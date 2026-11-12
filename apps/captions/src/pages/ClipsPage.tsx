@@ -66,7 +66,7 @@ import {
 import { confirmDialog } from "@/lib/dialogs";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { FolderShareButton, FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
-import { moveItems, useToolFolders } from "@/lib/folders";
+import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
@@ -616,7 +616,7 @@ export default function ClipsPage() {
     const into = folders.open;
     try {
       const s = await uploadClip(blob, name, mime, setUploadPct);
-      if (into) await moveItems("notes", [s.id], into).catch(() => {});
+      if (into) await folders.move([s.id], into, false).catch(() => {});
       rec.discard();
       putCached(me?.username, `/api/clips/${s.id}`, s);
       navigate(`/clips/${s.id}`);
@@ -956,7 +956,7 @@ export default function ClipsPage() {
                 />
                 {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
                 {!find.trim() && folders.open && listed.length === 0 && folders.folders.length === 0 && (
-                  <p className="rounded-lg border border-dashed border-zinc-800 py-10 text-center text-sm text-zinc-500">Empty folder. Drag clips here, or use Move to on a clip.</p>
+                  <p className="rounded-lg border border-dashed border-zinc-800 py-10 text-center text-sm text-zinc-500">Empty folder. A video you upload or record here goes in it, or use Move to on a clip.</p>
                 )}
                 {view === "grid" ? (
                   <FolderGrid ref={clipsBox} size="column">

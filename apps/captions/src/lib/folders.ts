@@ -93,20 +93,29 @@ export function useToolFolders<T extends { id: string }>(tool: FolderTool, items
     shareable: SHAREABLE_TOOLS.includes(tool),
     /** Turns the folder's link on (kept if it is on) and copies it. */
     share: async (f: ToolFolder) => {
-      const on = f.share ? f : await shareFolder(tool, f.id).finally(again);
+      const token = f.share
+        ? Promise.resolve(f.share)
+        : shareFolder(tool, f.id).then((on) => {
+            set((d) => ({ ...d, folders: d.folders.map((x) => (x.id === f.id ? on : x)) }));
+            return on.share!;
+          });
       try {
-        await navigator.clipboard.writeText(sharedFolderUrl(on.share!));
+        // a browser may refuse a copy made after waiting on the server, so a new link is handed over as a promise
+        if (f.share || typeof ClipboardItem === "undefined") await navigator.clipboard.writeText(sharedFolderUrl(await token));
+        else await navigator.clipboard.write([new ClipboardItem({ "text/plain": token.then((t) => new Blob([sharedFolderUrl(t)], { type: "text/plain" })) })]);
         toast.success("Link copied", { description: "Anyone with it can watch the clips in this folder and the folders inside it." });
       } catch {
-        toast(sharedFolderUrl(on.share!));
+        toast(sharedFolderUrl(await token), { description: "Copy this link to share the folder." });
       }
     },
     unshare: async (f: ToolFolder) => {
+      const yes = await confirmDialog({ title: `Stop sharing “${f.name}”?`, body: "Its link stops working. Sharing again makes a new link.", ok: "Stop sharing", danger: true });
+      if (!yes) return;
       set((d) => ({ ...d, folders: d.folders.map((x) => (x.id === f.id ? { ...x, share: undefined } : x)) }));
       await unshareFolder(tool, f.id).finally(again);
-      toast("Link turned off", { description: "Sharing again makes a new link." });
     },
-    move: async (ids: string[], folderId: string | null) => {
+    /** `undo` false: no ⌘Z (a clip just made inside a folder). */
+    move: async (ids: string[], folderId: string | null, undo = true) => {
       // where each was, for ⌘Z
       const was = new Map<string | null, string[]>();
       for (const id of ids) was.set(folderOf(id), [...(was.get(folderOf(id)) ?? []), id]);
@@ -123,7 +132,7 @@ export function useToolFolders<T extends { id: string }>(tool: FolderTool, items
         return Promise.all(moves.map(([to, some]) => moveItems(tool, some, to))).finally(again);
       };
       await put([[folderId, ids]]);
-      undoable("moved", () => put([...was]), ids.length);
+      if (undo) undoable("moved", () => put([...was]), ids.length);
     },
   };
 }
