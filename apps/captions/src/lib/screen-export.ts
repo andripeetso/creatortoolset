@@ -1,5 +1,7 @@
-import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, UrlSource } from "mediabunny";
+import { ALL_FORMATS, AudioSample, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, UrlSource } from "mediabunny";
 import { VideoSample, VideoSampleSink } from "mediabunny";
+import { VoiceMono, heardTracks, stereoMix, type TrackReader } from "./screen-sound";
+import { openTrackReader } from "./screen-sound-reader";
 import { alphaPacking, drawFrame, pointerPath, type CameraImage, type ScreenEvents, type ScreenLook } from "./screen-recording";
 import { allowHighH264 } from "./h264-level";
 import { frameReader } from "./frame-reader";
@@ -9,6 +11,8 @@ import { frameReader } from "./frame-reader";
  * `width`×`height`. The first sound track (the voice) comes along. `cameraUrl` is the camera file (same clock: its
  * t=0 is the screen's t=0); its frames are drawn over the picture. `trim` keeps only that part of the recording
  * (seconds); the look's times stay the recording's own. Returns the MP4.
+ * The sound is the editor's mix (lib/screen-sound.ts): the voice in both ears and the sound the Mac or the device
+ * played, each as the look's switches say; none at all when both are off or none was recorded.
  * `alpha` (a look with no background) makes the file the Mac app turns into a see-through video instead: each frame
  * twice in one picture, its colours over black and its matte (`alphaPacking`). It is not a video to watch.
  */
@@ -62,8 +66,22 @@ export async function renderScreenVideo(opts: {
     reader = null;
   }
   const cut = opts.trim?.start ?? 0;
+  const readers: { reader: TrackReader; close: () => void }[] = [];
   try {
     camera = cameraInput ? await cameraSource(cameraInput) : null;
+    // the sound: what is heard is read from its own track and mixed; the conversion's own sound track only times it
+    const heard = heardTracks(look, events);
+    const audioTracks = await input.getAudioTracks();
+    const open = async (n: number | null) => {
+      const track = n === null ? undefined : audioTracks[n];
+      const made = track ? await openTrackReader(track, cut) : null;
+      if (made) readers.push(made);
+      return made?.reader ?? null;
+    };
+    const voiceReader = await open(heard.voice);
+    const soundReader = await open(heard.sound);
+    const voice = new VoiceMono();
+    const RATE = 48_000;
     const conversion = await Conversion.init({
       input,
       output,
@@ -119,7 +137,30 @@ export async function renderScreenVideo(opts: {
           return canvas;
         },
       },
-      audio: { codec: "aac" },
+      audio:
+        voiceReader || soundReader
+          ? {
+              codec: "aac",
+              sampleRate: RATE,
+              forceTranscode: true,
+              processedNumberOfChannels: 2,
+              processedSampleRate: RATE,
+              process: async (sample) => {
+                const n = sample.numberOfFrames;
+                // a trimmed conversion hands over sound timed from the cut, like its frames
+                const t = sample.timestamp + cut;
+                const said = voiceReader ? voice.mix(await voiceReader.read(t, n, RATE)) : null;
+                const played = soundReader ? await soundReader.read(t, n, RATE) : null;
+                const [left, right] = stereoMix(said, played, n);
+                const data = new Float32Array(n * 2);
+                data.set(left, 0);
+                data.set(right, n);
+                const timestamp = sample.timestamp;
+                sample.close();
+                return new AudioSample({ data, format: "f32-planar", numberOfChannels: 2, sampleRate: RATE, timestamp });
+              },
+            }
+          : { discard: true },
     });
     if (!conversion.isValid || !conversion.utilizedTracks.some((t) => t.isVideoTrack())) {
       throw new Error(`This browser can't make the video (${conversion.discardedTracks.map((d) => d.reason).join(", ") || "no H.264 encoder"})`);
@@ -130,6 +171,7 @@ export async function renderScreenVideo(opts: {
     if (!target.buffer) throw new Error("The video came out empty");
     return new Blob([target.buffer], { type: "video/mp4" });
   } finally {
+    readers.forEach((r) => r.close());
     reader?.dispose();
     await camera?.close();
     cameraInput?.dispose();

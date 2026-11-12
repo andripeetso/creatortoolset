@@ -64,6 +64,10 @@ export type ScreenLook = {
    * Only where the whole recording is shown at rest: a frame that is filled (`fill`) has no window to grow.
    */
   zoomFit?: "inside" | "space" | "frame";
+  /** The voice is heard, in the editor and in the video it makes. A look without it: yes. */
+  voice?: boolean;
+  /** The sound the Mac (or the device) played while it recorded is heard. A look without it: yes, when it was recorded. */
+  sound?: boolean;
   /**
    * The camera beside the screen, when the recording has one. A look without `camera` gets `defaultCamera()` when a
    * camera exists, so old looks show the camera as a bubble.
