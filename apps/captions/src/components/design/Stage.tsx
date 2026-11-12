@@ -48,6 +48,7 @@ export function Stage({
   onEdit: (id: string | null) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const typing = useRef<HTMLTextAreaElement>(null);
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
   const sel = page.layers.find((l) => l.id === selected) ?? null;
 
@@ -140,9 +141,11 @@ export function Stage({
         className="absolute inset-0 touch-none select-none"
         onPointerDown={(e) => {
           if (e.button !== 0) return;
+          // a press beside the words being typed ends the typing and keeps them (a drag keeps the focus where it is,
+          // so the box is told to let go itself); it picks or moves nothing
+          if (typing.current) return typing.current.blur();
           const p = at(e);
           const hit = layerAt(page, p.x, p.y);
-          if (editing && hit?.id !== editing) onEdit(null);
           onSelect(hit?.id ?? null);
           if (hit) startMove(e, hit);
         }}
@@ -171,6 +174,7 @@ export function Stage({
       </div>
       {typed && (
         <textarea
+          ref={typing}
           autoFocus
           aria-label="The words of this layer"
           defaultValue={typed.text}
