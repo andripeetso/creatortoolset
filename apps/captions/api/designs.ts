@@ -314,6 +314,8 @@ designsApp.post("/", (c) =>
     const b = await body(c);
     const format = formatOf(b.format);
     if (!format) throw new DesignError("Pick one of the picture sizes");
+    const have = (await readdir(dirOf(user.username)).catch(() => [] as string[])).filter((n) => n.endsWith(".json")).length;
+    if (have >= DESIGN_LIMITS.designs) throw new DesignError(`An account holds up to ${DESIGN_LIMITS.designs} designs: delete one first`);
     const now = Date.now();
     const d: Design = { id: randomUUID(), owner: user.username, name: "Untitled design", kind: format.kind, format: format.id, width: format.w, height: format.h, pages: [], pictures: [], createdAt: now, updatedAt: now };
     const named = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, DESIGN_LIMITS.name) : "";

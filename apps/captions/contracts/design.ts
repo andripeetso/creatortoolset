@@ -32,7 +32,7 @@ export type DesignFormat = (typeof DESIGN_FORMATS)[number]["id"];
 export type DesignKind = (typeof DESIGN_FORMATS)[number]["kind"];
 export const formatOf = (id: unknown) => DESIGN_FORMATS.find((f) => f.id === id) ?? null;
 
-export const DESIGN_LIMITS = { pages: 20, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {

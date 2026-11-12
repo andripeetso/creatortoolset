@@ -128,7 +128,8 @@ export default function ToolsetHome() {
     return missing.length ? needsLine(missing) : null;
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
-  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome);
+  // the Designer is worked with a pointer and keys on a wide canvas: a phone's Home leaves it out
+  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome).filter((t) => !(phone && t === "design"));
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = accentTones(accentFor(projectTint, ownColour, project ? projectColor(project) : null));
