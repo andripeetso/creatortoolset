@@ -79,29 +79,31 @@ final class AppNavigator: ObservableObject {
     /// that new chat already. A message still on this phone (not sent yet, or not sent at all) belongs to the chat it
     /// was written in: then the open chat is shown and says why there is no new one yet.
     func newChat() {
-        Task {
-            let assistant = AssistantModel.shared
-            if assistant.view == nil { await assistant.load() }
-            if let view = assistant.view, !view.messages.isEmpty {
-                if !assistant.outbox.items.isEmpty {
-                    assistant.error = "A message here hasn't gone yet. A new chat can start once it has."
-                } else {
-                    await assistant.newChat()
-                    // an older server refuses while a reply is being written
-                    if assistant.view?.messages.isEmpty == false, assistant.view?.thinking != nil {
-                        assistant.error = "A reply is still being written here. A new chat can start once it's done."
-                    }
+        Task { await startNewChat() }
+    }
+
+    func startNewChat() async {
+        let assistant = AssistantModel.shared
+        if assistant.view == nil { await assistant.load() }
+        if let view = assistant.view, !view.messages.isEmpty {
+            if assistant.unsent {
+                assistant.error = "A message here hasn't gone yet. A new chat can start once it has."
+            } else {
+                await assistant.newChat()
+                // an older server refuses while a reply is being written
+                if assistant.view?.messages.isEmpty == false, assistant.view?.thinking != nil {
+                    assistant.error = "A reply is still being written here. A new chat can start once it's done."
                 }
             }
-            composing = assistant.view?.messages.isEmpty ?? true
-            open(.assistant)
         }
+        composing = assistant.view?.messages.isEmpty ?? true
+        open(.assistant)
     }
 
     /// A link in a chat or on a card: a page of the website becomes a screen, anything else leaves the app.
     func open(href: String) {
         if let route = AppRoute.from(path: href) {
-            open(route)
+            open(route)   // a chat of the assistant ("/?chat=<id>") is made the open one by its screen (AssistantChatRoute)
         } else if let url = URL(string: href), url.scheme == "http" || url.scheme == "https" {
             UIApplication.shared.open(url)
         }

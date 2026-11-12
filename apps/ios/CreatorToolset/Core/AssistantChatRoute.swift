@@ -33,7 +33,14 @@ struct AssistantChatRoute: View {
         .task(id: id) {
             if model.view?.id != id {
                 if model.view == nil { await model.load() }
-                if model.view?.id != id { await model.open(past: id) }
+                if model.view?.id != id {
+                    // a message not gone yet would land in this chat instead of its own
+                    if model.unsent {
+                        model.error = "A message in your current chat hasn't gone yet. This chat opens once it has."
+                    } else {
+                        await model.open(past: id)
+                    }
+                }
             }
             shown = model.view?.id == id
         }

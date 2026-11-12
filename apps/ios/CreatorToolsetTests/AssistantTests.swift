@@ -115,7 +115,7 @@ final class AssistantTests: XCTestCase {
         after.open(file)
         XCTAssertEqual(after.items, before.items)
         XCTAssertEqual(after.items.first?.images.first?.jpeg, Data([0xFF, 0xD8, 0xFF]))
-        XCTAssertEqual(after.items.last?.attached, "Clip.mov")
+        XCTAssertEqual(after.items.last?.files.first?.name, "Clip.mov")
 
         // sent: gone from the disk too
         await after.drain { _ in .sent }
@@ -223,6 +223,816 @@ final class AssistantTests: XCTestCase {
         XCTAssertNil(plain["images"])
         XCTAssertNil(plain["files"])
         XCTAssertTrue(JSONSerialization.isValidJSONObject(body))
+    }
+
+    // MARK: Videos that go up while the message waits
+
+    /// What the stand-in post saw, in order: each message's words and the file ids its body names.
+    private final class Posted {
+        var texts: [String] = []
+        var files: [[String]] = []
+
+        func post(_ message: QueuedMessage) -> AssistantOutbox.Outcome {
+            texts.append(message.text)
+            files.append(AssistantModel.body(message, timezone: "UTC")["files"] as? [String] ?? [])
+            return .sent
+        }
+    }
+
+    private final class Gate {
+        var waiting: CheckedContinuation<Void, Never>?
+        func pass() async { await withCheckedContinuation { waiting = $0 } }
+        func open() {
+            waiting?.resume()
+            waiting = nil
+        }
+    }
+
+    private func up(_ name: String, _ copy: String) -> QueuedMessage.Video { .init(name: name, copy: copy) }
+
+    func testAMessageWaitsForItsVideoAndTheNextWaitsBehindIt() async {
+        let gate = Gate()
+        let posted = Posted()
+        let file = scratch()
+        let outbox = AssistantOutbox()
+        outbox.open(file)
+        outbox.serverWaits = false   // a server that takes a message only once its videos are up
+        outbox.add(QueuedMessage(text: "Put this clip in Review", videos: [up("Clip.mov", "c1")]))
+        outbox.add(QueuedMessage(text: "and write its post description"))
+        // its video is not up: nothing goes, the plain one behind it included
+        let tried = await outbox.drain { posted.post($0) }
+        XCTAssertNil(tried)
+        var moved = 0
+        outbox.upload(.init(begin: { _ in "f1" }, send: { video, _, progress in
+            XCTAssertEqual(video.file, "f1")
+            progress(0.42)
+            await gate.pass()
+            return "f1"
+        }), moved: { moved += 1 })
+        while gate.waiting == nil { await Task.yield() }
+        // the server's id is kept on disk from the moment it is given; how far it got is not
+        let reread = AssistantOutbox()
+        reread.open(file)
+        XCTAssertEqual(reread.items.first?.videos?.first?.file, "f1")
+        while outbox.progress.isEmpty { await Task.yield() }
+        XCTAssertEqual(outbox.progress.values.first, 0.42)
+        let held = await outbox.drain { posted.post($0) }
+        XCTAssertNil(held)
+        // a second call while it goes up starts nothing new
+        outbox.upload(.init(begin: { _ in XCTFail("begun twice"); return "" }, send: { _, _, _ in XCTFail("two at once"); return "" }),
+                      moved: {})
+        gate.open()
+        await outbox.settled()
+        XCTAssertEqual(moved, 2)   // its id, then the video up
+        XCTAssertEqual(outbox.items[0].files, [.init(id: "f1", name: "Clip.mov")])
+        XCTAssertNil(outbox.items[0].videos)
+        XCTAssertTrue(outbox.progress.isEmpty)
+        await outbox.drain { posted.post($0) }
+        await outbox.drain { posted.post($0) }
+        XCTAssertEqual(posted.texts, ["Put this clip in Review", "and write its post description"])
+        XCTAssertEqual(posted.files, [["f1"], []])
+    }
+
+    func testVideosGoUpInTheOrderTheMessagesWereSent() async {
+        let outbox = AssistantOutbox()
+        outbox.add(QueuedMessage(text: "one", videos: [up("A.mov", "a"), up("B.mov", "b")]))
+        outbox.add(QueuedMessage(text: "two"))
+        outbox.add(QueuedMessage(text: "three", videos: [up("C.mov", "c")]))
+        var begun: [String] = []
+        var sent: [String] = []
+        outbox.upload(.init(begin: { video in
+            begun.append(video.name)
+            return "id-" + video.copy
+        }, send: { video, _, _ in
+            sent.append(video.name)
+            return video.file ?? ""
+        }), moved: {})
+        await outbox.settled()
+        XCTAssertEqual(begun, ["A.mov", "B.mov", "C.mov"])
+        XCTAssertEqual(sent, ["A.mov", "B.mov", "C.mov"])
+        XCTAssertEqual(outbox.items.map { $0.files.map(\.id) }, [["id-a", "id-b"], [], ["id-c"]])
+    }
+
+    func testNoConnectionKeepsTheMessageWaiting() async {
+        let posted = Posted()
+        let outbox = AssistantOutbox()
+        outbox.serverWaits = false
+        outbox.add(QueuedMessage(text: "one", videos: [up("Clip.mov", "c1")]))
+        outbox.add(QueuedMessage(text: "two"))
+        let offline = { (status: Int) in ToolsetAPI.Failure(status: status, message: "No connection to Creator Toolset") }
+        // no answer to its first call, a server restarting, then a connection that drops while the parts go
+        outbox.upload(.init(begin: { _ in throw offline(0) }, send: { _, _, _ in "" }), moved: {})
+        await outbox.settled()
+        outbox.upload(.init(begin: { _ in throw offline(503) }, send: { _, _, _ in "" }), moved: {})
+        await outbox.settled()
+        outbox.upload(.init(begin: { _ in "f1" }, send: { _, _, _ in throw offline(0) }), moved: {})
+        await outbox.settled()
+        // nothing said, nothing overtakes it: the next read of the chat starts it again, from its upload
+        XCTAssertNil(outbox.items[0].failed)
+        XCTAssertEqual(outbox.items[0].videos?.first?.file, "f1")
+        let tried = await outbox.drain { posted.post($0) }
+        XCTAssertNil(tried)
+        XCTAssertEqual(outbox.items.count, 2)
+    }
+
+    func testAFailedUploadIsMarkedAndTheMessagesBehindItGo() async {
+        let posted = Posted()
+        let outbox = AssistantOutbox()
+        outbox.open(scratch())
+        outbox.serverWaits = false
+        outbox.add(QueuedMessage(text: "one", videos: [up("Clip.mov", "c1")]))
+        outbox.add(QueuedMessage(text: "two"))
+        var moved = 0
+        outbox.upload(.init(begin: { _ in "f1" }, send: { _, _, _ in throw ToolsetAPI.Failure(status: 408, message: "No answer from the server") }),
+                      moved: { moved += 1 })
+        await outbox.settled()
+        // marked Not sent, with the reason, and out of the way
+        XCTAssertEqual(outbox.items[0].failed, "No answer from the server")
+        XCTAssertEqual(moved, 2)
+        XCTAssertEqual(outbox.shown.map(\.text), ["one", "two"])
+        await outbox.drain { posted.post($0) }
+        XCTAssertEqual(posted.texts, ["two"])
+        // a Not sent message's videos wait for Try again
+        outbox.upload(.init(begin: { _ in XCTFail("without Try again"); return "" }, send: { _, _, _ in XCTFail("without Try again"); return "" }),
+                      moved: {})
+        await outbox.settled()
+        // Try again: back in line, the video carries on from its upload and the message goes with it
+        outbox.retry(outbox.items[0].id)
+        outbox.upload(.init(begin: { _ in XCTFail("begun again"); return "" }, send: { video, _, _ in video.file ?? "" }), moved: {})
+        await outbox.settled()
+        await outbox.drain { posted.post($0) }
+        XCTAssertEqual(posted.texts, ["two", "one"])
+        XCTAssertEqual(posted.files.last, ["f1"])
+    }
+
+    func testAServerThatKeepsFailingThePartsDoesNotHoldTheLineForEver() async {
+        let posted = Posted()
+        let outbox = AssistantOutbox()
+        outbox.add(QueuedMessage(text: "one", videos: [up("Clip.mov", "c1")]))
+        outbox.add(QueuedMessage(text: "two"))
+        let full = ToolsetAPI.Failure(status: 500, message: "ENOSPC: no space left on device")
+        // a server error while the video gets further each time: it keeps waiting
+        for step in 1...6 {
+            outbox.upload(.init(begin: { _ in "f1" }, send: { _, _, progress in
+                progress(Double(step) / 10)
+                try await Task.sleep(for: .milliseconds(20))
+                throw full
+            }), moved: {})
+            await outbox.settled()
+        }
+        XCTAssertNil(outbox.items[0].failed)
+        // no further, a few times in a row: Not sent, with the server's words, and the next one goes
+        for _ in 1..<AssistantOutbox.maxStalls {
+            outbox.upload(.init(begin: { _ in "f1" }, send: { _, _, _ in throw full }), moved: {})
+            await outbox.settled()
+        }
+        XCTAssertEqual(outbox.items[0].failed, "ENOSPC: no space left on device")
+        await outbox.drain { posted.post($0) }
+        XCTAssertEqual(posted.texts, ["two"])
+        // no answer at all is never counted: that is no connection
+        let offline = AssistantOutbox()
+        offline.add(QueuedMessage(text: "one", videos: [up("Clip.mov", "c1")]))
+        for _ in 1...(2 * AssistantOutbox.maxStalls) {
+            offline.upload(.init(begin: { _ in throw ToolsetAPI.Failure(status: 0, message: "No connection") }, send: { _, _, _ in "" }),
+                           moved: {})
+            await offline.settled()
+        }
+        XCTAssertNil(offline.items[0].failed)
+    }
+
+    func testWhatWaitsAndWhatFails() throws {
+        XCTAssertTrue(AssistantUpload.waits(ToolsetAPI.Failure(status: 0, message: "No connection to Creator Toolset")))
+        XCTAssertTrue(AssistantUpload.waits(ToolsetAPI.Failure(status: 502, message: "HTTP 502")))
+        // a part that never gets an answer (an older server), a refusal, a copy that is gone: Not sent
+        XCTAssertFalse(AssistantUpload.waits(ToolsetAPI.Failure(status: 408, message: "No answer from the server")))
+        XCTAssertFalse(AssistantUpload.waits(ToolsetAPI.Failure(status: 401, message: "Sign in again")))
+        XCTAssertFalse(AssistantUpload.waits(AssistantUpload.Unreadable(name: "Clip.mov")))
+        XCTAssertFalse(AssistantUpload.waits(CocoaError(.fileReadNoSuchFile)))
+    }
+
+    func testAVideoThatCanNoLongerBeReadIsNotSentAndAsksNothingOfTheServer() async throws {
+        // a server nobody answers at: a request would come back as "no connection", which waits
+        let api = API(server: URL(string: "http://127.0.0.1:9")!, cookie: nil, username: "tiny")
+        let gone = up("Clip.mov", "gone-\(UUID().uuidString)")
+        XCTAssertFalse(gone.readable)
+        do {
+            _ = try await AssistantUpload.send(gone.url, name: gone.name, resuming: "f1", api: api, begun: { _ in }, progress: { _ in })
+            XCTFail("sent")
+        } catch {
+            XCTAssertTrue(error is AssistantUpload.Unreadable)
+            XCTAssertEqual(error.localizedDescription, "Clip.mov can no longer be read: take it back and add it again")
+        }
+    }
+
+    func testAQueueReadFromDiskCarriesOnWhereItStopped() async {
+        let file = scratch()
+        let before = AssistantOutbox()
+        before.open(file)
+        before.add(QueuedMessage(text: "one", videos: [up("Clip.mov", "c1")]))
+        before.add(QueuedMessage(text: "two"))
+        // the server gave the upload its id, then the connection dropped and the app was closed
+        before.upload(.init(begin: { _ in "f9" }, send: { _, _, _ in throw ToolsetAPI.Failure(status: 0, message: "The upload stopped") }),
+                      moved: {})
+        await before.settled()
+
+        let after = AssistantOutbox()
+        after.open(file)
+        after.serverWaits = false
+        XCTAssertEqual(after.items.map(\.text), ["one", "two"])
+        var resumed: String?
+        after.upload(.init(begin: { _ in XCTFail("started again"); return "" }, send: { video, _, _ in
+            resumed = video.file
+            return "f9"
+        }), moved: {})
+        await after.settled()
+        // it carries on with the same upload, not from the start
+        XCTAssertEqual(resumed, "f9")
+        let posted = Posted()
+        await after.drain { posted.post($0) }
+        await after.drain { posted.post($0) }
+        XCTAssertEqual(posted.texts, ["one", "two"])
+        XCTAssertEqual(posted.files, [["f9"], []])
+    }
+
+    func testAQueueSavedByTheOlderAppStillReads() throws {
+        // what the app wrote before videos could wait (JSONEncoder of the old QueuedMessage)
+        let file = scratch()
+        try Data(#"[{"id":"q1","text":"two","images":[],"files":[{"id":"f1","name":"Clip.mov"}],"quote":"a line"}]"#.utf8).write(to: file)
+        let outbox = AssistantOutbox()
+        outbox.open(file)
+        XCTAssertEqual(outbox.items.map(\.text), ["two"])
+        XCTAssertEqual(outbox.items.first?.files, [.init(id: "f1", name: "Clip.mov")])
+        XCTAssertNil(outbox.items.first?.videos)
+        XCTAssertTrue(AssistantOutbox.ready(outbox.items[0], serverWaits: false))
+        XCTAssertTrue(AssistantOutbox.ready(outbox.items[0], serverWaits: true))
+    }
+
+    func testATakenBackMessageStopsItsUploadAndTheBoxKeepsItsVideo() async throws {
+        // a real copy, as Photos leaves it, and one iOS has cleared away
+        let kept = up("Clip.mov", "test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: kept.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: kept.url)
+        defer { kept.discard() }
+        let gone = up("Old.mov", "gone-\(UUID().uuidString)")
+
+        let outbox = AssistantOutbox()
+        outbox.add(QueuedMessage(text: "Put this in Review", videos: [kept, gone]))
+        var started = false
+        outbox.upload(.init(begin: { $0.name == "Clip.mov" ? "f1" : "f2" }, send: { _, _, _ in
+            started = true
+            try await Task.sleep(for: .seconds(60))
+            return "f1"
+        }), moved: {})
+        while !started { await Task.yield() }
+        let message = outbox.items[0]
+        outbox.remove(message.id)
+        // no box holds it here: at the next look its upload stops
+        outbox.upload(.init(begin: { _ in "" }, send: { _, _, _ in "" }), moved: {})
+        await outbox.settled()
+        XCTAssertTrue(outbox.items.isEmpty)
+        XCTAssertTrue(kept.readable)   // the box takes it back: its copy stays
+
+        let draft = AssistantDraft()
+        draft.putBack(message)
+        XCTAssertEqual(draft.text, "Put this in Review")
+        // the video carries on from its upload when it goes again; the one that can't be read is left out, and said
+        XCTAssertEqual(draft.videos.map(\.name), ["Clip.mov"])
+        XCTAssertEqual(draft.videos.first?.file, "f1")
+        XCTAssertEqual(draft.notice, "A video could not be read")
+        let again = try XCTUnwrap(draft.take())
+        XCTAssertEqual(again.videos?.map(\.file), ["f1"])
+        XCTAssertFalse(AssistantOutbox.ready(again, serverWaits: false))
+        XCTAssertTrue(AssistantOutbox.ready(again, serverWaits: true))
+    }
+
+    func testSendEmptiesTheBoxWhileItsVideosHaveYetToGoUp() {
+        let draft = AssistantDraft()
+        draft.pretend(pictures: [], videos: [up("IMG_2041.MOV", "c1")])
+        draft.text = "Caption this"
+        let message = draft.take()
+        XCTAssertEqual(message?.videos?.map(\.name), ["IMG_2041.MOV"])
+        XCTAssertEqual(message?.files, [])
+        XCTAssertTrue(draft.isEmpty)
+        XCTAssertTrue(draft.videos.isEmpty)
+    }
+
+    // MARK: A server that waits for the videos itself (SEND-NOW.md)
+
+    func testAServerThatWaitsTakesTheMessageOnceItsVideoHasAnIdAndTheNextAtOnce() async {
+        let named = Gate()
+        let parts = Gate()
+        let posted = Posted()
+        let outbox = AssistantOutbox()
+        outbox.open(scratch())
+        XCTAssertFalse(outbox.serverWaits)   // not known until the server says so
+        outbox.serverWaits = true
+        outbox.add(QueuedMessage(text: "Put this clip in Review", videos: [up("Clip.mov", "c1")]))
+        outbox.add(QueuedMessage(text: "and write its post description"))
+        // the server takes the message when it is answered as if it came from it
+        let send = { (message: QueuedMessage) -> AssistantOutbox.Outcome in
+            if !AssistantOutbox.ready(message, serverWaits: false) { outbox.carry(message.id, reply: "r1") }
+            return posted.post(message)
+        }
+        outbox.upload(.init(begin: { _ in
+            await named.pass()
+            return "f1"
+        }, send: { _, _, progress in
+            progress(0.5)
+            await parts.pass()
+            return "f1"
+        }), moved: {})
+        while named.waiting == nil { await Task.yield() }
+        // no id for its video yet: it holds the line
+        let early = await outbox.drain(send: send)
+        XCTAssertNil(early)
+        named.open()
+        while parts.waiting == nil { await Task.yield() }
+        // it goes with the id while its video goes up, and the next one goes straight after it
+        await outbox.drain(send: send)
+        await outbox.drain(send: send)
+        XCTAssertEqual(posted.texts, ["Put this clip in Review", "and write its post description"])
+        XCTAssertEqual(posted.files, [["f1"], []])
+        // it stays only for its video, out of the feed: the conversation shows it
+        XCTAssertEqual(outbox.items.map(\.reply), ["r1"])
+        XCTAssertTrue(outbox.shown.isEmpty)
+        while outbox.carried["f1"] != 0.5 { await Task.yield() }
+        XCTAssertTrue(outbox.waiting)   // the chat is read again meanwhile: a stopped upload starts again on it
+        let more = await outbox.drain(send: send)
+        XCTAssertNil(more)
+        // its last video up: nothing is left of it here
+        parts.open()
+        await outbox.settled()
+        XCTAssertTrue(outbox.items.isEmpty)
+    }
+
+    func testAFailedVideoOfAMessageTheServerTookComesBackAsNotSent() async throws {
+        let outbox = AssistantOutbox()
+        outbox.add(QueuedMessage(text: "one", videos: [up("Clip.mov", "c1")], reply: "r1"))
+        outbox.add(QueuedMessage(text: "two", videos: [up("Other.mov", "c2")], reply: "r2"))
+        XCTAssertTrue(outbox.shown.isEmpty)
+        outbox.upload(.init(begin: { _ in "f" }, send: { video, _, _ in
+            if video.name == "Clip.mov" { throw AssistantUpload.Unreadable(name: "Clip.mov") }
+            return "f"
+        }), moved: {})
+        await outbox.settled()
+        // its reply is still held on the server: it shows, Not sent, until the phone has stopped that reply
+        XCTAssertEqual(outbox.shown.map(\.text), ["one"])
+        XCTAssertEqual(outbox.items[0].failed, "Clip.mov can no longer be read: take it back and add it again")
+        outbox.detach(outbox.items[0].id)
+        XCTAssertNil(outbox.items[0].reply)
+        // the one after it went on and is done here
+        XCTAssertEqual(outbox.items.map(\.text), ["one"])
+        // a reply he stopped himself: the video goes up no more
+        outbox.add(QueuedMessage(text: "three", videos: [up("Third.mov", "c3")], reply: "r3"))
+        outbox.drop(outbox.items[1].id)
+        XCTAssertEqual(outbox.items.map(\.text), ["one"])
+    }
+
+    func testAWaitingReplyAndItsVideosRead() throws {
+        // GET /api/assistant on the test server while the phone's video went up and two more messages had been
+        // sent (its earlier messages and earlier chats cut): the video's message, its held reply, the two behind it
+        let view = try view(#"""
+        {"id":"3441cbd5-c2c7-4ca9-b10f-1cddb2cad321","provider":"claude","aiName":"Claude Code","tools":true,"messages":[{"id":"1c67357d-ad25-499d-80d1-650730470e78","role":"user","text":"One with a clip","at":1794448591618,"files":[{"id":"46a70c3e-cc07-4ee9-86f1-0d6321e4f373","name":"Tiny clip A.mp4","uploading":true}]},{"id":"294c7820-b888-4028-a7ba-c511b911c298","role":"assistant","text":"","at":1794448591619,"status":"thinking","wait":{"for":"videos","videos":1,"text":"Waiting for a video to upload"}},{"id":"70254445-cad4-45a8-9455-852a22777529","role":"user","text":"Two","at":1794448591807},{"id":"9c402a25-2a27-44e6-810b-5bf0b20ea024","role":"assistant","text":"","at":1794448591808,"status":"thinking","wait":{"for":"reply","text":"Waiting for the reply before it"}},{"id":"1270f08a-cc76-44af-b01e-ff0ecd8a5fe3","role":"user","text":"Three","at":1794448591993},{"id":"299c8ee6-c18f-446c-b7d8-81bb704f8a1f","role":"assistant","text":"","at":1794448591994,"status":"thinking","wait":{"for":"reply","text":"Waiting for the reply before it"}}],"past":[],"pending":null,"navigate":null,"sendNow":true}
+        """#)
+        XCTAssertEqual(view.messages[0].files?.map(\.uploading), [true])
+        XCTAssertEqual(view.messages.compactMap(\.wait?.text),
+                       ["Waiting for a video to upload", "Waiting for the reply before it", "Waiting for the reply before it"])
+        // none is being written: the working line is about the first that waits, and counts nothing
+        XCTAssertEqual(view.thinking?.id, "294c7820-b888-4028-a7ba-c511b911c298")
+        XCTAssertEqual(view.asked(view.messages[3]), 1794448591807)
+        XCTAssertTrue(view.sendNow)
+        // an older server sends none of it: the phone holds a message until its videos are up
+        let older = try self.view(Self.seeded)
+        XCTAssertFalse(older.sendNow)
+        XCTAssertNil(older.messages[3].files?.first?.uploading)
+        XCTAssertNil(older.messages[1].wait)
+        // a video still going up is named by the id the server gave it
+        let body = AssistantModel.body(QueuedMessage(text: "Caption this", files: [.init(id: "f2", name: "Pier.mov")],
+                                                     videos: [.init(name: "Beach.mov", copy: "c1", file: "f1")]))
+        XCTAssertEqual(body["files"] as? [String], ["f2", "f1"])
+    }
+
+    // MARK: The model against a server that waits (the stand-in answers as the test server did: SEND-NOW.md)
+
+    /// A server stood in for the real one. It keeps the chat and answers each call with the whole view, in
+    /// the shapes captured from the test server: a message whose video is not in yet has `uploading`, its
+    /// reply a `wait`, a reply behind another waits for it, and a stopped waiting reply ends as "*Stopped.*".
+    @MainActor private final class Stand {
+        var messages: [[String: Any]] = []
+        /// What each `POST /turn` carried.
+        var turns: [[String: Any]] = []
+        /// The reply each `POST /stop` named.
+        var stops: [String] = []
+        /// Uploads begun and not all in yet.
+        var missing: Set<String> = []
+
+        var view: Data {
+            try! JSONSerialization.data(withJSONObject: [
+                "id": "3441cbd5-c2c7-4ca9-b10f-1cddb2cad321", "provider": "claude", "aiName": "Claude Code", "tools": true,
+                "messages": messages, "past": [], "sendNow": true,
+            ] as [String: Any])
+        }
+
+        /// A message and its reply, as the server files them: "u1" and "r1", "u2" and "r2"…
+        func take(_ text: String, files: [String] = []) {
+            let n = messages.count / 2 + 1
+            var user: [String: Any] = ["id": "u\(n)", "role": "user", "text": text, "at": 1794444151905 + n]
+            if !files.isEmpty {
+                user["files"] = files.map { id -> [String: Any] in
+                    missing.contains(id) ? ["id": id, "name": "Clip.mov", "uploading": true] : ["id": id, "name": "Clip.mov"]
+                }
+            }
+            messages += [user, ["id": "r\(n)", "role": "assistant", "text": "", "at": 1794444151906 + n, "status": "thinking"]]
+            settle()
+        }
+
+        /// The last part of a video landed: the server joins it and its reply may start.
+        func arrived(_ file: String) {
+            missing.remove(file)
+            for index in messages.indices {
+                guard var files = messages[index]["files"] as? [[String: Any]] else { continue }
+                for at in files.indices where files[at]["id"] as? String == file { files[at]["uploading"] = nil }
+                messages[index]["files"] = files
+            }
+            settle()
+        }
+
+        /// Who waits for what: the first open reply for its videos (or nothing: it is being written), the rest for it.
+        private func settle() {
+            var first = true
+            for index in messages.indices where messages[index]["status"] as? String == "thinking" {
+                let videos = (messages[index - 1]["files"] as? [[String: Any]] ?? []).filter { $0["uploading"] != nil }.count
+                if !first {
+                    messages[index]["wait"] = ["for": "reply", "text": "Waiting for the reply before it"]
+                } else if videos > 0 {
+                    messages[index]["wait"] = ["for": "videos", "videos": videos, "text": "Waiting for a video to upload"]
+                } else {
+                    messages[index]["wait"] = nil
+                }
+                first = false
+            }
+        }
+
+        func call(_ path: String, _ method: String, _ json: Any?) throws -> Data {
+            let body = json as? [String: Any] ?? [:]
+            switch (method, path) {
+            case ("POST", "/api/assistant/turn"):
+                turns.append(body)
+                take(body["text"] as? String ?? "", files: body["files"] as? [String] ?? [])
+            case ("POST", "/api/assistant/stop"):
+                let named = body["reply"] as? String
+                guard let index = messages.firstIndex(where: {
+                    $0["status"] as? String == "thinking" && (named == nil || $0["id"] as? String == named)
+                }) else { throw ToolsetAPI.Failure(status: 404, message: "Nothing is running") }
+                stops.append(named ?? "")
+                messages[index]["status"] = "done"
+                messages[index]["text"] = "*Stopped.*"
+                messages[index]["wait"] = nil
+                settle()
+            default:
+                break
+            }
+            return view
+        }
+
+        /// The model's way to it. A video gets the id "f-<its copy>"; `send` says how its parts go.
+        func server(queue: URL? = nil,
+                    send: @escaping @MainActor (QueuedMessage.Video) async throws -> Void = { _ in }) -> AssistantServer {
+            AssistantServer(queue: queue, call: { @MainActor [self] path, method, json in
+                try call(path, method, json)
+            }, uploader: .init(begin: { @MainActor [self] video in
+                missing.insert("f-" + video.copy)
+                return "f-" + video.copy
+            }, send: { @MainActor [self] video, _, _ in
+                try await send(video)
+                arrived(video.file ?? "")
+                return video.file ?? ""
+            }))
+        }
+    }
+
+    private func until(_ what: String, _ done: () -> Bool) async {
+        for _ in 0..<500 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(done(), what)
+    }
+
+    func testTheModelSendsAMessageWhileItsVideoGoesUpAndTheNextOnesStraightAfter() async {
+        let stand = Stand()
+        let parts = Gate()
+        let model = AssistantModel()
+        model.server = { stand.server(send: { _ in await parts.pass() }) }
+        await model.load()
+        model.send(QueuedMessage(text: "One with a clip", videos: [up("Clip.mov", "c1")]))
+        model.send(QueuedMessage(text: "Two"))
+        model.send(QueuedMessage(text: "Three"))
+        await until("all three went") { stand.turns.count == 3 && model.view?.messages.count == 6 && model.outbox.items.count == 1 }
+        // in the order sent, the first naming its video by the id the server gave it, and that video still going up
+        XCTAssertEqual(stand.turns.map { $0["text"] as? String }, ["One with a clip", "Two", "Three"])
+        XCTAssertEqual(stand.turns.map { $0["files"] as? [String] ?? [] }, [["f-c1"], [], []])
+        XCTAssertNotNil(parts.waiting)
+        // the conversation shows them, each reply with what it waits for; nothing is drawn twice
+        XCTAssertTrue(model.outbox.shown.isEmpty)
+        XCTAssertEqual(model.view?.messages.compactMap(\.wait?.text),
+                       ["Waiting for a video to upload", "Waiting for the reply before it", "Waiting for the reply before it"])
+        XCTAssertEqual(model.view?.messages[0].files?.first?.uploading, true)
+        // the first stays on the phone only for its video, under its reply's id
+        XCTAssertEqual(model.outbox.items.map(\.reply), ["r1"])
+        // the working line is about the first one that waits, until one is being written
+        XCTAssertEqual(model.view?.thinking?.id, "r1")
+        // the last part lands: its reply starts, and nothing of it is left on the phone
+        parts.open()
+        await until("the video is up") { model.outbox.items.isEmpty }
+        await model.load()
+        XCTAssertNil(model.view?.messages[0].files?.first?.uploading)
+        XCTAssertNil(model.view?.messages[1].wait)
+        XCTAssertEqual(model.view?.thinking?.id, "r1")
+        XCTAssertEqual(model.view.flatMap { $0.asked($0.messages[3]) }, model.view?.messages[2].at)
+        XCTAssertEqual(stand.turns.count, 3)
+    }
+
+    func testAMessageTheServerAlreadyTookIsNotSentAgain() async {
+        // the app was closed while the video went up: the message is in the chat, its reply waits
+        let stand = Stand()
+        stand.missing = ["f-c1"]
+        stand.take("One with a clip", files: ["f-c1"])
+        let file = scratch()
+        let before = AssistantOutbox()
+        before.open(file)
+        before.add(QueuedMessage(text: "One with a clip", videos: [.init(name: "Clip.mov", copy: "c1", file: "f-c1")], reply: "r1"))
+        var resumed: [String?] = []
+        let model = AssistantModel()
+        model.server = { stand.server(queue: file, send: { resumed.append($0.file) }) }
+        await model.load()
+        await until("the video is up") { model.outbox.items.isEmpty }
+        // it carried on with the same upload, and nothing was sent a second time
+        XCTAssertEqual(resumed, ["f-c1"])
+        XCTAssertTrue(stand.turns.isEmpty)
+
+        // the answer to a send was lost on the way: the message is in the chat, the phone still holds it as unsent
+        let lost = Stand()
+        lost.missing = ["f-c2"]
+        lost.take("Two with a clip", files: ["f-c2"])
+        let parts = Gate()
+        let again = AssistantModel()
+        again.server = { lost.server(send: { _ in await parts.pass() }) }
+        again.outbox.add(QueuedMessage(text: "Two with a clip", videos: [.init(name: "Clip.mov", copy: "c2", file: "f-c2")], triedAfter: ""))
+        await again.load()
+        await until("it is known as taken") { again.outbox.items.first?.reply == "r1" }
+        XCTAssertTrue(lost.turns.isEmpty)
+        XCTAssertTrue(again.outbox.shown.isEmpty)
+        parts.open()
+        await until("its video is up") { again.outbox.items.isEmpty }
+
+        // its reply ended meanwhile (stopped on the computer): its video goes up no more
+        let ended = Stand()
+        ended.missing = ["f-c3"]
+        ended.take("Three with a clip", files: ["f-c3"])
+        _ = try? ended.call("/api/assistant/stop", "POST", ["reply": "r1"])
+        let third = AssistantModel()
+        third.server = { ended.server(send: { _ in XCTFail("went up for a reply that ended") }) }
+        third.outbox.add(QueuedMessage(text: "Three with a clip", videos: [.init(name: "Clip.mov", copy: "c3", file: "f-c3")], reply: "r1"))
+        await third.load()
+        XCTAssertTrue(third.outbox.items.isEmpty)
+        XCTAssertTrue(ended.turns.isEmpty)
+    }
+
+    func testTheCrossStopsAWaitingReplyByItsIdAndTheNextOneGoesOn() async {
+        let stand = Stand()
+        let parts = Gate()
+        var cancelled = false
+        let model = AssistantModel()
+        model.server = { stand.server(send: { _ in
+            await parts.pass()
+            cancelled = Task.isCancelled
+            try Task.checkCancellation()
+        }) }
+        await model.load()
+        model.send(QueuedMessage(text: "One with a clip", videos: [up("Clip.mov", "c1")]))
+        model.send(QueuedMessage(text: "Two"))
+        await until("both went") { stand.turns.count == 2 && parts.waiting != nil }
+        await model.stop(reply: "r1")
+        // that reply, by its id; his message stays in the chat and its video goes up no more
+        XCTAssertEqual(stand.stops, ["r1"])
+        XCTAssertEqual(model.view?.messages.map(\.text), ["One with a clip", "*Stopped.*", "Two", ""])
+        XCTAssertEqual(model.view?.messages[1].status, "done")
+        XCTAssertTrue(model.outbox.items.isEmpty)
+        parts.open()
+        await until("its upload was stopped") { cancelled }
+        // the one behind it is being written now
+        XCTAssertEqual(model.view?.thinking?.id, "r2")
+        XCTAssertNil(model.view?.thinking?.wait)
+        // a reply that has ended already: nothing to say
+        await model.stop(reply: "r1")
+        XCTAssertNil(model.error)
+    }
+
+    func testAVideoThatFailsStopsItsHeldReplyAndTheMessageComesBackAsNotSent() async {
+        let stand = Stand()
+        let parts = Gate()
+        let model = AssistantModel()
+        model.server = { stand.server(send: { _ in
+            await parts.pass()
+            throw AssistantUpload.Unreadable(name: "Clip.mov")
+        }) }
+        await model.load()
+        model.send(QueuedMessage(text: "One with a clip", videos: [up("Clip.mov", "c1")]))
+        model.send(QueuedMessage(text: "Two"))
+        await until("both went") { stand.turns.count == 2 && parts.waiting != nil }
+        parts.open()
+        await until("its reply was stopped") { stand.stops == ["r1"] && model.outbox.items.first?.reply == nil }
+        // the phone's again, marked, with Try again; the one behind it went on
+        XCTAssertEqual(model.outbox.shown.map(\.text), ["One with a clip"])
+        XCTAssertEqual(model.outbox.items.first?.failed, "Clip.mov can no longer be read: take it back and add it again")
+        XCTAssertEqual(model.view?.messages.map(\.text), ["One with a clip", "*Stopped.*", "Two", ""])
+        XCTAssertNil(model.view?.thinking?.wait)
+    }
+
+    // MARK: A video goes up from the moment it is picked
+
+    func testAPickedVideoGoesUpBeforeItIsSentAndKeepsItsUploadWhenItIs() async {
+        let stand = Stand()
+        let parts = Gate()
+        var sends = 0
+        let model = AssistantModel()
+        model.server = { stand.server(send: { _ in
+            sends += 1
+            await parts.pass()
+        }) }
+        await model.load()
+        // picked: it has the server's id and its parts are going, and nothing is sent
+        model.draft.pretend(pictures: [], videos: [up("Clip.mov", "c1")])
+        await until("it goes up from the box") { parts.waiting != nil }
+        XCTAssertEqual(model.draft.videos.map(\.file), ["f-c1"])
+        XCTAssertTrue(stand.turns.isEmpty)
+        // Send: the message goes at once with that id, and the upload is the same one
+        model.draft.text = "One with a clip"
+        model.send(model.draft.take()!)
+        await until("it went") { stand.turns.count == 1 && model.view?.messages.count == 2 }
+        XCTAssertEqual(stand.turns[0]["files"] as? [String], ["f-c1"])
+        XCTAssertEqual(model.view?.messages[1].wait?.text, "Waiting for a video to upload")
+        parts.open()
+        await until("the video is up") { model.outbox.items.isEmpty }
+        XCTAssertEqual(sends, 1)
+
+        // one that is up before he sends: the box names it by the server's id, and the reply waits for nothing
+        model.draft.pretend(pictures: [], videos: [up("Other.mov", "c2")])
+        await until("its parts go") { parts.waiting != nil }
+        parts.open()
+        await until("it is up in the box") { model.draft.files == [.init(id: "f-c2", name: "Other.mov")] }
+        XCTAssertTrue(model.draft.videos.isEmpty)
+        model.draft.text = "Two with a clip"
+        model.send(model.draft.take()!)
+        await until("it went") { stand.turns.count == 2 && model.view?.messages.count == 4 && model.outbox.items.isEmpty }
+        XCTAssertEqual(stand.turns[1]["files"] as? [String], ["f-c2"])
+        XCTAssertNil(model.view?.messages[2].files?.first?.uploading)
+        XCTAssertTrue(model.outbox.items.isEmpty)
+    }
+
+    func testAVideoTakenOffTheBoxStopsGoingUp() async {
+        let stand = Stand()
+        let first = Gate()
+        let second = Gate()
+        var cancelled = false
+        let model = AssistantModel()
+        model.server = { stand.server(send: { video in
+            guard video.copy == "c1" else { return await second.pass() }
+            await first.pass()
+            cancelled = Task.isCancelled
+            try Task.checkCancellation()
+        }) }
+        await model.load()
+        model.draft.pretend(pictures: [], videos: [up("Clip.mov", "c1"), up("Other.mov", "c2")])
+        await until("the first goes up") { first.waiting != nil }
+        model.draft.remove(video: model.draft.videos[0].id)
+        // the one after it goes up at once
+        await until("the next goes up") { second.waiting != nil }
+        first.open()
+        await until("its upload was stopped") { cancelled }
+        XCTAssertEqual(model.draft.videos.map(\.name), ["Other.mov"])
+        second.open()
+        await until("it is up") { model.draft.files.map(\.id) == ["f-c2"] }
+        XCTAssertTrue(stand.turns.isEmpty)
+    }
+
+    func testSendDoesNotWaitForPhotosToHandAVideoOver() async throws {
+        let stand = Stand()
+        let model = AssistantModel()
+        model.server = { stand.server() }
+        await model.load()
+        // picked, and Photos is still handing it over (a big video, one in iCloud): Send empties the box all the same
+        let coming = model.draft.expect()
+        XCTAssertEqual(model.draft.videos.map(\.pending), [true])
+        model.draft.text = "One with a clip"
+        let message = try XCTUnwrap(model.draft.take())
+        XCTAssertTrue(model.draft.isEmpty)
+        model.send(message)
+        model.send(QueuedMessage(text: "Two"))
+        // it waits on the phone for its video, and the one behind it waits too
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(stand.turns.isEmpty)
+        XCTAssertEqual(model.outbox.shown.map(\.text), ["One with a clip", "Two"])
+        // Photos hands it over: it gets its name, goes up, and the message goes
+        let picked = AssistantPickedVideo(url: AssistantPickedVideo.folder.appendingPathComponent("test-\(UUID().uuidString)/IMG_2041.MOV"))
+        model.draft.handed(coming, picked)
+        await until("both went") { stand.turns.count == 2 }
+        XCTAssertEqual(stand.turns.map { $0["text"] as? String }, ["One with a clip", "Two"])
+        XCTAssertEqual((stand.turns[0]["files"] as? [String])?.count, 1)
+        await until("the video is up") { model.outbox.items.isEmpty }
+
+        // one Photos could not hand over: the message is marked, without it, and the next one goes
+        let lost = model.draft.expect()
+        model.draft.text = "Three with a clip"
+        model.send(try XCTUnwrap(model.draft.take()))
+        model.send(QueuedMessage(text: "Four"))
+        model.draft.handed(lost, nil)
+        await until("the next went") { stand.turns.count == 3 && model.outbox.items.count == 1 }
+        XCTAssertEqual(stand.turns[2]["text"] as? String, "Four")
+        XCTAssertEqual(model.outbox.items.map(\.failed), ["A video could not be read: add it again"])
+        XCTAssertNil(model.outbox.items[0].videos)
+        // still in the box when Photos gives up: it leaves the box, which says so
+        let boxed = model.draft.expect()
+        model.draft.handed(boxed, nil)
+        XCTAssertTrue(model.draft.videos.isEmpty)
+        XCTAssertEqual(model.draft.notice, "A video could not be read")
+    }
+
+    func testAVideoStillComingFromPhotosWhenTheAppClosedIsSaidSo() throws {
+        let file = scratch()
+        let before = AssistantOutbox()
+        before.open(file)
+        before.add(QueuedMessage(text: "one", videos: [.coming(), .init(name: "Clip.mov", copy: "c1", file: "f1")]))
+        before.add(QueuedMessage(text: "two"))
+        // no hand-over is running after a restart: the message says so instead of waiting for ever
+        let after = AssistantOutbox()
+        after.open(file)
+        XCTAssertEqual(after.items[0].failed, "A video was still coming from Photos when the app closed: add it again")
+        XCTAssertEqual(after.items[0].videos?.map(\.name), ["Clip.mov"])
+        XCTAssertNil(after.items[1].failed)
+        // a queue saved before videos could be coming reads as it did
+        XCTAssertEqual(AssistantOutbox.afterRestart(after.items[1]), after.items[1])
+    }
+
+    // MARK: Parts that iOS sends by itself
+
+    func testAPartIsKnownToIOSByItsUploadAndNumber() {
+        let part = AssistantTransfers.Part(upload: "1a810b3f-6b22-47b4-8f68-784209dd6dd3", number: 12)
+        XCTAssertEqual(part.name, "1a810b3f-6b22-47b4-8f68-784209dd6dd3-12")
+        XCTAssertEqual(AssistantTransfers.Part(name: part.name), part)
+        XCTAssertEqual(part.file.lastPathComponent, part.name)
+        XCTAssertTrue(part.file.path.contains("/Caches/assistant-parts/"))
+        // a task that is not one of these
+        XCTAssertNil(AssistantTransfers.Part(name: nil))
+        XCTAssertNil(AssistantTransfers.Part(name: "something else"))
+        XCTAssertNil(AssistantTransfers.Part(name: "-3"))
+    }
+
+    func testWhatAFinishedPartCameTo() {
+        func came(_ status: Int, _ error: Error? = nil, _ answer: String = "", unanswered: Bool = false) -> Error? {
+            AssistantTransfers.failure(status: status, error: error, answer: Data(answer.utf8), unanswered: unanswered)
+        }
+        // POST …/parts/1 on the test server: taken
+        XCTAssertNil(came(200, nil, #"{"ok":true,"partNumber":1,"size":40}"#))
+        // a part sent after the server joined the file, as the test server answered it: the sender then asks for the whole
+        let late = came(409, nil, #"{"error":"No upload in progress"}"#) as? ToolsetAPI.Failure
+        XCTAssertEqual(late?.status, 409)
+        XCTAssertEqual(late?.message, "No upload in progress")
+        // a busy server is tried again, and waits; no connection only waits
+        XCTAssertEqual((came(503) as? ToolsetAPI.Failure)?.message, "Upload failed (HTTP 503)")
+        XCTAssertTrue(AssistantUpload.waits(came(503)!))
+        XCTAssertTrue(AssistantUpload.waits(came(0, URLError(.networkConnectionLost))!))
+        // all of it sent and never answered, or out of time: Not sent, with the reason
+        XCTAssertFalse(AssistantUpload.waits(came(0, URLError(.cancelled), unanswered: true)!))
+        XCTAssertEqual(came(0, URLError(.timedOut))?.localizedDescription, "No answer from the server")
+        // ended because the video was taken off: nothing to say
+        XCTAssertTrue(came(0, URLError(.cancelled)) is CancellationError)
+    }
+
+    func testLeavingTheAppHandsIOSTheVideosThatHaveBegun() async {
+        final class Seen { var handed: [[String]] = [] }
+        let seen = Seen()
+        let parts = Gate()
+        let outbox = AssistantOutbox()
+        outbox.add(QueuedMessage(text: "one", videos: [up("A.mov", "a"), up("B.mov", "b")]))
+        outbox.add(QueuedMessage(text: "two", videos: [up("C.mov", "c")], failed: "No answer from the server"))
+        outbox.add(QueuedMessage(text: "three", videos: [up("D.mov", "d")]))
+        // nothing has gone up yet: nothing to hand over
+        outbox.leave()
+        outbox.upload(.init(begin: { video in
+            if video.name == "D.mov" { throw ToolsetAPI.Failure(status: 0, message: "No connection") }
+            return "id-" + video.copy
+        }, send: { video, _, _ in
+            await parts.pass()
+            return video.file ?? ""
+        }, handOver: { @MainActor videos in seen.handed.append(videos.compactMap(\.file)) }), moved: {})
+        while parts.waiting == nil || outbox.items[0].videos?.allSatisfy({ $0.file != nil }) != true { await Task.yield() }
+        outbox.leave()
+        while seen.handed.isEmpty { await Task.yield() }
+        // the ones with the server's id, oldest first: not a Not sent message's, not one that has no id yet
+        XCTAssertEqual(seen.handed, [["id-a", "id-b"]])
+        parts.open()
+        while parts.waiting == nil { await Task.yield() }
+        parts.open()
+        await outbox.settled()
     }
 
     // MARK: What goes with a message

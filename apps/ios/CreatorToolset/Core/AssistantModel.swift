@@ -14,8 +14,11 @@ struct AssistantView: Decodable, Equatable {
     var past: [AssistantPast]
     /// A page the assistant opened for the person; the first screen that reads it goes there and says so.
     var navigate: String?
+    /// The server takes a message whose videos are still going up, and messages while a reply is being
+    /// written: it holds each reply until its turn. An older server sends nothing.
+    var sendNow: Bool
 
-    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate }
+    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,11 +28,22 @@ struct AssistantView: Decodable, Equatable {
         messages = (try? c.decode([AssistantMessage].self, forKey: .messages)) ?? []
         past = (try? c.decode([AssistantPast].self, forKey: .past)) ?? []
         navigate = try? c.decodeIfPresent(String.self, forKey: .navigate)
+        sendNow = (try? c.decode(Bool.self, forKey: .sendNow)) ?? false
     }
 
     var connected: Bool { provider != "none" }
-    /// The reply being written, if one is.
-    var thinking: AssistantMessage? { messages.last { $0.role == "assistant" && $0.status == "thinking" } }
+    /// The reply being written; when none is, the first one that waits (for its videos, or its turn).
+    /// It is the one a Stop without a name stops.
+    var thinking: AssistantMessage? {
+        let open = messages.filter { $0.role == "assistant" && $0.status == "thinking" }
+        return open.first { $0.wait == nil } ?? open.first
+    }
+
+    /// When the message a reply answers was written: the one before it.
+    func asked(_ reply: AssistantMessage) -> Double? {
+        guard let index = messages.firstIndex(where: { $0.id == reply.id }) else { return nil }
+        return messages[..<index].last { $0.role == "user" }?.at
+    }
 }
 
 struct AssistantMessage: Decodable, Equatable, Identifiable {
@@ -53,6 +67,8 @@ struct AssistantMessage: Decodable, Equatable, Identifiable {
     var pasted: [String]?
     var files: [Named]?
     var quote: String?
+    /// A reply that has not started: what it waits for ("Waiting for 2 videos to upload"). A newer server sends it.
+    var wait: Wait?
     /// Folders dropped in the Mac app with the message: their paths on the computer.
     var folders: [String]?
     /// A scheduled task's run: its prompt, posted as the person's message.
@@ -61,6 +77,12 @@ struct AssistantMessage: Decodable, Equatable, Identifiable {
     struct Named: Decodable, Equatable, Identifiable {
         var id: String
         var name: String
+        /// A video of his message not all in yet (a newer server).
+        var uploading: Bool?
+    }
+
+    struct Wait: Decodable, Equatable {
+        var text: String?
     }
 }
 
@@ -129,10 +151,30 @@ struct AssistantPast: Decodable, Equatable, Identifiable {
     var working: Bool?
 }
 
+/// How the conversation reaches its server: the signed-in one. A test stands its own in.
+struct AssistantServer {
+    /// Where this account's waiting messages are kept; nil keeps nothing.
+    var queue: URL?
+    /// One call (path, method, JSON body): the answer's body, or a `ToolsetAPI.Failure`.
+    var call: (String, String, Any?) async throws -> Data
+    var uploader = AssistantOutbox.Uploader(begin: AssistantUpload.begin, send: AssistantUpload.send, handOver: AssistantUpload.handOver)
+
+    static var signedIn: AssistantServer? {
+        guard let api = ToolsetAPI.current else { return nil }
+        return AssistantServer(queue: AssistantOutbox.file(for: api.cacheKey)) { path, method, json in
+            var request = api.request(path, method: method, json: json)
+            let turn = path == "/api/assistant/turn"
+            if turn { request.timeoutInterval = 120 }   // six pictures on a slow connection
+            return try await api.data(request, session: turn ? ToolsetAPI.slow : ToolsetAPI.session)
+        }
+    }
+}
+
 /// The one assistant conversation of the signed-in account, shared by the chat screen and the
 /// Chats list. It shows its last copy at once, reads it again when the server says it changed
 /// (`/api/sync/events`, topic "assistant"), and while a reply is being written. It also sends
-/// what the person wrote: a message that can't go yet waits in `outbox` and goes by itself.
+/// what the person wrote: a message that can't go yet (its videos still going up, a reply being
+/// written, no connection) waits in `outbox` and goes by itself.
 @MainActor
 final class AssistantModel: ObservableObject {
     static let shared = AssistantModel()
@@ -145,10 +187,21 @@ final class AssistantModel: ObservableObject {
     let outbox = AssistantOutbox()
     /// What is in the message box: it stays while the screen is closed, and a video keeps uploading.
     let draft = AssistantDraft()
+    /// The server it talks to; nil while nobody is signed in.
+    var server: () -> AssistantServer? = { .signedIn }
     private var watching: Task<Void, Never>?
     private var reading: Task<Void, Never>?
+    /// Replies being stopped because a video of their message failed.
+    private var stopping: Set<String> = []
 
     init() {
+        // the box's videos go up from the moment they are picked
+        outbox.box = draft
+        draft.changed = { [weak self] in self?.carryOn() }
+        draft.handedOver = { [weak self] video, picked in
+            self?.outbox.handed(video, picked)
+            self?.carryOn()
+        }
         #if DEBUG
         AssistantFixtures.queued.forEach(outbox.add)
         #endif
@@ -158,6 +211,7 @@ final class AssistantModel: ObservableObject {
     func take(_ data: Data) {
         guard let fresh = try? JSONDecoder().decode(AssistantView.self, from: data) else { return }
         if fresh != view { view = fresh }
+        outbox.serverWaits = fresh.sendNow
         error = nil
         offline = false
         carryOn()
@@ -170,10 +224,10 @@ final class AssistantModel: ObservableObject {
             return
         }
         #endif
-        guard let api = ToolsetAPI.current else { return }
-        outbox.open(AssistantOutbox.file(for: api.cacheKey))
+        guard let server = server() else { return }
+        outbox.open(server.queue)
         do {
-            take(try await api.data(api.request("/api/assistant")))
+            take(try await server.call("/api/assistant", "GET", nil))
         } catch {
             offline = (error as? ToolsetAPI.Failure)?.status == 0
             if view == nil { self.error = error.localizedDescription }
@@ -225,10 +279,29 @@ final class AssistantModel: ObservableObject {
         carryOn()
     }
 
+    /// A waiting message back into the box, to change it: a video half way up carries on from there
+    /// when it goes again. The messages behind it go on.
+    func takeBack(_ id: String) {
+        guard let message = outbox.items.first(where: { $0.id == id }) else { return }
+        outbox.remove(id)
+        draft.putBack(message)
+        if let reply = message.reply { Task { await stop(reply: reply, of: nil) } }
+        carryOn()
+    }
+
     func stop() async { await write("/api/assistant/stop") }
+
+    /// The cross on a reply that waits (for its videos, or its turn): that one ends, his message stays in
+    /// the chat, its videos go up no more, and the messages behind it go on.
+    func stop(reply id: String) async { await stop(reply: id, of: nil) }
 
     /// A new chat; the open one moves to the earlier chats. On the computer too.
     func newChat() async { await write("/api/assistant", method: "DELETE") }
+
+    /// A message written in the open chat that the server doesn't have yet (waiting for its turn, or not sent): it
+    /// would go to whichever chat is open when it goes, so the open chat stays until it has gone. One the server
+    /// already has (its videos still going up) stays in its own chat on the server, whatever is opened meanwhile.
+    var unsent: Bool { outbox.items.contains { $0.reply == nil } }
 
     func open(past id: String) async { await write("/api/assistant/past/\(id)/open") }
 
@@ -250,9 +323,9 @@ final class AssistantModel: ObservableObject {
     /// One write; its answer is the whole view. A refusal leaves the view as the server has it
     /// and says why (a 404 is something already gone or finished: nothing to say).
     private func write(_ path: String, method: String = "POST", json: Any? = nil) async {
-        guard !Self.pretend, let api = ToolsetAPI.current else { return }
+        guard !Self.pretend, let server = server() else { return }
         do {
-            take(try await api.send(path, method: method, json: json))
+            take(try await server.call(path, method, json))
         } catch {
             await load()
             let status = (error as? ToolsetAPI.Failure)?.status ?? 0
@@ -272,21 +345,56 @@ final class AssistantModel: ObservableObject {
     }
 
     /// A reply is being written, or a message waits to go: read again every few seconds,
-    /// in case the server's change line is down.
+    /// in case the server's change line is down. A video that stopped for want of a connection
+    /// starts again on these.
     private var expecting: Bool { view?.thinking != nil || outbox.waiting }
 
-    /// After every answer and every new message: send the oldest waiting message when the
-    /// assistant is free, and keep reading while something is expected.
+    /// After every answer and every new message: videos go up whatever the assistant is doing, the
+    /// oldest waiting message goes when it is ready and the assistant is free, and the chat is read
+    /// again while something is expected. A video up may let a message go: that comes back here.
     private func carryOn() {
-        if !Self.pretend, let view, view.connected, view.thinking == nil, outbox.waiting {
+        if !Self.pretend, let server = server() {
+            // first what is over, so the video after a dropped one starts now and not at the next read
+            if let view { release(view) }
+            outbox.upload(server.uploader) { [weak self] in self?.carryOn() }
+        }
+        // a server that waits for videos takes a message while a reply is being written too
+        if !Self.pretend, let view, view.connected, outbox.serverWaits || view.thinking == nil, outbox.waiting {
             Task {
                 let outcome = await outbox.drain { [weak self] in await self?.post($0) ?? .later }
-                // a refused one is out of the way: the next goes at once (never after "later": that would spin)
-                if case .refused = outcome { carryOn() }
+                // it went, or is out of the way: the next goes at once (never after "later": that would spin)
+                if let outcome, outcome != .later { carryOn() }
                 keepReading()
             }
         }
         keepReading()
+    }
+
+    /// Messages the server took before their videos were up. One whose reply ended (he stopped it) needs
+    /// them no more. One whose video failed has its reply stopped, so the messages behind it go on, and is
+    /// the phone's again: Not sent, with Try again.
+    private func release(_ view: AssistantView) {
+        for message in outbox.items {
+            guard let reply = message.reply else { continue }
+            if message.failed != nil {
+                Task { await stop(reply: reply, of: message.id) }
+            } else if let held = view.messages.first(where: { $0.id == reply }), held.status != "thinking" {
+                outbox.drop(message.id)
+            }
+        }
+    }
+
+    /// Stops one held reply on the server; once it has ended, its message (when still here) is the phone's again.
+    private func stop(reply: String, of message: String?) async {
+        guard let server = server(), stopping.insert(reply).inserted else { return }
+        defer { stopping.remove(reply) }
+        do {
+            let answer = try await server.call("/api/assistant/stop", "POST", ["reply": reply])
+            if let message { outbox.detach(message) }
+            take(answer)
+        } catch let failure as ToolsetAPI.Failure where failure.status == 404 {
+            if let message { outbox.detach(message) }   // it had ended already
+        } catch {}
     }
 
     private func keepReading() {
@@ -304,19 +412,29 @@ final class AssistantModel: ObservableObject {
     /// One message to the server. No answer, busy or a server restarting: it waits and goes later.
     /// Any other refusal (a picture it won't take, a video gone after 7 days) would never pass: not sent.
     private func post(_ message: QueuedMessage) async -> AssistantOutbox.Outcome {
-        guard let api = ToolsetAPI.current else { return .later }
+        guard let server = server() else { return .later }
+        // its videos are not all up: only a server that waits for them takes it, and holds its reply
+        let early = !AssistantOutbox.ready(message, serverWaits: false)
         // tried before and the answer was lost on the way: if it is in the conversation, it went
         if let mark = message.triedAfter {
-            if Self.landed(message, after: mark, in: view?.messages ?? []) { return .sent }
+            let messages = view?.messages ?? []
+            if let at = Self.landing(message, after: mark, in: messages) {
+                if early, at + 1 < messages.count, messages[at + 1].role == "assistant" { outbox.carry(message.id, reply: messages[at + 1].id) }
+                return .sent
+            }
         } else {
             outbox.tried(message.id, after: view?.messages.last?.id ?? "")
         }
-        var request = api.request("/api/assistant/turn", method: "POST", json: Self.body(message))
-        request.timeoutInterval = 120   // six pictures on a slow connection
         do {
-            let answer = try await api.data(request, session: ToolsetAPI.slow)
-            // out of the queue in the same moment it shows in the conversation: never drawn twice
-            outbox.remove(message.id)
+            let answer = try await server.call("/api/assistant/turn", "POST", Self.body(message))
+            // out of the queue in the same moment it shows in the conversation: never drawn twice. One that
+            // went before its videos were up stays, out of sight, for them.
+            let reply = (try? JSONDecoder().decode(AssistantView.self, from: answer))?.messages.last
+            if early, let reply, reply.role == "assistant" {
+                outbox.carry(message.id, reply: reply.id)
+            } else {
+                outbox.remove(message.id)
+            }
             take(answer)
             return .sent
         } catch {
@@ -335,21 +453,28 @@ final class AssistantModel: ObservableObject {
         if !message.images.isEmpty {
             body["images"] = message.images.map { ["name": $0.name, "type": "image/jpeg", "data": $0.jpeg.base64EncodedString()] }
         }
-        if !message.files.isEmpty { body["files"] = message.files.map(\.id) }
+        // a video still going up is named by the id the server gave it
+        let files = message.files.map(\.id) + (message.videos ?? []).compactMap(\.file)
+        if !files.isEmpty { body["files"] = files }
         return body
     }
 
     /// Whether the message already stands in the conversation after the message that was its last when it was first tried.
     nonisolated static func landed(_ message: QueuedMessage, after mark: String, in messages: [AssistantMessage]) -> Bool {
+        landing(message, after: mark, in: messages) != nil
+    }
+
+    /// Where it stands in the conversation, when it does.
+    nonisolated static func landing(_ message: QueuedMessage, after mark: String, in messages: [AssistantMessage]) -> Int? {
         let from: Int
         if mark.isEmpty {
             from = 0
         } else if let index = messages.firstIndex(where: { $0.id == mark }) {
             from = index + 1
         } else {
-            return false   // another chat by now: send it
+            return nil   // another chat by now: send it
         }
-        return messages[from...].contains {
+        return messages[from...].firstIndex {
             $0.role == "user" && $0.text == message.text && ($0.images?.count ?? 0) == message.images.count
         }
     }

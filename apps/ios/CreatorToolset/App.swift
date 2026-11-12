@@ -223,6 +223,7 @@ struct ComposeButton: View {
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 56)
                 .background(Color("AccentColor"), in: Circle())
+                .contentShape(Circle())   // the whole circle takes the tap, not only the pencil
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
@@ -245,6 +246,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
+        // the assistant's videos have their own session
+        if identifier == AssistantTransfers.identifier {
+            AssistantTransfers.shared.finished = completionHandler
+            return
+        }
         guard identifier == Transfers.identifier else { return completionHandler() }
         Transfers.shared.backgroundCompletion = completionHandler
     }

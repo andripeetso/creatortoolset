@@ -4,6 +4,9 @@ import UIKit
 /// The server's own "something changed" line (server-sent events), read for as long as someone
 /// listens. The server sends no data on it, only that a thing changed; the screen then reads
 /// that thing again. A dropped line is opened again by itself, a little later each time.
+/// No line stays open while the app is in the background: the server takes an open one to mean
+/// someone is watching, and holds a notification back. It opens again when the app is back, and
+/// its first "hello" tells every reader to read again.
 ///
 ///     for await event in ServerEvents.stream("/api/sync/events") where event.name == "change" { … }
 enum ServerEvents {
@@ -21,14 +24,13 @@ enum ServerEvents {
     }
 
     /// Ends when the task that reads it is cancelled (a SwiftUI `.task` does that when its screen goes).
-    /// While the app is in the background the line is closed, and opened again on return (a "hello" then says
-    /// read again): the server counts an open line as someone watching, and pushes only to no one watching.
     static func stream(_ path: String) -> AsyncStream<Event> {
         AsyncStream { continuation in
             let task = Task {
                 var wait = 1.0
                 while !Task.isCancelled {
-                    await untilInFront()
+                    await Presence.shared.arrive()
+                    if Task.isCancelled { break }
                     guard let api = ToolsetAPI.current else {
                         try? await Task.sleep(for: .seconds(5))
                         continue
@@ -36,29 +38,22 @@ enum ServerEvents {
                     var request = api.request(path)
                     request.timeoutInterval = 3600
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    let opened = Date()
                     do {
-                        try await withThrowingTaskGroup(of: Void.self) { group in
-                            group.addTask {
-                                let (bytes, response) = try await ToolsetAPI.slow.bytes(for: request)
-                                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-                                var parser = Parser()
-                                for try await line in bytes.lines {
-                                    if let event = parser.take(line) { continuation.yield(event) }
-                                }
-                            }
-                            group.addTask {
-                                // the app went to the background: close the line
-                                for await _ in NotificationCenter.default.notifications(named: UIApplication.didEnterBackgroundNotification) { return }
-                            }
-                            try await group.next()
-                            group.cancelAll()
-                        }
+                        let (bytes, response) = try await ToolsetAPI.slow.bytes(for: request)
+                        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
                         wait = 1
+                        // ended the moment the app leaves the front (at once when it already has)
+                        await Presence.shared.opened(bytes.task)
+                        defer { Task { @MainActor in Presence.shared.closed(bytes.task) } }
+                        var parser = Parser()
+                        for try await line in bytes.lines {
+                            if let event = parser.take(line) { continuation.yield(event) }
+                        }
                     } catch {
                         // a dropped line, no network, a server restart: open it again
                     }
-                    if Date().timeIntervalSince(opened) > 30 { wait = 1 }   // it was open a while: not a line that keeps failing
+                    // closed because the app left: it opens the moment the app is back, with no pause
+                    if await Presence.shared.away { continue }
                     try? await Task.sleep(for: .seconds(wait))
                     wait = min(wait * 2, 30)
                 }
@@ -68,11 +63,57 @@ enum ServerEvents {
         }
     }
 
-    /// Returns at once in front; in the background, when the app comes back.
-    // ponytail: a return in the moment between the look and the wait is missed until the next one
-    private static func untilInFront() async {
-        guard await UIApplication.shared.applicationState == .background else { return }
-        for await _ in NotificationCenter.default.notifications(named: UIApplication.willEnterForegroundNotification) { return }
+    /// Whether the app is in front, for every open line at once.
+    @MainActor
+    final class Presence {
+        static let shared: Presence = {
+            let presence = Presence(away: UIApplication.shared.applicationState == .background)
+            let center = NotificationCenter.default
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { presence.left() }
+            }
+            for name in [UIApplication.willEnterForegroundNotification, UIApplication.didBecomeActiveNotification] {
+                center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { presence.came() }
+                }
+            }
+            return presence
+        }()
+
+        /// In the background (an app iOS started there has never been in front): no line may be open.
+        private(set) var away: Bool
+        private var open: [URLSessionTask] = []
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+
+        init(away: Bool) { self.away = away }
+
+        /// The app left the front: every open line ends.
+        func left() {
+            away = true
+            open.forEach { $0.cancel() }
+            open = []
+        }
+
+        /// The app is in front (again): the lines that waited open.
+        func came() {
+            away = false
+            waiting.forEach { $0.resume() }
+            waiting = []
+        }
+
+        /// Returns once a line may be opened: at once in front, else when the app comes back.
+        func arrive() async {
+            while away { await withCheckedContinuation { waiting.append($0) } }
+        }
+
+        /// A line that opened; one that opened just as the app left ends at once.
+        func opened(_ line: URLSessionTask) {
+            if away { line.cancel() } else { open.append(line) }
+        }
+
+        func closed(_ line: URLSessionTask) {
+            open.removeAll { $0 === line }
+        }
     }
 
     /// Lines into events. `URLSession.bytes.lines` drops the empty line that ends an event, so an

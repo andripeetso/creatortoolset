@@ -137,9 +137,45 @@ final class ChatsTests: XCTestCase {
         XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])
     }
 
+    @MainActor func testNoChangeLineIsOpenWhileTheAppIsInTheBackground() async {
+        func line() -> URLSessionTask { URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:9/")!) }
+        // in front: a line opens at once and stays
+        let presence = ServerEvents.Presence(away: false)
+        await presence.arrive()
+        let first = line()
+        presence.opened(first)
+        XCTAssertNotEqual(first.state, .canceling)
+        // the app leaves: the open line ends, and one that opens just then ends too
+        presence.left()
+        XCTAssertEqual(first.state, .canceling)
+        let late = line()
+        presence.opened(late)
+        XCTAssertEqual(late.state, .canceling)
+        // nothing opens until the app is back, however long that takes
+        var opened = false
+        let reader = Task { @MainActor in
+            await presence.arrive()
+            opened = true
+        }
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertFalse(opened)
+        presence.came()
+        await reader.value
+        XCTAssertTrue(opened)
+        // an app iOS started in the background has never been in front
+        let launched = ServerEvents.Presence(away: true)
+        XCTAssertTrue(launched.away)
+        launched.came()
+        XCTAssertFalse(launched.away)
+    }
+
     func testANotificationOpensOnlyAPageOfTheApp() {
         XCTAssertEqual(AppNotifications.path(in: ["path": "/editor/e1"]).flatMap(AppRoute.from(path:)), .edit("e1"))
         XCTAssertEqual(AppNotifications.path(in: ["path": "/review/r9?v=2"]).flatMap(AppRoute.from(path:)), .review("r9", version: 2))
+        // a reply of the assistant (its push: `path: "/?chat=<chat id>"`), and its own page
+        let reply: [AnyHashable: Any] = ["aps": ["alert": ["title": "Caption this", "body": "Here are three"], "sound": "default"], "path": "/?chat=c1"]
+        XCTAssertEqual(AppNotifications.path(in: reply).flatMap(AppRoute.from(path:)), .chat("c1"))
+        XCTAssertEqual(AppNotifications.path(in: ["path": "/assistant"]).flatMap(AppRoute.from(path:)), .assistant)
         XCTAssertNil(AppNotifications.path(in: ["path": "https://example.com/x"]))
         XCTAssertNil(AppNotifications.path(in: ["path": "phone-edit:1"]))
         XCTAssertNil(AppNotifications.path(in: ["aps": ["badge": 1]]))

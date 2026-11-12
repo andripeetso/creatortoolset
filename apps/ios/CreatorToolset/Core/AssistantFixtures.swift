@@ -36,9 +36,12 @@ enum AssistantFixtures {
 
     private static var acted = false
 
-    /// `-AssistantDo allow,stop,new,picture,video,say:<words>` (in that order, any of them): runs what
-    /// the buttons run, once the conversation is read, to check the real calls without taps. Unlike
-    /// the fixtures these DO write to the server. `video:<bytes>` uploads that many made-up bytes as a clip.
+    /// `-AssistantDo allow,stop,cross,wait:<seconds>,new,picture,video,say:<words>` (in that order, any of them): runs what
+    /// the buttons run, once the conversation is read, to check the real calls without taps (`unpick` is the
+    /// cross on the box's first video; `video:slow<seconds>:<path>` is one Photos takes that long to hand over). Unlike
+    /// the fixtures these DO write to the server. `video:<bytes>` puts that many made-up bytes in the box as
+    /// a clip, `video:<path>` a file on this Mac; the next `say:` sends them, and they go up after. `cross` is
+    /// the cross on the first reply that waits for its videos.
     @MainActor static func act(_ model: AssistantModel) async {
         guard current == nil, !acted, let script = debugArg("AssistantDo") else { return }
         acted = true
@@ -51,21 +54,34 @@ enum AssistantFixtures {
                 // after a `say`: the message is on its way, so wait until its reply is being written
                 for _ in 0..<60 where model.view?.thinking == nil { try? await Task.sleep(for: .milliseconds(100)) }
                 await model.stop()
+            case "cross":
+                for _ in 0..<100 where held(model) == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let reply = held(model) { await model.stop(reply: reply) }
+            case "unpick":
+                if let first = model.draft.videos.first { model.draft.remove(video: first.id) }
             case "new":
-                await model.newChat()
+                await AppNavigator.shared.startNewChat()   // the round button on Chats
             case "picture":
                 model.draft.pretend(pictures: [picture(.systemTeal, 1)], videos: model.draft.videos)
             default:
-                if step.hasPrefix("video:"), let bytes = Int(step.dropFirst(6)) {
-                    let folder = AssistantPickedVideo.folder.appendingPathComponent("check", isDirectory: true)
-                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                    let clip = folder.appendingPathComponent("Phone clip.mp4")
-                    try? Data(repeating: 7, count: bytes).write(to: clip)
-                    model.draft.pretendPicked(clip)
-                    for _ in 0..<300 where model.draft.videos.contains(where: { $0.fileID == nil && $0.error == nil }) {
-                        try? await Task.sleep(for: .milliseconds(200))
+                if step.hasPrefix("video:") {
+                    var what = String(step.dropFirst(6))
+                    var slow = 0.0
+                    if what.hasPrefix("slow"), let colon = what.firstIndex(of: ":") {
+                        slow = Double(what[what.index(what.startIndex, offsetBy: 4)..<colon]) ?? 0
+                        what = String(what[what.index(after: colon)...])
                     }
+                    let folder = AssistantPickedVideo.folder.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let clip = folder.appendingPathComponent(Int(what) == nil ? (what as NSString).lastPathComponent : "Phone clip.mp4")
+                    if let bytes = Int(what) {
+                        try? Data(repeating: 7, count: bytes).write(to: clip)
+                    } else {
+                        try? FileManager.default.copyItem(at: URL(fileURLWithPath: what), to: clip)
+                    }
+                    model.draft.pretendPicked(clip, after: slow)
                 }
+                if step.hasPrefix("wait:"), let seconds = Double(step.dropFirst(5)) { try? await Task.sleep(for: .seconds(seconds)) }
                 guard step.hasPrefix("say:") else { continue }
                 model.draft.text = String(step.dropFirst(4))
                 if let message = model.draft.take() { model.send(message) }
@@ -73,18 +89,22 @@ enum AssistantFixtures {
         }
     }
 
-    /// `-AssistantDraft YES`: two pictures and a video half way up in the message box;
-    /// `-AssistantDraft failed`: a video that did not upload.
+    /// The first reply that waits for its videos (not for its turn): its user message names one still going up.
+    @MainActor private static func held(_ model: AssistantModel) -> String? {
+        let messages = model.view?.messages ?? []
+        return messages.indices.first { index in
+            messages[index].status == "thinking" && messages[index].wait != nil && index > 0
+                && messages[index - 1].files?.contains { $0.uploading == true } == true
+        }.map { messages[$0].id }
+    }
+
+    /// `-AssistantDraft YES`: two pictures and two videos in the message box.
     @MainActor static func fill(_ draft: AssistantDraft) {
-        guard let kind = debugArg("AssistantDraft"), !draft.hasAttachment else { return }
-        if kind == "failed" {
-            draft.pretend(pictures: [], videos: [.init(name: "IMG_2042.MOV", progress: 0.7, error: "No answer from the server")])
-            return
-        }
+        guard debugArg("AssistantDraft") != nil, !draft.hasAttachment else { return }
         let pictures = [picture(.systemTeal, 1), picture(.systemOrange, 2)]
         draft.pretend(pictures: pictures, videos: [
-            .init(name: "IMG_2041.MOV", progress: 0.4),
-            .init(name: "IMG_2042.MOV", progress: 1, fileID: "done"),
+            .init(name: "IMG_2041.MOV", copy: "none"),
+            .init(name: "IMG_2042.MOV", copy: "none"),
         ])
         draft.text = "Caption these and put the clip in Review"
     }

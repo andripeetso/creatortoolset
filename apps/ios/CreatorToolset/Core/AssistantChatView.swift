@@ -35,10 +35,10 @@ struct AssistantChatView: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { showsPast = true } label: { Image(systemName: "clock") }
                         .accessibilityLabel("Earlier chats")
-                        .disabled(thinking != nil || model.view?.connected != true)
+                        .disabled(model.unsent || model.view?.connected != true)
                     Button { Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("New chat")
-                        .disabled(thinking != nil || model.view?.connected != true || messages.isEmpty)
+                        .disabled(model.unsent || model.view?.connected != true || messages.isEmpty)
                 }
             }
             .sheet(isPresented: $showsPast) { EarlierChats() }
@@ -98,10 +98,9 @@ struct AssistantChatView: View {
                         ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                             row(message, at: index)
                         }
-                        ForEach(outbox.items) { queued in
-                            AssistantQueuedBubble(message: queued, inFlight: outbox.sending == queued.id) {
-                                outbox.remove(queued.id)
-                                draft.putBack(queued)
+                        ForEach(outbox.shown) { queued in
+                            AssistantQueuedBubble(message: queued, inFlight: outbox.sending == queued.id, progress: outbox.progress) {
+                                model.takeBack(queued.id)
                             } onRetry: {
                                 model.retry(queued.id)
                             }
@@ -145,7 +144,8 @@ struct AssistantChatView: View {
     @ViewBuilder private func row(_ message: AssistantMessage, at index: Int) -> some View {
         switch message.role {
         case "user":
-            AssistantUserMessage(message: message)
+            AssistantUserMessage(message: message, uploading: outbox.carried,
+                                 held: index + 1 < messages.count && messages[index + 1].status == "thinking")
         case "note":
             Text(message.text)
                 .font(.footnote)
@@ -153,13 +153,14 @@ struct AssistantChatView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
         default:
-            AssistantReply(message: message, retry: retry(at: index), choose: choose(at: index))
+            AssistantReply(message: message, retry: retry(at: index), choose: choose(at: index),
+                           stop: message.status == "thinking" && message.wait != nil ? { Task { await model.stop(reply: message.id) } } : nil)
         }
     }
 
     /// The newest reply can be answered in one press, until something else is said.
     private func newest(_ index: Int) -> Bool {
-        index == messages.count - 1 && outbox.items.isEmpty
+        index == messages.count - 1 && outbox.shown.isEmpty
     }
 
     /// A failed reply at the end: its question can be sent again.
@@ -178,7 +179,7 @@ struct AssistantChatView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
-            if model.view?.connected == true, messages.isEmpty, outbox.items.isEmpty {
+            if model.view?.connected == true, messages.isEmpty, outbox.shown.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Self.starters, id: \.self) { starter in
                         Button { say(starter) } label: {
@@ -196,16 +197,17 @@ struct AssistantChatView: View {
             }
             if model.offline { QuietNotice(text: "No connection").padding(.horizontal, 22) }
             if let notice = draft.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
-            // its chip may be scrolled out of sight, and the message can't go until it is up or taken off
-            if draft.videos.contains(where: { $0.error != nil }) {
-                QuietNotice(text: "A video did not upload").padding(.horizontal, 22)
+            if let thinking {
+                // a reply held until its videos are in, or behind another: no clock until it is being written
+                WorkingCapsule(label: thinking.wait == nil ? "Working" : "Waiting",
+                               since: thinking.wait == nil ? model.view?.asked(thinking).map { date(ms: $0) } : nil) { Task { await model.stop() } }
             }
-            if thinking != nil {
-                WorkingCapsule(since: asked.map { date(ms: $0) }) { Task { await model.stop() } }
-            }
-            ChatComposer(text: $draft.text, sending: draft.blocked, hasAttachment: draft.hasAttachment, autofocus: autofocus,
-                         attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft)) : nil,
-                         onSend: sendDraft) {
+            // while a reply is being written the round button is a red Stop as long as the box is empty
+            // (owner, 2026-11-11: he could find no way to stop, typed "Stop", and it went as a message)
+            ChatComposer(text: $draft.text, working: thinking != nil, sending: draft.reading, hasAttachment: draft.hasAttachment,
+                         autofocus: autofocus,
+                         attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft, progress: outbox.progress)) : nil,
+                         onSend: sendDraft, onStop: { Task { await model.stop() } }) {
                 Menu {
                     Button { picking = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
                 } label: {
@@ -220,11 +222,6 @@ struct AssistantChatView: View {
             }
             .disabled(!connected)
         }
-    }
-
-    /// When the message being answered was written: the working line counts from there.
-    private var asked: Double? {
-        messages.last { $0.role == "user" }?.at
     }
 
     private func sendDraft() {
@@ -303,7 +300,7 @@ private struct EarlierChats: View {
                 }
             }
             .listStyle(.plain)
-            .disabled(model.view?.thinking != nil)
+            .disabled(model.unsent)
             .overlay {
                 if past.isEmpty { Text("No earlier chats").foregroundStyle(.secondary) }
             }
@@ -326,6 +323,8 @@ private struct EarlierChats: View {
 /// What goes with the message, inside the box above the text: each can be taken off.
 struct AssistantAttachmentChips: View {
     @ObservedObject var draft: AssistantDraft
+    /// How far each video going up has got, by its id.
+    var progress: [String: Double] = [:]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -344,43 +343,22 @@ struct AssistantAttachmentChips: View {
                         takeOff("Remove \(picture.name)") { draft.remove(picture: picture.id) }
                     }
                 }
-                ForEach(draft.videos) { video in
-                    HStack(spacing: 8) {
-                        if video.error != nil {
-                            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-                        } else if video.fileID == nil {
-                            Circle()
-                                .trim(from: 0, to: max(0.03, video.progress))
-                                .stroke(Color("AccentColor"), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                                .background(Circle().stroke(Color(.systemGray4), lineWidth: 3))
-                                .frame(width: 18, height: 18)
-                        } else {
-                            Image(systemName: "film").foregroundStyle(.secondary)
-                        }
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(video.name).font(.footnote.weight(.medium)).lineLimit(1)
-                            if let error = video.error {
-                                Text(error).font(.caption2).foregroundStyle(.red).lineLimit(1)
-                            } else if video.fileID == nil {
-                                Text("\(Int(video.progress * 100)) %").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: 170, alignment: .leading)
-                        if video.error != nil {
-                            Button("Try again") { draft.retry(video: video.id) }
-                                .font(.footnote.weight(.semibold))
-                                .buttonStyle(.plain)
-                                .frame(minHeight: 44)
-                        }
-                        takeOff("Remove \(video.name)") { draft.remove(video: video.id) }
-                    }
-                    .padding(.leading, 12)
-                    .frame(height: 56)
-                    .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
-                }
+                ForEach(draft.files) { file in video(file.name, up: nil) { draft.remove(file: file.id) } }
+                ForEach(draft.videos) { picked in video(picked.name, up: progress[picked.id] ?? 0) { draft.remove(video: picked.id) } }
             }
         }
+    }
+
+    /// A video goes up from the moment it is picked: its name, and how far it is until it is up.
+    private func video(_ name: String, up: Double?, remove: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            if let up { UploadRing(up: up) } else { Image(systemName: "film").foregroundStyle(.secondary) }
+            Text(name).font(.footnote.weight(.medium)).lineLimit(1).frame(maxWidth: 170, alignment: .leading)
+            takeOff("Remove \(name)", remove)
+        }
+        .padding(.leading, 12)
+        .frame(height: 56)
+        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func takeOff(_ label: String, _ action: @escaping () -> Void) -> some View {

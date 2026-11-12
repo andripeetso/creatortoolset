@@ -11,6 +11,9 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(AppRoute.from(path: "/workshop/sessions/s1"), .session("s1"))
         XCTAssertEqual(AppRoute.from(path: "/library"), .finals)
         XCTAssertEqual(AppRoute.from(path: "/assistant"), .assistant)
+        // one of the assistant's chats
+        XCTAssertEqual(AppRoute.from(path: "/?chat=c1"), .chat("c1"))
+        XCTAssertEqual(AppRoute.from(path: "/"), .page("/"))
         // a page with no screen of its own stays a page, with its query
         XCTAssertEqual(AppRoute.from(path: "/settings/automations?task=t1"), .page("/settings/automations?task=t1"))
         // another site's address is not a route: the phone opens it itself

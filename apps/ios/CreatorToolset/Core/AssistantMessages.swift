@@ -7,6 +7,10 @@ import SwiftUI
 /// What he wrote, with its pictures, files and the text he asked about.
 struct AssistantUserMessage: View {
     let message: AssistantMessage
+    /// How far this phone has got each video still going up, by its id.
+    var uploading: [String: Double] = [:]
+    /// Its reply still waits for its videos: one that was stopped shows them as plain names.
+    var held = true
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
@@ -38,7 +42,13 @@ struct AssistantUserMessage: View {
                     }
                 }
             }
-            ForEach(message.files ?? []) { chip($0.name, "film") }
+            ForEach(message.files ?? []) { file in
+                if file.uploading == true, held {
+                    AssistantVideoChip(name: file.name, up: uploading[file.id] ?? 0, known: uploading[file.id] != nil)
+                } else {
+                    chip(file.name, "film")
+                }
+            }
             ForEach(message.pasted ?? [], id: \.self) { chip($0, "doc.text") }
             ForEach(message.folders ?? [], id: \.self) { chip(($0 as NSString).lastPathComponent, "folder") }
             if !message.text.isEmpty { UserBubble(text: message.text) }
@@ -65,14 +75,30 @@ struct AssistantReply: View {
     var retry: (() -> Void)?
     /// Sends one of the offered answers: only on the newest reply.
     var choose: ((String) -> Void)?
+    /// Ends this reply before it starts: only on one that waits for its videos or its turn.
+    var stop: (() -> Void)?
 
     var body: some View {
         let steps = message.steps ?? []
         VStack(alignment: .leading, spacing: 10) {
             if message.status == "thinking" {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small).tint(.secondary)
-                    Text(steps.last ?? "Thinking").font(.footnote).foregroundStyle(.secondary)
+                    // nothing turns on a reply that has not started
+                    if message.wait == nil { ProgressView().controlSize(.small).tint(.secondary) }
+                    Text(message.wait?.text ?? steps.last ?? "Thinking").font(.footnote).foregroundStyle(.secondary)
+                    if let stop {
+                        Button(action: stop) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        // a full-size target that does not make the line taller than its words
+                        .padding(.vertical, -12)
+                        .accessibilityLabel("Stop this reply")
+                    }
                 }
             } else if steps.count == 1 {
                 StepsFold(title: steps[0], steps: [])
@@ -328,28 +354,32 @@ struct AssistantConfirmCard: View {
     }
 }
 
-/// A message that has not gone yet, at the end of the feed: dimmed and marked "Queued", or
-/// "Not sent" with the server's reason. The cross takes it back into the message box.
+/// A message that has not gone yet, at the end of the feed: dimmed, each video with how far it has
+/// gone up, and "Queued" while it waits its turn, or "Not sent" with the reason. The cross takes it
+/// back into the message box.
 struct AssistantQueuedBubble: View {
     let message: QueuedMessage
     /// On its way right now: drawn like a sent message.
     let inFlight: Bool
+    /// How far each video going up right now has got, by its id.
+    let progress: [String: Double]
     let onRemove: () -> Void
     let onRetry: () -> Void
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             VStack(alignment: .trailing, spacing: 6) {
-                if !message.attached.isEmpty {
-                    Label(message.attached, systemImage: "paperclip")
+                if !message.images.isEmpty {
+                    Label(message.images.count == 1 ? "1 picture" : "\(message.images.count) pictures", systemImage: "photo")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
                         .padding(.leading, 48)
                 }
+                ForEach(message.files) { AssistantVideoChip(name: $0.name) }
+                ForEach(message.videos ?? []) { AssistantVideoChip(name: $0.name, up: progress[$0.id] ?? 0) }
                 if !message.text.isEmpty { UserBubble(text: message.text) }
             }
-            .opacity(inFlight ? 1 : 0.5)
+            .opacity(inFlight ? 1 : 0.6)
             if !inFlight {
                 HStack(spacing: 10) {
                     if let failed = message.failed {
@@ -376,5 +406,46 @@ struct AssistantQueuedBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// How far a video has gone up, as a small ring.
+struct UploadRing: View {
+    let up: Double
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: max(0.03, up))
+            .stroke(Color("AccentColor"), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+            .background(Circle().stroke(Color(.systemGray4), lineWidth: 2.5))
+            .frame(width: 14, height: 14)
+    }
+}
+
+/// A video of his message: up already, or how far it has gone up (`known` false: going up from somewhere else).
+struct AssistantVideoChip: View {
+    let name: String
+    var up: Double?
+    var known = true
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let up {
+                UploadRing(up: up)
+            } else {
+                Image(systemName: "film")
+            }
+            Text(name).lineLimit(1)
+            if let up, known {
+                Text("\(Int(up * 100)) %").monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+        .font(.footnote)
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
+        .padding(.leading, 48)
+        .accessibilityElement(children: .combine)
     }
 }
