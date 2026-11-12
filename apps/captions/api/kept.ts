@@ -3,8 +3,6 @@ import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { EMPTIED, KEPT_KINDS, type KeptKind, type KeptRow, type KeptView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { removeFile } from "./assistant-files";
-import { EXPORTS_KEEP_DAYS, finishedExportDirs, removeFinishedExports } from "./exports";
 import { env } from "./lib/env";
 import type { SessionUser } from "./users";
 
@@ -13,7 +11,8 @@ import type { SessionUser } from "./users";
  *   GET  /              → KeptView: this account's files in the server's data folder, by kind (size and count)
  *   POST /:kind/empty   → deletes this account's files of one EMPTIED kind (a chat's pictures and videos, finished renders)
  * Only the caller's own files: a kind's folder is fixed here, never sent by the client. A file with no owner (made before
- * accounts) counts as an admin's, as the admin panel does.
+ * accounts) counts as an admin's, as the admin panel does. exports.ts is imported when used: at load it would close an import
+ * loop through the routes this file is mounted beside.
  *
  * ponytail: sizes are read from disk on every request (one stat per file). Fine for thousands of posts; a cached total
  * per account if a server holds far more.
@@ -53,7 +52,7 @@ async function itemsOf(kind: KeptKind, u: SessionUser): Promise<string[][]> {
     case "chat-videos":
       return perUser(at("assistant", "files", u.username));
     case "exports":
-      return (await finishedExportDirs(u.username)).map((d) => [d]);
+      return (await (await import("./exports")).finishedExportDirs(u.username)).map((d) => [d]);
     case "analyzer":
       return owned(at("instagram"));
     case "workshop": {
@@ -85,7 +84,7 @@ export async function keptView(u: SessionUser): Promise<KeptView> {
     const items = await itemsOf(kind, u);
     let bytes = 0;
     for (const paths of items) for (const p of paths) bytes += await dirBytes(p);
-    const keepDays = kind === "chat-videos" ? 7 : kind === "exports" ? EXPORTS_KEEP_DAYS : undefined;
+    const keepDays = kind === "chat-videos" ? 7 : kind === "exports" ? (await import("./exports")).EXPORTS_KEEP_DAYS : undefined;
     rows.push({ kind, bytes, items: items.length, ...(keepDays ? { keepDays } : {}) });
   }
   return { rows };
@@ -93,12 +92,12 @@ export async function keptView(u: SessionUser): Promise<KeptView> {
 
 /** Empty one kind of this account's files. A chat video still uploading stays (its turn waits for it). */
 export async function emptyKept(kind: KeptKind, u: SessionUser): Promise<void> {
-  if (kind === "exports") return removeFinishedExports(u.username);
+  if (kind === "exports") return (await import("./exports")).removeFinishedExports(u.username);
   if (kind === "chat-pictures") return void (await rm(at("assistant", "images", u.username), { recursive: true, force: true }));
   if (kind === "chat-videos") {
     for (const [dir] of await itemsOf(kind, u)) {
       if (await stat(path.join(dir!, "parts")).catch(() => null)) continue;
-      await removeFile(u.username, path.basename(dir!));
+      await rm(dir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }
 }
