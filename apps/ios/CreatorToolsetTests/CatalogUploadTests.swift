@@ -70,6 +70,12 @@ final class CatalogRulesTests: XCTestCase {
         XCTAssertFalse(off.transient)
         let signedOut = await catalog.failure(401, [:])
         XCTAssertEqual(signedOut, .signedOut)
+        // the library turning the sign-in away is the clip's problem, not the computer's sign-in ending
+        let refused = await catalog.failure(401, ["error": "Not signed in to the media library."])
+        XCTAssertEqual(refused.status, 403)
+        XCTAssertEqual(after(.catalogPatch, 401, body: ["error": "Not signed in to the media library."]),
+                       .failed("Not signed in to the media library."))
+        XCTAssertEqual(after(.catalogPatch, 401, body: ["error": "Signed out"]), .signedOut)
         XCTAssertTrue(APIError.offline.transient)
         XCTAssertTrue(APIError.server(502, "").transient)
         XCTAssertFalse(APIError.server(400, "").transient)
@@ -105,6 +111,9 @@ final class CatalogRulesTests: XCTestCase {
         let source = ServerPlugins.Source(id: "catalog", label: "Library")
         XCTAssertTrue(ServerPlugins.Known(plugins: [Studio.plugin], mainSource: source).catalog)
         XCTAssertFalse(ServerPlugins.Known(plugins: [Studio.plugin], mainSource: nil).catalog)
+        // sending never falls back to the storage library on a studio, even for an account that sees no catalog
+        XCTAssertTrue(ServerPlugins.Known(plugins: [Studio.plugin], mainSource: nil).sendsToCatalog)
+        XCTAssertFalse(ServerPlugins.Known(plugins: ["other"], mainSource: source).sendsToCatalog)
         XCTAssertFalse(ServerPlugins.Known(plugins: ["other"], mainSource: source).catalog)
         XCTAssertFalse(ServerPlugins.Known().catalog)
     }

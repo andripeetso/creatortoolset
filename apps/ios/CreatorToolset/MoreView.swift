@@ -106,7 +106,7 @@ struct SettingsView: View {
             if let profile = account.profile {
                 Section("Account") { AccountRow(profile: profile) { account.signOut() } }
             }
-            // Notifications: lane 2's row goes here (Section("Notifications") { <its row> }).
+            // Notifications, once lane 2 is merged: Section("Notifications") { NotificationsRow() }
             Section("Appearance") { AppearancePicker() }
             Section("Uploads") {
                 Toggle("Only upload on Wi-Fi", isOn: $wifiOnly)

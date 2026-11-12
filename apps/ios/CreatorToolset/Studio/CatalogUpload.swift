@@ -48,8 +48,12 @@ enum DirectUploadState: String {
 }
 
 extension ServerPlugins.Known {
-    /// The server's Media Library is the studio's catalog: the Upload tab sends there and shows it.
+    /// The server's Media Library is the studio's catalog: the Upload tab shows it.
     var catalog: Bool { plugins.contains(Studio.plugin) && mainSource != nil }
+    /// The Upload tab's clips go to the catalog on any server with the studio plug-in, whatever this account may see:
+    /// the server's own storage library is one nobody looks at there, so an account the catalog refuses gets a clip
+    /// that says why rather than footage sent where it is never found.
+    var sendsToCatalog: Bool { plugins.contains(Studio.plugin) }
 }
 
 extension APIError {
@@ -94,12 +98,14 @@ struct CatalogAPI {
     /// 403 `toolset_unreachable`: that is a wait, not a refusal. The proxy's bare 404 means the account has no Media
     /// Library (or the server no catalog).
     func failure(_ status: Int, _ object: [String: Any]) async -> APIError {
+        let message = object["error"] as? String ?? "The server answered \(status)"
+        // the proxy's own 401: the library doesn't know this sign-in; the computer's sign-in still holds
+        if status == 401, CatalogRules.libraryRefused(message) { return .server(403, message) }
         if status == 401 {
             let id = api.server.absoluteString
             await MainActor.run { if Servers.shared.currentId == id { Servers.shared.sessionExpired() } }
             return .signedOut
         }
-        let message = object["error"] as? String ?? "The server answered \(status)"
         if CatalogRules.restarting(status, object) { return .server(503, "The library is restarting") }
         if status == 404 && message == "Not found" { return .server(404, "The Media Library isn't on for this account") }
         return .server(status, message)
@@ -264,7 +270,7 @@ extension CatalogAPI {
     /// A short-lived signed link to the certified video on the video edge, for the player.
     func videoURL(_ clip: Int) async throws -> URL {
         let object = try await json(request("api/clips/\(clip)/download-url"))
-        guard let text = object["url"] as? String, let url = URL(string: text), url.scheme == "https" || url.scheme == "http" else {
+        guard let text = object["url"] as? String, let url = URL(string: text), url.scheme == "https" else {
             throw APIError.server(409, "This video can't be played yet")
         }
         return url
@@ -351,11 +357,16 @@ enum CatalogRules {
         status == 403 && object?["code"] as? String == "toolset_unreachable"
     }
 
+    /// The proxy's 401 when the library itself turned the sign-in away ("Not signed in to the media library."), as
+    /// against the computer's own 401 for a sign-in that ended.
+    static func libraryRefused(_ message: String) -> Bool { message.localizedCaseInsensitiveContains("media library") }
+
     static func after(_ kind: TransferStep.Kind, status: Int, uploadOffset: Int64?, size: Int64, body: Data,
                       networkError: Bool) -> CatalogNext {
         if networkError { return .retryLater("The connection dropped") }
         let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
         if restarting(status, json) { return .retryLater("The library is restarting") }
+        if status == 401, let said = json?["error"] as? String, libraryRefused(said) { return .failed(said) }
         let hiccup = "The server had a hiccup (HTTP \(status))"
         let said = json?["error"] as? String ?? "HTTP \(status)"
         switch kind {

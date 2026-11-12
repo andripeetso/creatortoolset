@@ -207,7 +207,7 @@ final class UploadEngine: ObservableObject {
         if item.edit != nil { return .library }
         // a debug build can send there on a scratch server whose library lists no source: -UploadRoute catalog
         if debugArg("UploadRoute") == "catalog" { return .catalog }
-        return try await ServerPlugins.read(api).catalog ? .catalog : .library
+        return try await ServerPlugins.read(api).sendsToCatalog ? .catalog : .library
     }
 
     func note(_ id: UUID, _ text: String?) {
