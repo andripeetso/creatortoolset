@@ -31,6 +31,10 @@ Three ways, all on one screen (the first screen, and More → Add a computer lat
 - **Type the address** (an address with no scheme is `http` for a local address and `https` otherwise) and sign in
   with your username and password. A server without sign-in opens with its address alone.
 
+An account with a sign-in code turned on asks for it after the password (here and for a computer on the account): the
+six digits from an authenticator app, which the iPhone's Passwords app can fill in, or one of its recovery codes. On a
+server that asks every account for a code, one without it is sent to the server's sign-in page to set it up first.
+
 Each sign-in cookie is kept in the Keychain and sent only to its server; the account's token is kept there too and
 goes only to creatortoolset.com.
 
@@ -52,7 +56,7 @@ TEST_RUNNER_CT_TEST_SERVER=http://127.0.0.1:43127 TEST_RUNNER_CT_TEST_PASSWORD=<
 
 Run the server with a scratch `DATA_DIR` for this: the test signs in as `admin` and adds files to its library.
 `-startTab <0-4>` as a launch argument opens that tab (for simulator screenshots); in a debug build
-`-signinDemo list|none|password|old|add|problem|partly` shows the sign-in screen with a made-up account and asks no server anything
+`-signinDemo list|none|password|old|add|problem|partly|code|setup` shows the sign-in screen with a made-up account and asks no server anything
 (`-servers '<hex of a saved list's JSON>'` gives one launch a connected computer, so the tabs show).
 
 The server side of the contract is `apps/captions/api/ios-contract.test.ts` with

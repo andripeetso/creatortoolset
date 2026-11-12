@@ -188,6 +188,15 @@ enum SignIn {
     enum Outcome: Equatable {
         case signedIn(cookie: String?, username: String)
         case needsPassword
+        /// The password was right and the account asks for its sign-in code next: `code(_:step:code:)` with this step.
+        case needsCode(step: String)
+        /// The server asks every account for a sign-in code and this one has none yet: it is set up on the website.
+        case setUpCode
+    }
+
+    /// The code step's five minutes are up: the password is asked again. Says so in the server's words.
+    struct StepExpired: LocalizedError, Equatable {
+        let errorDescription: String?
     }
 
     /// What was typed, pasted or scanned. No scheme: http for a local address (an IP, `localhost`, `.local`), else https.
@@ -244,6 +253,12 @@ enum SignIn {
         try await post(origin, "/api/auth/ticket", ["ticket": ticket, "password": password])
     }
 
+    /// The six digits from the authenticator app, or a recovery code, after a password that asked for one. A wrong
+    /// code throws the server's words and the step stays good; an expired step throws `StepExpired`.
+    static func code(_ origin: URL, step: String, code: String) async throws -> Outcome {
+        try await post(origin, "/api/auth/code", ["step": step, "code": code])
+    }
+
     /// A server from before sign-in by the account answers 404 here; a newer one refuses the empty code with 400.
     static func takesAppSignIn(_ origin: URL) async throws -> Bool {
         var request = API(server: origin, cookie: nil).request("/api/auth/app", method: "POST", json: [String: String]())
@@ -258,12 +273,30 @@ enum SignIn {
         request.httpShouldHandleCookies = false
         let (data, response) = try await API.session.data(for: request)
         let http = response as? HTTPURLResponse
-        guard let http, http.statusCode == 200 else {
-            throw APIError.server(http?.statusCode ?? 0, API.message(data, status: http?.statusCode ?? 0))
-        }
+        guard let http, http.statusCode == 200 else { return try refusal(http?.statusCode ?? 0, data) }
         // a server without sign-in answers ok with no cookie
         let cookie = cookie(from: http)
         return .signedIn(cookie: cookie, username: try await Self.username(origin, cookie: cookie))
+    }
+
+    /// A sign-in route's answer other than 200. A 401 with a `code` is a step of the sign-in, never a session that
+    /// ended: the sign-in code comes next, or is set up on the website first, or (expired) the password is asked again.
+    /// Anything else is thrown in the server's own words ("Wrong code", too many tries).
+    static func refusal(_ status: Int, _ data: Data) throws -> Outcome {
+        struct Body: Decodable {
+            let code: String?
+            let step: String?
+        }
+        let body = try? JSONDecoder().decode(Body.self, from: data)
+        if status == 401 {
+            switch body?.code {
+            case "CODE_NEEDED": if let step = body?.step { return .needsCode(step: step) }
+            case "CODE_SETUP": return .setUpCode
+            case "STEP_EXPIRED": throw StepExpired(errorDescription: API.message(data, status: status))
+            default: break
+            }
+        }
+        throw APIError.server(status, API.message(data, status: status))
     }
 
     struct Check: Decodable {
