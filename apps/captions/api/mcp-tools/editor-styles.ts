@@ -18,7 +18,9 @@ export const hasStyle = (username: string): boolean => stylesView(username).styl
 const FIELDS = { name: "name", versions: "versions", target_s: "targetS", pace: "pace", punch: "punch" } as const;
 
 const styles = async (ctx: ToolContext) => (await ctx.json<EditingStylesView>("/api/editor/styles")).styles;
-const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions, target_s: s.targetS, pace: s.pace, punch: s.punch, has_notes: !!s.notes });
+const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions, target_s: s.targetS, pace: s.pace, punch: s.punch, size: s.size ? `${s.size.w}x${s.size.h}` : "footage", has_notes: !!s.notes });
+/** The tool's size, "1080x1920" or "footage" (the footage's own) → the route's. */
+const sizeOf = (v: unknown) => (v === "footage" ? null : { w: Number(String(v).split("x")[0]), h: Number(String(v).split("x")[1]) });
 const sheet = (ctx: ToolContext) => `${ctx.origin}/editor?tab=styles`;
 
 /** One of the person's styles by its id, or by its name in any case. */
@@ -38,7 +40,7 @@ export const editorStyleTools: ToolModule = {
       description: "Make or change an AI Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat.",
       inputSchema: {
         type: "object",
-        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { enum: ["tight", "natural"] }, punch: { enum: [1, 1.15, 1.3] }, from_edit: str },
+        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { enum: ["tight", "natural"] }, punch: { enum: [1, 1.15, 1.3] }, size: { enum: ["1080x1920", "2160x3840", "footage"] }, from_edit: str },
       },
     },
     {
@@ -50,6 +52,7 @@ export const editorStyleTools: ToolModule = {
   handlers: {
     editor_style_save: async (a, ctx) => {
       const body: Args = Object.fromEntries((Object.keys(FIELDS) as (keyof typeof FIELDS)[]).filter((k) => a[k] != null).map((k) => [FIELDS[k], a[k]]));
+      if (a.size != null) body.size = sizeOf(a.size);
       const notes = typeof a.notes === "string" ? a.notes.trim() : "";
       if (a.id == null) {
         if (!body.name) throw new ToolError("Give the new style a name.");
@@ -57,7 +60,7 @@ export const editorStyleTools: ToolModule = {
         return { ...out(made), made: true, link: sheet(ctx) };
       }
       if (a.from_edit != null) throw new ToolError("from_edit makes a new style: leave id out.");
-      if (!Object.keys(body).length && !notes) throw new ToolError(`Nothing to change: give ${Object.keys(FIELDS).join(", ")} or notes.`);
+      if (!Object.keys(body).length && !notes) throw new ToolError(`Nothing to change: give ${Object.keys(FIELDS).join(", ")}, size or notes.`);
       const s = one(await styles(ctx), a.id);
       const saved = await ctx.json<EditingStyle>(`/api/editor/styles/${s.id}`, "PUT", { ...body, ...(notes ? { addNotes: notes } : {}) });
       return { ...out(saved), ...(notes ? { note: "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." } : {}), link: sheet(ctx) };

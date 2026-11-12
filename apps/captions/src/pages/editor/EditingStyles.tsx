@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 import { MAX_VERSIONS, type EditorDefaults } from "@contracts/editor";
 import type { EditStepChoice, StepRow } from "@contracts/editor-steps";
-import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace } from "@contracts/editor-styles";
+import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type WorkingSize } from "@contracts/editor-styles";
 import { placeOf } from "@contracts/skills";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,9 +27,19 @@ const select = "h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 tex
 
 /** What a style sets, in one line under its name. */
 export const styleLine = (s: EditingStyle): string =>
-  [PACE_NAME[s.pace], `${s.versions} ${s.versions === 1 ? "version" : "versions"}`, s.targetS ? `${s.targetS} s` : ""].filter(Boolean).join(" · ");
+  [PACE_NAME[s.pace], `${s.versions} ${s.versions === 1 ? "version" : "versions"}`, s.targetS ? `${s.targetS} s` : "", s.size ? `${s.size.w}×${s.size.h}` : ""].filter(Boolean).join(" · ");
 
 export type OpenStyle = EditingStyle | "new" | null;
+
+/** A working size as a select's value: "1080x1920", or "footage" for none (the footage's own). */
+export const sizeKey = (s: WorkingSize | null | undefined): string => (s ? `${s.w}x${s.h}` : "footage");
+export const sizeOfKey = (k: string): WorkingSize | null => {
+  const s = WORKING_SIZES.find((x) => sizeKey(x) === k);
+  return s ? { w: s.w, h: s.h } : null;
+};
+export const SIZE_OPTIONS = [...WORKING_SIZES.map((s) => ({ value: sizeKey(s), label: s.name })), { value: "footage", label: "From the footage" }];
+/** A new style's working size: vertical HD. */
+const NEW_SIZE = sizeKey(WORKING_SIZES[0]);
 
 /** A copy of a style under "<name> copy". A B-roll folder deleted since the style was made cannot be saved again, so the copy is then made without it. */
 export async function duplicateStyle(s: EditingStyle): Promise<EditingStyle> {
@@ -80,7 +90,7 @@ export function EditingStyles({ styles, open, onOpen, onChanged }: { styles: Edi
 }
 
 /** The folders B-roll can come from: every folder of the person's Media Library, named with its library when there are several. */
-async function brollFolders(): Promise<{ id: string; name: string }[]> {
+export async function brollFolders(): Promise<{ id: string; name: string }[]> {
   const libraries = await listLibraries();
   const lists = await Promise.all(libraries.map((l) => listCollections(l.id).catch(() => [])));
   return libraries.flatMap((l, i) => lists[i]!.map((c) => ({ id: c.id, name: libraries.length > 1 ? `${l.name}: ${c.name}` : c.name })));
@@ -100,6 +110,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [targetS, setTargetS] = useState(style?.targetS ? String(style.targetS) : "");
   const [pace, setPace] = useState<Pace>(style?.pace ?? "tight");
   const [punch, setPunch] = useState(style?.punch ?? 1.15);
+  const [size, setSize] = useState(style ? sizeKey(style.size) : NEW_SIZE);
   const [folder, setFolder] = useState(style?.brollCollectionId ?? "");
   const [grade, setGrade] = useState<string | null>(null); // null: not changed here
   const [steps, setSteps] = useState<EditStepChoice[] | null>(null); // null: not changed here
@@ -149,6 +160,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
       targetS: Number(targetS) || 0,
       pace,
       punch,
+      size: sizeOfKey(size),
       ...(folders.length ? { brollCollectionId: folderShown || null } : {}),
       ...(skill !== null ? { skill: skill || null } : {}),
       ...(grade !== null ? { grade } : {}),
@@ -214,6 +226,16 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
                 {PUNCHES.map((p) => (
                   <option key={p.value} value={p.value}>
                     {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="style-size">Working size</Label>
+              <select id="style-size" value={size} onChange={(e) => setSize(e.target.value)} className={`${select} min-w-40`}>
+                {SIZE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>

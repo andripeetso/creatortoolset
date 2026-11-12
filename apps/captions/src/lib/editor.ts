@@ -36,8 +36,10 @@ export const setEditStep = (id: string, change: { use?: boolean; values?: Record
 export const addEditStep = (folder: string) => send<{ folder: string }>(`/api/edit-steps/add/${encodeURIComponent(folder)}`, "POST");
 /** The person's editing styles (contracts/editor-styles.ts). `fromEdit` copies an edit's choices into a new one. */
 export const listStyles = () => send<EditingStylesView>("/api/editor/styles");
-export const createStyle = (body: EditingStyleInput | { fromEdit: string; name: string }) => send<EditingStyle>("/api/editor/styles", "POST", body);
+/** `first`: New edit's "How do you like to work?" made it (it becomes the one New edit opens on, and that screen is answered). */
+export const createStyle = (body: (EditingStyleInput & { first?: true }) | { fromEdit: string; name: string }) => send<EditingStyle>("/api/editor/styles", "POST", body);
 export const updateStyle = (id: string, body: EditingStyleInput) => send<EditingStyle>(`/api/editor/styles/${id}`, "PUT", body);
+export const markStylesAsked = () => send<{ ok: true }>("/api/editor/styles/asked", "POST");
 export const deleteStyle = (id: string) => send<{ ok: true }>(`/api/editor/styles/${id}`, "DELETE");
 /** The edits finished in a style, newest first, and × on one (it never counts for a style again). */
 export const listFinished = (styleId: string) => send<FinishedEdit[]>(`/api/editor/styles/${styleId}/finished`);
