@@ -94,7 +94,7 @@ describe("a tool's row says what stops it and where that is fixed", () => {
   const labels = (tile: Parameters<typeof missingNeeds>[0], have: Parameters<typeof missingNeeds>[1]) => missingNeeds(tile, have).map(needLabel);
 
   it("lists only what is missing and required: one line each, nothing once it is set up", () => {
-    expect(labels("enhance", [])).toEqual(["Needs an ElevenLabs or NVIDIA key"]);
+    expect(labels("enhance", [])).toEqual(["Needs an API key"]);
     expect(labels("enhance", ["NVIDIA_API_KEY"])).toEqual([]);
     expect(labels("instagram", [])).toEqual(["Needs a project", "Needs an Apify key"]);
     expect(labels("instagram", ["project", "instagram"])).toEqual([]); // its own Instagram login reads the posts too
