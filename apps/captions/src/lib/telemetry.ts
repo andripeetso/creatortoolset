@@ -8,7 +8,7 @@ import { useEffect } from "react";
 let on: Promise<boolean> | null = null;
 const isOn = () =>
   (on ??= fetch("/api/telemetry")
-    .then((r) => (r.ok ? (r.json() as Promise<{ on?: boolean }>) : {}))
+    .then((r) => (r.ok ? (r.json() as Promise<{ on?: boolean }>) : ({} as { on?: boolean })))
     .then((s) => s.on === true)
     .catch(() => false));
 
