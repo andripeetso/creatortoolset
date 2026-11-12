@@ -164,6 +164,15 @@ const children = new Map<string, ReturnType<typeof spawn>>();
 const writeQ = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Set<BlockKind>>();
 
+/** This account's notes being made and sections being written, for Home (api/activity.ts). */
+export async function notesWork(username: string) {
+  const writing = (await Promise.all([...generating.keys()].filter((id) => !active.has(id)).map(readMeta))).filter((m) => m?.owner === username);
+  return [
+    ...[...active.values()].filter((m) => m.owner === username && m.status === "processing").map((m) => ({ id: m.id, name: m.name, progress: m.progress, section: false })),
+    ...writing.map((m) => ({ id: m!.id, name: m!.name, progress: undefined, section: true })),
+  ];
+}
+
 void mkdir(CLIPS_DIR, { recursive: true }).catch(() => {});
 
 function claimKind(id: string, k: BlockKind): boolean {

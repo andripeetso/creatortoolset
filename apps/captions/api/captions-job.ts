@@ -158,9 +158,15 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
   }
 }
 
+/** Who each running job is for and its project's name, for Home (api/activity.ts). */
+const started = new Map<string, { owner: string; name: string }>();
+export const captioningWork = (username: string) => [...started].filter(([, j]) => j.owner === username).map(([id, j]) => ({ id, name: j.name }));
+
 /** Starts the captions for a project just made from a file; the chat hears how it ended. `name` is the project's. */
 export function captionInBackground(user: SessionUser, projectId: string, clipId: string, name: string, engine: Engine): void {
   captioning.set(projectId, "preparing");
+  started.set(projectId, { owner: user.username, name });
+  announceSoon(user.username, "projects"); // Home's chip (api/activity.ts captioningWork)
   void caption(user, projectId, clipId, engine)
     .then(
       (lines) =>
@@ -178,6 +184,7 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
       // first no longer "being captioned", then told: a page that has the project open reads it again on this notice,
       // takes the captions and offers Transcribe again (also when none were made)
       captioning.delete(projectId);
+      started.delete(projectId);
       announceSoon(user.username, "projects");
       // loaded here, not at the top: assistant.ts loads this file through assistant-files.ts
       const { workEnded } = await import("./assistant");

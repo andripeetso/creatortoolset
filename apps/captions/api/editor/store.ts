@@ -424,8 +424,11 @@ export function jobsOf(id: string): EditJob[] {
 }
 
 export function summaryOf(e: EditMeta): EditSummary {
-  const last = libraryDb().prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as EditSummary["last"] | undefined;
-  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last: last ? { ...last } : null };
+  // a step the person stopped is saved as failed with "Stopped" (worker.ts): `stopped` keeps it off Home's failed list
+  const row = libraryDb().prepare("SELECT kind, state, error = 'Stopped' AS stopped FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as
+    { kind: EditJob["kind"]; state: EditJob["state"]; stopped: number | null } | undefined;
+  const last = row ? { kind: row.kind, state: row.state, ...(row.stopped ? { stopped: true as const } : {}) } : null;
+  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
 }
 
 export function viewOf(e: EditMeta): Edit {

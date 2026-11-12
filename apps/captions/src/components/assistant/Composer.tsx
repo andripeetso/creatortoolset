@@ -143,7 +143,7 @@ export function Composer({
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{f.name}</span>
                   <span className={cn("block tabular-nums", f.error ? "text-destructive" : "text-muted-foreground")}>
-                    {f.error ? "Didn't upload: remove it and add it again" : f.id ? "Ready" : `Uploading · ${f.pct}%`}
+                    {f.error ? "Didn't upload: remove it and add it again" : f.done ? "Ready" : `Uploading · ${f.pct}%`}
                   </span>
                 </span>
               </div>

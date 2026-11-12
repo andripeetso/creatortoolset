@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
@@ -17,7 +17,8 @@ import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import { assistantFilesApp, readFileMeta } from "./assistant-files";
+import { allPartsIn, assistantFilesApp, finishUpload, uploadOf } from "./assistant-files";
+import { needsAttention, type Attention } from "./lib/attention";
 import { memoryBlock } from "./lib/memory";
 import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
@@ -31,6 +32,16 @@ import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage
  */
 
 export const assistantApp = new Hono<{ Variables: AuthVars }>();
+// a part or a complete for a file a waiting turn needs: the turn starts once its last file is in. The last part joins the
+// file here, so a phone that is locked before it can say /complete still gets its answer
+assistantApp.use("/files/:id/*", async (c, next) => {
+  await next();
+  const user = c.get("user")?.username;
+  const id = c.req.param("id");
+  if (c.req.method !== "POST" || c.res.status !== 200 || !user || !Object.values(load(user).held ?? {}).some((h) => h.files.includes(id))) return;
+  if (c.req.path.endsWith("/complete")) await pump(user);
+  else if (await allPartsIn(user, id)) void finishUpload(user, id).then(() => pump(user));
+});
 assistantApp.route("/files", assistantFilesApp);
 
 /** The job whose provider answers the dock: its own pick, else the default (contracts/providers.ts). */
@@ -101,6 +112,25 @@ interface Conv {
   calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
   past?: Chat[];
+  /** What each turn that hasn't started needs to start, by its reply's id (it survives a restart). Never sent to the dock. */
+  held?: Record<string, Held>;
+}
+
+/** A turn sent before its videos were in, or while another reply was being written: started by pump(). */
+interface Held {
+  /** The user message it answers. */
+  ask: string;
+  /** Its videos' ids (api/assistant-files.ts): the turn starts once every one is in. */
+  files: string[];
+  pasted: AssistantPaste[];
+  context?: AssistantContext;
+  /** Read when the message was sent (memoryBlock, skillLines), as the turn would have read them then. */
+  memory: string;
+  skills: string;
+  /** This server's MCP address, as the request that sent it saw it. */
+  url: string;
+  admin: boolean;
+  at: number;
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
@@ -267,7 +297,7 @@ function load(username: string): Conv {
   conv.id ??= randomUUID();
   // a reply the server stopped in the middle of: it can't finish any more
   // and it can't do what it asked
-  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking") {
+  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id]) {
     m.status = "error";
     expireApprovals(m, 0);
   }
@@ -395,6 +425,7 @@ export function askConfirm(username: string, turn: string, question: string, cal
   calls[id] = call;
   save(username);
   tell(username);
+  attend(username, turn, "asks", question);
   return true;
 }
 
@@ -525,6 +556,7 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
     list.push(a);
     save(username);
     tell(username);
+    attend(username, turn, "asks", `Asks to ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`);
   } else if (expireApprovals(m)) {
     save(username);
     tell(username);
@@ -562,10 +594,11 @@ export async function navigateTo(username: string, p: string): Promise<string> {
 }
 
 /** The assistant's ask_secret tool: a pending request for one key, shown as a secure box. Never takes a value. */
-export async function askSecret(username: string, env: MyKeyEnv, why: string): Promise<void> {
+export async function askSecret(username: string, env: MyKeyEnv, why: string, turn?: string): Promise<void> {
   load(username).pending = { env, why, at: Date.now() };
   save(username);
   tell(username);
+  if (turn) attend(username, turn, "asks", `Asks for your ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
 }
 
 /* ---- the turn ---- */
@@ -603,6 +636,7 @@ function view(username: string, admin: boolean): AssistantView {
     past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
+    sendNow: true,
   };
 }
 
@@ -750,6 +784,196 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     pendingSave.delete(username);
     save(username);
     tell(username);
+    // the person hears it ended (a Stop is their own doing), and the next message's turn starts
+    if (m && !stop.signal.aborted) attend(username, replyId, m.status === "error" ? "failed" : "done", m.text);
+    void pump(username);
+  }
+}
+
+/* ---- turns that wait: for their message's videos, or for the reply before them ---- */
+
+/** A video that stops arriving: this long after its last part (or the message), the reply says it didn't arrive. */
+export const WAIT_MS = 12 * 3600_000;
+/** Replies that may wait behind the one being written; one more is refused. */
+const MAX_WAITING = 10;
+
+/** One line about a reply for whatever listens (lib/attention.ts): not for a scheduled run, nobody sent it. */
+function attend(username: string, reply: string, kind: Attention["kind"], body: string): void {
+  if (unattended(username, reply)) return;
+  const conv = load(username);
+  const chat = [{ id: conv.id!, title: conv.title, messages: conv.messages }, ...(conv.past ?? [])].find((c) => c.messages.some((m) => m.id === reply));
+  if (!chat) return;
+  const i = chat.messages.findIndex((m) => m.id === reply);
+  const line = body.replace(/\s+/g, " ").trim();
+  needsAttention({
+    username,
+    reply,
+    kind,
+    title: chat.title ?? titleOf(chat.messages),
+    body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "The answer failed." : "Answered."),
+    path: `/?chat=${chat.id}`,
+    sentAt: chat.messages.slice(0, i).reverse().find((m) => m.role === "user")?.at ?? chat.messages[i]!.at,
+  });
+}
+
+/** A turn that never started ends: stopped by the person, or its video never arrived. The next one may start. */
+function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost"): void {
+  const conv = load(username);
+  const asked = conv.messages.find((x) => x.id === conv.held?.[m.id]?.ask);
+  if (conv.held) delete conv.held[m.id];
+  const lost = (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
+  const text = how === "stopped" ? "*Stopped.*" : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
+  Object.assign(m, { status: how === "stopped" ? "done" : "error", text, wait: undefined });
+  sayLater(username, m.id);
+  save(username);
+  tell(username);
+  if (how === "lost") attend(username, m.id, "failed", text);
+}
+
+const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
+const wakes = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * The account's waiting turns, in order: each shows what it waits for, one whose video stopped arriving ends, and the
+ * first whose videos are all in starts once no reply is being written. Called whenever that may have changed (a turn
+ * sent or ended, a file in, a Stop, the clock, a restart); a call during a run makes it run again, and resolves with it.
+ */
+function pump(username: string): Promise<void> {
+  const on = pumping.get(username);
+  if (on) {
+    on.again = true;
+    return on.done ?? Promise.resolve();
+  }
+  const state: { again: boolean; done?: Promise<void> } = { again: false };
+  pumping.set(username, state);
+  state.done = (async () => {
+    try {
+      do {
+        state.again = false;
+        await pumpOnce(username);
+      } while (state.again);
+    } finally {
+      pumping.delete(username);
+    }
+  })();
+  return state.done;
+}
+
+async function pumpOnce(username: string): Promise<void> {
+  const conv = load(username);
+  const ids = [...new Set(Object.values(conv.held ?? {}).flatMap((h) => h.files))];
+  const files = new Map(
+    await Promise.all(
+      ids.map(async (id) => {
+        let f = await uploadOf(username, id);
+        // every part is in and nobody joined it: its last part came before the message did, or before a restart
+        if (f && !("file" in f) && (await allPartsIn(username, id))) {
+          const done = await finishUpload(username, id);
+          if (!("error" in done)) f = { file: done };
+        }
+        return [id, f] as const;
+      }),
+    ),
+  );
+  // from here on nothing awaits: the conversation is read and changed in one go
+  const held = conv.held ?? {};
+  const t = Date.now();
+  let changed = false;
+  let soonest = Infinity;
+  let ahead = running.has(username);
+  for (const id of Object.keys(held)) if (messageOf(username, id)?.status !== "thinking") {
+    delete held[id];
+    changed = true;
+  }
+  for (const [i, m] of conv.messages.entries()) {
+    if (m.status !== "thinking") continue;
+    const h = held[m.id];
+    if (!h) {
+      ahead = true; // being written (a turn, or a scheduled run in this chat)
+      continue;
+    }
+    const asked = conv.messages.find((x) => x.id === h.ask);
+    const inNow = (id: string) => {
+      const f = files.get(id);
+      return f && "file" in f ? f.file : null;
+    };
+    for (const f of asked?.files ?? []) if (f.uploading && inNow(f.id)) {
+      delete f.uploading;
+      changed = true;
+    }
+    const missing = h.files.filter((id) => !inNow(id));
+    let wait: AssistantMessage["wait"];
+    if (missing.length) {
+      // a file between its last part and its meta (being joined) has neither: only the clock says it is lost
+      const last = Math.max(h.at, ...missing.map((id) => {
+        const f = files.get(id);
+        return f && "at" in f ? f.at : 0;
+      }));
+      if (t - last >= WAIT_MS) {
+        endHeld(username, m, "lost");
+        changed = true;
+        continue;
+      }
+      soonest = Math.min(soonest, last + WAIT_MS);
+      wait = { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
+    } else if (ahead) wait = { for: "reply", text: "Waiting for the reply before it" };
+    if (wait) {
+      if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
+        m.wait = wait;
+        changed = true;
+      }
+      ahead = true;
+      continue;
+    }
+    // one that can't start ends there, and the next may start in its place
+    if (startHeld(username, conv, i, h, h.files.map((id) => inNow(id)!))) ahead = true;
+    changed = true;
+  }
+  if (changed) {
+    save(username);
+    tell(username);
+  }
+  clearTimeout(wakes.get(username));
+  wakes.delete(username);
+  if (soonest < Infinity) wakes.set(username, setTimeout(() => void pump(username), Math.min(soonest - t + 1000, 2 ** 31 - 1)).unref());
+}
+
+/** A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. false: it ended instead. */
+function startHeld(username: string, conv: Conv, i: number, h: Held, files: AssistantFile[]): boolean {
+  const reply = conv.messages[i]!;
+  const asked = conv.messages.find((x) => x.id === h.ask);
+  delete conv.held![reply.id];
+  reply.wait = undefined;
+  const route = routeOf(username, h.admin);
+  if (!route || !asked) {
+    Object.assign(reply, { status: "error", text: route ? "The message is gone." : "Connect your AI first." });
+    sayLater(username, reply.id);
+    attend(username, reply.id, "failed", reply.text);
+    return false;
+  }
+  const images = (asked.images ?? []).flatMap((im) => {
+    const f = imageFile(username, im.id);
+    return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
+  });
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], context: h.context };
+  conv.mac = h.context?.mac === true;
+  void runTurn(username, reply.id, route, h.url, promptFor(conv.messages.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
+  return true;
+}
+
+/** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */
+export function resumeFromDisk(): void {
+  let names: string[] = [];
+  try {
+    names = readdirSync(dirOf()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return;
+  }
+  for (const f of names) {
+    if (!readFileSync(path.join(dirOf(), f), "utf-8").includes('"held":{"')) continue;
+    const username = f.slice(0, -5);
+    cache.delete(username);
+    void pump(username);
   }
 }
 
@@ -840,6 +1064,8 @@ export async function runInChat(
     pendingSave.delete(username);
     save(username);
     tell(username);
+    // a message sent while it ran waited for it
+    if (open) void pump(username);
   }
 }
 
@@ -861,46 +1087,72 @@ assistantApp.post("/turn", async (c) => {
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
+  // a video may still be uploading (the caller's own upload): the message goes now and its turn waits for the file
+  const files: NonNullable<AssistantMessage["files"]> = [];
+  input.fileIds = [...new Set(input.fileIds)];
   for (const id of input.fileIds) {
-    const f = await readFileMeta(u.username, id);
-    if (!f) return c.json({ error: "A video didn't finish uploading: add it again" }, 400);
-    input.files.push(f);
+    const f = await uploadOf(u.username, id);
+    if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
+    files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
   const memory = await memoryBlock(u);
-  // read here, before the turn starts: the job is then queued the moment the reply is made (Stop counts on that)
   const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
-  if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering the last message: wait for it" }, 409);
+  if (conv.messages.filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
   const now = Date.now();
-  conv.mac = input.context?.mac === true;
-  // the pictures are kept only once the turn runs
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
-  conv.messages.push({
+  const asked: AssistantMessage = {
     id: randomUUID(),
     role: "user",
     text: input.text,
     at: now,
     ...(images.length ? { images } : {}),
     ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
-    ...(input.files.length ? { files: input.files.map((f) => ({ id: f.id, name: f.name })) } : {}),
+    ...(files.length ? { files } : {}),
     ...(input.paths.length ? { folders: input.paths } : {}),
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
-  });
+  };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
-  conv.messages.push(reply);
+  conv.messages.push(asked, reply);
+  // every turn goes through the queue: one with nothing ahead and its videos in starts in this call (Stop counts on that)
+  (conv.held ??= {})[reply.id] = {
+    ask: asked.id,
+    files: input.fileIds,
+    pasted: input.pasted,
+    ...(input.context ? { context: input.context } : {}),
+    memory,
+    skills,
+    url: `${publicOrigin(c)}/api/mcp`,
+    admin: u.role === "admin",
+    at: now,
+  };
   save(u.username);
-  void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages, input), filesFor(input), memory, skills);
+  await pump(u.username);
   return c.json(view(u.username, u.role === "admin"), 202);
 });
 
-/** Stop the reply that's running (the dock's Stop, or Steer to send a queued message now). */
+/**
+ * Stop a reply (the dock's Stop, or Steer to send a queued message now). { reply: id } stops that one: being written,
+ * or waiting (for its videos, or its turn); without it, the one being written, else the first that waits. A waiting one
+ * ends at once as stopped; the next waiting message carries on.
+ */
 assistantApp.post("/stop", async (c) => {
   const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { reply?: unknown } | null;
+  const want = typeof b?.reply === "string" ? b.reply : undefined;
+  const conv = load(u.username);
+  const waiting = want ? (conv.held?.[want] ? want : undefined) : running.has(u.username) ? undefined : conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id])?.id;
+  const m = waiting ? conv.messages.find((x) => x.id === waiting) : undefined;
+  if (m) {
+    endHeld(u.username, m, "stopped");
+    await pump(u.username);
+    return c.json(view(u.username, u.role === "admin"));
+  }
   const stop = running.get(u.username);
-  if (!stop) return c.json({ error: "Nothing is running" }, 404);
+  if (!stop || (want && messageOf(u.username, want)?.status !== "thinking")) return c.json({ error: "Nothing is running" }, 404);
   stop.abort();
   // the turn ends on the next tick (the Mac call rejects): answer with the view after it
   await new Promise((r) => setTimeout(r, 0));

@@ -87,6 +87,8 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect((await call("other", "POST", `/api/editor/${id}/stop`)).status).toBe(404);
     const stopped = await json<Edit>(call("maker", "POST", `/api/editor/${id}/stop`));
     expect(stopped.jobs).toMatchObject([{ state: "failed", error: "Stopped" }]);
+    // the list says it was stopped, so Home does not call it a failure
+    expect((await json<EditSummary[]>(call("maker", "GET", "/api/editor"))).find((s) => s.id === id)?.last).toEqual({ kind: "analyze", state: "failed", stopped: true });
     expect((await call("maker", "DELETE", `/api/editor/${id}`)).status).toBe(200);
     expect((await call("maker", "GET", `/api/editor/${id}`)).status).toBe(404);
   });

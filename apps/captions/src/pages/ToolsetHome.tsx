@@ -7,7 +7,7 @@ import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
-import { HomeActivity, useRunning, useTodoLists, type Chip } from "@/components/HomeActivity";
+import { editWaits, HomeActivity, useRunning, useTodoLists, type Chip } from "@/components/HomeActivity";
 import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/HomeIntro";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
@@ -362,7 +362,7 @@ function NeedsSetup({ what }: { what: string[] }) {
 function useWaiting(me: Me | null): Record<string, number> {
   const { edits, assets } = useTodoLists(me);
   return {
-    editor: edits.filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key").length,
+    editor: edits.filter(editWaits).length,
     review: assets.filter((a) => a.approval.status === "needs_review").length,
   };
 }
