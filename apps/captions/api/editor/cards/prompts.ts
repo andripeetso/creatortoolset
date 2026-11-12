@@ -49,7 +49,7 @@ export function parsePlan(text: string, lines: PlanLine[]): { line: number; text
 }
 
 /** What a card's script is and what it has: the drawing page of the Mac app, said once for the make and the look call. */
-const stage = (w: number, h: number) => `The script runs alone in an empty web page. It must define one function, kitFrame(t, card), which paints the whole frame for time t (seconds from the card's start) into the element with the id "stage". A picture of the stage is taken right after each call returns, so nothing may wait: no timers, no CSS transitions or animations, nothing still loading. Work every position, size and opacity out from t.
+const stage = (w: number, h: number) => `The script runs alone in an empty web page. It must define one function, kitFrame(t, card), which paints the whole frame for time t (seconds from the card's start) into the element with the id "stage", a <div> (not a canvas: a canvas the script wants, it makes inside the stage). A picture of the stage is taken right after each call returns, so nothing may wait: no timers, no CSS transitions or animations, nothing still loading. Work every position, size and opacity out from t.
 
 The stage is ${w} by ${h} CSS pixels, black, with white text until the script says otherwise; what the script leaves unpainted is black in the video. The script has the DOM, CSS, SVG, a 2D canvas and the system's fonts. Pictures only as data: addresses written into the script. Nothing can be loaded by address, and there is no WebGL, WebAssembly or audio. One card's frames must all draw within 20 seconds.
 

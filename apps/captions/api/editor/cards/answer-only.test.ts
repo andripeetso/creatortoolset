@@ -200,7 +200,7 @@ describe("what the three questions are made of", () => {
     expect(make.prompt.system).toContain("Answer with the script only");
     expect(look.prompt.system).toContain("answer with the two letters OK and nothing else");
     for (const c of [make, look]) {
-      for (const said of ["kitFrame(t, card)", 'the id "stage"', "black, with white text", "no timers, no CSS transitions or animations", "Pictures only as data: addresses", "no WebGL, WebAssembly or audio", "within 20 seconds", "never empty at its first, middle or last frame"]) {
+      for (const said of ["kitFrame(t, card)", 'the id "stage", a <div> (not a canvas', "black, with white text", "no timers, no CSS transitions or animations", "Pictures only as data: addresses", "no WebGL, WebAssembly or audio", "within 20 seconds", "never empty at its first, middle or last frame"]) {
         expect(c.prompt.system).toContain(said);
       }
     }
