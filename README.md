@@ -131,6 +131,12 @@ so there's nothing else to install.
 Your data lives in `~/Library/Application Support/Creator Toolset/data`. You can move it to an external disk
 in **This Mac → Data location**.
 
+The downloaded app sends anonymous usage and crash reports to creatortoolset.com, which may pass them to PostHog
+and Sentry. A report holds a random install id, the version and system, which of the app's pages were opened and how
+often, whether Connect is on, which kinds of AI are set up, and the message and code location of any error. It never
+holds your name, account, files or content. Turn it off in **Settings → General → Send anonymous usage and crash
+reports**. A server you build or host yourself sends none (`api/lib/telemetry.ts`).
+
 The **Servers** menu, or the picker right of the window buttons, switches the window between this Mac's server and
 any server of yours added by address (⌥⌘1…⌥⌘9). **Servers → Run your own server…** walks you through one.
 More in [apps/mac/README.md](apps/mac/README.md).
