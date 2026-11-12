@@ -239,12 +239,16 @@ struct AssistantChatView: View {
         model.send(QueuedMessage(text: text, quote: quote))
     }
 
-    /// A page the assistant opened for him: go there once, and tell the server it was opened.
+    /// A page the assistant opened for the person: go there once, and tell the server it was opened.
     private func follow(_ path: String?) {
         guard let path, !path.isEmpty, nav.tab == .chats, nav.chats.last == .assistant else { return }
         Task { await model.navigated() }
-        nav.open(href: path)
+        if let route = Self.opensByItself(path) { nav.open(route) }
     }
+
+    /// What the assistant may open without a press: only a page of the signed-in server. Another site's address is
+    /// never opened (nor loaded) because a reply named it; a link in the reply opens it when the person presses it.
+    nonisolated static func opensByItself(_ path: String) -> AppRoute? { AppRoute.from(path: path) }
 }
 
 /// How tall the feed is, where its end sits in the scroll view, and how tall that view is.
