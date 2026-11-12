@@ -99,7 +99,7 @@ enum PhonePreview {
     static func show(_ phone: PhoneSession, on screen: NSScreen, onStart: @escaping () -> Void) {
         close()
         let area = screen.visibleFrame
-        let view = NSHostingView(rootView: content(phone, area: area, start: onStart))
+        let view = FirstClickHostingView(rootView: content(phone, area: area, start: onStart))
         let fitted = view.fittingSize
         let panel = EscapePanel(contentRect: NSRect(x: area.midX - fitted.width / 2, y: area.midY - fitted.height / 2,
                                                     width: fitted.width, height: fitted.height),
@@ -127,7 +127,7 @@ enum PhonePreview {
             NotificationCenter.default.addObserver(forName: AVCaptureInput.Port.formatDescriptionDidChangeNotification,
                                                    object: phone.picturePort, queue: .main) { _ in
                 Task { @MainActor in
-                    guard let panel = self.panel, let view = panel.contentView as? NSHostingView<PhonePreviewView> else { return }
+                    guard let panel = self.panel, let view = panel.contentView as? FirstClickHostingView<PhonePreviewView> else { return }
                     view.rootView = content(phone, area: area, start: onStart)
                     let fitted = view.fittingSize
                     let middle = CGPoint(x: panel.frame.midX, y: panel.frame.midY)

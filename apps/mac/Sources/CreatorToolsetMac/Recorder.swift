@@ -1037,7 +1037,7 @@ final class Recorder: ObservableObject {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: RecorderBar(recorder: self).frame(width: size.width, height: size.height))
+        panel.contentView = FirstClickHostingView(rootView: RecorderBar(recorder: self).frame(width: size.width, height: size.height))
         panel.setFrameOrigin(barOrigin(recorded: recorded, visible: screen.visibleFrame, size: size))
         panel.orderFrontRegardless()
         self.panel = panel

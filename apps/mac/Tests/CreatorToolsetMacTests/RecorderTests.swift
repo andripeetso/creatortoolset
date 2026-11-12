@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import SwiftUI
 import XCTest
 @testable import CreatorToolsetMac
 
@@ -254,6 +255,11 @@ final class RecorderTests: XCTestCase {
         XCTAssertFalse(updateMayInstall(appActive: true, aiJobs: 0, recording: false, secondsSinceInput: 900))
         XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 1, recording: false, secondsSinceInput: 900))
         XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 0, recording: true, secondsSinceInput: 900))
+    }
+
+    /// The recorder's panels take a press the first time, also when another window has the keyboard.
+    @MainActor func testTheRecordersPanelsTakeTheFirstPress() {
+        XCTAssertTrue(FirstClickHostingView(rootView: Text("Stop")).acceptsFirstMouse(for: nil))
     }
 
     func testPointerOnTheMainDisplay() {
