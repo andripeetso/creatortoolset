@@ -6,14 +6,15 @@ import type { EditStepChoice, StepInfo, StepRow, StepsView } from "../../contrac
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { folderPluginsEnabled, pluginsFolder } from "../lib/folder-plugins";
-import { pluginEditorSteps } from "../lib/plugin";
+import { loadedPluginIds, pluginEditorSteps } from "../lib/plugin";
 import { writeJsonAtomic } from "../library/media/run";
 
 /**
  * The AI Editor's post-processing steps per account (contracts/editor-steps.ts): which ones new edits use, and with
- * which values. One file per account, $DATA_DIR/edit-steps/<user>.json. The steps that come with the app are plug-in
- * folders in editor-steps/ (in the Mac app: Resources/server/source/editor-steps); Turn on copies one into the
- * person's plug-ins folder, and the Mac app's own alert switches it on. Nothing in a folder runs before that.
+ * which values. One file per account, $DATA_DIR/edit-steps/<user>.json. The plug-ins the team makes come with the app as
+ * folders in editor-steps/ (in the Mac app: Resources/server/source/editor-steps): the steps, and others such as an Audio
+ * Enhancer engine. Download in Community copies one into the person's plug-ins folder, and the Mac app's own alert
+ * switches it on. Nothing in a folder runs before that.
  */
 
 type Saved = Record<string, { use?: boolean; values?: Record<string, string> }>;
@@ -30,11 +31,14 @@ function readSaved(user: string): Saved {
 const valuesOf = (st: StepInfo, saved?: Record<string, string>): Record<string, string> =>
   Object.fromEntries((st.options ?? []).map((o) => [o.id, saved?.[o.id] ?? o.default]));
 
-/** The folder the bundled steps are in: beside the app's source in the Mac app, editor-steps/ in a checkout. */
+/** The folder the bundled plug-ins are in: beside the app's source in the Mac app, editor-steps/ in a checkout. */
 const bundledDir = () => process.env.CT_EDITOR_STEPS ?? [path.resolve("source/editor-steps"), path.resolve("editor-steps")].find((d) => existsSync(d)) ?? "";
 
-/** The steps that come with the app, read as text from each folder's plugin.ts (nothing in them runs): its plug-in id, name and line. */
-export function bundledSteps(): { folder: string; pluginId: string; title: string; about: string }[] {
+/**
+ * The plug-ins that come with the app, read as text from each folder's plugin.ts (nothing in them runs): its plug-in id,
+ * name, line and kind. The kind is read only before the first { or [ after the id, so a step option's kind never stands in.
+ */
+export function bundledPlugins(): { folder: string; pluginId: string; title: string; about: string; kind: string }[] {
   const root = bundledDir();
   if (!root) return [];
   return readdirSync(root, { withFileTypes: true }).flatMap((d) => {
@@ -42,13 +46,17 @@ export function bundledSteps(): { folder: string; pluginId: string; title: strin
     if (!d.isDirectory() || !existsSync(file)) return [];
     const text = readFileSync(file, "utf8");
     const at = text.search(/\bid:\s*"/);
-    const near = (key: string) => new RegExp(`\\b${key}:\\s*"([^"]+)"`).exec(text.slice(at, at + 600))?.[1];
+    const near = (key: string, upTo = 600) => new RegExp(`\\b${key}:\\s*"([^"]+)"`).exec(text.slice(at, at + upTo))?.[1];
     const pluginId = at < 0 ? undefined : near("id");
-    return pluginId ? [{ folder: d.name, pluginId, title: near("name") ?? pluginId, about: near("about") ?? "" }] : [];
+    const head = text.slice(at, at + 600).search(/[{[]/);
+    return pluginId ? [{ folder: d.name, pluginId, title: near("name") ?? pluginId, about: near("about") ?? "", kind: near("kind", head < 0 ? 600 : head) ?? "" }] : [];
   });
 }
 
-/** What Settings → AI Editor shows this account: the loaded steps, then the ones that come with the app and are not loaded. */
+/**
+ * The loaded steps, then the plug-ins that come with the app (on the Mac app's own server): each one not loaded, and each
+ * loaded one that adds no step. Settings → AI Editor shows the "on" rows, Community → Plug-ins all of them.
+ */
 export function stepsView(user: string): StepsView {
   const saved = readSaved(user);
   const loaded = pluginEditorSteps();
@@ -60,11 +68,12 @@ export function stepsView(user: string): StepsView {
     values: valuesOf(info, saved[info.id]?.values),
   }));
   if (canAdd) {
-    const running = new Set(loaded.map((s) => s.pluginId));
-    for (const b of bundledSteps()) {
-      if (running.has(b.pluginId)) continue;
-      const there = existsSync(path.join(pluginsFolder(), b.folder));
-      rows.push({ id: b.pluginId, title: b.title, about: b.about, state: there ? "off" : "add", folder: b.folder, use: false, values: {} });
+    const withSteps = new Set(loaded.map((s) => s.pluginId));
+    const running = new Set(loadedPluginIds());
+    for (const b of bundledPlugins()) {
+      if (withSteps.has(b.pluginId)) continue;
+      const state = running.has(b.pluginId) ? "loaded" : existsSync(path.join(pluginsFolder(), b.folder)) ? "off" : "add";
+      rows.push({ id: b.pluginId, title: b.title, about: b.about, kind: b.kind, state, folder: b.folder, use: false, values: {} });
     }
   }
   return { steps: rows, canAdd };
@@ -118,11 +127,11 @@ editStepsApp.put("/:id", async (c) => {
   return c.json(stepsView(user));
 });
 
-/** Turn on: the step's folder goes into the plug-ins folder (once). Switching it on is the Mac app's, in its own alert. */
+/** Download: the plug-in's folder goes into the plug-ins folder (once). Switching it on is the Mac app's, in its own alert. */
 editStepsApp.post("/add/:folder", async (c) => {
   if (!folderPluginsEnabled() || c.get("user").role !== "admin") return c.json({ error: "Not found" }, 404);
-  const b = bundledSteps().find((x) => x.folder === c.req.param("folder"));
-  if (!b) return c.json({ error: "No such step", code: "invalid" }, 400);
+  const b = bundledPlugins().find((x) => x.folder === c.req.param("folder"));
+  if (!b) return c.json({ error: "No such plug-in", code: "invalid" }, 400);
   const dest = path.join(pluginsFolder(), b.folder);
   if (!existsSync(dest)) await cp(path.join(bundledDir(), b.folder), dest, { recursive: true });
   return c.json({ folder: b.folder });
