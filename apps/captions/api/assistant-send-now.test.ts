@@ -368,6 +368,28 @@ describe("New chat and an earlier chat while a reply runs or waits", () => {
     expect(opened.messages.filter((m) => m.role === "assistant").map((m) => [m.text, m.status])).toEqual([["*Stopped.*", "done"], ["*Stopped.*", "done"]]);
   });
 
+  it("deleting an earlier chat whose reply runs stops it, drops the one queued there, and the new chat's message goes next", async () => {
+    const p = await person("ida");
+    await p.send({ text: "Alpha one" });
+    const first = await p.claim();
+    await p.send({ text: "Alpha two" });
+    const alpha = (await p.view()).id;
+    await p.newChat();
+    await p.send({ text: "Beta one" });
+    const next = p.claim();
+    const r = await app.request(`/api/assistant/past/${alpha}`, { method: "DELETE", headers: { cookie: p.cookie } });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as View).past.map((c) => c.id)).not.toContain(alpha);
+    const beta = await next;
+    expect(beta.user).toContain("Beta one");
+    expect(beta.user).not.toContain("Alpha");
+    await p.answer(first.id, "late");
+    await p.answer(beta.id, "Answer beta");
+    const v = await settled(p);
+    expect(v.messages.map((m) => m.text)).toEqual(["Beta one", "Answer beta"]);
+    expect(v.past).toEqual([]);
+  });
+
   it("an earlier chat opens while a reply is written in the open one, which then keeps working among the earlier chats", async () => {
     const p = await person("hal");
     await p.send({ text: "Done one" });
