@@ -238,3 +238,69 @@ describe("designs: a cover or a thumbnail from a video's moment", () => {
     expect((await call("POST", "/api/designs", { format: "cover", version: "ver_v", t: -3 })).status).toBe(400);
   });
 });
+
+describe("designs: an AI that writes the layers itself", () => {
+  type Read = { width: number; height: number; kind: string; fonts: string[]; how: string; looks: Array<{ name: string; brief: string }>; pictures: Array<{ id: string; what: string }>; pages: Array<{ page: number; words?: string; background: string; layers: unknown[] }> };
+  const text = { type: "text", font: "Anton", size: 90, color: "#ffffff", align: "center", x: 90, y: 400, w: 900, h: 300 };
+
+  it("reads each page with its own words and how layers are written, and replaces the pages it names: a carousel's words stay the slides'", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", session: SESSION, doc: DOC })).body;
+    const read = (await call<Read>("GET", `/api/designs/${d.id}/pages`)).body;
+    expect(read).toMatchObject({ kind: "carousel", width: 1080, height: 1350 });
+    expect(read.pages.map((p) => [p.page, p.words])).toEqual([[1, "Roll the mat out\n\nOn a soft floor, with you next to it."], [2, "Then the ramp goes down"], [3, "Try it today"]]);
+    expect(read.pages[0]!.layers).toEqual(d.pages[0]!.layers);
+    expect(read.fonts).toContain("Anton");
+    expect(read.how).toContain('{"type":"text"');
+    expect(read.how).toContain("never add, drop or change one");
+    expect(read.how).toContain('[{"page":1,');
+
+    const out = await call<DesignAnswer>("POST", `/api/designs/${d.id}/pages`, {
+      pages: [
+        { page: 2, background: "#102030", layers: [{ type: "shape", shape: "ellipse", fill: "#ff6600", x: 700, y: 80, w: 300, h: 300 }, { ...text, text: "Then the ramp goes down" }, { ...text, y: 800, text: "Buy the course" }] },
+        { page: 9, layers: [{ ...text, text: "Try it today" }] },
+      ],
+    });
+    expect(out.status).toBe(200);
+    expect(out.body.notes).toEqual(["Page 2: “Buy the course” is not in its own words: left out", "There is no page 9: this design has 3"]);
+    expect(out.body.design.pages[1]).toMatchObject({ id: d.pages[1]!.id, background: "#102030" });
+    expect(out.body.design.pages[1]!.layers.map((l) => l.type)).toEqual(["shape", "text"]);
+    // the pages it did not name are as they were, and so is a page's colour when none is given
+    expect([out.body.design.pages[0], out.body.design.pages[2]]).toEqual([d.pages[0], d.pages[2]]);
+    const again = (await call<DesignAnswer>("POST", `/api/designs/${d.id}/pages`, { pages: [{ page: 2, layers: [{ ...text, text: "Then the ramp goes down" }] }] })).body.design;
+    expect(again.pages[1]).toMatchObject({ background: "#102030", layers: [{ type: "text" }] });
+
+    // nothing that can be drawn: refused in words the AI can act on, and nothing is saved
+    const none = await call<{ error: string }>("POST", `/api/designs/${d.id}/pages`, { pages: [{ page: 1, layers: [{ ...text, text: "Something else" }] }] });
+    expect(none.status).toBe(400);
+    expect(none.body.error).toContain("“Something else” is not in its own words");
+    expect((await call("POST", `/api/designs/${d.id}/pages`, {})).status).toBe(400);
+    expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages).toEqual(again.pages);
+    expect((await call("GET", `/api/designs/${d.id}/pages`, undefined, "robin")).status).toBe(404);
+    expect((await call("POST", `/api/designs/${d.id}/pages`, { pages: [{ page: 1, layers: [] }] }, "robin")).status).toBe(404);
+
+    // a slide written since the design was made has a page to design, with that slide's words
+    piece(DOC, "carousel", [...slides, "One more thing"]);
+    try {
+      expect((await call<Read>("GET", `/api/designs/${d.id}/pages`)).body.pages.map((p) => p.words)[3]).toBe("One more thing");
+      const more = (await call<DesignAnswer>("POST", `/api/designs/${d.id}/pages`, { pages: [{ page: 4, layers: [{ ...text, text: "One more thing" }] }] })).body.design;
+      expect(more.pages).toHaveLength(4);
+      expect(new Set(more.pages.map((p) => p.id)).size).toBe(4);
+    } finally {
+      piece(DOC, "carousel", slides);
+    }
+  });
+
+  it("a cover's words are what the chat asks for: none are held, and the person's looks come as their own briefs", async () => {
+    const style = createAnimation("jordan", { name: "Paper cut", brief: "Torn paper edges, one loud colour." });
+    if (typeof style === "string") throw new Error(style);
+    const d = (await call<Design>("POST", "/api/designs", { format: "thumbnail", version: "ver_v", t: 1, title: "Floor time" })).body;
+    const read = (await call<Read>("GET", `/api/designs/${d.id}/pages`)).body;
+    expect(read.pages[0]).not.toHaveProperty("words");
+    expect(read.pictures).toEqual([{ id: d.pictures[0], what: "the video's own frame" }]);
+    expect(read.looks).toContainEqual({ name: "Paper cut", brief: "Torn paper edges, one loud colour." });
+    expect(read.how).toContain("Write only words the user asked for");
+    const out = (await call<DesignAnswer>("POST", `/api/designs/${d.id}/pages`, { pages: [{ page: 1, layers: [{ type: "image", picture: d.pictures[0], fit: "cover", x: 0, y: 0, w: 1280, h: 720 }, { ...text, text: "3 MISTAKES" }, { type: "image", picture: "ffffffff.png", x: 0, y: 0, w: 10, h: 10 }] }] })).body;
+    expect(out.design.pages[0]!.layers).toMatchObject([{ type: "image" }, { type: "text", text: "3 MISTAKES" }]);
+    expect(out.notes).toEqual(["Page 1: a picture that is not in this design: left out"]);
+  });
+});

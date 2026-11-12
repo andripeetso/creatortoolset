@@ -7,7 +7,7 @@ import { FONT_OPTIONS } from "../src/lib/types";
 import { aiFor, completeWithFallback } from "./ai-complete";
 import { completeVisionWithFallback, type VisionImage } from "./ai-vision";
 import type { AuthVars } from "./auth";
-import { findAnimation } from "./editor/animation-styles";
+import { animationStyles, findAnimation } from "./editor/animation-styles";
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
@@ -89,15 +89,19 @@ async function slidesOf(user: AuthVars["user"], session: string, doc: string): P
 
 /* ---- the AI's call ---- */
 
-export const DESIGN_SYSTEM = `You design pictures for a creator: carousel slides, video covers and thumbnails. Your design is data, not a picture: pages of layers that the app draws exactly as you give them, and that the person then moves, resizes and restyles by hand.
-
-Every layer has "x", "y", "w", "h" in pixels from the page's top left corner, and may have "rotate" (degrees about its middle) and "opacity" (0 to 1). Layers are drawn in order, a later one over an earlier one. The kinds:
+/** How layers are written: part of the design call, and what an AI that asks for a design's pages is told (GET /:id/pages). */
+export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from the page's top left corner, and may have "rotate" (degrees about its middle) and "opacity" (0 to 1). Layers are drawn in order, a later one over an earlier one. The kinds:
 - {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"upper":false,"outline":{"color":"#rrggbb","width":8}}: the words wrap inside w; size is the letter height in pixels.
 - {"type":"shape","shape":"rect|ellipse","fill":"#rrggbb","radius":0,"stroke":{"color":"#rrggbb","width":4}}
 - {"type":"image","picture":"<id>","fit":"cover|contain","radius":0}: only a picture listed under "Pictures".
-- {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes and paths only: no text, no image, no link, no script, no style element.
+- {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes and paths only: no text, no image, no link, no script, no style element.`;
+const AUTHORS_WORDS = "The words on each page are the author's. Place every word of a page on that page, as written: you choose where the words go, how big they are and how they are split across text layers, and you never add, drop or change one.";
 
-The words on each page are the author's. Place every word of a page on that page, as written: you choose where the words go, how big they are and how they are split across text layers, and you never add, drop or change one.
+export const DESIGN_SYSTEM = `You design pictures for a creator: carousel slides, video covers and thumbnails. Your design is data, not a picture: pages of layers that the app draws exactly as you give them, and that the person then moves, resizes and restyles by hand.
+
+${DESIGN_LAYERS}
+
+${AUTHORS_WORDS}
 
 Answer with JSON only, one page for each page asked for, in order:
 {"pages":[{"background":"#rrggbb","layers":[…]}]}`;
@@ -188,6 +192,76 @@ export async function designPages(user: AuthVars["user"], d: Design, body: { loo
   if (!made.pages.some((p) => p.layers.length)) throw new DesignError(`The AI's design had nothing that could be drawn${made.notes.length ? ` (${made.notes.slice(0, 2).join("; ")})` : ""}`, 502);
   const design = await save({ ...d, pages, ...(style ? { look: style.id } : { look: undefined }), updatedAt: Date.now() });
   return { design, notes: made.notes };
+}
+
+/* ---- an AI that writes the layers itself (the assistant, a connected AI) ---- */
+
+const saidOn = (p: DesignPage): string => p.layers.flatMap((l) => (l.type === "text" ? [l.text] : [])).join("\n");
+
+/**
+ * The pages as an AI works on them. A carousel piece's design: its pages, a plain page for each slide written since
+ * (so that slide can be designed too), and each page's words as the slide has them now: those are held, as in the
+ * design call. A cover or a thumbnail: its pages, and no words held, since what it says is asked for in the chat.
+ */
+async function pagesForAi(user: AuthVars["user"], d: Design): Promise<{ pages: DesignPage[]; words: string[] | null }> {
+  if (!("session" in (d.from ?? {}))) return { pages: d.pages, words: null };
+  const { slides } = await slidesOf(user, (d.from as { session: string }).session, (d.from as { doc: string }).doc);
+  const taken = new Set(d.pages.map((p) => p.id));
+  const more = plainPages(slides, d.width, d.height)
+    .slice(d.pages.length)
+    .map((p, k) => ({ ...p, id: taken.has(p.id) ? `p${Date.now().toString(36)}${k}` : p.id }));
+  const pages = [...d.pages, ...more].slice(0, DESIGN_LIMITS.pages);
+  return { pages, words: pages.map((p, k) => slides[k] ?? saidOn(p)) };
+}
+
+/** What an AI is given to design from: the size, the fonts, the pictures, the person's looks in their own words, each page with its words, and how layers are written. */
+async function forAi(user: AuthVars["user"], d: Design) {
+  const { pages, words } = await pagesForAi(user, d);
+  return {
+    id: d.id,
+    name: d.name,
+    kind: d.kind,
+    width: d.width,
+    height: d.height,
+    fonts: FONT_OPTIONS.map((f) => f.family),
+    pictures: d.pictures.map((id) => ({ id, what: "version" in (d.from ?? {}) && id === d.pictures[0] ? "the video's own frame" : "a picture the author added" })),
+    // a look is its pictures first, and those are not sent here: its name and brief are what words can carry
+    looks: animationStyles(d.owner)
+      .filter((s) => s.brief.trim())
+      .slice(0, 12)
+      .map((s) => ({ name: s.name, brief: s.brief.trim().slice(0, 600) })),
+    pages: pages.map((p, k) => ({ page: k + 1, ...(words ? { words: words[k] } : {}), background: p.background, layers: p.layers })),
+    how: `${DESIGN_LAYERS}\n\n${words ? `${AUTHORS_WORDS} Each page's own are its "words"; to change them, change the piece's slide first.` : "Write only words the user asked for or agreed to."}\n\nTo change pages, give them as [{"page":1,"background":"#rrggbb","layers":[…]}]: each page given is replaced whole, the others stay.`,
+  };
+}
+
+/** An AI's pages onto the design: each page named is replaced whole, checked as the design call's answer is. */
+async function writeForAi(user: AuthVars["user"], d: Design, given: unknown): Promise<DesignAnswer> {
+  if (!Array.isArray(given) || !given.length) throw new DesignError('Give the pages to replace: [{"page":1,"background":"#rrggbb","layers":[…]}]');
+  const { pages, words } = await pagesForAi(user, d);
+  const next = [...pages];
+  const notes: string[] = [];
+  let drawn = 0;
+  for (const raw of given.slice(0, DESIGN_LIMITS.pages) as Array<Record<string, unknown> | null>) {
+    const n = Number.isInteger(raw?.page) ? (raw!.page as number) : 0;
+    const was = pages[n - 1];
+    if (!was) {
+      notes.push(`There is no page ${String(raw?.page)}: this design has ${pages.length}`);
+      continue;
+    }
+    const made = cleanPages([raw], { w: d.width, h: d.height, pictures: d.pictures, ...(words ? { words: [words[n - 1] ?? ""] } : {}) });
+    notes.push(...made.notes.map((note) => note.replace(/^Page 1:/, `Page ${n}:`)));
+    const page = made.pages[0];
+    if (!page?.layers.length) {
+      notes.push(`Page ${n}: nothing given could be drawn, so it is as it was`);
+      continue;
+    }
+    // the page keeps its id and name, and its colour when none is given
+    next[n - 1] = { ...page, id: was.id, ...(was.name ? { name: was.name } : {}), background: typeof raw?.background === "string" ? page.background : was.background };
+    drawn++;
+  }
+  if (!drawn) throw new DesignError(`Nothing given could be drawn${notes.length ? ` (${notes.slice(0, 3).join("; ")})` : ""}`);
+  return { design: await save({ ...d, pages: next, updatedAt: Date.now() }), notes };
 }
 
 /* ---- routes ---- */
@@ -285,6 +359,10 @@ designsApp.delete("/:id", (c) =>
 );
 
 designsApp.post("/:id/design", (c) => answer(c, async () => designPages(c.get("user"), await mine(c), await body(c))));
+
+// an AI that designs the pages itself: what it reads, and what it writes
+designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c))));
+designsApp.post("/:id/pages", (c) => answer(c, async () => writeForAi(c.get("user"), await mine(c), (await body(c)).pages)));
 
 designsApp.post("/:id/pictures", (c) =>
   answer(c, async () => {

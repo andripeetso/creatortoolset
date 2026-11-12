@@ -12,6 +12,8 @@
  *   PUT    /api/designs/:id             { name?, pages?, look? } → Design (what the person changed by hand)
  *   DELETE /api/designs/:id
  *   POST   /api/designs/:id/design      { look?: string | null, notes?: string } → DesignAnswer (the AI designs the pages)
+ *   GET    /api/designs/:id/pages       → what an AI designs from: the size, fonts, pictures, looks' briefs, each page with its words, how layers are written
+ *   POST   /api/designs/:id/pages       { pages: [{ page, background?, layers }] } → DesignAnswer (an AI's pages: each one named is replaced, checked as above)
  *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP)
  *   GET    /api/designs/:id/pictures/:pid
  * A picture layer names a picture in the design's own folder by its id, never an address: a video's frame and anything

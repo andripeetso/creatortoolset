@@ -17,6 +17,7 @@ import { addPicture, designWithAi, getDesign, pictureUrl, saveDesign } from "@/l
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import { listAnimationStyles } from "@/lib/editor";
+import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { FONT_OPTIONS, fontWeightFor } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -183,6 +184,25 @@ export default function DesignPage() {
     setLive(null);
     setHist((h) => (h ? (back ? histUndo(h) : histRedo(h)) : h));
   };
+
+  // A change made somewhere else (the assistant designing the pages, another window) is shown at once, as a step ⌘Z
+  // takes back. This window's own saves are not told back to it (lib/sync.ts). What comes from the server is not
+  // saved again; what was changed here in the moment before is the step behind it.
+  useEffect(
+    () =>
+      onTopic("designs", () => {
+        getDesign(id).then(
+          (d) => {
+            setDesign(d);
+            if (JSON.stringify(d.pages) === JSON.stringify(latest.current)) return;
+            first.current = true;
+            change(() => d.pages);
+          },
+          () => {},
+        );
+      }),
+    [id, change],
+  );
 
   /** The saved page with every picked layer through `fn`. */
   const through = (fn: (l: Layer) => Layer): Page | null => (base ? { ...base, layers: base.layers.map((l) => (selected.includes(l.id) ? fn(l) : l)) } : null);
