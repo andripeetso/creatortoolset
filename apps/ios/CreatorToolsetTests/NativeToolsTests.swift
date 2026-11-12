@@ -151,7 +151,7 @@ final class NativeToolsTests: XCTestCase {
     /// Chats as the screen orders it, from the three lists.
     private func chats(todo: Data = NativeToolsTests.todo, held: Set<String> = []) throws -> [ChatRow] {
         let edits = EditorChats.rows(edits: try decode(Self.edits), todo: try decode(todo), held: held)
-        return ChatList.arrange(assistant: ChatList.assistant(nil), rows: ChatList.merge(videos: try decode(Self.reviews), others: edits))
+        return ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: edits))
     }
 
     func testTheListsDecode() throws {
@@ -176,38 +176,38 @@ final class NativeToolsTests: XCTestCase {
 
     func testChatsRowsTheirOrderShelvesAndBadges() throws {
         let rows = try chats()
-        XCTAssertEqual(rows.map(\.title), ["Assistant", "Tummy time: 3 mistakes", "Crawling myths reshoot", "Hanging basics",
+        XCTAssertEqual(rows.map(\.title), ["Tummy time: 3 mistakes", "Crawling myths reshoot", "Hanging basics",
                                            "Sleep routine reel", "Rolling cues", "Hanging basics teaser v2"])
-        XCTAssertEqual(rows.map(\.shelf), [.active, .active, .active, .active, .active, .working, .done])
+        XCTAssertEqual(rows.map(\.shelf), [.active, .active, .active, .active, .working, .done])
         // an edit whose pass waits and whose cut is in Review is one row, and the go comes first
-        XCTAssertEqual(rows[1].status, .yourGo)
-        XCTAssertEqual(rows[1].detail, "First cut is ready · next: B-roll")
-        XCTAssertEqual(rows[1].route, .edit(tummy))
-        XCTAssertEqual(rows[1].keys.count, 2)
-        XCTAssertEqual(rows[2].status, .failed)
-        XCTAssertTrue(rows[2].detailIsError)
-        XCTAssertEqual(rows[2].detail, "No voice recording in the folder: the mic file is missing. Add it and run Sort again.")
+        XCTAssertEqual(rows[0].status, .yourGo)
+        XCTAssertEqual(rows[0].detail, "First cut is ready · next: B-roll")
+        XCTAssertEqual(rows[0].route, .edit(tummy))
+        XCTAssertEqual(rows[0].keys.count, 2)
+        XCTAssertEqual(rows[1].status, .failed)
+        XCTAssertTrue(rows[1].detailIsError)
+        XCTAssertEqual(rows[1].detail, "No voice recording in the folder: the mic file is missing. Add it and run Sort again.")
         // a look sheet waits although music is queued behind it
-        XCTAssertEqual(rows[3].status, .yourGo)
-        XCTAssertEqual(rows[3].detail, "Look sheet is ready")
+        XCTAssertEqual(rows[2].status, .yourGo)
+        XCTAssertEqual(rows[2].detail, "Look sheet is ready")
         // changes he asked for: no word at the edge, and not under Done although its script is ready to post
-        XCTAssertEqual(rows[4].detail, "Changes requested on V1A-2")
-        XCTAssertFalse(rows[4].status.waitsOnYou)
-        XCTAssertEqual(rows[5].detail, "Script")
-        XCTAssertEqual(rows[5].status, .working(since: Date(timeIntervalSince1970: 1_794_417_383.365)))
+        XCTAssertEqual(rows[3].detail, "Changes requested on V1A-2")
+        XCTAssertFalse(rows[3].status.waitsOnYou)
+        XCTAssertEqual(rows[4].detail, "Script")
+        XCTAssertEqual(rows[4].status, .working(since: Date(timeIntervalSince1970: 1_794_417_383.365)))
         // the two cuts in Review belong to their edits' rows; the video uploaded by hand has its own, approved
-        XCTAssertEqual(rows[6].route, .review("ca5463a2-36d1-46dc-9f41-3ae5c54a4d2f", version: nil))
+        XCTAssertEqual(rows[5].route, .review("ca5463a2-36d1-46dc-9f41-3ae5c54a4d2f", version: nil))
         XCTAssertEqual(rows.filter(\.status.waitsOnYou).count, 3)
-        XCTAssertEqual(ChatFilter.allCases.map { chip in rows.filter(chip.has).count }, [7, 5, 1, 1])
+        XCTAssertEqual(ChatFilter.allCases.map { chip in rows.filter(chip.has).count }, [6, 5, 1, 0])
     }
 
     func testAnOlderServerThatDoesNotSayWhichJobIsHeld() throws {
         let old = Data(String(decoding: Self.todo, as: UTF8.self).replacingOccurrences(of: #","hold":true"#, with: "").utf8)
         XCTAssertEqual(try decode(old, as: EditorTodo.self).sheets.map(\.hold), [nil, nil])
-        XCTAssertEqual(try chats(todo: old)[1].detail, "Look sheet is ready")
+        XCTAssertEqual(try chats(todo: old)[0].detail, "Look sheet is ready")
         // the phone read the edit and found the pass held
         let key = "j:\(tummy):7f98003b-584c-4854-81e9-f3608bfd9161"
-        XCTAssertEqual(try chats(todo: old, held: [key])[1].detail, "First cut is ready · next: B-roll")
+        XCTAssertEqual(try chats(todo: old, held: [key])[0].detail, "First cut is ready · next: B-roll")
     }
 
     func testWhatIsNewToTell() throws {
@@ -225,8 +225,8 @@ final class NativeToolsTests: XCTestCase {
         // he pressed go: the row now says Review, for a cut he was shown already
         var todo: EditorTodo = try decode(Self.todo)
         todo.sheets.removeFirst()
-        let after = ChatList.arrange(assistant: ChatList.assistant(nil), rows: EditorChats.rows(edits: try decode(Self.edits), todo: todo))
-        XCTAssertEqual(after[1].status, .review)
+        let after = ChatList.arrange(rows: EditorChats.rows(edits: try decode(Self.edits), todo: todo))
+        XCTAssertEqual(after[0].status, .review)
         let then = AppNotifications.fresh(after, shown: first.shown)
         XCTAssertTrue(then.notes.isEmpty)
         // the pass he started waits again later under the same name: it is news again, because it left in between
@@ -315,12 +315,10 @@ final class NativeToolsTests: XCTestCase {
         // what the plug-in sends (its `apnsPayload`): an edit, a Review video, or an assistant chat
         XCTAssertEqual(AppRoute.from(path: "/editor/\(tummy)"), .edit(tummy))
         XCTAssertEqual(AppRoute.from(path: "/review/r9?v=2"), .review("r9", version: 2))
-        XCTAssertEqual(AppNavigator.chat(in: "/?chat=c-41"), "c-41")
-        XCTAssertEqual(AppNavigator.chat(in: "?chat=c-41"), "c-41")
-        XCTAssertNil(AppNavigator.chat(in: "/?chat="))
-        XCTAssertNil(AppNavigator.chat(in: "/review/r9?chat=c-41"))
-        XCTAssertNil(AppNavigator.chat(in: "https://example.com/?chat=c-41"))
-        XCTAssertNil(AppNavigator.chat(in: "/editor/\(tummy)"))
+        XCTAssertEqual(AppRoute.from(path: "/?chat=c-41"), .chat("c-41"))
+        XCTAssertEqual(AppRoute.from(path: "/?chat="), .page("/?chat="))
+        XCTAssertEqual(AppRoute.from(path: "/review/r9?chat=c-41"), .review("r9", version: nil))
+        XCTAssertNil(AppRoute.from(path: "https://example.com/?chat=c-41"))
     }
 
     // MARK: Share → Creator Toolset

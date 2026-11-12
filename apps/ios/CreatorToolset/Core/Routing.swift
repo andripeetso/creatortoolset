@@ -37,7 +37,7 @@ enum AppRoute: Hashable {
             return .finals
         case "assistant":
             return query("chat").map(AppRoute.chat) ?? .assistant
-        case nil where query("chat") != nil:
+        case nil where query("chat")?.isEmpty == false:
             return .chat(query("chat")!)   // "/?chat=<id>": a notification about a reply in that chat
         default:
             return .page(raw)
@@ -100,30 +100,11 @@ final class AppNavigator: ObservableObject {
 
     /// A link in a chat or on a card: a page of the website becomes a screen, anything else leaves the app.
     func open(href: String) {
-        if let chat = Self.chat(in: href) {
-            Task { await open(chat: chat) }
-        } else if let route = AppRoute.from(path: href) {
+        if let route = AppRoute.from(path: href) {
             open(route)
         } else if let url = URL(string: href), url.scheme == "http" || url.scheme == "https" {
             UIApplication.shared.open(url)
         }
-    }
-
-    /// An assistant chat by its id, as the website names it (`/?chat=<id>`, e.g. a push about a reply).
-    nonisolated static func chat(in href: String) -> String? {
-        guard let parts = URLComponents(string: href), parts.host == nil, parts.path == "/" || parts.path.isEmpty else { return nil }
-        return parts.queryItems?.first { $0.name == "chat" }?.value.flatMap { $0.isEmpty ? nil : $0 }
-    }
-
-    /// Opens the assistant on that chat: an earlier one is made the open chat first, as the website does. Not while a
-    /// reply is being written (the server refuses then): the assistant opens on the chat it has.
-    func open(chat id: String) async {
-        let assistant = AssistantModel.shared
-        if assistant.view == nil { await assistant.load() }
-        if let view = assistant.view, view.id != id, view.thinking == nil, view.past.contains(where: { $0.id == id }) {
-            await assistant.open(past: id)
-        }
-        open(.assistant)
     }
 
     /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 2` or `-startTab finals`
