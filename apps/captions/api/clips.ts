@@ -5,7 +5,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import type { AuthVars } from "./auth";
+import { sessionOf, type AuthVars } from "./auth";
 import {
   assembleParts,
   MAX_UPLOAD_BYTES,
@@ -25,6 +25,8 @@ import {
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
 import { env } from "./lib/env";
+import { isWithin, sharedFolder } from "./folders";
+import type { SharedFolder, ToolFolder } from "../contracts/folders";
 import {
   applyTranscriptCleanup,
   CLEANUP_CHUNK,
@@ -38,7 +40,7 @@ import {
 import { announceSoon } from "./lib/announce-soon";
 import { workEnded } from "./assistant";
 import { capChapters, chapterCountRange, timedTranscript } from "./lib/timed-transcript";
-import { type SessionUser } from "./users";
+import { findUser, LOCAL_USER, type SessionUser } from "./users";
 import {
   cloudTranscribeBlock,
   transcribeWav,
@@ -157,6 +159,8 @@ interface Meta {
   blocks?: ClipBlock[];
   createdAt: number;
   updatedAt: number;
+  /** How many times a restart has started its processing again (resumeJob). */
+  resumes?: number;
 }
 
 const active = new Map<string, Meta>();
@@ -305,12 +309,14 @@ async function readMeta(id: string): Promise<Meta | null> {
     const meta: Meta = JSON.parse(
       await readFile(path.join(sesDir(id), "meta.json"), "utf-8"),
     );
-    if (meta.status === "processing") {
-      meta.status = "error";
-      meta.error = "Interrupted by a server restart — try again.";
+    if (meta.status === "processing" && !active.has(id)) {
+      if (!resumeJob(meta)) {
+        meta.status = "error";
+        meta.error = "Processing stopped several times when the server restarted. Try again.";
+      }
       await persist(meta);
     }
-    return meta;
+    return active.get(id) ?? meta;
   } catch {
     return null;
   }
@@ -788,6 +794,7 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     meta.step = undefined;
     meta.progress = 1;
     meta.error = undefined;
+    meta.resumes = undefined;
     await jobPersist(meta);
   } catch (e) {
     stopCrawl();
@@ -815,6 +822,28 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     await rm(wavPath(id), { force: true }).catch(() => {});
   }
 }
+
+/** The most times a restart starts a note's processing again: a file that takes the server down doesn't do it forever. */
+const MAX_RESUMES = 3;
+
+/**
+ * A note whose processing a server restart stopped (a build, an update) starts again in the background as its owner;
+ * the video plays meanwhile. False: no owner to run it as, or it has been started again too often.
+ */
+// ponytail: starts over from the thumbnail, so a long transcription is done again; keep the words heard so far if that hurts
+function resumeJob(meta: Meta): boolean {
+  if ((meta.resumes ?? 0) >= MAX_RESUMES) return false;
+  const rec = meta.owner ? findUser(meta.owner) : null;
+  const user = rec ? sessionOf(rec) : !env.appSecret ? LOCAL_USER : null;
+  if (!user) return false;
+  meta.resumes = (meta.resumes ?? 0) + 1;
+  console.log(`[clips] ${meta.id}: processing again after a restart (${meta.resumes}/${MAX_RESUMES})`);
+  enqueue(meta, user);
+  return true;
+}
+
+/** At start: every note a restart stopped picks up again, without anyone opening it. */
+export const resumeStoppedClips = () => clipMetas(() => false).then(() => undefined);
 
 function enqueue(meta: Meta, user: SessionUser): void {
   active.set(meta.id, meta);
@@ -882,8 +911,15 @@ clipsApp.get("/availability", (c) => {
   });
 });
 
-clipsApp.get("/", async (c) => {
-  const user = c.get("user");
+/** The folders from the top down to `id`. */
+function folderTrail(folders: ToolFolder[], id: string): ToolFolder[] {
+  const out: ToolFolder[] = [];
+  for (let f = folders.find((x) => x.id === id); f && !out.includes(f); f = folders.find((x) => x.id === f!.parentId)) out.unshift(f);
+  return out;
+}
+
+/** Every clip's meta that `keep` takes, newest first. */
+async function clipMetas(keep: (m: Meta) => boolean): Promise<Meta[]> {
   let ids: string[] = [];
   try {
     ids = (await readdir(CLIPS_DIR, { withFileTypes: true }))
@@ -891,14 +927,44 @@ clipsApp.get("/", async (c) => {
       .map((d) => d.name)
       .filter(okId);
   } catch {
-    return c.json([]);
+    return [];
   }
-  const metas = (await Promise.all(ids.map(readMeta))).filter(
-    (m): m is Meta =>
-      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner)),
-  );
-  metas.sort((a, b) => b.createdAt - a.createdAt);
+  const metas = (await Promise.all(ids.map(readMeta))).filter((m): m is Meta => !!m && keep(m));
+  return metas.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+clipsApp.get("/", async (c) => {
+  const user = c.get("user");
+  const metas = await clipMetas((m) => m.owner === user.username || (user.role === "admin" && !m.owner));
   return c.json(metas.map(publicMeta));
+});
+
+// GET /api/clips/f/:token[?f=<a folder inside>] → SharedFolder: a shared folder of Video Notes, no account needed (its
+// link is the key). Only that folder and the ones inside it, and only its owner's clips in them.
+clipsApp.get("/f/:token", async (c) => {
+  const shared = await sharedFolder("notes", c.req.param("token"));
+  if (!shared) return c.json({ error: "Not found" }, 404);
+  const { data, folder: root, username } = shared;
+  const at = data.folders.find((f) => f.id === (c.req.query("f") || root.id));
+  if (!at || !isWithin(data, root.id, at.id)) return c.json({ error: "Not found" }, 404);
+  const clips = await clipMetas((m) => m.owner === username && m.status !== "error");
+  const inFolder = (fid: string) => clips.filter((m) => data.items[m.id] === fid);
+  const trail = folderTrail(data.folders, at.id);
+  const out: SharedFolder = {
+    name: root.name,
+    trail: trail.slice(trail.findIndex((f) => f.id === root.id)).map(({ id, name }) => ({ id, name })),
+    folders: data.folders
+      .filter((f) => f.parentId === at.id)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((f) => ({
+        id: f.id,
+        name: f.name,
+        count: inFolder(f.id).length + data.folders.filter((x) => x.parentId === f.id).length,
+        pictures: inFolder(f.id).map((m) => m.id).filter((id) => existsSync(thumbPath(id))).slice(0, 4),
+      })),
+    items: inFolder(at.id).map((m) => ({ id: m.id, name: m.name, duration: m.duration, createdAt: m.createdAt, hasThumb: existsSync(thumbPath(m.id)) })),
+  };
+  return c.json(out, 200, { "Cache-Control": "no-store" });
 });
 
 clipsApp.post("/init", async (c) => {
@@ -1013,6 +1079,7 @@ clipsApp.post("/:id/retry", async (c) => {
   if (meta.status === "processing") {
     return c.json({ error: "Already processing" }, 409);
   }
+  meta.resumes = undefined;
   enqueue(meta, user);
   await persist(meta);
   return c.json(publicMeta(meta));

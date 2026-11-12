@@ -75,7 +75,8 @@ export async function sweepAll(): Promise<void> {
 /** One of this account's dropped files, uploading or in, removed (a strict id only). false when there was none. */
 export async function removeFile(user: string, id: string): Promise<boolean> {
   if (!UUID.test(id) || !(await stat(dirOf(user, id)).catch(() => null))) return false;
-  await rm(dirOf(user, id), { recursive: true, force: true });
+  // a part may still be landing in parts/ (Stop during an upload): rm retries the ENOTEMPTY that race gives
+  await rm(dirOf(user, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   return true;
 }
 

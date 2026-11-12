@@ -5,7 +5,7 @@ import { appRouter } from "./router";
 import { createContext } from "./context";
 import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
-import { clipsApp } from "./clips";
+import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
@@ -163,6 +163,8 @@ const PUBLIC_CLIP_GET = new RegExp(
   `^/api/clips/${PUBLIC_UUID}(?:/(?:play|thumb|transcript))?$`,
   "i",
 );
+// a shared Video Notes folder (clips.ts /f/:token): the folder's list; its clips play by their own public routes
+const PUBLIC_CLIP_FOLDER_GET = /^\/api\/clips\/f\/[A-Za-z0-9_-]{22}$/;
 const PUBLIC_AGENT_GET =
   /^\/api\/agent-(?:context\.json|transcript\.json|frame\.jpg)$/;
 const PUBLIC_DOC_GET = new RegExp(
@@ -291,6 +293,7 @@ app.use("/api/*", async (c, next) => {
   if (
     c.req.method === "GET" &&
     (PUBLIC_CLIP_GET.test(c.req.path) ||
+      PUBLIC_CLIP_FOLDER_GET.test(c.req.path) ||
       PUBLIC_LIBRARY_SHARE.test(c.req.path) ||
       PUBLIC_AGENT_GET.test(c.req.path) ||
       PUBLIC_DOC_GET.test(c.req.path) ||
@@ -493,6 +496,8 @@ if (env.isProduction) {
       console.log(`Server running on http://${host ?? "localhost"}:${port}/`);
       // a computer linked to the account runs its tunnel while the server runs (api/connect/connector.ts)
       if (connectState()) startConnector();
+      // Video Notes a restart stopped mid-processing carry on in the background
+      void resumeStoppedClips().catch((e) => console.warn("[clips] resume:", e));
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
