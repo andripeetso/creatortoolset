@@ -67,7 +67,8 @@ enum Keychain {
     }
 
     /// Items saved before the shared group existed sit in the app's own group, where the Share extension can't read
-    /// them: each is saved again, once, so it lands in the shared group. Locked phone: tried again next launch.
+    /// them: each is copied into the shared group, and only then is the old copy deleted. Anything refused (a locked
+    /// phone) is tried again next launch; nothing is deleted before its copy is in.
     static func moveToSharedGroup(defaults: UserDefaults = .standard) {
         let done = "keychainShared"
         guard !defaults.bool(forKey: done) else { return }
@@ -79,11 +80,24 @@ enum Keychain {
         var out: AnyObject?
         let status = SecItemCopyMatching(q as CFDictionary, &out)
         guard status == errSecSuccess || status == errSecItemNotFound else { return }
+        var all = true
         for item in (out as? [[String: Any]]) ?? [] {
             guard let account = item[kSecAttrAccount as String] as? String, let data = item[kSecValueData as String] as? Data,
-                  let value = String(data: data, encoding: .utf8) else { continue }
-            set(account, value)
+                  let group = item[kSecAttrAccessGroup as String] as? String else { continue }
+            var copy = query(account)
+            copy[kSecValueData as String] = data
+            copy[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            switch SecItemAdd(copy as CFDictionary, nil) {
+            case errSecSuccess:
+                var old = query(account)
+                old[kSecAttrAccessGroup as String] = group
+                SecItemDelete(old as CFDictionary)
+            case errSecDuplicateItem:
+                break   // already in the shared group
+            default:
+                all = false
+            }
         }
-        defaults.set(true, forKey: done)
+        if all { defaults.set(true, forKey: done) }
     }
 }

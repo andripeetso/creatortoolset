@@ -289,8 +289,12 @@ enum SignIn {
         let user: User?
     }
 
+    /// On the plain session: no answer stays a `URLError`, which the account's sign-in names with the server's address.
     static func authCheck(_ origin: URL, cookie: String?) async throws -> Check {
-        try await API(server: origin, cookie: cookie).get("/api/auth/check")
+        let (data, response) = try await API.session.data(for: API(server: origin, cookie: cookie).request("/api/auth/check"))
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw APIError.server(status, API.message(data, status: status)) }
+        return try JSONDecoder().decode(Check.self, from: data)
     }
 
     private static func username(_ origin: URL, cookie: String?) async throws -> String {

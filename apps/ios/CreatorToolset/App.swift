@@ -73,12 +73,14 @@ struct AppearancePicker: View {
 /// account may not use is gone; each tab's badge counts what waits there.
 struct RootView: View {
     @EnvironmentObject private var servers: Servers
-    @EnvironmentObject private var store: UploadStore
     @ObservedObject private var access = ToolsetAccess.shared
     @ObservedObject private var plugins = ServerPlugins.shared
     @ObservedObject private var nav = AppNavigator.shared
     @ObservedObject private var chats = ChatsModel.shared
     @ObservedObject private var workshop = WorkshopModel.shared
+    /// Uploads that need a look (the Upload badge). Counted from the store's list, not by watching the store: a byte
+    /// going up must not redraw every tab.
+    @State private var failed = 0
     private static var placed = false
 
     var body: some View {
@@ -92,7 +94,7 @@ struct RootView: View {
                     .tag(AppTab.chats)
                 NavigationStack { UploadView() }
                     .tabItem { Label("Upload", systemImage: "arrow.up.circle") }
-                    .badge(store.items.filter { $0.state == .failed }.count)
+                    .badge(failed)
                     .tag(AppTab.upload)
                 if access.shows(.finals) {
                     NavigationStack { FinalsView() }
@@ -125,6 +127,9 @@ struct RootView: View {
                 await workshop.load()
             }
             .onAppear(perform: place)
+            .onReceive(UploadEngine.shared.store.$items.map { $0.filter { $0.state == .failed }.count }.removeDuplicates()) {
+                failed = $0
+            }
         }
     }
 

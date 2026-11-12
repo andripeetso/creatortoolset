@@ -23,6 +23,10 @@ final class ToolsetAccess: ObservableObject {
     @Published private(set) var me: Me?
     private var serverId: String?
 
+    /// The server in use's last answer, before the first screen draws (so tabs don't jump and a helper starts on
+    /// Upload).
+    init() { load(for: API.current?.server.absoluteString) }
+
     private static let key = "toolsetAccess"
     private var saved: [String: Me] {
         get { UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: Me].self, from: $0) } ?? [:] }
@@ -58,7 +62,9 @@ final class ToolsetAccess: ObservableObject {
     }
 
     func refresh() async {
-        guard let api = API.current, let id = serverId else { return }
+        // filed under the server asked, even if another one is picked meanwhile
+        guard let api = API.current else { return }
+        let id = api.server.absoluteString
         struct Check: Decodable { let user: Me? }
         do {
             let check: Check = try await api.get("/api/auth/check")
@@ -100,6 +106,8 @@ final class ServerPlugins: ObservableObject {
     @Published private(set) var known = Known()
     private var serverId: String?
 
+    init() { load(for: API.current?.server.absoluteString) }
+
     private static let key = "serverPlugins"
     private var saved: [String: Known] {
         get { UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: Known].self, from: $0) } ?? [:] }
@@ -116,7 +124,8 @@ final class ServerPlugins: ObservableObject {
     }
 
     func refresh() async {
-        guard let api = API.current, let id = serverId else { return }
+        guard let api = API.current else { return }
+        let id = api.server.absoluteString
         guard let fresh = try? await Self.read(api) else { return }   // offline: keep what we knew
         var all = saved
         all[id] = fresh
