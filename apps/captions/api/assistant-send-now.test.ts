@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +13,8 @@ const app = (await import("./boot")).default;
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
-const { resumeFromDisk, routeOf, runInChat, STALL_MS, WAIT_MS } = await import("./assistant");
+const { resumeFromDisk, routeOf, runInChat, WAIT_MS } = await import("./assistant");
+const { ORPHAN_MS, sweep } = await import("./assistant-files");
 const { onAttention } = await import("./lib/attention");
 type View = import("../contracts/assistant").AssistantView;
 type Attention = import("./lib/attention").Attention;
@@ -483,91 +484,111 @@ describe("the phone's contract", () => {
   });
 });
 
-describe("a file dropped in the Mac app, with its path", () => {
-  it("doesn't hold the reply: it starts at once, told the file is still arriving and where it is; the chip says uploading until it is in", async () => {
+describe("a video dropped in the Mac app goes as its path", () => {
+  it("nothing uploads: the reply starts at once and is told where the video is", async () => {
     const p = await person("pia");
-    const clip = await p.upload("walkthru-1.mp4");
-    const r = await p.send({ text: "Edit these", files: [{ id: clip.id, path: "/Users/tiny/Movies/walkthru-1.mp4" }] });
+    const r = await p.send({ text: "Edit these", localFiles: ["/Users/tiny/Movies/walkthru-1.mp4"] });
     expect(r.status).toBe(202);
     const v = (await r.json()) as View;
-    expect(v.messages.at(-2)!.files).toEqual([{ id: clip.id, name: "walkthru-1.mp4", uploading: true, path: "/Users/tiny/Movies/walkthru-1.mp4" }]);
+    expect(v.messages.at(-2)).toMatchObject({ text: "Edit these", localFiles: ["/Users/tiny/Movies/walkthru-1.mp4"] });
+    expect(v.messages.at(-2)!.files).toBeUndefined();
     expect(v.messages.at(-1)!.wait).toBeUndefined();
     const job = await p.claim();
-    expect(job.user).toContain(`"walkthru-1.mp4", file id ${clip.id}: it is still uploading to this server`);
-    expect(job.user).toContain(`On their computer it is at "/Users/tiny/Movies/walkthru-1.mp4"`);
-    // the upload goes on behind the reply: its last part clears the chip
-    await clip.part();
-    let files = (await p.view()).messages.at(-2)!.files;
-    for (let i = 0; i < 50 && files?.[0]?.uploading; i++) files = (await tick(), await p.view()).messages.at(-2)!.files;
-    expect(files).toEqual([{ id: clip.id, name: "walkthru-1.mp4", path: "/Users/tiny/Movies/walkthru-1.mp4" }]);
+    expect(job.user).toContain(`The user dropped a video from their computer: "/Users/tiny/Movies/walkthru-1.mp4" (its path there; nothing was uploaded).`);
     await p.answer(job.id, "On it.");
-    // the same file sent without a path still waits, as before
-    const other = await p.upload("plain.mp4");
-    expect(((await (await p.send({ text: "And this", files: [other.id] })).json()) as View).messages.at(-1)!.wait).toMatchObject({ for: "videos" });
-    await p.stop();
+    expect(existsSync(path.join(process.env.DATA_DIR!, "assistant", "files", "pia"))).toBe(false);
   });
 
-  it("one that gets no part for a while says it didn't arrive, still uploading; it is taken when it comes after all", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    const p = await person("vic");
-    const clip = await p.upload("Quiet.mp4");
-    await p.send({ text: "Look", files: [{ id: clip.id, path: "/Users/tiny/Quiet.mp4" }] });
-    const job = await p.claim();
-    await vi.advanceTimersByTimeAsync(STALL_MS + 2000);
-    let f = (await p.view()).messages.at(-2)!.files![0]!;
-    for (let i = 0; i < 100 && !f.lost; i++) f = (await new Promise((r) => setImmediate(r)), await p.view()).messages.at(-2)!.files![0]!;
-    vi.useRealTimers();
-    expect(f).toMatchObject({ uploading: true, lost: true });
-    await clip.part();
-    for (let i = 0; i < 50 && f.uploading; i++) f = (await tick(), await p.view()).messages.at(-2)!.files![0]!;
-    expect(f).toEqual({ id: clip.id, name: "Quiet.mp4", path: "/Users/tiny/Quiet.mp4" });
-    await p.answer(job.id, "Ok.");
-  });
-
-  it("on a server on this same Mac it is taken where it is, nothing uploaded; a file of another size at that path is refused", async () => {
-    const p = await person("uma");
-    const clip = path.join(process.env.DATA_DIR!, "Here.mov");
-    writeFileSync(clip, Buffer.alloc(2048, 1));
-    const inPlace = (size: number) => app.request("/api/assistant/files/path", { method: "POST", ...json({ path: clip, size }, { cookie: p.cookie }) });
-    process.env.CT_LOCAL = "1";
-    try {
-      expect(((await (await inPlace(99)).json()) as { error: string }).error).toMatch(/isn't the one dropped/);
-      const { id } = (await (await inPlace(2048)).json()) as { id: string };
-      await p.send({ text: "Caption it", files: [{ id, path: clip }] });
-      const job = await p.claim();
-      expect(job.user).toContain(`"Here.mov" (0.0 MB), file id ${id}. On their computer it is at ${JSON.stringify(clip)}.`);
-      await p.answer(job.id, "Ok.");
-    } finally {
-      delete process.env.CT_LOCAL;
-    }
-    expect((await inPlace(2048)).status).toBe(409); // a server elsewhere: the dock uploads instead
-  });
-
-  it("use_file on a file still arriving waits for it; past the wait it answers plainly that it is still uploading", async () => {
+  it("use_file with its path on a server elsewhere asks the dock to send that one file; the reply carries on once it lands", async () => {
     const p = await person("rae");
-    const [late, never] = [await p.upload("Late.mp4"), await p.upload("Slow.mp4")];
-    await p.send({ text: "Review both", files: [{ id: late.id, path: "/Users/tiny/Late.mp4" }, { id: never.id, path: "/Users/tiny/Slow.mp4" }] });
+    await p.send({ text: "Put it in Review", localFiles: ["/Users/tiny/Movies/walkthru-2.mp4"] });
     const job = await p.claim();
-    const using = tool(job.mcp.token, "use_file", { file: late.id, to: "review" });
-    await tick(100);
-    await late.part();
-    const used = JSON.parse((await using).text) as { href: string };
+    const asked = JSON.parse((await tool(job.mcp.token, "use_file", { path: "/Users/tiny/Movies/walkthru-2.mp4", to: "review" })).text) as { sending: string; note: string };
+    expect(asked.sending).toBe("walkthru-2.mp4");
+    expect(asked.note).toContain("end your reply");
+    // asked twice: one send
+    await tool(job.mcp.token, "use_file", { path: "/Users/tiny/Movies/walkthru-2.mp4", to: "review" });
+    await p.answer(job.id, "Sending it to Review first.");
+    let v = await p.view();
+    const sendReply = v.messages.at(-1)!;
+    expect(v.messages.filter((m) => m.send)).toHaveLength(1);
+    expect(sendReply).toMatchObject({ status: "thinking", send: { path: "/Users/tiny/Movies/walkthru-2.mp4", name: "walkthru-2.mp4", to: "Review" }, wait: { for: "videos", text: `Sending "walkthru-2.mp4" to Review` } });
+    // the dock uploads that file and names its upload; the last part starts the reply
+    const clip = await p.upload("walkthru-2.mp4");
+    const named = await app.request(`/api/assistant/sends/${sendReply.id}`, { method: "POST", ...json({ id: clip.id }, { cookie: p.cookie }) });
+    expect(named.status).toBe(200);
+    const next = p.claim();
+    expect(await stillWaiting(next)).toBe(true);
+    await clip.part();
+    const carry = await next;
+    expect(carry.user).toContain(`"walkthru-2.mp4" is on this server now, file id ${clip.id}: carry on, use_file with it to review`);
+    expect(carry.user).toContain("Put it in Review");
+    const used = JSON.parse((await tool(carry.mcp.token, "use_file", { file: clip.id, to: "review" })).text) as { href: string };
     expect(used.href).toMatch(/^\/review\//);
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    let ended = false;
-    const waiting = tool(job.mcp.token, "use_file", { file: never.id, to: "review" }).finally(() => (ended = true));
-    // the clock moves only while the call is in flight; its reads of the disk run in real time between the steps
-    for (let i = 0; i < 2000 && !ended; i++) {
-      await new Promise((r) => setImmediate(r));
-      await vi.advanceTimersByTimeAsync(500);
-    }
-    vi.useRealTimers();
-    const out = await waiting;
-    expect(out.error).toBe(false);
-    expect(JSON.parse(out.text)).toMatchObject({ file: never.id, still_uploading: "Slow.mp4" });
-    expect(out.text).not.toMatch(/isn't here any more/);
-    await p.answer(job.id, "Done.");
-  }, 20_000);
+    await p.answer(carry.id, "In Review.");
+    v = await settled(p);
+    expect(v.messages.at(-1)).toMatchObject({ id: sendReply.id, text: "In Review.", status: "done" });
+  });
+
+  it("a send whose file isn't in the window any more says in one line to drop it again", async () => {
+    const p = await person("sid");
+    await p.send({ text: "Captions please", localFiles: ["/Users/tiny/Movies/old.mov"] });
+    const job = await p.claim();
+    await tool(job.mcp.token, "use_file", { path: "/Users/tiny/Movies/old.mov", to: "captions" });
+    await p.answer(job.id, "Sending it first.");
+    const reply = (await p.view()).messages.at(-1)!;
+    const r = await app.request(`/api/assistant/sends/${reply.id}`, { method: "POST", ...json({ gone: true }, { cookie: p.cookie }) });
+    expect(((await r.json()) as View).messages.at(-1)).toMatchObject({ status: "done", text: `"old.mov" isn't in this window any more (the page was reloaded): drop it in the chat again.` });
+    // nothing waits any more
+    expect((await app.request(`/api/assistant/sends/${reply.id}`, { method: "POST", ...json({ gone: true }, { cookie: p.cookie }) })).status).toBe(404);
+  });
+});
+
+describe("an upload's X and Stop delete the server copy; nobody's upload stays", () => {
+  const partsOf = (p: { cookie: string }, id: string) => app.request(`/api/assistant/files/${id}/parts`, { headers: { cookie: p.cookie } });
+  const del = (p: { cookie: string }, id: string) => app.request(`/api/assistant/files/${id}`, { method: "DELETE", headers: { cookie: p.cookie } });
+
+  it("DELETE removes the account's own upload, in progress or finished; anyone else's or a bad id is not found", async () => {
+    const p = await person("tia2");
+    const other = await person("ugo2");
+    const going = await p.upload("Going.mp4");
+    expect((await partsOf(p, going.id)).status).toBe(200);
+    expect((await del(other, going.id)).status).toBe(404);
+    expect((await del(p, going.id)).status).toBe(200);
+    expect((await partsOf(p, going.id)).status).toBe(404);
+    expect((await del(p, going.id)).status).toBe(404);
+    const done = await p.upload("Done.mp4");
+    await done.part();
+    await done.complete();
+    expect((await del(p, done.id)).status).toBe(200);
+    expect(existsSync(path.join(process.env.DATA_DIR!, "assistant", "files", "tia2", done.id))).toBe(false);
+    expect((await del(p, "../ugo2")).status).toBe(404);
+  });
+
+  it("Stop on a reply waiting for its video deletes the video's server copy", async () => {
+    const p = await person("vic");
+    const clip = await p.upload("Stopped.mp4");
+    await p.send({ text: "Never mind", files: [clip.id] });
+    expect((await p.stop()).status).toBe(200);
+    let st = (await partsOf(p, clip.id)).status;
+    for (let i = 0; i < 50 && st !== 404; i++) st = (await tick(), (await partsOf(p, clip.id)).status);
+    expect(st).toBe(404);
+  });
+
+  it("the sweep removes an upload with no part for an hour, and keeps a fresh one and a finished one", async () => {
+    const p = await person("wyn");
+    const [old, fresh, done] = [await p.upload("Old.mp4"), await p.upload("Fresh.mp4"), await p.upload("Done.mp4")];
+    await done.part();
+    await done.complete();
+    const dir = (id: string) => path.join(process.env.DATA_DIR!, "assistant", "files", "wyn", id);
+    const ago = new Date(Date.now() - ORPHAN_MS - 60_000);
+    utimesSync(path.join(dir(old.id), "parts"), ago, ago);
+    utimesSync(dir(done.id), ago, ago);
+    await sweep("wyn");
+    expect(existsSync(dir(old.id))).toBe(false);
+    expect(existsSync(dir(fresh.id))).toBe(true);
+    expect(existsSync(dir(done.id))).toBe(true);
+  });
 });
 
 describe("headless: the user's own AI sends a file with upload_file", () => {

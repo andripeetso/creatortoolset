@@ -11,8 +11,8 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
-import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
+import { askConfirm, askFolder, askSend, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { postedFromUrl } from "./lib/workshop/posted";
@@ -525,16 +525,6 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       await sleep(Math.min(3000, end - Date.now()));
     }
   };
-  /** A dropped file still uploading (its reply didn't wait for it): waits until `by`. Its name if it is still not in, else null. */
-  const arriving = async (id: string, by: number): Promise<string | null> => {
-    for (;;) {
-      const f = await json(`/api/assistant/files/${encodeURIComponent(id)}`).catch(() => null);
-      if (!f || f.state === "in") return null; // gone: use says so
-      if (Date.now() >= by) return String(f.name);
-      await sleep(Math.min(2000, by - Date.now()));
-    }
-  };
-  const stillUploading = (id: string, name: string) => ({ file: id, still_uploading: name, note: "Still uploading to this server: call use_file again in a while, or use its path where a tool runs on that computer." });
   /** use_file to the library: each dropped file is added (a copy the library keeps), then one line says how they were sorted. */
   const toLibrary = async (a: Args) => {
     const by = Date.now() + ANSWER_BY_S * 1000;
@@ -547,11 +537,6 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       // big files take a while each: the ones not reached in time are named, to send again
       if (Date.now() > by - 15_000) {
         files.push({ file: id, not_yet: "Not added yet: call use_file again with these" });
-        continue;
-      }
-      const up = await arriving(id, by - 15_000);
-      if (up) {
-        files.push(stillUploading(id, up));
         continue;
       }
       try {
@@ -723,14 +708,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
         };
       }
+      // a file dropped in the Mac app, from the dock, on a server that isn't on that computer: the dock sends that one file
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      const name = a.path && turn && process.env.CT_LOCAL !== "1" ? await askSend(user, turn, `${origin}/api/mcp`, String(a.path), a.to as AssistantFileUse) : null;
+      if (name) return { sending: name, note: "It has to be on this server first, and the chat is sending it now: say so in one line and end your reply. The chat carries on with it once it is here." };
       if (a.to === "library") return toLibrary(a);
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
       // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
       if (a.version_of && a.to !== "review") throw new ToolError("version_of goes with to: review.");
       const of = a.version_of ? { version_of: ((await json(reviewPath(String(a.version_of), origin))).asset as Args).id } : {};
       const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
-      const up = await arriving(String(file), Date.now() + ANSWER_BY_S * 1000);
-      if (up) return stillUploading(String(file), up);
       return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", { ...pick(a, ["to", "name"]), ...of });
     },
     notes_get: async (a) => {

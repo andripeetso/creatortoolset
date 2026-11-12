@@ -27,6 +27,8 @@ import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contrac
 export const assistantFilesApp = new Hono<{ Variables: AuthVars }>();
 
 const KEEP_MS = 7 * 24 * 3600_000;
+/** An upload that gets no part for this long is nobody's any more: the sweep removes it. */
+export const ORPHAN_MS = 3600_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Footage only: a video or a recording's sound. */
 export const isMedia = (mime: string, name: string) => /^(video|audio)\//.test(mime) || /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg)$/i.test(name);
@@ -47,12 +49,26 @@ export async function readFileMeta(user: string, id: string): Promise<AssistantF
   }
 }
 
-/** This account's files older than 7 days go (each new upload sweeps its own account). */
-async function sweep(user: string): Promise<void> {
+/** This account's files older than 7 days go, and uploads with no part for an hour (each new upload sweeps its own account; sweepAll every hour). */
+export async function sweep(user: string): Promise<void> {
   for (const id of await readdir(rootOf(user)).catch(() => [] as string[])) {
     const st = await stat(dirOf(user, id)).catch(() => null);
-    if (st && Date.now() - st.mtimeMs > KEEP_MS) await rm(dirOf(user, id), { recursive: true, force: true });
+    const parts = await stat(path.join(dirOf(user, id), "parts")).catch(() => null);
+    if ((st && Date.now() - st.mtimeMs > KEEP_MS) || (parts && Date.now() - parts.mtimeMs > ORPHAN_MS)) await rm(dirOf(user, id), { recursive: true, force: true });
   }
+}
+
+/** Every account's sweep (boot.ts runs it at start and every hour). */
+export async function sweepAll(): Promise<void> {
+  const root = path.join(env.dataDir, "assistant", "files");
+  for (const user of await readdir(root).catch(() => [] as string[])) await sweep(user);
+}
+
+/** One of this account's dropped files, uploading or in, removed (a strict id only). false when there was none. */
+export async function removeFile(user: string, id: string): Promise<boolean> {
+  if (!UUID.test(id) || !(await stat(dirOf(user, id)).catch(() => null))) return false;
+  await rm(dirOf(user, id), { recursive: true, force: true });
+  return true;
 }
 
 assistantFilesApp.post("/", async (c) => {
@@ -68,6 +84,9 @@ assistantFilesApp.post("/", async (c) => {
   await startUpload(path.join(dirOf(user.username, id), "parts"), { total: size, partSize: PART_SIZE, name, mime: mime || "video/mp4", owner: user.username });
   return c.json({ id, partSize: PART_SIZE });
 });
+
+/** The X on a file: its upload stops being kept, parts or the finished file (own account only). */
+assistantFilesApp.delete("/:id", async (c) => ((await removeFile(c.get("user").username, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404)));
 
 assistantFilesApp.get("/:id/parts", (c) => {
   const id = c.req.param("id");
@@ -130,19 +149,6 @@ export async function uploadOf(user: string, id: string): Promise<{ file: Assist
   return { name: state.name, at: (await stat(parts).catch(() => null))?.mtimeMs ?? 0 };
 }
 
-/** Where one of this account's files is: in (joined now when its last part is), uploading (when its last part landed), else 404. */
-assistantFilesApp.get("/:id", async (c) => {
-  const user = c.get("user").username;
-  const id = c.req.param("id");
-  let f = await uploadOf(user, id);
-  if (f && !("file" in f) && (await allPartsIn(user, id))) {
-    const done = await finishUpload(user, id);
-    if (!("error" in done)) f = { file: done };
-  }
-  if (!f) return c.json({ error: "Not found" }, 404);
-  return c.json("file" in f ? { state: "in", ...f.file } : { state: "uploading", name: f.name, at: f.at });
-});
-
 /* ---- an upload by link: the user's own AI on a computer the server isn't on (MCP upload_file) sends a file with curl ---- */
 
 const LINK_MS = 3600_000;
@@ -191,13 +197,11 @@ export const mimeOf = (name: string) => MIME[path.extname(name).slice(1).toLower
  * (CT_LOCAL=1), so the assistant can point at footage where it lies and nothing is uploaded. A hard link on the same
  * disk; a file on another drive is copied once.
  */
-export async function fileFromPath(user: string, p: string, size?: number): Promise<AssistantFile> {
+export async function fileFromPath(user: string, p: string): Promise<AssistantFile> {
   if (process.env.CT_LOCAL !== "1") throw new Error("This server isn't on your computer: drop the file in the chat so it uploads, or send it with upload_file.");
   if (!path.isAbsolute(p)) throw new Error("Give the file's full path, such as /Users/you/Movies/clip.mov.");
   const st = await stat(p).catch(() => null);
   if (!st?.isFile() || !st.size) throw new Error(`There's no file at ${p}.`);
-  // a page on another computer that names a path here: the same size, or it is another file
-  if (size !== undefined && st.size !== size) throw new Error(`The file at ${p} isn't the one dropped.`);
   const name = path.basename(p);
   // ponytail: footage by its extension only; probe the streams if something else ever passes for a video
   if (!isMedia("", name)) throw new Error(`${name} isn't a video or a recording.`);
@@ -209,15 +213,15 @@ export async function fileFromPath(user: string, p: string, size?: number): Prom
 }
 
 assistantFilesApp.post("/path", async (c) => {
-  const b = (await c.req.json().catch(() => null)) as { path?: unknown; size?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { path?: unknown } | null;
   try {
-    return c.json(await fileFromPath(c.get("user").username, typeof b?.path === "string" ? b.path : "", typeof b?.size === "number" ? b.size : undefined));
+    return c.json(await fileFromPath(c.get("user").username, typeof b?.path === "string" ? b.path : ""));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
   }
 });
 
-const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio", library: "Media Library" };
+export const USE_NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio", library: "Media Library" };
 
 /**
  * Hand a dropped file to a tool; answers what it became and its page. versionOf (Review only): the id of a Review
@@ -232,7 +236,7 @@ export async function useFile(
 ): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean }> {
   const meta = await readFileMeta(user.username, id);
   if (!meta) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
-  if (!mayUse(user, TOOL_OF[to])) throw new Error(`${NAMES[to]} isn't switched on for this account.`);
+  if (!mayUse(user, TOOL_OF[to])) throw new Error(`${USE_NAMES[to]} isn't switched on for this account.`);
   if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
   const file = fileOf(user.username, id);
   const title = (name?.trim() || meta.name).slice(0, 120);
