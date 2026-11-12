@@ -12,16 +12,19 @@ export interface PackContents {
   slots: Array<{ slot: PackSlot; label: string; text: string }>;
   frameworks: Array<{ name: string; role: string }>;
   captionStyles: string[];
+  /** Each skill with the place it acts, in the tool's words. */
+  skills: Array<{ label: string; name: string; text: string }>;
   /** A Home layout: the tools it shows on Home, by name, in Home's order. null = the pack has none. */
   home: string[] | null;
 }
 
-export function packContents(pack: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "home">>): PackContents {
+export function packContents(pack: Partial<Pick<Pack, "instructions" | "skills" | "frameworks" | "captionStyles" | "home">>): PackContents {
   const instructions = pack.instructions ?? {};
   return {
     slots: USED_SLOTS.filter((s) => instructions[s]).map((slot) => ({ slot, label: PACK_SLOTS[slot], text: instructions[slot] ?? "" })),
     frameworks: (pack.frameworks ?? []).map((f) => ({ name: f.name, role: f.role })),
     captionStyles: (pack.captionStyles ?? []).map((s) => s.name),
+    skills: (pack.skills ?? []).map((s) => ({ label: PACK_SLOTS[s.slot] ?? s.slot, name: s.name, text: s.text })),
     home: pack.home ? HOME_TILES.filter((t) => !pack.home!.hidden.includes(t)).map((t) => HOME_TILE_NAMES[t]) : null,
   };
 }
@@ -116,13 +119,14 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
 }
 
 /** A pack's `contains`, worked out from the pack itself (the detail page has the pack, the cards have `contains`). */
-export function containsOf(p: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "designSystems" | "home">>): CatalogEntry["contains"] {
+export function containsOf(p: Partial<Pick<Pack, "instructions" | "skills" | "frameworks" | "captionStyles" | "designSystems" | "home">>): CatalogEntry["contains"] {
   return {
     instructions: (Object.keys(p.instructions ?? {}) as PackSlot[]).filter((s) => p.instructions?.[s]),
     frameworks: p.frameworks?.length ?? 0,
     captionStyles: p.captionStyles?.length ?? 0,
     designSystems: p.designSystems?.length ?? 0,
     ...(p.home ? { home: true } : {}),
+    ...(p.skills?.length ? { skills: p.skills.length } : {}),
   };
 }
 

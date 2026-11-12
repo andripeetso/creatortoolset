@@ -84,6 +84,15 @@ describe("community catalog", () => {
     expect(((await res.json()) as { error: string }).error).toMatch(/carries code/);
   });
 
+  it("installs no pack with a skill for the assistant, whatever the catalog lists", async () => {
+    const dock = { ...pack("1.0.0"), skills: [{ slot: "assistant", name: "Hooks", text: "Open on the result." }] };
+    hosted = { "/api/pack-catalog/public/punchy-hooks": () => Response.json({ ...detail("1.0.0"), pack: dock }) };
+    const res = await call("POST", "/api/pack-catalog/punchy-hooks/install");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { problems: string[] }).problems).toContain("skills[0].slot: a shared skill never goes to the assistant");
+    expect((await listInstalled("tinyacrobatics")).some((p) => p.skills?.length)).toBe(false);
+  });
+
   it("publishing answers with the catalog's address; share-link visitors can't install or publish", async () => {
     const res = await call("POST", "/api/pack-catalog/submit", { pack: pack("2.0.0"), rights: true });
     expect(res.status).toBe(409);

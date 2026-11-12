@@ -1,14 +1,16 @@
 import { Hono } from "hono";
 import { unattended } from "./assistant";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
-import { SkillError, addSkill, dockSkills, listSkills, removeSkill, skillNamed, updateSkill } from "./lib/skills";
+import { listInstalled } from "./lib/packs";
+import { SkillError, addSkill, dockSkills, listSkills, removeSkill, setSharedOn, sharedSkills, sharedSwitches, skillNamed, updateSkill } from "./lib/skills";
 
 /**
- * Settings → Skills: a person's own skills (contracts/skills.ts, api/lib/skills.ts). The list, add, change (text, on
- * or off, the projects it is for) and remove; and the one read the assistant's skill_read makes.
+ * Community → Skills (contracts/skills.ts, api/lib/skills.ts): the person's own skills and the ones their installed packs
+ * and the server's plug-ins bring. The list, add one for a place, change (text, on or off, the projects it is for) and
+ * remove; a shared skill's switch; and the one read the assistant's skill_read makes, which serves only their own.
  *
- * A write takes a name, the line that says when to use it, and the body, and keeps nothing else: a dropped file is read
- * in the browser (parseSkillFile), and only those three reach the server.
+ * A write takes a place, a name, the line that says when to use it, and the body, and keeps nothing else: a dropped
+ * file is read in the browser (parseSkillFile), and only those reach the server.
  */
 export const skillsApp = new Hono<{ Variables: AuthVars }>();
 
@@ -19,7 +21,7 @@ export const skillsApp = new Hono<{ Variables: AuthVars }>();
 skillsApp.use("*", async (c, next) => {
   if (c.req.method === "GET" || c.req.method === "HEAD") return next();
   if (c.get("user").role === "visitor" || innerCall.getStore() || c.req.header("authorization"))
-    return c.json({ error: "Skills are added and changed by the person, in Settings → Skills." }, 403);
+    return c.json({ error: "Skills are added and changed by the person, in Community → Skills." }, 403);
   return next();
 });
 
@@ -28,9 +30,27 @@ const refusal = (e: unknown) => {
   throw e;
 };
 
-skillsApp.get("/", async (c) => c.json({ skills: await listSkills(c.get("user").username) }));
+const sharedOf = async (username: string) => sharedSkills(await listInstalled(username), await sharedSwitches(username));
 
-/** One skill's text by its name, for the assistant: only one that is on in the project the app is in. */
+skillsApp.get("/", async (c) => {
+  const username = c.get("user").username;
+  return c.json({ skills: await listSkills(username), shared: await sharedOf(username) });
+});
+
+/** A shared skill's switch: `{on}`. */
+skillsApp.patch("/shared/:id", async (c) => {
+  const b = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+  if (typeof b.on !== "boolean") return c.json({ error: "on: true or false" }, 400);
+  const username = c.get("user").username;
+  try {
+    const skill = await setSharedOn(username, c.req.param("id"), b.on, await sharedOf(username));
+    return skill ? c.json(skill) : c.json({ error: "Not found" }, 404);
+  } catch (e) {
+    return c.json({ error: refusal(e) }, 400);
+  }
+});
+
+/** One skill's text by its name, for the assistant: only one of the person's own assistant skills on in the project the app is in. */
 skillsApp.get("/read", async (c) => {
   // a scheduled run is given no skill (its prompt lists none and skill_read is not in its tools): asked by name, it is refused
   const turn = jobTurn(c.req.header("authorization"));

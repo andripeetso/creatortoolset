@@ -154,12 +154,13 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up: General, Appearance, Tools,
-    AI (Providers, Scheduled tasks, Skills, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
+    AI (Providers, Scheduled tasks, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
     API keys, Headless access), People (Team, Admin; on a hosted server). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **Community** = everything added to the app. Installed shows **Plug-ins** (code: built into this server, or on
     the Mac app's own server the folders in the person's plug-ins folder, each with its switch) and then **Packs**
-    (content you switch on per project and can remove).
+    (content you switch on per project and can remove). **Skills** lists every skill by the place it acts (the
+    assistant, a tool's AI step): the person's own, and the ones their packs and the plug-ins bring.
   - A plug-in's pieces show up where the built-in ones do: its Settings section in the matching group or Admin tab,
     its tiles on Home, its pages in place of built-in ones. The Plug-ins list is the one place that names it.
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)

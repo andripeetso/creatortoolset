@@ -82,7 +82,12 @@ They go after the app's own prompt and before the person's own rules and notes, 
 Where they disagree, the person wins. Each slot takes up to 2,000 characters. Safety checks and access are never
 slots, and a pack can't give the AI a tool, a key or a permission.
 
-The checks refuse instruction text with links, or text that tries to replace the app's instructions or asks for
+A pack can also carry up to 8 `skills`, each `{ "slot", "name", "when"?, "text" }` with up to 4,000 characters of
+text, for `workshop.review`, `analyzer.ideas`, `captions.lines` or `editor.script`. Never the assistant and never
+`workshop.write`: those take only the person's own skills. Each shows in Community → Skills under its place with its
+own switch; an `editor.script` skill reaches an edit only when the edit's editing style names it.
+
+The checks refuse instruction and skill text with links, or text that tries to replace the app's instructions or asks for
 keys and passwords. Nobody reviews a pack file: install packs only from people you trust. Packs in the community
 catalog were reviewed before they were listed.
 

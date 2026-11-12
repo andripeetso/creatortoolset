@@ -3,7 +3,7 @@ import { Loader2, Plus, X } from "lucide-react";
 import { MAX_VERSIONS, type EditorDefaults } from "@contracts/editor";
 import type { EditStepChoice, StepRow } from "@contracts/editor-steps";
 import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace } from "@contracts/editor-styles";
-import type { Skill } from "@contracts/skills";
+import { placeOf } from "@contracts/skills";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -89,9 +89,9 @@ async function brollFolders(): Promise<{ id: string; name: string }[]> {
 /**
  * One style's sheet. The grade and the steps are sent only when changed here: a style that says nothing about them
  * takes the person's own defaults when an edit is made. A select with nothing to choose is not drawn (one grade, no
- * folder, no step in this app, no skill). The skills offered are the ones an edit's script step would get: switched
- * on, for every project; the skill is sent only when changed here, so one the style names that is switched off for
- * now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
+ * folder, no step in this app, no skill). The skills offered are the AI Editor script skills (the person's own, and
+ * the ones their packs and plug-ins bring), and the one the style names from before skills had a place, so it can be
+ * taken off; the skill is sent only when changed here, so one the style names that is switched off for now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
  */
 function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
   const [name, setName] = useState(style?.name ?? "");
@@ -107,7 +107,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<StepRow[]>([]);
   const [skill, setSkill] = useState<string | null>(null); // null: not changed here
-  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skills, setSkills] = useState<{ id: string; name: string }[]>([]);
   const [finished, setFinished] = useState<FinishedEdit[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +116,14 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
     getEditorDefaults().then(setDefaults, () => {});
     brollFolders().then(setFolders, () => {});
     getEditSteps().then((v) => setRows(v.steps.filter((s) => s.state === "on")), () => {});
-    listSkills().then((r) => setSkills((r.skills ?? []).filter((s) => s.on && !s.projectIds?.length)), () => {});
+    listSkills().then(
+      (r) =>
+        setSkills([
+          ...(r.skills ?? []).filter((s) => s.on && !s.projectIds?.length && (placeOf(s) === "editor.script" || s.id === style?.skill)),
+          ...(r.shared ?? []).filter((s) => s.place === "editor.script"),
+        ]),
+      () => {},
+    );
     if (style) listFinished(style.id).then((list) => setFinished(Array.isArray(list) ? list : []), () => {});
   }, [style]);
 

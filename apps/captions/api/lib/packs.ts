@@ -1,12 +1,14 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { PACK_SLOTS, type InstalledPack, type Pack, type PackEditorItems, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
+import { PACK_SLOTS, isPackSkillSlot, type InstalledPack, type Pack, type PackEditorItems, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
 import { readOfficialPacks } from "../official-packs";
 import { packPresetStore, type PresetRecord } from "../presets";
 import { findUser } from "../users";
 import { env } from "./env";
 import { packItemInstaller } from "./plugin";
+import { slotSkills } from "./skills";
+import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import type { Framework } from "./workshop/types";
 
 /**
@@ -240,6 +242,7 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       })(),
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
+      ...(pack.skills?.length ? { skills: pack.skills } : {}),
       ...(pack.home ? { home: pack.home } : {}),
       items: { frameworks, presets, designSystems },
       ...(held ? { held } : {}),
@@ -353,8 +356,16 @@ export function renderPackInstructions(packs: InstalledPack[], slot: PackSlot, p
   ].join("\n\n");
 }
 
-/** `renderPackInstructions` for a person, read from disk. */
+/**
+ * `renderPackInstructions` for a person, read from disk, and after it the slot's skills switched on (lib/skills.ts
+ * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. The Workshop's
+ * writing turn gets its skills as files (api/workshop.ts) and the script step only the one a style names (skillText).
+ */
 export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null): Promise<string> {
-  return renderPackInstructions(await listInstalled(username), slot, projectId);
+  const packs = await listInstalled(username);
+  const text = renderPackInstructions(packs, slot, projectId);
+  if (!isPackSkillSlot(slot) || slot === "editor.script") return text;
+  const skills = await slotSkills(username, slot, projectId, packs.filter((p) => packOn(p, projectId)), INSTRUCTIONS_MAX - (text ? text.length + 2 : 0));
+  return skills ? [text, skills].filter(Boolean).join("\n\n") : text;
 }
 

@@ -54,8 +54,6 @@ const STATIC_ROWS = [
   { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
-  // Skills
-  { section: "skills", id: "skills", title: "Skills", keywords: ["skill", "prompt", "instructions", "reference", "load", "file", "markdown"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
   { section: "usage", id: "your-plan", title: "Your AI plan", description: "On Pro or Plus, big jobs ask before they start", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
