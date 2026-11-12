@@ -9,8 +9,9 @@ final class ConnectTests: XCTestCase {
 
     func testThereIsNoConnectServiceUntilOneIsSet() {
         // none until one is set: the menu item that needs it is hidden, and nothing calls a service that isn't there
-        XCTAssertNil(connectBrokerURL(nil))
+        XCTAssertEqual(connectBrokerURL(nil), defaultConnectService)
         XCTAssertNil(connectBrokerURL(""))
+        XCTAssertNil(connectBrokerURL("  "))
         XCTAssertEqual(connectBrokerURL("https://broker.example.com/"), URL(string: "https://broker.example.com"))
         // a plain http address is refused unless it is this machine
         XCTAssertNil(connectBrokerURL("http://broker.example.com"))

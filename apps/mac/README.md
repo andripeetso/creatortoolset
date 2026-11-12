@@ -306,6 +306,11 @@ one at most once a minute). A crash of the app itself is macOS's report in
   page's `account` messages are answered only for the window's own page, never a frame inside it. The account
   server is in This Mac → Account (default `https://creatortoolset.com`, the only place the app names it; empty = no
   account step, for your own server). `Account.swift`.
+- **Add this Mac to my account…** (Servers menu): makes the server on this Mac reachable from your other devices
+  through the connect service (default `https://connect.creatortoolset.com`, UserDefaults `connectBroker`; empty =
+  off). The browser opens the site's page with the code filled in; you sign in and say yes, the page hands back to the
+  app (`creatortoolset://connect`) and the tunnel starts. Nothing is sent to the service before that press, or before
+  you sign in to an account (then the Servers list shows the account's other computers). `Connect.swift`.
 - **Settings…** (⌘,, the one Settings item) opens the server's Settings in the window; with no server picked it opens
   This Mac. The Servers menu and the menu bar item (**This Mac…**) open the native **This Mac** window: Servers,
   **Use this Mac for my AI**, the server here (on or off, port, log, Data location, Access from other devices) and
