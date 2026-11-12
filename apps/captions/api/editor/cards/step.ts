@@ -91,8 +91,9 @@ export async function answer<T>(actor: string, prompt: { system: string; user: s
  * that meets a usage limit moves to another AI of the account, so text other people wrote does not go there.
  */
 export async function planPackText(actor: string): Promise<string> {
-  const onMac = !!aiFor(whoFor(actor), "editor", LABEL).only?.includes("mac");
-  return packInstructions(actor, "editor.cards", null, { shippedOnly: onMac });
+  const ai = aiFor(whoFor(actor), "editor", LABEL);
+  // stricter than runsWithoutTools on purpose: answer-only.test.ts found tools left on some Mac programs it lists
+  return packInstructions(actor, "editor.cards", null, { ai, tools: !!ai.only?.includes("mac") });
 }
 
 /** The style's pictures a call carries: the liked stills first, newest first, then the inspirations, `max` in all. */
