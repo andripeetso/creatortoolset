@@ -192,7 +192,8 @@ describe("designs: the person's AI designs the pages", () => {
     expect(sent[2]).toHaveLength(2);
     expect(sent[6]).toMatchObject({ label: "Designer", job: "editor" });
     expect(body.design.look).toBe(style.id);
-    expect(body.notes).toEqual([]);
+    // the answer put only the first slide's headline on its page: the words it left off are named
+    expect(body.notes).toEqual(["Page 1: these words of it are not on the page: on a soft floor with you next to it"]);
     expect((await call("POST", `/api/designs/${d.id}/design`, { look: "nope" })).body).toEqual({ error: "That style is gone: pick another" });
   });
 

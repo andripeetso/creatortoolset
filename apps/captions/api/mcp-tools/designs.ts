@@ -17,12 +17,12 @@ export const designTools: ToolModule = {
     {
       name: "design_make",
       description:
-        "Start a design the user edits by hand in the designer: a Workshop carousel piece's slides as pages (session, and doc: the piece's id; a piece that has a design gets that one back), or a cover or thumbnail from a library video's frame (version, t in seconds, title). design_layers designs it.",
+        "Start a design the user edits by hand in the designer: a Workshop carousel piece's slides as pages (session, and doc: the piece's id; a piece that has a design gets that one back), or a cover or thumbnail from a library video's frame (version: the video's version id, t in seconds, title). design_layers designs it.",
       inputSchema: { type: "object", properties: { session: str, doc: str, version: str, t: { type: "number" }, title: str, format: { type: "string", enum: DESIGN_FORMATS.map((f) => f.id) } } },
     },
     {
       name: "design_layers",
-      description: "A design's pages. With only the id: each page's words and layers, and how layers are written. With pages ([{page, background, layers}]) those pages are replaced, and the answer says what was left out and why.",
+      description: "A design's pages (id: as in its /design/<id> address). With only the id: each page's words and layers, and how layers are written. With pages ([{page, background, layers}]) those pages are replaced, and the answer says what was left out and why.",
       inputSchema: { type: "object", properties: { id: str, pages: { type: "array", items: { type: "object" } } }, required: ["id"] },
     },
   ],

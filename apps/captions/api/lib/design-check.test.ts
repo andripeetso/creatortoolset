@@ -106,6 +106,9 @@ describe("an AI's words on the page", () => {
     const ai = cleanPages([{ layers: [text, { ...text, x: -5, y: 100, w: 2000 }, { ...text, x: 900, y: 100, rotate: 20 }] }], { w: 1080, h: 1350, pictures: [], words: ["Roll it"] });
     expect(ai.pages[0]!.layers.map((l) => [l.x, l.y, l.w, l.h])).toEqual([[80, 0, 1000, 200], [0, 100, 1080, 200], [900, 100, 1000, 200]]);
     expect(ai.notes).toEqual(["Page 1: words that stuck out of the page were moved onto it", "Page 1: words that stuck out of the page were moved onto it"]);
+    // words of the page it left off are named; a word said twice on the page covers the slide's one only once
+    const half = cleanPages([{ layers: [{ ...text, x: 40, y: 40, text: "Roll" }, { ...text, x: 40, y: 400, text: "Roll" }] }], { w: 1080, h: 1350, pictures: [], words: ["Roll it out, roll it back"] });
+    expect(half.notes).toEqual(["Page 1: these words of it are not on the page: it out it back"]);
     const own = cleanPages([{ layers: [text] }], { w: 1080, h: 1350, pictures: [] });
     expect(own.pages[0]!.layers[0]).toMatchObject({ x: 540, y: -30, w: 1000 });
     expect(own.notes).toEqual([]);

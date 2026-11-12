@@ -152,6 +152,16 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       ids.add(id);
       layers.push({ ...clean, id } as Layer);
     }
+    // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
+    // on it is said so by whoever asked for it)
+    if (r.words && layers.length) {
+      const left = plainWords(r.words[k] ?? "").split(" ").filter(Boolean);
+      for (const word of plainWords(layers.flatMap((l) => (l.type === "text" ? [l.text] : [])).join(" ")).split(" ")) {
+        const at = left.indexOf(word);
+        if (at >= 0) left.splice(at, 1);
+      }
+      if (left.length) notes.push(`Page ${k + 1}: these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`);
+    }
     pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), background: color(p.background, "#ffffff"), layers });
   }
   return { pages, notes };
