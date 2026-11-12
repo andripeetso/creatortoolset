@@ -150,6 +150,20 @@ describe("skills from a Community pack", () => {
   });
 });
 
+describe("a run with tools on the person's computer", () => {
+  it("gets none of the shared skills: with shippedOnly, the person's own alone", async () => {
+    await clear();
+    await install({ skills: [{ slot: "captions.lines", name: "Line breaks", text: "CAPTION-SKILL" }] });
+    await call("/api/skills/shared/plugin%3Atiny-studio%3Ashort-lines", "PATCH", { on: true });
+    await call("/api/skills", "POST", { name: "Own", body: "OWN-LINES", place: "captions.lines" });
+    expect(await packInstructions("ana", "captions.lines", null)).toMatch(/OWN-LINES[\s\S]*CAPTION-SKILL[\s\S]*PLUGIN-SKILL/);
+    const withTools = await packInstructions("ana", "captions.lines", null, { shippedOnly: true });
+    expect(withTools).toContain("OWN-LINES");
+    expect(withTools).not.toMatch(/CAPTION-SKILL|PLUGIN-SKILL/);
+    await call("/api/skills/shared/plugin%3Atiny-studio%3Ashort-lines", "PATCH", { on: false });
+  });
+});
+
 describe("skills from a plug-in", () => {
   it("are listed with the plug-in's name, start switched off, and once switched on reach their own place; the ones the checks refuse never show", async () => {
     await clear();

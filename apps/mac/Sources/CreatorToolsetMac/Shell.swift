@@ -144,12 +144,18 @@ final class Shell: NSObject, ObservableObject {
             switch ask {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }
+            // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
+            case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             case "folder": done(self.chooseFolder())
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
         }
         account.window = { [weak self] in self?.webView.window }
+        view.onPublishPack = { [weak self] text, done in
+            guard let self else { return done(["state": "off"]) }
+            self.account.publish(text, done: done)
+        }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }

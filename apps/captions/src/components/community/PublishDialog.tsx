@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
-import { CatalogError, submitPack } from "@/lib/pack-catalog";
+import { CatalogError, publishFromMac, submitPack } from "@/lib/pack-catalog";
 import { useMe } from "@/lib/auth";
 import { msg } from "../settings/helpers";
 import { Notice } from "../settings/ui";
@@ -68,7 +68,8 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [sendAt, setSendAt] = useState<{ pack: Pack; href: string } | null>(null);
+  /** Where the file goes when this window can't send it: the catalog's site; `signedOut`: the Mac app could, once signed in. */
+  const [sendAt, setSendAt] = useState<{ pack: Pack; href: string; signedOut?: boolean } | null>(null);
   const [sent, setSent] = useState(false);
 
   const id = slugify(name);
@@ -95,8 +96,13 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
       await submitPack(pack);
       setSent(true);
     } catch (e) {
-      if (pack && e instanceof CatalogError && e.publishAt && /^https?:\/\//.test(e.publishAt)) setSendAt({ pack, href: e.publishAt });
-      else if (e instanceof CatalogError && e.problems.length) setProblems(e.problems);
+      if (pack && e instanceof CatalogError && e.publishAt && /^https?:\/\//.test(e.publishAt)) {
+        // this server only reads the catalog: the Mac app sends it with its own account, after its own alert
+        const mac = await publishFromMac(pack);
+        if (mac?.state === "sent") setSent(true);
+        else if (mac?.state === "error") setError(mac.message || "It didn't send. Try again.");
+        else if (mac?.state !== "cancelled") setSendAt({ pack, href: e.publishAt, signedOut: mac?.state === "signedOut" });
+      } else if (e instanceof CatalogError && e.problems.length) setProblems(e.problems);
       else setError(msg(e));
     } finally {
       setBusy(false);
@@ -121,8 +127,9 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
         ) : sendAt ? (
           <div className="space-y-3">
             <Notice>
-              It passed the checks. Packs are published on the community catalog&apos;s site: download the file, then send it
-              there.
+              {sendAt.signedOut
+                ? "It passed the checks. Sign in to your Creator Toolset account in Settings → Account to publish it from here, or download the file and send it on the community catalog's site."
+                : "It passed the checks. Packs are published on the community catalog's site: download the file, then send it there."}
             </Notice>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => download(sendAt.pack)}>

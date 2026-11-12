@@ -29,7 +29,7 @@ export interface S3Place {
 
 export const s3Client = (p: S3Place) =>
   new S3Client({
-    endpoint: p.endpoint,
+    endpoint: p.endpoint || undefined, // empty: Amazon, found by region
     region: p.region || "us-east-1",
     forcePathStyle: p.pathStyle,
     credentials: { accessKeyId: p.accessKey, secretAccessKey: p.secretKey },

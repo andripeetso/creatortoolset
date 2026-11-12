@@ -327,6 +327,7 @@ export function TranscriptPanel() {
 
   // AI cadence pass (hidden when the server has no AI key; guests can't run it)
   const editorBusy = useStudio(isEditorBusy);
+  const serverCaptioning = useStudio((s) => s.serverCaptioning);
   const refineError = useStudio((s) => s.refineError);
   const refineCues = useStudio((s) => s.refineCues);
   const cadenceApplied = useStudio((s) => s.cadenceApplied);
@@ -1017,7 +1018,7 @@ export function TranscriptPanel() {
                       setConfirmRe(true);
                     }
                   }}
-                  disabled={transcribing || editorBusy}
+                  disabled={transcribing || editorBusy || serverCaptioning}
                   title={`Discard this transcript and generate a fresh one for ${clipName || "this clip"} with ${engineLabel} — only this clip is affected`}
                   className="block w-full px-3 py-1.5 text-left text-[11px] text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"
                 >
@@ -1203,7 +1204,7 @@ export function TranscriptPanel() {
         )}
 
         {/* while it works the player's status card says so, in one place */}
-        {empty && !transcribing && (
+        {empty && !transcribing && !serverCaptioning && (
           <p className="pointer-events-none absolute inset-x-0 top-8 px-6 text-center text-xs leading-5 text-zinc-600">
             {status.phase === "error" ? (
               <span className="text-red-400/80">

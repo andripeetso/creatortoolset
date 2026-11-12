@@ -356,16 +356,24 @@ export function renderPackInstructions(packs: InstalledPack[], slot: PackSlot, p
   ].join("\n\n");
 }
 
+/** Whether an installed pack's text at a slot is the app's own shipped pack's, word for word (packs/*.ctpack.json). */
+export const isShippedText = (p: InstalledPack, slot: PackSlot): boolean =>
+  readOfficialPacks().some((o) => o.pack.id === p.id && o.pack.instructions?.[slot] === p.instructions[slot]);
+
 /**
  * `renderPackInstructions` for a person, read from disk, and after it the slot's skills switched on (lib/skills.ts
- * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. The Workshop's
- * writing turn gets its skills as files (api/workshop.ts) and the script step only the one a style names (skillText).
+ * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. `shippedOnly`: for
+ * an AI run with tools on the person's computer (the Workshop's turn on the Mac reads its folder and may search the
+ * web), only the app's own shipped packs go in, and of the skills only the person's own: text other people wrote never
+ * reaches a run that can act. The Workshop's writing turn gets its skills as files (api/workshop.ts) and the script
+ * step only the one a style names (skillText).
  */
-export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null): Promise<string> {
+export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null, o: { shippedOnly?: boolean } = {}): Promise<string> {
   const packs = await listInstalled(username);
-  const text = renderPackInstructions(packs, slot, projectId);
+  const text = renderPackInstructions(o.shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);
   if (!isPackSkillSlot(slot) || slot === "editor.script") return text;
-  const skills = await slotSkills(username, slot, projectId, packs.filter((p) => packOn(p, projectId)), INSTRUCTIONS_MAX - (text ? text.length + 2 : 0));
+  const shared = !o.shippedOnly;
+  const skills = await slotSkills(username, slot, projectId, shared ? packs.filter((p) => packOn(p, projectId)) : [], INSTRUCTIONS_MAX - (text ? text.length + 2 : 0), shared);
   return skills ? [text, skills].filter(Boolean).join("\n\n") : text;
 }
 

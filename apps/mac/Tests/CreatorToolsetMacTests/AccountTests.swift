@@ -221,6 +221,39 @@ final class AccountTests: XCTestCase {
         }
     }
 
+    func testAPackIsReadByTheAppForItsAlert() throws {
+        let text = #"{"format":1,"id":"tiny","name":"  Tiny Home ","captionStyles":[{"name":"a"},{"name":"b"}],"instructions":{"captions.lines":"x"},"home":{"hidden":[]}}"#
+        let pack = try XCTUnwrap(packToPublish(text))
+        XCTAssertEqual(pack.name, "Tiny Home")
+        XCTAssertEqual(pack.holds, "1 instruction, 2 caption styles, a Home layout")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: pack.body) as? [String: Any])
+        XCTAssertEqual(body["rights"] as? Bool, true)
+        XCTAssertEqual((body["pack"] as? [String: Any])?["id"] as? String, "tiny")
+        // not a pack: nothing to publish
+        XCTAssertEqual(packToPublish("{\"name\":\"Two\\nlines\\u0007\"}")?.name, "Two lines")
+        XCTAssertNil(packToPublish("[1,2]"))
+        XCTAssertNil(packToPublish(#"{"id":"no-name"}"#))
+        XCTAssertNil(packToPublish(#"{"name":"big","x":"\#(String(repeating: "a", count: 600_000))"}"#))
+        let words = publishAlertText(name: "Tiny Home", holds: "a Home layout", host: "creatortoolset.com", who: "zoe@example.com")
+        XCTAssertEqual(words.message, "Publish “Tiny Home” to Community?")
+        XCTAssertEqual(words.detail, "It goes to creatortoolset.com for review, from your account zoe@example.com. It holds: a Home layout.")
+    }
+
+    func testSubmitSendsTheTokenAndSaysWhatTheCatalogSaid() async throws {
+        let body = try XCTUnwrap(packToPublish(#"{"name":"Tiny"}"#)).body
+        StubServer.routes["/api/pack-catalog/submit"] = (201, #"{"status":"pending"}"#)
+        try await client.submit(body, token: "cta_x")
+        XCTAssertEqual(StubServer.seen.last?.value(forHTTPHeaderField: "Authorization"), "Bearer cta_x")
+        StubServer.routes["/api/pack-catalog/submit"] = (429, #"{"error":"You have 5 packs waiting for review.","problems":[]}"#)
+        do { try await client.submit(body, token: "cta_x"); XCTFail("refused") } catch {
+            XCTAssertEqual(error as? AccountError, .refused("You have 5 packs waiting for review."))
+        }
+        StubServer.routes["/api/pack-catalog/submit"] = (401, #"{"error":"Sign in to publish packs"}"#)
+        do { try await client.submit(body, token: "cta_x"); XCTFail("signed out") } catch {
+            XCTAssertEqual(error as? AccountError, .signedOut)
+        }
+    }
+
     func testKeychainKeepsAndForgetsTheToken() {
         let service = "com.creatortoolset.mac.account.tests"
         defer { DeviceVault.remove(for: "accounts.example.com", service: service) }

@@ -8,6 +8,7 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertTrue(thisMacAsks.contains("access"))
         XCTAssertTrue(thisMacAsks.contains("start"))
         XCTAssertTrue(thisMacAsks.contains("state"))
+        XCTAssertTrue(thisMacAsks.contains("connect"))
         XCTAssertFalse(thisMacAsks.contains("forget"))
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
     }

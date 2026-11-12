@@ -102,7 +102,7 @@ function stubCloudFetch(): FetchCall[] {
         contentType: headers.get("Content-Type"),
         body: init?.body,
       });
-      if (url === "/api/transcribe") {
+      if (url.split("?")[0] === "/api/transcribe") {
         return new Response(
           JSON.stringify({
             words: [{ text: "hello", start: 0, end: 0.5 }],
@@ -146,7 +146,7 @@ describe("cloud transcription without a finished source upload", () => {
       { timeout: 5000 },
     );
 
-    const cloudCall = calls.find((call) => call.url === "/api/transcribe");
+    const cloudCall = calls.find((call) => call.url === "/api/transcribe?project=project-1");
     expect(cloudCall).toBeDefined();
     expect(cloudCall?.contentType).toBe("audio/wav");
     expect(calls.some((c) => c.url.includes("/transcribe/project/"))).toBe(
@@ -173,7 +173,7 @@ describe("cloud transcription without a finished source upload", () => {
     );
 
     expect(extractAudio).toHaveBeenCalledOnce();
-    const cloudCall = calls.find((call) => call.url === "/api/transcribe");
+    const cloudCall = calls.find((call) => call.url === "/api/transcribe?project=project-1");
     expect(cloudCall).toBeDefined();
     expect(calls.some((c) => c.url.includes("/transcribe/project/"))).toBe(
       false,

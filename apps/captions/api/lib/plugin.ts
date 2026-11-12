@@ -189,6 +189,8 @@ export interface EditorStepInput {
   signal: AbortSignal;
   /** a line for the draft's notes, a whole sentence ("Blur faces found no face that matches …"): shown with the edit */
   note(text: string): void;
+  /** one line on the edit page while it runs: what it is doing now (a first-time install, waiting for the person's AI) */
+  say(text: string): void;
 }
 
 /** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */

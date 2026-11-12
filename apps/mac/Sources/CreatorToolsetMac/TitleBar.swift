@@ -62,6 +62,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "thisMac")
         // A picture of the page for the assistant (src/lib/page-context.ts snapshot()): replies with a PNG in base64
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "snapshot")
+        // Publish to Community with this Mac's account (src/lib/pack-catalog.ts publishFromMac): the pack as JSON text,
+        // answered with { state } once this app's own alert is answered (Account.swift publish)
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "publishPack")
         installScripts()
     }
 
@@ -140,6 +143,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var onAccount: ((String, @escaping (AccountReply) -> Void) -> Void)?
     /// This Mac's AI for the page (thisMac): one of thisMacAsks; the reply is { aiOn, paired, problem }.
     var onThisMacAsk: ((String, @escaping ([String: Any]) -> Void) -> Void)?
+    /// Publish a pack (the "publishPack" message): the pack's JSON text; the reply is { state, message }.
+    var onPublishPack: ((String, @escaping (AccountReply) -> Void) -> Void)?
     /// The site the window shows (Shell sets it): only its own pages may ask for a screenshot.
     var site: (() -> URL)?
 
@@ -147,6 +152,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         if message.name == "snapshot" { return snapshot(message, replyHandler) }
         if message.name == "thisMac" { return thisMac(message, replyHandler) }
+        if message.name == "publishPack" { return publishPack(message, replyHandler) }
         guard let ask = accountAsk(message.body, mainFrame: message.frameInfo.isMainFrame), let onAccount else { return replyHandler(["state": "off"], nil) }
         onAccount(ask) { replyHandler($0, nil) }
     }
@@ -315,6 +321,15 @@ extension AppWebView {
             }
             replyHandler(png.base64EncodedString(), nil)
         }
+    }
+
+    /// "publishPack": only the open server's own main frame may ask, with text; anything else is "off".
+    fileprivate func publishPack(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
+              let text = message.body as? String, let onPublishPack else {
+            return replyHandler(["state": "off"], nil)
+        }
+        onPublishPack(text) { replyHandler($0, nil) }
     }
 
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".

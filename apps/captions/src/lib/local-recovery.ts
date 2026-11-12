@@ -645,6 +645,8 @@ async function restoreRecoveryProject(
     serverProjectReady: project.serverProjectReady,
     serverRevision: project.serverRevision,
     serverConflict: project.serverConflict,
+    // asked of the server when this copy is opened (persist.ts takeServerCopy)
+    serverCaptioning: false,
     fileName: project.fileName,
     clips,
     activeClipId: active.id,
