@@ -1733,7 +1733,7 @@ async function visionSlide(
         images.push({ jpegBase64: buf.toString("base64") });
       }
     }
-    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai: aiFor(user, "analyzer", "Analyzer vision") });
     const { value, provider } = await completeVisionWithFallback(
       packText ? `${VISION_SYSTEM}\n\n${packText}` : VISION_SYSTEM,
       visionUserText({
@@ -2175,8 +2175,9 @@ function mergeLibraryIntoCatalog(catalog: CatalogItem[], posts: PostMeta[]): Cat
 }
 
 async function tagPost(meta: PostMeta, user: SessionUser, signal: AbortSignal): Promise<void> {
-  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
-  const tags = await completeWithFallback(packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM, await postReadText(meta), signal, parseTagsPayload, aiFor(user, "analyzer", "Analyzer tags"));
+  const ai = aiFor(user, "analyzer", "Analyzer tags");
+  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai });
+  const tags = await completeWithFallback(packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM, await postReadText(meta), signal, parseTagsPayload, ai);
   meta.tags = mergeTags(meta.tags, tags);
   bumpUsage(user.username, { aiRuns: 1 });
 }
@@ -2310,7 +2311,7 @@ async function generateIdeaBoardNow(
   // the Analyzer's AI (Admin → Your AI), its usage on the board
   let usage: MacUsage | undefined;
   const mac = aiFor(user, "analyzer", "Idea board");
-  const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null);
+  const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null, { ai: mac });
   const parsed = await completeWithFallback(
     packText ? `${IDEA_BOARD_SYSTEM}\n\n${packText}` : IDEA_BOARD_SYSTEM,
     ideaBoardUserMessage(catalog, previous.length ? previous : undefined),
@@ -2332,13 +2333,14 @@ async function ideaPost(meta: PostMeta, user: SessionUser, signal: AbortSignal):
   const text = await postReadText(meta);
   const folders = await libraryIdeaFolders(user, meta.id);
   const titles = folders.map((f) => f.title);
-  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+  const ai = aiFor(user, "analyzer", "Analyzer filing");
+  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai });
   const idea = await completeWithFallback(
     packText ? `${IDEA_SYSTEM}\n\n${packText}` : IDEA_SYSTEM,
     ideaUserMessage(text, folders),
     signal,
     (answer) => parseIdeaPayload(answer, titles),
-    aiFor(user, "analyzer", "Analyzer filing"),
+    ai,
   );
   // a new folder name may still be a topic the library already has
   const tsKey = typesafeFor(user);
@@ -3016,13 +3018,14 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           .map((c) => c.captionPreview)
           .filter(Boolean)
           .join("\n");
-        const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+        const ai = aiFor(user, "analyzer", "Analyzer tags");
+        const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai });
         const tags = await completeWithFallback(
           packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM,
           [`@${meta.username}`, meta.biography || "", captions].filter(Boolean).join("\n"),
           signal,
           parseTagsPayload,
-          aiFor(user, "analyzer", "Analyzer tags"),
+          ai,
         );
         meta.tags = mergeTags(meta.tags, tags);
         bumpUsage(user.username, { aiRuns: 1 });

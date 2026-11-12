@@ -134,7 +134,7 @@ captionLayoutApp.post("/auto", async (c) => {
       fixes.push(...applied.fixes.map(({ before, after }) => ({ before, after })));
       bumpUsage(user.username, { aiRuns: 1 });
     }
-    const packText = await packInstructions(user.username, "captions.lines");
+    const packText = await packInstructions(user.username, "captions.lines", null, { ai: opts.provider });
     const marks = await thoughtMarks(words, { ...opts, packText });
     bumpUsage(user.username, { aiRuns: 1 });
     words = words.map((w, i) => ({ ...w, cut: marks[i] }));
