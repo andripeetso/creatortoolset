@@ -69,7 +69,7 @@ it("keeps a plain user's files 14 days, team's 28, admin's always, deleted accou
   expect(has(`review/${ORPHAN_VIDEO}`)).toBe(false);
   expect(has("clips/gone-note")).toBe(false);
   expect(has("documents/plain-guide")).toBe(false);
-  expect(has("clips/old-note")).toBe(false);
+  expect(has("clips/old-note")).toBe(true); // a clip is a shared link: age never deletes it
   for (const kept of ["projects/plain-new", "projects/team-mid", "projects/admin-old", "projects/legacy-old", `review/${TEAM_VIDEO}`, "documents/plain-fresh"]) {
     expect(has(kept)).toBe(true);
   }

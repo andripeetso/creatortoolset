@@ -3,7 +3,7 @@ import type { HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import fs from "fs";
 import path from "path";
-import { clipPageAgentResponse, injectClipPageHtml } from "../clip-agent";
+import { clipIdFromPath, clipPageAgentResponse, injectClipPageHtml } from "../clip-agent";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type App = Hono<{ Bindings: HttpBindings; Variables: any }>;
@@ -31,7 +31,8 @@ export function serveStaticFiles(app: App) {
     const agent = await clipPageAgentResponse(c);
     if (agent) return agent;
     const accept = c.req.header("accept") ?? "";
-    if (!accept.includes("text/html")) {
+    // A shared clip link always gets its page: link previews (WhatsApp, Slack, iMessage) send no text/html.
+    if (!accept.includes("text/html") && !clipIdFromPath(c.req.path)) {
       return c.json({ error: "Not Found" }, 404);
     }
     const indexPath = path.resolve(distPath, "index.html");
