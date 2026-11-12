@@ -5,7 +5,6 @@ import { appRouter } from "./router";
 import { createContext } from "./context";
 import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
-import { cleanApp } from "./clean";
 import { clipsApp } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp } from "./enhance";
@@ -133,7 +132,6 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/projects") ||
     c.req.path.startsWith("/api/transcribe") ||
     c.req.path.startsWith("/api/enhance") ||
-    c.req.path.startsWith("/api/clean") ||
     c.req.path.startsWith("/api/clips") ||
     c.req.path.startsWith("/api/review/uploads") ||
     c.req.path.startsWith("/api/uploads/relay") ||
@@ -197,7 +195,6 @@ const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
 // their APIs serve each other (Review and Guides play Video Notes).
 export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/enhance", ["enhance"]],
-  ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
   ["/api/edit-steps", ["editor"]],
@@ -391,7 +388,6 @@ app.route("/api/skills", skillsApp);
 app.route("/api/pack-catalog", packCatalogApp);
 app.route("/api/projects", projectsApp);
 app.route("/api/enhance", enhanceApp);
-app.route("/api/clean", cleanApp);
 app.route("/api", clipAgentApp);
 app.route("/api/clips", clipsApp);
 app.route("/api/documents", documentsApp);

@@ -212,7 +212,7 @@ body { overscroll-behavior-y: none; }
    them, so a pane whose content must not move when it starts to scroll uses overflow-y-scroll, never overflow-y-auto:
    the track is transparent, so an empty one is not seen (Settings and Community do). */
 /* The page itself always keeps its bar's 8px too, so a page that grows past the window never jumps sideways (measured in
-   WebKit: 8px on Media Library, Review, Captions, Enhance, Cleaner, Stories and Notes before this). A dialog locks the page
+   WebKit: 8px on Media Library, Review, Captions, Enhance, Stories and Notes before this). A dialog locks the page
    behind it and expects the page's bar to vanish: it pads the body by the bar's width and hides the body's overflow.
    The bar now stays, so that padding would be the jump, and the hidden overflow would cut a scrolled page off at one
    window's height: both are undone here. */

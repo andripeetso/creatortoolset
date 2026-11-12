@@ -113,8 +113,10 @@ async function view(user: SessionUser): Promise<SetupView> {
   // a plug-in's other way to set up a tool: its row names it, and counts it once this account has it
   const plugged = await pluginNeeds(user);
   return {
-    tools: s.tools ?? null,
-    hidden: s.hidden ?? [],
+    // a saved id the app no longer has (a tool that left it) is left out: the page sends these lists back whole, and
+    // a save with an unknown id in it is refused
+    tools: s.tools ? s.tools.filter(isTool) : null,
+    hidden: (s.hidden ?? []).filter(isHomeTile),
     plan: s.plan ?? null,
     detected: planOf(user.username),
     done: !!s.done,
@@ -181,12 +183,13 @@ setupApp.put("/", async (c) => {
   if (b.tools !== undefined) {
     if (!Array.isArray(b.tools) || !b.tools.every(isTool))
       return c.json({ error: `tools: some of ${TOOLS.join(", ")}` }, 400);
-    next.tools = TOOLS.filter((t) => (b.tools as Tool[]).includes(t));
+    // an id the page can't show (view leaves it out, so the page never sends it) stays in the file as it was saved
+    next.tools = [...TOOLS.filter((t) => (b.tools as Tool[]).includes(t)), ...(next.tools ?? []).filter((t) => !isTool(t))];
   }
   if (b.hidden !== undefined) {
     if (!Array.isArray(b.hidden) || !b.hidden.every(isHomeTile))
       return c.json({ error: `hidden: some of ${HOME_TILES.join(", ")}` }, 400);
-    next.hidden = HOME_TILES.filter((t) => (b.hidden as HomeTile[]).includes(t));
+    next.hidden = [...HOME_TILES.filter((t) => (b.hidden as HomeTile[]).includes(t)), ...(next.hidden ?? []).filter((t) => !isHomeTile(t))];
   }
   if (b.plan !== undefined) {
     if (b.plan !== null && !isPlan(b.plan))

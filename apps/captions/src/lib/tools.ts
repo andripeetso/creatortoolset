@@ -3,7 +3,6 @@ import {
   AudioLines,
   Captions,
   Clapperboard,
-  Eraser,
   FileText,
   Library,
   Star,
@@ -73,13 +72,6 @@ const BUILTIN_WORKFLOW: { stage: string; tools: Tool[] }[] = [
   {
     stage: "Distribute",
     tools: [
-      {
-        to: "/clean",
-        icon: Eraser,
-        name: "Video Cleaner",
-        desc: "Clean metadata and compare fingerprints before posting.",
-        can: (me) => canUse(me, "clean"),
-      },
       {
         to: "/stories",
         icon: Scissors,

@@ -45,7 +45,7 @@ Check a file before you share it: `pnpm --filter @creator-toolset/captions pack:
 
 ## Home layout
 
-`"home": { "hidden": ["clean", "stories"] }`: the tiles switched off under Settings → Tools, by the app's own ids
+`"home": { "hidden": ["stories", "notes"] }`: the tiles switched off under Settings → Tools, by the app's own ids
 (`HOME_TILES` in `contracts/tools.ts`); every other tile shows. It is a list of choices from that list and nothing
 else: an id the app doesn't have is dropped, and it can't add a tile, name a page or change who may open a tool.
 Installing or updating a pack never changes Home. The installed pack has a **Use on Home** button; pressing it sets

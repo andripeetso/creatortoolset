@@ -5,12 +5,11 @@ dist/
 *.log
 .DS_Store
 
-# Tools downloaded at setup (ffmpeg, fingerprint and SSCD builds): never source
+# Tools downloaded at setup (ffmpeg and fingerprint builds): never source
 runtime/
 
 # Platform-specific visual fingerprint tools
 runtime/fingerprints/
-runtime/sscd/
 
 # Plug-ins: a private folder per plug-in, and the registries scripts/plugins.mjs writes from it
 /plugins/

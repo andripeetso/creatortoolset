@@ -129,7 +129,7 @@ export default function LibraryPage() {
   const collections = (folderList.data ?? []).filter((c) => !isFinals(c));
   const reloadFolders = () => void folderList.refresh().catch((e) => setError(message(e)));
   // the open folder (?f=), or the Trash (?trash=1); a folder that is gone is the top level once the folders are known
-  const [linked] = useSearchParams(); // also ?library=&asset= (the Video Cleaner's duplicate check links here)
+  const [linked] = useSearchParams(); // also ?library=&asset=: a link from outside the page to one item (a plug-in's list of matches)
   const trash = linked.get("trash") === "1";
   const asked = trash ? null : linked.get("f");
   const open = asked && (!folderList.data || collections.some((c) => c.id === asked)) ? asked : null;

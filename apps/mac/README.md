@@ -38,7 +38,6 @@ Build settings are environment variables, read by `scripts/build-app.sh` at buil
 | `FEED_URL` | none | Appcast URL the app reads for updates. Set it together with `SPARKLE_PUBLIC_KEY`, or neither |
 | `BUILD_NUMBER` | commit count | Build number, e.g. to test an update locally |
 | `NOTARY_PROFILE` | none | A `notarytool store-credentials` keychain profile. With `SIGN_IDENTITY`, the script notarizes and staples the app |
-| `SSCD_CACHE` | none | A verified SSCD model folder (`apps/captions/scripts/install-sscd-runtime.mjs`). Unset: the app ships without it and the Video Cleaner's duplicate check skips that score |
 | `CT_BUILD_CACHE` | `build/cache` | Where the Node, FFmpeg and fingerprint source downloads are kept between builds |
 | `BUNDLE_ID` | `com.creatortoolset.mac` | Bundle id. An installed build keeps its own id, or it can't receive its updates |
 | `APP_NAME` | `Creator Toolset` | The name in the menu bar and the Dock |
