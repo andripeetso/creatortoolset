@@ -48,9 +48,16 @@ export const REVIEW_TIMELINE_ID = "timeline-edits";
 /** The page's comment pins: the clip the comment being written is about, how many comments sit on each clip. */
 export interface TimelinePins {
   selected: string | null;
+  /** the other clips of a comment about several, ringed with `selected` */
+  marked?: string[];
   pins: Record<string, number>;
-  onSelect: (item: TimelineItem | null) => void;
+  /** a click on a clip (Shift/⌘-click: `group` is every clip picked) */
+  onSelect: (item: TimelineItem | null, group?: TimelineItem[]) => void;
   onPin: (key: string) => void;
+  /** the comment's time range (seconds); a drag across empty lane space sets it */
+  range?: [number, number] | null;
+  onRange?: (from: number, to: number) => void;
+  onClearRange?: () => void;
 }
 
 export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTimelineSlot; pin?: TimelinePins }) {
@@ -337,12 +344,16 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
         waves={waves}
         placeholders={[...sentHoles, ...(hole ? [hole] : [])]}
         selected={pin?.selected}
+        marked={pin?.marked}
         pins={pin?.pins}
-        onSelect={pin ? (item) => {
-          pin.onSelect(item ?? null);
+        onSelect={pin ? (item, _editing, group) => {
+          pin.onSelect(item ?? null, group);
           if (item) slots.current.player.pause();
         } : undefined}
         onPin={pin?.onPin}
+        range={pin?.range}
+        onRange={pin?.onRange}
+        onClearRange={pin?.onClearRange}
         {...(manage ? {
           onLive: setLive,
           onEdit: applyEdits,

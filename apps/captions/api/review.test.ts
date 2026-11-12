@@ -518,6 +518,20 @@ describe("timeline file on a version", () => {
     expect((await app.request(`/s/${share.token}/v/1/timeline`)).status).toBe(200);
   });
 
+  it("a share-link reviewer pins a comment to one clip or to several", async () => {
+    const asset = await up("Tiny pins.mp4");
+    await read(putTimeline(asset.id, EDL));
+    const { share } = await read(app.request(`/assets/${asset.id}`, patch({ share: { enabled: true } })));
+    const guest = { "x-review-key": "g".repeat(24) };
+    const clip = (rec: number) => ({ track: "V1", rec, len: 25, label: `talk ${rec}` });
+    const one = await read(app.request(`/s/${share.token}/comments`, json({ version: 1, text: "This shot", author: "Client", anchor: clip(0) }, guest)));
+    expect(one.anchor).toEqual(clip(0));
+    expect(one).not.toHaveProperty("anchors");
+    const many = await read(app.request(`/s/${share.token}/comments`,
+      json({ version: 1, text: "These two", author: "Client", anchor: clip(0), anchors: [clip(0), clip(50), { track: "X9" }] }, guest)));
+    expect(many.anchors).toEqual([clip(0), clip(50)]);
+  });
+
   it("refuses an oversized timeline from its declared length, before reading the body", async () => {
     const asset = await up("Tiny big.mp4");
     const { MAX_TIMELINE_BYTES } = await import("../contracts/timeline-import");
