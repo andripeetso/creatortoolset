@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { createDesign, listDesigns } from "@/lib/designs";
 import { Eye, Loader2, X } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
@@ -489,6 +490,17 @@ export default function WorkshopSessionPage() {
 
   // ---- documents
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
+  const navigate = useNavigate();
+  /** The carousel's design: the one this piece has, or a new one (a page a slide, portrait) to start from. */
+  const openDesign = async () => {
+    if (!activeDoc) return;
+    try {
+      const have = await listDesigns({ session: sessionId, doc: activeDoc.id });
+      navigate(`/design/${(have[0] ?? (await createDesign({ format: "portrait", session: sessionId, doc: activeDoc.id }))).id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const auditOpen = messages.find((m) => m.id === auditMessageId) ?? null;
   const replaceDoc = (doc: WorkshopDocument) => setDocs((ds) => (ds.some((d) => d.id === doc.id) ? ds.map((d) => (d.id === doc.id ? doc : d)) : [...ds, doc]));
   // the Finals versions linked to the active piece: one post-description tab each (Finals → Workshop session link)
@@ -1212,6 +1224,7 @@ export default function WorkshopSessionPage() {
                             preview={docPreview}
                             onPreview={() => setDocPreview((p) => !p)}
                             onVisualize={() => setVisualize(true)}
+                            onDesign={() => void openDesign()}
                             notMine={notMine}
                             onNotMine={toggleNotMine}
                             changes={showChanges}

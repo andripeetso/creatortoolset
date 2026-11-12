@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ChevronDown, Diff, Eye, Highlighter, LayoutGrid, ListChecks, Pencil, Shapes } from "lucide-react";
+import { ChevronDown, Diff, Eye, Highlighter, LayoutGrid, ListChecks, Palette, Pencil, Shapes } from "lucide-react";
 import {
   FRAMEWORK_ROLES,
   type FrameworkRole,
@@ -31,6 +31,7 @@ export function DocView({
   preview,
   onPreview,
   onVisualize,
+  onDesign,
   notMine,
   onNotMine,
   changes,
@@ -40,6 +41,8 @@ export function DocView({
   preview: boolean;
   onPreview: () => void;
   onVisualize?: () => void;
+  /** Design: the carousel's slides as pictures (the designer, /design/:id). */
+  onDesign?: () => void;
   /** "Not mine": mark every word of the AI's text that you never said. */
   notMine?: boolean;
   onNotMine?: () => void;
@@ -76,6 +79,11 @@ export function DocView({
       {kind === "carousel" && onVisualize ? (
         <button type="button" onClick={onVisualize} className={barBtn} title="Visualize: the slides side by side" aria-label="Visualize">
           <LayoutGrid className="h-3 w-3" /> <span className={barName}>Visualize</span>
+        </button>
+      ) : null}
+      {kind === "carousel" && onDesign ? (
+        <button type="button" onClick={onDesign} className={barBtn} title="Design: the slides as pictures your AI designs and you change by hand" aria-label="Design">
+          <Palette className="h-3 w-3" /> <span className={barName}>Design</span>
         </button>
       ) : null}
       <button type="button" onClick={onPreview} className={barBtn} title={preview ? "Back to editing" : "Preview: the piece as it reads"} aria-label={preview ? "Edit" : "Preview"}>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Scissors, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Palette, Scissors, Trash2 } from "lucide-react";
+import { createDesign } from "@/lib/designs";
 import type { AssetCard, LibrarySummary, Piece, PieceItem } from "@contracts/library";
 import { PLATFORMS } from "@contracts/connectors";
 import { AppBar } from "@/components/AppBar";
@@ -132,8 +133,11 @@ export function PieceEditor({
   onReload = () => {},
   onOpen = () => {},
   onOpenSession = () => {},
+  onDesign,
   linked,
 }: {
+  /** Opens a design by its id (the designer, /design/:id); without it there is no "Design a cover". */
+  onDesign?: (id: string) => void;
   libraryId: string;
   piece: Piece;
   cards: AssetCard[];
@@ -169,6 +173,21 @@ export function PieceEditor({
   const pickIsVideo = pickVersion ? byVersion.get(pickVersion)?.kind !== "image" : false;
 
   // Runs the calls one after another; only the last answer (the piece as the server holds it) is kept.
+  /** A cover design from the frame the player is on: tall for an upright video, a wide thumbnail for a wide one. */
+  const designCover = async () => {
+    const v = player.current;
+    if (!pickVersion) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const d = await createDesign({ format: v && v.videoWidth > v.videoHeight ? "thumbnail" : "cover", version: pickVersion, t: v?.currentTime ?? 0, title: piece.label });
+      onDesign?.(d.id);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const run = async (calls: (() => Promise<Piece>)[]) => {
     setBusy(true);
     setError(null);
@@ -334,6 +353,11 @@ export function PieceEditor({
               >
                 <ImagePlus className="h-4 w-4" /> {pickIsVideo ? "Use this frame as cover" : "Use this picture as cover"}
               </Button>
+              {pickIsVideo && onDesign && (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void designCover()}>
+                  <Palette className="h-4 w-4" /> Design a cover from this frame
+                </Button>
+              )}
               {piece.coverUrl && (
                 <Button size="sm" variant="ghost" disabled={locked} onClick={() => void run([() => clearPieceCover(libraryId, piece.id)])}>
                   Back to the automatic cover
@@ -648,6 +672,7 @@ export default function FinalsPiecePage() {
         {found === null && <p className="py-16 text-center text-sm text-zinc-500">No such piece in Finals.</p>}
         {library && piece && (
           <PieceEditor
+            onDesign={(design) => navigate(`/design/${design}`)}
             key={piece.id}
             libraryId={library.id}
             piece={piece}
