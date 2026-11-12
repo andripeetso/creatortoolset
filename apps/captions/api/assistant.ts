@@ -881,6 +881,8 @@ async function pumpOnce(username: string): Promise<void> {
   let changed = false;
   let soonest = Infinity;
   let ahead = running.has(username);
+  // a chat whose reply waits for its videos holds only the messages after it in that chat: another chat goes on
+  const stalled = new Set<AssistantMessage[]>();
   for (const id of Object.keys(held)) if (messageOf(username, id)?.status !== "thinking") {
     delete held[id];
     changed = true;
@@ -917,13 +919,15 @@ async function pumpOnce(username: string): Promise<void> {
       }
       soonest = Math.min(soonest, last + WAIT_MS);
       wait = { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
-    } else if (ahead || runningBefore) wait = { for: "reply", text: "Waiting for the reply before it" };
+    } else if (ahead || runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
         changed = true;
       }
-      ahead = true;
+      // waiting on videos (or on its chat's videos) uses no AI: it holds its own chat, not the others
+      if (wait.for === "videos" || (stalled.has(list) && !ahead && !runningBefore)) stalled.add(list);
+      else ahead = true;
       continue;
     }
     // one that can't start ends there, and the next may start in its place

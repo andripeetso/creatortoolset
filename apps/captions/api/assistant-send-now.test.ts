@@ -321,6 +321,33 @@ describe("New chat and an earlier chat while a reply runs or waits", () => {
     expect(opened.messages.at(-1)).toMatchObject({ text: "Pier captioned.", status: "done" });
   });
 
+  it("a reply waiting for its videos holds only its own chat: a message in the new chat is answered meanwhile, and one after it in the old chat still waits", async () => {
+    const p = await person("kit");
+    const clip = await p.upload("Dock.mp4");
+    await p.send({ text: "Edit the dock clip", files: [clip.id] });
+    await p.send({ text: "And make it short" });   // same chat, behind the video's reply
+    const old = (await p.view()).id;
+    await p.newChat();
+    const v = (await (await p.send({ text: "What day is it?" })).json()) as View;
+    expect(v.messages.at(-1)!.wait).toBeUndefined();   // not held behind the old chat's videos
+    const now = await p.claim();
+    expect(now.user).toContain("What day is it?");
+    expect(now.user).not.toContain("dock");
+    await p.answer(now.id, "Tuesday.");
+    const next = p.claim();
+    expect(await stillWaiting(next)).toBe(true);   // "And make it short" still waits for the video's reply
+    await clip.part();
+    const first = await next;
+    expect(first.user).toContain("Edit the dock clip");
+    await p.answer(first.id, "Dock edited.");
+    const second = await p.claim();
+    expect(second.user).toContain("And make it short");
+    expect(second.user).toContain("Dock edited.");
+    await p.answer(second.id, "Shortened.");
+    const opened = (await (await p.open(old)).json()) as View;
+    expect(opened.messages.at(-1)).toMatchObject({ text: "Shortened.", status: "done" });
+  });
+
   it("a queued reply's prompt is its own chat up to its message, whatever chat is open when its turn comes; one at a time across chats", async () => {
     const p = await person("fay");
     await p.send({ text: "Alpha one" });
