@@ -24,8 +24,29 @@ export const APPS: Record<AiApp, { name: string; logo?: string; after: string }>
  * Allow (api/oauth.ts names their key after the app). Only a server the internet reaches, over https.
  */
 export const WEB_APPS = [
-  { name: "ChatGPT", logo: "codex", open: "https://chatgpt.com/#settings/Connectors" },
-  { name: "Claude", logo: "claude", open: "https://claude.ai/settings/connectors" },
+  {
+    name: "ChatGPT",
+    logo: "codex",
+    open: () => "https://chatgpt.com/plugins",
+    steps: [
+      "Open ChatGPT's Plugins page, press + and choose Add custom MCP server. No + there? Turn on Developer mode in ChatGPT's Settings → Security and login first.",
+      "Name it Creator Toolset and paste this address under Connection, as the Server URL (Description stays empty):",
+      "Authentication: OAuth. Tick I understand and want to continue, then press Create as a plugin.",
+      "ChatGPT sends you here: sign in and press Allow.",
+    ],
+  },
+  {
+    name: "Claude",
+    logo: "claude",
+    // the add dialog, filled in; if Claude ignores the fields, the steps below still say what goes where
+    open: (url: string) => `https://claude.ai/customize/connectors?${new URLSearchParams({ modal: "add-custom-connector", connectorName: "Creator Toolset", connectorUrl: url })}`,
+    steps: [
+      "Open Claude's Connectors, press + Add and choose Add custom connector.",
+      "Name it Creator Toolset and paste this address as the server URL:",
+      "Press Continue, then Add, then Connect.",
+      "Claude sends you here: sign in and press Allow.",
+    ],
+  },
 ] as const;
 const onTheWeb = () => typeof window !== "undefined" && window.location.protocol === "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
@@ -255,37 +276,62 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
 const newest = (keys: AiKeyInfo[], name: string) => keys.filter((k) => k.name === name).sort((a, b) => b.at - a.at)[0];
 
 /**
- * ChatGPT or Claude: Install copies this server's address and opens the app's connector settings, where the person
- * adds it and signs in here. The row says Installed once the app has its key.
+ * ChatGPT or Claude. Neither takes a server from a link, so Install opens the steps in the row: what to press there,
+ * the address with Copy, and a button that opens the right page. The row says Installed once the app has its key.
  */
 function WebAppRow({ app, aiKey, onDisconnect }: { app: (typeof WEB_APPS)[number]; aiKey?: AiKeyInfo; onDisconnect: (id: string) => Promise<unknown> }) {
-  const [opened, setOpened] = useState(false);
-  const install = () => {
-    const url = `${window.location.origin}/api/mcp`;
-    window.open(app.open, "_blank", "noopener");
-    void navigator.clipboard.writeText(url).then(
-      () => setOpened(true),
-      () => saveFailed(`Couldn't copy it. The address is ${url}`),
-    );
-  };
+  const [open, setOpen] = useState(false);
+  const url = `${window.location.origin}/api/mcp`;
   return (
-    <ListRow
-      icon={<ProviderLogo driver={app.logo} className="size-4" />}
-      title={app.name}
-      subtitle={aiKey ? usedText(aiKey) : opened ? `Address copied. Add it in ${app.name} as a connector, then sign in.` : undefined}
-      actions={
-        aiKey ? (
-          <>
-            <InUse>Installed</InUse>
-            <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
-          </>
-        ) : (
-          <Button size="sm" variant={opened ? "outline" : "default"} onClick={install}>
-            {opened ? "Open again" : "Install"}
-          </Button>
-        )
-      }
-    />
+    <div>
+      <ListRow
+        icon={<ProviderLogo driver={app.logo} className="size-4" />}
+        title={app.name}
+        subtitle={aiKey ? usedText(aiKey) : undefined}
+        actions={
+          aiKey ? (
+            <>
+              <InUse>Installed</InUse>
+              <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
+            </>
+          ) : (
+            !open && (
+              <Button size="sm" onClick={() => setOpen(true)}>
+                Install
+              </Button>
+            )
+          )
+        }
+      />
+      {open && !aiKey && (
+        <div className="px-3 pb-3 sm:px-4">
+          <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
+            {app.steps.map((step, i) => (
+              <li key={i}>
+                {step}
+                {i === 1 && (
+                  <div className="mt-2">
+                    <CommandBox text={url} />
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" onClick={() => window.open(app.open(url), "_blank", "noopener")}>
+              Open {app.name}
+            </Button>
+            {/* an icon the app takes (ChatGPT: PNG, at most 10 KB) */}
+            <Button size="sm" variant="outline" asChild>
+              <a href="/icons/icon-256-small.png" download="Creator Toolset.png">Icon</a>
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

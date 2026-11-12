@@ -8,10 +8,14 @@ The address is your server followed by `/api/mcp`, e.g. `https://creatortoolset.
 
 ## ChatGPT and Claude
 
-1. Settings → Headless access → **Install** on the ChatGPT or Claude row. That copies the address and opens the app's
-   connector settings.
-2. In ChatGPT or Claude, add a connector with that address.
-3. The app sends you to Creator Toolset: sign in, check the app's name and address, press **Allow**.
+Settings → Headless access → **Install** on the ChatGPT or Claude row shows these steps with the address to copy:
+
+- **ChatGPT:** chatgpt.com/plugins → **+** → **Add custom MCP server** (no **+**: turn on Developer mode in Settings →
+  Security and login). Name Creator Toolset, the address as the MCP server URL, OAuth, **Create as a plugin**.
+- **Claude:** Customize → Connectors → **+ Add** → **Add custom connector**. Name Creator Toolset, the address as the
+  server URL, **Continue**, **Add**, **Connect**.
+
+Either app then sends you to Creator Toolset: sign in, check the app's name and address, press **Allow**.
 
 The row then says Installed. **Remove** in its menu ends the connection at once; connecting again replaces the old
 one. Allow gives the app what your account can do, except your AI providers, paired computers and keys.
