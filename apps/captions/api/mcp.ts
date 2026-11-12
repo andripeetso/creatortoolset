@@ -1297,7 +1297,8 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     }
     const content: Content[] = Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }];
     // an AI app outside the dock draws some answers as a card (mcp-cards.ts): its data rides beside the text, for the card alone
-    const card = !turn && !confirmed && !isJob(auth) && hasCard(name) ? cardFor(name, args ?? {}, answerOf(result, content), origin, thumbLinks(auth.get("authorization"), user.username, origin)) : null;
+    // (never for a plug-in's answer to a tool of the same name: its answer is its own shape)
+    const card = !turn && !confirmed && !plug && !isJob(auth) && hasCard(name) ? cardFor(name, args ?? {}, answerOf(result, content), origin, thumbLinks(auth.get("authorization"), user.username, origin)) : null;
     return card ? { content, _meta: { card } } : { content };
   } catch (e) {
     if (e instanceof Asked)
@@ -1353,7 +1354,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // dockOnly says who gets a tool; it is not part of the listing
       return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
           // the labels are for an AI app outside (it asks before a tool that can remove); the dock's list stays as it was
-          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(hasCard(name) ? { _meta: cardToolMeta() } : {}) },
+          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(hasCard(name) && !plugged.handlers.has(name) ? { _meta: cardToolMeta() } : {}) },
         ) });
     }
     // the card's page (mcp-cards.ts): one resource, read once by the AI app and kept

@@ -289,7 +289,8 @@ body{font:14px/1.45 var(--font-sans,system-ui,-apple-system,"Segoe UI",Roboto,sa
     var card = meta.card || (result && result.structuredContent && result.structuredContent.card);
     if (!card || !DRAW[card.kind]) {
       /* the app sent an answer without the card's data: say what arrived, so the cause can be found */
-      if (!again && !root.firstChild && result && (result.content || result.structuredContent || result._meta)) {
+      /* a call that was refused has no card: the frame stays empty and the AI says why */
+      if (!again && !root.firstChild && result && !result.isError && (result.content || result.structuredContent || result._meta)) {
         root.appendChild(el("div", "note", "Nothing to show here (" + Object.keys(result).join(", ") + (host ? "; apps" : "") + (window.openai ? "; openai" : "") + ")."));
         size();
       }

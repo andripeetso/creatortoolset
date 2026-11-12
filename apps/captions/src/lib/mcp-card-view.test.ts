@@ -69,3 +69,8 @@ it("an answer without a card says what arrived instead of staying blank", () => 
   say({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "{}" }] } });
   expect(document.getElementById("c")!.textContent).toContain("Nothing to show here (content; apps)");
 });
+
+it("a refused call leaves the frame empty", () => {
+  say({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Not found, or not this account's." }], isError: true } });
+  expect(document.getElementById("c")!.childNodes.length).toBe(0);
+});

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,9 @@ const { mintJobToken } = await import("./auth");
 const app = (await import("./boot")).default;
 const { CARD_LINK_MS, CARD_MIME, CARD_URI, cardFor, thumbLinks } = await import("./mcp-cards");
 const { registerLibrarySlot, resetLibrarySlots, LIBRARY_SOURCE } = await import("./library/sources");
+const { blobs, libraryDb } = await import("./library/db");
+const { ensureLibrary, homeOf } = await import("./library/access");
+const { handle, pluginToolsOf } = await import("./mcp");
 
 const user = createUser("cardowner", "password1");
 const made = newAiKey(user, "ChatGPT", true);
@@ -63,6 +66,20 @@ describe("cards for an AI app outside the dock", () => {
   });
 });
 
+describe("a plug-in that answers a card tool itself", () => {
+  it("gets no card: its answer is its own shape", async () => {
+    const plugged = pluginToolsOf([
+      { id: "tiny", tools: { defs: [{ name: "editor_get", description: "The plug-in's own.", inputSchema: { type: "object", properties: {} } }], handlers: { editor_get: async () => ({ id: "e1", drafts: [{ odd: true }] }) }, replaces: ["editor_get"] } } as never,
+    ]);
+    const call = (p: string, init?: RequestInit) => Promise.resolve(app.request(p, init));
+    const ask = async (method: string, params: unknown) => (await handle(call, new Headers({ authorization: key }), { jsonrpc: "2.0", id: 1, method, params }, ORIGIN, findUser("cardowner") as never, plugged)) as { result: Record<string, any> };
+    const listed = (await ask("tools/list", {})).result.tools as Array<{ name: string; _meta?: unknown }>;
+    expect(listed.filter((t) => t.name === "editor_get").map((t) => t._meta)).toEqual([undefined]);
+    expect(listed.find((t) => t.name === "media_search")!._meta).toBeDefined();
+    expect((await ask("tools/call", { name: "editor_get", arguments: { edit: "e1" } })).result._meta).toBeUndefined();
+  });
+});
+
 describe("card data", () => {
   const none = () => undefined;
   it("footage: the first moment said, a signed picture where there is one, and what to do when there is nothing", () => {
@@ -93,6 +110,27 @@ describe("a card's picture links", () => {
   const get = (url: string) => app.request(new URL(url).pathname);
   /** A signed link for a clip that isn't there: past every check it ends at the library's own "not found" (code not_found). */
   const reached = async (url: string) => ((await (await get(url)).json()) as { code?: string }).code === "not_found";
+
+  it("serves the clip's picture to its owner's link, and not to another account's", async () => {
+    ensureLibrary("cardowner");
+    const d = libraryDb();
+    const lib = (d.prepare("SELECT id FROM libraries WHERE workspace_id = ?").get(homeOf("cardowner")) as { id: string }).id;
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_pic', ?, 'video', 'Bedtime', 'v_pic', 'cardowner', 1)").run(lib);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES ('v_pic', 'a_pic', 1, ?, 9, 'v_pic', 'video/mp4', '{}', 'ready', 'cardowner', 1)").run(`libraries/${lib}/v/v_pic/source`);
+    const file = path.join(process.env.DATA_DIR!, "thumb-in");
+    writeFileSync(file, "the picture");
+    await blobs.put(`libraries/${lib}/v/v_pic/thumb.jpg`, file);
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('v_pic', 'thumb', ?, 11)").run(`libraries/${lib}/v/v_pic/thumb.jpg`);
+
+    const res = await get(thumbLinks(key, "cardowner", ORIGIN)("v_pic")!);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(await res.text()).toBe("the picture");
+    // signing is not seeing: another account's own key makes a link, and the library still refuses it the clip
+    const other = createUser("cardother", "password1");
+    const theirs = thumbLinks(`Bearer ${newAiKey(other, "ChatGPT", true).key}`, "cardother", ORIGIN)("v_pic")!;
+    expect((await get(theirs)).status).toBe(404);
+  });
 
   it("works for its key, its time and thumbnails of the built-in library only", async () => {
     const link = thumbLinks(key, "cardowner", ORIGIN)("v_missing")!;
