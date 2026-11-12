@@ -1,8 +1,9 @@
 import type { TimelineSource } from "../../contracts/editor";
 
 /**
- * Punch-ins without face detection: every cut on the speaker track changes scale (1.0 ↔ punch), pan stays 0, and the
- * tilt keeps the eye line the user set for each source at the same screen height, clamped so no edge shows.
+ * Punch-ins: every cut on the speaker track changes scale (1.0 ↔ punch), pan stays 0, and the tilt keeps each
+ * source's eye line (the user's, else the one found at analyze, eyeline.ts) at the same screen height, clamped so no
+ * edge shows.
  */
 
 /** The most a source may be punched in: 2.0 from 4K (a short side of 2160 px), else 1.5. */

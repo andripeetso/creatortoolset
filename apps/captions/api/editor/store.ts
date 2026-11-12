@@ -72,7 +72,8 @@ export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, u
 
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
-  analysis: { sentences: Sentence[]; notes: string[] };
+  /** `eyeline`: per source version, the eye line found on this computer (eyeline.ts) */
+  analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number> };
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
@@ -449,6 +450,7 @@ export function viewOf(e: EditMeta): Edit {
     ...summaryOf(e),
     jobs: jobsOf(e.id),
     eyeline: e.eyeline ?? {},
+    ...(a?.eyeline ? { eyelineFound: a.eyeline } : {}),
     drafts: draftNames(e.id),
     sentences: a?.sentences.length ?? 0,
     lines: p?.lines ?? [],

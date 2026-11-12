@@ -162,7 +162,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     words,
     energy,
     punch: edit.framing.punch,
-    eyeline: edit.eyeline ?? {},
+    eyeline: { ...analysis.eyeline, ...edit.eyeline },
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
     size: edit.size,
   });

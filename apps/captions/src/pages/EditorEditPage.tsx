@@ -185,7 +185,13 @@ export default function EditorEditPage() {
           </div>
           <div className="flex flex-wrap gap-3">
             {edit.sources.map((v) => (
-              <EyeLine key={v} versionId={v} y={edit.eyeline[v] ?? DEFAULT_EYELINE} onSet={(y) => void act(setEyeline(id, v, y))} />
+              <EyeLine
+                key={v}
+                versionId={v}
+                y={edit.eyeline[v] ?? edit.eyelineFound?.[v] ?? DEFAULT_EYELINE}
+                note={edit.eyeline[v] !== undefined ? "Set by you" : edit.eyelineFound?.[v] !== undefined ? "Found" : undefined}
+                onSet={(y) => void act(setEyeline(id, v, y))}
+              />
             ))}
           </div>
         </section>
@@ -326,7 +332,7 @@ export default function EditorEditPage() {
 }
 
 /** A clip's frame with its eye line: drag (or click) to move it; it is saved when let go. */
-function EyeLine({ versionId, y, onSet }: { versionId: string; y: number; onSet: (y: number) => void }) {
+function EyeLine({ versionId, y, note, onSet }: { versionId: string; y: number; note?: string; onSet: (y: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const at = (e: React.PointerEvent) => {
@@ -362,6 +368,7 @@ function EyeLine({ versionId, y, onSet }: { versionId: string; y: number; onSet:
     >
       <img src={thumb(versionId)} alt="" draggable={false} className="block min-h-16 w-full" />
       <div className="pointer-events-none absolute inset-x-0 border-t-2 border-violet-400 shadow-[0_0_0_1px_rgba(0,0,0,0.4)]" style={{ top: `${shown * 100}%` }} />
+      {note && <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[11px] text-white">{note}</span>}
     </div>
   );
 }

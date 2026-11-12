@@ -156,6 +156,8 @@ export interface Edit extends EditSummary, EditBrief {
   size?: WorkingSize | null;
   /** per source version: the speaker's eye line, a fraction of the picture's height from the top (punch-ins keep it in place) */
   eyeline: Record<string, number>;
+  /** per source version: the eye line found on this computer at analyze, used where `eyeline` has none */
+  eyelineFound?: Record<string, number>;
   /** the versions with a draft timeline, by name */
   drafts: string[];
   jobs: EditJob[];
@@ -182,7 +184,7 @@ export interface PlansPatch {
   plans: { name: string; lines: { line: string; take: Pick<Take, "first" | "last"> }[] }[];
 }
 
-/** The eye line when the user has not set one: a little above the middle, where a speaker's eyes usually are. */
+/** The eye line when the user has set none and none was found: a little above the middle, where a speaker's eyes usually are. */
 export const DEFAULT_EYELINE = 0.38;
 
 export const TRACKS = ["V1", "V2", "A1", "A2", "A3"] as const;

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Line, Sentence, TimelineSource, VersionPlan } from "../../contracts/editor";
+import { DEFAULT_EYELINE, type Line, type Sentence, type TimelineSource, type VersionPlan } from "../../contracts/editor";
 import type { TimedWord } from "../library/transcribe";
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
@@ -15,9 +15,10 @@ const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
-const { createEdit, editDir, readDraft, readStep, saveDraft, saveStep, viewOf, readEdit } = await import("./store");
+const { createEdit, editDir, readDraft, readStep, saveDraft, saveEdit, saveStep, viewOf, readEdit } = await import("./store");
 const { buildTimeline, sourceOf, timecodeFrames } = await import("./timeline");
 const { tick } = await import("./worker");
+const { tiltFor } = await import("./framing");
 
 /** Two sentences per file, each two 0.25 s words with a 0.1 s gap, sentences 1 s apart. */
 const words: TimedWord[] = [
@@ -168,5 +169,29 @@ describe("AI Editor timeline", () => {
     const v2 = readDraft(e.id, "v2")!.timeline;
     expect(v2.tracks.V1.items.map((i) => i.src)).toEqual(["ver_a", "ver_b"]);
     expect(Object.keys(v2.sources).sort()).toEqual(["ver_a", "ver_b"]);
+  });
+
+  it("a draft keeps the eye line the person set, else the one found at analyze, else the default", async () => {
+    const e = (await createEdit("mem-a", { sources: ["ver_a", "ver_b"], versions: 1 }))!;
+    await saveEdit({ ...readEdit(e.id)!, eyeline: { ver_b: 0.45 } });
+    await saveStep(e.id, "analysis", { sentences, notes: [], eyeline: { ver_a: 0.25, ver_b: 0.25 } });
+    // shots: ver_a wide, ver_b punched, ver_b wide, ver_a punched
+    const take = (n: number) => ({ first: n, last: n, score: 1 });
+    const four = { name: "v1", title: "Four", lines: [{ line: "L1", take: take(1) }, { line: "L2", take: take(4) }, { line: "L1", take: take(3) }, { line: "L2", take: take(2) }] };
+    await saveStep(e.id, "plan", { lines, plans: [four], notes: [] });
+    enqueueJob(libraryDb(), "mem-a", `${e.id}:v1`, "draft", "mem-a", true, "edit_jobs");
+    while (await tick());
+    expect(viewOf(readEdit(e.id)!).eyelineFound).toEqual({ ver_a: 0.25, ver_b: 0.25 });
+    const t = readDraft(e.id, "v1")!.timeline;
+    const punched = t.tracks.V1.items.filter((i) => i.zoom);
+    expect(punched.map((i) => i.src)).toEqual(["ver_b", "ver_a"]);
+    const tilt = (src: string, y: number) => tiltFor(t.sources[src]!, t.width, t.height, punched[0]!.zoom!, y);
+    expect(punched.map((i) => i.tilt)).toEqual([tilt("ver_b", 0.45), tilt("ver_a", 0.25)]);
+    // none found and none set: the default, as before
+    await saveStep(e.id, "analysis", { sentences, notes: [] });
+    await saveEdit({ ...readEdit(e.id)!, eyeline: {} });
+    enqueueJob(libraryDb(), "mem-a", `${e.id}:v1`, "draft", "mem-a", true, "edit_jobs");
+    while (await tick());
+    expect(readDraft(e.id, "v1")!.timeline.tracks.V1.items.filter((i) => i.zoom).map((i) => i.tilt)).toEqual([tilt("ver_b", DEFAULT_EYELINE), tilt("ver_a", DEFAULT_EYELINE)]);
   });
 });
