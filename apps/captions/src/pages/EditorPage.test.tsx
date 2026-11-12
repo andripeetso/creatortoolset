@@ -240,7 +240,8 @@ describe("New edit: a script, nothing filmed", () => {
     expect(button("Create and run").disabled).toBe(false);
     await submit();
     expect(calls.find((c) => c.url === "/api/editor/voice")!.body).toEqual({ text: "Roll the mat out.", voice: "v_mine" });
-    expect(posted.at(-1)).toEqual({ sources: ["ver_voice"], brief: "", script: "Roll the mat out.", brollCollectionId: null });
+    // one version, as long as the voice; no folder named, so all their B-roll
+    expect(posted.at(-1)).toEqual({ sources: ["ver_voice"], brief: "", script: "Roll the mat out.", versions: 1, targetS: 0 });
     expect(calls.at(-1)!.url).toBe("/api/editor/edit_1/run");
   });
 
@@ -256,6 +257,22 @@ describe("New edit: a script, nothing filmed", () => {
     await type("edit-spoken", "Try it today.");
     await submit();
     expect(posted.at(-1)).toMatchObject({ sources: ["ver_voice"], brollCollectionId: "col_1" });
+  });
+
+  it("with a style: still one version of the voice's own length, and the style's B-roll folder unless another is chosen", async () => {
+    installed.folders = [{ id: "col_1", name: "Tumbling", kind: "manual" }, { id: "col_2", name: "Outdoors", kind: "manual" }];
+    await open({ styles: [style("st_1", "Fast and warm", { versions: 3, targetS: 30, brollCollectionId: "col_1" })], last: "st_1" });
+    act(() => button("A script, nothing filmed").click());
+    await flush();
+    await flush();
+    // the style's folder is what "nothing chosen" means, by its name, and it is not listed twice
+    expect([...field<HTMLSelectElement>("edit-broll")!.options].map((o) => [o.value, o.textContent])).toEqual([["", "Tumbling"], ["col_2", "Outdoors"]]);
+    await type("edit-spoken", "Roll the mat out.");
+    await submit();
+    expect(posted.at(-1)).toEqual({ sources: ["ver_voice"], brief: "", script: "Roll the mat out.", versions: 1, targetS: 0, style: "st_1" });
+    await choose("edit-broll", "col_2");
+    await submit();
+    expect(posted.at(-1)).toMatchObject({ versions: 1, style: "st_1", brollCollectionId: "col_2" });
   });
 
   it("with no ElevenLabs key it says where to add one, and nothing can be made", async () => {

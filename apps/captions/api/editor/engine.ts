@@ -73,10 +73,11 @@ export function nextKinds(): Record<string, string[]> {
  * What a finished step queues for this edit: `next`'s list, except that the cards come after the B-roll when the edit's
  * style names an animation style. An edit in passes (passes.ts) goes from a draft or a B-roll straight to post, so each
  * pass ends in a preview and waits; only a version whose cards pass ran (`done`) goes on to its cards after a B-roll
- * (Make cards again lays the B-roll first).
+ * (Make cards again lays the B-roll first). A draft with no picture (a voice recording's) is recorded as having had its
+ * B-roll (timeline.ts), so it goes on to it at once: that B-roll is its picture, and the first cut is filed with it.
  */
 export const nextFor = (kind: string, edit: Pick<EditMeta, "style">, next: Record<string, string[]>, done: string[] = []): string[] =>
-  edit.style?.passes && (kind === "draft" || (kind === "broll" && !done.includes("cards")))
+  edit.style?.passes && ((kind === "draft" && !done.includes("broll")) || (kind === "broll" && !done.includes("cards")))
     ? ["post"]
     : kind === "broll" && edit.style?.animation ? ["cards"] : (next[kind] ?? []);
 

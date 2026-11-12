@@ -6,7 +6,7 @@ import { buildAssetQuery, MAX_LIMIT, type CardRow } from "../library/query";
 import type { ProbeSummary } from "../library/media/probe";
 import { brollMinFrames } from "./qa";
 import { readDraft, saveDraft, sourcesWorkspace } from "./store";
-import { sourceOf } from "./timeline";
+import { noPicture, sourceOf } from "./timeline";
 import type { StepContext } from "./worker";
 
 /**
@@ -115,13 +115,6 @@ export function placeBroll(tl: Timeline, pool: TimelineSource[]): BrollResult {
   }
   out.tracks.V2.items = placed;
   return { timeline: out, notes };
-}
-
-/** A cut whose takes have no picture: nothing to cut away from, so the B-roll is the whole picture. */
-export function noPicture(tl: Timeline): boolean {
-  // only a take the cut knows to be sound only (w 0): a source it has no record of is not one
-  const items = tl.tracks?.V1?.items ?? [];
-  return items.length > 0 && items.every((i) => tl.sources?.[i.src]?.w === 0);
 }
 
 /** The longest shot of a covered picture, in frames at 25 fps (3 s): a longer line is cut into equal shots. */

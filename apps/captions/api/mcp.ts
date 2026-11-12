@@ -74,6 +74,11 @@ const FINALS_GUIDE = `Finals: the finished pieces the user keeps. A piece holds 
 sets the winner, orders its versions and writes a version's name or post description, finals_piece_trash moves one to
 the trash or back. A version's id is the one finals_pieces gives.`;
 
+/** Said only where the built-in AI Editor's tools are (voice_make is one of them): not on an install whose plug-in answers /api/editor. */
+const NOTHING_FILMED_GUIDE = `A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
+as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
+picture gets its whole picture from B-roll: the edit's broll_folder, or every clip sorted B-roll when it names none.`;
+
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
 Content Workshop: the same projects, sessions, pieces and chat the user sees on the site and the iPhone app, so whatever
@@ -110,8 +115,6 @@ one per version, and the run files each draft's preview in Review by itself. edi
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
 the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop session
 that fits its name) and ask once, in one short question, whether that's right and whether to use the usual setup.
-"a video from this script, nothing filmed" = voice_make (the script, spoken), then editor_create with its version id as
-the only source and the script: a take with no picture gets its whole picture from B-roll.
 
 Instagram comments: instagram_comments reads what people write under an account's posts (the user's, or another
 creator's added with instagram_add_account), to find the questions they ask most.
@@ -1356,7 +1359,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});

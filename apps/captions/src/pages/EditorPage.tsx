@@ -384,7 +384,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
         name: name.trim() || undefined,
         brief,
         script,
-        ...(spoken ? { brollCollectionId: broll || null } : { versions, targetS: Number(targetS) || 0 }),
+        // one voice says the script once: one version, as long as the voice, whatever the style says. No folder chosen
+        // says nothing, so the style's own B-roll folder stands (with none: all their B-roll)
+        ...(spoken ? { versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) } : { versions, targetS: Number(targetS) || 0 }),
         // only an account with styles says anything about one: its pick, or null for None
         ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
       });
@@ -427,7 +429,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             </Button>
           </div>
 
-          {!filmed && <FromScript script={script} onScript={setScript} voice={voice} onVoice={setVoice} folders={folders} broll={broll} onBroll={setBroll} />}
+          {!filmed && (
+            <FromScript script={script} onScript={setScript} voice={voice} onVoice={setVoice} folders={folders} broll={broll} onBroll={setBroll} styleFolder={styles?.styles.find((x) => x.id === styleId)?.brollCollectionId ?? null} />
+          )}
           {filmed && (
           <section aria-label="Footage" className="flex flex-col gap-2">
             {libId && items.length === 0 && !term && !folder && <FootageFolderCard libraryId={libId} />}

@@ -17,7 +17,8 @@ const { indexAsset } = await import("../library/query");
 const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
 const { NO_COVER, rankByWords } = await import("./broll");
-const { createEdit, readDraft, readEdit, saveStep, viewOf } = await import("./store");
+const { nextPass, passesDone } = await import("./passes");
+const { createEdit, readDraft, readEdit, saveEdit, saveStep, viewOf } = await import("./store");
 const { sourceOf } = await import("./timeline");
 const { tick } = await import("./worker");
 
@@ -124,6 +125,21 @@ describe("AI Editor: an edit of a voice with no picture", () => {
     const { tl } = await cut({ brollCollectionId: "col_two" });
     expect(new Set(tl!.tracks.V2.items.map((i) => i.src))).toEqual(new Set(["ver_park", "ver_ramp"]));
     expect(coveredTo(tl!.tracks.V2.items)).toBe(Math.max(...tl!.tracks.V1.items.map((i) => i.rec + i.len)));
+  });
+
+  it("an edit in passes: the picture is laid with the first cut, which is what is filed, and B-roll is not a pass left to carry on with", async () => {
+    const e = (await createEdit("mem-a", { sources: ["ver_voice"] }))!;
+    await saveEdit({ ...e, style: { id: "st_1", name: "Tiny passes", notes: "", pace: "tight", passes: true }, brollCollectionId: "col_two" });
+    await saveStep(e.id, "analysis", { sentences, notes: [] });
+    await saveStep(e.id, "plan", { lines, plans, notes: [] });
+    enqueueJob(libraryDb(), "mem-a", `${e.id}:`, "draft", "mem-a", true, "edit_jobs");
+    while (await tick());
+    const view = viewOf(readEdit(e.id)!);
+    expect(view.jobs.map((j) => `${j.kind} ${j.variant}`.trim()).slice(0, 5)).toEqual(["draft", "draft v1", "broll v1", "post v1", "preview v1"]);
+    const tl = readDraft(e.id, "v1")!.timeline;
+    expect(coveredTo(tl.tracks.V2.items)).toBe(Math.max(...tl.tracks.V1.items.map((i) => i.rec + i.len)));
+    expect(passesDone(e.id, "v1")).toEqual(["broll"]);
+    expect(nextPass(readEdit(e.id)!, "v1")).toBeNull();
   });
 
   it("with nothing to show, the B-roll step fails in words and no preview of a black video is made", async () => {

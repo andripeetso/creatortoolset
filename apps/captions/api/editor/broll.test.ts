@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
 import { placeCards } from "./cards/place";
-import { emptyTracks } from "./timeline";
-import { BROLL_NOTE, COVER_SHOT_FRAMES, coverWindows, freeStart, noPicture, placeBroll, placeCover, rulesAt, windowsOf } from "./broll";
+import { emptyTracks, noPicture } from "./timeline";
+import { BROLL_NOTE, COVER_SHOT_FRAMES, coverWindows, freeStart, placeBroll, placeCover, rulesAt, windowsOf } from "./broll";
 
 const src = (versionId: string, dur: number): TimelineSource => ({ versionId, name: versionId, fps: 30, tc: 0, dur, w: 1080, h: 1920 });
 

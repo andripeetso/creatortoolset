@@ -10,7 +10,8 @@ const SELECT = "h-9 w-fit max-w-full rounded-md border border-zinc-500/30 bg-tra
 
 /**
  * New edit with nothing filmed: the script, the voice that says it (one of the person's ElevenLabs voices, their own
- * first, opening on the one used last) and where the picture comes from (a Media Library folder, or all their B-roll).
+ * first, opening on the one used last) and where the picture comes from (a Media Library folder; with none chosen, the
+ * picked style's B-roll folder, or all their B-roll).
  */
 export function FromScript({
   script,
@@ -20,6 +21,7 @@ export function FromScript({
   folders,
   broll,
   onBroll,
+  styleFolder,
 }: {
   script: string;
   onScript: (text: string) => void;
@@ -28,6 +30,8 @@ export function FromScript({
   folders: Collection[];
   broll: string;
   onBroll: (id: string) => void;
+  /** the B-roll folder of the editing style picked, if it names one: what the edit uses when no folder is chosen here */
+  styleFolder: string | null;
 }) {
   const [view, setView] = useState<VoicesView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,8 +107,8 @@ export function FromScript({
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="edit-broll">Picture from</Label>
         <select id="edit-broll" value={broll} onChange={(e) => onBroll(e.target.value)} className={SELECT}>
-          <option value="">All my B-roll</option>
-          {folders.map((c) => (
+          <option value="">{styleFolder ? (folders.find((c) => c.id === styleFolder)?.name ?? "The style's folder") : "All my B-roll"}</option>
+          {folders.filter((c) => c.id !== styleFolder).map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>

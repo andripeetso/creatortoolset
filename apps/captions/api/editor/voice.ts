@@ -95,7 +95,10 @@ function pickVoice(voices: Voice[], wanted: string, last: string | null): Voice 
   throw new VoiceError(`${w ? `No voice called “${wanted.trim()}”.` : "Which voice?"} Give voice: ${names.join(", ")}${voices.length > 20 ? ", and more in ElevenLabs" : ""}.`);
 }
 
-/** Speaks `text` in `voice` and saves the recording in the person's Media Library. */
+/**
+ * Speaks `text` in `voice` and saves the recording in the person's Media Library.
+ * ponytail: spoken inside the request (seconds for a reel's script, the page waits on "Making the voice"); a job with a state of its own when texts get long.
+ */
 export async function makeVoice(user: AuthVars["user"], input: { text: string; voice?: string; name?: string }): Promise<MadeVoice> {
   // where a plug-in's source is the Media Library, the storage library is never shown: nothing goes where nobody looks
   const main = mainSource();

@@ -1,5 +1,6 @@
 import type { Item, Timeline, TimelineSource } from "../../../contracts/editor";
-import { noPicture, rulesAt } from "../broll";
+import { rulesAt } from "../broll";
+import { noPicture } from "../timeline";
 
 /**
  * Where a card goes on the cut, in code: a full-frame cutaway on the B-roll track over the first shot of its line, by
