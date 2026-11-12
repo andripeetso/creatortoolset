@@ -97,12 +97,16 @@ async function draw(d: Design, pages: DesignPage[], which: number[], dir: string
   }
 }
 
-// one browser at a time: a second asker waits for the first to be done
+// one browser at a time: a second asker waits for the first to be done, and no more than a few wait
 let line: Promise<unknown> = Promise.resolve();
+let waiting = 0;
+const MAX_WAITING = 4;
 
 /** Pictures of the pages numbered in `which` (1 = the first). `dir`: the design's pictures folder. */
 export function pagePictures(d: Design, pages: DesignPage[], which: number[], dir: string): Promise<Look> {
-  const mine = line.then(() => draw(d, pages, which, dir));
+  if (waiting >= MAX_WAITING) return Promise.resolve({ pictures: [], why: "No pictures of the pages: the server is drawing others just now" });
+  waiting++;
+  const mine = line.then(() => draw(d, pages, which, dir)).finally(() => waiting--);
   line = mine.catch(() => {});
   return mine;
 }
