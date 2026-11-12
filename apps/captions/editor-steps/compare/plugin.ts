@@ -251,7 +251,7 @@ export default definePlugin({
   id: "compare",
   name: "Compare",
   about: "Two of your AIs write the same draft, names hidden until you pick one.",
-  kind: "Workshop button",
+  kind: "workshop",
   gates: { ids: ["compare"], defaultOff: ["compare"] },
   routes: app,
 });
