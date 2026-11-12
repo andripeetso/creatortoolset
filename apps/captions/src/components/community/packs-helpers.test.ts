@@ -19,7 +19,7 @@ describe("packContents", () => {
   });
 
   it("names the tools a Home layout shows, and files the pack under Home layouts", () => {
-    const home = { hidden: ["enhance", "captions", "clean", "stories", "notes", "guides", "record"] as never };
+    const home = { hidden: ["enhance", "captions", "stories", "notes", "guides", "record"] as never };
     expect(packContents({ home }).home).toEqual(["Content Analyzer", "Content Workshop", "Media Library", "AI Editor", "Review"]);
     expect(packKinds({ instructions: [], frameworks: 0, captionStyles: 0, designSystems: 0, home: true })).toEqual([{ id: "home", label: "Home layouts", count: undefined }]);
     expect(destinations({ instructions: [], frameworks: 0, captionStyles: 0, designSystems: 0, home: true }).map((d) => d.to)).toEqual(["/settings/tools"]);

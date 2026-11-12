@@ -372,7 +372,6 @@ export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean
 
 /**
  * "What do you want to do first?": each answer's words, the tools it is done with and the line that says it is ready.
- * The Video Cleaner is in none: it is leaving the app.
  */
 export const JOB_SETUP: Record<Job, { name: string; tools: readonly Tool[]; ready: string }> = {
   ideas: { name: "Find ideas in posts I like", tools: ["instagram"], ready: "You're ready to find ideas." },

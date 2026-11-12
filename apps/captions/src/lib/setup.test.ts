@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, JOB_SETUP, jobNeeds, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
@@ -270,12 +270,11 @@ describe("the work preferences' saved copy", () => {
 
 describe("What do you want to do first?", () => {
   const all = [...TOOLS];
-  it("offers only the jobs this account has a tool for, and Just look around always; the Video Cleaner is in none", () => {
+  it("offers only the jobs this account has a tool for, and Just look around always", () => {
     expect(jobsFor(all)).toEqual([...JOBS]);
     expect(jobsFor(["workshop", "captions"])).toEqual(["write", "captions", "look"]);
     expect(jobsFor(["editor"])).toEqual(["edit", "look"]); // one of its two tools is enough
     expect(jobsFor([])).toEqual(["look"]);
-    for (const j of JOBS) expect(JOB_SETUP[j].tools).not.toContain("clean");
   });
 
   it("lists a job's missing required rows from the tools' own list (readiness), each once, never an optional one", () => {
