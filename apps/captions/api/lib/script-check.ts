@@ -340,12 +340,12 @@ function dress(
 type CheckOpts = { signal?: AbortSignal; provider?: ProviderOpts; hedgeAfterMs?: number };
 
 /**
- * The check runs on Caption Studio's provider, labelled "Script check"; no hedged second call on the Mac,
- * which would only double its work (Opus takes about as long per piece as the hedge waits).
+ * The check runs on Caption Studio's provider, labelled "Script check"; no hedged second call on the Mac or a local
+ * model, which would only double its work (Opus takes about as long per piece as the hedge waits).
  */
 export function scriptCheckOpts(user: Parameters<typeof aiFor>[0], opts: CheckOpts): CheckOpts {
   const provider = aiFor(user, "captions", "Script check");
-  return { ...opts, provider, ...(provider.only?.includes("mac") ? { hedgeAfterMs: 15 * 60_000 } : {}) };
+  return { ...opts, provider, ...(provider.only?.some((id) => id === "mac" || id === "localModel") ? { hedgeAfterMs: 15 * 60_000 } : {}) };
 }
 
 /** Vetted script edits for a whole transcript: pieces in parallel, joined. */

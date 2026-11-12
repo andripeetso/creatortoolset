@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 import { MAX_VERSIONS, type EditorDefaults } from "@contracts/editor";
 import type { EditStepChoice, StepRow } from "@contracts/editor-steps";
-import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, type EditingStyle, type EditingStyleInput, type Pace } from "@contracts/editor-styles";
+import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace } from "@contracts/editor-styles";
+import type { Skill } from "@contracts/skills";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,8 +11,9 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { RowMenu } from "@/components/settings/ui";
-import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, updateStyle } from "@/lib/editor";
+import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listFinished, removeFinished, updateStyle } from "@/lib/editor";
 import { listCollections, listLibraries } from "@/lib/library";
+import { listSkills } from "@/lib/skills";
 
 /**
  * The AI Editor's Editing styles tab: the person's styles as cards, and the sheet one is made and changed in. A style
@@ -87,7 +89,9 @@ async function brollFolders(): Promise<{ id: string; name: string }[]> {
 /**
  * One style's sheet. The grade and the steps are sent only when changed here: a style that says nothing about them
  * takes the person's own defaults when an edit is made. A select with nothing to choose is not drawn (one grade, no
- * folder, no step in this app).
+ * folder, no step in this app, no skill). The skills offered are the ones an edit's script step would get: switched
+ * on, for every project; the skill is sent only when changed here, so one the style names that is switched off for
+ * now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
  */
 function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
   const [name, setName] = useState(style?.name ?? "");
@@ -102,6 +106,9 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [defaults, setDefaults] = useState<EditorDefaults | null>(null);
   const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<StepRow[]>([]);
+  const [skill, setSkill] = useState<string | null>(null); // null: not changed here
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [finished, setFinished] = useState<FinishedEdit[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -109,11 +116,14 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
     getEditorDefaults().then(setDefaults, () => {});
     brollFolders().then(setFolders, () => {});
     getEditSteps().then((v) => setRows(v.steps.filter((s) => s.state === "on")), () => {});
-  }, []);
+    listSkills().then((r) => setSkills((r.skills ?? []).filter((s) => s.on && !s.projectIds?.length)), () => {});
+    if (style) listFinished(style.id).then((list) => setFinished(Array.isArray(list) ? list : []), () => {});
+  }, [style]);
 
   const grades = defaults?.items.grade ?? [];
   const gradeShown = grade ?? (grades.some((g) => g.id === style?.grade) ? style!.grade! : (defaults?.bundle.grade ?? ""));
   const folderShown = folders.some((f) => f.id === folder) ? folder : "";
+  const skillShown = skill ?? (skills.some((s) => s.id === style?.skill) ? style!.skill! : "");
   // the steps as an edit made now would get them: this style's, else the ones in use in Settings → AI Editor
   const stepsShown = steps ?? style?.steps ?? rows.filter((r) => r.use).map((r) => ({ id: r.id, values: r.values }));
   const setStep = (row: StepRow, on: boolean, values?: Record<string, string>) => {
@@ -133,6 +143,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
       pace,
       punch,
       ...(folders.length ? { brollCollectionId: folderShown || null } : {}),
+      ...(skill !== null ? { skill: skill || null } : {}),
       ...(grade !== null ? { grade } : {}),
       ...(steps ? { steps } : {}),
     };
@@ -201,7 +212,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </select>
             </div>
           </div>
-          {(grades.length > 1 || folders.length > 0) && (
+          {(grades.length > 1 || folders.length > 0 || skills.length > 0) && (
             <div className="flex flex-wrap gap-4">
               {grades.length > 1 && (
                 <div className="flex flex-col gap-1.5">
@@ -223,6 +234,19 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
                     {folders.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {skills.length > 0 && (
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <Label htmlFor="style-skill">Skill</Label>
+                  <select id="style-skill" value={skillShown} onChange={(e) => setSkill(e.target.value)} className={`${select} min-w-40 max-w-full`}>
+                    <option value="">None</option>
+                    {skills.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
                       </option>
                     ))}
                   </select>
@@ -279,6 +303,34 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Save
           </Button>
+          {style && finished.length > 0 && (
+            <section aria-label="Finished with this style" className="flex flex-col gap-2 pt-2">
+              <h3 className="text-sm font-medium">Finished with this style</h3>
+              <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
+                {finished.map((f) => {
+                  const day = new Date(f.at).toLocaleDateString();
+                  return (
+                    <li key={f.editId} className="flex items-center justify-between gap-3 py-1.5 pl-3 pr-1.5">
+                      <span className="min-w-0 truncate text-sm">{f.name || day}</span>
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-zinc-500">
+                        {[f.seconds ? `${f.seconds} s` : "", f.name ? day : ""].filter(Boolean).join(" · ")}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          aria-label={`Remove ${f.name || day} from the finished edits`}
+                          onClick={() => void removeFinished(style.id, f.editId).then(() => setFinished((list) => list.filter((x) => x.editId !== f.editId)), (e) => setError(message(e)))}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
         </form>
       </SheetContent>
     </Sheet>

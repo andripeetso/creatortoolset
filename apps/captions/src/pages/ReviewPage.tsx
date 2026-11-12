@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCachedLoad } from "@/lib/local-cache";
+import { undoable } from "@/lib/undo";
 import { useSteadyList } from "@/lib/steady-list";
 import { Picture } from "@/components/Picture";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -81,8 +82,11 @@ import { ReviewUploadDialog, type UploadItem } from "@/components/ReviewUploadDi
 import { cn } from "@/lib/utils";
 
 type Upload = { key: string; name: string; timeline?: string; pct: number; waiting?: boolean; assetId?: string; error?: string };
-/** Run a change, then reload; `now` shows its result right away (reverted by the reload if it failed). */
-type Act = (change: Promise<unknown>, now?: (list: ReviewAsset[]) => ReviewAsset[]) => void;
+type Now = (list: ReviewAsset[]) => ReviewAsset[];
+/** How a change is taken back (lib/undo.ts): what it was, how many videos, and the opposite change, started only when asked for. */
+type Undo = { what: string; n?: number; back: () => [change: Promise<unknown>, now?: Now] };
+/** Run a change, then reload; `now` shows its result right away (reverted by the reload if it failed). With `undo`, ⌘Z takes it back. */
+type Act = (change: Promise<unknown>, now?: Now, undo?: Undo) => void;
 
 /** dataTransfer type of a video card dragged onto another card or a project:
  *  its id, or the selected videos' ids joined by "," when it's one of them. */
@@ -93,9 +97,19 @@ const NONE: ReadonlySet<string> = new Set();
 /** Mark videos Finished or back In progress by hand (Review's tabs); `act`'s arguments. */
 const markFinished = (list: ReviewAsset[], finished: boolean): Parameters<Act> => {
   const ids = new Set(list.map((a) => a.id));
+  // each video goes back to what it was, not to "the other tab": a project's menu marks a mixed folder
+  const before = new Map(list.map((a) => [a.id, { was: isFinished(a), done: a.done }]));
   return [
     Promise.all(list.map((a) => patchReviewAsset(a.id, { finished }))),
     (l) => l.map((x) => (ids.has(x.id) ? { ...x, done: { finished, at: Date.now() } } : x)),
+    {
+      what: finished ? "marked finished" : "moved to In progress",
+      n: list.length,
+      back: () => [
+        Promise.all(list.map((a) => patchReviewAsset(a.id, { finished: before.get(a.id)!.was }))),
+        (l) => l.map((x) => (before.has(x.id) ? { ...x, done: before.get(x.id)!.done } : x)),
+      ],
+    },
   ];
 };
 
@@ -246,13 +260,19 @@ export default function ReviewPage() {
   }, [orderKey, loaded]);
 
   // the first load is the hook's (the saved list shows at once); processing progress arrives as change notices
-  const act: Act = (change, now) => {
-    setError("");
+  const apply = (change: Promise<unknown>, now?: Now) => {
     if (now) setAssets((list) => list && now(list));
-    void change.then(load).catch((e: Error) => {
-      setError(e.message);
+    return change.then(load, (e: Error) => {
       void load();
+      throw e;
     });
+  };
+  const act: Act = (change, now, undo) => {
+    setError("");
+    void apply(change, now).then(
+      () => undo && undoable(undo.what, () => apply(...undo.back()), undo.n),
+      (e: Error) => setError(e.message),
+    );
   };
 
   const picked = sel.at === where ? sel.ids : NONE;
@@ -283,8 +303,18 @@ export default function ReviewPage() {
   /** These videos into a project (null = the top level), all at once. */
   const moveMany = (ids: string[], projectId: string | null) => {
     const set = new Set(ids);
-    act(Promise.all(ids.map((id) => patchReviewAsset(id, { projectId }))), (l) =>
-      l.map((x) => (set.has(x.id) ? { ...x, projectId: projectId ?? undefined } : x)),
+    const from = new Map((assets ?? []).filter((a) => set.has(a.id)).map((a) => [a.id, a.projectId]));
+    act(
+      Promise.all(ids.map((id) => patchReviewAsset(id, { projectId }))),
+      (l) => l.map((x) => (set.has(x.id) ? { ...x, projectId: projectId ?? undefined } : x)),
+      {
+        what: "moved",
+        n: ids.length,
+        back: () => [
+          Promise.all(ids.map((id) => patchReviewAsset(id, { projectId: from.get(id) ?? null }))),
+          (l) => l.map((x) => (set.has(x.id) ? { ...x, projectId: from.get(x.id) } : x)),
+        ],
+      },
     );
     clearPicks();
   };
@@ -790,9 +820,12 @@ function AssetCard({
   const [over, setOver] = useState(false);
   const to = `/review/${a.id}`;
   const setStatus = (s: Approval) => {
-    act(reviewApi(`/api/review/assets/${a.id}`).approve(s), (l) =>
-      l.map((x) => (x.id === a.id ? { ...x, approval: { status: s } } : x)),
-    );
+    const was = a.approval.status;
+    const put = (to: Approval): [Promise<unknown>, Now] => [
+      reviewApi(`/api/review/assets/${a.id}`).approve(to),
+      (l) => l.map((x) => (x.id === a.id ? { ...x, approval: { status: to } } : x)),
+    ];
+    act(...put(s), s === was ? undefined : { what: `set to ${APPROVAL[s].label}`, back: () => put(was) });
   };
   const moveTo = projects.filter((p) => p.id !== a.projectId);
   const many = carried().length;
@@ -1048,7 +1081,7 @@ function AssetCard({
           onClick={() => {
             void confirmDialog({ title: `Move “${a.name}” to the trash?`, body: "You can restore it for 30 days.", ok: "Move to trash", danger: true, deleting: true })
               .then((yes) => {
-                if (yes) act(deleteReviewAsset(a.id), (l) => l.filter((x) => x.id !== a.id));
+                if (yes) act(deleteReviewAsset(a.id), (l) => l.filter((x) => x.id !== a.id), { what: "moved to trash", back: () => [restoreReviewAsset(a.id)] });
               });
           }}
         >

@@ -6,12 +6,15 @@
 import AppKit
 import Foundation
 
-/// The connect service's address (the broker, apps/relay), as saved in UserDefaults `connectBroker`. None until one is
-/// set: no hosted one answers yet, so by default the app offers nothing that needs it ("Add this Mac to my account…")
-/// and asks nothing of it.
+/// The hosted connect service (apps/relay), the same one the iPhone app and `creatortoolset connect` use.
+let defaultConnectService = URL(string: "https://connect.creatortoolset.com")!
+
+/// The connect service's address, as saved in UserDefaults `connectBroker`: never set = defaultConnectService;
+/// "" = none (forks, own setups). Having one sends nothing by itself: the service is asked only once "Add this Mac to
+/// my account…" is pressed, or for the account's computers while signed in to an account (Shell.brokerComputers).
 func connectBrokerURL(_ saved: String?) -> URL? {
-    guard let saved, !saved.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-    return siteURL(from: saved)
+    guard let saved else { return defaultConnectService }
+    return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
 }
 
 /// The connect service this Mac is set to use, if any. The menu item, the server's CT_CONNECT_URL and the account's
@@ -45,6 +48,8 @@ func isPlainHostname(_ host: String) -> Bool {
 struct ConnectStart: Decodable, Equatable {
     let user_code: String
     let verification_uri: String
+    /// The same page with the code filled in, when the broker gives one: nothing to type.
+    let verification_uri_complete: String?
     let expires_in: Int
     let interval: Int
 }
@@ -199,8 +204,8 @@ extension Shell {
         guard let server, runsHere else { notice = "Turn on This Mac's server first"; return }
         do {
             let start = try JSONDecoder().decode(ConnectStart.self, from: try await client().postData("/api/connect/start", [:]))
-            notice = "Enter \(start.user_code) on creatortoolset.com to add this Mac to your account"
-            if let url = URL(string: start.verification_uri) { NSWorkspace.shared.open(url) }
+            notice = "Check that the page in your browser shows \(start.user_code), then add this Mac"
+            if let url = URL(string: start.verification_uri_complete ?? start.verification_uri) { NSWorkspace.shared.open(url) }
             let deadline = Date().addingTimeInterval(TimeInterval(start.expires_in))
             while Date() < deadline {
                 try await Task.sleep(for: .seconds(Double(max(start.interval, 2))))

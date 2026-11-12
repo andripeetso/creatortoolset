@@ -38,6 +38,9 @@ export function announce(owner: string, topic: string, origin: string | null = n
 
 export const currentSeq = () => seq;
 
+/** How many change streams this account has open now (a window or a phone listening; it says nothing of which screen is up). */
+export const streamsOpen = (owner: string): number => listeners.get(owner)?.size ?? 0;
+
 /** Writes that change nothing anyone sees: the stream itself, sign-in, upload chunks, read marks, worker heartbeats. */
 const QUIET = /^\/api\/(?:sync|auth|account|activity)(?:\/|$)|\/uploads?\/[^/]+(?:\/parts\/[^/]+)?$|\/(?:seen|heartbeat|ping|wait)$/;
 

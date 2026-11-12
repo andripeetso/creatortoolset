@@ -18,7 +18,7 @@ import { addSpend } from "./lib/workspaces";
 /**
  * Reading pictures (the Analyzer's slides and video frames) on the Analyzer's AI provider: the pictures go to
  * the Mac as files in the run's folder, which the provider reads in order. Without a provider they go to the Anthropic API
- * key aiFor picked (the account's own).
+ * key aiFor picked (the account's own). A local model (local-model.ts) is never sent pictures.
  */
 
 export interface VisionImage {
@@ -47,7 +47,11 @@ export async function completeVisionWithFallback<T>(
   if (!images.length) throw new AiProviderError("No image to analyze", "FAILED", false);
   const label = opts.label ?? "Image reading";
   const name = typeof who === "string" ? who : who?.username;
-  const route = (opts.preferKey && name && onApiKey(name, "analyzer", label)) || aiFor(who, "analyzer", label);
+  const picked = (opts.preferKey && name && onApiKey(name, "analyzer", label)) || aiFor(who, "analyzer", label);
+  // a local model answers text only: pictures go to the account's own Anthropic key when it has one, never to the local address
+  const route = picked.localModel
+    ? (name && onApiKey(name, "analyzer", label)) || { only: [], off: "A local model answers text only. To read pictures, connect your AI in Settings → Providers or add your Anthropic key in Settings → API keys" }
+    : picked;
   if (route.off) throw new AiProviderError(route.off, "FAILED", false);
   if (route.only?.includes("mac")) {
     const files = Object.fromEntries(images.map((im, i) => [`attached/${i + 1}.jpg`, `base64:${im.jpegBase64}`]));

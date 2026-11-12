@@ -16,6 +16,7 @@ const ffmpegFiles = [
   "api/clean.test.ts",
   "api/editor/analyze.test.ts",
   "api/editor/editor-ui.e2e.test.ts",
+  "api/editor/finished-finals.test.ts",
   "api/editor/grade.test.ts",
   "api/editor/preview.test.ts",
   "api/editor/sync.test.ts",
