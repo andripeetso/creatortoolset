@@ -40,7 +40,6 @@ const PAGE: Record<Key, { to: string; phoneTo?: string; desc: string }> = {
   media: { to: "/library", desc: "Your footage in one place: upload, search by title and tag, preview." },
   enhance: { to: "/enhance", desc: "Studio sound for any recording: denoise, de-echo, level." },
   captions: { to: "/captions?view=projects", phoneTo: "/m/captions", desc: "Transcribe, caption and export: burned-in videos or alpha overlays." },
-  clean: { to: "/clean", desc: "Clean metadata and compare fingerprints before posting." },
   stories: { to: "/stories", desc: "One video in, stories of about 20 s out: cut on the edit's cuts, pauses and beats. ZIP download." },
   notes: { to: "/clips", desc: "Drop in a recording: transcript, summary, chapters, takeaways." },
   guides: { to: "/documents", desc: "Turn recordings into SOPs, walkthroughs and guides you can publish." },

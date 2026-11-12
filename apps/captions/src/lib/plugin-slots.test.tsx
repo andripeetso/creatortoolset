@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Hand, Sparkles } from "lucide-react";
 import type { Me } from "./auth";
-import { accountItemsFor, adminTabsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, type WebPlugin } from "./plugin";
+import { accountItemsFor, adminTabsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, webPluginAdds, type WebPlugin } from "./plugin";
 import { shownTools, withPluginTiles } from "./tools";
 import hello from "../../plugin-examples/hello/web";
 
@@ -27,7 +27,7 @@ describe("Home tiles", () => {
     expect(workflow.map((s) => [s.stage, s.tools.map((t) => t.name)])).toEqual([
       ["Plan", ["Content Analyzer", "Content Workshop"]],
       ["Make", ["AI Editor", "Review"]],
-      ["Distribute", ["Video Cleaner", "Story Splitter", "Finals"]],
+      ["Distribute", ["Story Splitter", "Finals"]],
     ]);
     expect(other.map((t) => t.name)).toEqual([
       "Media Library", "Audio Enhancer", "Caption Studio", "Video Notes", "Screen Recorder", "Guide Builder",
@@ -205,6 +205,16 @@ describe("item actions", () => {
     expect(itemActionsFor(member(["tiny-gate"]), [open], "session").map((a) => a.label)).toEqual(["Always"]);
     expect(itemActionsFor(admin(["tiny-gate"]), [open], "session").map((a) => a.label)).toEqual(["Open in tool", "Always"]);
     expect(itemActionsFor(null, [open], "session").map((a) => a.label)).toEqual(["Always"]);
+  });
+
+  it("a button on the project open in Caption Studio gets that project's id, and Community names where it is", () => {
+    const got: string[] = [];
+    const clips = defineWebPlugin({ id: "clips", itemActions: { captions: [{ label: "Tiny edit", gate: "tiny-gate", onRun: (id) => void got.push(id) }] } });
+    expect(itemActionsFor(member(), [open], "captions")).toEqual([]);
+    void itemActionsFor(member(), [clips], "captions")[0]!.onRun("p1");
+    expect(got).toEqual(["p1"]);
+    expect(itemActionsFor(member(["tiny-gate"]), [clips], "captions")).toEqual([]);
+    expect(webPluginAdds(clips, { me: member(), hosted: false })).toEqual([{ text: "Button on Caption Studio projects: Tiny edit", to: "/captions" }]);
   });
 });
 

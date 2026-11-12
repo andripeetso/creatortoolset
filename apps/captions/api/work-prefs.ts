@@ -39,6 +39,10 @@ export function writeWorkPrefs(username: string, b: Record<string, unknown>): Wo
     if (b.job !== null && !JOBS.includes(b.job as never)) return `job is one of ${JOBS.join(", ")} (or null)`;
     next.job = b.job as WorkPrefs["job"];
   }
+  if (b.askFit !== undefined) {
+    if (typeof b.askFit !== "boolean") return "askFit is true or false";
+    next.askFit = b.askFit;
+  }
   const file = fileOf(username);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(`${file}.tmp`, JSON.stringify(next));

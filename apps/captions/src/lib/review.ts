@@ -119,6 +119,8 @@ export interface ReviewComment {
   plugins?: Record<string, unknown>;
   /** The timeline clip it is about (a version with a timeline). */
   anchor?: ReviewAnchor;
+  /** Every clip it is about when it is about several (the first is `anchor`). */
+  anchors?: ReviewAnchor[];
   resolved?: boolean;
   createdAt: number;
   editedAt?: number;
@@ -440,6 +442,7 @@ export function reviewApi(base: string) {
       /** Plug-in data (see ReviewComment.plugins); the server accepts it from managers only. */
       plugins?: Record<string, unknown>;
       anchor?: ReviewAnchor;
+      anchors?: ReviewAnchor[];
     }) => call<ReviewComment>(`${base}/comments`, send("POST", body)),
     /** An image or video for the comment being written; send its id with it. */
     uploadRef: async (n: number, file: File) => {

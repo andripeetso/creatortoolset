@@ -64,16 +64,17 @@ export async function pathOnMac(file: File): Promise<string | undefined> {
 }
 
 /**
- * The Finder folders of the drag just dropped on the window (AppWebView.dragItems): their paths, so a folder is pointed
- * at where it lies instead of uploaded. undefined in a browser or a Mac app from before it could; [] when none.
+ * The Finder files and folders of the drag just dropped on the window (AppWebView.dragItems): their paths, so a folder is
+ * pointed at where it lies instead of uploaded, and a file's reply needn't wait for its upload. undefined in a browser or
+ * a Mac app from before it could; [] when none.
  */
-export async function droppedFoldersOnMac(): Promise<string[] | undefined> {
+export async function droppedOnMac(): Promise<Array<{ path: string; folder: boolean }> | undefined> {
   const bridge = thisMacBridge();
   if (!bridge) return undefined;
   try {
     const r = ((await bridge.postMessage("dropped")) ?? {}) as unknown as { items?: Array<{ path?: unknown; folder?: unknown }> };
     if (!Array.isArray(r.items)) return undefined;
-    return r.items.filter((x) => x.folder === true && typeof x.path === "string").map((x) => x.path as string);
+    return r.items.flatMap((x) => (typeof x.path === "string" ? [{ path: x.path, folder: x.folder === true }] : []));
   } catch {
     return undefined;
   }

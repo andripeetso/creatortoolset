@@ -75,7 +75,7 @@ final class RecordingPreviewBusy: ObservableObject {
                                    busy: busy,
                                    actions: actions,
                                    close: { RecordingPreview.close() })
-            panel.contentView = NSHostingView(rootView: view.frame(width: Controller.size.width, height: Controller.size.height))
+            panel.contentView = FirstClickHostingView(rootView: view.frame(width: Controller.size.width, height: Controller.size.height))
         }
     }
 }

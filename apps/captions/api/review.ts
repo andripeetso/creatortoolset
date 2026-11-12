@@ -194,6 +194,8 @@ interface Comment {
   plugins?: Record<string, unknown>;
   /** A timeline item it is about (a version with a timeline: an AI Editor draft's shot, say). */
   anchor?: Anchor;
+  /** Every clip it is about when it is about several (the first is `anchor`). */
+  anchors?: Anchor[];
   resolved?: boolean;
   createdAt: number;
   editedAt?: number;
@@ -2248,6 +2250,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const t = parentId ? undefined : cleanTime(body?.t, version.duration);
     // a timeline item: only on a top-level comment of a version that has a timeline
     const anchor = parentId || !(version.edit || version.timelineFile) ? undefined : cleanAnchor(body?.anchor);
+    const anchors = anchor && Array.isArray(body?.anchors)
+      ? (body.anchors as unknown[]).slice(0, 50).map(cleanAnchor).filter((a): a is Anchor => !!a) : [];
     const tEnd = t === undefined ? undefined : cleanTime(body?.tEnd, version.duration);
     const cm: Comment = {
       id: randomUUID(),
@@ -2262,6 +2266,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       ...(refs.length ? { refs } : {}),
       ...(plugins && !parentId ? { plugins } : {}),
       ...(anchor ? { anchor } : {}),
+      ...(anchors.length > 1 ? { anchors } : {}),
       createdAt: Date.now(),
     };
     const error = await updateComments(v.meta.id, (list) => {

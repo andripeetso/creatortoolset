@@ -267,8 +267,10 @@ function Review({
     setRangeOut(null);
   };
   // the timeline clip the comment being written is about (anyone who can comment picks it on the timeline)
-  const [anchor, setAnchor] = useState<ReviewAnchor | null>(null);
-  useEffect(() => setAnchor(null), [n]);
+  const [anchors, setAnchors] = useState<ReviewAnchor[]>([]);
+  const anchor = anchors[0] ?? null;
+  const setAnchor = (a: ReviewAnchor | null) => setAnchors(a ? [a] : []);
+  useEffect(() => setAnchors([]), [n]);
   // a range only runs forwards: while its
   // end follows the playhead, a playhead behind the start moves the start there
   if (rangeIn !== null && rangeOut === null && time < rangeIn) setRangeIn(time);
@@ -489,25 +491,42 @@ function Review({
 
   // how many comments sit on each timeline clip, and a click on a clip's count goes through them, newest first
   const pinKey = (a: ReviewAnchor) => `${a.track}:${a.rec}`;
+  const clipsOf = (c: ReviewComment) => (c.anchors ?? (c.anchor ? [c.anchor] : []));
   const pins = threads.reduce<Record<string, number>>((acc, c) => {
-    if (c.anchor) acc[pinKey(c.anchor)] = (acc[pinKey(c.anchor)] ?? 0) + 1;
+    for (const k of new Set(clipsOf(c).map(pinKey))) acc[k] = (acc[k] ?? 0) + 1;
     return acc;
   }, {});
+  type Clip = { track: string; rec: number; len: number; label: string };
+  const clipOf = (i: Clip): ReviewAnchor => ({ track: i.track, rec: i.rec, len: i.len, label: i.label });
+  const shownClips = anchors.length ? anchors : sel ? clipsOf(sel) : [];
   const timelinePin = {
-    selected: anchor ? pinKey(anchor) : sel?.anchor ? pinKey(sel.anchor) : null,
+    selected: shownClips[0] ? pinKey(shownClips[0]) : null,
+    marked: shownClips.slice(1).map(pinKey),
     pins,
-    onSelect: (item: { track: string; rec: number; len: number; label: string } | null) => {
-      setAnchor(item && { track: item.track, rec: item.rec, len: item.len, label: item.label });
+    onSelect: (item: Clip | null, group?: Clip[]) => {
+      setAnchors(!item ? [] : group && group.length > 1 ? group.map(clipOf) : [clipOf(item)]);
       if (item) composerBox.current?.focus();
     },
     onPin: (key: string) => {
-      const on = threads.filter((c) => c.anchor && pinKey(c.anchor) === key).sort((a, b) => b.createdAt - a.createdAt);
+      const on = threads.filter((c) => clipsOf(c).some((a) => pinKey(a) === key)).sort((a, b) => b.createdAt - a.createdAt);
       if (!on.length) return;
       const c = on[(on.findIndex((x) => x.id === selected) + 1) % on.length]!;
       setFilter((f) => (f === "done" && !c.resolved ? "all" : f === "open" && c.resolved ? "all" : f));
       focusComment(c);
       setFlash(c.id);
     },
+    // the comment being written's range, else the picked comment's; a drag across the lanes sets it
+    range: rangeIn !== null ? [rangeIn, rangeOut ?? time] as [number, number]
+      : sel?.t !== undefined && sel.tEnd !== undefined ? [sel.t, sel.tEnd] as [number, number] : null,
+    onRange: (from: number, to: number) => {
+      pause();
+      setWithTime(true);
+      setRangeIn(from);
+      setRangeOut(to);
+      seek(to);
+      composerBox.current?.focus();
+    },
+    onClearRange: clearRange,
   };
 
   const focusComment = (c: ReviewComment) => {
@@ -565,7 +584,7 @@ function Review({
         ...(guest ? { author: name.trim() } : {}),
         ...(refIds.length ? { refs: refIds } : {}),
         ...(plugins ? { plugins } : {}),
-        ...(anchor ? { anchor } : {}),
+        ...(anchor ? { anchor, ...(anchors.length > 1 ? { anchors } : {}) } : {}),
       });
       patchComments((l) => [...l, c]);
       setAnchor(null);
@@ -1078,8 +1097,10 @@ function Review({
             {refFailed && <p className="mb-2 text-xs text-red-400">{refFailed.name}: {refFailed.error}</p>}
             {anchor && (
               <div className="mb-2 flex items-center gap-2 rounded-md border border-violet-700/60 bg-violet-950/30 px-2 py-1 text-xs text-violet-200">
-                <span className="min-w-0 flex-1 truncate">About {anchor.label} ({anchor.track})</span>
-                <button aria-label="Not about this clip" onClick={() => setAnchor(null)} className="rounded px-1 text-violet-300 hover:text-zinc-50">×</button>
+                <span className="min-w-0 flex-1 truncate">
+                  {anchors.length > 1 ? `About ${anchors.length} clips: ${anchors.map((a) => a.label).join(", ")}` : `About ${anchor.label} (${anchor.track})`}
+                </span>
+                <button aria-label={anchors.length > 1 ? "Not about these clips" : "Not about this clip"} onClick={() => setAnchor(null)} className="rounded px-1 text-violet-300 hover:text-zinc-50">×</button>
               </div>
             )}
             <textarea
@@ -1952,8 +1973,9 @@ function Entry({
             </button>
           )}
           {top && c.anchor && (
-            <span className="mr-1.5 inline-flex max-w-[12rem] truncate rounded bg-zinc-800 px-1.5 py-px text-xs text-zinc-300" title={`On the timeline: ${c.anchor.label} (${c.anchor.track})`}>
-              {c.anchor.label}
+            <span className="mr-1.5 inline-flex max-w-[12rem] truncate rounded bg-zinc-800 px-1.5 py-px text-xs text-zinc-300"
+              title={`On the timeline: ${(c.anchors ?? [c.anchor]).map((a) => `${a.label} (${a.track})`).join(", ")}`}>
+              {c.anchors && c.anchors.length > 1 ? `${c.anchors.length} clips` : c.anchor.label}
             </span>
           )}
           {edit ? (

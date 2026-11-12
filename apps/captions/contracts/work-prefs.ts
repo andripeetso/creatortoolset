@@ -5,8 +5,9 @@
  *   editor: the editor they use when check includes it (e.g. "resolve-studio", "premiere", "final-cut").
  *   makes: what they make (reels, newsletters, X threads…), asked in first-run setup; it pre-ticks the tools.
  *   job: what they want to do first (setup's "What do you want to do first?"), or null when not answered.
+ *   askFit: false = the assistant no longer asks whether dropped footage belongs in the open project.
  *
- *   GET /api/work-prefs → WorkPrefs   PUT /api/work-prefs { talk?, check?, editor?, makes?, job? } → WorkPrefs
+ *   GET /api/work-prefs → WorkPrefs   PUT /api/work-prefs { talk?, check?, editor?, makes?, job?, askFit? } → WorkPrefs
  * First-run setup's "How do you want to use Creator Toolset?" and the MCP tools get_work_prefs / set_work_prefs
  * change the same record.
  */
@@ -27,6 +28,8 @@ export interface WorkPrefs {
   makes: Make[];
   /** a record saved before this field has none: read as null */
   job?: Job | null;
+  /** The assistant says when dropped footage doesn't seem to fit the project that is open (absent = on). */
+  askFit?: boolean;
 }
 
 export const DEFAULT_WORK_PREFS: WorkPrefs = { talk: "app", check: "app", editor: null, makes: [], job: null };

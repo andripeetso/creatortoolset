@@ -68,7 +68,6 @@ project you're in.
 | Make | **AI Editor** | Pick raw takes from the Media Library, or add files from your computer, and say what the video is. The AI picks the best take of each line and cuts the restarts and pauses. You get draft timelines for your own editor, with a preview in Review. |
 | Distribute | **Finals** | Your finished reels, carousels and other pieces: the versions of each, the winner, and where it was posted. |
 | Extras | **Audio Enhancer** | Clean up the sound of a recording, with a before-and-after player. |
-| Extras | **Video Cleaner** | Edit and compare versions of a video, measure how similar they look (PDQ, TMK, SSCD), see and strip metadata, and export in batches. |
 | Extras | **Story Splitter** | Cut a video into stories of about 20 seconds, on its own cuts, pauses and beats, and download them as one zip. |
 | Extras | **Video Notes** | Screen and camera recordings. Each one gets a transcript (through your cloud transcription key when you have one; without a key the Mac app makes it on your Mac, and a server makes none) and, with an AI connected, a title, a summary and chapters. |
 | Extras | **Guide Builder** | Put recordings in order, have AI draft a step-by-step page, and publish it as an unlisted link. |
@@ -109,8 +108,8 @@ Code or Codex as an MCP server, with a key that only works for you, and Settings
 address and key for any other MCP app. From that chat you can draft and edit Workshop pieces, read and resolve
 Review comments, run AI Editor steps and schedule tasks.
 
-Without any AI, the rest still works. Captions transcribe in the browser, and Review, Video Cleaner, Story Splitter
-and the Media Library need no AI at all.
+Without any AI, the rest still works. Captions transcribe in the browser, and Review, Story Splitter and the Media
+Library need no AI at all.
 
 ## Run it on your Mac
 

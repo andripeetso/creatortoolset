@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -16,7 +16,6 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const { libraryDb } = await import("./db");
 const { phashPerSecond } = await import("./fingerprint");
 const { similar, similarTo } = await import("./similar");
-const { cleanApp } = await import("../clean");
 const { libraryApp } = await import("./routes");
 
 const ff = (args: string[]) => execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: "pipe" });
@@ -68,17 +67,8 @@ describe("similar", () => {
     expect(similarTo("owner-b", ["0000000000000000"]).matches).toEqual([]);
   });
 
-  it("the Video Cleaner checks an upload against the library", async () => {
-    const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", async (c, next) => {
-      c.set("user", { username: "owner-a", role: "user", cloud: false, off: [] });
-      await next();
-    });
-    app.route("/", cleanApp);
-    const up = await app.request("/sources?name=copy.mp4", { method: "POST", body: readFileSync(copy) });
-    expect(up.status).toBe(201);
-    const { id } = (await up.json()) as { id: string };
-    const res = (await (await app.request(`/sources/${id}/duplicates`, { method: "POST" })).json()) as { matches: { assetId: string }[] };
-    expect(res.matches.map((m) => m.assetId).sort()).toEqual(["clip", "copy"]);
+  it("checks a file that is not in the library against it", async () => {
+    const r = similarTo("owner-a", await phashPerSecond(copy));
+    expect(r.matches.map((m) => m.assetId).sort()).toEqual(["clip", "copy"]);
   });
 });

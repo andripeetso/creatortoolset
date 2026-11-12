@@ -78,6 +78,14 @@ import SwiftUI
     }
 }
 
+/// The recorder's floating panels hold their controls in this: a press on one works the first time. A panel that does
+/// not have the keyboard (the picker, the camera bubble or another app had it last) otherwise takes the first press for
+/// itself and does nothing with it, so every button seemed to need two presses (the owner, 11-11: "clicking these
+/// control buttons is almost completely non-responsive").
+final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 /// The microphone's level, 0...1, for the bar under the microphone's name.
 @MainActor final class MicLevelValue: ObservableObject {
     @Published var value: Float = 0
@@ -106,7 +114,7 @@ import SwiftUI
             folder: onFolder,
             showFolder: onShowFolder
         )
-        let hosting = NSHostingView(rootView: view)
+        let hosting = FirstClickHostingView(rootView: view)
         let size = hosting.fittingSize
 
         let panel = ToolbarPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],

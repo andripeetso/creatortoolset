@@ -3,19 +3,19 @@ import { constants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegCommand } from "../ffmpeg-runtime";
-import { vpdqHashes } from "../lib/clean-extended-scores";
+import { vpdqHashes } from "./vpdq";
 
 /**
  * The library's `fingerprint` job (tasks/media-library-plan.md, sections 5 and 10): a 64-bit perceptual hash (DCT
- * pHash of a 32×32 grey frame, 16 hex) for every second of the video, plus the Video Cleaner's vPDQ frame hashes
- * (lib/clean-extended-scores.ts) when its PDQ tool is installed. Stored inline in `derivatives`, where the duplicate
+ * pHash of a 32×32 grey frame, 16 hex) for every second of the video, plus its vPDQ frame hashes
+ * (vpdq.ts) when the PDQ tool is installed. Stored inline in `derivatives`, where the duplicate
  * check reads it. No AI, nothing leaves the server.
  */
 
 export interface Fingerprint {
   /** one pHash per second, from zero */
   phash: string[];
-  /** the Cleaner's vPDQ sample; absent when the PDQ tool is not installed */
+  /** the vPDQ sample; absent when the PDQ tool is not installed */
   pdq?: { interval: number; frames: { hash: string; quality: number }[] };
 }
 

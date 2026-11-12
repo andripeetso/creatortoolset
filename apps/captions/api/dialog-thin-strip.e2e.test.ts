@@ -77,10 +77,9 @@ afterAll(async () => {
 
 const SIZES = { "1480x900": { width: 1480, height: 900 }, "960x640": { width: 960, height: 640 } } as const;
 
-// The body of each dialog: the element that scrolls inside the dialog. The Video Cleaner guide opens from /clean.
+// The body of each dialog: the element that scrolls inside the dialog.
 const CASES = [
   { name: "projects", route: "/projects", body: '[data-slot="dialog-content"] > .overflow-y-auto' },
-  { name: "clean-guide", route: "/clean", open: 'button[aria-label="Open Video Cleaner guide"]', body: '[role="document"][aria-label="Video Cleaner README"]' },
 ] as const;
 
 describe.skipIf(!enabled)("dialog bodies in WebKit (production build)", () => {
@@ -94,7 +93,6 @@ describe.skipIf(!enabled)("dialog bodies in WebKit (production build)", () => {
         const page = await context.newPage();
         try {
           await page.goto(`${base}${c.route}`, { waitUntil: "networkidle" });
-          if ("open" in c) await page.click(c.open);
           await page.waitForSelector(c.body, { timeout: 30_000 });
           await page.waitForTimeout(400); // the dialog's fade-in
           // a long body (a list of projects, a guide): the case where a flex-1 body went to a thin strip in WebKit
