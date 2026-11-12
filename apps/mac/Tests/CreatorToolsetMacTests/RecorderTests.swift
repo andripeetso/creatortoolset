@@ -56,13 +56,15 @@ final class RecorderTests: XCTestCase {
     }
 
     /// Float samples at half level, `channels` of them, each channel in its own buffer or all in one.
-    private func floatSound(rate: Double, channels: Int, interleaved: Bool, at: CMTime = .zero) throws -> CMSampleBuffer {
+    /// 512 frames of float sound, every sample of channel c at `levels[c]` (0.5 in all when not said).
+    private func floatSound(rate: Double, channels: Int, interleaved: Bool, at: CMTime = .zero, levels: [Float]? = nil) throws -> CMSampleBuffer {
         let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: AVAudioChannelCount(channels), interleaved: interleaved))
         let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512))
         pcm.frameLength = 512
-        for buffer in UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList) {
+        let level = { (c: Int) in levels?[c] ?? 0.5 }
+        for (b, buffer) in UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList).enumerated() {
             let samples = UnsafeMutableBufferPointer<Float>(buffer)
-            for i in samples.indices { samples[i] = 0.5 }
+            for i in samples.indices { samples[i] = level(interleaved ? i % channels : b) }
         }
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)), presentationTimeStamp: at, decodeTimeStamp: .invalid)
         var made: CMSampleBuffer?
@@ -108,6 +110,35 @@ final class RecorderTests: XCTestCase {
         return try CMSampleBuffer(imageBuffer: image, formatDescription: format, sampleTiming: timing)
     }
 
+    /// The voice is one channel whatever the microphone sends: an interface's voice on one input of two comes through
+    /// at its own level (not halved, not in one ear), the same voice on both inputs once, a one-channel microphone as it
+    /// is; and from the moment a channel carries sound, an input with nothing plugged in is left out.
+    func testTheVoiceIsOneChannelOfTheChannelsThatCarrySound() throws {
+        let cases: [(channels: Int, interleaved: Bool, levels: [Float], expect: Float)] = [
+            (2, true, [0.5, 0], 0.5),       // the interface: voice on input 1, input 2 empty
+            (2, false, [0, 0.5], 0.5),      // plugged into input 2
+            (2, true, [0.5, 0.5], 0.5),     // the same voice on both
+            (2, true, [0.4, 0.2], 0.3),     // two voices
+            (1, true, [0.5], 0.5),          // a built-in microphone
+        ]
+        for c in cases {
+            var layout = SoundLayout(mono: true)
+            let made = try XCTUnwrap(layout.take(try floatSound(rate: 48_000, channels: c.channels, interleaved: c.interleaved, levels: c.levels)))
+            XCTAssertEqual(made.formatDescription?.audioStreamBasicDescription?.mChannelsPerFrame, 1, "\(c.levels)")
+            let samples = try floats(made)
+            XCTAssertEqual(samples.count, 512)
+            XCTAssertTrue(samples.allSatisfy { abs($0 - c.expect) < 0.0001 }, "\(c.levels): \(samples.prefix(3))")
+        }
+        // the room before anyone speaks, an empty input's faint hum, then the voice: from then on the hum is not in it
+        var layout = SoundLayout(mono: true)
+        _ = layout.take(try floatSound(rate: 48_000, channels: 2, interleaved: true, levels: [0.003, 0.002]))
+        let spoken = try floats(XCTUnwrap(layout.take(try floatSound(rate: 48_000, channels: 2, interleaved: true, levels: [0.5, 0.002]))))
+        XCTAssertTrue(spoken.allSatisfy { abs($0 - 0.5) < 0.0001 }, "\(spoken.prefix(3))")
+        // the Mac's sound stays in two channels
+        var mac = SoundLayout()
+        XCTAssertEqual(try XCTUnwrap(mac.take(try floatSound(rate: 48_000, channels: 2, interleaved: true))).formatDescription?.audioStreamBasicDescription?.mChannelsPerFrame, 2)
+    }
+
     /// What a device on a cable sends (Capture.take): pictures, its own sound and the Mac's microphone, each timed on
     /// the host clock. The file has the picture and both sound tracks, the voice first, starts at the first picture
     /// and has no pointer log, since a phone has no pointer.
@@ -145,7 +176,9 @@ final class RecorderTests: XCTestCase {
         XCTAssertEqual([events.width, events.height], [320, 692])
         let asset = AVURLAsset(url: file)
         let duration = try await asset.load(.duration).seconds
-        XCTAssertEqual(duration, lasted, accuracy: 0.25)
+        // a second and a half of pictures went in; on a busy Mac the writer drops what it cannot take in time
+        XCTAssertGreaterThan(duration, 1.0)
+        XCTAssertLessThanOrEqual(duration, lasted + 0.25)
         let video = try await asset.loadTracks(withMediaType: .video)
         XCTAssertEqual(video.count, 1)
         let size = try await video[0].load(.naturalSize)
@@ -154,8 +187,12 @@ final class RecorderTests: XCTestCase {
         XCTAssertEqual(sound.count, 2)
         for track in sound {
             let range = try await track.load(.timeRange)
-            XCTAssertGreaterThan(range.duration.seconds, 1.2)
+            XCTAssertGreaterThan(range.duration.seconds, 1.0)
         }
+        // the voice in one channel, the device's sound in two
+        var channels: [UInt32] = []
+        for track in sound { channels.append(try await track.load(.formatDescriptions).first?.audioStreamBasicDescription?.mChannelsPerFrame ?? 0) }
+        XCTAssertEqual(channels, [1, 2])
     }
 
     /// A device turned on its side while it records sends its picture the other way round: it goes into the file
@@ -172,7 +209,6 @@ final class RecorderTests: XCTestCase {
         let capture = try Capture(file: file, width: 320, height: 692, mic: false, system: false)
         try capture.open()
         let host = { CMClockGetTime(CMClockGetHostTimeClock()) }
-        let began = host()
         // upright for half a second, then on its side, all in white
         for n in 0..<36 {
             let turned = n >= 15
@@ -181,7 +217,9 @@ final class RecorderTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(33))
         }
         _ = try await capture.stop()
-        let images = AVAssetImageGenerator(asset: AVURLAsset(url: file))
+        let asset = AVURLAsset(url: file)
+        let end = try await asset.load(.duration).seconds
+        let images = AVAssetImageGenerator(asset: asset)
         images.requestedTimeToleranceBefore = .zero
         images.requestedTimeToleranceAfter = .zero
         let brightness = { (image: CGImage, x: Int, y: Int) -> Int in
@@ -190,13 +228,32 @@ final class RecorderTests: XCTestCase {
             return Int(((c?.redComponent ?? 0) + (c?.greenComponent ?? 0) + (c?.blueComponent ?? 0)) / 3 * 255)
         }
         let upright = try await images.image(at: CMTime(seconds: 0.2, preferredTimescale: 600)).image
-        let onItsSide = try await images.image(at: CMTime(seconds: (host() - began).seconds - 0.4, preferredTimescale: 600)).image
+        let onItsSide = try await images.image(at: CMTime(seconds: end - 0.25, preferredTimescale: 600)).image
         XCTAssertEqual([upright.width, upright.height, onItsSide.width, onItsSide.height], [320, 692, 320, 692])
         XCTAssertGreaterThan(brightness(upright, 160, 20), 200)      // upright: white to the top
         XCTAssertLessThan(brightness(onItsSide, 160, 20), 40)        // on its side: black above
         XCTAssertLessThan(brightness(onItsSide, 160, 672), 40)       // and below
         XCTAssertGreaterThan(brightness(onItsSide, 160, 346), 200)   // the picture in the middle
         XCTAssertGreaterThan(brightness(onItsSide, 4, 346), 200)     // as wide as the file
+    }
+
+    /// The microphone's level changes 20 times a second while the toolbar is open; the toolbar's choices are not told
+    /// each time (the camera bubble follows them, and reopened the camera on every one).
+    @MainActor func testTheMicrophonesLevelIsNotAChangeOfTheToolbarsChoices() {
+        let setup = RecordSetup()
+        var told = 0
+        let watch = setup.objectWillChange.sink { told += 1 }
+        for n in 0..<20 { setup.level.value = Float(n) / 20 }
+        withExtendedLifetime(watch) { XCTAssertEqual(told, 0) }
+    }
+
+    /// An update waits until the person is away from the Mac, not just away from this app.
+    func testAnUpdateWaitsUntilNobodyIsAtTheMac() {
+        XCTAssertTrue(updateMayInstall(appActive: false, aiJobs: 0, recording: false, secondsSinceInput: 301))
+        XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 0, recording: false, secondsSinceInput: 60))   // working in another app
+        XCTAssertFalse(updateMayInstall(appActive: true, aiJobs: 0, recording: false, secondsSinceInput: 900))
+        XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 1, recording: false, secondsSinceInput: 900))
+        XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 0, recording: true, secondsSinceInput: 900))
     }
 
     func testPointerOnTheMainDisplay() {

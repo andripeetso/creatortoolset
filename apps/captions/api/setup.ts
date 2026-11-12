@@ -16,6 +16,7 @@ import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
 import { keyFor } from "./my-keys";
+import { pluginNeeds } from "./lib/plugin";
 import {
   apiKeysOf,
   findUser,
@@ -109,6 +110,8 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
 
 async function view(user: SessionUser): Promise<SetupView> {
   const s = read(user.username) ?? {};
+  // a plug-in's other way to set up a tool: its row names it, and counts it once this account has it
+  const plugged = await pluginNeeds(user);
   return {
     // a saved id the app no longer has (a tool that left it) is left out: the page sends these lists back whole, and
     // a save with an unknown id in it is refused
@@ -117,8 +120,9 @@ async function view(user: SessionUser): Promise<SetupView> {
     plan: s.plan ?? null,
     detected: planOf(user.username),
     done: !!s.done,
-    have: await haveFor(user),
+    have: [...(await haveFor(user)), ...plugged.have],
     mcpTo: s.mcpTo ?? [],
+    ...(plugged.ways.length ? { ways: plugged.ways } : {}),
   };
 }
 

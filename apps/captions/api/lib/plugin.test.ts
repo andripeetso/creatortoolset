@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { definePlugin, driverKinds, mountAdminRoutes, mountPlugins, mountReplacedRoutes, providerPresets } from "./plugin";
+import { needsLine, readiness, TOOL_NEEDS } from "../../contracts/tools";
+import type { SessionUser } from "../users";
+import { admissionProblem, definePlugin, describeServerPlugins, driverKinds, mountAdminRoutes, mountPlugins, mountReplacedRoutes, pluginNeeds, providerPresets } from "./plugin";
 
 describe("mountPlugins", () => {
   it("serves a plug-in's routes under /api/x/<id>", async () => {
@@ -86,5 +88,53 @@ describe("mountAdminRoutes", () => {
     app.route("/api/admin", new Hono().get("/users", (c) => c.text("built-in")).get("/media-access", (c) => c.text("built-in")));
     expect(await (await app.request("/api/admin/media-access")).text()).toBe("plug-in");
     expect(await (await app.request("/api/admin/users")).text()).toBe("built-in");
+  });
+});
+
+describe("needs: a plug-in's other way to set up a tool", () => {
+  const user = (username: string): SessionUser => ({ username, role: "admin", cloud: false, off: [] });
+
+  it("names the way in the tool's first required row, counts it when met, and leaves the shipped rows once it is gone", async () => {
+    const shipped = JSON.stringify(TOOL_NEEDS);
+    mountPlugins(new Hono(), [definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: (u) => u.username === "in", settings: "tiny-way" }] })]);
+    try {
+      expect(TOOL_NEEDS.enhance[0]).toMatchObject({ what: "An API key or a Tiny sign-in", alsoMetBy: ["plugin:tiny-way/enhance"] });
+      const yes = await pluginNeeds(user("in"));
+      expect(yes).toEqual({ ways: [{ tool: "enhance", what: "A Tiny sign-in", have: "plugin:tiny-way/enhance", settings: "tiny-way" }], have: ["plugin:tiny-way/enhance"] });
+      expect(readiness("enhance", yes.have).ready).toBe(true);
+      const no = await pluginNeeds(user("out"));
+      expect(no.have).toEqual([]);
+      expect(needsLine(readiness("enhance", no.have).missing)).toBe("Needs an API key or a Tiny sign-in");
+      // a tool with no required row is left as it is
+      expect(TOOL_NEEDS.review).toEqual([]);
+    } finally {
+      mountPlugins(new Hono(), []);
+    }
+    expect(JSON.stringify(TOOL_NEEDS)).toBe(shipped);
+    expect(await pluginNeeds(user("in"))).toEqual({ ways: [], have: [] });
+  });
+
+  it("counts a check that throws as not met, and says so in the log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mountPlugins(new Hono(), [definePlugin({ id: "tiny-throws", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: () => { throw new Error("no profile"); } }] })]);
+    try {
+      expect((await pluginNeeds(user("in"))).have).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("tiny-throws setup check failed: no profile"));
+    } finally {
+      mountPlugins(new Hono(), []);
+      warn.mockRestore();
+    }
+  });
+
+  it("is refused when it names no tool, has no words or no check, and listed in Community", () => {
+    const bad = (needs: unknown) => admissionProblem([], definePlugin({ id: "tiny-bad", needs: needs as never }));
+    expect(bad([{ tool: "nope", what: "X", met: () => true }])).toContain("is not a tool");
+    expect(bad([{ tool: "enhance", what: " ", met: () => true }])).toContain("needs a what");
+    expect(bad([{ tool: "enhance", what: "X" }])).toContain("met must be a function");
+    expect(bad({})).toContain("must be a list");
+    expect(bad([{ tool: "enhance", what: "X", met: () => true, settings: 3 }])).toContain("Settings section");
+    expect(bad([{ tool: "enhance", what: "A Tiny sign-in", met: () => true, settings: "tiny-way" }])).toBeNull();
+    const [d] = describeServerPlugins([definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: () => true }] })], true);
+    expect(d!.adds).toContainEqual({ text: "Audio Enhancer setup: a Tiny sign-in", to: "/settings/tools" });
   });
 });

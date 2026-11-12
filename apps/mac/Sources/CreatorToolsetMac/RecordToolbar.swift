@@ -10,8 +10,10 @@ import SwiftUI
     /// "none" = no camera, otherwise a device's uniqueID.
     @AppStorage("recordCameraID") var cameraID: String = "none"
     @AppStorage("recordSystemAudio") var systemAudio: Bool = false
-    /// Mic level 0...1, fed by the meter while the toolbar is open.
-    @Published var micLevel: Float = 0
+    /// Mic level 0...1, fed by the meter while the toolbar is open: its own object, never this one's change. It
+    /// changes 20 times a second, and what follows the choices here (the camera bubble) reopened the camera on every
+    /// one of those, asking macOS for the camera each time: the camera never showed and the app hung.
+    let level = MicLevelValue()
 
     /// Called when the microphone choice changes, so the meter can follow it.
     var onMicChange: (() -> Void)?
@@ -76,6 +78,11 @@ import SwiftUI
     }
 }
 
+/// The microphone's level, 0...1, for the bar under the microphone's name.
+@MainActor final class MicLevelValue: ObservableObject {
+    @Published var value: Float = 0
+}
+
 /// The floating toolbar shown before a recording starts. Nothing is captured here except the mic level.
 @MainActor enum RecordToolbar {
     private static var panel: ToolbarPanel?
@@ -138,7 +145,7 @@ import SwiftUI
     /// Starts the meter for the chosen mic, asking for permission first when it has not been decided.
     private static func startMeter(_ setup: RecordSetup) {
         meter.stop()
-        setup.micLevel = 0
+        setup.level.value = 0
         guard panel != nil, let device = setup.micDevice else { return }
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -156,7 +163,7 @@ import SwiftUI
     private static func beginMeter(_ device: AVCaptureDevice, _ setup: RecordSetup) {
         do {
             try meter.start(device: device) { [weak setup] value in
-                Task { @MainActor in setup?.micLevel = value }
+                Task { @MainActor in setup?.level.value = value }
             }
         } catch {
             AppLog.write("mic meter did not start: \(error)")
@@ -257,7 +264,7 @@ private struct ToolbarView: View {
                     Text(setup.micDevice?.localizedName ?? "No microphone").lineLimit(1)
                 }
                 if setup.micDevice != nil {
-                    LevelBar(level: setup.micLevel).frame(width: 140)
+                    LevelBar(level: setup.level).frame(width: 140)
                 }
             }
             .frame(maxWidth: 160, alignment: .leading)
@@ -340,13 +347,13 @@ private final class MenuChoice: NSObject {
 }
 
 private struct LevelBar: View {
-    let level: Float
+    @ObservedObject var level: MicLevelValue
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.white.opacity(0.15))
-                Capsule().fill(Color.green).frame(width: geo.size.width * CGFloat(min(1, max(0, level))))
+                Capsule().fill(Color.green).frame(width: geo.size.width * CGFloat(min(1, max(0, level.value))))
             }
         }
         .frame(height: 3)

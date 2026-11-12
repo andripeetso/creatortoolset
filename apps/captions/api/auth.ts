@@ -32,6 +32,7 @@ import {
   isSignInProvider,
   userForApiKey,
   verifyPassword,
+  listUsers,
 } from "./users";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
 import { acceptInvite, inviteByToken, memberIn, workspaceOf } from "./lib/workspaces";
@@ -84,19 +85,19 @@ export function getSessionUser(
   cookieHeader: string | undefined,
 ): SessionUser | null {
   if (!env.appSecret) return LOCAL_USER;
-  const m = new RegExp(
-    `(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`,
-  ).exec(cookieHeader ?? "");
-  if (!m) return null;
-  let username = "";
-  try {
-    username = Buffer.from(m[1], "base64url").toString();
-  } catch {
-    return null;
+  // a browser can hold several cookies by this name (an old one for the parent domain, a newer one for this host), and
+  // sends all of them: the first that is still valid is the session, so an old one never hides a new sign-in
+  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`, "g"))) {
+    let username = "";
+    try {
+      username = Buffer.from(m[1], "base64url").toString();
+    } catch {
+      continue;
+    }
+    const user = findUser(username);
+    if (user && signedBy(user.username, stamp(user), m[2])) return sessionOf(user);
   }
-  const user = findUser(username);
-  if (!user || !signedBy(user.username, stamp(user), m[2])) return null;
-  return sessionOf(user);
+  return null;
 }
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
@@ -196,8 +197,20 @@ authApp.get("/check", (c) => {
 // each wrong try also buys a delay; the lock (lib/sign-in-code.ts) stops a guesser
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * No passwords on a hosted server where every account signs in with Google, Apple or GitHub: a password there is only
+ * one more thing to guess. A server with any account that has no linked sign-in keeps them for everyone.
+ */
+export const passwordsOff = (): boolean => {
+  if (!hostedMode() || !env.appSecret) return false;
+  const all = listUsers();
+  return all.length > 0 && all.every((u) => !!u.identities?.length);
+};
+export const PASSWORDS_OFF = "This server signs in with Google, Apple or GitHub only";
+
 authApp.post("/login", async (c) => {
   if (!env.appSecret) return c.json({ ok: true, user: toPublic(LOCAL_USER) });
+  if (passwordsOff()) return c.json({ error: PASSWORDS_OFF }, 403);
   let username = "";
   let password = "";
   try {

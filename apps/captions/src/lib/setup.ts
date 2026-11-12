@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
-import { DEFAULT_TOOLS, readiness, type Have, type HomeTile, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { applyNeedWays, DEFAULT_TOOLS, readiness, type Have, type HomeTile, type Need, type SetupView, type Tool } from "@contracts/tools";
 import { DEFAULT_WORK_PREFS, JOBS, type Job, type Make, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 import { useAuth } from "./auth";
@@ -234,6 +234,10 @@ export const useSetup = create<{ view: SetupView | null; load: () => Promise<Set
       .then((r) => json<SetupView>(r))
       .then((view) => (putCached(me(), SETUP_KEY, view), set({ view }))),
 }));
+
+// a plug-in's other ways to set up a tool (contracts/tools.ts applyNeedWays): the rows follow each setup view, before
+// the screens that read it draw again
+useSetup.subscribe((s) => applyNeedWays(s.view?.ways));
 
 /**
  * Before the first render (main.tsx): the last setup and work preferences this account saw, so Home's marks and an

@@ -25,6 +25,8 @@ export type ThisMacState = {
   computer?: string;
   host?: string;
   device?: string | null;
+  /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
+  version?: string;
   /** the app's last answer, kept on this device: it has not answered in this window yet */
   saved?: true;
 };

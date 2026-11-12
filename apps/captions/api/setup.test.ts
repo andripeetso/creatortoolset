@@ -10,6 +10,9 @@ const { setupApp } = await import("./setup");
 const { claudeMcpAdd, codexMcpAdd, codexWithKey, shellLine } = await import("./lib/local-ai");
 const { saveMyKey } = await import("./my-keys");
 const { pairDevice, saveReport } = await import("./lib/devices");
+const { definePlugin, mountPlugins } = await import("./lib/plugin");
+const { needsLine, readiness, TOOL_NEEDS } = await import("../contracts/tools");
+import type { SetupView } from "../contracts/tools";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 
@@ -94,6 +97,29 @@ describe("setup: my tools, my plan, what is set up", () => {
     const r = (await (await app.request("/api/setup/computers")).json()) as { others: Array<{ name: string; drivers: unknown[] }> };
     expect(r.others.find((o) => o.name === "Workshop PC")?.drivers).toEqual([{ driver: "codex", installed: false }]);
     expect(r.others.map((o) => o.name)).not.toContain("Mina's Mac");
+  });
+
+  it("names a plug-in's other way to set up a tool and counts it once this account has it; without one the view is as before", async () => {
+    who = { username: "ways", role: "user", cloud: true, off: [] };
+    const shipped = JSON.stringify(TOOL_NEEDS);
+    const plain = (await (await app.request("/api/setup")).json()) as object;
+    expect("ways" in plain).toBe(false);
+    let signedIn = false;
+    mountPlugins(new Hono(), [definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: () => signedIn }] })]);
+    try {
+      const out = (await get()) as unknown as SetupView;
+      expect(out.ways).toEqual([{ tool: "enhance", what: "A Tiny sign-in", have: "plugin:tiny-way/enhance" }]);
+      expect(needsLine(readiness("enhance", out.have).missing)).toBe("Needs an API key or a Tiny sign-in");
+      signedIn = true;
+      const inn = (await get()) as unknown as SetupView;
+      expect(inn.have).toContain("plugin:tiny-way/enhance");
+      expect(readiness("enhance", inn.have).ready).toBe(true);
+    } finally {
+      mountPlugins(new Hono(), []);
+    }
+    // the plug-in gone: the rows and the view are the ones the app ships
+    expect(JSON.stringify(TOOL_NEEDS)).toBe(shipped);
+    expect(await (await app.request("/api/setup")).json()).toEqual(plain);
   });
 
   it("is for accounts only", async () => {

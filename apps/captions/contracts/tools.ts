@@ -107,7 +107,19 @@ export const NEED_SENTENCE: Record<Have, string> = {
  * transcripts made on this computer without a key (the server is on its owner's computer: api/lib/device-transcribe.ts),
  * and each key keyFor (api/my-keys.ts) finds for them.
  */
-export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | "deviceTranscripts" | MyKeyEnv;
+export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | "deviceTranscripts" | MyKeyEnv | NeedWay["have"];
+
+/**
+ * A plug-in's other way to meet a tool's required row (ServerPlugin.needs, api/lib/plugin.ts): the row reads "An API key
+ * or <what>", and is met when `have` holds this way's id.
+ */
+export interface NeedWay {
+  tool: Tool;
+  what: string;
+  have: `plugin:${string}`;
+  /** the plug-in's Settings section that sets it up: the row's Set up shows it under the row's own form */
+  settings?: string;
+}
 
 /** The screen that sets a row up: API keys (its keys only), Apify, the Media Library, Providers, a project. */
 export type NeedForm = "keys" | "apify" | "library" | "ai" | "project";
@@ -175,6 +187,26 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   ],
 };
 
+/** The rows as the app ships them, before any plug-in's way. */
+const SHIPPED_NEEDS: Record<Tool, readonly Need[]> = { ...TOOL_NEEDS };
+
+/**
+ * Puts the plug-ins' ways (NeedWay) into TOOL_NEEDS: a tool's first required row also names each way and is met by it.
+ * Made again from the shipped rows each time, so a way that is gone is gone. The server calls it when it mounts its
+ * plug-ins (mountPlugins), the page each time a setup view arrives (src/lib/setup.ts). No ways: the shipped rows.
+ */
+export function applyNeedWays(ways: readonly NeedWay[] = []): void {
+  for (const t of TOOLS) {
+    const mine = ways.filter((w) => w.tool === t);
+    const first = SHIPPED_NEEDS[t].findIndex((n) => !n.optional);
+    TOOL_NEEDS[t] = SHIPPED_NEEDS[t].map((n, i) =>
+      i !== first || !mine.length
+        ? n
+        : { ...n, what: [n.what, ...mine.map((w) => w.what.charAt(0).toLowerCase() + w.what.slice(1))].join(" or "), alsoMetBy: [...(n.alsoMetBy ?? []), ...mine.map((w) => w.have)] },
+    );
+  }
+}
+
 /** Missing rows' names in a sentence: "a project and an Apify key". */
 export function needNames(needs: readonly Need[]): string {
   const names = needs.map((n) => n.what.charAt(0).toLowerCase() + n.what.slice(1));
@@ -211,4 +243,6 @@ export interface SetupView {
   have: Have[];
   /** the AI CLIs that hold this account's Creator Toolset entry (stored in its setup file; they get the new key on each add) */
   mcpTo: CliId[];
+  /** the plug-ins' other ways to meet a tool's row (applyNeedWays); absent when no plug-in has one */
+  ways?: NeedWay[];
 }

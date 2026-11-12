@@ -82,8 +82,8 @@ struct CreatorToolsetMacApp: App {
 }
 
 /// Sparkle installs a downloaded update when the app quits, and this app lives in the menu bar and never quits, so
-/// updates waited forever (a build two days old while newer ones shipped). Instead: install and relaunch as soon as
-/// the app is in the background with no AI job on this Mac and no recording.
+/// updates waited forever (a build two days old while newer ones shipped). Instead: install and relaunch while the
+/// person is away (`updateMayInstall`), with no AI job on this Mac and no recording; or when they quit, as before.
 final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
     static let shared = UpdateWhenIdle()
     /// The quiet update found its idle moment itself: no question then.
@@ -128,18 +128,32 @@ final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
         return cut
     }
 
-    /// Calls `go` once no AI job runs on this Mac and nothing records (and, for the quiet updates, the app is in the background).
+    /// Calls `go` once no AI job runs on this Mac and nothing records; for the quiet updates also only while nobody is
+    /// at the Mac (`updateMayInstall`).
     private func whenIdle(every seconds: TimeInterval, inBackground: Bool, _ go: @escaping () -> Void) {
         Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { timer in
             MainActor.assumeIsolated {
-                guard let shell = AppDelegate.shell, !(inBackground && NSApp.isActive),
-                      shell.ai.running == 0, !shell.recorder.busy,
-                      inBackground || Self.wouldInterrupt(shell).isEmpty else { return }
+                guard let shell = AppDelegate.shell, shell.ai.running == 0, !shell.recorder.busy else { return }
+                if inBackground {
+                    let away = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+                    guard updateMayInstall(appActive: NSApp.isActive, aiJobs: shell.ai.running, recording: shell.recorder.busy,
+                                           secondsSinceInput: away) else { return }
+                } else {
+                    guard Self.wouldInterrupt(shell).isEmpty else { return }
+                }
                 timer.invalidate()
                 go()
             }
         }
     }
+}
+
+/// Whether a downloaded update may quit and relaunch the app now: the app is in the background, nothing runs in it,
+/// and nobody has touched the keyboard or the mouse for 5 minutes. In the background alone was not enough: a minute
+/// in another app (the owner, 11-11, with a release about every hour) closed this one while he was working with it,
+/// three times in an afternoon, and each looked like a crash.
+func updateMayInstall(appActive: Bool, aiJobs: Int, recording: Bool, secondsSinceInput: Double) -> Bool {
+    !appActive && aiJobs == 0 && !recording && secondsSinceInput >= 300
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

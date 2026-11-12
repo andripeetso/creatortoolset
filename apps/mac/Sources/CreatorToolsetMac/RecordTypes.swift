@@ -53,13 +53,22 @@ func recorderVideoSettings(width: Int, height: Int, bitRate: Int, frameRate: Int
 /// interface can hand over its first buffers in another layout than the rest (measured on a USB interface: 24-bit
 /// samples in 4 bytes each for one or two buffers, then in 3, in about half of the takes). Read by the first
 /// layout, the rest came out as noise at three quarters of its length: the whole voice track.
+/// The voice (`mono`) is one channel. An audio interface hands over two (or more) channels with the voice on the one
+/// it is plugged into and the others silent (measured: the left at −44 dB, the right at −91), which played the voice
+/// in one ear; the voice is made of the channels that carry sound (`mixDown`), at their own level.
 struct SoundLayout {
+    private let mono: Bool
     private var converter: AVAudioConverter?
     private var plain: AVAudioFormat?
+    private var voice: AVAudioFormat?
     private var rate = 0.0
     private var channels: AVAudioChannelCount = 0
+    /// The loudest each input channel has been so far (RMS of a buffer), for `mixDown`.
+    private var loudest: [Float] = []
     /// Buffers that could not be read or came at another rate or channel count than the track's, for the log.
     private(set) var leftOut = 0
+
+    init(mono: Bool = false) { self.mono = mono }
 
     /// `buffer` as float samples at the same time, or nil when it is left out. A track whose layout cannot be made
     /// (more channels than a layout is known for) is written as it comes.
@@ -69,7 +78,10 @@ struct SoundLayout {
         if rate == 0 {
             rate = from.sampleRate
             channels = from.channelCount
-            plain = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: channels, interleaved: true)
+            // a voice of several channels is read one channel a buffer, then mixed down to one
+            let mixes = mono && channels > 1
+            plain = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: channels, interleaved: !mixes)
+            if mixes { voice = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1, interleaved: true) }
         }
         guard let plain else { return buffer }
         let frames = AVAudioFrameCount(buffer.numSamples)
@@ -87,17 +99,43 @@ struct SoundLayout {
         guard CMSampleBufferCopyPCMDataIntoAudioBufferList(buffer, at: 0, frameCount: Int32(frames),
                                                            into: input.mutableAudioBufferList) == noErr,
               (try? converter.convert(to: output, from: input)) != nil,
+              let written = voice == nil ? output : mixDown(output),
               CMSampleBufferCreate(allocator: nil, dataBuffer: nil, dataReady: false, makeDataReadyCallback: nil,
-                                   refcon: nil, formatDescription: plain.formatDescription,
-                                   sampleCount: CMItemCount(output.frameLength), sampleTimingEntryCount: 1,
+                                   refcon: nil, formatDescription: written.format.formatDescription,
+                                   sampleCount: CMItemCount(written.frameLength), sampleTimingEntryCount: 1,
                                    sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil,
                                    sampleBufferOut: &made) == noErr, let made,
               CMSampleBufferSetDataBufferFromAudioBufferList(made, blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
-                                                             flags: 0, bufferList: output.audioBufferList) == noErr
+                                                             flags: 0, bufferList: written.audioBufferList) == noErr
         else {
             leftOut += 1
             return nil
         }
         return made
+    }
+
+    /// One channel of `pcm` (one channel a buffer): the average of the channels that carry sound, each counted from
+    /// when it has been within 20 dB of the loudest one. A channel with nothing plugged in is left out, so the voice
+    /// keeps its level; two that carry the same voice give it once; two voices are both in.
+    private mutating func mixDown(_ pcm: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let voice, let into = AVAudioPCMBuffer(pcmFormat: voice, frameCapacity: pcm.frameLength),
+              let from = pcm.floatChannelData, let to = into.floatChannelData?[0] else { return nil }
+        let n = Int(pcm.frameLength), count = Int(pcm.format.channelCount)
+        into.frameLength = pcm.frameLength
+        if loudest.count != count { loudest = Array(repeating: 0, count: count) }
+        for c in 0..<count where n > 0 {
+            var sum: Float = 0
+            for i in 0..<n { sum += from[c][i] * from[c][i] }
+            loudest[c] = max(loudest[c], (sum / Float(n)).squareRoot())
+        }
+        let top = loudest.max() ?? 0
+        let used = (0..<count).filter { loudest[$0] >= top * 0.1 }   // within 20 dB
+        let share = 1 / Float(max(1, used.count))
+        for i in 0..<n {
+            var sum: Float = 0
+            for c in used { sum += from[c][i] }
+            to[i] = sum * share
+        }
+        return into
     }
 }
