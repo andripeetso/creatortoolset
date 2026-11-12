@@ -353,8 +353,17 @@ export function renderPackInstructions(packs: InstalledPack[], slot: PackSlot, p
   ].join("\n\n");
 }
 
-/** `renderPackInstructions` for a person, read from disk. */
-export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null): Promise<string> {
-  return renderPackInstructions(await listInstalled(username), slot, projectId);
+/** Whether an installed pack's text at a slot is the app's own shipped pack's, word for word (packs/*.ctpack.json). */
+export const isShippedText = (p: InstalledPack, slot: PackSlot): boolean =>
+  readOfficialPacks().some((o) => o.pack.id === p.id && o.pack.instructions?.[slot] === p.instructions[slot]);
+
+/**
+ * `renderPackInstructions` for a person, read from disk. `shippedOnly`: for an AI run with tools on the person's
+ * computer (the Workshop's turn on the Mac reads its folder and may search the web), only the app's own shipped packs
+ * go in: text other people wrote never reaches a run that can act.
+ */
+export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null, o: { shippedOnly?: boolean } = {}): Promise<string> {
+  const packs = await listInstalled(username);
+  return renderPackInstructions(o.shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);
 }
 

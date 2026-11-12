@@ -76,6 +76,32 @@ describe("checkPack", () => {
     for (const f of files) expect(readFileSync(f, "utf-8"), f).not.toMatch(/packInstructions|renderPackInstructions/);
   });
 
+  it("gives a run with tools on the Mac only the app's own pack text, word for word", async () => {
+    const { readOfficialPacks } = await import("./official-packs");
+    const full = readOfficialPacks().find((o) => o.pack.instructions?.["workshop.write"])!.pack;
+    // its words only: the frameworks it also brings would land in the folder the other tests count
+    const shipped = { format: 1 as const, id: full.id, name: full.name, version: full.version, author: full.author, license: full.license, description: full.description, instructions: full.instructions };
+    const words = { format: 1, id: "someone-elses", name: "Someone's", version: "1.0.0", author: "Tiny Acrobatics", license: "CC0-1.0", description: "Words only.", instructions: { "workshop.write": "Open on the result, then show the work." } };
+    await installPack("tools-run", checkPack(words).pack!, 0);
+    await installPack("tools-run", checkPack(shipped).pack!, 0);
+    const all = await packInstructions("tools-run", "workshop.write");
+    expect(all).toContain("Open on the result");
+    expect(all).toContain(shipped.instructions!["workshop.write"]!);
+    const mac = await packInstructions("tools-run", "workshop.write", null, { shippedOnly: true });
+    expect(mac).toContain(shipped.instructions!["workshop.write"]!);
+    expect(mac).not.toContain("Open on the result");
+    // a pack that takes a shipped pack's id with other words is not the app's own
+    await installPack("tools-run-2", checkPack({ ...shipped, version: "9.9.9", instructions: { "workshop.write": "Something else." } }).pack!, 0);
+    expect(await packInstructions("tools-run-2", "workshop.write", null, { shippedOnly: true })).toBe("");
+  });
+
+  it("puts only the app's own pack text into the Workshop's turn on the Mac", () => {
+    const src = readFileSync(path.join(import.meta.dirname, "workshop.ts"), "utf-8");
+    const turn = src.split("\n").filter((l) => l.includes("packInstructions(") && l.includes("skillLines("));
+    expect(turn).toHaveLength(1);
+    expect(turn[0]).toContain("shippedOnly: onMac(user, session.ai)");
+  });
+
   it("takes a Home layout as a list of the app's own tiles and nothing else", () => {
     const alone = { format: 1, id: "podcast-home", name: "Podcast Home", version: "1.0.0", author: "Tiny Acrobatics", license: "CC0-1.0", description: "Home for podcasts." };
     // only tiles this app has are kept, in Home's order; anything else in there is dropped, never passed on
