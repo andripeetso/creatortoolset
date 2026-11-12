@@ -56,7 +56,7 @@ const clear = async (user: string) => {
   for (const s of (await styles(user)).styles) await call(user, "DELETE", `/api/editor/styles/${s.id}`);
 };
 
-/** A post-processing step, as a plug-in adds one (Settings → AI Editor). */
+/** A post-processing step, as a plug-in adds one (Settings → Tools → AI Editor). */
 const blur = definePlugin({
   id: "tiny-blur",
   editor: {

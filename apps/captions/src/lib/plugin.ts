@@ -220,7 +220,7 @@ export interface SiteFrame {
 
 export interface WebPlugin {
   id: string;
-  // The name the Community → Plug-ins list shows (the id when absent) and one short line on what it does.
+  // The name Community shows for it (the id when absent) and one short line on what it does.
   name?: string;
   about?: string;
   // A product site on its own host(s), see SiteFrame. AuthGate shows it before the sign-in form.

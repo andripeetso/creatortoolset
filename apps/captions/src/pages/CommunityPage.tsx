@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { BarChart3, BookOpenText, Compass, LayoutGrid, Layers, Package, PenLine, Puzzle, Scissors, Search, Type, X, type LucideIcon } from "lucide-react";
+import { BookOpenText, Compass, LayoutGrid, Package, Puzzle, ScreenShare, Search, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { Card, ErrorRow, LoadingRow } from "@/components/settings/ui";
-import { PACK_KINDS, packKinds, type KindId } from "@/components/community/packs-helpers";
-import { ExploreView, KindView } from "@/components/community/CatalogViews";
+import { PACK_KINDS, PACK_TOOLS, packKinds, reachesTool } from "@/components/community/packs-helpers";
+import { ExploreView, KindView, ToolView } from "@/components/community/CatalogViews";
 import { InstalledView } from "@/components/community/PacksInstalled";
-import { PluginsView } from "@/components/community/PluginsCatalog";
+import { ToolPlugins, stepsFor, useSteps } from "@/components/community/PluginsCatalog";
+import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
+import { HOME_TILES, HOME_TILE_NAMES, isHomeTile, type HomeTile } from "@contracts/tools";
 import { PackDetailView } from "@/components/community/PackDetailView";
 import { SkillsView } from "@/components/community/SkillsView";
 import { useCommunityData } from "@/components/community/useCommunityData";
@@ -17,16 +19,17 @@ import { useAuth, useMe } from "@/lib/auth";
 import { mergePluginInfo } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
-const KIND_ICONS: Record<KindId, LucideIcon> = {
-  frameworks: Layers,
-  guides: PenLine,
-  captions: Type,
-  editing: Scissors,
-  analyzer: BarChart3,
-  home: LayoutGrid,
+const TILE_ICONS: Record<HomeTile, LucideIcon> = { ...TOOL_ICONS, record: ScreenShare };
+const SECTIONS = ["explore", "tool", "home", "other", "installed", "skills"];
+/** Sections from before Community was sorted by tool, and where they are now. */
+const RETIRED: Record<string, string> = {
+  frameworks: "/community/tool/workshop",
+  guides: "/community/tool/workshop",
+  captions: "/community/tool/captions",
+  editing: "/community/tool/editor",
+  analyzer: "/community/tool/instagram",
+  plugins: "/community/explore",
 };
-const KINDS = Object.keys(PACK_KINDS) as KindId[];
-const SECTIONS = ["explore", ...KINDS, "plugins", "installed", "skills"];
 
 // The sidebar item of Settings (SettingsPage.tsx itemCls), so the two windows read as one family.
 const itemCls = (on: boolean) =>
@@ -37,8 +40,10 @@ const itemCls = (on: boolean) =>
 
 /**
  * Community: its own window over the page behind it, from the account menu, at /community/<section>: the shared catalog by
- * the place a pack works in, and what's installed (the plug-ins this server is built with, then the packs).
- * /community/pack/<id> is one pack. The frame is Settings' frame: a header with the breadcrumb, a sidebar, a content column.
+ * the tool it adds to (/community/tool/<tile>: the team's plug-ins for that tool, then the packs that reach it, each
+ * labelled with what kind of thing it is), Home layouts, the plug-ins that name no tool (Other), and what's installed
+ * (the plug-ins this server is built with, then the packs). /community/pack/<id> is one pack. A tool's page in
+ * Settings → Tools sends here with "Get more for <tool>". The frame is Settings' frame: a header with the breadcrumb, a sidebar, a content column.
  */
 export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const [, , section = "explore", sub] = useLocation().pathname.split("/");
@@ -47,15 +52,21 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const me = useMe();
   const hosted = useAuth((s) => s.hosted);
   const [q, setQ] = useState("");
-  const isCatalog = section === "explore" || (KINDS as string[]).includes(section);
+  const steps = useSteps();
+  const isCatalog = ["explore", "tool", "home", "other"].includes(section);
+  if (RETIRED[section]) return <Navigate to={RETIRED[section]} replace />;
+  if (section === "tool" && !isHomeTile(sub)) return <Navigate to="/community/explore" replace />;
   if (section !== "pack" && !SECTIONS.includes(section)) return <Navigate to="/community/explore" replace />;
+  // the tools anything can be added to: the ones packs reach, and the ones a plug-in names
+  const tools = HOME_TILES.filter((t) => PACK_TOOLS.includes(t) || stepsFor(steps.view, t).length > 0);
+  const others = stepsFor(steps.view, null).length;
   const installed = data.installed ?? [];
   const plugins = mergePluginInfo(webPlugins, data.serverPlugins, { me, hosted });
   const waiting = data.updates.length;
   const title =
-    section === "pack" ? "Pack" : section === "installed" ? "Installed" : section === "plugins" ? "Plug-ins" : section === "skills" ? "Skills" : section === "explore" ? "Explore" : PACK_KINDS[section as KindId];
+    section === "pack" ? "Pack" : section === "installed" ? "Installed" : section === "skills" ? "Skills" : section === "explore" ? "Explore" : section === "home" ? PACK_KINDS.home : section === "other" ? "Other" : HOME_TILE_NAMES[sub as HomeTile];
   const nav = (id: string, label: string, Icon: LucideIcon, count?: number, dot = false) => {
-    const on = section === id;
+    const on = `${section}${sub ? `/${sub}` : ""}` === id;
     return (
       <Link key={id} to={`/community/${id}`} replace aria-current={on ? "page" : undefined} className={itemCls(on)}>
         <Icon className="size-4 shrink-0" />
@@ -69,20 +80,27 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const body =
     section === "pack" ? (
       <PackDetailView id={sub ?? ""} installed={installed.find((p) => p.id === sub)} reload={data.reload} />
-    ) : section === "plugins" ? (
-      <PluginsView q={q} />
+    ) : section === "other" ? (
+      <ToolPlugins steps={steps} tool={null} q={q} />
     ) : section === "skills" ? (
       <SkillsView />
     ) : section === "installed" ? (
       <InstalledView plugins={plugins} folderPlugins={data.folderPlugins} installed={data.installed} updates={data.updates} reload={data.reload} error={data.error} />
+    ) : section === "tool" && !PACK_TOOLS.includes(sub as HomeTile) ? (
+      <ToolPlugins steps={steps} tool={sub as HomeTile} q={q} />
     ) : catalogWaiting ? (
       <Card>
         {data.catalogError ? <ErrorRow title="The Community catalog did not load" detail={data.catalogError} retry={data.reload} /> : <LoadingRow />}
       </Card>
     ) : section === "explore" ? (
       <ExploreView entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />
+    ) : section === "home" ? (
+      <KindView kind="home" entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />
     ) : (
-      <KindView kind={section as KindId} entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />
+      <>
+        <ToolPlugins steps={steps} tool={sub as HomeTile} q={q} />
+        <ToolView tool={sub as HomeTile} entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />
+      </>
     );
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -135,11 +153,12 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
             <nav aria-label="Community sections" className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
               <span className="hidden px-2.5 pb-1 text-xs font-medium text-sidebar-foreground/60 md:block">Discover</span>
               {nav("explore", "Explore", Compass, data.catalog?.length)}
-              {KINDS.map((id) =>
-                nav(id, PACK_KINDS[id], KIND_ICONS[id], data.catalog?.filter((e) => packKinds(e.contains).some((k) => k.id === id)).length),
+              {tools.map((t) =>
+                nav(`tool/${t}`, HOME_TILE_NAMES[t], TILE_ICONS[t], data.catalog ? data.catalog.filter((e) => reachesTool(e.contains, t)).length + stepsFor(steps.view, t).length : undefined),
               )}
-              {/* the team's plug-ins, each a download (the AI Editor's steps) */}
-              {nav("plugins", "Plug-ins", Puzzle)}
+              {nav("home", PACK_KINDS.home, LayoutGrid, data.catalog?.filter((e) => packKinds(e.contains).some((k) => k.id === "home")).length)}
+              {/* the team's plug-ins that add to no Home tool */}
+              {others > 0 && nav("other", "Other", Puzzle, others)}
               <span className="hidden px-2.5 pb-1 pt-4 text-xs font-medium text-sidebar-foreground/60 md:block">You</span>
               {nav("installed", "Installed", Package, data.installed ? installed.length + plugins.length : undefined, waiting > 0)}
               {nav("skills", "Skills", BookOpenText)}

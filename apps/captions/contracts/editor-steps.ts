@@ -1,8 +1,8 @@
 /**
  * The AI Editor's post-processing steps: plug-ins that change the footage a draft plays (the voice, the colour, the
  * faces). Each step makes copies of the source files it changes, and the preview and the exported timeline play those
- * copies. Settings → AI Editor lists the steps that are loaded. The plug-ins the team makes come with the app as folders
- * (apps/captions/editor-steps/<folder>: the steps, and others such as an Audio Enhancer engine); Community → Plug-ins lists
+ * copies. Settings → Tools → AI Editor lists the steps that are loaded. The plug-ins the team makes come with the app as folders
+ * (apps/captions/editor-steps/<folder>: the steps, and others such as an Audio Enhancer engine); Community lists
  * them too, each under the Home tool its plugin.ts names (`kind`), and the person downloads one there.
  *
  *   GET  /api/edit-steps                → StepsView
@@ -33,7 +33,7 @@ export interface StepInfo {
 }
 
 /**
- * A row in Settings → AI Editor (only "on" rows) and Community → Plug-ins (all). state: "add" = comes with the app, not in
+ * A row in Settings → Tools → AI Editor (only "on" rows) and Community, each in its tool's section (all). state: "add" = comes with the app, not in
  * the plug-ins folder yet; "off" = in the folder, not switched on (or not loaded since); "on" = a loaded step, so new edits
  * can use it; "loaded" = a plug-in that comes with the app, loaded, and adds no AI Editor step (Community: Installed).
  */

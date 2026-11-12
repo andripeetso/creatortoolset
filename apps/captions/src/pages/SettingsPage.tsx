@@ -11,6 +11,7 @@ import { navBlocks, navListFor, resolveSection, sectionsFor, type NavContext, ty
 import { PageActionContext } from "@/components/settings/page-action";
 import { searchSettings, type SearchHit } from "@/components/settings/search";
 import { hasThisMac } from "@/components/settings/ThisMacSection";
+import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
 import { logout, useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -321,7 +322,19 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                 <span aria-hidden className="text-muted-foreground/60">
                   ›
                 </span>{" "}
-                <span className="font-medium text-foreground">{current.title}</span>
+                {current.id === "tools" && sub && isHomeTile(sub) ? (
+                  <>
+                    <Link to="/settings/tools" replace className="text-muted-foreground hover:text-foreground">
+                      {current.title}
+                    </Link>{" "}
+                    <span aria-hidden className="text-muted-foreground/60">
+                      ›
+                    </span>{" "}
+                    <span className="font-medium text-foreground">{HOME_TILE_NAMES[sub]}</span>
+                  </>
+                ) : (
+                  <span className="font-medium text-foreground">{current.title}</span>
+                )}
               </DialogTitle>
               <div ref={setActionEl} className="flex shrink-0 items-center gap-2 empty:hidden" />
               <Tooltip>

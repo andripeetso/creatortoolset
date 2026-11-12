@@ -29,7 +29,7 @@ app.use("*", async (c, next) => { c.set("user" as never, { username: "me", role:
 app.route("/", editStepsApp);
 const put = (id: string, body: unknown) => app.request(`/${id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-describe("Settings → AI Editor's steps", () => {
+describe("Settings → Tools → AI Editor's steps", () => {
   it("lists a loaded step on, in use, with its defaults; new edits take it", async () => {
     const view = (await (await app.request("/")).json()) as StepsView;
     expect(view.steps).toEqual([expect.objectContaining({ id: "blur", state: "on", use: true, values: { who: "everyone except me", how: "blur" } })]);
@@ -68,7 +68,7 @@ describe("Settings → AI Editor's steps", () => {
     });
   });
 
-  it("on the Mac app's own server: Community gets every team plug-in, Settings → AI Editor only the loaded steps", async () => {
+  it("on the Mac app's own server: Community gets every team plug-in, Settings → Tools → AI Editor only the loaded steps", async () => {
     const appFolder = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), "edit-steps-app-"));
     // the team's folder: a step whose plugin.ts says no kind (an option's kind: "choice" must not stand in), and an engine
     const team = path.join(appFolder, "team");

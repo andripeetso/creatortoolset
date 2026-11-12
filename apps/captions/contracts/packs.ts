@@ -22,6 +22,17 @@ export const PACK_SLOTS = {
 } as const;
 export type PackSlot = keyof typeof PACK_SLOTS;
 export const isPackSlot = (s: string): s is PackSlot => Object.hasOwn(PACK_SLOTS, s);
+/** The Home tool each slot belongs to: its pack items and skills are listed on that tool's page (Settings → Tools). */
+export const SLOT_TOOL: Record<PackSlot, HomeTile> = {
+  "workshop.write": "workshop",
+  "workshop.review": "workshop",
+  "analyzer.ideas": "instagram",
+  "captions.lines": "captions",
+  "editor.script": "editor",
+  "editor.cards": "editor",
+};
+/** The part of a slot's words after the tool's name: "the script". */
+export const slotSpot = (s: PackSlot): string => PACK_SLOTS[s].replace(/^[^:]*:\s*/, "");
 
 /**
  * Where a skill from a pack or a plug-in may go: a job that reads text and has no tools on anyone's computer. Never the

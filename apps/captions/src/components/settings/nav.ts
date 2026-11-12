@@ -1,4 +1,4 @@
-import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users, WandSparkles } from "lucide-react";
+import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users, } from "lucide-react";
 import { settingsWithPlugins, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "editor", "folders", "providers", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "folders", "providers", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
   "servers", "team", "admin", "account",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -29,13 +29,15 @@ interface BuiltinEntry extends SettingsEntry {
   hostedOnly?: boolean;
   /** Only in the Mac app, where this computer's own settings are (servers). */
   macOnly?: boolean;
-  /** Only on the Mac app's own server (not hosted): what it holds is switched on by that Mac app (the editor's steps). */
-  localOnly?: boolean;
   /** False: routable but not in the sidebar (account: the account button is its entry). */
   listed?: false;
 }
 
-/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "Plug-ins", "People" are headed. */
+/**
+ * The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "People" are headed.
+ * What is added to one tool (its plug-ins, packs, skills) is on that tool's page under Tools (/settings/tools/<tile>); a
+ * plug-in's own section with no group goes in a "Plug-ins" block before People (lib/plugin.ts PLUGINS_GROUP).
+ */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
@@ -50,28 +52,26 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "Connections" },
-  // the AI Editor's post-processing steps: plug-ins the Mac app switches on (EditorStepsSection); the plug-ins' own
-  // sections join this block (lib/plugin.ts PLUGINS_GROUP)
-  { id: "editor", title: "AI Editor", icon: WandSparkles, group: "Plug-ins", macOnly: true, localOnly: true },
   { id: "team", title: "Team", icon: Users, group: "People", hostedOnly: true },
   { id: "admin", title: "Admin", icon: ShieldCheck, group: "People", hostedOnly: true, adminOnly: true },
   { id: "account", title: "Account", icon: UserRound, listed: false },
 ];
 
-/** Old ids and where they go. A full path, so the editor's old id can leave Settings. */
+/** Old ids and where they go, as full paths. */
 export const RETIRED_PATHS: Readonly<Record<string, string>> = {
   setup: "/settings/general",
   cache: "/settings/general",
   "this-mac": "/settings/devices",
   "my-keys": "/settings/keys",
   packs: "/community/installed",
+  editor: "/settings/tools/editor",
   skills: "/community/skills",
 };
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */
 export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): SettingsEntry[] {
   const allowed = BUILTIN.filter(
-    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && !(ctx.hosted && s.localOnly) && (ctx.admin || !s.adminOnly),
+    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly),
   );
   return visibleSettings(settingsWithPlugins(allowed, plugins), { role: ctx.admin ? "admin" : "user" });
 }
@@ -98,6 +98,5 @@ export type SectionResolution = { kind: "page"; id: string } | { kind: "redirect
 export function resolveSection(section: string, ctx: NavContext, plugins: PluginList = webPlugins): SectionResolution {
   if (RETIRED_PATHS[section]) return { kind: "redirect", to: RETIRED_PATHS[section] };
   if (sectionsFor(ctx, plugins).some((s) => s.id === section)) return { kind: "page", id: section };
-  // the editor's old id (its defaults moved to the AI Editor page) where its steps page is not shown
-  return { kind: "redirect", to: section === "editor" ? "/editor" : "/settings/general" };
+  return { kind: "redirect", to: "/settings/general" };
 }

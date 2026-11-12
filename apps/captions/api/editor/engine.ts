@@ -42,7 +42,7 @@ const KINDS: Record<string, EditKind> = {
   broll: { source: "core", next: ["post"], run: brollStep },
   // the cards of an edit whose style names an animation style: queued after its B-roll by nextFor, and for no other edit
   cards: { source: "core", next: ["post"], run: cardsStep },
-  // the post-processing steps the edit uses (plug-ins, Settings → AI Editor); with none it only clears its notes
+  // the post-processing steps the edit uses (plug-ins, Settings → Tools → AI Editor); with none it only clears its notes
   post: { source: "core", next: ["preview"], run: postStep },
   preview: { source: "core", next: ["file"], run: previewStep },
   file: { source: "core", next: [], run: fileStep },

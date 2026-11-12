@@ -160,9 +160,9 @@ describe("New edit: How do you like to work?", () => {
 
   it("Rough cut only: no B-roll and no steps; with none installed, Full edit has one way to the plug-ins", async () => {
     await open({ styles: [], last: null }, async () => {});
-    expect(document.querySelector('a[href="/community/plugins"]')).not.toBeNull();
+    expect(document.querySelector('a[href="/community/tool/editor"]')).not.toBeNull();
     await press("Rough cut only");
-    expect(document.querySelector('a[href="/community/plugins"]')).toBeNull();
+    expect(document.querySelector('a[href="/community/tool/editor"]')).toBeNull();
     await press("Continue");
     expect(calls.at(-1)!.body).toEqual({ name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, brollCollectionId: null, steps: [] });
   });

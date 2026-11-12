@@ -33,9 +33,10 @@ import { PublishDialog } from "./PublishDialog";
 /**
  * Community → Skills: every skill, one section per place it acts, headed with the tool's own words. Each place lists
  * the person's own (switch, projects, edit, publish, remove), then the ones their packs and the server's plug-ins bring
- * (a source line and a switch). An AI Editor script skill has no switch: an editing style picks it.
+ * (a source line and a switch). An AI Editor script skill has no switch: an editing style picks it. A tool's page in
+ * Settings → Tools shows only its own places (`places`), each headed by `title`.
  */
-export function SkillsView() {
+export function SkillsView({ places = SKILL_PLACES, title = placeLabel }: { places?: readonly SkillPlace[]; title?: (p: SkillPlace) => string } = {}) {
   // own: this window's saves read the list again too, and a pack installed here brings its skills
   const data = useCachedLoad<{ skills: Skill[]; shared?: SharedSkill[] }>("/api/skills", listSkills, { topic: ["skills", "packs"], own: true });
   const [editing, setEditing] = useState<{ place: SkillPlace; skill?: Skill } | null>(null);
@@ -47,13 +48,13 @@ export function SkillsView() {
   const shared = data.data.shared ?? [];
   return (
     <>
-      {SKILL_PLACES.map((place) => {
+      {places.map((place) => {
         const mine = own.filter((s) => placeOf(s) === place);
         const theirs = shared.filter((s) => s.place === place);
         return (
           <Section
             key={place}
-            title={placeLabel(place)}
+            title={title(place)}
             action={
               <Button size="xs" variant="ghost" onClick={() => setEditing({ place })} aria-label={`Add a skill for ${placeLabel(place)}`}>
                 <Plus className="size-3" /> Add

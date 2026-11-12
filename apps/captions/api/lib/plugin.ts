@@ -10,7 +10,7 @@ import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { UploadRelayTus } from "../../contracts/storage";
 import type { SessionUser } from "../users";
-import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
+import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, SLOT_TOOL, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
 
 // The plug-in slot. A plug-in is a folder plugins/<id>/ that scripts/plugins.mjs finds at build time:
 // plugin.ts is its server entry (definePlugin), web.tsx its browser entry (defineWebPlugin, src/lib/plugin.ts).
@@ -23,7 +23,7 @@ export interface ServerPlugin {
   name?: string;
   about?: string;
   // The Home tool it adds to ("editor", "enhance": a HomeTile id, contracts/tools.ts), on a plug-in the team bundles with
-  // the app (editor-steps/<folder>): Community → Plug-ins lists it under that tool's name, and one that names no tool under
+  // the app (editor-steps/<folder>): Community lists it in that tool's section, and one that names no tool under
   // Other. Read as text from plugin.ts like name and about, so write it right after them.
   kind?: string;
   // Environment variable names this plug-in reads. The generator warns about any that are not set.
@@ -65,7 +65,7 @@ export interface ServerPlugin {
   // editor.ingest: where footage an account adds to an AI Editor edit from its computer is filed (api/editor/ingest.ts).
   // The first plug-in that answers wins; null or absent = the account's own library's A-roll folder. A throw refuses (fails closed).
   // editor.steps: post-processing steps of the AI Editor (contracts/editor-steps.ts), run in `order` after the B-roll and
-  // before the preview (api/editor/post.ts); Settings → AI Editor lists them for each account to use or not.
+  // before the preview (api/editor/post.ts); Settings → Tools → AI Editor lists them for each account to use or not.
   editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null>; steps?: EditorStep[] };
   // Workshop "check now" for a post he pasted or shared (PATCH /sessions/:id with posted): reads it and matches it to a version.
   // The session's own write stays in core; the first plug-in that answers wins. `account` is the project's Instagram account.
@@ -205,13 +205,13 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     const tools = (p.tools as { defs?: unknown[] } | undefined)?.defs?.length ?? 0;
     if (tools) adds.push({ text: `${tools} ${tools === 1 ? "tool" : "tools"} for your own AI`, to: "/settings/own-ai" });
     for (const f of p.editFlags ?? []) adds.push({ text: `AI Editor flag: ${f.label}`, to: "/editor" });
-    for (const st of p.editor?.steps ?? []) adds.push({ text: `AI Editor step: ${st.title}`, to: "/settings/editor" });
+    for (const st of p.editor?.steps ?? []) adds.push({ text: `AI Editor step: ${st.title}`, to: "/settings/tools/editor" });
     for (const i of p.packItems ?? []) adds.push({ text: `Pack items: ${i.kind === "designSystems" ? "design systems" : i.kind}` });
     if (p.library) adds.push({ text: "Media Library source", to: "/library" });
     if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });
     if (p.activity) adds.push({ text: "Rows in the Mac menu bar panel" });
     for (const n of p.needs ?? []) adds.push({ text: `${TOOL_NAMES[n.tool]} setup: ${n.what.charAt(0).toLowerCase()}${n.what.slice(1)}`, to: "/settings/tools" });
-    for (const k of checkedSkills(p)) adds.push({ text: `Skill for ${PACK_SLOTS[k.slot]}: ${k.name}`, to: "/community/skills" });
+    for (const k of checkedSkills(p)) adds.push({ text: `Skill for ${PACK_SLOTS[k.slot]}: ${k.name}`, to: `/settings/tools/${SLOT_TOOL[k.slot]}` });
     d.adds = adds;
     return d;
   });

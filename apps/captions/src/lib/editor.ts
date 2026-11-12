@@ -31,7 +31,7 @@ export const patchEdit = (id: string, body: EditPatch) => send<Edit>(base(id), "
 export const getEditorDefaults = () => send<EditorDefaults>("/api/editor/defaults");
 /** Sets one slot's default to an item, or back to the pack's or built-in one with null. */
 export const setEditorDefault = (slot: EditSlot, id: string | null) => send<EditorDefaults>(`/api/editor/defaults/${slot}`, "PUT", { id });
-/** Settings → AI Editor: the post-processing steps (contracts/editor-steps.ts). */
+/** Settings → Tools → AI Editor: the post-processing steps (contracts/editor-steps.ts). */
 export const getEditSteps = () => send<StepsView>("/api/edit-steps");
 export const setEditStep = (id: string, change: { use?: boolean; values?: Record<string, string> }) => send<StepsView>(`/api/edit-steps/${id}`, "PUT", change);
 /** Puts a step that comes with the app into the plug-ins folder; the Mac app's own alert then switches it on. */

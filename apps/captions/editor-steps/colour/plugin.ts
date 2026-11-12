@@ -12,7 +12,7 @@ import { parseProbe } from "../../api/library/media/probe";
  * Colour, an AI Editor step: log footage turned into normal video (Rec.709), on this computer, with each camera
  * maker's own published conversion (README.md lists the papers). It is never a grade: nothing is measured to pick a
  * look. A file is converted only when its own metadata says which log it is, or when the person picked the profile
- * under Colour in Settings → AI Editor and the file looks flat. A file that looks flat with no profile in it is left
+ * under Colour in Settings → Tools → AI Editor and the file looks flat. A file that looks flat with no profile in it is left
  * alone and named in the edit's notes. The copy is the whole file again (ProRes 422 HQ, the source's frames, sound and
  * timecode), so a pack's grade still sits on top of it at preview.
  */
@@ -295,7 +295,7 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
     if (tag && "log" in tag) profile = tag.log;
     else if (!tag && (await looksFlat(file, p.duration || 1))) {
       if (choice === "auto") {
-        note(`${name} looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → AI Editor`);
+        note(`${name} looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → Tools → AI Editor`);
         continue;
       }
       profile = choice;

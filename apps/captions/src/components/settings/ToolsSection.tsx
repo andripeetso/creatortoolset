@@ -1,11 +1,23 @@
-import { useState } from "react";
-import { Link } from "react-router";
+import { useState, type ReactNode } from "react";
+import { Link, Navigate } from "react-router";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { canUseTile, useMe } from "@/lib/auth";
+import { canUseTile, useAuth, useMe } from "@/lib/auth";
 import { useSetup, useSetupLive } from "@/lib/setup";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
-import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, needsLine, readiness, type Have, type HomeTile, type Need } from "@contracts/tools";
+import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, isHomeTile, needsLine, readiness, type Have, type HomeTile, type Need } from "@contracts/tools";
+import { SLOT_TOOL, slotSpot, type InstalledPack, type PackSkillSlot, type PackSlot } from "@contracts/packs";
+import { SKILL_PLACES, placeOf, type SharedSkill, type Skill, type SkillPlace } from "@contracts/skills";
+import type { StepsView } from "@contracts/editor-steps";
+import { useCachedLoad } from "@/lib/local-cache";
+import { listSkills } from "@/lib/skills";
+import { listInstalled } from "@/components/community/packs-api";
+import { PACK_TOOLS, containsOf, reachesTool } from "@/components/community/packs-helpers";
+import { PackRow } from "@/components/community/PacksInstalled";
+import { SkillsView } from "@/components/community/SkillsView";
+import { ToolPlugins, stepsFor, useSteps, type Steps } from "@/components/community/PluginsCatalog";
+import { hasThisMac } from "./ThisMacSection";
 import { PublishButton } from "@/components/community/PublishDialog";
 import { Card, LoadingRow, Section, Status, saveFailed } from "./ui";
 
@@ -39,15 +51,8 @@ export function needFix(need: Need): { label: string; to: string } {
   return { label: "Add AI", to: "/settings/providers" };
 }
 
-/**
- * Settings → Tools: every tile Home can show, in Home's order (the tools, then the Screen Recorder), each with the
- * switch that shows it on Home. A tool that cannot work yet says why under its name, one amber line per thing it is
- * missing with the button that goes where it is fixed: the reason for its marker on Home. A tool that works shows only
- * its switch. A switch moves at once: the page keeps the list it was just given and saves it behind, and puts the saved
- * one back only when a save fails.
- */
-export function ToolsSection() {
-  const me = useMe();
+/** Home's switches: the list the page was just given while it saves behind; the saved one back when a save fails. */
+function useHomeSwitches() {
   const view = useSetup((s) => s.view);
   const save = useSetup((s) => s.save);
   useSetupLive(true);
@@ -61,6 +66,77 @@ export function ToolsSection() {
       saveFailed("The tools did not save. Try again.");
     });
   };
+  return { view, hidden, set };
+}
+
+/** The skill places that are part of a tool (the assistant's are no tool's: Community → Skills has them). */
+export const skillPlacesOf = (t: HomeTile): SkillPlace[] => SKILL_PLACES.filter((p): p is PackSkillSlot | "workshop.write" => p !== "assistant" && SLOT_TOOL[p] === t);
+
+/** A tool has a page when something can be added to it: packs and skills have a place in it, or a plug-in names it. */
+export const hasToolPage = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0;
+
+/**
+ * What the person has added to each tool: installed packs that reach it, skills at its places (their own and the ones
+ * packs and plug-ins bring), plug-ins that are in. Best effort: a list that did not load counts nothing.
+ */
+function useAdded(steps: StepsView | null) {
+  const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"] });
+  const skills = useCachedLoad<{ skills: Skill[]; shared?: SharedSkill[] }>("/api/skills", listSkills, { topic: ["skills", "packs"] });
+  return (t: HomeTile): number => {
+    const places = skillPlacesOf(t) as string[];
+    return (
+      (packs.data ?? []).filter((p) => reachesTool(containsOf(p), t)).length +
+      (skills.data?.skills ?? []).filter((s) => places.includes(placeOf(s))).length +
+      (skills.data?.shared ?? []).filter((s) => places.includes(s.place)).length +
+      stepsFor(steps, t).filter((r) => r.state === "on" || r.state === "loaded").length
+    );
+  };
+}
+
+/** One tile's Home switch, with one amber line per thing it is missing and the button that goes where it is fixed. */
+function TileRow({ tile: t, have, shown, onChange, head }: { tile: HomeTile; have: readonly Have[]; shown: boolean; onChange: (on: boolean) => void; head: ReactNode }) {
+  return (
+    <div data-settings-row={`home-tool-${t}`} className="px-3 py-3 sm:px-4">
+      <div className="flex items-center justify-between gap-6">
+        {head}
+        <Switch checked={shown} aria-label={`Show ${HOME_TILE_NAMES[t]} on Home`} onCheckedChange={onChange} />
+      </div>
+      {missingNeeds(t, have).map((n) => {
+        const fix = needFix(n);
+        return (
+          <div key={n.what} className="flex min-h-8 items-center justify-between gap-6 pt-2">
+            <Status tone="attention">{needLabel(n)}</Status>
+            <Button asChild size="sm" variant="outline">
+              <Link to={fix.to}>{fix.label}</Link>
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Settings → Tools: every tile Home can show, in Home's order (the tools, then the Screen Recorder), each with the
+ * switch that shows it on Home. A tool that cannot work yet says why under its name, one amber line per thing it is
+ * missing with the button that goes where it is fixed: the reason for its marker on Home. A tool that works shows only
+ * its switch. A tool something can be added to opens its own page (ToolPage), and says how many things are added to it.
+ * `/settings/tools/<tile>` is that page.
+ */
+export function ToolsSection({ sub }: { sub?: string }) {
+  const steps = useSteps();
+  const me = useMe();
+  if (sub) {
+    if (!isHomeTile(sub) || (me && !canUseTile(me, sub)) || (steps.view && !hasToolPage(sub, steps.view))) return <Navigate to="/settings/tools" replace />;
+    return <ToolPage tile={sub} steps={steps} />;
+  }
+  return <ToolsList steps={steps.view} />;
+}
+
+function ToolsList({ steps }: { steps: StepsView | null }) {
+  const me = useMe();
+  const { view, hidden, set } = useHomeSwitches();
+  const added = useAdded(steps);
   return (
     <Section
       title="Shown on Home"
@@ -71,32 +147,65 @@ export function ToolsSection() {
           <LoadingRow />
         ) : (
           HOME_TILES.filter((t) => canUseTile(me, t)).map((t) => {
-            const name = HOME_TILE_NAMES[t];
-            return (
-              <div key={t} data-settings-row={`home-tool-${t}`} className="px-3 py-3 sm:px-4">
-                <div className="flex items-center justify-between gap-6">
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <div className="text-sm font-medium text-foreground">{name}</div>
-                    <div className="text-xs text-muted-foreground">{HOME_TILE_LINES[t]}</div>
-                  </div>
-                  <Switch checked={!hidden.includes(t)} aria-label={`Show ${name} on Home`} onCheckedChange={(on) => set(t, on)} />
-                </div>
-                {missingNeeds(t, view.have).map((n) => {
-                  const fix = needFix(n);
-                  return (
-                    <div key={n.what} className="flex min-h-8 items-center justify-between gap-6 pt-2">
-                      <Status tone="attention">{needLabel(n)}</Status>
-                      <Button asChild size="sm" variant="outline">
-                        <Link to={fix.to}>{fix.label}</Link>
-                      </Button>
-                    </div>
-                  );
-                })}
+            const text = (
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="text-sm font-medium text-foreground">{HOME_TILE_NAMES[t]}</div>
+                <div className="text-xs text-muted-foreground">{HOME_TILE_LINES[t]}</div>
               </div>
             );
+            const n = added(t);
+            const head = hasToolPage(t, steps) ? (
+              <Link to={`/settings/tools/${t}`} replace className="group -my-1 flex min-w-0 flex-1 items-center gap-3 rounded-md py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {text}
+                {n > 0 && <span className="shrink-0 text-xs text-muted-foreground">{n} added</span>}
+                <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+              </Link>
+            ) : (
+              text
+            );
+            return <TileRow key={t} tile={t} have={view.have} shown={!hidden.includes(t)} onChange={(on) => set(t, on)} head={head} />;
           })
         )}
       </Card>
     </Section>
+  );
+}
+
+/**
+ * Settings → Tools → <tool>: everything added to one tool, in one place. Its Home switch, the plug-ins that add to it (an
+ * AI Editor step with its switch for new edits and options, on the Mac app's own server), the installed packs that reach
+ * it, its skills by place, and the way to Community's section for it.
+ */
+function ToolPage({ tile, steps }: { tile: HomeTile; steps: Steps }) {
+  const { view, hidden, set } = useHomeSwitches();
+  const hosted = useAuth((s) => s.hosted);
+  const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"], own: true });
+  const name = HOME_TILE_NAMES[tile];
+  const mine = (packs.data ?? []).filter((p) => reachesTool(containsOf(p), tile));
+  const places = skillPlacesOf(tile);
+  return (
+    <>
+      <Section title="Shown on Home">
+        <Card>{view ? <TileRow tile={tile} have={view.have} shown={!hidden.includes(tile)} onChange={(on) => set(tile, on)} head={<div className="min-w-0 flex-1 text-sm text-muted-foreground">{HOME_TILE_LINES[tile]}</div>} /> : <LoadingRow />}</Card>
+      </Section>
+      <ToolPlugins steps={steps} tool={tile} inSettings switches={tile === "editor" && hasThisMac() && !hosted} />
+      {mine.length > 0 && (
+        <Section title="Packs">
+          <Card>
+            {mine.map((p) => (
+              <div key={p.id} className="[&>*+*]:border-t [&>*+*]:border-border/50">
+                <PackRow pack={p} reload={() => packs.refresh().then(() => undefined)} />
+              </div>
+            ))}
+          </Card>
+        </Section>
+      )}
+      {places.length > 0 && <SkillsView places={places} title={(p) => `Skills for ${slotSpot(p as PackSlot)}`} />}
+      <div>
+        <Button asChild size="sm" variant="outline">
+          <Link to={`/community/tool/${tile}`}>Get more for {name}</Link>
+        </Button>
+      </div>
+    </>
   );
 }

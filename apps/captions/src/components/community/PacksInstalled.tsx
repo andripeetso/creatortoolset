@@ -61,7 +61,7 @@ export function InstalledView({
   );
 }
 
-function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
+export function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
   const contents = packContents(p);
   const hasContents = contents.slots.length + contents.skills.length + contents.frameworks.length + contents.captionStyles.length > 0 || !!contents.home;
   const heldDesign = p.held?.designSystems;

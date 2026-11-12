@@ -65,7 +65,7 @@ export interface EditingStyle {
   grade: string | null;
   /** a Media Library folder to take B-roll from, or none */
   brollCollectionId: string | null;
-  /** the post-processing steps and their values, as an edit keeps them; null = the ones Settings → AI Editor has in use when the edit is made */
+  /** the post-processing steps and their values, as an edit keeps them; null = the ones Settings → Tools → AI Editor has in use when the edit is made */
   steps: EditStepChoice[] | null;
   /** an animation style of theirs: an edit made with this style gets cards in it; absent or null = no cards */
   animation?: string | null;

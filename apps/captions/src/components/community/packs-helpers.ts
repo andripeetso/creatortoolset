@@ -1,6 +1,6 @@
 import { PACK_SLOTS, type InstalledPack, type Pack, type PackSlot } from "@contracts/packs";
 import type { CatalogEntry } from "@contracts/pack-catalog";
-import { HOME_TILES, HOME_TILE_NAMES } from "@contracts/tools";
+import { HOME_TILES, HOME_TILE_NAMES, type HomeTile } from "@contracts/tools";
 
 export const LICENCES = ["CC-BY-4.0", "CC0-1.0", "MIT"] as const;
 
@@ -67,6 +67,25 @@ export function packKinds(c: CatalogEntry["contains"]): PackKind[] {
   if (c.home) add("home");
   return kinds;
 }
+
+/** The tool each kind is part of. A Home layout is part of none: it has its own Community section. */
+export const KIND_TOOL: Record<KindId, HomeTile | null> = {
+  frameworks: "workshop",
+  guides: "workshop",
+  captions: "captions",
+  editing: "editor",
+  analyzer: "instagram",
+  home: null,
+};
+
+/** The tools that can take packs, in Home's order: the ones with a kind. */
+export const PACK_TOOLS: HomeTile[] = HOME_TILES.filter((t) => Object.values(KIND_TOOL).includes(t));
+
+/** A catalog entry's kinds that are part of one tool (all of them for null): the label its row shows there. */
+export const kindsFor = (c: CatalogEntry["contains"], tool: HomeTile | null): PackKind[] => packKinds(c).filter((k) => tool === null || KIND_TOOL[k.id] === tool);
+
+/** Whether a pack reaches a tool. */
+export const reachesTool = (c: CatalogEntry["contains"], tool: HomeTile): boolean => kindsFor(c, tool).length > 0;
 
 /** "Writing frameworks · 21, Writing guides · 2" */
 export const kindLine = (kinds: PackKind[]): string =>

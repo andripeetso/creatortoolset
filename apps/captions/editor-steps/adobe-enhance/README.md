@@ -33,7 +33,7 @@ A plug-in for Creator Toolset. It adds Adobe's Enhance Speech to the Audio Enhan
 
 ## Add it
 
-- **The Mac app:** the account menu → Community → Plug-ins → Audio Enhancer → Adobe Enhance Speech → Download, then
+- **The Mac app:** the account menu → Community → Audio Enhancer → Adobe Enhance Speech → Download, then
   Switch on in the app's own dialog. The app comes with this folder (`editor-steps/adobe-enhance`) and copies it into your
   plug-ins folder.
 - **A checkout:** copy it to `apps/captions/plugins/adobe-enhance/` and build.

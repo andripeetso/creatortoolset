@@ -2,7 +2,8 @@ import { Link } from "react-router";
 import type { CatalogEntry, UpdateRow } from "@contracts/pack-catalog";
 import { compareVersions, type InstalledPack } from "@contracts/packs";
 import { Card, EmptyRow, ListRow, Section } from "@/components/settings/ui";
-import { PACK_KINDS, firstSentence, packKinds, type KindId } from "./packs-helpers";
+import type { HomeTile } from "@contracts/tools";
+import { PACK_KINDS, firstSentence, kindsFor, packKinds, reachesTool, type KindId } from "./packs-helpers";
 import { OfficialBadge } from "./PacksShared";
 import { InstallButton, PackUpdateButton } from "./PackActions";
 
@@ -50,20 +51,32 @@ export function KindView({ kind, entries, installed, updates, q, reload }: Catal
   );
 }
 
-function PackList({ entries, installed, updates, reload, empty }: Omit<CatalogProps, "q"> & { entries: CatalogEntry[]; empty: string }) {
+/** A tool's packs: the ones that reach it, each row saying what kind of thing it adds there. */
+export function ToolView({ tool, entries, installed, updates, q, reload }: CatalogProps & { tool: HomeTile }) {
+  const shown = matching(entries, q).filter((e) => reachesTool(e.contains, tool));
+  return (
+    <Section title="Packs">
+      <PackList entries={shown} installed={installed} updates={updates} reload={reload} tool={tool} empty={q ? "Nothing matches your search." : "Nothing here yet."} />
+    </Section>
+  );
+}
+
+function PackList({ entries, installed, updates, reload, empty, tool }: Omit<CatalogProps, "q"> & { entries: CatalogEntry[]; empty: string; tool?: HomeTile }) {
   if (entries.length === 0) return empty ? <Card><EmptyRow title={empty} /></Card> : null;
   return (
     <Card>
       {entries.map((e) => {
         const mine = installed.find((p) => p.id === e.id);
-        return <CatalogRow key={e.id} entry={e} installed={mine} latest={updates.find((u) => u.id === e.id)?.latest} reload={reload} />;
+        return <CatalogRow key={e.id} entry={e} installed={mine} latest={updates.find((u) => u.id === e.id)?.latest} reload={reload} tool={tool} />;
       })}
     </Card>
   );
 }
 
 /** A pack in Discover: the same row as in Installed, with Install (or Installed, or Update) where the switch would be. */
-function CatalogRow({ entry, installed, latest, reload }: { entry: CatalogEntry; installed?: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
+function CatalogRow({ entry, installed, latest, reload, tool }: { entry: CatalogEntry; installed?: InstalledPack; latest?: string | null; reload: () => Promise<void>; tool?: HomeTile }) {
+  // in a tool's section, what kind of thing it adds there: "Writing frameworks, Writing guides · by Tiny"
+  const kinds = tool ? kindsFor(entry.contains, tool).map((k) => k.label).join(", ") : "";
   const updatable = !!installed && !!latest && compareVersions(latest, installed.version) > 0;
   return (
     <ListRow
@@ -75,7 +88,7 @@ function CatalogRow({ entry, installed, latest, reload }: { entry: CatalogEntry;
           {entry.official && <OfficialBadge />}
         </span>
       }
-      subtitle={`by ${entry.author}`}
+      subtitle={kinds ? `${kinds} · by ${entry.author}` : `by ${entry.author}`}
       status={firstSentence(entry.description)}
       actions={
         installed ? (

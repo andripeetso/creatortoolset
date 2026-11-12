@@ -45,9 +45,9 @@ describe("Settings redirects", () => {
     expect(resolveSection("skills", local)).toEqual({ kind: "redirect", to: "/community/skills" });
   });
 
-  it("sends the editor id out of Settings to the AI Editor page, except in the Mac app on its own server (its steps page)", () => {
-    expect(resolveSection("editor", local)).toEqual({ kind: "redirect", to: "/editor" });
-    expect(resolveSection("editor", { ...local, mac: true })).toEqual({ kind: "page", id: "editor" });
+  it("sends the old AI Editor id to the AI Editor's page under Tools, everywhere", () => {
+    expect(resolveSection("editor", local)).toEqual({ kind: "redirect", to: "/settings/tools/editor" });
+    expect(resolveSection("editor", { ...local, mac: true })).toEqual({ kind: "redirect", to: "/settings/tools/editor" });
   });
 
   it("sends a page this install does not show to General", () => {

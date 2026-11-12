@@ -12,7 +12,7 @@ grade (`api/editor/grade.ts`, applied at preview) sits on top of the converted c
 | a log it knows (below) | converted with that log | converted with the file's log: the file wins over the named profile | left alone |
 | not log (Sony `rec709`, Fujifilm normal or HLG, an HLG or PQ tag) | left alone | left alone | left alone |
 | a log it doesn't convert (e.g. Sony S-Log3 with S-Gamut3) | left alone, named in the notes | the same | left alone |
-| nothing, and it looks flat | left alone, and the notes say: "Tiny-take looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → AI Editor" | converted with the named profile | left alone |
+| nothing, and it looks flat | left alone, and the notes say: "Tiny-take looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → Tools → AI Editor" | converted with the named profile | left alone |
 | nothing, and it doesn't look flat | left alone | left alone | left alone |
 
 Each converted file gets a note: "Tiny-take: S-Log3 from the file, converted to normal video". Photos are left alone.

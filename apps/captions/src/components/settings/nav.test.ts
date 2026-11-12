@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { navBlocks, navListFor, type NavContext } from "./nav";
+import { navBlocks, navListFor, resolveSection, type NavContext } from "./nav";
 
 const at = (hosted: boolean, admin: boolean, mac = false): NavContext => ({ hosted, admin, mac });
 const listed = (ctx: NavContext) => navListFor(ctx, []).map((s) => s.id);
@@ -19,10 +19,9 @@ describe("the sidebar per install and role", () => {
     expect(listed(at(true, false, true))).toContain("servers");
   });
 
-  it("AI Editor (its post-processing steps) is on the Mac app's own server only: they are switched on there", () => {
-    expect(listed(at(false, true, true))).toEqual(expect.arrayContaining(["tools", "editor"]));
-    expect(listed(at(false, true))).not.toContain("editor");
-    expect(listed(at(true, true, true))).not.toContain("editor");
+  it("the AI Editor has no sidebar page: its steps are on its page under Tools, where the old address goes", () => {
+    expect(listed(at(false, true, true))).not.toContain("editor");
+    expect(resolveSection("editor", at(false, true, true), [])).toEqual({ kind: "redirect", to: "/settings/tools/editor" });
   });
 
   it("a hosted member sees Team but not Admin", () => {
@@ -56,10 +55,9 @@ describe("the sidebar blocks", () => {
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools"]);
   });
 
-  it("the Mac app's own server: the AI Editor's steps head a Plug-ins block after Connections, not the top block", () => {
-    const blocks = navBlocks(navListFor(at(false, true, true), []));
-    expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Hardware", "Connections", "Plug-ins"]);
-    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools"]);
-    expect(blocks.at(-1)?.items.map((s) => s.id)).toEqual(["editor"]);
+  it("a plug-in's own section with no group heads a Plug-ins block after Connections, before People", () => {
+    const blocks = navBlocks(navListFor(at(true, true, true), [{ settings: [{ id: "tiny", title: "Tiny", body: null } as never] }]));
+    expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Hardware", "Connections", "Plug-ins", "People"]);
+    expect(blocks[4].items.map((s) => s.id)).toEqual(["tiny"]);
   });
 });

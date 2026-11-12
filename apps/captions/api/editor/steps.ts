@@ -55,7 +55,7 @@ export function bundledPlugins(): { folder: string; pluginId: string; title: str
 
 /**
  * The loaded steps, then the plug-ins that come with the app (on the Mac app's own server): each one not loaded, and each
- * loaded one that adds no step. Settings → AI Editor shows the "on" rows, Community → Plug-ins all of them.
+ * loaded one that adds no step. Settings → Tools → AI Editor shows the "on" rows, Community all of them, each under its tool.
  */
 export function stepsView(user: string): StepsView {
   const saved = readSaved(user);

@@ -150,7 +150,7 @@ describe("the Colour step on a file", () => {
     const notes: string[] = [];
     const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take, a: take }, timeline, values: { profile: "auto" }, workDir: dir, signal: new AbortController().signal, note: (t: string) => notes.push(t), say: () => {} };
     expect(await convertColour(input)).toEqual({});
-    expect(notes).toEqual(["Tiny-take looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → AI Editor"]);
+    expect(notes).toEqual(["Tiny-take looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → Tools → AI Editor"]);
 
     notes.length = 0;
     const out = await convertColour({ ...input, values: { profile: "slog3" } });

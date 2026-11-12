@@ -129,7 +129,7 @@ export function FirstWay({ onDone }: { onDone: () => Promise<unknown> }) {
               />
             ))
           ) : (
-            <Row title="Post-processing" control={<Button asChild size="sm" variant="outline"><Link to="/community/plugins">Get plug-ins</Link></Button>} />
+            <Row title="Post-processing" control={<Button asChild size="sm" variant="outline"><Link to="/community/tool/editor">Get plug-ins</Link></Button>} />
           )}
         </Card>
       )}

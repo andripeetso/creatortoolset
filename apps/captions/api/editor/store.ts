@@ -38,7 +38,7 @@ export interface EditMeta extends EditBrief {
   eyeline?: Record<string, number>;
   /** the items the edit was made with, recorded by createEdit and never changed by a later default */
   bundle: EditBundle;
-  /** the post-processing steps it was made with (Settings → AI Editor at the time), run by post.ts */
+  /** the post-processing steps it was made with (Settings → Tools → AI Editor at the time), run by post.ts */
   steps?: EditStepChoice[];
   /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
   style?: EditStyleCopy;

@@ -84,6 +84,6 @@ pnpm exec vitest run editor-steps/face-refine   # the engine test runs once the 
 ## Disk
 
 Each copy is the whole recording in ProRes 422 HQ, about 1.4 GB for each minute of video at 1080x1920 (the row in
-Settings → AI Editor says so). After the steps of a draft run, its version keeps only the copy that plays: an earlier
+Settings → Tools → AI Editor says so). After the steps of a draft run, its version keeps only the copy that plays: an earlier
 step's copy (Voice makes its own from this one) and an older draft's go (`prune` in api/editor/post.ts). The edit's
 whole folder, post copies included, goes when the edit leaves the trash.

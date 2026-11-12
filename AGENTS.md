@@ -163,12 +163,20 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
     AI (Providers, Scheduled tasks, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
     API keys, Headless access), People (Team, Admin; on a hosted server). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
-  - **Community** = everything added to the app. Installed shows **Plug-ins** (code: built into this server, or on
-    the Mac app's own server the folders in the person's plug-ins folder, each with its switch) and then **Packs**
-    (content you switch on per project and can remove). **Skills** lists every skill by the place it acts (the
-    assistant, a tool's AI step): the person's own, and the ones their packs and the plug-ins bring.
-  - A plug-in's pieces show up where the built-in ones do: its Settings section in the matching group or Admin tab,
-    its tiles on Home, its pages in place of built-in ones. The Plug-ins list is the one place that names it.
+  - **A tool is what you use; plug-ins, packs and skills are what you add to it; Community is where you find more.**
+    Settings → Tools lists every tile with its Home switch; a tool something can be added to (packs reach it, or a
+    plug-in names it) opens its page, `/settings/tools/<tile>`: its Home switch, its plug-ins (an AI Editor step with
+    its switch for new edits), the installed packs that reach it, its skills by place, and "Get more for <tool>". The
+    map from a pack slot to its tool is `SLOT_TOOL` (`contracts/packs.ts`), from a Community kind `KIND_TOOL`
+    (`packs-helpers.ts`); a new slot or kind goes in that map, never a page of its own.
+  - **Community** = finding more, sorted the same way: one section per tool (`/community/tool/<tile>`: the team's
+    plug-ins for it, then the packs that reach it, each row labelled with its kind), Home layouts, Other (plug-ins
+    that name no tool). Installed shows **Plug-ins** (built into this server, or on the Mac app's own server the
+    folders in the person's plug-ins folder, each with its switch) and then **Packs**. **Skills** lists every skill by
+    the place it acts, the assistant's included (no tool page has those).
+  - A plug-in's pieces show up where the built-in ones do: its steps and skills on its tool's page, its Settings
+    section in the matching group (no group: a Plug-ins block before People) or Admin tab, its tiles on Home, its pages
+    in place of built-in ones. Community → Installed is the one place that names the whole plug-in.
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
     in both `plugin.ts` and `web.tsx` (`plugin-examples/hello` shows it). `GET /api/plugins` and Community read these.
   - Settings groups and the sidebar: `src/components/settings/nav.ts`; kit: `src/components/settings/ui.tsx`.
