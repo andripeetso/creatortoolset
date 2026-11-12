@@ -171,6 +171,8 @@ extension Shell {
             // the recording shortcut as shown ("" = none) and the plan-limits switch (Settings → General, Usage)
             "shortcut": RecordShortcut.shared.shortcut?.display ?? "",
             "limits": limitsReadingOn(),
+            // Settings → General → Version
+            "version": appVersion,
         ]
     }
 }

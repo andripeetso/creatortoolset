@@ -7,20 +7,20 @@ import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { canRecordScreen } from "@/lib/mac-record";
 import { Card, Row, Section, saveFailed } from "./ui";
-import { tell, useThisMac, type ThisMacState } from "./ThisMacSection";
+import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 const size = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 /** Settings → General: the switches that have a reader, add-ons, and this computer's saved lists. */
 export function GeneralSection() {
-  const mac = useThisMac(canRecordScreen());
+  const mac = useThisMac(hasThisMac());
   return (
     <>
       <Working />
       <AddOns />
       <ScreenRecording mac={canRecordScreen() ? mac : null} />
-      <ThisComputer />
+      <ThisComputer version={mac?.version} />
     </>
   );
 }
@@ -105,7 +105,7 @@ export function ScreenRecording({ mac }: { mac: ThisMacState | null }) {
  * The saved lists (lib/local-cache.ts): one row with their count and size, read when the page opens and after each
  * change. Clear empties them; a failure is a toast.
  */
-function ThisComputer() {
+export function ThisComputer({ version }: { version?: string }) {
   const me = useAuth((s) => s.me);
   const [usage, setUsage] = useState(() => cachedUsage(me?.username));
   const measure = useCallback(() => setUsage(cachedUsage(useAuth.getState().me?.username)), []);
@@ -124,6 +124,7 @@ function ThisComputer() {
   return (
     <Section title="This computer">
       <Card>
+        {version && <Row id="app-version" title="Version" status={`Creator Toolset ${version}`} />}
         <Row
           id="saved-lists"
           title="Cache"
