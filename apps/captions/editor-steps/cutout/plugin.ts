@@ -98,7 +98,7 @@ const cutout = {
   id: "cutout",
   name: "Cut-out",
   about: "Your assistant cuts the subject of a picture out of its background, on your Mac",
-  kind: "Assistant tool",
+  kind: "assistant",
   routes,
   tools,
 };
