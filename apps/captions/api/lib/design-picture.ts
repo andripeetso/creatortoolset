@@ -2,7 +2,7 @@ import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Browser } from "playwright-chromium";
 import type { Design, DesignPage, PictureSpec } from "../../contracts/design";
-import { rendererUrl } from "../caption-frames";
+import { installExportBrowser, rendererUrl } from "../caption-frames";
 import { ffmpeg } from "../library/media/run";
 
 /**
@@ -15,8 +15,10 @@ import { ffmpeg } from "../library/media/run";
  * shown as a picture, where nothing runs or loads; and an uploaded picture never reaches the browser as it was
  * uploaded: ffmpeg writes a small copy first, and the browser reads that.
  *
- * Best effort. No browser yet (it is fetched the first time a captioned video is exported, never from here), a
- * drawing that takes too long or a crash give no pictures and one line saying why: the design is saved either way.
+ * Best effort. A drawing that takes too long or a crash give no pictures and one line saying why: the design is
+ * saved either way. A server that has no such browser yet (the downloaded app, until its first captioned export)
+ * starts fetching it, once, as the first export would, and does not wait for it: this answer has no pictures and
+ * says the browser is on its way, so the AI can tell the person, and the pictures come with a later look.
  */
 
 export interface PagePicture {
@@ -37,7 +39,8 @@ const WIDTH = 560;
 /** An uploaded picture's small copy: its longer side at most. */
 const SMALL = 1024;
 const TIMEOUT_MS = 25_000;
-const NO_BROWSER = "No pictures of the pages: this server has no browser to draw them with yet (it is fetched the first time a captioned video is exported)";
+const NO_BROWSER = "No pictures of the pages: this server has no browser to draw them with yet";
+const FETCHING = "No pictures of the pages yet: the browser that draws them is being fetched now (once, about 150 MB, from Playwright's download server; a captioned export uses the same one). Look again in a minute or two";
 
 type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<{ jpeg: string; spills: string[] }> } };
 
@@ -89,7 +92,13 @@ async function draw(d: Design, pages: DesignPage[], which: number[], dir: string
   } catch (e) {
     const said = e instanceof Error ? e.message : String(e);
     // ponytail: Playwright's missing-browser message (1.62), as api/caption-frames.ts reads it
-    if (said.includes("Executable doesn't exist") || said.includes("playwright-chromium")) return { pictures: [], why: NO_BROWSER };
+    if (said.includes("Executable doesn't exist")) {
+      // fetched once, behind this answer (askers while it runs share the one fetch): nobody waits for it, and one
+      // that fails is tried again at the next look
+      void installExportBrowser().catch(() => {});
+      return { pictures: [], why: FETCHING };
+    }
+    if (said.includes("playwright-chromium")) return { pictures: [], why: NO_BROWSER };
     return { pictures: [], why: late ? "No pictures of the pages: drawing them took too long" : `No pictures of the pages: ${said.split("\n")[0]!.slice(0, 200)}` };
   } finally {
     clearTimeout(timer);
