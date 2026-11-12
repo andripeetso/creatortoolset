@@ -192,7 +192,7 @@ export const mimeOf = (name: string) => MIME[path.extname(name).slice(1).toLower
  * disk; a file on another drive is copied once.
  */
 export async function fileFromPath(user: string, p: string, size?: number): Promise<AssistantFile> {
-  if (process.env.CT_LOCAL !== "1") throw new Error("This server isn't on your computer: drop the file in the chat so it uploads.");
+  if (process.env.CT_LOCAL !== "1") throw new Error("This server isn't on your computer: drop the file in the chat so it uploads, or send it with upload_file.");
   if (!path.isAbsolute(p)) throw new Error("Give the file's full path, such as /Users/you/Movies/clip.mov.");
   const st = await stat(p).catch(() => null);
   if (!st?.isFile() || !st.size) throw new Error(`There's no file at ${p}.`);

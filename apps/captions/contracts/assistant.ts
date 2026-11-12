@@ -35,8 +35,8 @@ export interface AssistantMessage {
   pasted?: string[];
   /**
    * Videos and recordings sent with a user message (api/assistant-files.ts), by name; `uploading` until the file is in.
-   * `path`: where it is on the user's computer (dropped in the Mac app): its reply never waits for it. `lost`: its upload
-   * stopped before it was in.
+   * `path`: where it is on the user's computer (dropped in the Mac app): its reply never waits for it. `lost`: no part of it
+   * came for a while (it is still taken if it comes).
    */
   files?: Array<{ id: string; name: string; uploading?: true; path?: string; lost?: true }>;
   /**

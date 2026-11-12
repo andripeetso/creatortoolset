@@ -13,7 +13,7 @@ const app = (await import("./boot")).default;
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
-const { resumeFromDisk, routeOf, runInChat, WAIT_MS } = await import("./assistant");
+const { resumeFromDisk, routeOf, runInChat, STALL_MS, WAIT_MS } = await import("./assistant");
 const { onAttention } = await import("./lib/attention");
 type View = import("../contracts/assistant").AssistantView;
 type Attention = import("./lib/attention").Attention;
@@ -507,6 +507,23 @@ describe("a file dropped in the Mac app, with its path", () => {
     await p.stop();
   });
 
+  it("one that gets no part for a while says it didn't arrive, still uploading; it is taken when it comes after all", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const p = await person("vic");
+    const clip = await p.upload("Quiet.mp4");
+    await p.send({ text: "Look", files: [{ id: clip.id, path: "/Users/tiny/Quiet.mp4" }] });
+    const job = await p.claim();
+    await vi.advanceTimersByTimeAsync(STALL_MS + 2000);
+    let f = (await p.view()).messages.at(-2)!.files![0]!;
+    for (let i = 0; i < 100 && !f.lost; i++) f = (await new Promise((r) => setImmediate(r)), await p.view()).messages.at(-2)!.files![0]!;
+    vi.useRealTimers();
+    expect(f).toMatchObject({ uploading: true, lost: true });
+    await clip.part();
+    for (let i = 0; i < 50 && f.uploading; i++) f = (await tick(), await p.view()).messages.at(-2)!.files![0]!;
+    expect(f).toEqual({ id: clip.id, name: "Quiet.mp4", path: "/Users/tiny/Quiet.mp4" });
+    await p.answer(job.id, "Ok.");
+  });
+
   it("on a server on this same Mac it is taken where it is, nothing uploaded; a file of another size at that path is refused", async () => {
     const p = await person("uma");
     const clip = path.join(process.env.DATA_DIR!, "Here.mov");
@@ -594,6 +611,7 @@ describe("does the dropped footage belong here?", () => {
     await p.send({ text: "Don't ask again" });
     const off = await p.claim();
     expect(readWorkPrefs("tom").askFit).toBe(false);
+    expect(off.user).toContain("That answer turned the question off");
     await p.answer(off.id, "Ok, I won't ask.");
     await settled(p);
     await p.send({ text: "And this one", files: [clip.id] });

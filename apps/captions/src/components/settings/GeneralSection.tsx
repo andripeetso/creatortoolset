@@ -71,9 +71,8 @@ function Working() {
 /** The assistant asks when dropped footage doesn't seem to fit the open project (work-prefs askFit; its "Don't ask again" turns it off). */
 function AskFit() {
   const prefs = useWorkPrefs((s) => s.prefs);
-  useEffect(() => {
-    if (!prefs) void useWorkPrefs.getState().load();
-  }, [prefs]);
+  // read each time the page opens: the chat's "Don't ask again" may have turned it off meanwhile
+  useEffect(() => void useWorkPrefs.getState().load(), []);
   if (!prefs) return null;
   return (
     <Row

@@ -832,7 +832,7 @@ export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: Assista
               <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{f.name}</span>
-                {f.uploading && <span className="shrink-0 text-muted-foreground">Uploading</span>}
+                {f.uploading && !f.lost && <span className="shrink-0 text-muted-foreground">Uploading</span>}
                 {f.lost && <span className="shrink-0 text-muted-foreground">Didn't arrive</span>}
               </span>
             ))}

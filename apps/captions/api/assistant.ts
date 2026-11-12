@@ -691,6 +691,8 @@ function newestFacts(input: TurnInput): string[] {
 /** The answers under the fit question (fitLine): the last one turns the question off (POST /turn). */
 const FIT_NEW = "New project";
 const FIT_OFF = "Don't ask again";
+/** Told to the reply that answers "Don't ask again". */
+const FIT_OFF_SAID = "That answer turned the question off (Settings, General has the switch): carry on in the open project.";
 /** Asked when footage comes with a message and askFit is on (work-prefs; Settings, General). */
 export const fitLine = (project: string) =>
   `The project open in the app is ${JSON.stringify(project)}. If the footage clearly doesn't belong there (by its file names, what the user said and, once read, what is said in it), say so in one line and offer_choices "${FIT_NEW}" / ${JSON.stringify(`Keep it in ${project}`)} / "${FIT_OFF}" ("${FIT_OFF}" turns this question off by itself).`;
@@ -917,23 +919,30 @@ async function pumpOnce(username: string): Promise<void> {
     const f = files.get(id);
     return f && "file" in f ? f.file : null;
   };
-  const waitedFor = new Set(Object.values(held).flatMap((h) => h.files));
-  for (const f of all.flatMap((m) => m.files ?? [])) {
+  for (const m of all) for (const f of m.files ?? []) {
     if (!f.uploading) continue;
     if (inNow(f.id)) {
       delete f.uploading;
+      delete f.lost;
       changed = true;
       continue;
     }
-    // one no reply waits for (the held turn has its own clock): stopped arriving, its chip says so
-    if (waitedFor.has(f.id)) continue;
+    // a file with a path (no reply waits for it) that stopped arriving: its chip says so, and it is still taken if it comes
+    if (!f.path) continue;
     const up = files.get(f.id);
-    const last = up && "at" in up ? up.at : 0;
-    if (t - last >= STALL_MS) {
+    if (!up) {
+      // gone (kept 7 days): it can't arrive any more
       delete f.uploading;
       f.lost = true;
       changed = true;
-    } else soonest = Math.min(soonest, last + STALL_MS);
+      continue;
+    }
+    const last = Math.max(m.at, "at" in up ? up.at : 0);
+    if (t - last < STALL_MS) soonest = Math.min(soonest, last + STALL_MS);
+    else if (!f.lost) {
+      f.lost = true;
+      changed = true;
+    }
   }
   for (const id of Object.keys(held)) if (messageOf(username, id)?.status !== "thinking") {
     delete held[id];
@@ -1162,9 +1171,10 @@ assistantApp.post("/turn", async (c) => {
   const prefs = readWorkPrefs(u.username);
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...load(u.username).messages].reverse().find((m) => m.role === "assistant");
-  if (input.text === FIT_OFF && lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW)) writeWorkPrefs(u.username, { askFit: false });
+  const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
+  if (fitOff) writeWorkPrefs(u.username, { askFit: false });
   const project = (files.length || input.paths.length) && prefs.askFit !== false ? await currentProject(u).catch(() => undefined) : undefined;
-  const fit = project ? fitLine(project.name) : undefined;
+  const fit = fitOff ? FIT_OFF_SAID : project ? fitLine(project.name) : undefined;
   const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
   if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
@@ -1227,7 +1237,7 @@ assistantApp.post("/stop", async (c) => {
   // the dock stops their uploads too: nothing will use them
   for (const list of everyChat(conv)) {
     const i = list.findIndex((x) => x.id === want);
-    for (const f of i > 0 ? (list[i - 1]!.files ?? []) : []) delete f.uploading;
+    for (const f of i > 0 ? (list[i - 1]!.files ?? []) : []) if (f.path) delete f.uploading;
   }
   // the turn ends on the next tick (the Mac call rejects): answer with the view after it
   await new Promise((r) => setTimeout(r, 0));
