@@ -70,9 +70,14 @@ describe("Settings sections", () => {
     { id: "keys", title: "API keys", icon: Hand, adminOnly: true, group: "Server" },
   ];
 
-  it("puts a plug-in section with no group at the end of the top block, before the first headed block", () => {
+  it("puts a plug-in section with no group in the Plug-ins block: after the other blocks, before People", () => {
     const sections = settingsWithPlugins(builtin, [tiny]);
-    expect(sections.map((s) => s.id)).toEqual(["general", "tiny", "providers", "keys"]);
+    expect(sections.map((s) => s.id)).toEqual(["general", "providers", "keys", "tiny"]);
+    expect(sections.at(-1)?.group).toBe("Plug-ins");
+    const people = [...builtin, { id: "team", title: "Team", icon: Hand, group: "People" }];
+    expect(settingsWithPlugins(people, [tiny]).map((s) => s.id)).toEqual(["general", "providers", "keys", "tiny", "team"]);
+    const steps = [...builtin, { id: "editor", title: "AI Editor", icon: Hand, group: "Plug-ins" }, { id: "team", title: "Team", icon: Hand, group: "People" }];
+    expect(settingsWithPlugins(steps, [tiny]).map((s) => s.id)).toEqual(["general", "providers", "keys", "editor", "tiny", "team"]);
   });
 
   it("places a plug-in section inside its group, and an adminTab stays out of the sidebar", () => {
@@ -95,7 +100,7 @@ describe("Settings sections", () => {
   it("shows an adminOnly plug-in section to admins only", () => {
     const sections = settingsWithPlugins(builtin, [tiny]);
     expect(visibleSettings(sections, member()).map((s) => s.id)).toEqual(["general", "providers"]);
-    expect(visibleSettings(sections, admin()).map((s) => s.id)).toEqual(["general", "tiny", "providers", "keys"]);
+    expect(visibleSettings(sections, admin()).map((s) => s.id)).toEqual(["general", "providers", "keys", "tiny"]);
   });
 
   it("refuses a plug-in section that reuses a built-in id", () => {

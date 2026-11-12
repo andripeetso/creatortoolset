@@ -27,14 +27,15 @@ export interface SettingsEntry {
   id: string;
   title: string;
   icon: LucideIcon;
-  /** The sidebar block it sits in ("AI", "Hardware", "Connections", "People"); none = the top block. */
+  /** The sidebar block it sits in ("AI", "Hardware", "Connections", "Plug-ins", "People"); none = the top block (a plug-in's: Plug-ins). */
   group?: string;
   adminOnly?: boolean;
   body?: ReactNode;
 }
 
 /**
- * A Settings section a plug-in adds. `group` places it inside that sidebar block (after the block's last section).
+ * A Settings section a plug-in adds. `group` places it inside that sidebar block (after the block's last section); with
+ * no group it goes in the Plug-ins block (PLUGINS_GROUP).
  * `adminTab: true` shows it as a tab in Admin instead, after the built-in tabs (see adminTabsFor). `adminOnly` hides it
  * from everyone else.
  */
@@ -284,6 +285,10 @@ export function itemActionsFor(me: Me | null, plugins: WebPlugin[], kind: ItemKi
  * tabs (adminTab) are not sidebar sections and are left out (see adminTabsFor). A plug-in section may not reuse a
  * built-in id (it would hide that section): throws.
  */
+/** The sidebar block for a plug-in's section with no group, beside the AI Editor's steps: after Connections, before
+ *  People (owner, 2026-11-11: "a setting submenu for like plug-ins… this should be all grouped up"). */
+export const PLUGINS_GROUP = "Plug-ins";
+
 export function settingsWithPlugins<T extends SettingsEntry>(
   builtin: ReadonlyArray<T>,
   plugins: ReadonlyArray<{ settings?: PluginSettingsSection[] }>,
@@ -293,16 +298,11 @@ export function settingsWithPlugins<T extends SettingsEntry>(
     if (builtin.some((b) => b.id === s.id)) throw new Error(`plug-in settings section "${s.id}" is already a built-in section`);
   }
   const out: Array<T | PluginSettingsSection> = [...builtin];
-  for (const s of extra) {
-    let at: number;
-    if (s.group) {
-      const last = out.map((x) => x.group).lastIndexOf(s.group);
-      at = last < 0 ? out.length : last + 1;
-    } else {
-      const firstHeaded = out.findIndex((x) => x.group);
-      at = firstHeaded < 0 ? out.length : firstHeaded;
-    }
-    out.splice(at, 0, s);
+  for (const section of extra) {
+    const s = section.group ? section : { ...section, group: PLUGINS_GROUP };
+    const last = out.map((x) => x.group).lastIndexOf(s.group);
+    const people = out.findIndex((x) => x.group === "People");
+    out.splice(last >= 0 ? last + 1 : s.group === PLUGINS_GROUP && people >= 0 ? people : out.length, 0, s);
   }
   return out;
 }

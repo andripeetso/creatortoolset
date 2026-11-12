@@ -55,4 +55,11 @@ describe("the sidebar blocks", () => {
     expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Hardware", "Connections", "People"]);
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools"]);
   });
+
+  it("the Mac app's own server: the AI Editor's steps head a Plug-ins block after Connections, not the top block", () => {
+    const blocks = navBlocks(navListFor(at(false, true, true), []));
+    expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Hardware", "Connections", "Plug-ins"]);
+    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools"]);
+    expect(blocks.at(-1)?.items.map((s) => s.id)).toEqual(["editor"]);
+  });
 });

@@ -35,13 +35,11 @@ interface BuiltinEntry extends SettingsEntry {
   listed?: false;
 }
 
-/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "People" are headed. */
+/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "Plug-ins", "People" are headed. */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "tools", title: "Tools", icon: LayoutGrid },
-  // the AI Editor's post-processing steps: plug-ins the Mac app switches on (EditorStepsSection)
-  { id: "editor", title: "AI Editor", icon: WandSparkles, macOnly: true, localOnly: true },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "AI" },
@@ -52,6 +50,9 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "Connections" },
+  // the AI Editor's post-processing steps: plug-ins the Mac app switches on (EditorStepsSection); the plug-ins' own
+  // sections join this block (lib/plugin.ts PLUGINS_GROUP)
+  { id: "editor", title: "AI Editor", icon: WandSparkles, group: "Plug-ins", macOnly: true, localOnly: true },
   { id: "team", title: "Team", icon: Users, group: "People", hostedOnly: true },
   { id: "admin", title: "Admin", icon: ShieldCheck, group: "People", hostedOnly: true, adminOnly: true },
   { id: "account", title: "Account", icon: UserRound, listed: false },
