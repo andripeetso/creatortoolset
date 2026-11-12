@@ -19,6 +19,7 @@ import {
 } from "../src/lib/document-markdown";
 import { type SessionUser } from "./users";
 import { generateGuideFromClip } from "./lib/guide-pipeline";
+import { announce } from "./lib/sync";
 import {
   guideToMarkdown,
   isGuideAssetName,
@@ -157,6 +158,21 @@ async function ownedMeta(id: string, user: SessionUser): Promise<Meta | null> {
 function assertGuideSources(sources: DocSource[]): void {
   if (sources.length !== 1 || sources[0].type !== "clip") {
     throw new Error("A guide uses exactly one clip");
+  }
+}
+
+/** Guides and documents being written (inside their request), for Home (api/activity.ts). */
+const writing = new Map<string, { owner: string; name: string }>();
+export const guidesWork = (username: string) => [...writing].filter(([, w]) => w.owner === username).map(([id, w]) => ({ id, name: w.name }));
+/** Runs one writing, told to Home when it starts and when it ends, whatever the end. */
+async function written<T>(id: string, owner: string, name: string, fn: () => Promise<T>): Promise<T> {
+  writing.set(id, { owner, name });
+  announce(owner, "documents");
+  try {
+    return await fn();
+  } finally {
+    writing.delete(id);
+    announce(owner, "documents");
   }
 }
 
@@ -605,10 +621,10 @@ documentsApp.post("/", async (c) => {
     updatedAt: Date.now(),
   };
   try {
-    const md =
+    const md = await written(id, user.username, resolved[0]?.name ?? meta.name, async () =>
       kind === "guide"
         ? (await runGuideGenerate(meta, resolved, user.username)).markdown
-        : await generateBody(prompt, resolved, user.username);
+        : await generateBody(prompt, resolved, user.username));
     meta.name = titleFromBody(md, meta.name);
     await persist(meta);
     if (kind !== "guide") await writeBody(id, md);
@@ -746,10 +762,10 @@ documentsApp.post("/:id/generate", async (c) => {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
   try {
-    const md =
+    const md = await written(meta.id, user.username, meta.name, async () =>
       kind === "guide"
         ? (await runGuideGenerate(meta, resolved, user.username)).markdown
-        : await generateBody(meta.prompt, resolved, user.username);
+        : await generateBody(meta.prompt, resolved, user.username));
     meta.name = titleFromBody(md, meta.name);
     meta.status = "ready";
     meta.error = undefined;

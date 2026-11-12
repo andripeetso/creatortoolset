@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { Crosshair, Image as ImageIcon, MousePointer2, Plus, Sparkles, Trash2, Video, X, ZoomIn } from "lucide-react";
+import { AudioLines, Crosshair, Image as ImageIcon, MousePointer2, Plus, Sparkles, Trash2, Video, X, ZoomIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   BACKGROUNDS,
@@ -16,10 +16,11 @@ import {
   type Zoom,
 } from "@/lib/screen-recording";
 import { clock, zoomSlot } from "@/lib/screen-timeline";
+import { soundTracks } from "@/lib/screen-sound";
 import { ColorField, Group, PanelButton, Segmented, SliderRow, SwitchRow, Swatches } from "./controls";
 import type { Player } from "./usePlayer";
 
-export type InspectorTab = "background" | "pointer" | "zoom" | "camera";
+export type InspectorTab = "background" | "pointer" | "zoom" | "sound" | "camera";
 
 const SHAPES: { id: FrameShape; label: string; title: string }[] = [
   { id: "source", label: "Auto", title: "The shape of what you recorded" },
@@ -71,10 +72,15 @@ export function Inspector({
   /** The least depth a zoom is seen at (lib/screen-recording.ts zoomFloor, in tenths): above 1 where zooms fill the whole frame. */
   floor: number;
 }) {
+  // a recording of an iPhone or iPad has no pointer log: nothing of the pointer's is offered for it
+  const hasPointer = events.moves.length > 0 || events.clicks.length > 0;
+  const recorded = soundTracks(events);
+  const hasSound = recorded.voice !== null || recorded.sound !== null;
   const tabs: { id: InspectorTab; label: string; icon: typeof ImageIcon }[] = [
     { id: "background", label: "Background", icon: ImageIcon },
-    { id: "pointer", label: "Pointer", icon: MousePointer2 },
+    ...(hasPointer ? [{ id: "pointer" as const, label: "Pointer", icon: MousePointer2 }] : []),
     { id: "zoom", label: "Zoom", icon: ZoomIn },
+    ...(hasSound ? [{ id: "sound" as const, label: "Sound", icon: AudioLines }] : []),
     ...(hasCamera ? [{ id: "camera" as const, label: "Camera", icon: Video }] : []),
   ];
   const shown = tabs.some((t) => t.id === tab) ? tab : "background";
@@ -105,6 +111,7 @@ export function Inspector({
         {shown === "zoom" && (
           <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
+        {shown === "sound" && <SoundTab look={look} change={change} events={events} />}
         {shown === "camera" && <CameraTab look={look} change={change} />}
       </div>
     </aside>
@@ -194,7 +201,7 @@ function PointerTab({ look, initial, change }: TabProps) {
       {!look.pointerHidden && (
         <>
           <SliderRow label="Size" value={look.pointer} min={0.8} max={3} step={0.1} format={(v) => `${v.toFixed(1)}×`} initial={initial.pointer} onChange={(pointer) => change({ pointer })} />
-          <SliderRow label="Smooth movement" value={look.smooth} min={0} max={0.4} step={0.01} format={pct} initial={initial.smooth} onChange={(smooth) => change({ smooth })} />
+          <SliderRow label="Smooth movement" value={look.smooth} min={0} max={0.8} step={0.01} format={pct} initial={initial.smooth} onChange={(smooth) => change({ smooth })} />
           <SwitchRow label="Hide when it stays still" checked={look.hideIdle} onChange={(hideIdle) => change({ hideIdle })} />
         </>
       )}
@@ -258,17 +265,19 @@ function ZoomTab({
             <SliderRow label="Depth" value={depth(zoom)} min={least} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
           )}
           <AimPad look={look} zoom={zoom} player={player} onAim={(x, y) => setZoom({ x, y })} />
-          <PanelButton
-            onClick={() => {
-              const at = aim(player.time());
-              setZoom({ x: at.x, y: at.y });
-            }}
-            title="Look where the pointer is at the playhead"
-          >
-            <Crosshair /> Aim at the pointer
-          </PanelButton>
+          {(events.moves.length > 0 || events.clicks.length > 0) && (
+            <PanelButton
+              onClick={() => {
+                const at = aim(player.time());
+                setZoom({ x: at.x, y: at.y });
+              }}
+              title="Look where the pointer is at the playhead"
+            >
+              <Crosshair /> Aim at the pointer
+            </PanelButton>
+          )}
         </Group>
-        <EveryZoom look={look} change={change} />
+        <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
         <Group>
           {look.zooms.length > 1 && (
             <PanelButton onClick={() => change({ zooms: look.zooms.map((z) => ({ ...z, scale: zoom.scale })) })}>
@@ -309,7 +318,7 @@ function ZoomTab({
       </Group>
       {look.zooms.length > 0 && (
         <>
-          <EveryZoom look={look} change={change} />
+          <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
           <Group title="Zooms">
             <div className="space-y-1">
               {look.zooms.map((z, i) => (
@@ -334,17 +343,19 @@ function ZoomTab({
 }
 
 /**
- * What holds for every zoom: whether the view follows the pointer, and what a zoom does to the window the recording
+ * What holds for every zoom: whether the view moves on to a click it would not show, and what a zoom does to the window the recording
  * sits in. The window can only grow where the whole recording is shown; up to the padding only where the frame has
  * space beside the window (another shape than the recording's).
  */
-function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void }) {
+function EveryZoom({ look, change, clicks }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; clicks: boolean }) {
   const filled = look.fill && look.shape !== "source";
   const room = look.shape !== "source";
   const fit = look.zoomFit === "frame" ? "frame" : look.zoomFit === "space" && room ? "space" : "inside";
+  if (!clicks && filled) return null; // nothing here would change anything
   return (
     <Group title="Every zoom">
-      <SwitchRow label="Follow the pointer while zoomed" checked={look.follow} onChange={(follow) => change({ follow })} />
+      {/* only where there are clicks for the view to move to */}
+      {clicks && <SwitchRow label="Move to clicks outside the view" checked={look.follow} onChange={(follow) => change({ follow })} />}
       {!filled && (
         <div className="space-y-2">
           <p className="text-xs text-zinc-400">While zoomed, the window</p>
@@ -429,6 +440,23 @@ function AimPad({ look, zoom, player, onAim }: { look: ScreenLook; zoom: Zoom; p
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Which of the recorded sounds are heard, in the editor and in the video it makes: the voice, and what the Mac (or
+ * the device) played. Only the ones that were recorded.
+ */
+function SoundTab({ look, change, events }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; events: ScreenEvents }) {
+  const recorded = soundTracks(events);
+  const device = (events.audio ?? []).includes("device");
+  return (
+    <Group>
+      {recorded.voice !== null && <SwitchRow label="Your voice" checked={look.voice !== false} onChange={(voice) => change({ voice })} />}
+      {recorded.sound !== null && (
+        <SwitchRow label={device ? "Device sound" : "Mac sound"} checked={look.sound !== false} onChange={(sound) => change({ sound })} />
+      )}
+    </Group>
   );
 }
 

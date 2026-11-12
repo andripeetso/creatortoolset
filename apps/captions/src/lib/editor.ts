@@ -1,5 +1,5 @@
 import type { StepsView } from "@contracts/editor-steps";
-import type { EditingStyle, EditingStyleInput, EditingStylesView } from "@contracts/editor-styles";
+import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
@@ -23,6 +23,8 @@ export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "P
 export const getEdit = (id: string) => send<Edit>(base(id));
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");
+/** Edit in passes: Carry on queues each version's next pass. */
+export const carryOn = (id: string) => send<Edit>(`${base(id)}/pass`, "POST");
 export const stopEdit = (id: string) => send<Edit>(`${base(id)}/stop`, "POST");
 export const deleteEdit = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const patchEdit = (id: string, body: EditPatch) => send<Edit>(base(id), "PATCH", body);
@@ -36,13 +38,39 @@ export const setEditStep = (id: string, change: { use?: boolean; values?: Record
 export const addEditStep = (folder: string) => send<{ folder: string }>(`/api/edit-steps/add/${encodeURIComponent(folder)}`, "POST");
 /** The person's editing styles (contracts/editor-styles.ts). `fromEdit` copies an edit's choices into a new one. */
 export const listStyles = () => send<EditingStylesView>("/api/editor/styles");
-export const createStyle = (body: EditingStyleInput | { fromEdit: string; name: string }) => send<EditingStyle>("/api/editor/styles", "POST", body);
+/** `first`: New edit's "How do you like to work?" made it (it becomes the one New edit opens on, and that screen is answered). */
+export const createStyle = (body: (EditingStyleInput & { first?: true }) | { fromEdit: string; name: string }) => send<EditingStyle>("/api/editor/styles", "POST", body);
 export const updateStyle = (id: string, body: EditingStyleInput) => send<EditingStyle>(`/api/editor/styles/${id}`, "PUT", body);
+export const markStylesAsked = () => send<{ ok: true }>("/api/editor/styles/asked", "POST");
 export const deleteStyle = (id: string) => send<{ ok: true }>(`/api/editor/styles/${id}`, "DELETE");
+/** The person's animation styles (contracts/editor-styles.ts): a name, a brief and pictures. */
+const animation = "/api/editor/animation-styles";
+export const listAnimationStyles = () => send<AnimationStylesView>(animation);
+export const createAnimationStyle = (body: { name: string; brief: string }) => send<AnimationStyle>(animation, "POST", body);
+export const updateAnimationStyle = (id: string, body: { name?: string; brief?: string }) => send<AnimationStyle>(`${animation}/${id}`, "PUT", body);
+export const deleteAnimationStyle = (id: string) => send<{ ok: true }>(`${animation}/${id}`, "DELETE");
+export const stylePictureUrl = (id: string, pictureId: string) => `${animation}/${id}/pictures/${pictureId}`;
+export const removeStylePicture = (id: string, pictureId: string) => send<AnimationStyle>(stylePictureUrl(id, pictureId), "DELETE");
+/** Adds pictures to a style, each as an inspiration. */
+export async function addStylePictures(id: string, files: File[]): Promise<AnimationStyle> {
+  const form = new FormData();
+  for (const f of files) form.append("file", f);
+  const r = await fetch(`${animation}/${id}/pictures`, { method: "POST", body: form });
+  const out = (await r.json().catch(() => ({}))) as AnimationStyle & { error?: string };
+  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  return out;
+}
+/** The edits finished in a style, newest first, and × on one (it never counts for a style again). */
+export const listFinished = (styleId: string) => send<FinishedEdit[]>(`/api/editor/styles/${styleId}/finished`);
+export const removeFinished = (styleId: string, editId: string) => send<{ ok: true }>(`/api/editor/styles/${styleId}/finished/${editId}`, "DELETE");
 export const setEyeline = (id: string, versionId: string, y: number) => send<Edit>(`${base(id)}/eyeline/${versionId}`, "PUT", { y });
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);
 export const reviewDraft = (id: string, name: string) => send<Edit>(`${base(id)}/drafts/${name}/review`, "POST");
+/** A version's cards (contracts/editor.ts): a card's still, the 👍 that keeps it in the animation style, and making them again. */
+export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
+export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");
+export const makeCardsAgain = (id: string, variant: string) => send<Edit>(`${base(id)}/cards/${variant}/again`, "POST");
 export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
 
 /** The PUT lines body that gives line `index` of `version` the take `take`, the rest of its lines as they are. */

@@ -8,6 +8,8 @@ import WebKit
 
 @MainActor
 final class Shell: NSObject, ObservableObject {
+    /// Sign in with Google / Apple / GitHub to the site this window shows (SiteSignIn.swift).
+    private let siteSignIn = SiteSignIn()
     let webView: WKWebView
     @Published private(set) var base: URL
     @Published private(set) var unread = 0
@@ -144,12 +146,18 @@ final class Shell: NSObject, ObservableObject {
             switch ask {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }
+            // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
+            case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             case "folder": done(self.chooseFolder())
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
         }
         account.window = { [weak self] in self?.webView.window }
+        view.onPublishPack = { [weak self] text, done in
+            guard let self else { return done(["state": "off"]) }
+            self.account.publish(text, done: done)
+        }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }
@@ -157,6 +165,10 @@ final class Shell: NSObject, ObservableObject {
                 Task { done(await self.account.status()) }
             } else if ask == "signout" {
                 Task { done(await self.account.signOut()) }
+            } else if ask.hasPrefix("unlink:") {
+                Task { done(await self.account.unlink(String(ask.dropFirst(7)))) }
+            } else if ask.hasPrefix("link:") {
+                self.account.signIn(String(ask.dropFirst(5)), link: true, done: done)
             } else {
                 self.account.signIn(ask, done: done)
             }
@@ -328,7 +340,7 @@ final class Shell: NSObject, ObservableObject {
     func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
         guard let server else { return nil }
         if on && !server.hasOwnerPassword {
-            guard let password, password.count >= 6 else { return "Use at least 6 characters." }
+            guard let password, password.count >= 10 else { return "Use at least 10 characters." }
             guard let current = server.ownerPasswords().last else { return "The Keychain did not give the server's secret." }
             // the Keychain first: a password the server took but the app lost would lock the window out
             guard server.saveOwnerPassword(password) else { return "The Keychain did not keep the password." }
@@ -441,7 +453,7 @@ final class Shell: NSObject, ObservableObject {
     }
 
     var rows: (active: [ActivityRow], forYou: [ActivityRow]) {
-        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows)
+        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows, drawing: aiOn && ai.drawing)
     }
 
     var aiLine: String {
@@ -675,6 +687,7 @@ final class Shell: NSObject, ObservableObject {
         let id = UUID()
         let work = relayFolder(for: base, localData: runsHere ? server?.dataDir : nil)
         let relay = RelayRunner(base: base, token: token, work: work,
+            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }),
             onStatus: { [weak self] status in
                 Task { @MainActor in
                     guard let self, self.runnerID == id else { return }
@@ -696,6 +709,9 @@ final class Shell: NSObject, ObservableObject {
         runner?.stop()
         runner = nil
         runnerID = UUID()
+        // what the stopped runner still finishes is no longer told here, so its count and its row would stay for good
+        ai.running = 0
+        ai.drawing = false
     }
 
     /// The site no longer knows this Mac (its token was revoked): drop the token and say so in the menu.
@@ -848,6 +864,18 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         if url.isFileURL { return decisionHandler(.cancel) }
         // Embeds and players stay where the page put them.
         if action.targetFrame?.isMainFrame == false { return decisionHandler(.allow) }
+        // the login screen's Sign in with Google / Apple / GitHub: in the system's sheet, ending in this window (SiteSignIn.swift)
+        if let start = siteSignInStart(url, site: base) {
+            siteSignIn.window = { [weak self] in self?.webView.window }
+            siteSignIn.start(provider: start.provider, site: base, back: start.back,
+                             run: { [weak self] script in self?.webView.evaluateJavaScript(script) },
+                             show: { [weak self] back, error in
+                                 guard let self, var parts = URLComponents(url: URL(string: back, relativeTo: self.base)!.absoluteURL, resolvingAgainstBaseURL: false) else { return }
+                                 parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "error" } + [URLQueryItem(name: "error", value: error)]
+                                 if let to = parts.url, isSite(to, self.base) { self.webView.load(URLRequest(url: to)) }
+                             })
+            return decisionHandler(.cancel)
+        }
         let inside = ["about", "blob", "data", "javascript"].contains(url.scheme ?? "") || isSite(url, base)
         if inside {
             decisionHandler(.allow)

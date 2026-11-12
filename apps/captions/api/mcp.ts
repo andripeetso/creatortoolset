@@ -18,7 +18,9 @@ import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
-import { editorTools } from "./mcp-tools/editor";
+import { editorTools, hasStyle } from "./mcp-tools/editor";
+import { finalsTools } from "./mcp-tools/finals";
+import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 
@@ -61,6 +63,12 @@ export const SORT_WAIT_S = { added: 10, asked: 50 };
 const ANSWER_BY_S = 50;
 /** What a media tool's answer says while clips are still being sorted (a transcript first). */
 const STILL_SORTING = "Some clips are still being sorted (their transcript comes first): media_search with these versions waits for the final count.";
+
+/** Said only where the built-in Finals tools are listed (not where a plug-in's Media Library replaces the app's). */
+const FINALS_GUIDE = `Finals: the finished pieces the user keeps. A piece holds versions, and one can be the winner. finals_pieces lists them
+(and gives one in full: each version's post description and where it was posted), finals_piece_update renames a piece,
+sets the winner, orders its versions and writes a version's name or post description, finals_piece_trash moves one to
+the trash or back. A version's id is the one finals_pieces gives.`;
 
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
@@ -171,7 +179,7 @@ export const TOOLS = [
   { name: "workshop_wait", description: "Keep waiting for a workshop_chat reply.", inputSchema: { type: "object", properties: { session: str, reply: str, wait_s: { type: "integer" } }, required: ["session", "reply"] } },
   {
     name: "finals_link_session",
-    description: "Link a Finals piece (its id) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
+    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
     inputSchema: { type: "object", properties: { piece: str, session: str, workshop_piece: str }, required: ["piece", "session"] },
   },
   { name: "list_reviews", description: "His videos in Review: approval, versions, latest file, comment counts, link.", inputSchema: { type: "object", properties: {} } },
@@ -337,7 +345,13 @@ const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.nam
  * there unless the plug-in serves a tool of the same name.
  */
 const BUILT_IN_EDITOR = new Set(editorTools.defs.map((d) => d.name));
-const notHere = (name: string) => BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor");
+/**
+ * The built-in Finals tools (mcp-tools/finals.ts) work on the pieces of the app's own library. On an install whose
+ * Media Library is a plug-in's (LibrarySource.main) the person never sees that library, so the tools would list and
+ * change pieces that are on no page there: left out, like the editor's.
+ */
+const BUILT_IN_FINALS = new Set(finalsTools.defs.map((d) => d.name));
+const notHere = (name: string) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor")) || (BUILT_IN_FINALS.has(name) && !!mainSource());
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
@@ -478,12 +492,18 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
   const librarySources = async (lib: string) =>
     (await json<{ sources?: Array<{ id: string; label: string; main?: boolean }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
-  /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
-  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
+  /**
+   * One plug-in source's cards for a search (its own list takes q and nothing else), or null when it fails or is not
+   * back by `by`. `refused`: the source's own reason for listing nothing (SourceRefusal).
+   */
+  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<{ items: Args[]; refused?: string } | null> => {
     const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<null>((done) => (timer = setTimeout(() => done(null), Math.max(0, by - Date.now()))));
-    const cards = json<{ items?: Args[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then((r) => r.items ?? [], () => null);
+    const cards = json<{ items?: Args[]; refused?: string }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then(
+      (r) => ({ items: r.items ?? [], ...(r.refused ? { refused: r.refused } : {}) }),
+      () => null,
+    );
     return Promise.race([cards, late]).finally(() => clearTimeout(timer));
   };
   /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
@@ -747,6 +767,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     review_share: async (a) => {
       const at = await reviewOf({ json, origin }, a.link);
       if (!at.manage) throw new ToolError("That video is someone else's: only its owner can change its share link.");
+      if (a.on !== false && !(at.asset.share as { enabled?: boolean } | null)?.enabled) await sure(`Turn on the share link of "${String(at.asset.name).slice(0, 80)}"? Anyone with the link can watch${a.download === true ? ", comment and download the file" : " and comment"}, no account needed.`);
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
       const r = await json(at.path, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
@@ -884,11 +905,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
       const found = await Promise.all(asked.map((s) => sourceCards(lib, s.id, a.q, by)));
       for (const [i, s] of asked.entries()) {
-        const cards = found[i];
-        if (!cards) {
+        const answer = found[i];
+        if (!answer) {
           notes.push(`${s.label} did not answer.`);
           continue;
         }
+        if (answer.refused) {
+          notes.push(`${s.label}: ${answer.refused}`);
+          continue;
+        }
+        const cards = answer.items;
         let kept = a.kind ? cards.filter((c) => c.kind === a.kind) : cards;
         if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
         else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);
@@ -1020,7 +1046,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const env = MY_KEYS.find((k) => k.env === a.env);
       if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
       // only the name and the reason: any other argument (a value included) is dropped unread
-      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300));
+      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300), jobTurn(auth.get("authorization") ?? undefined) ?? undefined);
       return { status: "asked", note: "The user will type the key into a secure box in the chat. It does not come to you; carry on without it until it's saved." };
     },
     offer_choices: async (a) => {
@@ -1179,7 +1205,7 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
       if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
       // Caption Studio: the card runs while the captions are being made (captions-job.ts ends it, and says so in the chat)
       if (a.to === "captions")
-        return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: r.captioning ? "/captions?view=projects" : String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;
+        return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;
       const kind = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
       const where = { notes: "Video Notes", review: "Review", captions: "Caption Studio" }[kind];
       return r.href
@@ -1263,7 +1289,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
-        instructions: plugged.guide ? `${INSTRUCTIONS}\n\n${plugged.guide}` : INSTRUCTIONS,
+        instructions: [INSTRUCTIONS, mainSource() ? "" : FINALS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
@@ -1273,7 +1299,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read")), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));

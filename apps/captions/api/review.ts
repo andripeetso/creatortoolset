@@ -194,6 +194,8 @@ interface Comment {
   plugins?: Record<string, unknown>;
   /** A timeline item it is about (a version with a timeline: an AI Editor draft's shot, say). */
   anchor?: Anchor;
+  /** Every clip it is about when it is about several (the first is `anchor`). */
+  anchors?: Anchor[];
   resolved?: boolean;
   createdAt: number;
   editedAt?: number;
@@ -498,6 +500,15 @@ async function processVersion(id: string, n: number): Promise<void> {
 
 const queued = new Set<string>();
 let chain = Promise.resolve();
+
+/** This account's videos being prepared, for Home (api/activity.ts). */
+export async function reviewWork(username: string) {
+  const metas = await Promise.all([...queued].map(async (key) => [key, await readMeta(key.split("/")[0]!)] as const));
+  return metas.flatMap(([key, m]) => {
+    const v = m?.owner === username ? m.versions.find((x) => `${m.id}/${x.n}` === key && x.status === "processing") : undefined;
+    return v ? [{ id: key, assetId: m!.id, name: m!.name, progress: v.progress }] : [];
+  });
+}
 
 function enqueue(id: string, n: number): void {
   const key = `${id}/${n}`;
@@ -1245,6 +1256,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
     { versionId: ver.versionId },
   );
   if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+  emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
   return c.json({ pieceId: out.pieceId });
 });
 
@@ -1274,6 +1286,7 @@ reviewApp.post("/assets/:id/v/:n/content", async (c) => {
     if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
     pieceId = out.pieceId;
   }
+  emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
   return c.json({ pieceId }, 201);
 });
 
@@ -2237,6 +2250,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const t = parentId ? undefined : cleanTime(body?.t, version.duration);
     // a timeline item: only on a top-level comment of a version that has a timeline
     const anchor = parentId || !(version.edit || version.timelineFile) ? undefined : cleanAnchor(body?.anchor);
+    const anchors = anchor && Array.isArray(body?.anchors)
+      ? (body.anchors as unknown[]).slice(0, 50).map(cleanAnchor).filter((a): a is Anchor => !!a) : [];
     const tEnd = t === undefined ? undefined : cleanTime(body?.tEnd, version.duration);
     const cm: Comment = {
       id: randomUUID(),
@@ -2251,6 +2266,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       ...(refs.length ? { refs } : {}),
       ...(plugins && !parentId ? { plugins } : {}),
       ...(anchor ? { anchor } : {}),
+      ...(anchors.length > 1 ? { anchors } : {}),
       createdAt: Date.now(),
     };
     const error = await updateComments(v.meta.id, (list) => {
@@ -2340,6 +2356,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       m.approval = { status, by, at: Date.now() };
     });
     if (!meta) return c.json({ error: "Not found" }, 404);
+    if (status === "approved") emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }

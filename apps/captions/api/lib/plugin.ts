@@ -1,5 +1,5 @@
 import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
-import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../contracts/tools";
+import { applyNeedWays, isPluginGateId, isTool, TOOL_NAMES, type Have, type NeedWay, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
 import type { EditFlag, FootageTarget, Timeline } from "../../contracts/editor";
 import type { StepInfo } from "../../contracts/editor-steps";
@@ -10,7 +10,7 @@ import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { UploadRelayTus } from "../../contracts/storage";
 import type { SessionUser } from "../users";
-import { PACK_ITEM_KINDS, type PackDesignSystem, type PackItemKind, type PackOrigin } from "../../contracts/packs";
+import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
 
 // The plug-in slot. A plug-in is a folder plugins/<id>/ that scripts/plugins.mjs finds at build time:
 // plugin.ts is its server entry (definePlugin), web.tsx its browser entry (defineWebPlugin, src/lib/plugin.ts).
@@ -103,6 +103,13 @@ export interface ServerPlugin {
   // Installers for pack items the core can't install itself (a design system for the AI Editor). Each kind is installed by
   // at most one plug-in; a pack's items of a kind with no installer are held on the account (api/lib/packs.ts).
   packItems?: PackItemInstaller[];
+  // Another way to meet a tool's required row on Home, in setup and in Settings → Tools ("Needs an API key or an Adobe
+  // sign-in"): `what` names it, `met` says whether this account has it. Read by api/setup.ts (pluginNeeds).
+  needs?: PluginNeed[];
+  // Skills for the places a pack's skills may go (contracts/packs.ts PACK_SKILL_SLOTS, never the assistant): text the
+  // job reads, checked like a pack's when the server starts (one that fails is left out and named in the log). Each
+  // account switches them on in Community → Skills (api/lib/skills.ts); an AI Editor script skill is picked on a style.
+  skills?: PackSkill[];
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
@@ -119,6 +126,49 @@ export interface PackItemInstaller {
   adminOnly?: boolean;
   install: (item: PackDesignSystem, origin: PackOrigin) => Promise<string>;
   remove: (name: string, pack: string) => Promise<boolean>;
+}
+
+/** A plug-in's way to meet a tool's required row (ServerPlugin.needs). A `met` that throws counts as not met. */
+export interface PluginNeed {
+  tool: Tool;
+  what: string;
+  met: (user: SessionUser) => boolean | Promise<boolean>;
+  /** The id of the plug-in's own Settings section (web.tsx `settings`) where the person sets it up. */
+  settings?: string;
+}
+
+const wayOf = (p: ServerPlugin, n: PluginNeed): NeedWay => ({ tool: n.tool, what: n.what, have: `plugin:${p.id}/${n.tool}`, ...(n.settings ? { settings: n.settings } : {}) });
+
+/** The loaded plug-ins' ways, and the ones this account has (for its setup view, api/setup.ts). */
+export async function pluginNeeds(user: SessionUser): Promise<{ ways: NeedWay[]; have: Have[] }> {
+  const ways: NeedWay[] = [];
+  const have: Have[] = [];
+  for (const p of loaded) {
+    for (const n of p.needs ?? []) {
+      const way = wayOf(p, n);
+      ways.push(way);
+      try {
+        if ((await n.met(user)) === true) have.push(way.have);
+      } catch (e) {
+        console.warn(`[plugin] ${p.id} setup check failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+  return { ways, have };
+}
+
+/** Refuses a need whose tool is not a tool, with no `what`, or whose `met` is not a function. */
+function checkNeeds(plugins: ServerPlugin[]): void {
+  for (const plugin of plugins) {
+    if (plugin.needs === undefined) continue;
+    if (!Array.isArray(plugin.needs)) throw new Error(`plug-in ${plugin.id}: needs must be a list`);
+    for (const n of plugin.needs) {
+      if (!isTool(n?.tool)) throw new Error(`plug-in ${plugin.id}: needs: "${String(n?.tool)}" is not a tool`);
+      if (typeof n.what !== "string" || !n.what.trim()) throw new Error(`plug-in ${plugin.id}: needs: each one needs a what`);
+      if (typeof n.met !== "function") throw new Error(`plug-in ${plugin.id}: needs: met must be a function`);
+      if (n.settings !== undefined && typeof n.settings !== "string") throw new Error(`plug-in ${plugin.id}: needs: settings is a Settings section's id`);
+    }
+  }
 }
 
 /** One line of what a plug-in adds, as the Community window lists it: text, and a path to where it lives (when there is one). */
@@ -156,6 +206,8 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     if (p.library) adds.push({ text: "Media Library source", to: "/library" });
     if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });
     if (p.activity) adds.push({ text: "Rows in the Mac menu bar panel" });
+    for (const n of p.needs ?? []) adds.push({ text: `${TOOL_NAMES[n.tool]} setup: ${n.what.charAt(0).toLowerCase()}${n.what.slice(1)}`, to: "/settings/tools" });
+    for (const k of checkedSkills(p)) adds.push({ text: `Skill for ${PACK_SLOTS[k.slot]}: ${k.name}`, to: "/community/skills" });
     d.adds = adds;
     return d;
   });
@@ -184,6 +236,8 @@ export interface EditorStepInput {
   signal: AbortSignal;
   /** a line for the draft's notes, a whole sentence ("Blur faces found no face that matches …"): shown with the edit */
   note(text: string): void;
+  /** one line on the edit page while it runs: what it is doing now (a first-time install, waiting for the person's AI) */
+  say(text: string): void;
 }
 
 /** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */
@@ -213,6 +267,24 @@ function checkPackItems(plugins: ServerPlugin[]): void {
 
 // The plug-ins mounted by mountPlugins, read when a new account is made.
 let loaded: ServerPlugin[] = [];
+
+/** A plug-in's skills that pass the pack checks (checkPackSkill), at most PACK_LIMITS.skills, one per name. */
+function checkedSkills(p: ServerPlugin, warn?: (why: string) => void): PackSkill[] {
+  const out: PackSkill[] = [];
+  for (const [i, raw] of (Array.isArray(p.skills) ? p.skills : []).entries()) {
+    const r = checkPackSkill(raw, `skills[${i}]`);
+    if ("problems" in r) warn?.(r.problems.join("; "));
+    else if (out.length >= PACK_LIMITS.skills) warn?.(`skills[${i}]: a plug-in brings up to ${PACK_LIMITS.skills} skills`);
+    else if (out.some((x) => skillNameKey(x.name) === skillNameKey(r.skill.name))) warn?.(`skills[${i}].name: another skill of this plug-in has that name`);
+    else out.push(r.skill);
+  }
+  return out;
+}
+
+let skills: { plugin: { id: string; name: string }; skill: PackSkill }[] = [];
+
+/** Every loaded plug-in's skills that passed the checks at mount, in load order. */
+export const pluginSkills = (): readonly { plugin: { id: string; name: string }; skill: PackSkill }[] => skills;
 
 /** An upload relay a plug-in adds for Review's big videos: the browser sends the file to it (TUS), then the server takes it over. */
 export interface UploadRelay {
@@ -534,7 +606,10 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
   checkProviders(plugins);
   checkUploadRelays(plugins);
   checkPackItems(plugins);
+  checkNeeds(plugins);
   loaded = plugins;
+  applyNeedWays(plugins.flatMap((p) => (p.needs ?? []).map((n) => wayOf(p, n))));
+  skills = plugins.flatMap((p) => checkedSkills(p, (why) => console.warn(`plug-in ${p.id}: a skill is left out: ${why}`)).map((skill) => ({ plugin: { id: p.id, name: p.name ?? p.id }, skill })));
   registerConnectors(plugins);
   for (const plugin of plugins) {
     if (plugin.library) registerLibrarySlot(plugin.id, plugin.library);
@@ -584,6 +659,7 @@ export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlug
     checkProviders(all);
     checkUploadRelays(all);
     checkPackItems(all);
+    checkNeeds(all);
     checkReplaces(all);
     checkAnswers(all);
     checkLibrarySlots(all.flatMap((p) => (p.library ? [[p.id, p.library] as [string, LibrarySlot]] : [])));

@@ -4,24 +4,27 @@ import { HOME_TILES, HOME_TILE_NAMES } from "@contracts/tools";
 
 export const LICENCES = ["CC-BY-4.0", "CC0-1.0", "MIT"] as const;
 
-/** The slots this app adds to a prompt, in order. editor.cards is in the format but this app draws no cards. */
-export const USED_SLOTS: PackSlot[] = (Object.keys(PACK_SLOTS) as PackSlot[]).filter((s) => s !== "editor.cards");
+/** The slots this app adds to a prompt, in order: every one in the format. */
+export const USED_SLOTS: PackSlot[] = Object.keys(PACK_SLOTS) as PackSlot[];
 
-/** What a pack adds here, in the order the screens show it (design systems and unused slots are left out). */
+/** What a pack adds here, in the order the screens show it (design systems are left out). */
 export interface PackContents {
   slots: Array<{ slot: PackSlot; label: string; text: string }>;
   frameworks: Array<{ name: string; role: string }>;
   captionStyles: string[];
+  /** Each skill with the place it acts, in the tool's words. */
+  skills: Array<{ label: string; name: string; text: string }>;
   /** A Home layout: the tools it shows on Home, by name, in Home's order. null = the pack has none. */
   home: string[] | null;
 }
 
-export function packContents(pack: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "home">>): PackContents {
+export function packContents(pack: Partial<Pick<Pack, "instructions" | "skills" | "frameworks" | "captionStyles" | "home">>): PackContents {
   const instructions = pack.instructions ?? {};
   return {
     slots: USED_SLOTS.filter((s) => instructions[s]).map((slot) => ({ slot, label: PACK_SLOTS[slot], text: instructions[slot] ?? "" })),
     frameworks: (pack.frameworks ?? []).map((f) => ({ name: f.name, role: f.role })),
     captionStyles: (pack.captionStyles ?? []).map((s) => s.name),
+    skills: (pack.skills ?? []).map((s) => ({ label: PACK_SLOTS[s.slot] ?? s.slot, name: s.name, text: s.text })),
     home: pack.home ? HOME_TILES.filter((t) => !pack.home!.hidden.includes(t)).map((t) => HOME_TILE_NAMES[t]) : null,
   };
 }
@@ -87,7 +90,7 @@ export interface Destination {
   does: string;
 }
 
-/** The places this app reads a pack (design systems and editor.cards are left out, as in USED_SLOTS). */
+/** The places this app reads a pack (design systems are left out). */
 export function destinations(c: CatalogEntry["contains"]): Destination[] {
   const has = (s: PackSlot) => c.instructions.includes(s);
   const out: Destination[] = [];
@@ -99,7 +102,7 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
     out.push({ ...workshop, spot: "A piece's Shape menu",
       does: "You pick up to one per role for a piece: Shape sets the order, Persuasion shapes the ask, Argument shapes the reasoning. The AI writes the piece along the steps of the ones you picked; with none picked, it can look through all of them." });
   if (has("workshop.write"))
-    out.push({ ...workshop, spot: "Every message to the AI on a piece", does: "Added to what the AI is told when it writes and edits your reels, carousels and ads." });
+    out.push({ ...workshop, spot: "Every message to the AI on a piece", does: "Added to what the AI is told when it writes and edits your reels, carousels and ads. Not in the Workshop's chat on your Mac, which can read files and search the web." });
   if (has("workshop.review"))
     out.push({ ...workshop, spot: "Follower read and Fact check", does: "Added to what the AI is told when it reads a piece as a follower and checks its claims." });
   if (has("analyzer.ideas"))
@@ -110,19 +113,22 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
     out.push({ ...captions, spot: "Where captions break into lines", does: "Added to what the AI is told when it splits a transcript into caption lines." });
   if (has("editor.script"))
     out.push({ ...editor, spot: "The script", does: "Added to what the AI is told when it plans an edit's script." });
+  if (has("editor.cards"))
+    out.push({ ...editor, spot: "The cards", does: "Added to what the AI is told when it picks the lines that get a card, in an edit whose style has an animation style." });
   if (c.home)
     out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Shown on Home", does: "Sets which tools Home shows, when you press Use on Home. Every switch stays yours to change." });
   return out;
 }
 
 /** A pack's `contains`, worked out from the pack itself (the detail page has the pack, the cards have `contains`). */
-export function containsOf(p: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "designSystems" | "home">>): CatalogEntry["contains"] {
+export function containsOf(p: Partial<Pick<Pack, "instructions" | "skills" | "frameworks" | "captionStyles" | "designSystems" | "home">>): CatalogEntry["contains"] {
   return {
     instructions: (Object.keys(p.instructions ?? {}) as PackSlot[]).filter((s) => p.instructions?.[s]),
     frameworks: p.frameworks?.length ?? 0,
     captionStyles: p.captionStyles?.length ?? 0,
     designSystems: p.designSystems?.length ?? 0,
     ...(p.home ? { home: true } : {}),
+    ...(p.skills?.length ? { skills: p.skills.length } : {}),
   };
 }
 

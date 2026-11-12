@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, UserRound } from "lucide-react";
 import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
-import { SIGN_IN_BUTTON, useMacAccount } from "@/components/setup/AccountStep";
+import { SIGN_IN_BUTTON, linkedOf, useMacAccount } from "@/components/setup/AccountStep";
+import { SignInCodeRow } from "@/components/SignInCode";
 import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 
 const PROVIDERS: Provider[] = ["google", "apple", "github"];
@@ -149,6 +150,7 @@ export function AccountSection() {
           <NameRow name={account.name} username={account.username} onSaved={saved} />
           {required && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => ({ ...a, login }))} />}
           {required && <PasswordRow />}
+          {required && <SignInCodeRow />}
         </Card>
       </Section>
 
@@ -179,16 +181,21 @@ const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS a
  * Connected accounts: each sign-in this account has, with the provider's mark, who it is there and its own menu, then
  * a Continue with … button (the provider's mark) for each one still open. On a server with sign-in set up they are the account's linked sign-ins
  * (Unlink; a Continue with … button links another). In the Mac app it is also the Creator Toolset account this Mac is signed in
- * to (Sign out; its button signs in, only for a sign-in the Mac app offers). Nothing connected and nothing to
+ * to (Sign out; its button signs in, only for a sign-in the Mac app offers), with the sign-ins linked to that account
+ * (Unlink) and a Continue with … button that links one more to it. Nothing connected and nothing to
  * connect means no section at all, so it is never a dead row.
  */
 function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
   const mac = useMacAccount({ first: "offered" });
   const macIn = mac.account.state === "signedIn" ? mac.account : null;
-  // a provider this server links is its button; the Mac app's own account sign-in only for one the server does not
-  const macOpen = macIn ? [] : mac.providers.filter((p) => !open.includes(p));
+  const macLinked = linkedOf(mac.account);
+  // a provider this server links is its button; the Mac app's own account sign-in only for one the server does not.
+  // Signed in to the account: the ones it has no sign-in with yet, which link to it
+  const macOpen = mac.providers.filter((p) => !open.includes(p) && (!macIn || (p !== macIn.provider && !macLinked.some((l) => l.provider === p))));
   // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
-  const failed = mac.account.state === "error" ? mac.account.message || "The sign-in didn't work. Try again." : mac.account.state === "unreachable" ? "Couldn't reach the account server. Try again." : null;
+  const failed =
+    mac.problem ??
+    (mac.account.state === "error" ? mac.account.message || "The sign-in didn't work. Try again." : mac.account.state === "unreachable" ? "Couldn't reach the account server. Try again." : null);
   useEffect(() => {
     if (failed) toast.error(failed);
   }, [failed]);
@@ -221,6 +228,21 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
             actions={<RowMenu label="More for this account" items={[{ label: "Sign out", onSelect: async () => mac.signOut() }]} />}
           />
         )}
+        {macIn &&
+          macLinked.map((l) => (
+            <ListRow
+              key={`linked-${l.provider}`}
+              icon={mark(l.provider)}
+              title={PROVIDER_NAME[l.provider]}
+              subtitle={l.email || undefined}
+              actions={
+                <RowMenu
+                  label={`More for ${PROVIDER_NAME[l.provider]}`}
+                  items={[{ label: "Unlink", destructive: true, confirm: { title: `Unlink ${PROVIDER_NAME[l.provider]} from your account?`, body: "You can link it again any time.", ok: "Unlink" }, onSelect: () => mac.unlink(l.provider) }]}
+                />
+              }
+            />
+          ))}
         {(open.length > 0 || macOpen.length > 0) && (
           <div className="flex flex-col gap-2 p-2 sm:flex-row">
             {open.map((p) => (
@@ -230,7 +252,7 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
               </a>
             ))}
             {macOpen.map((p) => (
-              <button key={`mac-${p}`} type="button" disabled={!!mac.busy} onClick={() => mac.signIn(p)} className={cn(SIGN_IN_BUTTON, "sm:flex-1", mac.busy && mac.busy !== p && "opacity-50")}>
+              <button key={`mac-${p}`} type="button" disabled={!!mac.busy} onClick={() => (macIn ? mac.link(p) : mac.signIn(p))} className={cn(SIGN_IN_BUTTON, "sm:flex-1", mac.busy && mac.busy !== p && "opacity-50")}>
                 {mac.busy === p ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ProviderMark provider={p} className="size-4 shrink-0" />}
                 <span>{mac.busy === p ? "Signing in…" : `Continue with ${PROVIDER_NAME[p]}`}</span>
               </button>
@@ -412,7 +434,7 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
       onSubmit={submit}
     >
       <Input name="current" type="password" autoComplete="current-password" placeholder="Current password" aria-label="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} autoFocus required />
-      <Input name="next" type="password" autoComplete="new-password" placeholder="New password (6+ characters)" aria-label="New password" minLength={6} value={next} onChange={(e) => setNext(e.target.value)} required />
+      <Input name="next" type="password" autoComplete="new-password" placeholder="New password (10+ characters)" aria-label="New password" minLength={10} value={next} onChange={(e) => setNext(e.target.value)} required />
     </FormDialog>
   );
 }

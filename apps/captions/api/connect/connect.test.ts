@@ -42,7 +42,7 @@ async function fakeBroker(req: Request): Promise<Response> {
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   if (req.method === "POST" && u.pathname === "/oauth/device") {
-    return json(200, { device_code: "device-1", user_code: "BCDF-GHJK", verification_uri: "https://broker.test/connect", interval: 5, expires_in: 600 });
+    return json(200, { device_code: "device-1", user_code: "BCDF-GHJK", verification_uri: "https://broker.test/connect", verification_uri_complete: "https://broker.test/connect?code=BCDF-GHJK", interval: 5, expires_in: 600 });
   }
   if (req.method === "POST" && u.pathname === "/oauth/token") {
     if (!broker.approved) return json(400, { error: "authorization_pending" });
@@ -102,7 +102,7 @@ beforeAll(async () => {
   expect(adminCookie).not.toBe("");
   const started = await call("POST", "/api/connect/start", { cookie: adminCookie });
   expect(started.status).toBe(200);
-  expect(await started.json()).toMatchObject({ user_code: "BCDF-GHJK" });
+  expect(await started.json()).toMatchObject({ user_code: "BCDF-GHJK", verification_uri_complete: "https://broker.test/connect?code=BCDF-GHJK" });
   // still waiting for approval
   expect(await (await call("POST", "/api/connect/poll", { cookie: adminCookie })).json()).toEqual({ status: "pending" });
   broker.approved = true;
@@ -198,5 +198,48 @@ describe("a second machine signs in through the tunnel with a ticket", () => {
     const t = await ticketFor();
     const res = await call("POST", "/api/auth/ticket", { host: `other.${ZONE}`, body: { ticket: t, password: "tinyacrobatics1" } });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("with the sign-in code on, everything through the tunnel is asked for it", () => {
+  it("a ticket and the password give a step token, never a cookie; the code then signs in; this Mac's window is not asked", async () => {
+    vi.stubEnv("CT_LOCAL", "1");
+    const { codeAt } = await import("../lib/sign-in-code");
+    const { findUser, setSignInCode } = await import("../users");
+    const secret = randomBytes(20);
+    setSignInCode(findUser("admin")!, { secret: secret.toString("hex"), recovery: [], lastStep: 0 }, true);
+    const viaTunnel = { "cf-connecting-ip": "203.0.113.9", "cf-ray": "8f00-SIN" };
+    const id = hostname.split(".")[0];
+    const r = await fakeBroker(new Request(`https://broker.test/v1/computers/${id}/ticket`, { method: "POST", headers: { authorization: `Bearer ${broker.lastToken}` } }));
+    const { ticket } = (await r.json()) as { ticket: string };
+
+    const res = await call("POST", "/api/auth/ticket", { host: hostname, headers: viaTunnel, body: { ticket, password: "tinyacrobatics1" } });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const { code, step } = (await res.json()) as { code: string; step: string };
+    expect(code).toBe("CODE_NEEDED");
+    const done = await call("POST", "/api/auth/code", { host: hostname, headers: viaTunnel, body: { step, code: codeAt(secret, Math.floor(Date.now() / 30_000)) } });
+    expect(done.status).toBe(200);
+    expect(((await (await call("GET", "/api/auth/check", { host: hostname, cookie: cookieOf(done) })).json()) as { authed: boolean }).authed).toBe(true);
+
+    // addressed to the tunnel's name from loopback with no tunnel headers: asked too
+    const named = await call("POST", "/api/auth/login", { host: hostname, body: { username: "admin", password: "tinyacrobatics1" } });
+    expect(((await named.json()) as { code: string }).code).toBe("CODE_NEEDED");
+    // this Mac's own window: signed in with the password alone
+    expect((await call("POST", "/api/auth/login", { body: { username: "admin", password: "tinyacrobatics1" } })).status).toBe(200);
+  });
+});
+
+describe("through the tunnel, each client is its own address", () => {
+  it("Cloudflare's CF-Connecting-IP: one client's wrong guesses lock that client only", { timeout: 30_000 }, async () => {
+    vi.stubEnv("CT_LOCAL", "1");
+    const from = (ip: string, password: string) =>
+      call("POST", "/api/auth/login", { host: hostname, headers: { "cf-connecting-ip": ip, "cf-ray": "8f00-SIN" }, body: { username: "admin", password } });
+    for (let i = 0; i < 5; i++) expect((await from("203.0.113.70", "not-the-password")).status).toBe(401);
+    expect((await from("203.0.113.70", "tinyacrobatics1")).status).toBe(429);
+    // another client through the tunnel gets the code step, as does the tunnel with no client named
+    expect(((await (await from("203.0.113.71", "tinyacrobatics1")).json()) as { code: string }).code).toBe("CODE_NEEDED");
+    const plain = await call("POST", "/api/auth/login", { host: hostname, body: { username: "admin", password: "tinyacrobatics1" } });
+    expect(((await plain.json()) as { code: string }).code).toBe("CODE_NEEDED");
   });
 });

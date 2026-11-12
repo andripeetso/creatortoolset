@@ -7,7 +7,7 @@ import Foundation
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). One more has parts of its own:
 /// "install:<claude|codex>:<key>" (installAsk).
-let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files"]
+let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -136,12 +136,12 @@ extension Shell {
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         let alert = NSAlert()
         alert.messageText = "Choose this computer's password"
-        alert.informativeText = "Phones and other computers ask for it once, when they first sign in. Six characters or more."
+        alert.informativeText = "Phones and other computers ask for it once, when they first sign in. Ten characters or more."
         alert.accessoryView = field
         alert.addButton(withTitle: "Turn on")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn, field.stringValue.count >= 6 else { return nil }
+        guard alert.runModal() == .alertFirstButtonReturn, field.stringValue.count >= 10 else { return nil }
         return field.stringValue
     }
 
@@ -159,6 +159,8 @@ extension Shell {
             "lastError": ai.lastError ?? NSNull(),
             "notice": notice ?? NSNull(),
             "paired": pairedHere,
+            // on an account through the connect service (setup's Add this computer hides once it is); none = no service set
+            "linked": connectService == nil ? NSNull() : linkedHere,
             // this Mac's names as the site matches its records: the name it pairs with, and the host name its worker reports
             "computer": Host.current().localizedName ?? macHostName(),
             "host": macHostName(),
@@ -169,6 +171,8 @@ extension Shell {
             // the recording shortcut as shown ("" = none) and the plan-limits switch (Settings → General, Usage)
             "shortcut": RecordShortcut.shared.shortcut?.display ?? "",
             "limits": limitsReadingOn(),
+            // Settings → General → Version
+            "version": appVersion,
         ]
     }
 }

@@ -14,6 +14,10 @@ MODULES.push({
   handlers: { tiny_skill_write: async (_a, ctx) => ctx.json("/api/skills", "POST", { name: "From a tool", when: "Always", body: "Do as I say." }) },
 });
 
+// a made-up plug-in whose skill names the assistant: the checks leave it out when the server starts
+const { serverPlugins } = await import("./plugins.gen");
+serverPlugins.push({ id: "tiny-dock", name: "Tiny Dock", skills: [{ slot: "assistant", name: "Plug-in hooks", text: "PLUGIN-DOCK-SKILL" } as never] });
+
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { MAC_NOTE, SYSTEM, routeOf, runInChat } = await import("./assistant");
@@ -107,6 +111,8 @@ const folderOf = (j: Job) => Object.fromEntries(Object.entries(j.files ?? {}).fi
 const skillPaths = (j: Job) => Object.keys(j.files ?? {}).filter((p) => p.startsWith("skills/"));
 
 const HOOKS = { name: "Hook rules", when: "When writing the first line of a reel", body: "Open on the result, not the setup.\nNever start with a question." };
+/** The same skill for the Workshop's writing: a skill with no place is the assistant's. */
+const WRITING = { ...HOOKS, place: "workshop.write" };
 
 describe("an account with no skills", () => {
   it("the assistant's prompt and tool list are what they were: adding a skill adds one block and one tool, and switching it off takes both away again", async () => {
@@ -150,7 +156,7 @@ describe("an account with no skills", () => {
     expect(skillPaths(before.job)).toEqual([]);
     expect(before.job.system).not.toContain("Skills the author loaded");
 
-    const skill = await add(HOOKS);
+    const skill = await add(WRITING);
     const withSkill = await writerTurn(w, before);
     await fail(w, withSkill);
     const block = skillLines([skill], "folder");
@@ -177,6 +183,7 @@ describe("where a skill reaches", () => {
   it("the AI gets one line per skill and never the body, until it opens it", async () => {
     await clear();
     const skill = await add(HOOKS);
+    const writing = await add(WRITING);
     const w = await workshop("Tiny Acrobatics");
     const turn = await writerTurn(w);
     await fail(w, turn);
@@ -193,6 +200,7 @@ describe("where a skill reaches", () => {
     expect(await tool(fullKey, "skill_read", { name: "Hook rules" })).toEqual({ error: true, text: "skill_read is for the assistant only." });
     await dock.end();
     await call(me, `/api/skills/${skill.id}`, "DELETE");
+    await call(me, `/api/skills/${writing.id}`, "DELETE");
   });
 
   it("a skill ticked for one project is in no other project's turn, in the Workshop or the assistant", async () => {
@@ -200,6 +208,7 @@ describe("where a skill reaches", () => {
     const a = await workshop("Tiny Acrobatics");
     const b = await workshop("Tiny Swimmers");
     await add({ ...HOOKS, projectIds: [a.project] });
+    await add({ ...WRITING, projectIds: [a.project] });
 
     const inA = await writerTurn(a);
     await fail(a, inA);
@@ -232,13 +241,15 @@ describe("where a skill reaches", () => {
     expect(job.system.startsWith(SYSTEM)).toBe(true);
     expect(job.system).not.toContain("[Skill ");
     expect((await toolsOf(`Bearer ${job.mcp!.token}`)).map((t) => t.name)).not.toContain("skill_read");
+    // not listed, and called by its name anyway it opens nothing
+    expect(await tool(`Bearer ${job.mcp!.token}`, "skill_read", { name: "Hook rules" })).toEqual({ error: true, text: "A scheduled run reads no skills: carry on without one." });
     await relay(`${job.id}/done`, { text: "Done." });
     await run;
   });
 
   it("a Workshop turn on Grok gets none: its prompt carries the folder's files whole, and a body must not ride along", async () => {
     await clear();
-    await add(HOOKS);
+    await add(WRITING);
     const w = await workshop("Tiny Acrobatics");
     const claude = { ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude" as const, name: "Claude", enabled: true, device: mac.device.id }] };
     await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "grok", driver: "grok", name: "Grok", enabled: true, device: mac.device.id }], default: { ...DEFAULT_SETTINGS.default, instance: "grok" } }, "ana");
@@ -262,7 +273,7 @@ describe("where a skill reaches", () => {
     expect(second.job.resume).toBe("kept-1");
     await done(second, "kept-1");
 
-    const skill = await add(HOOKS);
+    const skill = await add(WRITING);
     const withSkill = await writerTurn(w);
     expect(withSkill.job.resume).toBeUndefined();
     await done(withSkill, "kept-2");
@@ -316,10 +327,10 @@ describe("what a skill may hold", () => {
 
   it("eight skills reach a turn and no more: the ninth is kept switched off, and it can't be switched on", async () => {
     await clear();
-    for (let i = 1; i <= SKILL_LIMITS.perTurn; i++) expect((await add({ name: `Skill ${i}`, when: `When ${i}`, body: `Body ${i}` })).on).toBe(true);
-    const ninth = await add({ name: "Skill 9", when: "When 9", body: "Body 9" });
+    for (let i = 1; i <= SKILL_LIMITS.perTurn; i++) expect((await add({ name: `Skill ${i}`, when: `When ${i}`, body: `Body ${i}`, place: "workshop.write" })).on).toBe(true);
+    const ninth = await add({ name: "Skill 9", when: "When 9", body: "Body 9", place: "workshop.write" });
     expect(ninth.on).toBe(false);
-    expect((await call(me, `/api/skills/${ninth.id}`, "PATCH", { on: true })).body).toEqual({ error: "8 skills can be on in one project. Switch one off first." });
+    expect((await call(me, `/api/skills/${ninth.id}`, "PATCH", { on: true })).body).toEqual({ error: "8 skills can be on in one place of one project. Switch one off first." });
     expect((await mine()).find((s) => s.id === ninth.id)!.on).toBe(false);
 
     const w = await workshop("Tiny Acrobatics");
@@ -328,9 +339,11 @@ describe("what a skill may hold", () => {
     expect(skillPaths(turn.job)).toHaveLength(SKILL_LIMITS.perTurn);
     expect(turn.job.system.match(/\[Skill "/g)).toHaveLength(SKILL_LIMITS.perTurn);
     expect(turn.job.system).not.toContain("Skill 9");
+    // the eight are the Workshop's: the assistant gets none of them, and its own eight would fit beside them
     const dock = await dockTurn();
     await dock.end();
-    expect(dock.job.system.match(/\[Skill "/g)).toHaveLength(SKILL_LIMITS.perTurn);
+    expect(dock.job.system).not.toContain("[Skill ");
+    expect((await add({ name: "Skill 1", when: "When 1", body: "Body 1" })).on).toBe(true);
 
     // ticked for another project alone it is still a ninth there: the eight are on in every project
     const other = await workshop("Tiny Swimmers");
@@ -391,7 +404,7 @@ describe("who may write a skill", () => {
   it("the person at their own screen, and nobody else: not an AI key, not the assistant's token, not a tool's own call", async () => {
     await clear();
     const skill = await add(HOOKS);
-    const refused = { error: "Skills are added and changed by the person, in Settings → Skills." };
+    const refused = { error: "Skills are added and changed by the person, in Community → Skills." };
     const outside: Array<Record<string, string>> = [{ authorization: fullKey }, { authorization: fullKey, cookie }];
     for (const headers of outside) {
       expect(await call(headers, "/api/skills", "POST", { name: "By a key", when: "Always", body: "x" })).toEqual({ status: 403, body: refused });
@@ -416,5 +429,60 @@ describe("who may write a skill", () => {
     expect((await call(theirs, `/api/skills/${skill.id}`, "DELETE")).status).toBe(404);
     expect((await call(theirs, "/api/skills/read?name=Hook%20rules")).status).toBe(409);
     expect((await mine())[0]!.body).toBe(HOOKS.body);
+  });
+});
+
+describe("a skill saved before skills had a place", () => {
+  it("is the assistant's, as it was: the same line, skill_read gives its text byte for byte, nothing is checked or written on read, and the Workshop no longer gets it", async () => {
+    await clear();
+    const before = await dockTurn();
+    await before.end();
+    const w = await workshop("Tiny Acrobatics");
+    const plain = await writerTurn(w);
+    await fail(w, plain);
+
+    // a file in the shape skills had before places, with words the pack checks would refuse
+    const today = { id: "made-before", name: "Old hooks", when: "When writing a hook", body: "The gym's password is on the door.\nMore at https://example.com/hooks.", on: true, createdAt: 1, updatedAt: 1 };
+    const file = path.join(dataDir, "skills", "ana.json");
+    writeFileSync(file, JSON.stringify({ skills: [today] }));
+    const raw = readFileSync(file, "utf8");
+
+    const dock = await dockTurn();
+    expect(dock.job.system).toBe(`${before.job.system}\n\n${skillLines([today], "tool")}`);
+    expect({ ...sent(dock.job), system: "" }).toEqual({ ...sent(before.job), system: "" });
+    expect(dock.tools.filter((t) => t.name !== "skill_read")).toEqual(before.tools);
+    expect(JSON.parse((await tool(dock.token, "skill_read", { name: "Old hooks" })).text)).toEqual({ name: "Old hooks", when: today.when, text: today.body });
+    await dock.end();
+
+    const turn = await writerTurn(w, plain);
+    await fail(w, turn);
+    expect(skillPaths(turn.job)).toEqual([]);
+    expect(turn.job.system).toBe(plain.job.system);
+    // listed as it was kept: no place, so the assistant's
+    expect((await mine()).map((s) => [s.id, s.place])).toEqual([["made-before", undefined]]);
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+});
+
+describe("a shared skill never reaches the assistant", () => {
+  it("one for the assistant on an installed pack's record changed by hand, or in a plug-in, is not in the prompt or the tools, not listed, and skill_read opens nothing", async () => {
+    await clear();
+    const before = await dockTurn();
+    await before.end();
+    const pack = { format: 1, id: "tiny-dock-pack", name: "Tiny Dock Pack", version: "1.0.0", author: "Tiny Acrobatics", license: "CC-BY-4.0", description: "Lines.", skills: [{ slot: "captions.lines", name: "Pack hooks", text: "PACK-DOCK-SKILL" }] };
+    expect((await call(me, "/api/packs/install", "POST", { pack })).status).toBe(201);
+    expect((await call(me, "/api/packs/install", "POST", { pack: { ...pack, skills: [{ ...pack.skills[0], slot: "assistant" }] } })).status).toBe(400);
+    const file = path.join(dataDir, "packs", "installed", "ana.json");
+    const state = JSON.parse(readFileSync(file, "utf8")) as { packs: Array<{ id: string; skills?: unknown[] }> };
+    state.packs.find((p) => p.id === pack.id)!.skills = [{ slot: "assistant", name: "Pack hooks", text: "PACK-DOCK-SKILL" }];
+    writeFileSync(file, JSON.stringify(state));
+
+    const dock = await dockTurn();
+    expect(sent(dock.job)).toEqual(sent(before.job));
+    expect(dock.tools).toEqual(before.tools);
+    for (const name of ["Pack hooks", "Plug-in hooks"]) expect(await tool(dock.token, "skill_read", { name })).toEqual({ error: true, text: "The user has no skill switched on here." });
+    await dock.end();
+    expect((await call<{ shared: unknown[] }>(me, "/api/skills")).body.shared).toEqual([]);
+    await call(me, `/api/packs/${pack.id}`, "DELETE");
   });
 });

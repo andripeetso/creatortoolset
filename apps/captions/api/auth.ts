@@ -26,16 +26,20 @@ import {
   newApiKey,
   setDisplayName,
   setPassword,
+  setSignInCode,
+  passwordProblem,
   SIGNIN_NAME,
   isSignInProvider,
   userForApiKey,
   verifyPassword,
+  listUsers,
 } from "./users";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
 import { acceptInvite, inviteByToken, memberIn, workspaceOf } from "./lib/workspaces";
 import { parseRelayKey } from "./connect/keys";
 import { consumeJti, connectState, tunnelHostname } from "./connect/state";
 import { TicketError, verifyTicket } from "./connect/ticket";
+import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret, spendStep, stepFor, waitFor, wrongTry } from "./lib/sign-in-code";
 
 /**
  * Account login for public hosting. When APP_SECRET is set, every /api
@@ -68,6 +72,9 @@ function cookieValue(username: string, hash: string): string {
   return `${Buffer.from(username).toString("base64url")}.${sign(username, hash)}`;
 }
 
+/** What the cookie is signed over: the password hash, plus the session stamp once the sign-in code made one (users.ts). */
+const stamp = (u: UserRecord) => (u.session ? `${u.hash}:${u.session}` : u.hash);
+
 const signedBy = (username: string, hash: string, hex: string) => {
   const expected = Buffer.from(sign(username, hash), "hex");
   const got = Buffer.from(hex, "hex");
@@ -78,19 +85,19 @@ export function getSessionUser(
   cookieHeader: string | undefined,
 ): SessionUser | null {
   if (!env.appSecret) return LOCAL_USER;
-  const m = new RegExp(
-    `(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`,
-  ).exec(cookieHeader ?? "");
-  if (!m) return null;
-  let username = "";
-  try {
-    username = Buffer.from(m[1], "base64url").toString();
-  } catch {
-    return null;
+  // a browser can hold several cookies by this name (an old one for the parent domain, a newer one for this host), and
+  // sends all of them: the first that is still valid is the session, so an old one never hides a new sign-in
+  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`, "g"))) {
+    let username = "";
+    try {
+      username = Buffer.from(m[1], "base64url").toString();
+    } catch {
+      continue;
+    }
+    const user = findUser(username);
+    if (user && signedBy(user.username, stamp(user), m[2])) return sessionOf(user);
   }
-  const user = findUser(username);
-  if (!user || !signedBy(user.username, user.hash, m[2])) return null;
-  return sessionOf(user);
+  return null;
 }
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
@@ -187,12 +194,23 @@ authApp.get("/check", (c) => {
   });
 });
 
-// tiny brute-force damper: consecutive failures per username buy a delay
-const failures = new Map<string, number>();
+// each wrong try also buys a delay; the lock (lib/sign-in-code.ts) stops a guesser
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * No passwords on a hosted server where every account signs in with Google, Apple or GitHub: a password there is only
+ * one more thing to guess. A server with any account that has no linked sign-in keeps them for everyone.
+ */
+export const passwordsOff = (): boolean => {
+  if (!hostedMode() || !env.appSecret) return false;
+  const all = listUsers();
+  return all.length > 0 && all.every((u) => !!u.identities?.length);
+};
+export const PASSWORDS_OFF = "This server signs in with Google, Apple or GitHub only";
 
 authApp.post("/login", async (c) => {
   if (!env.appSecret) return c.json({ ok: true, user: toPublic(LOCAL_USER) });
+  if (passwordsOff()) return c.json({ error: PASSWORDS_OFF }, 403);
   let username = "";
   let password = "";
   try {
@@ -205,18 +223,22 @@ authApp.post("/login", async (c) => {
   }
   username = username.trim().toLowerCase();
   const user = username ? findByLogin(username) : null;
+  // the lock is per account (a name no account has is held the same way); this Mac's own window is never held or counted
+  const mac = fromThisMac(c);
+  const key = user?.username ?? `?${username}`;
+  const from = clientAddress(c);
+  if (!mac && waitFor(key, from)) return locked(c, key, from);
   if (!user || !password || !verifyPassword(user, password)) {
-    const fails = (failures.get(username) ?? 0) + 1;
-    failures.set(username, fails);
-    await sleep(Math.min(fails * 250, 2000));
+    await sleep(Math.min((mac ? 1 : wrongTry(key, from)) * 250, 2000));
     return c.json({ error: "Wrong username or password" }, 401);
   }
-  failures.delete(username);
   // after the password: a wrong guess from the LAN costs its delay and says nothing about the account
   if (password === env.appSecret && localOnly(c)) return c.json({ error: NO_PASSWORD_YET }, 403);
   // checked after the password too, so a wrong guess learns nothing about the team
   const rule = ruleFor(user.username);
   if (rule && !rule.missing) return c.json({ error: `Your team signs in with ${rule.allowed.map(providerLabel).join(" or ")}: use that button`, code: "SIGNIN_RULE" }, 403);
+  if (!mac && (user.code || codeRequired())) return codeStep(c, user);
+  clearTries(key, from);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({
@@ -251,7 +273,7 @@ export const setLoginCookie = (c: Context, user: UserRecord) => {
   const secure = secureAttr(c);
   c.header(
     "Set-Cookie",
-    `${COOKIE}=${cookieValue(user.username, user.hash)}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
+    `${COOKIE}=${cookieValue(user.username, stamp(user))}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
   );
 };
 
@@ -261,14 +283,44 @@ export const setLoginCookie = (c: Context, user: UserRecord) => {
  * from this Mac alone. The socket's address decides, never a header (a LAN client writes those itself).
  */
 const isLoopback = (c: Context) => {
-  let a = "";
-  try {
-    a = getConnInfo(c).remote.address ?? "";
-  } catch {
-    /* no socket (tests): not loopback */
-  }
-  return a === "::1" || /^(::ffff:)?127\./.test(a);
+  const a = peerOf(c);
+  return a === "::1" || /^127\./.test(a);
 };
+/** The socket's address, an IPv4-mapped one as plain IPv4. Empty with no socket (tests): not loopback. */
+const peerOf = (c: Context) => {
+  try {
+    return (getConnInfo(c).remote.address ?? "").replace(/^::ffff:(?=\d+\.)/, "");
+  } catch {
+    return "";
+  }
+};
+const PRIVATE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|f[cd][0-9a-f]{2}:)/i;
+/** IPv6 by its /64: one network hands out a whole /64, so its addresses count as one. */
+const per64 = (a: string) => {
+  if (!a.includes(":")) return a;
+  const [head = "", tail] = a.toLowerCase().replace(/%.*$/, "").split("::");
+  const h = head ? head.split(":") : [];
+  const t = tail ? tail.split(":") : [];
+  const all = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill("0"), ...t];
+  return `${all.slice(0, 4).map((x) => x.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+};
+/**
+ * Who a wrong password or code counts against (the lock, lib/sign-in-code.ts). The socket's address, unless the socket
+ * is a proxy on this computer (cloudflared, nginx, Caddy) or, off the Mac app's server, on its private network (the
+ * Docker kit's Caddy): then the address that proxy wrote. Through this Mac's tunnel that is Cloudflare's
+ * CF-Connecting-IP (Cloudflare sets it and drops a caller's own), else the tunnel counts as one address; behind any
+ * other proxy it is the last X-Forwarded-For entry, the one the nearest proxy added (Caddy writes the header fresh;
+ * nginx appends to it). A caller that reaches the socket itself is its own address whatever it sends, and one behind a
+ * proxy can only put entries before the proxy's.
+ */
+export function clientAddress(c: Context): string {
+  const peer = peerOf(c);
+  const tunnel = tunnelHostname();
+  let a = peer;
+  if (isLoopback(c) && tunnel && hostOf(c) === tunnel.toLowerCase()) a = c.req.header("cf-connecting-ip")?.trim() || "tunnel";
+  else if (isLoopback(c) || (process.env.CT_LOCAL !== "1" && PRIVATE.test(peer))) a = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() || peer;
+  return per64(a.slice(0, 64));
+}
 /**
  * A request that came through this computer's tunnel (api/connect). cloudflared dials this server from loopback, so the
  * socket says "local"; the tunnel's own headers and its hostname say otherwise. A LAN client can write these headers
@@ -286,6 +338,19 @@ const hostOf = (c: Context) => new URL(c.req.url).hostname.toLowerCase();
  * operator's own password, and a CDN in front of it (Cloudflare) puts the same headers on every request as our tunnel.
  */
 const ownComputer = () => process.env.CT_LOCAL === "1" || !!tunnelHostname();
+/**
+ * The Mac app's own window (or a browser on this Mac) signing in to the server the app runs here: CT_LOCAL=1, not
+ * hosted, a loopback socket, addressed to loopback, and nothing that says the request was passed on (the tunnel's
+ * headers, a proxy's). Neither the sign-in code nor the lock applies to it. A request through the tunnel, a proxy or
+ * the network fails one of these; a relay that adds none of them (one the person sets up on this Mac) can't be told apart.
+ */
+export const fromThisMac = (c: Context) =>
+  process.env.CT_LOCAL === "1" &&
+  !hostedMode() &&
+  isLoopback(c) &&
+  /^(127\.0\.0\.1|localhost|\[::1\])$/.test(hostOf(c)) &&
+  !viaTunnel(c) &&
+  !["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "via"].some((h) => c.req.header(h) !== undefined);
 const localOnly = (c: Context) => (process.env.CT_LOCAL === "1" && !isLoopback(c)) || (ownComputer() && viaTunnel(c));
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
 const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Access from other devices and choose it, then try again.";
@@ -342,7 +407,7 @@ authApp.post("/link", async (c) => {
   // one live code per account: a new one ends the older ones, so the codes on screen never stack
   for (const [k, v] of links) if (v.expiresAt <= now || v.username === user.username) links.delete(k);
   const code = randomBytes(32).toString("base64url");
-  links.set(code, { username: user.username, hash: user.hash, expiresAt: now + LINK_TTL });
+  links.set(code, { username: user.username, hash: stamp(user), expiresAt: now + LINK_TTL });
   return c.json({ url: await phoneOrigin(c), path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
 });
 
@@ -353,7 +418,7 @@ authApp.get("/link/:code", (c) => {
   c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
   const user = link && link.expiresAt > Date.now() ? findUser(link.username) : null;
-  if (!user || user.hash !== link!.hash) return c.text("This sign-in link has expired or was used. Ask for a new one.", 410);
+  if (!user || stamp(user) !== link!.hash) return c.text("This sign-in link has expired or was used. Ask for a new one.", 410);
   if (remoteRefused(c, user)) return c.text(NO_PASSWORD_YET, 403);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
@@ -378,7 +443,7 @@ export function mintAppCode(user: UserRecord, challenge: string): string {
   const now = Date.now();
   for (const [k, v] of appCodes) if (v.expiresAt <= now) appCodes.delete(k);
   const code = randomBytes(32).toString("base64url");
-  appCodes.set(code, { username: user.username, hash: user.hash, challenge, expiresAt: now + LINK_TTL });
+  appCodes.set(code, { username: user.username, hash: stamp(user), challenge, expiresAt: now + LINK_TTL });
   return code;
 }
 
@@ -394,7 +459,7 @@ authApp.post("/app", async (c) => {
   const proved = !!hit && hit.expiresAt > Date.now() && APP_VERIFIER.test(verifier) && createHash("sha256").update(verifier).digest("base64url") === hit.challenge;
   const user = proved ? findUser(hit.username) : null;
   // one answer for a wrong, used or expired code and a wrong verifier: it says nothing about which
-  if (!user || user.hash !== hit!.hash) return c.json({ error: "That sign-in code is used or expired" }, 400);
+  if (!user || stamp(user) !== hit!.hash) return c.json({ error: "That sign-in code is used or expired" }, 400);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
@@ -431,13 +496,14 @@ authApp.post("/ticket", async (c) => {
   if (!user) return c.json({ error: "This ticket doesn't work here. Ask for a new one." }, 403);
   // the computer's password must be set first: while it is APP_SECRET, only this Mac can sign in
   if (password === env.appSecret) return c.json({ error: NO_PASSWORD_YET }, 403);
+  const from = clientAddress(c);
+  if (waitFor(user.username, from)) return locked(c, user.username, from);
   if (!password || !verifyPassword(user, password)) {
-    const fails = (failures.get(user.username) ?? 0) + 1;
-    failures.set(user.username, fails);
-    await sleep(Math.min(fails * 250, 2000));
+    await sleep(Math.min(wrongTry(user.username, from) * 250, 2000));
     return c.json({ error: "Wrong password" }, 401);
   }
-  failures.delete(user.username);
+  if (user.code || codeRequired()) return codeStep(c, user);
+  clearTries(user.username, from);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
@@ -464,6 +530,119 @@ authApp.post("/password", async (c) => {
 
 /** The account signed in on this browser. */
 const signedInAccount = (cookie: string | undefined) => getSessionUser(cookie);
+
+/** Too many wrong tries in a row: no password or code is looked at until the wait is over (lib/sign-in-code.ts). */
+const locked = (c: Context, key: string, from: string) => {
+  const min = Math.ceil(waitFor(key, from) / 60_000);
+  c.header("Retry-After", String(min * 60));
+  return c.json({ error: `Too many wrong tries. Try again in ${min} minute${min === 1 ? "" : "s"}.`, code: "LOCKED" }, 429);
+};
+
+/**
+ * The password was right and the sign-in code is still to come: no cookie, only a step token for POST /api/auth/code.
+ * An app that doesn't know this step shows `error` as the reason it can't sign in.
+ */
+const codeStep = (c: Context, user: UserRecord) => {
+  const setup = !user.code;
+  c.header("Cache-Control", "no-store");
+  return c.json(
+    {
+      error: setup
+        ? "This server asks for a code from an authenticator app. Set it up in a browser, then sign in here with a link from it."
+        : "This account asks for a code from an authenticator app, which this app can't take yet. Sign in with a link from a signed-in computer instead.",
+      code: setup ? "CODE_SETUP" : "CODE_NEEDED",
+      step: mintStep(user.username, stamp(user), setup),
+    },
+    401,
+  );
+};
+
+const accountHere = (c: Context) => {
+  const me = env.appSecret ? signedInAccount(c.req.header("cookie")) : null;
+  return (me && findUser(me.username)) || null;
+};
+const bodyOf = (c: Context) => c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+const text = (v: unknown) => (typeof v === "string" ? v : "");
+
+/**
+ * The code step after a password (POST /api/auth/code { step, code }): the step token from /login or /ticket and the
+ * authenticator's code, or a recovery code once. A wrong code counts toward the lock as a wrong password does; the
+ * token stays until it signs in or its 5 minutes are up. A setup token takes the first code of the secret
+ * /code/new made for it, switches the code on and answers the recovery codes, once.
+ */
+authApp.post("/code", async (c) => {
+  const b = await bodyOf(c);
+  const hit = stepFor(b.step);
+  const user = hit && findUser(hit.username);
+  c.header("Cache-Control", "no-store");
+  if (!user || stamp(user) !== hit.stamp) return c.json({ error: "That sign-in expired. Sign in again.", code: "STEP_EXPIRED" }, 401);
+  const from = clientAddress(c);
+  if (waitFor(user.username, from)) return locked(c, user.username, from);
+  const made = hit.setup && !user.code ? confirmSecret(user.username, text(b.code)) : null;
+  const next = made?.code ?? (!hit.setup && user.code ? checkCode(user.code, text(b.code)) : null);
+  if (!next) {
+    await sleep(Math.min(wrongTry(user.username, from) * 250, 2000));
+    return c.json({ error: "Wrong code" }, 401);
+  }
+  setSignInCode(user, next, !!made);
+  spendStep(text(b.step));
+  clearTries(user.username, from);
+  bumpUsage(user.username, { logins: 1 });
+  setLoginCookie(c, user);
+  return c.json({ ok: true, user: withLogins(sessionOf(user)), ...(made ? { recovery: made.recovery } : {}) });
+});
+
+/** Settings → Account: whether the code is on, whether this server asks everyone, and whether this is this Mac's own window. */
+authApp.get("/code", (c) => {
+  const user = accountHere(c);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  return c.json({ on: !!user.code, required: codeRequired(), mac: fromThisMac(c) });
+});
+
+/**
+ * A secret to scan (POST /api/auth/code/new): for the account signed in here, or a setup token's account. Never for an
+ * account that has a code: switching it off comes first. Kept 10 minutes, until a first code confirms it.
+ */
+authApp.post("/code/new", async (c) => {
+  const b = await bodyOf(c);
+  const hit = b.step === undefined ? null : stepFor(b.step);
+  const user = b.step === undefined ? accountHere(c) : hit?.setup ? findUser(hit.username) : null;
+  if (!user || (hit && stamp(user) !== hit.stamp)) return c.json({ error: "Sign in with an account first" }, 401);
+  if (user.code) return c.json({ error: "The sign-in code is on already" }, 409);
+  c.header("Cache-Control", "no-store");
+  return c.json(newSecret(user.username, `${user.login ?? user.username}@${hostOf(c)}`));
+});
+
+/** Switches the code on with the first code of the new secret. Every other browser is signed out; this one keeps going. */
+authApp.post("/code/on", async (c) => {
+  const user = accountHere(c);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  if (user.code) return c.json({ error: "The sign-in code is on already" }, 409);
+  const made = confirmSecret(user.username, text((await bodyOf(c)).code));
+  if (!made) return c.json({ error: "Wrong code" }, 400);
+  setSignInCode(user, made.code, true);
+  setLoginCookie(c, user);
+  c.header("Cache-Control", "no-store");
+  return c.json({ ok: true, recovery: made.recovery });
+});
+
+/** Switches it off with a current code or a recovery code. This Mac's own window needs neither: the way back from a lost phone. */
+authApp.post("/code/off", async (c) => {
+  const user = accountHere(c);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  if (!user.code) return c.json({ ok: true });
+  if (codeRequired()) return c.json({ error: "This server asks everyone for a sign-in code" }, 400);
+  if (!fromThisMac(c)) {
+    const from = clientAddress(c);
+    if (waitFor(user.username, from)) return locked(c, user.username, from);
+    if (!checkCode(user.code, text((await bodyOf(c)).code))) {
+      wrongTry(user.username, from);
+      return c.json({ error: "Wrong code" }, 400);
+    }
+  }
+  setSignInCode(user, null);
+  return c.json({ ok: true });
+});
 
 /** Settings → Account: the name the app calls you. The username underneath never changes: your files are filed under it. */
 authApp.get("/account", (c) => {
@@ -527,12 +706,17 @@ inviteApp.post("/invite/:token", async (c) => {
     const username = typeof b.username === "string" ? b.username.trim().toLowerCase() : "";
     const password = typeof b.password === "string" ? b.password : "";
     try {
+      const problem = passwordProblem(password);
+      if (problem) throw new Error(problem);
       user = createUser(username, password, { role: found.workspace.plan === "team" ? "team" : "user" });
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }
-    setLoginCookie(c, user);
-    bumpUsage(user.username, { logins: 1 });
+    // a server that asks everyone for a sign-in code: the new account signs in with its password and sets one up
+    if (!codeRequired()) {
+      setLoginCookie(c, user);
+      bumpUsage(user.username, { logins: 1 });
+    }
   }
   try {
     acceptInvite(token, user.username);

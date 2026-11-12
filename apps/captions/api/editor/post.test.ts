@@ -49,7 +49,20 @@ describe("one post copy per version", () => {
     const face = file("face-refine/a-1.mov");
     const voice = file("voice/a-2.mov");
     const older = file("voice/a-0.mov");
+    const side = file("voice/a-2.mov.counts.json");
+    const faceSide = file("face-refine/a-1.mov.counts.json");
     await prune(root, new Set([voice]));
     expect([existsSync(face), existsSync(voice), existsSync(older)]).toEqual([false, true, false]);
+    expect([existsSync(side), existsSync(faceSide)]).toEqual([true, false]);   // a kept copy's own files stay with it
+  });
+});
+
+describe("what a running step says", () => {
+  it("names each step as it starts, and passes the step's own line on", async () => {
+    const said: string[] = [];
+    const talks: EditorStep = { id: "faces", title: "Face refinement", about: "", run: async (i) => (i.say("Face refinement: setting up its face tools, the first time only (a few minutes)"), {}) };
+    const quiet: EditorStep = { id: "voice", title: "Voice", about: "", run: async () => ({}) };
+    await runSteps([{ id: "faces", values: {} }, { id: "voice", values: {} }], [talks, quiet], { ...input, say: (t) => said.push(t) });
+    expect(said).toEqual(["Face refinement", "Face refinement: setting up its face tools, the first time only (a few minutes)", "Voice"]);
   });
 });

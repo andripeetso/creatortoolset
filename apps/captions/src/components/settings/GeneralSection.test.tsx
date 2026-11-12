@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ScreenRecording } from "./GeneralSection";
+import { ScreenRecording, ThisComputer } from "./GeneralSection";
 import type { ThisMacState } from "./ThisMacSection";
 
 const state = (over: Partial<ThisMacState> = {}) => ({ answer: "", aiOn: true, running: 0, lastError: null, notice: null, paired: true, problem: null, servers: [], ...over }) as ThisMacState;
@@ -21,5 +21,12 @@ describe("the recording shortcut row", () => {
 
   it("says Off when no shortcut is set", () => {
     expect(renderToStaticMarkup(<ScreenRecording mac={state({ shortcut: "" })} />)).toContain(">Off</div>");
+  });
+});
+
+describe("the version row", () => {
+  it("shows the Mac app's version, and nothing outside the Mac app or in one too old to say", () => {
+    expect(renderToStaticMarkup(<ThisComputer version="0.15.20" />)).toContain("Creator Toolset 0.15.20");
+    expect(renderToStaticMarkup(<ThisComputer />)).not.toContain("Version");
   });
 });

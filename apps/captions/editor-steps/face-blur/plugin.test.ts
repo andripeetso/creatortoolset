@@ -6,14 +6,14 @@ import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { venvDir } from "../../api/editor/mediapipe";
 import { ffmpeg } from "../../api/library/media/run";
-import { type Box, blurFaces, blurRanges, buildTracks, chosenIn, copyKey, ellipseOf, ellipses, pickFrames, trackBoxes } from "./plugin";
+import { type Box, blurFaces, blurRanges, buildTracks, chosenIn, copyKey, ellipseOf, ellipses, pickFrames, trackBoxes, countsNote } from "./plugin";
 
 const dir = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), "face-blur-"));
 const tl = (v1: object[], v2: object[] = [], sources: object = { t: { fps: 25, dur: 1000, w: 1080, h: 1920 }, b: { fps: 25, dur: 500, w: 1080, h: 1920 } }) =>
   ({ fps: 25, sources, tracks: { V1: { items: v1 }, V2: { items: v2 }, A1: { items: [] } } }) as unknown as Timeline;
 const box = (x: number, y = 100, w = 100): Box => [x, y, w, w, 0.9];
 const input = (timeline: Timeline, files: Record<string, string>, values: Record<string, string> = {}, notes: string[] = []) => ({
-  edit: { id: "e", name: "E", createdBy: "nobody-here" }, variant: "", files, timeline, values, workDir: dir, signal: new AbortController().signal, note: (t: string) => notes.push(t),
+  edit: { id: "e", name: "E", createdBy: "nobody-here" }, variant: "", files, timeline, values, workDir: dir, signal: new AbortController().signal, note: (t: string) => notes.push(t), say: () => {},
 });
 
 describe("which frames Blur faces looks at", () => {
@@ -117,4 +117,15 @@ describe.skipIf(!existsSync(path.join(venvDir(), "ready")))("the Blur faces engi
     expect(notes).toEqual(["Blur faces found no face in the footage"]);
     expect(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream_tags=timecode", "-of", "csv=p=0", take], { encoding: "utf8" })).toContain("01:00:10:00");
   }, 120_000);
+});
+
+describe("the count Blur faces writes on every run", () => {
+  it("says how many faces it found, how many it blurred and which it left, also when all went well", () => {
+    const who = "Every face except the person speaking";
+    expect(countsNote([{ found: 3, blurred: 2, left: ["Tiny-take, middle centre, the speaker"] }, { found: 0, blurred: 0, left: [] }], who))
+      .toBe("Blur faces: 3 faces found, 2 blurred, 1 left as it is (Tiny-take, middle centre, the speaker)");
+    expect(countsNote([{ found: 2, blurred: 2, left: [] }], who)).toBe("Blur faces: 2 faces found, 2 blurred");
+    expect(countsNote([{ found: 1, blurred: 0, left: ["Tiny-take, top left"] }], "The dog")).toBe("Blur faces: 1 face found, none matched “The dog”, nothing blurred");
+    expect(countsNote([], who)).toBe("Blur faces: 0 faces found in the footage, nothing blurred");
+  });
 });

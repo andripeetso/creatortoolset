@@ -15,6 +15,15 @@ it("a link to a page of this app opens here, and a link to another site opens in
   expect(html).toMatch(/<a href="https:\/\/example.com\/guide" target="_blank" rel="noreferrer"/);
 });
 
+it("a file this server hands out (a finished export) is saved when pressed: it is not a page to move to", () => {
+  const html = renderToStaticMarkup(
+    <MemoryRouter>
+      <ReplyText text={"It is ready: [Download it](/api/exports/e1/file)."} />
+    </MemoryRouter>,
+  );
+  expect(html).toMatch(/<a href="\/api\/exports\/e1\/file" download="" class="[^"]*">Download it<\/a>/);
+});
+
 it("with no router around it (a share page), every link opens in a new tab as before", () => {
   expect(renderToStaticMarkup(<ReplyText text={text} />)).toMatch(/<a href="\/editor\/e1\/V1A_D1" target="_blank"/);
 });

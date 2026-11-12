@@ -80,12 +80,15 @@ Enable the hooks once per clone: `git config core.hooksPath .githooks`.
 **AI providers.** A server's AI providers are a person's own Claude Code or Codex, installed on their own Mac and
 signed in with their own subscription, paired through the Mac app. They answer only the requests and background work
 of the account that owns them. Never add a path that runs one person's subscription for another person, and never
-let a request from one account reach another account's provider.
+let a request from one account reach another account's provider. The one other AI is a model the admin of their own
+install runs themselves and types in by address (Settings → API keys → Local model, `apps/captions/api/local-model.ts`):
+text jobs only, refused on a hosted server, and the app never downloads, detects or suggests a model.
 
 **What other people share carries no code.** What people share with each other through Community is text and
 settings: packs (prompts, frameworks, caption styles, a Home layout), each read as data. Never add a way for someone
 outside the team to list, install or update code through Community, and never put a pack's text into an AI run that
-has tools on someone's computer (the assistant). A plug-in a person makes is their own, on their own Mac, with the
+has tools on someone's computer (the assistant). Every `packInstructions` call names its job's AI: a run with tools (the Workshop's chat turn or fact
+check on the Mac), or an AI program not in `TOOLS_OFF_DRIVERS`, gets only the app's own shipped packs. A plug-in a person makes is their own, on their own Mac, with the
 app's full access. Code that Community offers is the team's own, reviewed like the app's code.
 
 **Whose keys pay.** Every paid service call (AI on an API key, transcription, audio engines, research, Apify)
@@ -152,12 +155,13 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up: General, Appearance, Tools,
-    AI (Providers, Scheduled tasks, Skills, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
+    AI (Providers, Scheduled tasks, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
     API keys, Headless access), People (Team, Admin; on a hosted server). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **Community** = everything added to the app. Installed shows **Plug-ins** (code: built into this server, or on
     the Mac app's own server the folders in the person's plug-ins folder, each with its switch) and then **Packs**
-    (content you switch on per project and can remove).
+    (content you switch on per project and can remove). **Skills** lists every skill by the place it acts (the
+    assistant, a tool's AI step): the person's own, and the ones their packs and the plug-ins bring.
   - A plug-in's pieces show up where the built-in ones do: its Settings section in the matching group or Admin tab,
     its tiles on Home, its pages in place of built-in ones. The Plug-ins list is the one place that names it.
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
@@ -168,6 +172,10 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
   loads what the Mac app says is on (`apps/mac` `Plugins.swift` keeps the person's Switch on clicks) and
   `src/lib/folder-plugins.tsx` adds the page halves before the first render. A screen reads the plug-in list when it
   is drawn, never when its file loads. A folder plug-in that fails is left out and named; it never stops the app.
+- A move with an opposite (a status, a place, the trash, a pin) can be taken back: once the server has it, call
+  `undoable(what, back, count)` (`src/lib/undo.ts`). It shows the notice with Undo and owns ⌘Z while the notice is up.
+  `back` puts each thing where it was through the routes that exist; a move with no way back (a delete that removes
+  files) gets none.
 - Long-running work (exports, enhancement, the Mac relay) runs in background queues with concurrency limits set
   by environment variables; keep those limits when you add work to them.
 - Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's

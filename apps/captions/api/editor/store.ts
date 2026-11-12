@@ -7,8 +7,11 @@ import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
-import type { EditStyleCopy } from "../../contracts/editor-styles";
+import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
+import { cardsView } from "./cards/state";
+import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
+import { lineOf } from "./progress";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
 import { libraryRole } from "../library/access";
@@ -39,6 +42,10 @@ export interface EditMeta extends EditBrief {
   steps?: EditStepChoice[];
   /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
   style?: EditStyleCopy;
+  /** the working size its style named (timeline.ts); absent or null = the footage's own */
+  size?: WorkingSize | null;
+  /** which of the name and the brief came through an AI's tool, not from the person at their own screen (routes.ts): finished.ts keeps neither */
+  byTool?: ("name" | "brief")[];
   trashedAt?: number;
 }
 
@@ -67,12 +74,19 @@ export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, u
 
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
-  analysis: { sentences: Sentence[]; notes: string[] };
+  /** `eyeline`: per source version, the eye line found on this computer (eyeline.ts) */
+  analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number> };
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
   /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
   post: Record<string, { files: Record<string, string>; notes: string[] }>;
+  /** each version's lines and takes as the script step first planned them, before the person changed any (finished.ts: what they took out) */
+  first: { plans: Pick<VersionPlan, "name" | "lines">[] };
+  /** the person took this edit off its style's finished list: it is never kept for a style again (finished.ts) */
+  finished: { removed: boolean };
+  /** the passes Carry on queued for each version, in order (passes.ts) */
+  passes: Record<string, string[]>;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -85,6 +99,19 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
 
 /** The copies the post step made for a version, by source version id: the preview and the export play these (none: the sources' own files). */
 export const postFiles = (editId: string, variant: string): Record<string, string> => readStep(editId, "post")?.[variant]?.files ?? {};
+
+/** Said when a version's newest post step did not finish (failed, stopped, or not done yet). */
+export const POST_UNFINISHED = "Post-processing did not finish on this version: run it again before you export";
+
+/**
+ * True when a version's newest post step is not done: its copies (post.json) are an older run's, which may carry faces
+ * unblurred or a look the cut no longer has, so neither the export nor a preview may play them. A version that never
+ * had a post step (edits from before it) is not held.
+ */
+export function postUnfinished(editId: string, variant: string): boolean {
+  const row = libraryDb().prepare("SELECT state FROM edit_jobs WHERE edit_id = ? AND version_id = ? AND kind = 'post' ORDER BY id DESC LIMIT 1").get(editId, `${editId}:${variant}`) as { state: string } | undefined;
+  return !!row && row.state !== "done";
+}
 
 export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: StepFiles[K]) => writeJsonAtomic(path.join(root(), id, `${name}.json`), value);
 
@@ -282,6 +309,16 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   return out;
 }
 
+/**
+ * EditMeta.byTool once `patch` set the name or the brief: a field an AI's tool wrote (`tool`) is listed, one the person
+ * wrote themselves is theirs again. No key when neither is a tool's.
+ */
+export function byToolAfter(was: EditMeta["byTool"], patch: Partial<EditBrief>, tool: boolean): Pick<EditMeta, "byTool"> {
+  const set = (["name", "brief"] as const).filter((k) => patch[k] !== undefined);
+  const now = [...(was ?? []).filter((k) => !set.includes(k)), ...(tool ? set : [])];
+  return now.length ? { byTool: now } : {};
+}
+
 /** An editing style that is not there: the routes answer 404. */
 export class NoStyle extends Error {}
 
@@ -301,6 +338,8 @@ export async function styleFields(username: string, ws: string, id: string, on?:
     brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
     bundle: { ...(on?.bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
     ...(s.steps ? { steps: s.steps } : {}),
+    // always set, so a style that names none takes another style's size off an edit
+    size: s.size ?? null,
     style: styleCopy(s),
   };
 }
@@ -338,8 +377,8 @@ export function uploadFinished(uploadId: string, versionId: string): Promise<voi
   return waiting;
 }
 
-/** A new edit of `sources` for `username`, or null when a source is not theirs to read. */
-export async function createEdit(username: string, body: Record<string, unknown>): Promise<EditMeta | null> {
+/** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
+export async function createEdit(username: string, body: Record<string, unknown>, tool = false): Promise<EditMeta | null> {
   const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
   const sources = ids(body.sources);
   const uploads = sources.length ? [] : ids(body.uploads);
@@ -371,6 +410,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
+    ...byToolAfter(undefined, brief, tool),
   };
   mkdirSync(path.dirname(fileOf(e.id)), { recursive: true });
   await saveEdit(e);
@@ -390,23 +430,34 @@ interface JobDbRow {
 
 export function jobsOf(id: string): EditJob[] {
   const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as JobDbRow[];
-  return rows.map((r) => ({ id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error }));
+  return rows.map((r) => {
+    const line = r.state === "running" ? lineOf(r.id) : undefined;
+    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}) };
+  });
 }
 
 export function summaryOf(e: EditMeta): EditSummary {
-  const last = libraryDb().prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as EditSummary["last"] | undefined;
-  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last: last ? { ...last } : null };
+  // a step the person stopped is saved as failed with "Stopped" (worker.ts): `stopped` keeps it off Home's failed list
+  const row = libraryDb().prepare("SELECT kind, state, error = 'Stopped' AS stopped FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as
+    { kind: EditJob["kind"]; state: EditJob["state"]; stopped: number | null } | undefined;
+  const last = row ? { kind: row.kind, state: row.state, ...(row.stopped ? { stopped: true as const } : {}) } : null;
+  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
 }
 
 export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
+  delete meta.byTool; // the server's own mark (finished.ts): `meta` is this call's own copy
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
+  const cards = cardsView(e.id, draftNames(e.id));
+  const jobs = jobsOf(e.id);
+  const passes = passesView(e, draftNames(e.id), jobs.some((j) => j.state === "queued" || j.state === "running"));
   return {
     ...meta,
     ...summaryOf(e),
-    jobs: jobsOf(e.id),
+    jobs,
     eyeline: e.eyeline ?? {},
+    ...(a?.eyeline ? { eyelineFound: a.eyeline } : {}),
     drafts: draftNames(e.id),
     sentences: a?.sentences.length ?? 0,
     lines: p?.lines ?? [],
@@ -414,6 +465,8 @@ export function viewOf(e: EditMeta): Edit {
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
     previews: readStep(e.id, "review") ?? {},
     flagDefs: pluginEditFlags(),
+    ...(cards ? { cards } : {}),
+    ...(passes ? { passes } : {}),
   };
 }
 

@@ -84,6 +84,8 @@ export function generate({ root = APP_ROOT, sourceRoot = root, names = null, env
     if (!id) throw new Error(`plug-in ${name} declares no id (definePlugin / defineWebPlugin with id: "…")`);
     if (declared.some((d) => d && d !== id)) throw new Error(`plug-in ${name}: plugin.ts and web.tsx declare different ids`);
     if (ids.has(id)) throw new Error(`duplicate plug-in id "${id}" (second copy in ${name})`);
+    // Review's timeline editor keeps its comment data under this id (src/components/ReviewEdits.tsx)
+    if (id === "timeline-edits") throw new Error(`plug-in ${name}: the id "timeline-edits" is the app's own`);
     ids.add(id);
 
     if (hasWeb) {

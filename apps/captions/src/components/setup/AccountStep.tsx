@@ -16,7 +16,15 @@ import { cn } from "@/lib/utils";
 
 export type AccountState =
   | { state: "checking" | "signedOut" | "cancelled" | "off" }
-  | { state: "signedIn"; name?: string; email?: string; /** the sign-in it was made with, when the Mac app remembers it */ provider?: string }
+  | {
+      state: "signedIn";
+      name?: string;
+      email?: string;
+      /** the sign-in it was made with, when the Mac app remembers it */
+      provider?: string;
+      /** the sign-ins linked to the account since ("github,apple"), each one's email as `login.<provider>` */
+      logins?: string;
+    }
   | { state: "notSetUp"; server?: string }
   | { state: "unreachable"; server?: string; message?: string }
   | { state: "error"; message?: string };
@@ -25,6 +33,13 @@ export type { Provider };
 const PROVIDERS: Provider[] = ["apple", "google", "github"];
 /** The providers a reply names, in the order it names them (the Mac app decides which comes first); unknown names and repeats are dropped. */
 export const parseProviders = (list: string) => [...new Set(list.split(","))].filter((p): p is Provider => (PROVIDERS as string[]).includes(p));
+
+/** The sign-ins linked to a signed-in account, with the email each has there, in the order the Mac app names them. */
+export function linkedOf(a: AccountState): { provider: Provider; email: string }[] {
+  if (a.state !== "signedIn" || !a.logins) return [];
+  const all = a as unknown as Record<string, string | undefined>;
+  return parseProviders(a.logins).map((provider) => ({ provider, email: all[`login.${provider}`] ?? "" }));
+}
 
 type Bridge = { postMessage: (m: string) => Promise<AccountState & { providers?: string }> };
 const bridge = (): Bridge | undefined =>
@@ -117,7 +132,25 @@ export function useMacAccount({ on = true, first = "status" }: { on?: boolean; f
     setBusy("signout");
     void ask("signout").finally(() => setBusy(null));
   };
-  return { account, providers, busy, signIn, signOut };
+  // a link or unlink that didn't go through leaves the account as it was and says why once (a closed sheet says nothing)
+  const [problem, setProblem] = useState<string | null>(null);
+  const change = async (m: string) => {
+    setProblem(null);
+    try {
+      const reply = await bridge()?.postMessage(m);
+      if (reply?.state === "signedIn") setAccount(reply);
+      else if (reply && reply.state !== "cancelled") setProblem(("message" in reply && reply.message) || "That didn't go through. Try again.");
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    }
+  };
+  /** Signed in already: this sign-in joins the same account (the Mac app's sheet, with the account server's ticket). */
+  const link = (provider: Provider) => {
+    setBusy(provider);
+    void change(`link:${provider}`).finally(() => setBusy(null));
+  };
+  const unlink = (provider: Provider) => change(`unlink:${provider}`);
+  return { account, providers, busy, signIn, signOut, link, unlink, problem };
 }
 export type MacAccount = ReturnType<typeof useMacAccount>;
 

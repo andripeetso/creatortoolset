@@ -111,6 +111,7 @@ A plug-in has one or both of these files, and any other files beside them:
 | An item in the account menu | `accountMenu` | `web.tsx` |
 | A button on a Workshop session, a review upload, an export or a library item. `onRun` gets the item's id; read the rest through the app's own API (a session: `GET /api/workshop/sessions/<id>`) | `itemActions` | `web.tsx` |
 | Panels and toolbar buttons in Review | `review` | `web.tsx` |
+| Review's timeline editor: a clip that plays in a card, the camera frame under Reframe and full-quality colour on an AI edit (`ReviewTimelineSlot`, `src/lib/plugin.ts`) | `review.timeline` | `web.tsx` |
 | Your page in place of a built-in one (AI Editor, Media Library, Finals, Settings → Storage) | `replaces` | `web.tsx` |
 | An API of its own, at `/api/x/<id>/…` behind the app's login | `routes` (a Hono app) | `plugin.ts` |
 | A tool the person's own AI can call | `tools: { defs, handlers }` | `plugin.ts` |
@@ -120,6 +121,8 @@ A plug-in has one or both of these files, and any other files beside them:
 | Media Library sources, filters and badges | `library` | both |
 | A post-processing step in the AI Editor (it changes the footage a draft plays: the voice, the colour, faces) | `editor.steps` | `plugin.ts` |
 | AI provider kinds and presets | `providers` | `plugin.ts` |
+| Another way to set up a tool: the tool's row on Home and in setup names it, and the tool counts as set up once the account has it | `needs` | `plugin.ts` |
+| A skill for one of a tool's AI steps (text, checked like a pack's; each person switches it on in Community → Skills, never the assistant) | `skills` | `plugin.ts` |
 | Rows and menu items in the Mac app's menu bar | `activity`, `menu` | `plugin.ts` |
 
 A page, a tile, an API and a tool together make a whole new tool in the app. `plugin-examples/hello` has one of

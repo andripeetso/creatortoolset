@@ -258,7 +258,7 @@ private final class PickerSession {
 
     func mouseDown(in view: PickerView, at p: CGPoint) {
         switch kind {
-        case .display:
+        case .display, .device:
             break
         case .window:
             // a click on a window records it; a click on empty desktop does nothing (the picked one waits for Start)
@@ -320,6 +320,8 @@ private final class PickerSession {
         case .area:
             guard let v = activeView, let sel = selection, PickerGeometry.isUsable(sel) else { return }
             start(.area(v.displayID, PickerGeometry.flipped(sel, height: v.bounds.height)))
+        case .device:
+            break
         }
     }
 
@@ -400,47 +402,52 @@ private final class PickerView: NSView {
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .mouseMoved, .inVisibleRect],
                                        owner: self, userInfo: nil))
 
+        // No box behind it (the owner: "remove the black box, make the start recording button bigger", next to the
+        // picker of the recorder he compared with): the icon, a large name and the size stand on the tint, a soft
+        // shadow under the text keeps it readable on any window, and the button is large.
         card.orientation = .vertical
         card.alignment = .centerX
-        card.spacing = 10
+        card.spacing = 8
         card.autoresizingMask = []
-        // a dark card under the labels: white text stays readable on any tint or wallpaper
-        card.edgeInsets = NSEdgeInsets(top: 18, left: 26, bottom: 18, right: 26)
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 14
-        card.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.74).cgColor
+        card.edgeInsets = NSEdgeInsets(top: 16, left: 24, bottom: 16, right: 24)
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([iconView.widthAnchor.constraint(equalToConstant: 56),
-                                     iconView.heightAnchor.constraint(equalToConstant: 56)])
+        NSLayoutConstraint.activate([iconView.widthAnchor.constraint(equalToConstant: 88),
+                                     iconView.heightAnchor.constraint(equalToConstant: 88)])
+        iconView.shadow = Self.softShadow(blur: 10)
 
-        nameLabel.font = .systemFont(ofSize: 24, weight: .semibold)
-        nameLabel.textColor = .white
-        appLabel.font = .systemFont(ofSize: 18, weight: .semibold)
-        appLabel.textColor = .white
+        for label in [nameLabel, appLabel] {
+            label.font = .systemFont(ofSize: 34, weight: .bold)
+            label.textColor = .white
+            label.shadow = Self.softShadow(blur: 8)
+        }
 
-        chip.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        chip.textColor = .white
+        chip.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+        chip.textColor = NSColor.white.withAlphaComponent(0.9)
+        chip.shadow = Self.softShadow(blur: 6)
         chipBox.setViews([chip], in: .center)
-        chipBox.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        chipBox.edgeInsets = NSEdgeInsets(top: 3, left: 9, bottom: 3, right: 9)
         chipBox.wantsLayer = true
-        chipBox.layer?.cornerRadius = 6
-        chipBox.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.6).cgColor
+        chipBox.layer?.cornerRadius = 7
 
         button.bezelStyle = .rounded
         button.bezelColor = .controlAccentColor
-        button.controlSize = .large
-        button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: nil)
+        if #available(macOS 26.0, *) { button.controlSize = .extraLarge } else { button.controlSize = .large }
+        button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.white])))
         button.imagePosition = .imageLeading
         button.contentTintColor = .white
         // white on the accent colour in a light system too (the default title turns dark there)
-        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
-            .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .large), weight: .semibold)])
+        button.attributedTitle = NSAttributedString(string: "  " + button.title + "  ", attributes: [
+            .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 17, weight: .semibold)])
         button.target = self
         button.action = #selector(startTapped)
 
         card.setViews([iconView, appLabel, nameLabel, chipBox, button], in: .center)
+        card.setCustomSpacing(14, after: iconView)
+        card.setCustomSpacing(18, after: chipBox)
         addSubview(card)
     }
 
@@ -448,7 +455,19 @@ private final class PickerView: NSView {
         fatalError("PickerView is built in code")
     }
 
+    /// A dark, soft shadow right under a label or the icon, so white stands out on a light tint too.
+    private static func softShadow(blur: CGFloat) -> NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.45)
+        shadow.shadowBlurRadius = blur
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        return shadow
+    }
+
     override var acceptsFirstResponder: Bool { true }
+
+    /// A press works the first time, also while another window has the keyboard (FirstClickHostingView).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     /// Everything goes to this view except the Start button, so labels never swallow clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -518,10 +537,13 @@ private final class PickerView: NSView {
             }
         case .area:
             if active, let sel = s.selection {
-                setChip(PickerGeometry.pixelText(sel.size, scale: scale))
+                // an area has no tint under it: the size gets a small dark pill to stand on
+                setChip(PickerGeometry.pixelText(sel.size, scale: scale), pill: true)
                 button.isHidden = !PickerGeometry.isUsable(sel)
                 center = CGPoint(x: sel.midX, y: sel.midY)
             }
+        case .device:
+            break   // a device is not picked on the screen
         }
         card.isHidden = center == nil
         if let c = center {
@@ -532,7 +554,8 @@ private final class PickerView: NSView {
         needsDisplay = true
     }
 
-    private func setChip(_ text: String) {
+    private func setChip(_ text: String, pill: Bool = false) {
+        chipBox.layer?.backgroundColor = pill ? NSColor.black.withAlphaComponent(0.55).cgColor : nil
         chip.stringValue = text
         chipBox.isHidden = false
     }
@@ -572,6 +595,8 @@ private final class PickerView: NSView {
                 box.lineWidth = 1
                 box.stroke()
             }
+        case .device:
+            break
         }
     }
 

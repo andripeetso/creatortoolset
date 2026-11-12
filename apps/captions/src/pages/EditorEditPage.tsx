@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, Trash2 } from "lucide-react";
+import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, ThumbsUp, Trash2 } from "lucide-react";
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { createStyle, deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
+import { cn } from "@/lib/utils";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
@@ -20,7 +21,7 @@ import { STYLE_NAME_MAX } from "@contracts/editor-styles";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", file: "File in Review", broll: "B-roll" };
+const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
@@ -140,9 +141,10 @@ export default function EditorEditPage() {
               <li key={j.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
                 <span className="font-medium">{STEP_NAME[j.kind] ?? j.kind}</span>
                 {j.variant && <span className="text-xs text-zinc-500">{edit.plans.find((p) => p.name === j.variant)?.title ?? j.variant}</span>}
-                <StateBadge state={j.state} />
+                <StateBadge state={j.error === "Stopped" ? "stopped" : j.state} />
                 {j.state === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
-                {j.error && (
+                {j.state === "running" && j.line && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{j.line}</span>}
+                {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
                     {j.state === "needs_key" && (
@@ -184,7 +186,13 @@ export default function EditorEditPage() {
           </div>
           <div className="flex flex-wrap gap-3">
             {edit.sources.map((v) => (
-              <EyeLine key={v} versionId={v} y={edit.eyeline[v] ?? DEFAULT_EYELINE} onSet={(y) => void act(setEyeline(id, v, y))} />
+              <EyeLine
+                key={v}
+                versionId={v}
+                y={edit.eyeline[v] ?? edit.eyelineFound?.[v] ?? DEFAULT_EYELINE}
+                note={edit.eyeline[v] !== undefined ? "Set by you" : edit.eyelineFound?.[v] !== undefined ? "Found" : undefined}
+                onSet={(y) => void act(setEyeline(id, v, y))}
+              />
             ))}
           </div>
         </section>
@@ -265,11 +273,24 @@ export default function EditorEditPage() {
         {edit.drafts.length > 0 && (
           <section aria-label="Versions" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">Versions</h2>
+            {edit.passes?.waiting && edit.passes.next && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted px-3 py-2">
+                {/* N = 1 + the passes done: the cards come second when there is a B-roll pass before them */}
+                <span className="text-sm">Pass {edit.passes.next === "cards" && edit.brollCollectionId ? 2 : 1} is in Review</span>
+                <Button size="sm" onClick={() => void act(carryOn(id))}>
+                  Carry on: {edit.passes.next === "broll" ? "B-roll" : "cards"}
+                </Button>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {edit.drafts.map((n) => {
                 const pv = edit.previews[n];
                 const d = drafts[n];
                 const title = edit.plans.find((p) => p.name === n)?.title ?? n;
+                const cards = edit.cards?.[n];
+                // its newest post step not done: the server refuses the export (api/editor/store.ts postUnfinished), so say why here
+                const post = edit.jobs.filter((j) => j.kind === "post" && j.variant === n).at(-1);
+                const postHeld = !!post && post.state !== "done";
                 return (
                   <article key={n} aria-label={title} className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -288,8 +309,33 @@ export default function EditorEditPage() {
                         ))}
                       </ul>
                     )}
+                    {cards && (
+                      <section aria-label={`Cards of ${title}`} className="flex flex-col gap-1.5">
+                        {cards.cards.length > 0 && (
+                          <ul className="flex flex-wrap gap-2">
+                            {cards.cards.map((card) => (
+                              <li key={card.id} className="relative w-20">
+                                <img src={cardStillUrl(id, n, card.id)} alt={card.text} title={card.text} className="block w-full rounded-md bg-zinc-800" />
+                                <button
+                                  type="button"
+                                  aria-label={`Like the card “${card.text}”`}
+                                  aria-pressed={card.liked}
+                                  disabled={card.liked}
+                                  onClick={() => void act(likeCard(id, n, card.id))}
+                                  className={cn("absolute bottom-1 right-1 rounded-full p-1.5 text-white", card.liked ? "bg-violet-500" : "bg-black/70 hover:bg-black")}
+                                >
+                                  <ThumbsUp className="h-3 w-3" />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {cards.note && <p className="text-xs text-zinc-500">{cards.note}</p>}
+                      </section>
+                    )}
                     <div className="flex flex-wrap gap-1.5">
-                      {(["otio", "fcpxml", "zip"] as const).map((f) => (
+                      {postHeld && <p className="text-xs text-amber-600">Post-processing did not finish on this version: run it again before you export</p>}
+                      {!postHeld && (["otio", "fcpxml", "zip"] as const).map((f) => (
                         <Button key={f} asChild size="sm" variant="outline">
                           <a href={exportUrl(id, n, f)} download>
                             <Download className="h-3.5 w-3.5" />
@@ -308,6 +354,11 @@ export default function EditorEditPage() {
                       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
                         Render preview again
                       </Button>
+                      {edit.style?.animation && (
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(makeCardsAgain(id, n))}>
+                          Make cards again
+                        </Button>
+                      )}
                     </div>
                   </article>
                 );
@@ -321,7 +372,7 @@ export default function EditorEditPage() {
 }
 
 /** A clip's frame with its eye line: drag (or click) to move it; it is saved when let go. */
-function EyeLine({ versionId, y, onSet }: { versionId: string; y: number; onSet: (y: number) => void }) {
+function EyeLine({ versionId, y, note, onSet }: { versionId: string; y: number; note?: string; onSet: (y: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const at = (e: React.PointerEvent) => {
@@ -357,6 +408,7 @@ function EyeLine({ versionId, y, onSet }: { versionId: string; y: number; onSet:
     >
       <img src={thumb(versionId)} alt="" draggable={false} className="block min-h-16 w-full" />
       <div className="pointer-events-none absolute inset-x-0 border-t-2 border-violet-400 shadow-[0_0_0_1px_rgba(0,0,0,0.4)]" style={{ top: `${shown * 100}%` }} />
+      {note && <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[11px] text-white">{note}</span>}
     </div>
   );
 }

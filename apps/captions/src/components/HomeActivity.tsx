@@ -1,13 +1,15 @@
 import { useCachedLoad } from "@/lib/local-cache";
+import { useState } from "react";
 import { Link } from "react-router";
-import { CircleAlert, Eye, Inbox, KeyRound, Loader2, MessageSquare, Pause, type LucideIcon } from "lucide-react";
+import { CircleAlert, Eye, Inbox, KeyRound, Loader2, MessageSquare, Pause, X, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { canUse, useMe, type Me } from "@/lib/auth";
 import type { EditSummary } from "@contracts/editor";
 import type { ActivityRow } from "@contracts/activity";
 import { listEdits } from "@/lib/editor";
-import { listReviewAssets, type ReviewAsset } from "@/lib/review";
+import { listReviewAssets, reviewApi, type ReviewAsset } from "@/lib/review";
+import { undoable } from "@/lib/undo";
 import { useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 
 export interface TodoRow {
@@ -15,16 +17,21 @@ export interface TodoRow {
   to: string;
   text: string;
   icon: "review" | "failed" | "key";
+  /** the Review video behind a review row: the row can be cleared */
+  asset?: string;
 }
+
+/** An edit whose last step failed (not one the person stopped) or needs a key: it waits on you. */
+export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.last.stopped) || e.last?.state === "needs_key";
 
 /** What waits on you, from the lists the Home page already reads: videos to review, and edits whose last step failed
  *  or needs a key. Pure, so the rows can be tested without a server. */
 export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[] {
   const review = assets
     .filter((a) => a.approval.status === "needs_review")
-    .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name} is waiting for your review`, icon: "review" }));
+    .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name} is waiting for your review`, icon: "review", asset: a.id }));
   const edit = edits
-    .filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key")
+    .filter(editWaits)
     .map((e): TodoRow => {
       const needsKey = e.last?.state === "needs_key";
       return {
@@ -37,6 +44,12 @@ export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[]
   return [...review, ...edit];
 }
 
+/** The list with these videos' status set (a cleared row: back to No status; a clear that failed: Needs review again). Pure. */
+export function withStatus(assets: ReviewAsset[], ids: string[], status: "none" | "needs_review"): ReviewAsset[] {
+  const these = new Set(ids);
+  return assets.map((a) => (these.has(a.id) ? { ...a, approval: { status } } : a));
+}
+
 /** The two lists the Activity list and Home's badges count, from their saved copies (the same keys as Review's page), live. */
 export function useTodoLists(me: Me | null) {
   const edits = useCachedLoad<EditSummary[]>(canUse(me, "editor") ? "/api/editor" : null, listEdits);
@@ -45,16 +58,41 @@ export function useTodoLists(me: Me | null) {
     edits: edits.data ?? [],
     assets: assets.data ?? [],
     refresh: () => void Promise.all([edits.refresh(), assets.refresh()]).catch(() => {}),
+    /**
+     * "Not waiting on me": these videos go back to No status, so they leave the list and Home's badge on every device.
+     * The saved copy is changed at once (a refresh could join a read already going and bring them back); a video the
+     * server refused comes back. Undo puts the ones it took back to Needs review.
+     */
+    clear: async (ids: string[]) => {
+      /** Sets the status here and on the server; answers the videos the server took. The others are shown as `else`. */
+      const put = async (these: string[], status: "none" | "needs_review", otherwise: "none" | "needs_review") => {
+        assets.set((prev) => prev && withStatus(prev, these, status));
+        const done = await Promise.allSettled(these.map((id) => reviewApi(`/api/review/assets/${id}`).approve(status)));
+        const failed = these.filter((_, i) => done[i].status === "rejected");
+        if (failed.length) assets.set((prev) => prev && withStatus(prev, failed, otherwise));
+        return these.filter((id) => !failed.includes(id));
+      };
+      const cleared = await put(ids, "none", "needs_review");
+      if (!cleared.length) return;
+      undoable("cleared", async () => {
+        const back = await put(cleared, "needs_review", "none");
+        if (back.length < cleared.length) throw new Error(`${cleared.length - back.length} could not be put back`);
+      }, cleared.length);
+    },
   };
 }
 
 const loadActivity = () =>
   fetch("/api/activity").then((r) => (r.ok ? (r.json() as Promise<ActivityRow[]>) : Promise.reject(new Error(`Request failed (${r.status})`))));
 
-/** GET /api/activity: the app's own background work and the plug-ins' rows, live: read again when the Media Library, an
- *  edit or an export changes (lib/sync.ts), never on a timer. An upload's progress is read again when the list opens. */
+/** The topics of the tools whose work has a row (api/activity.ts): a change to one reads the rows again. */
+const WORK_TOPICS = ["library", "editor", "exports", "instagram", "clips", "enhance", "review", "documents", "projects", "workshop"];
+
+/** GET /api/activity: the app's own background work and the plug-ins' rows, live: read again when a tool with running
+ *  work changes (lib/sync.ts), never on a timer, this window's own writes included (a stop pressed here ends a row).
+ *  An upload's progress is read again when the list opens. */
 export function useActivityRows(me: Me | null) {
-  return useCachedLoad<ActivityRow[]>(me ? "/api/activity" : null, loadActivity, { topic: ["library", "editor", "exports"] });
+  return useCachedLoad<ActivityRow[]>(me ? "/api/activity" : null, loadActivity, { topic: WORK_TOPICS, own: true });
 }
 
 /** One line of the list. `reason`: why running work waits (a plan's limit), said once, in place of a spinner. */
@@ -66,6 +104,8 @@ export interface Line {
   icon: "running" | "review" | "failed" | "key" | "reply";
   progress?: number;
   reason?: string;
+  /** the Review video a row waits on: it can be cleared */
+  asset?: string;
 }
 
 /**
@@ -91,7 +131,7 @@ export function activityLines(server: ActivityRow[], sessions: SessionSummary[],
       ...sessions.filter((s) => s.working).map((s) => session(s, "Workshop · writing a reply", "running")),
     ],
     waiting: [
-      ...todo.map((t): Line => ({ key: t.key, to: t.to, title: t.text, detail: "", icon: t.icon })),
+      ...todo.map((t): Line => ({ key: t.key, to: t.to, title: t.text, detail: "", icon: t.icon, ...(t.asset ? { asset: t.asset } : {}) })),
       ...sessions.filter((s) => s.ready && !s.working).map((s) => session(s, "Workshop · new reply", "reply")),
       ...rows.filter((r) => r.state === "ready").map((r) => line(r, "key")),
     ],
@@ -105,27 +145,45 @@ export interface Chip {
   moving: boolean;
 }
 
-/** Each server row's tile, by the page it opens ("/editor/e1" → the AI Editor's tile). */
+/** Each server row's tile and its word, by the page it opens ("/editor/e1" → the AI Editor's tile); the first line that
+ *  matches takes the row, so a longer page comes before the one it starts with. */
 const TILE: [string, string, string][] = [
   ["/library", "/library", ""],
   ["/editor", "/editor", "editing"],
+  ["/captions?view=projects", "/captions?view=projects", "captioning"],
   ["/captions", "/captions?view=projects", "exporting"],
+  ["/instagram", "/instagram", "reading"],
+  ["/clips", "/clips", "processing"],
+  ["/enhance", "/enhance", "enhancing"],
+  ["/review", "/review", "preparing"],
+  ["/documents", "/documents", "writing"],
+  ["/workshop", "/workshop", "reading"],
 ];
+const lineOf = (href: string) => TILE.find(([p]) => href === p || href.startsWith(`${p}/`) || href.startsWith(`${p}?`));
 
 /**
  * Home's tiles, by their page: the Media Library says how far it is ("45%"), or when the plan's limit lets it carry on
- * ("until 5pm"); the AI Editor and Caption Studio how many edits and exports run; the Workshop how many replies are being
- * written. Pure.
+ * ("until 5pm"); the other tools how many things run there and one word ("2 editing", "1 reading"), two kinds of work at
+ * one tool "2 working"; the Workshop how many replies are being written. The hover lists what runs. Pure.
  */
 export function runningByTile(server: ActivityRow[], writing: number): Record<string, Chip> {
   const out: Record<string, Chip> = {};
-  if (writing) out["/workshop"] = { text: `${writing} writing`, title: `${writing} writing`, moving: true };
-  for (const [prefix, tile, verb] of TILE) {
-    const rows = server.filter((r) => r.state === "working" && (r.href === prefix || r.href.startsWith(`${prefix}/`) || r.href.startsWith(`${prefix}?`)));
+  const counts: Record<string, number> = {};
+  const count = (tile: string, n: number, verb: string, title: string, moving: boolean) => {
+    const before = out[tile];
+    counts[tile] = (counts[tile] ?? 0) + n;
+    out[tile] = { text: `${counts[tile]} ${before ? "working" : verb}`, title: before ? `${before.title}\n${title}` : title, moving: moving || !!before?.moving };
+  };
+  if (writing) count("/workshop", writing, "writing", `${writing} writing`, true);
+  for (const line of TILE) {
+    const [, tile, verb] = line;
+    // a row with buttons is the menu bar's own (a worker's Start), left out here as in the list
+    const rows = server.filter((r) => r.state === "working" && !r.actions?.length && lineOf(r.href) === line);
     if (!rows.length) continue;
     const moving = rows.filter((r) => !r.reason);
-    const title = rows.map((r) => r.reason ?? r.detail).join("\n");
-    if (verb) out[tile] = { text: `${rows.length} ${verb}`, title, moving: moving.length > 0 };
+    // the hover: what each thing is (the Media Library's one row says how far it is)
+    const title = rows.map((r) => r.reason ?? (verb ? r.title : r.detail)).join("\n");
+    if (verb) count(tile, rows.length, verb, title, moving.length > 0);
     else if (moving.length) {
       // the stage furthest behind: a folder still being taken in at 92% while its clips are prepared at 39% says 39%
       const far = Math.min(...moving.map((r) => r.progress ?? 1));
@@ -160,7 +218,7 @@ const ICON: Record<Line["icon"], LucideIcon> = { running: Loader2, review: Eye, 
 const TONE: Record<Line["icon"], string> = { running: "text-muted-foreground", review: "text-amber-500", failed: "text-red-500", key: "text-amber-400", reply: "text-emerald-500" };
 
 function ActivityButton({ me }: { me: Me }) {
-  const { edits, assets, refresh } = useTodoLists(me);
+  const { edits, assets, refresh, clear } = useTodoLists(me);
   const server = useActivityRows(me);
   const sessions = useSessionSummaries() ?? [];
   const { running, waiting } = activityLines(server.data ?? [], canUse(me, "workshop") ? sessions : [], todoRows(edits, assets));
@@ -187,32 +245,65 @@ function ActivityButton({ me }: { me: Me }) {
         <div className="max-h-96 overflow-y-scroll pb-1">
           {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">Nothing is running or waiting on you.</p>}
           <Part label="Running" lines={running} />
-          <Part label="Waiting on you" lines={waiting} />
+          <Part label="Waiting on you" lines={waiting} onClear={(ids) => void clear(ids)} />
         </div>
       </PopoverContent>
     </Popover>
   );
 }
 
-function Part({ label, lines }: { label: string; lines: Line[] }) {
+/**
+ * `onClear`: the rows that wait on a Review video get a button that takes them off the list, and the part one for all of
+ * them. The one for all asks once more in its own place ("Clear 11?"): it sits above the rows' buttons, where a miss lands.
+ */
+function Part({ label, lines, onClear }: { label: string; lines: Line[]; onClear?: (assets: string[]) => void }) {
+  const [sure, setSure] = useState(false);
   if (!lines.length) return null;
+  const clearable = onClear ? lines.flatMap((l) => l.asset ?? []) : [];
   return (
     <section aria-label={label}>
-      <h3 className="px-3 pb-1 pt-2.5 text-[11px] font-medium text-muted-foreground">{label}</h3>
+      <div className="flex items-center justify-between px-3 pb-1 pt-2.5">
+        <h3 className="text-[11px] font-medium text-muted-foreground">{label}</h3>
+        {clearable.length > 1 && (
+          <button
+            onClick={() => {
+              if (sure) onClear!(clearable);
+              setSure(!sure);
+            }}
+            onBlur={() => setSure(false)}
+            onMouseLeave={() => setSure(false)}
+            className={`rounded text-[11px] font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring ${sure ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {sure ? `Clear ${clearable.length}?` : clearable.length === lines.length ? "Clear all" : `Clear ${clearable.length} reviews`}
+          </button>
+        )}
+      </div>
       {lines.map((l) => {
         const Icon = l.reason ? Pause : ICON[l.icon];
         return (
-          <Link key={l.key} to={l.to} className="flex min-w-0 items-start gap-2 px-3 py-2 text-xs hover:bg-accent">
-            <Icon className={`mt-px h-3.5 w-3.5 shrink-0 ${TONE[l.icon]} ${l.icon === "running" && !l.reason ? "motion-safe:animate-spin" : ""}`} />
-            <span className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="line-clamp-3 min-w-0 break-words">
-                {l.title}
-                {l.detail && <span className="text-muted-foreground">{` ${l.detail}`}</span>}
+          <div key={l.key} className="flex items-stretch hover:bg-accent">
+            <Link to={l.to} className="flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-xs">
+              <Icon className={`mt-px h-3.5 w-3.5 shrink-0 ${TONE[l.icon]} ${l.icon === "running" && !l.reason ? "motion-safe:animate-spin" : ""}`} />
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="line-clamp-3 min-w-0 break-words">
+                  {l.title}
+                  {l.detail && <span className="text-muted-foreground">{` ${l.detail}`}</span>}
+                </span>
+                {l.progress !== undefined && !l.reason && <Progress value={l.progress * 100} className="h-1" />}
+                {l.reason && <span className="text-amber-700 dark:text-amber-300">{l.reason}</span>}
               </span>
-              {l.progress !== undefined && !l.reason && <Progress value={l.progress * 100} className="h-1" />}
-              {l.reason && <span className="text-amber-700 dark:text-amber-300">{l.reason}</span>}
-            </span>
-          </Link>
+            </Link>
+            {onClear && l.asset && (
+              <button
+                onClick={() => onClear([l.asset!])}
+                title="Clear"
+                aria-label={`Clear: ${l.title}`}
+                className="shrink-0 px-3 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         );
       })}
     </section>

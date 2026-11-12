@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-// Packs in the Workshop: an installed pack's workshop.write instruction reaches the system prompt of a turn, after the
-// app's own text. Only the model is mocked; the turn runs on Claude on the account's paired Mac.
+// Packs in the Workshop's turn on the Mac, which has tools (it reads its folder and may search the web): only the app's own
+// shipped packs' workshop.write text reaches its system prompt, after the app's own text; text other people wrote never
+// does. Only the model is mocked; the turn runs on Claude on the account's paired Mac.
 const dataDir = mkdtempSync(path.join(tmpdir(), "ws-packs-"));
 process.env.DATA_DIR = dataDir;
 
@@ -21,6 +22,7 @@ vi.mock("./lib/devices", async (importOriginal) => ({
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
 const { installPack } = await import("./lib/packs");
+const { readOfficialPacks } = await import("./official-packs");
 const { streamWithFallback } = await import("./ai-complete");
 const mocked = vi.mocked(streamWithFallback);
 const { createUser } = await import("./users");
@@ -81,7 +83,7 @@ async function systemOf(id: string, docId: string): Promise<string> {
 }
 
 describe("packs in the Workshop turn", () => {
-  it("an installed pack's workshop.write instruction reaches the turn's system prompt, after the app's own text", async () => {
+  it("another person's pack text never reaches the turn on the Mac", async () => {
     const s = session("Hooks");
     const before = await systemOf(s.id, s.docId);
     expect(before).not.toContain("Tiny Acrobatics pack line");
@@ -91,8 +93,16 @@ describe("packs in the Workshop turn", () => {
       description: "Hook habits.", instructions: { "workshop.write": "Tiny Acrobatics pack line: open on the result." },
     }, 0);
 
+    expect(await systemOf(s.id, s.docId)).not.toContain("Tiny Acrobatics pack line");
+  });
+
+  it("the app's own shipped pack reaches it, after the app's own text", async () => {
+    const full = readOfficialPacks().find((o) => o.pack.instructions?.["workshop.write"])!.pack;
+    const line = full.instructions!["workshop.write"]!;
+    await installPack("tinyacrobatics", { ...full, frameworks: undefined }, 0);
+    const s = session("Shipped");
     const after = await systemOf(s.id, s.docId);
-    expect(after).toContain("Tiny Acrobatics pack line: open on the result.");
-    expect(after.indexOf("How this works:")).toBeLessThan(after.indexOf("Tiny Acrobatics pack line"));
+    expect(after).toContain(line);
+    expect(after.indexOf("How this works:")).toBeLessThan(after.indexOf(line));
   });
 });

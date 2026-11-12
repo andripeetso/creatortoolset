@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
+import { EDITOR_HINT } from "../../contracts/devices";
 import { limitLine, limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
@@ -318,7 +319,7 @@ const unclaimedMessage = (device: string, on: boolean): string =>
  * The relay's routes for a device (mounted at /api/devices/relay, its ctd_ token). `deviceOf` says which device the
  * caller is (null = not allowed).
  */
-export function relayRoutes(deviceOf: (c: Context) => string | null) {
+export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits?: (device: string, kinds: unknown) => Promise<boolean>) {
   const app = new Hono<{ Variables: { device: string } }>();
 
   /** Any call from the relay says its device is here: a running job's text, step, done or fail keeps it on while every slot is busy (no poll then). */
@@ -333,9 +334,14 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
   /** A waiting request for this device, or 204 after 25 s. A relay that sends {blobs: true} keeps big files itself (packFor). */
   app.post("/wait", async (c) => {
     const device = c.get("device");
-    const keeps = (await body(c)).blobs === true;
+    const b = await body(c);
+    const keeps = b.blobs === true;
+    // a poll that lists editor step kinds (contracts/devices.ts): when one waits that this device could claim now, the
+    // poll is answered with the hint, after any AI request. A poll that lists none is never answered with it.
+    const step = "editor" in b && !!(await editorWaits?.(device, b.editor));
     const queued = next(device);
     if (queued) return c.json(packFor(claim(queued), keeps));
+    if (step) return c.json(EDITOR_HINT);
     const got = await new Promise<Req | null>((resolve) => {
       const w = {
         device,

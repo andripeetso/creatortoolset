@@ -284,6 +284,9 @@ function patchSource(id: string, change: (s: KnowledgeSource) => KnowledgeSource
 }
 /** Sources being read in this process: a second read of one waits for the first. */
 const inRead = new Set<string>();
+/** This account's sources its AI is reading, for Home (api/activity.ts); inJob tells "workshop" as they start and end. */
+export const knowledgeWork = async (username: string) =>
+  (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name }] : []));
 
 /**
  * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,
@@ -1267,7 +1270,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       }
       // Tagged sources first, then the open one, then the most recently pulled ones.
       views.sort((a, b) => Number(!!b.tagged) - Number(!!a.tagged) || Number(!!b.open) - Number(!!a.open) || b.at - a.at);
-      const packText = [await packInstructions(user.username, "workshop.write", project?.id ?? null), skillLines(skills, "folder")].filter(Boolean).join("\n\n");
+      // on the Mac the turn has tools (it reads its folder, and may search the web): the app's own packs only there
+      const packText = [await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: workshopAi(user, session.ai), tools: onMac(user, session.ai) }), skillLines(skills, "folder")].filter(Boolean).join("\n\n");
       const prompt = buildTurnPrompt({
         project: project ?? undefined,
         account: account ?? undefined,
@@ -1637,11 +1641,11 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     if (!doc?.blocks.length) throw new Error("That document is empty");
     const project = await projectForAi(session.projectId, user);
     const { handle, best } = await bestPosts(user, project, 8);
-    const packText = await packInstructions(user.username, "workshop.review", project?.id ?? null);
+    const reader = fableProvider(user);
+    const packText = await packInstructions(user.username, "workshop.review", project?.id ?? null, { ai: { only: ["mac"], mac: { label: "Workshop follower's read", provider: reader } } });
     const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best, packText });
     let usage: MacUsage | undefined;
     const write = progressWriter(session.id, messageId);
-    const reader = fableProvider(user);
     const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL });
     await write({}, true);
     // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
@@ -1699,7 +1703,8 @@ async function runAudit(session: SessionMeta, user: SessionUser, messageId: stri
       text = postAuditText(pack.handle, pack.kind, pack.markdown);
     }
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
-    const packText = await packInstructions(user.username, "workshop.review", session.projectId ?? null);
+    // on the Mac the check searches the web: a run with tools, so the app's own packs only (Perplexity has none)
+    const packText = await packInstructions(user.username, "workshop.review", session.projectId ?? null, { ai: workshopAi(user), tools: onWebMac(user) });
     const system = packText ? `${AUDIT_SYSTEM}\n\n${packText}` : AUDIT_SYSTEM;
     const answer = await webResearch(user, system, text, { depth: input.depth, jsonSchema: AUDIT_JSON_SCHEMA, signal });
     const result = { ...parseAuditResult(answer.content, answer.citations), ...(covered ? { covered } : {}) };
@@ -3720,7 +3725,7 @@ async function runDraft(session: SessionMeta, draft: DraftMeta, user: SessionUse
       project: project ?? undefined,
       frameworks,
       rules: rules.map((r) => r.text),
-      packText: await packInstructions(user.username, "workshop.write", project?.id ?? null),
+      packText: await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: workshopAi(user, session.ai) }),
       notes,
       prompt: draft.prompt,
       packs: packs.map((p) => ({ ...p, note: noteFor.get(p.id), savedFor: p.savedFor })),

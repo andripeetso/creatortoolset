@@ -82,26 +82,6 @@ export const HOME_TILE_LINES: Record<HomeTile, string> = { ...TOOL_LINES, record
 /** Whether Home shows a tile: every one except those the person switched off (SetupView.hidden). Nothing hidden = all shown. */
 export const onHome = (hidden: readonly HomeTile[] | null | undefined, t: HomeTile): boolean => !hidden?.includes(t);
 
-/** What each thing a tool needs is called in a row's heading (plain, no vendor-first wording). */
-export const NEED_SHORT: Record<Have, string> = {
-  project: "a project",
-  ai: "your AI",
-  ownAi: "your AI",
-  library: "a Media Library",
-  instagram: "an Instagram login",
-  apify: "an Apify key",
-  mcp: "Creator Toolset in your AI",
-  deviceTranscripts: "transcripts",
-  DEEPGRAM_API_KEY: "a Deepgram key",
-  ELEVENLABS_API_KEY: "an ElevenLabs or NVIDIA key",
-  NVIDIA_API_KEY: "an ElevenLabs or NVIDIA key",
-  ANTHROPIC_API_KEY: "an Anthropic key",
-  OPENAI_API_KEY: "an OpenAI key",
-  PERPLEXITY_API_KEY: "a Perplexity key",
-  YOUTUBE_API_KEY: "a YouTube Data API key",
-  TYPESAFE_API_KEY: "a TypeSafe Jev key",
-};
-
 /** One plain sentence per need: what it is for and who bills (section 11.2 of the onboarding spec). */
 export const NEED_SENTENCE: Record<Have, string> = {
   project: "A project keeps this tool's work together. Making one takes a moment.",
@@ -129,7 +109,19 @@ export const NEED_SENTENCE: Record<Have, string> = {
  * transcripts made on this computer without a key (the server is on its owner's computer: api/lib/device-transcribe.ts),
  * and each key keyFor (api/my-keys.ts) finds for them.
  */
-export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | "deviceTranscripts" | MyKeyEnv;
+export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | "deviceTranscripts" | MyKeyEnv | NeedWay["have"];
+
+/**
+ * A plug-in's other way to meet a tool's required row (ServerPlugin.needs, api/lib/plugin.ts): the row reads "An API key
+ * or <what>", and is met when `have` holds this way's id.
+ */
+export interface NeedWay {
+  tool: Tool;
+  what: string;
+  have: `plugin:${string}`;
+  /** the plug-in's Settings section that sets it up: the row's Set up shows it under the row's own form */
+  settings?: string;
+}
 
 /** The screen that sets a row up: API keys (its keys only), Apify, the Media Library, Providers, a project. */
 export type NeedForm = "keys" | "apify" | "library" | "ai" | "project";
@@ -153,47 +145,79 @@ export interface Need {
  * Review, Video Cleaner and Story Splitter need nothing. A transcripts row is also met by "deviceTranscripts": on the
  * person's own computer no key is needed.
  */
-const OWN_COMPUTER = "the Mac app transcribes without one; a key is faster";
+// One way of saying every row (owner, 2026-11-11: "no standard… each has its own personality"): `what` is the thing to
+// add, as Settings names it ("An Apify key", "An AI provider"; "An API key" where more than one key does: owner, 11-11);
+// an optional row adds what it gives after a colon. Home,
+// Settings → Tools and the tool's checklist all say a missing row the same way: needsLine, "Needs an Apify key".
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
     { what: "A project", anyOf: ["project"], form: "project" },
-    { what: "Posts to read: your own Apify key", anyOf: ["apify", "instagram"], form: "apify" },
-    { what: "AI to read posts and slides", anyOf: ["ai"], form: "ai", optional: true },
-    { what: "TypeSafe Jev: sharper picks", anyOf: ["TYPESAFE_API_KEY"], form: "keys", optional: true },
+    { what: "An Apify key", anyOf: ["apify", "instagram"], form: "apify" },
+    { what: "An AI provider: reads posts and slides", anyOf: ["ai"], form: "ai", optional: true },
+    { what: "A TypeSafe Jev key: sharper picks", anyOf: ["TYPESAFE_API_KEY"], form: "keys", optional: true },
   ],
   workshop: [
     { what: "A project", anyOf: ["project"], form: "project" },
-    { what: "Your AI, connected", anyOf: ["ownAi"], form: "ai" },
-    { what: "Perplexity: accuracy checks and deep research without your AI", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
+    { what: "An AI provider", anyOf: ["ownAi"], form: "ai" },
+    { what: "A Perplexity key: accuracy checks and deep research", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
   ],
-  enhance: [{ what: "An ElevenLabs or NVIDIA key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
+  enhance: [{ what: "An API key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
   captions: [
-    { what: "Deepgram: faster cloud transcripts (without it, your device transcribes)", anyOf: ["DEEPGRAM_API_KEY"], form: "keys", optional: true },
-    { what: "AI: the cadence pass", anyOf: ["ai"], form: "ai", optional: true },
+    { what: "A Deepgram key: faster transcripts", anyOf: ["DEEPGRAM_API_KEY"], form: "keys", optional: true },
+    { what: "An AI provider: Match cadence", anyOf: ["ai"], form: "ai", optional: true },
   ],
   review: [],
   media: [
-    { what: "A library: where your files live", anyOf: ["library"], form: "library" },
-    { what: `Transcripts: a Deepgram or OpenAI key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
-    { what: "Search by meaning: an OpenAI key", anyOf: ["OPENAI_API_KEY"], form: "keys", optional: true },
-    { what: "AI: descriptions", anyOf: ["ai"], form: "ai", optional: true },
+    { what: "A Media Library", anyOf: ["library"], form: "library" },
+    { what: "An API key: transcripts", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
+    { what: "An OpenAI key: search by meaning", anyOf: ["OPENAI_API_KEY"], form: "keys", optional: true },
+    { what: "An AI provider: descriptions", anyOf: ["ai"], form: "ai", optional: true },
   ],
   editor: [
-    { what: "AI", anyOf: ["ai"], form: "ai" },
-    { what: "Your footage in a Media Library", anyOf: ["library"], form: "library" },
-    { what: `Transcripts: a Deepgram or OpenAI key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
+    { what: "An AI provider", anyOf: ["ai"], form: "ai" },
+    { what: "A Media Library", anyOf: ["library"], form: "library" },
+    { what: "An API key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
   clean: [],
   stories: [],
   notes: [
-    { what: `Transcripts: a Deepgram key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
-    { what: "AI: summaries and chapters", anyOf: ["ai"], form: "ai" },
+    { what: "A Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
+    { what: "An AI provider", anyOf: ["ai"], form: "ai" },
   ],
   guides: [
-    { what: `Transcripts: a Deepgram key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
-    { what: "AI: writes the guide", anyOf: ["ai"], form: "ai" },
+    { what: "A Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
+    { what: "An AI provider", anyOf: ["ai"], form: "ai" },
   ],
 };
+
+/** The rows as the app ships them, before any plug-in's way. */
+const SHIPPED_NEEDS: Record<Tool, readonly Need[]> = { ...TOOL_NEEDS };
+
+/**
+ * Puts the plug-ins' ways (NeedWay) into TOOL_NEEDS: a tool's first required row also names each way and is met by it.
+ * Made again from the shipped rows each time, so a way that is gone is gone. The server calls it when it mounts its
+ * plug-ins (mountPlugins), the page each time a setup view arrives (src/lib/setup.ts). No ways: the shipped rows.
+ */
+export function applyNeedWays(ways: readonly NeedWay[] = []): void {
+  for (const t of TOOLS) {
+    const mine = ways.filter((w) => w.tool === t);
+    const first = SHIPPED_NEEDS[t].findIndex((n) => !n.optional);
+    TOOL_NEEDS[t] = SHIPPED_NEEDS[t].map((n, i) =>
+      i !== first || !mine.length
+        ? n
+        : { ...n, what: [n.what, ...mine.map((w) => w.what.charAt(0).toLowerCase() + w.what.slice(1))].join(" or "), alsoMetBy: [...(n.alsoMetBy ?? []), ...mine.map((w) => w.have)] },
+    );
+  }
+}
+
+/** Missing rows' names in a sentence: "a project and an Apify key". */
+export function needNames(needs: readonly Need[]): string {
+  const names = needs.map((n) => n.what.charAt(0).toLowerCase() + n.what.slice(1));
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** Missing rows in one line, as every screen says them: "Needs a project and an Apify key". */
+export const needsLine = (needs: readonly Need[]): string => `Needs ${needNames(needs)}`;
 
 /** A tool's rows split by what is still missing: `ready` when no required row is. */
 export function readiness(tool: Tool, have: Iterable<Have>): { ready: boolean; missing: Need[]; extra: Need[] } {
@@ -222,4 +246,6 @@ export interface SetupView {
   have: Have[];
   /** the AI CLIs that hold this account's Creator Toolset entry (stored in its setup file; they get the new key on each add) */
   mcpTo: CliId[];
+  /** the plug-ins' other ways to meet a tool's row (applyNeedWays); absent when no plug-in has one */
+  ways?: NeedWay[];
 }

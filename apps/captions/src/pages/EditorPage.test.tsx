@@ -15,6 +15,8 @@ vi.mock("@/lib/setup", () => ({ confirmHeavy: async () => true, openToolSetup: (
 vi.mock("@/components/FootageFolderCard", () => ({ FootageFolderCard: () => null }));
 
 let posted: Record<string, unknown>[];
+let calls: { url: string; body: Record<string, unknown> }[];
+let installed: { folders: object[]; steps: object[] };
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 const flush = () => act(async () => new Promise<void>((done) => setTimeout(done, 0)));
@@ -25,15 +27,21 @@ const style = (id: string, name: string, more: Partial<EditingStyle> = {}): Edit
 
 beforeEach(() => {
   posted = [];
+  calls = [];
+  installed = { folders: [], steps: [] };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
     if (init?.method === "POST" && url === "/api/editor") {
       posted.push(JSON.parse(init.body as string));
       return reply({ id: "edit_1" });
     }
-    if (init?.method === "POST") return reply({});
+    if (init?.method === "POST") {
+      calls.push({ url, body: JSON.parse((init.body as string) ?? "{}") });
+      return reply({});
+    }
     if (url === "/api/library") return reply({ libraries: [{ id: "lib_1", name: "Tiny Acrobatics" }] });
-    if (url.includes("/collections")) return reply({ collections: [] });
+    if (url.includes("/collections")) return reply({ collections: installed.folders });
+    if (url === "/api/edit-steps") return reply({ steps: installed.steps, canAdd: false });
     return reply({ items: [{ id: "ast_1", versionId: "ver_1", title: "Take one", state: "ready", thumbUrl: null }] });
   });
 });
@@ -46,14 +54,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function open(styles: EditingStylesView | null) {
+async function open(styles: EditingStylesView | null, onStyles?: () => Promise<unknown>) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root!.render(
       <MemoryRouter>
-        <NewEditSheet open onClose={() => {}} styles={styles} />
+        <NewEditSheet open onClose={() => {}} styles={styles} onStyles={onStyles} />
       </MemoryRouter>,
     );
   });
@@ -115,5 +123,63 @@ describe("New edit: the Style select", () => {
     await choose("edit-style", "");
     expect(field<HTMLSelectElement>("edit-versions")!.value).toBe("3"); // what is in the fields stays
     expect(await create()).toMatchObject({ style: null, versions: 3 });
+  });
+});
+
+describe("New edit: How do you like to work?", () => {
+  const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim().startsWith(text))!;
+  const press = async (text: string) => {
+    act(() => button(text).click());
+    await flush();
+    await flush();
+  };
+  const blur = { id: "blur", title: "Blur faces", about: "", state: "on", use: true, values: { who: "everyone" } };
+
+  it("comes first for someone with no style who has not answered it; once answered, or with a style, New edit is as it was", async () => {
+    await open({ styles: [], last: null }, async () => {});
+    expect(document.body.textContent).toContain("How do you like to work?");
+    expect(field("edit-name")).toBeNull();
+    for (const answered of [{ styles: [], last: null, asked: true as const }, { styles: [style("s_a", "Mine")], last: null }]) {
+      act(() => root!.unmount());
+      await open(answered, async () => {});
+      expect(document.body.textContent).not.toContain("How do you like to work?");
+      expect(field("edit-name")).not.toBeNull();
+    }
+  });
+
+  it("Full edit: the B-roll folder and the post-processing steps switched on, 2 versions at 1080x1920, saved as My way; then the styles are read again", async () => {
+    installed = { folders: [{ id: "col_1", name: "B-roll", parentId: null, kind: "manual", createdBy: "me" }], steps: [blur, { ...blur, id: "voice", title: "Voice", use: false }] };
+    const done = vi.fn(async () => {});
+    await open({ styles: [], last: null }, done);
+    expect(button("Full edit").getAttribute("aria-pressed")).toBe("true");
+    expect([...document.querySelectorAll('[role="switch"]')].map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "false"]); // as Settings has them in use
+    await press("Continue");
+    expect(calls).toEqual([{ url: "/api/editor/styles", body: { name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, brollCollectionId: "col_1", steps: [{ id: "blur", values: { who: "everyone" } }] } }]);
+    expect(done).toHaveBeenCalledOnce();
+  });
+
+  it("Rough cut only: no B-roll and no steps; with none installed, Full edit has one way to the plug-ins", async () => {
+    await open({ styles: [], last: null }, async () => {});
+    expect(document.querySelector('a[href="/community/plugins"]')).not.toBeNull();
+    await press("Rough cut only");
+    expect(document.querySelector('a[href="/community/plugins"]')).toBeNull();
+    await press("Continue");
+    expect(calls.at(-1)!.body).toEqual({ name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, brollCollectionId: null, steps: [] });
+  });
+
+  it("Edit in passes: what Full edit saves, with passes on", async () => {
+    installed = { folders: [{ id: "col_1", name: "B-roll", parentId: null, kind: "manual", createdBy: "me" }], steps: [blur] };
+    await open({ styles: [], last: null }, async () => {});
+    await press("Edit in passes");
+    await press("Continue");
+    expect(calls.at(-1)!.body).toEqual({ name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, passes: true, brollCollectionId: "col_1", steps: [{ id: "blur", values: { who: "everyone" } }] });
+  });
+
+  it("Not now answers it without a style", async () => {
+    const done = vi.fn(async () => {});
+    await open({ styles: [], last: null }, done);
+    await press("Not now");
+    expect(calls).toEqual([{ url: "/api/editor/styles/asked", body: {} }]);
+    expect(done).toHaveBeenCalledOnce();
   });
 });

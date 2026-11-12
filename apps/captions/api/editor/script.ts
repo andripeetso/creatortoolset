@@ -6,6 +6,8 @@ import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { NeedsKey } from "../library/transcribe";
 import { packInstructions } from "../lib/packs";
+import { skillText } from "../lib/skills";
+import { finishedBlock } from "./finished";
 import { readStep, saveStep, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
@@ -39,6 +41,8 @@ export interface ScriptInput {
   targetS: number;
   /** Installed packs' instructions for editor.script (api/lib/packs.ts), added after the app's own system prompt. */
   packText?: string;
+  /** For an edit in an editing style: the closest edits its maker finished in that style (finished.ts), after the target length. */
+  examples?: string;
 }
 
 export function scriptPrompt(i: ScriptInput): { system: string; user: string } {
@@ -48,6 +52,7 @@ export function scriptPrompt(i: ScriptInput): { system: string; user: string } {
   if (i.script.trim()) parts.push(`The script the takes were read from:\n${i.script.trim()}`);
   parts.push(`Versions: ${i.versions}`);
   if (i.targetS) parts.push(`Target length: about ${i.targetS} seconds`);
+  if (i.examples) parts.push(i.examples);
   parts.push(`Sources:\n${ids.map((id) => `${tag(id)} = ${JSON.stringify(i.titles[id])}`).join("\n")}`);
   parts.push(
     `Sentences (number, source, seconds, text):\n${i.sentences.map((s) => `${s.n} ${tag(s.src)} ${s.s.toFixed(1)}-${s.e.toFixed(1)} ${s.text}`).join("\n")}`,
@@ -181,8 +186,10 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     script: edit.script,
     versions: edit.versions,
     targetS: edit.targetS,
-    // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts); no style adds nothing
-    packText: [await packInstructions(job.actor!, "editor.script", null), styleBlock(edit.style)].filter(Boolean).join("\n\n"),
+    // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts), then the one skill
+    // the style names (api/lib/skills.ts, cut there); no style adds nothing
+    packText: [await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
+    examples: finishedBlock(edit),
   });
   let raw: RawScript;
   try {
@@ -195,5 +202,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   const mapped = takeMap(raw, analysis.sentences, edit.versions);
   if (!mapped.lines.length) throw new Error(`The AI's answer had no usable lines (${mapped.notes.slice(0, 3).join("; ")})`);
   const { plans, notes } = allocate(mapped.lines, mapped.versions);
+  // the plan as the AI gave it, kept beside the one the person goes on to change: its lines and takes by number, none of its words
+  await saveStep(edit.id, "first", { plans: plans.map((p) => ({ name: p.name, lines: p.lines })) });
   await saveStep(edit.id, "plan", { lines: mapped.lines, plans, notes: [...mapped.notes, ...notes] });
 }

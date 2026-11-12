@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
-import type { AuthVars } from "../auth";
+import { MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
+import { foundIn, saidInChat } from "../assistant";
+import { innerCall, jobTurn, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
@@ -10,8 +12,12 @@ import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
-import { createStyle, deleteStyle, stylesView, updateStyle } from "./styles";
+import { forgetFinished, finishedOf, removeFinished } from "./finished";
+import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { animationApp } from "./animation-styles";
+import { cardsApp } from "./cards/routes";
+import { markPasses, nextPass } from "./passes";
+import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
 /**
@@ -29,6 +35,9 @@ const body = async (c: C): Promise<Record<string, unknown>> => {
   return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
 };
 
+/** A request an AI makes (one of its tools' own calls, or one with an AI key), not the person at their own screen. */
+const viaTool = (c: C) => !!innerCall.getStore() || !!c.req.header("authorization");
+
 /** The caller's own edit, or null (answer 404). */
 function load(c: C): { e: EditMeta } | null {
   const e = readEdit(c.req.param("id") ?? "");
@@ -41,7 +50,7 @@ onUploadDone.push((id, version) => void uploadFinished(id, version));
 editorApp.post("/", async (c) => {
   const user = c.get("user").username;
   try {
-    const e = await createEdit(user, await body(c));
+    const e = await createEdit(user, await body(c), viaTool(c));
     return e ? c.json({ id: e.id }) : notFound(c);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
@@ -82,23 +91,96 @@ editorApp.put("/defaults/:slot", async (c) => {
 // the person's editing styles (contracts/editor-styles.ts); registered before /:id, as the defaults are
 editorApp.get("/styles", (c) => c.json(stylesView(c.get("user").username)));
 
+const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
+
+/**
+ * A style's notes go into the script prompt of every later edit in that style, so no AI writes them. A save that comes
+ * from a reply the assistant is writing (it carries that reply's job token) keeps notes only when they stand in
+ * something the person typed in that chat: the check a remembered fact is held to (saidInChat, foundIn, and its
+ * shortest quote, so notes are never put together a word at a time), and what is kept is their wording. A scheduled
+ * run has nobody typing, so it saves no notes. A save from the person's own page, or from their own AI with an access
+ * key, is theirs and is not checked. True when the save is refused.
+ */
+function notesNotTyped(c: C, b: Record<string, unknown>): boolean {
+  const auth = c.req.header("authorization");
+  if (!/^Bearer ctj_/.test(auth ?? "")) return false;
+  const said = saidInChat(c.get("user").username, jobTurn(auth) ?? "") ?? [];
+  for (const k of ["notes", "addNotes"]) {
+    const sent = b[k];
+    if (typeof sent !== "string" || !sent.trim()) continue;
+    const typed = tidy(sent).length < MEMORY_QUOTE_MIN ? null : said.map((m) => foundIn(sent, m.text)).find((t) => !!t);
+    if (!typed) return true;
+    b[k] = typed;
+  }
+  return false;
+}
+
 /** A new style from the fields sent, or with `fromEdit` from an edit of the caller's own (its choices, never its brief, script or footage). */
 editorApp.post("/styles", async (c) => {
   const user = c.get("user").username;
   const b = await body(c);
+  if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
   const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
   if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
-  const made = createStyle(user, b, from ?? undefined);
+  const made = createStyle(user, b, from ?? undefined, b.first === true);
   return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
 });
 
+/** New edit's "How do you like to work?" put off (Not now): it is not shown again. */
+editorApp.post("/styles/asked", (c) => {
+  markAsked(c.get("user").username);
+  return c.json({ ok: true });
+});
+
+/** Changes the fields sent. `addNotes` adds a line under the notes the style has (one it already holds is not added twice). */
 editorApp.put("/styles/:id", async (c) => {
-  const changed = updateStyle(c.get("user").username, c.req.param("id"), await body(c));
+  const user = c.get("user").username;
+  const b = await body(c);
+  if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
+  if (typeof b.addNotes === "string" && b.addNotes.trim()) {
+    const had = findStyle(user, c.req.param("id"))?.notes ?? "";
+    const add = b.addNotes.trim();
+    b.notes = had.toLowerCase().includes(add.toLowerCase()) ? had : [had, add].filter(Boolean).join("\n");
+  }
+  const changed = updateStyle(user, c.req.param("id"), b);
   if (!changed) return notFound(c);
   return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
 });
 
-editorApp.delete("/styles/:id", (c) => (deleteStyle(c.get("user").username, c.req.param("id")) ? c.json({ ok: true }) : notFound(c)));
+// a deleted style takes the edits finished with it along (finished.ts)
+editorApp.delete("/styles/:id", (c) => {
+  const user = c.get("user").username;
+  if (!deleteStyle(user, c.req.param("id"))) return notFound(c);
+  forgetFinished(user, c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// the edits the person finished in a style, newest first, and × on one: it never counts for a style again
+editorApp.get("/styles/:id/finished", (c) => {
+  const user = c.get("user").username;
+  return findStyle(user, c.req.param("id")) ? c.json(finishedOf(user, c.req.param("id"))) : notFound(c);
+});
+
+editorApp.delete("/styles/:id/finished/:editId", async (c) =>
+  (await removeFinished(c.get("user").username, c.req.param("id"), c.req.param("editId"))) ? c.json({ ok: true }) : notFound(c));
+
+// the person's animation styles and their pictures (animation-styles.ts); before /:id, as the styles are
+editorApp.route("/animation-styles", animationApp);
+// a version's cards on the edit page: a still, the 👍, Make cards again (cards/routes.ts)
+editorApp.route("/", cardsApp);
+
+/** Carry on, for an edit in passes: every drafted version's next pass is queued (and recorded as done); 409 while it is being made, or when no pass is left. */
+editorApp.post("/:id/pass", async (c) => {
+  const r = load(c);
+  if (!r) return notFound(c);
+  const db = libraryDb();
+  if (db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id)) return c.json({ error: "This edit is still being made", code: "conflict" }, 409);
+  const queued = Object.fromEntries(draftNames(r.e.id).flatMap((n) => { const p = nextPass(r.e, n); return p ? [[n, p]] : []; }));
+  if (!Object.keys(queued).length) return c.json({ error: "Nothing left to do", code: "conflict" }, 409);
+  await markPasses(r.e.id, queued);
+  for (const [n, p] of Object.entries(queued)) enqueueJob(db, r.e.workspaceId, `${r.e.id}:${n}`, p, r.e.createdBy, true, "edit_jobs");
+  return c.json(viewOf(r.e));
+});
 
 editorApp.get("/:id", (c) => {
   const r = load(c);
@@ -123,7 +205,14 @@ editorApp.patch("/:id", async (c) => {
   delete patch.framing; // set per source in a later step
   // a flag the patch leaves out keeps its state
   const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
-  if (b.style === null) delete e.style;
+  if (b.style === null) {
+    delete e.style;
+    delete e.size; // an edit with no style is cut at the footage's size, as before
+  }
+  // whose words the name and the brief are now: an AI's tool's, or the person's own (finished.ts keeps only theirs)
+  const byTool = byToolAfter(r.e.byTool, patch, viaTool(c)).byTool;
+  if (byTool) e.byTool = byTool;
+  else delete e.byTool;
   await saveEdit(e);
   return c.json(viewOf(readEdit(e.id)!));
 });
@@ -239,8 +328,10 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   if (!["otio", "fcpxml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml or zip", code: "invalid" }, 400);
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
-  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
-  const m = await mediaPaths(r.e, Object.keys(tl.sources));
+  // (a card is the edit's own file, not footage: TimelineSource.file)
+  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources).filter((k) => !tl.sources[k]!.file)) !== r.e.workspaceId) return notFound(c);
+  if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
+  const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip");
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
@@ -252,6 +343,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const at = { mtime: new Date("2000-01-01T00:00:00Z") };
   zip.addBuffer(Buffer.from(await otio()), `${base}/${base}.otio`, at);
   zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
+  for (const o of m.own) zip.addFile(o.file, `${base}/media/${o.name}`, at);
   if (m.downloads.length) {
     const hours = LINK_TTL_S / 3600;
     const list = [`Download these into the media folder next to the timeline, then open the timeline (links work for ${hours} hours):`, ""];

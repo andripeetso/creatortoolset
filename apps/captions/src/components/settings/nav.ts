@@ -1,5 +1,4 @@
 import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users, WandSparkles } from "lucide-react";
-import { BookOpenText } from "lucide-react";
 import { settingsWithPlugins, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -12,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "editor", "folders", "providers", "devices", "automations", "skills", "memory", "usage", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "editor", "folders", "providers", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
   "servers", "team", "admin", "account",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -36,16 +35,13 @@ interface BuiltinEntry extends SettingsEntry {
   listed?: false;
 }
 
-/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "People" are headed. */
+/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "Plug-ins", "People" are headed. */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "tools", title: "Tools", icon: LayoutGrid },
-  // the AI Editor's post-processing steps: plug-ins the Mac app switches on (EditorStepsSection)
-  { id: "editor", title: "AI Editor", icon: WandSparkles, macOnly: true, localOnly: true },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
-  { id: "skills", title: "Skills", icon: BookOpenText, group: "AI" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "AI" },
   { id: "usage", title: "Usage", icon: Gauge, group: "AI" },
   { id: "devices", title: "Devices", icon: Monitor, group: "Hardware" },
@@ -54,6 +50,9 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "Connections" },
+  // the AI Editor's post-processing steps: plug-ins the Mac app switches on (EditorStepsSection); the plug-ins' own
+  // sections join this block (lib/plugin.ts PLUGINS_GROUP)
+  { id: "editor", title: "AI Editor", icon: WandSparkles, group: "Plug-ins", macOnly: true, localOnly: true },
   { id: "team", title: "Team", icon: Users, group: "People", hostedOnly: true },
   { id: "admin", title: "Admin", icon: ShieldCheck, group: "People", hostedOnly: true, adminOnly: true },
   { id: "account", title: "Account", icon: UserRound, listed: false },
@@ -66,6 +65,7 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
   "this-mac": "/settings/devices",
   "my-keys": "/settings/keys",
   packs: "/community/installed",
+  skills: "/community/skills",
 };
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */

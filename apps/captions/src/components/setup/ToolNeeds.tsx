@@ -6,13 +6,15 @@ import {
 } from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { PLANS, type PlanId } from "@contracts/plans";
-import { DEFAULT_TOOLS, NEED_SENTENCE, NEED_SHORT, readiness, TOOL_LINES, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { DEFAULT_TOOLS, NEED_SENTENCE, readiness, TOOL_LINES, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
 import { createProject } from "@/lib/workshop";
+import { useSetup } from "@/lib/setup";
+import { webPlugins } from "@/plugins.gen";
 import { Choice } from "./Choice";
 
 const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
@@ -42,11 +44,20 @@ function NeedForm({ need }: { need: Need }) {
   );
 }
 
-/** The welcome's wording for a need: its short name and one plain sentence (contracts/tools.ts). */
-const shortOf = (n: Need): string => {
-  const s = NEED_SHORT[n.anyOf[0]];
-  return s.charAt(0).toUpperCase() + s.slice(1);
-};
+/** A plug-in's Settings sections that also meet this row (NeedWay.settings), each as Settings draws it. */
+function WaySections({ need }: { need: Need }) {
+  const ways = useSetup((s) => s.view?.ways);
+  const ids = new Set((ways ?? []).filter((w) => w.settings && need.alsoMetBy?.includes(w.have)).map((w) => w.settings));
+  return webPlugins
+    .flatMap((p) => p.settings ?? [])
+    .filter((s) => ids.has(s.id))
+    .map((s) => (
+      <div key={s.id} className="mt-3">
+        <h4 className="mb-2 text-xs font-medium">{s.title}</h4>
+        {s.body}
+      </div>
+    ));
+}
 
 /** One checklist line: ticked or open, its name and sentence, its one button; what the button opens goes under it. */
 export function NeedLine({ met, name, line, button, children }: { met: boolean; name: ReactNode; line?: ReactNode; button?: ReactNode; children?: ReactNode }) {
@@ -71,15 +82,21 @@ export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: 
   return (
     <NeedLine
       met={met}
-      name={welcome ? shortOf(need) : need.what}
+      name={need.what}
       line={welcome && NEED_SENTENCE[need.anyOf[0]]}
       button={
         <Button size="sm" variant="outline" className="h-7" autoFocus={focus} onClick={() => setOpen(!open)}>
-          {open ? "Close" : need.form === "keys" ? "Add key" : need.form === "ai" ? "Connect" : "Set up"}
+          {open ? "Close" : need.form === "keys" && !need.alsoMetBy?.some((h) => h.startsWith("plugin:")) ? "Add key" : need.form === "ai" ? "Connect" : "Set up"}
         </Button>
       }
     >
-      {open && (form ?? <NeedForm need={need} />)}
+      {open &&
+        (form ?? (
+          <>
+            <NeedForm need={need} />
+            <WaySections need={need} />
+          </>
+        ))}
     </NeedLine>
   );
 }

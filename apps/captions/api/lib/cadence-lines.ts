@@ -72,9 +72,11 @@ export const PIECE_WORDS = 500;
  * on the Mac is never hedged: a second run only doubles the Mac's work.
  */
 export const HEDGE_AFTER_MS = 40_000;
-/** How long before a hedged second request: never on the Mac (15 min = past any answer). */
+/** A local model answers one request at a time, on the person's own video card: a second, identical one only doubles its work. */
+const onLocalModel = (provider?: ProviderOpts) => !!provider?.only?.includes("localModel");
+/** How long before a hedged second request: never on the Mac or a local model (15 min = past any answer). */
 export const hedgeAfter = (opts: { provider?: ProviderOpts; hedgeAfterMs?: number }) =>
-  opts.hedgeAfterMs ?? (opts.provider?.only?.includes("mac") ? 15 * 60_000 : HEDGE_AFTER_MS);
+  opts.hedgeAfterMs ?? (opts.provider?.only?.includes("mac") || onLocalModel(opts.provider) ? 15 * 60_000 : HEDGE_AFTER_MS);
 /** Words of neighbouring text each piece sees for context. */
 const CONTEXT_WORDS = 40;
 /** Model requests in flight at once for one transcript. */
@@ -268,7 +270,7 @@ export async function splitPoints(
             (answer) => marksFromLines(parseThoughtLines(answer), words),
             opts.provider,
           ),
-        HEDGE_AFTER_MS,
+        onLocalModel(opts.provider) ? 15 * 60_000 : HEDGE_AFTER_MS,
         opts.signal,
       );
     }),

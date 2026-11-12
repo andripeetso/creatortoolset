@@ -189,13 +189,24 @@ export interface LibrarySummary {
 
 /**
  * Where a library's files live, as its owner sets it (PUT /api/library/:id/storage): the server's disk, the server's
- * bucket (set up by whoever runs the server), or the library's own S3-compatible bucket. Own keys may be left out to
- * keep the ones already saved; they are never sent back.
+ * bucket (set up by whoever runs the server), the library's own S3-compatible bucket, or Bunny Storage. Own keys may be
+ * left out to keep the ones already saved; they are never sent back. Bunny takes the account's API key once: the server
+ * makes a storage zone and a token-signed pull zone with it and keeps only the zone's own keys, never the account key.
  */
 export type LibraryStorageInput =
   | { kind: "local" }
   | { kind: "s3"; mode: "server" }
-  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string };
+  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string }
+  | { kind: "bunny"; apiKey?: string; region?: BunnyRegion };
+
+/** Bunny Storage's main regions, as its API names them. */
+export const BUNNY_REGIONS = [
+  { id: "DE", name: "Europe (Germany)" },
+  { id: "NY", name: "New York" },
+  { id: "LA", name: "Los Angeles" },
+  { id: "SG", name: "Singapore" },
+] as const;
+export type BunnyRegion = (typeof BUNNY_REGIONS)[number]["id"];
 
 /** GET /api/library/:id/usage, the owner only. */
 export interface LibraryStorage {
@@ -204,6 +215,7 @@ export interface LibraryStorage {
   endpoint?: string; // own bucket only
   region?: string;
   bucket?: string;
+  zone?: string; // Bunny: the storage zone's name
   pathStyle?: boolean;
   keysSet: boolean; // own bucket: its keys are saved (they never leave the server)
   serverBucket: boolean; // the server offers a bucket for libraries
@@ -332,25 +344,24 @@ export interface Posting {
 }
 
 /**
- * Own-bucket presets for the storage form: the endpoint, region and URL style each S3-compatible provider wants. A preset
- * whose endpoint is per account or per server (R2, MinIO) sets `endpoint` to "" and `endpointHint`, shown as the field's
- * placeholder: the owner types the real address (the server rejects `<…>` text in it). Path-style URLs work on all four,
- * and MinIO needs them.
+ * Own-bucket presets for the storage form: Amazon S3 and Cloudflare R2 (with Bunny, the three storages offered; any other
+ * S3-compatible provider is typed in by hand), and where each makes its keys. R2's endpoint is per account: `endpoint` is "" and
+ * `endpointHint`, shown as the field's placeholder: the owner types the real address (the server rejects `<…>` text in
+ * it). Amazon's endpoint is empty for real: the SDK finds it from the region. The bucket need not exist yet: saving
+ * makes it, and gives it the CORS rule direct uploads need when it has none.
  */
 export const S3_PRESETS = [
-  { id: "r2", name: "Cloudflare R2", endpoint: "", endpointHint: "https://<account-id>.r2.cloudflarestorage.com", region: "auto", pathStyle: true },
-  { id: "b2", name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.com", endpointHint: "", region: "us-west-004", pathStyle: true },
-  { id: "wasabi", name: "Wasabi", endpoint: "https://s3.us-east-1.wasabisys.com", endpointHint: "", region: "us-east-1", pathStyle: true },
-  { id: "minio", name: "MinIO", endpoint: "", endpointHint: "https://your-minio-host:9000", region: "us-east-1", pathStyle: true },
+  { id: "aws", name: "Amazon S3", endpoint: "", endpointHint: "", region: "us-east-1", pathStyle: false, keysUrl: "https://console.aws.amazon.com/iam/home#/users" },
+  { id: "r2", name: "Cloudflare R2", endpoint: "", endpointHint: "https://<account-id>.r2.cloudflarestorage.com", region: "auto", pathStyle: true, keysUrl: "https://dash.cloudflare.com/?to=/:account/r2/api-tokens" },
 ] as const;
 
 export type S3PresetId = (typeof S3_PRESETS)[number]["id"];
 
 /**
- * The form with a preset's region and path-style set, and its endpoint when the preset has a fixed one (an empty preset
- * endpoint keeps what the field holds); the bucket and the keys are left as they are.
+ * The form with a preset's region and path-style set, and its endpoint: a fixed one is filled in, one per account
+ * (`endpointHint`) keeps what the field holds, and Amazon's clears it. The bucket and the keys are left as they are.
  */
 export function applyS3Preset<T extends { endpoint: string; region: string; pathStyle: boolean }>(form: T, id: S3PresetId): T {
   const p = S3_PRESETS.find((x) => x.id === id);
-  return p ? { ...form, endpoint: p.endpoint || form.endpoint, region: p.region, pathStyle: p.pathStyle } : form;
+  return p ? { ...form, endpoint: p.endpoint || (p.endpointHint ? form.endpoint : ""), region: p.region, pathStyle: p.pathStyle } : form;
 }

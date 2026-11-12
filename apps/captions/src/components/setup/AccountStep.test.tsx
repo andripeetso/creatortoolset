@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { AccountSetupView, AccountStepView, offersAccount, parseProviders, type AccountState, type Provider } from "./AccountStep";
+import { AccountSetupView, AccountStepView, linkedOf, offersAccount, parseProviders, type AccountState, type Provider } from "./AccountStep";
 
 const all: Provider[] = ["apple", "google", "github"];
 const view = (account: AccountState, providers: Provider[] = all) =>
@@ -102,4 +102,14 @@ it("the account screen after a press: signed in says who; a closed sheet says no
   }
   // opened with nothing to offer (an old link): one plain line, no button
   expect(setup({ state: "signedOut" }, [])).toContain("Sign-in is not available right now.");
+});
+
+it("reads the sign-ins linked to the account, with each one's email, and none when signed out", () => {
+  const a = { state: "signedIn", provider: "google", logins: "github,apple,microsoft", "login.github": "sam@gh.test" } as AccountState;
+  expect(linkedOf(a)).toEqual([
+    { provider: "github", email: "sam@gh.test" },
+    { provider: "apple", email: "" },
+  ]);
+  expect(linkedOf({ state: "signedIn", logins: "" })).toEqual([]);
+  expect(linkedOf({ state: "signedOut" })).toEqual([]);
 });

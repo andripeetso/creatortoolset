@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_VERSIONS } from "@contracts/editor";
-import type { EditingStylesView } from "@contracts/editor-styles";
+import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { createEdit, footageTarget, listEdits, listStyles, runEdit } from "@/lib/editor";
+import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,9 @@ import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/comp
 import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
+import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
 import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
+import { FirstWay } from "./editor/FirstWay";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -43,8 +45,9 @@ const STATE_TONE: Record<string, string> = {
   done: "bg-emerald-500/15 text-emerald-500",
   failed: "bg-red-500/15 text-red-500",
   needs_key: "bg-amber-500/15 text-amber-600",
+  stopped: "bg-zinc-500/15 text-zinc-500",
 };
-export const STATE_LABEL: Record<string, string> = { queued: "Queued", running: "Running", done: "Done", failed: "Failed", needs_key: "Needs setup" };
+export const STATE_LABEL: Record<string, string> = { queued: "Queued", running: "Running", done: "Done", failed: "Failed", needs_key: "Needs setup", stopped: "Stopped" };
 
 export function StateBadge({ state }: { state: string }) {
   return <Badge className={cn("border-transparent", STATE_TONE[state])}>{STATE_LABEL[state] ?? state}</Badge>;
@@ -73,15 +76,40 @@ export default function EditorPage() {
   // the person's editing styles: the second tab (/editor?tab=styles), and New edit's Style select. `own`: it is read again after this window's own saves
   const styleList = useCachedLoad<EditingStylesView>("/api/editor/styles", listStyles, { own: true });
   const [openStyle, setOpenStyle] = useState<OpenStyle>(null);
-  const tab = params.get("tab") === "styles" ? "styles" : "edits";
+  // the person's animation styles: the third tab (/editor?tab=animation)
+  const animationList = useCachedLoad<AnimationStylesView>("/api/editor/animation-styles", listAnimationStyles, { own: true });
+  const [openAnimation, setOpenAnimation] = useState<OpenAnimation>(null);
+  const asked = params.get("tab");
+  const tab = asked === "styles" || asked === "animation" ? asked : "edits";
   const tabs = (
-    <Tabs value={tab} onValueChange={(t) => setParams(t === "styles" ? { tab: t } : {})}>
+    <Tabs value={tab} onValueChange={(t) => setParams(t === "edits" ? {} : { tab: t })}>
       <TabsList>
         <TabsTrigger value="edits">Edits</TabsTrigger>
         <TabsTrigger value="styles">Editing styles</TabsTrigger>
+        <TabsTrigger value="animation">Animation styles</TabsTrigger>
       </TabsList>
     </Tabs>
   );
+
+  if (tab === "animation") {
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <AppBar tool="AI Editor">
+          {!!animationList.data?.styles.length && (
+            <Button size="sm" onClick={() => setOpenAnimation("new")}>
+              <Plus className="h-4 w-4" />
+              New animation style
+            </Button>
+          )}
+        </AppBar>
+        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
+          {tabs}
+          {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} />}
+          {!animationList.data && animationList.error && <p className="text-sm text-red-400">{animationList.error}</p>}
+        </main>
+      </div>
+    );
+  }
 
   // only one tab is drawn at a time: the styles tab has its own bar button and nothing of the edits list
   if (tab === "styles") {
@@ -160,7 +188,7 @@ export default function EditorPage() {
                 icon={Clapperboard}
                 name={e.name}
                 meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
-                badge={e.last && <StateBadge state={e.last.state} />}
+                badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 drag={folders.drag(e.id)}
                 actions={folders.folders.length > 0 || folders.open ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
               />
@@ -189,7 +217,7 @@ export default function EditorPage() {
                       {e.last && ` · ${e.last.kind}`}
                     </div>
                   </div>
-                  {e.last && <StateBadge state={e.last.state} />}
+                  {e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 </Link>
                 <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
               </li>
@@ -198,16 +226,18 @@ export default function EditorPage() {
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
       </main>
-      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} />
+      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} onStyles={styleList.refresh} />
     </div>
   );
 }
 
 /**
  * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder), then the brief.
- * `styles`: the person's editing styles. With none there is no Style select and the edit is made as it always was.
+ * `styles`: the person's editing styles. With none there is no Style select and the edit is made as it always was; with
+ * none and "How do you like to work?" not answered yet, the sheet asks that first (FirstWay), and `onStyles` reads the
+ * styles again once it is answered.
  */
-export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string }; styles?: EditingStylesView | null }) {
+export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string }; styles?: EditingStylesView | null; onStyles?: () => Promise<unknown> }) {
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [libId, setLibId] = useState("");
@@ -359,6 +389,9 @@ export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
+        {styles && !styles.styles.length && !styles.asked && onStyles ? (
+          <FirstWay onDone={onStyles} />
+        ) : (
         <form
           className="flex flex-col gap-4 p-4 pt-12"
           onSubmit={(e) => {
@@ -536,6 +569,7 @@ export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; 
             Create and run
           </Button>
         </form>
+        )}
       </SheetContent>
     </Sheet>
   );

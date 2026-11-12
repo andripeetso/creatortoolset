@@ -355,6 +355,15 @@ const idleWaiters = new Map<string, Set<() => void>>();
 const writeQ = new Map<string, Promise<unknown>>();
 let running = 0;
 
+/** What the Analyzer does for this account right now (posts read, accounts pulled, idea boards written), for Home (api/activity.ts). */
+export const analyzerWork = (username: string) => [
+  ...[...active.values()].filter((m) => m.status === "processing" && jobUsers.get(m.id)?.username === username)
+    .map((m) => ({ id: m.id, kind: "post" as const, name: m.creator.username ? `@${m.creator.username}` : m.shortcode || m.input, waits: m.step === "queued" })),
+  ...[...accountActive.values()].filter((m) => m.status === "processing" && jobUsers.get(`a:${m.id}`)?.username === username)
+    .map((m) => ({ id: m.id, kind: "account" as const, name: `@${m.username}`, waits: m.step === "queued" })),
+  ...[...boardLocks.keys()].filter((k) => k.startsWith(`${username}:`)).map((k) => ({ id: k, kind: "ideas" as const, name: "Ideas", waits: false })),
+];
+
 void mkdir(IG_ROOT, { recursive: true }).catch(() => {});
 void mkdir(ACCOUNTS_ROOT, { recursive: true }).catch(() => {});
 
@@ -1724,7 +1733,7 @@ async function visionSlide(
         images.push({ jpegBase64: buf.toString("base64") });
       }
     }
-    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai: aiFor(user, "analyzer", "Analyzer vision") });
     const { value, provider } = await completeVisionWithFallback(
       packText ? `${VISION_SYSTEM}\n\n${packText}` : VISION_SYSTEM,
       visionUserText({
@@ -2166,8 +2175,9 @@ function mergeLibraryIntoCatalog(catalog: CatalogItem[], posts: PostMeta[]): Cat
 }
 
 async function tagPost(meta: PostMeta, user: SessionUser, signal: AbortSignal): Promise<void> {
-  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
-  const tags = await completeWithFallback(packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM, await postReadText(meta), signal, parseTagsPayload, aiFor(user, "analyzer", "Analyzer tags"));
+  const ai = aiFor(user, "analyzer", "Analyzer tags");
+  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai });
+  const tags = await completeWithFallback(packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM, await postReadText(meta), signal, parseTagsPayload, ai);
   meta.tags = mergeTags(meta.tags, tags);
   bumpUsage(user.username, { aiRuns: 1 });
 }
@@ -2277,8 +2287,9 @@ async function generateIdeaBoard(
   const key = `${user.username}:${projectId ?? ""}`;
   const pending = boardLocks.get(key);
   if (pending) return pending;
-  const run = generateIdeaBoardNow(user, signal, projectId).finally(() => boardLocks.delete(key));
+  const run = generateIdeaBoardNow(user, signal, projectId).finally(() => (boardLocks.delete(key), announceSoon(user.username, "instagram")));
   boardLocks.set(key, run);
+  announceSoon(user.username, "instagram"); // Home's chip (api/activity.ts analyzerWork)
   return run;
 }
 
@@ -2300,7 +2311,7 @@ async function generateIdeaBoardNow(
   // the Analyzer's AI (Admin → Your AI), its usage on the board
   let usage: MacUsage | undefined;
   const mac = aiFor(user, "analyzer", "Idea board");
-  const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null);
+  const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null, { ai: mac });
   const parsed = await completeWithFallback(
     packText ? `${IDEA_BOARD_SYSTEM}\n\n${packText}` : IDEA_BOARD_SYSTEM,
     ideaBoardUserMessage(catalog, previous.length ? previous : undefined),
@@ -2322,13 +2333,14 @@ async function ideaPost(meta: PostMeta, user: SessionUser, signal: AbortSignal):
   const text = await postReadText(meta);
   const folders = await libraryIdeaFolders(user, meta.id);
   const titles = folders.map((f) => f.title);
-  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+  const ai = aiFor(user, "analyzer", "Analyzer filing");
+  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai });
   const idea = await completeWithFallback(
     packText ? `${IDEA_SYSTEM}\n\n${packText}` : IDEA_SYSTEM,
     ideaUserMessage(text, folders),
     signal,
     (answer) => parseIdeaPayload(answer, titles),
-    aiFor(user, "analyzer", "Analyzer filing"),
+    ai,
   );
   // a new folder name may still be a topic the library already has
   const tsKey = typesafeFor(user);
@@ -3006,13 +3018,14 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           .map((c) => c.captionPreview)
           .filter(Boolean)
           .join("\n");
-        const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+        const ai = aiFor(user, "analyzer", "Analyzer tags");
+        const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai });
         const tags = await completeWithFallback(
           packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM,
           [`@${meta.username}`, meta.biography || "", captions].filter(Boolean).join("\n"),
           signal,
           parseTagsPayload,
-          aiFor(user, "analyzer", "Analyzer tags"),
+          ai,
         );
         meta.tags = mergeTags(meta.tags, tags);
         bumpUsage(user.username, { aiRuns: 1 });

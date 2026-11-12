@@ -87,6 +87,8 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect((await call("other", "POST", `/api/editor/${id}/stop`)).status).toBe(404);
     const stopped = await json<Edit>(call("maker", "POST", `/api/editor/${id}/stop`));
     expect(stopped.jobs).toMatchObject([{ state: "failed", error: "Stopped" }]);
+    // the list says it was stopped, so Home does not call it a failure
+    expect((await json<EditSummary[]>(call("maker", "GET", "/api/editor"))).find((s) => s.id === id)?.last).toEqual({ kind: "analyze", state: "failed", stopped: true });
     expect((await call("maker", "DELETE", `/api/editor/${id}`)).status).toBe(200);
     expect((await call("maker", "GET", `/api/editor/${id}`)).status).toBe(404);
   });
@@ -136,6 +138,23 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect(e.jobs.map((j) => [j.kind, j.variant, j.state])).toEqual([["preview", "v1", "queued"]]);
     expect(e.previews).toEqual({});
     await call("maker", "POST", `/api/editor/${id}/stop`);
+  });
+
+  it("export refuses a version whose newest post step did not finish, and takes it again once post is done", async () => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a2"]));
+    await saveDraft(id, "v1", { timeline: { sources: { ver_a2: {} }, tracks: {}, markers: [], fps: 25, width: 1080, height: 1920, name: "v1" } as never, notes: [] });
+    enqueueJob(libraryDb(), "ws", `${id}:v1`, "post", "maker", true, "edit_jobs");
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'failed' WHERE edit_id = ? AND kind = 'post'").run(id);
+    const refused = await call("maker", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe("Post-processing did not finish on this version: run it again before you export");
+    // nor is a preview made from the older copies (it would be filed in Review as this cut)
+    const { previewStep } = await import("./preview");
+    const { readEdit } = await import("./store");
+    await expect(previewStep({ edit: readEdit(id)!, variant: "v1", signal: new AbortController().signal } as never)).rejects.toThrow("Post-processing did not finish");
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'done' WHERE edit_id = ? AND kind = 'post'").run(id);
+    // past the hold (this fixture's source has no file, so the export itself goes no further)
+    expect((await call("maker", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`)).status).not.toBe(409);
   });
 
   it("export reads the footage again: a source trashed since is 404, no links or download URLs made", async () => {

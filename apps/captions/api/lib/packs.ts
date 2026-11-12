@@ -1,13 +1,16 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { PACK_SLOTS, type InstalledPack, type Pack, type PackEditorItems, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
+import { PACK_SLOTS, isPackSkillSlot, type InstalledPack, type Pack, type PackEditorItems, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
 import { readOfficialPacks } from "../official-packs";
 import { packPresetStore, type PresetRecord } from "../presets";
 import { findUser } from "../users";
 import { env } from "./env";
 import { packItemInstaller } from "./plugin";
+import { slotSkills } from "./skills";
+import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import type { Framework } from "./workshop/types";
+import type { ProviderOpts } from "../ai-complete";
 
 /**
  * Installed packs. Install copies a pack's frameworks and caption styles into the person's account with
@@ -105,7 +108,7 @@ export async function ensureDefaults(username: string, ids = DEFAULT_PACKS): Pro
       if (state.packs.some((p) => p.id === id)) continue;
       const { installed } = await installInto(state, username, o.pack, o.level, { adopt: ADOPT_ONLY.has(id) });
       installed.default = true;
-      if (!on && Object.keys(installed.instructions).length) installed.off = ["*"];
+      if (!on && (Object.keys(installed.instructions).length || installed.skills?.length)) installed.off = ["*"];
     }
     state.defaultsSeen = [...done];
     await saveState(username, state);
@@ -240,6 +243,7 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       })(),
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
+      ...(pack.skills?.length ? { skills: pack.skills } : {}),
       ...(pack.home ? { home: pack.home } : {}),
       items: { frameworks, presets, designSystems },
       ...(held ? { held } : {}),
@@ -353,8 +357,36 @@ export function renderPackInstructions(packs: InstalledPack[], slot: PackSlot, p
   ].join("\n\n");
 }
 
-/** `renderPackInstructions` for a person, read from disk. */
-export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null): Promise<string> {
-  return renderPackInstructions(await listInstalled(username), slot, projectId);
+/** Whether an installed pack's text at a slot is the app's own shipped pack's, word for word (packs/*.ctpack.json). */
+export const isShippedText = (p: InstalledPack, slot: PackSlot): boolean =>
+  readOfficialPacks().some((o) => o.pack.id === p.id && o.pack.instructions?.[slot] === p.instructions[slot]);
+
+/**
+ * The AI programs that can only answer on the Mac for a job with no folder, no web and no assistant (apps/mac
+ * ClaudeRequest.swift): Claude (`--tools ""`), Codex (a read-only profile with no network: it may read, never send),
+ * Grok (its to-do list only) and OpenCode (acpRules: reads in its run folder, no web). Not Gemini (plan mode keeps its
+ * own web search, which a pack's words could steer), not Muse Code (it loads the MCP servers the person listed in its own
+ * settings), and not Cursor, Antigravity, Pi or a local ACP command (their own tools).
+ */
+export const TOOLS_OFF_DRIVERS: ReadonlySet<string> = new Set(["claude", "codex", "grok", "opencode"]);
+
+/** Whether a job's AI has no tools: the API key or a local model, or a Mac program from the list above. */
+export const runsWithoutTools = (ai: ProviderOpts): boolean => !ai.mac?.provider || TOOLS_OFF_DRIVERS.has(ai.mac.provider.driver);
+
+/**
+ * `renderPackInstructions` for a person, read from disk, and after it the slot's skills switched on (lib/skills.ts
+ * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. Every caller names
+ * the job's AI (`ai`), or says the run has tools (`tools`: the Workshop's turn on the Mac reads its folder and may search
+ * the web). A run with tools gets only the app's own shipped packs and of the skills only the person's own: text other
+ * people wrote never reaches an AI that can act on the person's computer. The Workshop's writing turn gets its skills
+ * as files (api/workshop.ts) and the script step only the one a style names (skillText).
+ */
+export async function packInstructions(username: string, slot: PackSlot, projectId: string | null | undefined, run: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
+  const packs = await listInstalled(username);
+  const shippedOnly = run.tools || !runsWithoutTools(run.ai);
+  const text = renderPackInstructions(shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);
+  if (!isPackSkillSlot(slot) || slot === "editor.script") return text;
+  const skills = await slotSkills(username, slot, projectId, shippedOnly ? [] : packs.filter((p) => packOn(p, projectId)), INSTRUCTIONS_MAX - (text ? text.length + 2 : 0), !shippedOnly);
+  return skills ? [text, skills].filter(Boolean).join("\n\n") : text;
 }
 

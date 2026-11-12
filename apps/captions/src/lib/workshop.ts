@@ -153,6 +153,13 @@ export function sessionStatusOf(status: SessionStatus | undefined): SessionStatu
   return status ?? "draft";
 }
 
+/**
+ * The statuses to set, in order, to bring a session from `from` back to `to` (an Undo). A shelved session is only ever
+ * picked up as Writing (the server's SESSION_MOVES), so going back further takes two.
+ */
+export const statusSteps = (from: SessionStatus, to: SessionStatus): SessionStatus[] =>
+  from === "shelved" && to !== "writing" ? ["writing", to] : [to];
+
 export function sessionStatusLabel(status: SessionStatus | undefined): string {
   const id = sessionStatusOf(status);
   return SESSION_STATUSES.find((s) => s.id === id)?.label ?? "Idea";

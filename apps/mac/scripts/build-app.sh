@@ -99,7 +99,7 @@ $url_types
   <key>LSUIElement</key><false/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>So you can talk to the assistant instead of typing, and your voice is in your screen recordings.</string>
-  <key>NSCameraUsageDescription</key><string>So your camera can be in your screen recordings.</string>
+  <key>NSCameraUsageDescription</key><string>So your camera can be in your screen recordings, and to record the screen of an iPhone or iPad on a cable.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
@@ -165,7 +165,7 @@ mkdir -p "$src_out/scripts"
 # HELD_STEPS: steps that are in the repo but not offered by a released app yet (the app lists the folders it finds
 # here), by folder name, space-separated. A step's name comes out in the commit that brings its two real edits (one with
 # no step on, one with it on). Empty is fine: the list below is read so that bash 3.2 with set -u takes an empty one.
-HELD_STEPS="face-blur"
+HELD_STEPS=""
 held=(); for s in $HELD_STEPS; do held+=(--exclude "/$s"); done
 for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the AI Editor's steps, put in on Turn on
   more=(); [ "$d" = editor-steps ] && more=(${held[@]+"${held[@]}"})

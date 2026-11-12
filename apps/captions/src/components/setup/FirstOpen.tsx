@@ -1,19 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { NEED_SHORT, readiness, TOOL_NAMES, type Have, type Need, type Tool } from "@contracts/tools";
+import { needNames, readiness, TOOL_NAMES, type Have, type Tool } from "@contracts/tools";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useMe } from "@/lib/auth";
 import { showAssistantNotice, useAssistant } from "@/lib/assistant";
 import { openSetupAt, toolForPath, useSetup, useSetupLive, useSetupShown, useWorkTalk } from "@/lib/setup";
 import { ToolNeeds } from "./ToolNeeds";
-
-/** "an Apify key and a Deepgram key" (8.3): the short names of the missing required rows, joined. */
-function joinNeeds(needs: readonly Need[]): string {
-  const names = needs.map((n) => NEED_SHORT[n.anyOf[0]]);
-  if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-}
 
 /** The text the chat path copies (8.2): the same request the assistant's chip sends. */
 const walkText = (tool: Tool) => `Walk me through setting up ${TOOL_NAMES[tool]}, one step at a time.`;
@@ -74,7 +67,7 @@ export function FirstOpen() {
     navigate("/settings/setup");
   };
   const askAssistant = () => {
-    const needs = joinNeeds(r.missing);
+    const needs = needNames(r.missing);
     showAssistantNotice({
       text: `${TOOL_NAMES[shown]} still needs ${needs}. Tap Walk me through it, and I'll go through each one with you, one step at a time.`,
       chip: { label: "Walk me through it", send: copy },

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -105,6 +105,8 @@ export function AssistantDock() {
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
+  /** Each video upload of this window, by its file id, so Stop can end it. ponytail: a removed chip's upload still runs to the end */
+  const uploads = useRef(new Map<string, AbortController>());
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -290,13 +292,18 @@ export function AssistantDock() {
         setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
         media = media.slice(0, Math.max(room, 0));
       }
-      // a video uploads at once; the message waits for it (Send is off until it's in)
+      // a video uploads at once, and the message may go as soon as the upload is made: the server waits for the rest.
+      // It keeps uploading after the message goes (its chip has left the box: the chat shows it as uploading)
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
         const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
         setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
-        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }))
-          .then((r) => patch({ id: r.id, pct: 100 }))
+        const ctl = new AbortController();
+        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }), (id) => {
+          uploads.current.set(id, ctl);
+          patch({ id });
+        }, ctl.signal)
+          .then((r) => patch({ id: r.id, pct: 100, done: true }))
           .catch((e) => patch({ error: e instanceof Error ? e.message : String(e) }));
       }
       if (!pics.length) return;
@@ -342,7 +349,8 @@ export function AssistantDock() {
   const connectedNow = !!view && view.provider !== "none";
   useEffect(() => {
     const next = queue[0];
-    if (!next || thinking || held || !connectedNow || sending.current) return;
+    // the server queues a message sent while a reply is being written: only a send in flight or a refused one holds this
+    if (!next || held || !connectedNow || sending.current) return;
     sending.current = true;
     void send(next).then((ok) => {
       sending.current = false;
@@ -351,14 +359,14 @@ export function AssistantDock() {
     });
     // send is a fresh function each render; the queue, the reply and the hold decide when to go
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, thinking, held, connectedNow]);
+  }, [queue, held, connectedNow]);
   /** A message (and the highlighted text it asks about) back in the box, after what's there. */
   const putBack = (it: Queued) => {
     setDraft((cur) => ({
       text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
-      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id }))],
+      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id, done: true }))],
       folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
     }));
     if (it.quote) setQuote(it.quote);
@@ -376,13 +384,21 @@ export function AssistantDock() {
     // the first thing sent ends the welcome and any notice a tool left
     set({ notice: null });
     welcome.end("sent");
-    if (thinking || busy || queue.length) setQueue((q) => [...q, it]);
+    // a reply being written doesn't hold it: the server queues it behind that reply
+    if (busy || queue.length) setQueue((q) => [...q, it]);
     // refused or failed: it comes back to the box rather than being lost
     else void send(it).then((ok) => !ok && putBack(it));
   };
   /** A notice's chip: its words go out as a message. */
   const chipSend = (text: string) => submit({ ...EMPTY_DRAFT, text });
-  const stop = () => void stopTurn().then((r) => r.ok && setView(r.data));
+  const stop = () => {
+    // Stop on a reply that waits for its videos: those videos stop uploading too (nothing will use them)
+    const msgs = view?.messages ?? [];
+    const w = [...msgs].reverse().findIndex((m) => m.role === "assistant" && m.status === "thinking" && m.wait?.for === "videos");
+    const i = w < 0 ? -1 : msgs.length - 1 - w;
+    for (const f of i > 0 ? (msgs[i - 1]!.files ?? []) : []) uploads.current.get(f.id)?.abort();
+    void stopTurn().then((r) => r.ok && setView(r.data));
+  };
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
     setHeld(false);
@@ -556,7 +572,6 @@ export function AssistantDock() {
           <button
             type="button"
             className={headBtn}
-            disabled={thinking}
             onClick={() => {
               stopSpeaking();
               setShowPast(false);
@@ -593,7 +608,6 @@ export function AssistantDock() {
         {view && showPast && (
           <PastList
             view={view}
-            busy={thinking}
             onOpen={(id) =>
               void openPast(id).then((r) => {
                 if (!r.ok) return setError(r.error);
@@ -777,7 +791,7 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
   );
 }
 
-function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
+export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -805,6 +819,7 @@ function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessa
               <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{f.name}</span>
+                {f.uploading && <span className="shrink-0 text-muted-foreground">Uploading</span>}
               </span>
             ))}
             {m.folders?.map((p) => (
@@ -838,11 +853,13 @@ function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessa
     return (
       <div className="space-y-1">
         <Steps steps={steps} working />
-        <Elapsed since={m.at} />
+        {/* a reply waiting for its videos or its turn isn't working yet: its wait line says what it waits for */}
+        {!m.wait && <Elapsed since={m.at} />}
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
         <ConfirmCards confirms={m.confirms} onView={onView} />
+        {m.wait && <p className="text-xs text-muted-foreground">{m.wait.text}</p>}
         <Dots />
       </div>
     );
@@ -953,7 +970,7 @@ const ago = (at: number) => {
 };
 
 /** Earlier chats, newest first: open one to read it or carry on; the bin deletes it for good. */
-function PastList({ view, busy, onOpen, onDelete }: { view: AssistantView; busy: boolean; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+function PastList({ view, onOpen, onDelete }: { view: AssistantView; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
   return (
     <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
       <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
@@ -963,12 +980,12 @@ function PastList({ view, busy, onOpen, onDelete }: { view: AssistantView; busy:
           <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">
             <button
               type="button"
-              disabled={busy}
               onClick={() => onOpen(p.id)}
-              className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-2 text-left disabled:opacity-50"
-              title={busy ? "Wait for the reply first" : "Open this chat"}
+              className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-2 text-left"
+              title="Open this chat"
             >
               <span className="min-w-0 flex-1 truncate">{p.title}</span>
+              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-label="Still answering" />}
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{ago(p.at)}</span>
             </button>
             <button

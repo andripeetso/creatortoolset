@@ -113,6 +113,12 @@ export class Deck {
     this.applySound();
   }
 
+  /** Whether the showing video plays its own sound (off while the editor plays the sound itself: sound.ts). */
+  setSound(on: boolean) {
+    this.sound = on;
+    this.applySound();
+  }
+
   /** Moves the showing video while it is not playing (the picture follows a drag at once). */
   seek(t: number) {
     const a = this.showing;

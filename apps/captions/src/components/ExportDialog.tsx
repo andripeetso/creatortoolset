@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useStudio, clipRenderData, getClipSnapshot, retainClipSourceFile } from "@/lib/store";
 import { buildAss, buildSrt, buildVtt } from "@/lib/ass";
+import { exportBase, exportName, renderSpecOf } from "@/lib/export-request";
 import {
   FORMAT_LABELS,
   batchExports,
@@ -275,17 +276,8 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
   // export filenames: {project}_{clip} — the server appends "-captioned"
   const fileName = useStudio((s) => s.fileName);
-  const projBase = fileName
-    .trim()
-    .replace(/\.[^.]+$/, "")
-    .replace(/[^\w.-]+/g, "_");
-  const named = (clipName: string) => {
-    const cb = (clipName || "captions").replace(/\.[^.]+$/, "");
-    if (!projBase || cb.toLowerCase().startsWith(projBase.toLowerCase())) {
-      return cb;
-    }
-    return `${projBase}_${cb}`;
-  };
+  const projBase = exportBase(fileName);
+  const named = (clipName: string) => exportName(fileName, clipName);
   const base = named(activeClip?.name || "captions");
   const tabFormats = FORMATS.filter((f) => f.tab === tab);
   const selected = FORMATS.find((f) => f.id === format)!;
@@ -436,14 +428,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
         filename: `${name}-captioned.mp4`,
         codec: format === "hevc" ? "h265" : "h264",
         fps,
-        spec: {
-          width: d.width,
-          height: d.height,
-          cues: d.cues,
-          style: d.style,
-          posSegments: d.posSegments,
-          texts: d.texts,
-        },
+        spec: renderSpecOf(d),
         onProgress: setLocalProgress,
       });
       return;
@@ -463,14 +448,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
           }
         : {
             engine: "wysiwyg" as const,
-            renderSpec: {
-              width: d.width,
-              height: d.height,
-              cues: d.cues,
-              style: d.style,
-              posSegments: d.posSegments,
-              texts: d.texts,
-            },
+            renderSpec: renderSpecOf(d),
           };
     if (selected.burn) {
       const job = await startExport({

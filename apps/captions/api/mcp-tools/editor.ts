@@ -1,3 +1,4 @@
+import { editorStyleTools } from "./editor-styles";
 import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } from "./types";
 
 // The AI Editor's page buttons for the assistant: Stop, Retry, a change to what the edit was asked for, the trash.
@@ -36,6 +37,8 @@ export const editorTools: ToolModule = {
       },
     },
     { name: "editor_delete", description: "Move an AI Editor edit to the trash; what still runs is stopped.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
+    // editing styles: make or change one, put one on an edit (editor-styles.ts)
+    ...editorStyleTools.defs,
   ],
   handlers: {
     editor_stop: async (a, ctx) => {
@@ -99,6 +102,7 @@ export const editorTools: ToolModule = {
       await ctx.json(path, "DELETE");
       return { ...pick(e, ["id", "name"]), trashed: true };
     },
+    ...editorStyleTools.handlers,
   },
   steps: {
     editor_stop: "Stopping the edit",
@@ -106,6 +110,7 @@ export const editorTools: ToolModule = {
     editor_update: "Updating the edit",
     // in the dock this call only asks: the edit goes on Yes
     editor_delete: "Asking before the edit goes to the trash",
+    ...editorStyleTools.steps,
   },
   // a retry starts work again: its card opens the edit, and ends when the run does (api/editor/ended.ts)
   work: (name, _a, r) =>
@@ -113,3 +118,5 @@ export const editorTools: ToolModule = {
       ? { card: { id: `edit:${String(r.id)}:retry`, kind: "edit", title: String(r.name ?? "Edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: "running", detail: "The AI Editor is working on it" } }
       : null,
 };
+
+export { hasStyle } from "./editor-styles";

@@ -47,6 +47,9 @@ final class AccountTests: XCTestCase {
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://account?code=")!))
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://review/abc?code=abc123")!))
         XCTAssertNil(accountCode(from: URL(string: "https://accounts.example.com/account?code=abc123")!))
+        XCTAssertTrue(isConnectDone(URL(string: "creatortoolset://connect")!))
+        XCTAssertFalse(isConnectDone(URL(string: "creatortoolset://review/connect")!))
+        XCTAssertFalse(isConnectDone(URL(string: "https://creatortoolset.com/connect")!))
     }
 
     func testAccountServerSetting() {
@@ -82,6 +85,21 @@ final class AccountTests: XCTestCase {
             return data
         }
         XCTAssertEqual(try JSONDecoder().decode([String: String].self, from: body!), ["code": "abc123", "verifier": "v-123"])
+    }
+
+    func testLinkedSignInsComeWithTheAccount() async throws {
+        StubServer.routes["/api/account/token"] = (200, #"{"token":"tok-3","name":"Sam","email":"sam@tinyacrobatics.com","provider":"google","logins":[{"provider":"github","email":"sam@gh.test","name":"sam"}]}"#)
+        let (_, profile) = try await client.exchange("abc123", verifier: "v-123")
+        XCTAssertEqual(profile.provider, "google")
+        XCTAssertEqual(profile.logins, [AccountLogin(provider: "github", email: "sam@gh.test")])
+        StubServer.routes["/api/account/link-start"] = (200, #"{"link":"ticket-1"}"#)
+        let ticket = try await client.linkStart("cta_tok")
+        XCTAssertEqual(ticket, "ticket-1")
+        XCTAssertEqual(StubServer.seen.last?.value(forHTTPHeaderField: "Authorization"), "Bearer cta_tok")
+        StubServer.routes["/api/account/logins/github"] = (200, #"{"name":"Sam","email":"sam@tinyacrobatics.com","provider":"google","logins":[]}"#)
+        let after = try await client.unlink("github", token: "cta_tok")
+        XCTAssertEqual(StubServer.seen.last?.httpMethod, "DELETE")
+        XCTAssertEqual(after.logins, [])
     }
 
     func testPkcePair() {
@@ -134,6 +152,7 @@ final class AccountTests: XCTestCase {
         XCTAssertFalse(StubServer.seen.contains { $0.url?.host == "appleid.example.com" })
         XCTAssertEqual(client.loginURL("google", challenge: "c1").absoluteString, "https://accounts.example.com/api/account/login/google?app=1&challenge=c1")
         XCTAssertEqual(client.loginURL("github", challenge: "c1").absoluteString, "https://accounts.example.com/api/account/login/github?app=1&challenge=c1")
+        XCTAssertEqual(client.loginURL("github", challenge: "c1", link: "t-1_x").absoluteString, "https://accounts.example.com/api/account/login/github?app=1&challenge=c1&link=t%2D1%5Fx")
         // the probe also carries a challenge (the server refuses an app sign-in start without one)
         XCTAssertTrue(StubServer.seen.contains { ($0.url?.query ?? "").contains("challenge=") })
         // past the sign-in page a 404 is a code it doesn't know: never a way around the account
@@ -198,6 +217,13 @@ final class AccountTests: XCTestCase {
         XCTAssertEqual(accountAsk("github", mainFrame: true), "github")
         XCTAssertNil(accountAsk("microsoft", mainFrame: true))   // not a provider here
         XCTAssertNil(accountAsk("github", mainFrame: false))
+        XCTAssertEqual(accountAsk("link:github", mainFrame: true), "link:github")
+        XCTAssertEqual(accountAsk("unlink:apple", mainFrame: true), "unlink:apple")
+        XCTAssertNil(accountAsk("link:microsoft", mainFrame: true))
+        XCTAssertNil(accountAsk("unlink:github", mainFrame: false))
+        XCTAssertNil(accountAsk("link:", mainFrame: true))
+        XCTAssertEqual(accountError(from: URL(string: "creatortoolset://account?error=That%20sign-in%20is%20taken")!), "That sign-in is taken")
+        XCTAssertNil(accountError(from: URL(string: "creatortoolset://account?code=x")!))
         XCTAssertNil(accountAsk("status", mainFrame: false))   // an embed inside the page
         XCTAssertNil(accountAsk("apple", mainFrame: false))
         XCTAssertNil(accountAsk("delete", mainFrame: true))
@@ -214,6 +240,39 @@ final class AccountTests: XCTestCase {
             _ = try await client.me("tok-1")
             XCTFail("401 should fail")
         } catch {
+            XCTAssertEqual(error as? AccountError, .signedOut)
+        }
+    }
+
+    func testAPackIsReadByTheAppForItsAlert() throws {
+        let text = #"{"format":1,"id":"tiny","name":"  Tiny Home ","captionStyles":[{"name":"a"},{"name":"b"}],"instructions":{"captions.lines":"x"},"home":{"hidden":[]}}"#
+        let pack = try XCTUnwrap(packToPublish(text))
+        XCTAssertEqual(pack.name, "Tiny Home")
+        XCTAssertEqual(pack.holds, "1 instruction, 2 caption styles, a Home layout")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: pack.body) as? [String: Any])
+        XCTAssertEqual(body["rights"] as? Bool, true)
+        XCTAssertEqual((body["pack"] as? [String: Any])?["id"] as? String, "tiny")
+        // not a pack: nothing to publish
+        XCTAssertEqual(packToPublish("{\"name\":\"Two\\nlines\\u0007\"}")?.name, "Two lines")
+        XCTAssertNil(packToPublish("[1,2]"))
+        XCTAssertNil(packToPublish(#"{"id":"no-name"}"#))
+        XCTAssertNil(packToPublish(#"{"name":"big","x":"\#(String(repeating: "a", count: 600_000))"}"#))
+        let words = publishAlertText(name: "Tiny Home", holds: "a Home layout", host: "creatortoolset.com", who: "zoe@example.com")
+        XCTAssertEqual(words.message, "Publish “Tiny Home” to Community?")
+        XCTAssertEqual(words.detail, "It goes to creatortoolset.com for review, from your account zoe@example.com. It holds: a Home layout.")
+    }
+
+    func testSubmitSendsTheTokenAndSaysWhatTheCatalogSaid() async throws {
+        let body = try XCTUnwrap(packToPublish(#"{"name":"Tiny"}"#)).body
+        StubServer.routes["/api/pack-catalog/submit"] = (201, #"{"status":"pending"}"#)
+        try await client.submit(body, token: "cta_x")
+        XCTAssertEqual(StubServer.seen.last?.value(forHTTPHeaderField: "Authorization"), "Bearer cta_x")
+        StubServer.routes["/api/pack-catalog/submit"] = (429, #"{"error":"You have 5 packs waiting for review.","problems":[]}"#)
+        do { try await client.submit(body, token: "cta_x"); XCTFail("refused") } catch {
+            XCTAssertEqual(error as? AccountError, .refused("You have 5 packs waiting for review."))
+        }
+        StubServer.routes["/api/pack-catalog/submit"] = (401, #"{"error":"Sign in to publish packs"}"#)
+        do { try await client.submit(body, token: "cta_x"); XCTFail("signed out") } catch {
             XCTAssertEqual(error as? AccountError, .signedOut)
         }
     }

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { rm, stat, utimes } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -23,7 +23,7 @@ export interface BunnyPlace {
  * Blobs in a Bunny Storage zone, under the same keys as on disk. Bunny has no multipart upload, so `put` sends the
  * file in one PUT and removes it (callers rely on the file being gone). Uses the storage REST API: PUT, DELETE, GET,
  * and HEAD for `stat`. The HEAD answer's Content-Length is the size; a 404 is a missing blob.
- * ponytail: `locate` signs with the HS256 advanced token scheme from Bunny's docs, checked only against the docs, not a live zone
+ * `locate` signs with Bunny's HS256 advanced token, byte for byte what a production signer that serves real zones makes.
  */
 export function bunnyBlobs(place: BunnyPlace, cacheDir: string, opts: { cacheBytes: number }): BlobStore {
   const origin = place.origin ?? `https://${place.region ? `${place.region}.` : ""}storage.bunnycdn.com`;
@@ -76,14 +76,74 @@ export function bunnyBlobs(place: BunnyPlace, cacheDir: string, opts: { cacheByt
       await rm(cachedPath(cacheDir, key), { force: true });
     },
     localCopy,
-    async locate(key, ttlSeconds) {
-      if (!place.cdnHost || !place.tokenKey) return { kind: "path", path: await localCopy(key) };
+    async locate(key, ttlSeconds, o) {
+      // The pull zone serves a file with the type its name's extension says and can't be told a download name, so a
+      // key with no extension (a video's `source`) or a download is served from this server's copy instead.
+      // ponytail: originals stream through the server cache; store them under a key with the extension to sign them too
+      const named = /\.[a-z0-9]{2,5}$/i.test(key);
+      if (!place.cdnHost || !place.tokenKey || !named || o?.download) return { kind: "path", path: await localCopy(key) };
       // Bunny's advanced token: HMAC-SHA256 keyed by the token key over path + expires, base64url, prefixed HS256-.
-      // The download and content-type hints are not sent: the pull zone serves the file as stored.
       const urlPath = pathOf(key);
       const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
       const token = createHmac("sha256", place.tokenKey).update(urlPath + String(expires)).digest("base64url");
       return { kind: "url", url: `https://${place.cdnHost}${urlPath}?token=HS256-${token}&expires=${expires}` };
     },
   };
+}
+
+/** What Bunny's account API says when it refuses: its own message, or the status. */
+async function refusal(res: Response, what: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as { Message?: string } | null;
+  return new Error(`Bunny refused ${what}: ${body?.Message ?? res.status}`);
+}
+
+/**
+ * Makes a library's whole Bunny setup from the account's API key: a storage zone in `region` (DE, NY, LA or SG) and a
+ * pull zone on it with token authentication, so playback is a signed link. `check` tries the new zone (a test file); it
+ * gets three tries, since a new zone may take a moment. On any failure after the storage zone is made, both zones are
+ * deleted again, so a retry never leaves a pair behind. The key is used for these calls only and never kept. `api`
+ * replaces api.bunny.net (tests).
+ * ponytail: no replication regions; add a choice when someone asks for a second region
+ */
+export async function createBunnyZone(
+  apiKey: string,
+  region: string,
+  check: (zone: Omit<BunnyPlace, "origin">) => Promise<string | null>,
+  api = "https://api.bunny.net",
+): Promise<Omit<BunnyPlace, "origin">> {
+  const headers = { AccessKey: apiKey, "Content-Type": "application/json", Accept: "application/json" };
+  const name = `ct-${randomBytes(6).toString("hex")}`; // zone names are global on Bunny: a random one never collides
+  const made = await fetch(`${api}/storagezone`, { method: "POST", headers, body: JSON.stringify({ Name: name, Region: region }) });
+  if (!made.ok) throw await refusal(made, "to make a storage zone");
+  const zone = (await made.json()) as { Id: number; Password: string; StorageHostname?: string };
+  let pullId: number | undefined;
+  try {
+    const pull = await fetch(`${api}/pullzone`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ Name: name, OriginType: 2, StorageZoneId: zone.Id, ZoneSecurityEnabled: true }),
+    });
+    if (!pull.ok) throw await refusal(pull, "to make a pull zone");
+    let p = (await pull.json().catch(() => ({}))) as { Id?: number; ZoneSecurityKey?: string; Hostnames?: { Value: string; IsSystemHostname?: boolean }[] };
+    pullId = p.Id;
+    if (!p.ZoneSecurityKey && p.Id) p = (await (await fetch(`${api}/pullzone/${p.Id}`, { headers })).json()) as typeof p;
+    if (!p.ZoneSecurityKey) throw new Error("Bunny made the pull zone but did not give its token key");
+    // the zone's own storage host says its region: storage.bunnycdn.com is Falkenstein, ny.storage.bunnycdn.com New York
+    const host = /^(?:([a-z]+)\.)?storage\.bunnycdn\.com$/.exec(zone.StorageHostname ?? "");
+    const place = {
+      zone: name,
+      accessKey: zone.Password,
+      region: host ? (host[1] ?? "") : region === "DE" ? "" : region.toLowerCase(),
+      cdnHost: p.Hostnames?.find((h) => h.IsSystemHostname)?.Value ?? `${name}.b-cdn.net`,
+      tokenKey: p.ZoneSecurityKey,
+    };
+    let failed: string | null = null;
+    for (let i = 0; i < 3 && (failed = await check(place)); i++) await new Promise((done) => setTimeout(done, 2000));
+    if (failed) throw new Error(failed);
+    return place;
+  } catch (e) {
+    if (pullId) await fetch(`${api}/pullzone/${pullId}`, { method: "DELETE", headers }).catch(() => {});
+    await fetch(`${api}/storagezone/${zone.Id}`, { method: "DELETE", headers }).catch(() => {});
+    throw e;
+  }
 }

@@ -31,6 +31,7 @@ const STATIC_ROWS = [
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
+  { section: "general", id: "app-version", title: "Version", description: "Which Creator Toolset Mac app this is", keywords: ["version", "update", "release", "about", "mac app"], needs: "mac" },
   { section: "general", id: "saved-lists", title: "Cache", description: "Lists kept on this computer so screens open at once. Clearing it loses no work.", keywords: ["cache", "clear", "storage", "saved", "lists", "screens", "reload"] },
   // Appearance
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
@@ -54,8 +55,6 @@ const STATIC_ROWS = [
   { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
-  // Skills
-  { section: "skills", id: "skills", title: "Skills", keywords: ["skill", "prompt", "instructions", "reference", "load", "file", "markdown"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
   { section: "usage", id: "your-plan", title: "Your AI plan", description: "On Pro or Plus, big jobs ask before they start", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
@@ -83,11 +82,13 @@ const STATIC_ROWS = [
   { section: "admin", id: "admin-accounts", title: "Accounts", keywords: ["account", "users", "password", "create", "apps"] },
   { section: "admin", id: "admin-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow"] },
   { section: "admin", id: "admin-projects", title: "Projects", keywords: ["projects", "server", "newest"] },
+  { section: "admin", id: "admin-sign-in-code", title: "Ask everyone for a sign-in code", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "lock", "unlock"] },
   { section: "admin", id: "server-keys", title: "Server keys", keywords: ["env", "server", "api key", "secret", "fallback"] },
   // Account: the person's own profile and sign-in
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
+  { section: "account", id: "sign-in-code", title: "Sign-in code", description: "Ask for a code from an authenticator app when you sign in with your password", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "recovery codes", "otp"], needs: "sign-in" },
   { section: "account", id: "photo", title: "Photo", description: "From your Google or GitHub sign-in", keywords: ["picture", "avatar", "image", "profile photo"] },
   { section: "account", id: "sign-in-with", title: "Connected accounts", keywords: ["google", "apple", "github", "link", "unlink", "sign in", "connect"], needs: "sign-in" },
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },

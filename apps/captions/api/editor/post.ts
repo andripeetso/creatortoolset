@@ -4,6 +4,7 @@ import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { Timeline } from "../../contracts/editor";
 import { pluginEditorSteps, type EditorStep } from "../lib/plugin";
 import { localFiles } from "./preview";
+import { sayFor } from "./progress";
 import { editDir, readDraft, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./engine";
 
@@ -26,7 +27,7 @@ export interface PostResult {
 export async function runSteps(
   chosen: EditStepChoice[],
   steps: EditorStep[],
-  input: { edit: { id: string; name: string; createdBy: string }; variant: string; timeline: Timeline; base: Record<string, string>; workRoot: string; signal: AbortSignal },
+  input: { edit: { id: string; name: string; createdBy: string }; variant: string; timeline: Timeline; base: Record<string, string>; workRoot: string; signal: AbortSignal; say?: (text: string) => void },
 ): Promise<PostResult> {
   const files: Record<string, string> = {};
   const notes: string[] = [];
@@ -36,7 +37,9 @@ export async function runSteps(
     if (!c || input.signal.aborted) continue;
     const workDir = path.join(input.workRoot, st.id);
     await mkdir(workDir, { recursive: true });
-    const made = await st.run({ edit: input.edit, variant: input.variant, files: { ...input.base, ...files }, timeline: input.timeline, values: c.values, workDir, signal: input.signal, note: (t) => notes.push(`${POST_NOTE}${t}`) });
+    const say = input.say ?? (() => {});
+    say(st.title);
+    const made = await st.run({ edit: input.edit, variant: input.variant, files: { ...input.base, ...files }, timeline: input.timeline, values: c.values, workDir, signal: input.signal, note: (t) => notes.push(`${POST_NOTE}${t}`), say });
     for (const [k, f] of Object.entries(made)) if (k in input.timeline.sources) files[k] = f;
   }
   return { files, notes };
@@ -51,11 +54,20 @@ export async function prune(root: string, keep: Set<string>): Promise<void> {
   const all = await readdir(root, { recursive: true, withFileTypes: true }).catch(() => []);
   for (const e of all) {
     const file = path.join(e.parentPath, e.name);
-    if (e.isFile() && !keep.has(file)) await unlink(file).catch(() => {});
+    // a kept copy's own files beside it (<copy>.counts.json, say) stay with it
+    if (e.isFile() && !keep.has(file) && ![...keep].some((k) => file.startsWith(`${k}.`))) await unlink(file).catch(() => {});
   }
 }
 
-export async function postStep({ edit, variant, signal }: StepContext): Promise<void> {
+export async function postStep({ edit, job, variant, signal }: StepContext): Promise<void> {
+  try {
+    await post({ edit, job, variant, signal });
+  } finally {
+    sayFor(job, null);
+  }
+}
+
+async function post({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   const chosen = edit.steps ?? [];
@@ -67,6 +79,7 @@ export async function postStep({ edit, variant, signal }: StepContext): Promise<
         base: await localFiles(d.timeline),
         workRoot: path.join(editDir(edit.id), "post", variant || "_"),
         signal,
+        say: (t) => sayFor(job, t),
       })
     : { files: {}, notes: [] };
   if (signal.aborted) return;

@@ -20,7 +20,7 @@ import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { inReview } from "./trash";
 import { similar } from "./similar";
-import { assetRef, canSee, sourceById, sourcesVisibleTo } from "./sources";
+import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
 import { fileRoll, rollFolder } from "./roll";
@@ -680,14 +680,17 @@ libraryApp.get("/:id/assets", async (c) => {
   if (sourceId) {
     const source = sourceById(sourceId);
     if (!source?.list || !(await sourcesVisibleTo(viewer)).some((s) => s.id === sourceId)) return c.json({ items: [] });
-    const cards = (await source.list(viewer, c.req.raw).catch(() => [] as AssetCard[])).slice(0, 200);
+    let refused: string | undefined;
+    const cards = (
+      await source.list(viewer, c.req.raw).catch((e: unknown) => ((refused = e instanceof SourceRefusal ? e.message : undefined), [] as AssetCard[]))
+    ).slice(0, 200);
     const items: AssetCard[] = [];
     for (const card of cards) {
       const ref = externalRefById(card.id);
       if (!ref || ref.source !== sourceId || !(await canSee(viewer, externalAssetRef(ref, libraryId)))) continue;
       items.push({ ...card, libraryId });
     }
-    return c.json({ items });
+    return c.json({ items, ...(refused ? { refused } : {}) });
   }
   const query = expandCollection(libraryId, parseSearch(c.req.query()));
   if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);

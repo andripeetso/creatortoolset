@@ -16,7 +16,7 @@ describe("TOOL_NEEDS readiness", () => {
   });
 
   it("the Audio Enhancer is ready with either key", () => {
-    expect(readiness("enhance", []).missing.map((n) => n.what)).toEqual(["An ElevenLabs or NVIDIA key"]);
+    expect(readiness("enhance", []).missing.map((n) => n.what)).toEqual(["An API key"]);
     expect(readiness("enhance", ["NVIDIA_API_KEY"]).ready).toBe(true);
     expect(readiness("enhance", ["ELEVENLABS_API_KEY"]).ready).toBe(true);
   });
@@ -42,12 +42,12 @@ describe("TOOL_NEEDS readiness", () => {
     expect(readiness("editor", ["ai", "library", "deviceTranscripts"]).ready).toBe(true);
     expect(readiness("notes", ["ai", "deviceTranscripts"]).ready).toBe(true);
     expect(readiness("guides", ["ai", "deviceTranscripts"]).ready).toBe(true);
-    expect(readiness("media", ["library", "deviceTranscripts"]).extra.map((n) => n.what)).not.toContainEqual(expect.stringMatching(/^Transcripts/));
-    // anywhere else the row is still missing, asks only for keys (never for "this computer"), and says a key is faster
+    expect(readiness("media", ["library", "deviceTranscripts"]).extra.map((n) => n.what)).not.toContainEqual(expect.stringMatching(/transcripts$/));
+    // anywhere else the row is still missing and asks only for keys (never for "this computer")
     for (const t of ["editor", "notes", "guides"] as const) {
       const [row] = readiness(t, ["ai", "library"]).missing;
       expect(row.anyOf.every((h) => h.endsWith("_API_KEY"))).toBe(true);
-      expect(row.what).toMatch(/a key is faster/);
+      expect(row.what).toMatch(/key$/);
     }
   });
 
@@ -72,12 +72,21 @@ describe("home order and need copy", () => {
     expect(TOOL_GROUPS.flatMap((g) => g.tools).sort()).toEqual([...TOOLS].sort());
   });
 
-  it("every need has a short name and a sentence", async () => {
-    const { NEED_SHORT, NEED_SENTENCE } = await import("./tools");
+  it("every need has a sentence", async () => {
+    const { NEED_SENTENCE } = await import("./tools");
     const used = new Set(TOOLS.flatMap((t) => TOOL_NEEDS[t].flatMap((n) => [...n.anyOf])));
-    for (const h of used) {
-      expect(NEED_SHORT[h as keyof typeof NEED_SHORT], h).toBeTruthy();
-      expect(NEED_SENTENCE[h as keyof typeof NEED_SENTENCE], h).toBeTruthy();
-    }
+    for (const h of used) expect(NEED_SENTENCE[h as keyof typeof NEED_SENTENCE], h).toBeTruthy();
+  });
+
+  it("names every row one way: the thing to add (an optional row adds what it gives), one line for what is missing", async () => {
+    const { needsLine } = await import("./tools");
+    for (const t of TOOLS)
+      for (const n of TOOL_NEEDS[t]) {
+        expect(n.what, `${t}: ${n.what}`).toMatch(n.optional ? /^(A|An) [^:]+: [a-zA-Z]/ : /^(A|An) [^:]+$/);
+        // more than one key does: the row names where they go, not each brand
+        if (n.form === "keys" && n.anyOf.length > 1) expect(n.what, `${t}: ${n.what}`).toMatch(/^An API key\b/);
+      }
+    expect(needsLine([TOOL_NEEDS.instagram[0], TOOL_NEEDS.instagram[1]])).toBe("Needs a project and an Apify key");
+    expect(needsLine([TOOL_NEEDS.workshop[1]])).toBe("Needs an AI provider");
   });
 });

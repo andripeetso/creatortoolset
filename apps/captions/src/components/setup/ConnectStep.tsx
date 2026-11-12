@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { useAuth } from "@/lib/auth";
-import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
+import { allowOtherDevices, connectThisMac, thisMacBridge, thisMacLinked } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 import { readCached, putCached } from "@/lib/local-cache";
 import { serverUrl, useComputers, type ComputerInfo } from "./computers";
@@ -249,6 +249,7 @@ export function ConnectStepView({
   joinNote,
   account,
   hosted = false,
+  addHere,
 }: {
   here: { name: string; address: string };
   others: ComputerInfo[];
@@ -271,6 +272,8 @@ export function ConnectStepView({
   account?: ReactNode;
   /** hosted: this server is no computer of the person, so its own row and the add-a-computer form are left out */
   hosted?: boolean;
+  /** this Mac, not on the account yet: the button that adds it (and starts its tunnel); absent once it is, or in a browser */
+  addHere?: { onAdd: () => void; busy: boolean; problem?: string | null };
 }) {
   const [signingIn, setSigningIn] = useState(false);
   return (
@@ -287,7 +290,7 @@ export function ConnectStepView({
       </div>
       )}
 
-      {account || others.length > 0 ? (
+      {account || others.length > 0 || addHere ? (
         <section className={CARD} aria-label="Creator Toolset Connect">
           <div className="flex items-center gap-3 px-4 py-3">
             <Cloud className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -299,6 +302,19 @@ export function ConnectStepView({
             )}
           </div>
           {signingIn && account && <div className="border-t border-border/60 px-4 py-3">{account}</div>}
+          {addHere && (
+            <div className="space-y-2 border-t border-border/60 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <p className="flex-1 text-sm text-muted-foreground">
+                  {addHere.busy ? "Say yes in your browser to add this computer." : "Open this computer from your other devices."}
+                </p>
+                <Button size="sm" onClick={addHere.onAdd} disabled={addHere.busy}>
+                  Add this computer
+                </Button>
+              </div>
+              {addHere.problem && <p role="status" className="text-xs text-destructive">{addHere.problem}</p>}
+            </div>
+          )}
           {others.length > 0 ? (
             <ul className="divide-y divide-border/60 border-t border-border/60" aria-label="Your other computers">
               {others.map((c) => (
@@ -422,6 +438,24 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
   const [serverBad, setServerBad] = useState(false);
   const [link, setLink] = useState("");
   const [joinNote, setJoinNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // this Mac on the account: asked of the Mac app only (nothing leaves this computer before Add this computer is pressed)
+  const [linked, setLinked] = useState<boolean | undefined>(undefined);
+  const [adding, setAdding] = useState(false);
+  const [addProblem, setAddProblem] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hosted) void thisMacLinked().then(setLinked);
+  }, [hosted]);
+  const add = async () => {
+    setAdding(true);
+    setAddProblem(null);
+    const problem = await connectThisMac();
+    setAdding(false);
+    if (problem) setAddProblem(problem);
+    else {
+      setLinked(true);
+      void refresh().catch(() => {});
+    }
+  };
 
   const go = () => {
     const url = serverUrl(server);
@@ -471,6 +505,7 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
       onJoin={() => void join()}
       joinNote={joinNote}
       account={hasAccountBridge() ? <AccountStep /> : undefined}
+      addHere={linked === false ? { onAdd: () => void add(), busy: adding, problem: addProblem } : undefined}
     />
   );
 }
