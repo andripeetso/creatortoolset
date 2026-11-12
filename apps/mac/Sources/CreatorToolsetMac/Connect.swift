@@ -6,12 +6,15 @@
 import AppKit
 import Foundation
 
-/// The connect service's address (the broker, apps/relay), as saved in UserDefaults `connectBroker`. None until one is
-/// set: no hosted one answers yet, so by default the app offers nothing that needs it ("Add this Mac to my account…")
-/// and asks nothing of it.
+/// The hosted connect service (apps/relay), the same one the iPhone app and `creatortoolset connect` use.
+let defaultConnectService = URL(string: "https://connect.creatortoolset.com")!
+
+/// The connect service's address, as saved in UserDefaults `connectBroker`: never set = defaultConnectService;
+/// "" = none (forks, own setups). Having one sends nothing by itself: the service is asked only once "Add this Mac to
+/// my account…" is pressed, or for the account's computers while signed in to an account (Shell.brokerComputers).
 func connectBrokerURL(_ saved: String?) -> URL? {
-    guard let saved, !saved.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-    return siteURL(from: saved)
+    guard let saved else { return defaultConnectService }
+    return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
 }
 
 /// The connect service this Mac is set to use, if any. The menu item, the server's CT_CONNECT_URL and the account's
