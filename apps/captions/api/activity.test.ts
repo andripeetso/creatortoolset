@@ -84,7 +84,7 @@ describe("GET /api/activity", () => {
     const res = await app.request("/api/activity");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ id: "tiny:a", title: "Row a", detail: "Tiny", state: "working", href: "/editor" }]);
-  });
+  }, 30_000); // the first call loads every tool's module (appWork), slow on a busy machine
 });
 
 describe("appRows", () => {
