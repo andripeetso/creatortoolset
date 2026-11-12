@@ -2,7 +2,7 @@
 import UIKit
 
 /// Conversations a debug build can show instead of the server's, to look at a state without
-/// taps: `-AssistantFixture none|empty|thinking|failed|asks`. While one is shown nothing is written
+/// taps: `-AssistantFixture none|empty|thinking|failed|asks|long|lists`. While one is shown nothing is written
 /// to the server and nothing is saved. With one, `-AssistantQueue <text>` adds a queued message
 /// and `-AssistantNotSent <text>` one the server refused.
 enum AssistantFixtures {
@@ -13,6 +13,8 @@ enum AssistantFixtures {
         case "thinking": replying
         case "failed": failedReply
         case "asks": asks
+        case "long": longReply
+        case "lists": listsReply
         default: nil
         }
     }()

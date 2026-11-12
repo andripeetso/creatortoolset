@@ -156,7 +156,7 @@ enum ChatList {
             status = .none
         }
         return ChatRow(id: path(.assistant), route: .assistant, title: "Assistant",
-                       detail: String(MarkdownText.inline(line).characters), status: status,
+                       detail: Markdown.plain(line), status: status,
                        at: messages.last.map { date(ms: $0.at) } ?? .distantPast)
     }
 

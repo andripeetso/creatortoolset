@@ -144,94 +144,14 @@ struct UserBubble: View {
 
     var body: some View {
         Text(text)
+            .font(.callout)   // the size of the replies around it (Markdown.swift)
+            .lineSpacing(3)
             .textSelection(.enabled)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 48)
-    }
-}
-
-/// What the AI wrote: plain text across the width, no bubble. Bold, italics, code and links
-/// are drawn; a link to a page of the website opens the app's own screen for it.
-struct MarkdownText: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(Self.blocks(text).enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .code(let code):
-                    Text(code)
-                        .font(.footnote.monospaced())
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-                case .text(let paragraph):
-                    Text(Self.inline(paragraph))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .textSelection(.enabled)
-        .environment(\.openURL, OpenURLAction { url in
-            Task { @MainActor in AppNavigator.shared.open(href: url.absoluteString) }
-            return .handled
-        })
-    }
-
-    enum Block: Equatable {
-        case text(String)
-        case code(String)
-    }
-
-    /// Paragraphs (split on empty lines) and fenced code, in order.
-    static func blocks(_ text: String) -> [Block] {
-        var blocks: [Block] = []
-        var paragraph: [String] = []
-        var code: [String]?
-        func flush() {
-            let joined = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { blocks.append(.text(joined)) }
-            paragraph = []
-        }
-        for line in text.components(separatedBy: "\n") {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                if let open = code {
-                    blocks.append(.code(open.joined(separator: "\n")))
-                    code = nil
-                } else {
-                    flush()
-                    code = []
-                }
-            } else if code != nil {
-                code?.append(line)
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flush()
-            } else {
-                paragraph.append(line)
-            }
-        }
-        if let open = code { blocks.append(.code(open.joined(separator: "\n"))) }   // a fence never closed
-        flush()
-        return blocks
-    }
-
-    /// One paragraph: list marks become dots, headings bold, the rest is the text's own marks.
-    static func inline(_ paragraph: String) -> AttributedString {
-        let lines = paragraph.components(separatedBy: "\n").map { line -> String in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") { return "•  " + trimmed.dropFirst(2) }
-            if trimmed.hasPrefix("#") {
-                let title = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
-                return title.isEmpty ? "" : "**\(title)**"
-            }
-            return line
-        }
-        let source = lines.joined(separator: "\n")
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
     }
 }
 

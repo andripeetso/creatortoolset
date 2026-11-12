@@ -81,6 +81,7 @@ struct AssistantReply: View {
             }
             if message.status == "error" {
                 Text(message.text.isEmpty ? "That didn't work." : message.text)
+                    .font(.callout)
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if !message.text.isEmpty {
