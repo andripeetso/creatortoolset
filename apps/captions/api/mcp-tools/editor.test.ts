@@ -334,6 +334,21 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     expect((await editOf(id)).flags).toEqual({ "tiny-on": true, "tiny-off": true });
   });
 
+  it("editor_get lists a long recording's moments with what is said in each; an edit of takes has no such line", async () => {
+    const { id } = (await (await site("/api/editor", "POST", { name: "Tiny talk", sources: ["ver_a"], moments: 3 })).json()) as { id: string };
+    await saveStep(id, "plan", {
+      lines: [{ id: "M1", text: "Get down on the floor yourself.", takes: [{ first: 1, last: 2, score: 0.9 }] }],
+      plans: [{ name: "m1", title: "The first rule", lines: [{ line: "M1", take: { first: 1, last: 2, score: 0.9 } }] }],
+      notes: [],
+    });
+    await saveDraft(id, "m1", { timeline: {} as never, notes: [] });
+    expect((await tool(anaKey, "editor_get", { edit: id })).value.drafts).toEqual([{ name: "m1", title: "The first rule", said: "Get down on the floor yourself.", preview: "none" }]);
+    const plain = await edit("Tiny takes");
+    await saveStep(plain, "plan", { lines: [{ id: "L1", text: "We roll.", takes: [{ first: 1, last: 1, score: 1 }] }], plans: [{ name: "v1", title: "First", lines: [{ line: "L1", take: { first: 1, last: 1, score: 1 } }] }], notes: [] });
+    await saveDraft(plain, "v1", { timeline: {} as never, notes: [] });
+    expect((await tool(anaKey, "editor_get", { edit: plain })).value.drafts).toEqual([{ name: "v1", title: "First", preview: "none" }]);
+  });
+
   it("editor_delete asks first in the dock, with the edit's name: nothing goes until Yes; an AI key from outside goes straight through", async () => {
     standIn();
     const id = await edit("Tiny goodbye");

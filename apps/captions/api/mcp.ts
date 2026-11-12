@@ -74,10 +74,14 @@ const FINALS_GUIDE = `Finals: the finished pieces the user keeps. A piece holds 
 sets the winner, orders its versions and writes a version's name or post description, finals_piece_trash moves one to
 the trash or back. A version's id is the one finals_pieces gives.`;
 
-/** Said only where the built-in AI Editor's tools are (voice_make is one of them): not on an install whose plug-in answers /api/editor. */
+/** The built-in AI Editor's recipes, said only where its tools are (voice_make, editor_create's moments): not on an install whose plug-in answers /api/editor. */
 const NOTHING_FILMED_GUIDE = `A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
 as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
-picture gets its whole picture from B-roll: the edit's broll_folder, or every clip sorted B-roll when it names none.`;
+picture gets its whole picture from B-roll: the edit's broll_folder, or every clip sorted B-roll when it names none.
+
+Short videos from a long recording (a podcast, a talk): editor_create with moments finds the parts that stand on their
+own and cuts each as a video of its own; editor_get then lists them with each one's title and what is said in it. A
+script from each is a Workshop piece: workshop_new_session, then workshop_new_piece (kind reel) with those words.`;
 
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
@@ -831,6 +835,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const jobs = (e.jobs as Args[] | undefined) ?? [];
       const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
       const titles = (e.plans as Args[] | undefined) ?? [];
+      // a moment of a long recording is one line: what is said in it, for the AI to write a script or a post from
+      const words = new Map(((e.lines as Args[] | undefined) ?? []).map((l) => [String(l.id), String(l.text ?? "")]));
+      const saidIn = (plan: Args | undefined) => (e.moments && plan ? (words.get(String(((plan.lines as Args[] | undefined) ?? [])[0]?.line)) ?? "") : "");
       return {
         ...pick(e, ["id", "name", "brief", "script", "versions", "notes"]),
         // each draft with where its preview is: "in Review" plays with show_video (edit + draft) and opens at review
@@ -838,7 +845,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           const own = jobs.filter((j) => j.variant === name);
           const p = previews[name];
           const preview = own.some((j) => j.state === "queued" || j.state === "running") ? "being made" : own.some((j) => j.state === "failed" || j.state === "needs_key") ? "failed" : p ? "in Review" : "none";
-          return { name, ...pick(titles.find((x) => x.name === name) ?? {}, ["title"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
+          const plan = titles.find((x) => x.name === name);
+          return { name, ...pick(plan ?? {}, ["title"]), ...pick({ said: saidIn(plan) }, ["said"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
         }),
         ...(Object.keys((e.flags as Args | undefined) ?? {}).length ? { flags: e.flags } : {}),
         link: `${origin}/editor/${e.id}`,
