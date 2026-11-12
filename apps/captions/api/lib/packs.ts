@@ -362,12 +362,13 @@ export const isShippedText = (p: InstalledPack, slot: PackSlot): boolean =>
   readOfficialPacks().some((o) => o.pack.id === p.id && o.pack.instructions?.[slot] === p.instructions[slot]);
 
 /**
- * The AI programs whose tools stay off on the Mac for a job with no folder, no web and no assistant (apps/mac
- * ClaudeRequest.swift): Claude (`--tools ""`), Codex (a read-only profile), Gemini (plan mode and a deny policy), Grok
- * (its to-do list only), Muse Code (no tools) and OpenCode (acpRules). Cursor, Antigravity, Pi and a local ACP command
- * keep their own tools there, which this app does not switch off.
+ * The AI programs that can only answer on the Mac for a job with no folder, no web and no assistant (apps/mac
+ * ClaudeRequest.swift): Claude (`--tools ""`), Codex (a read-only profile with no network: it may read, never send),
+ * Grok (its to-do list only) and OpenCode (acpRules: reads in its run folder, no web). Not Gemini (plan mode keeps its
+ * own web search, which a pack's words could steer), not Muse Code (it loads the MCP servers the person listed in its own
+ * settings), and not Cursor, Antigravity, Pi or a local ACP command (their own tools).
  */
-export const TOOLS_OFF_DRIVERS: ReadonlySet<string> = new Set(["claude", "codex", "gemini", "grok", "musecode", "opencode"]);
+export const TOOLS_OFF_DRIVERS: ReadonlySet<string> = new Set(["claude", "codex", "grok", "opencode"]);
 
 /** Whether a job's AI has no tools: the API key or a local model, or a Mac program from the list above. */
 export const runsWithoutTools = (ai: ProviderOpts): boolean => !ai.mac?.provider || TOOLS_OFF_DRIVERS.has(ai.mac.provider.driver);
