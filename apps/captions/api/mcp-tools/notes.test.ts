@@ -272,8 +272,8 @@ describe("a tool that is not set up yet", () => {
     delete process.env.CT_MODE;
     expect(out.not_yet).toBe("Video Notes needs these first; then call use_file again.");
     expect(out.needs).toEqual([
-      { what: expect.stringMatching(/^Transcripts: a Deepgram key/), ask_secret: ["DEEPGRAM_API_KEY"] },
-      { what: "AI: summaries and chapters", open: "/settings/providers" },
+      { what: "A Deepgram key", ask_secret: ["DEEPGRAM_API_KEY"] },
+      { what: "An AI provider", open: "/settings/providers" },
     ]);
   });
 });

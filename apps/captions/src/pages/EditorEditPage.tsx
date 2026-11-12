@@ -143,6 +143,7 @@ export default function EditorEditPage() {
                 {j.variant && <span className="text-xs text-zinc-500">{edit.plans.find((p) => p.name === j.variant)?.title ?? j.variant}</span>}
                 <StateBadge state={j.error === "Stopped" ? "stopped" : j.state} />
                 {j.state === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
+                {j.state === "running" && j.line && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{j.line}</span>}
                 {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
