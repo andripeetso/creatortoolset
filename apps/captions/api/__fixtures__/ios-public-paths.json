@@ -22,5 +22,12 @@
   { "id": "assistant.turn", "method": "POST", "path": "/api/assistant/turn", "probe": "route" },
   { "id": "editor.create", "method": "POST", "path": "/api/editor", "probe": "route" },
   { "id": "editor.get", "method": "GET", "path": "/api/editor/:id", "probe": "route" },
-  { "id": "editor.delete", "method": "DELETE", "path": "/api/editor/:id", "probe": "route" }
+  { "id": "editor.delete", "method": "DELETE", "path": "/api/editor/:id", "probe": "route" },
+  { "id": "editor.list", "method": "GET", "path": "/api/editor", "probe": "route" },
+  { "id": "editor.draft-review", "method": "POST", "path": "/api/editor/:id/drafts/:name/review", "probe": "route" },
+  { "id": "assistant.past-open", "method": "POST", "path": "/api/assistant/past/:id/open", "probe": "route" },
+  { "id": "workshop.workspace", "method": "GET", "path": "/api/workshop/workspace", "probe": "route" },
+  { "id": "workshop.own-post", "method": "POST", "path": "/api/workshop/own-post", "probe": "route" },
+  { "id": "workshop.session-patch", "method": "PATCH", "path": "/api/workshop/sessions/:id", "probe": "route" },
+  { "id": "instagram.share", "method": "POST", "path": "/api/instagram/share", "probe": "route" }
 ]
