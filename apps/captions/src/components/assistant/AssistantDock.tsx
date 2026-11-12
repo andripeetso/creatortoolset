@@ -105,6 +105,8 @@ export function AssistantDock() {
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
+  /** Each video upload of this window, by its file id, so Stop can end it. ponytail: a removed chip's upload still runs to the end */
+  const uploads = useRef(new Map<string, AbortController>());
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -296,7 +298,11 @@ export function AssistantDock() {
         const key = `${Date.now()}-${f.name}-${f.size}`;
         const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
         setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
-        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }), (id) => patch({ id }))
+        const ctl = new AbortController();
+        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }), (id) => {
+          uploads.current.set(id, ctl);
+          patch({ id });
+        }, ctl.signal)
           .then((r) => patch({ id: r.id, pct: 100, done: true }))
           .catch((e) => patch({ error: e instanceof Error ? e.message : String(e) }));
       }
@@ -385,7 +391,14 @@ export function AssistantDock() {
   };
   /** A notice's chip: its words go out as a message. */
   const chipSend = (text: string) => submit({ ...EMPTY_DRAFT, text });
-  const stop = () => void stopTurn().then((r) => r.ok && setView(r.data));
+  const stop = () => {
+    // Stop on a reply that waits for its videos: those videos stop uploading too (nothing will use them)
+    const msgs = view?.messages ?? [];
+    const w = [...msgs].reverse().findIndex((m) => m.role === "assistant" && m.status === "thinking" && m.wait?.for === "videos");
+    const i = w < 0 ? -1 : msgs.length - 1 - w;
+    for (const f of i > 0 ? (msgs[i - 1]!.files ?? []) : []) uploads.current.get(f.id)?.abort();
+    void stopTurn().then((r) => r.ok && setView(r.data));
+  };
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
     setHeld(false);

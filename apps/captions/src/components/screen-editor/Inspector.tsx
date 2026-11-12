@@ -194,7 +194,7 @@ function PointerTab({ look, initial, change }: TabProps) {
       {!look.pointerHidden && (
         <>
           <SliderRow label="Size" value={look.pointer} min={0.8} max={3} step={0.1} format={(v) => `${v.toFixed(1)}×`} initial={initial.pointer} onChange={(pointer) => change({ pointer })} />
-          <SliderRow label="Smooth movement" value={look.smooth} min={0} max={0.4} step={0.01} format={pct} initial={initial.smooth} onChange={(smooth) => change({ smooth })} />
+          <SliderRow label="Smooth movement" value={look.smooth} min={0} max={0.8} step={0.01} format={pct} initial={initial.smooth} onChange={(smooth) => change({ smooth })} />
           <SwitchRow label="Hide when it stays still" checked={look.hideIdle} onChange={(hideIdle) => change({ hideIdle })} />
         </>
       )}
@@ -334,7 +334,7 @@ function ZoomTab({
 }
 
 /**
- * What holds for every zoom: whether the view follows the pointer, and what a zoom does to the window the recording
+ * What holds for every zoom: whether the view moves on to a click it would not show, and what a zoom does to the window the recording
  * sits in. The window can only grow where the whole recording is shown; up to the padding only where the frame has
  * space beside the window (another shape than the recording's).
  */
@@ -344,7 +344,7 @@ function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial
   const fit = look.zoomFit === "frame" ? "frame" : look.zoomFit === "space" && room ? "space" : "inside";
   return (
     <Group title="Every zoom">
-      <SwitchRow label="Follow the pointer while zoomed" checked={look.follow} onChange={(follow) => change({ follow })} />
+      <SwitchRow label="Move to clicks outside the view" checked={look.follow} onChange={(follow) => change({ follow })} />
       {!filled && (
         <div className="space-y-2">
           <p className="text-xs text-zinc-400">While zoomed, the window</p>

@@ -91,6 +91,8 @@ export interface EditJob {
   attempts: number;
   /** the failure, or for needs_key what to add */
   error: string | null;
+  /** while it runs: what it is doing now, when the step says (a first-time install, waiting for the person's AI) */
+  line?: string;
 }
 
 export interface EditSummary {

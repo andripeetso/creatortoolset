@@ -4,6 +4,7 @@ import { useStudio, isEditorBusy, clipRenderData } from "@/lib/store";
 import { flushPendingSave } from "@/lib/persist";
 import { useMe } from "@/lib/auth";
 import { buildAss } from "@/lib/ass";
+import { exportBase, exportName } from "@/lib/export-request";
 import { batchExports, startExport } from "@/lib/exports";
 import {
   DropdownMenu,
@@ -43,7 +44,7 @@ export function SendToFinalsButton() {
       await flushPendingSave();
       const s = useStudio.getState();
       if (!s.projectId) throw new Error("Open a clip first.");
-      const project = s.fileName.trim().replace(/\.[^.]+$/, "").replace(/[^\w.-]+/g, "_");
+      const project = exportBase(s.fileName);
       const started: string[] = [];
       const skipped: string[] = [];
       for (const id of ids) {
@@ -58,8 +59,7 @@ export function SendToFinalsButton() {
           skipped.push(`${clip.name} (video still uploading)`);
           continue;
         }
-        const clipBase = (clip.name || "captions").replace(/\.[^.]+$/, "");
-        const name = !project || clipBase.toLowerCase().startsWith(project.toLowerCase()) ? clipBase : `${project}_${clipBase}`;
+        const name = exportName(s.fileName, clip.name);
         try {
           const job = await startExport({
             kind: "burn",

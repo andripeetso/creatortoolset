@@ -100,7 +100,7 @@ async function fetchModel(m: (typeof MODELS)[number], dir: string): Promise<void
  * The models and the engine in the step's own folder, and the face steps' shared Python (api/editor/mediapipe.ts), made
  * once in the data folder the first time the step runs (never before the person has switched it on).
  */
-async function setUp(): Promise<{ python: string; engine: string; models: string }> {
+async function setUp(onInstall: () => void): Promise<{ python: string; engine: string; models: string }> {
   const dir = home();
   const engine = path.join(dir, `engine-${sha1(ENGINE).slice(0, 8)}.py`);
   const models = path.join(dir, "models");
@@ -110,18 +110,19 @@ async function setUp(): Promise<{ python: string; engine: string; models: string
     await rename(`${engine}.part`, engine);
   }
   for (const m of MODELS) await fetchModel(m, models);
-  const python = await ensureMediapipe("Face refinement", (py) => engineRun(py, [engine, "--selftest"], new AbortController().signal, { FACE_REFINE_MODELS: models }));
+  const python = await ensureMediapipe("Face refinement", (py) => engineRun(py, [engine, "--selftest"], new AbortController().signal, { FACE_REFINE_MODELS: models }), onInstall);
   return { python, engine, models };
 }
 let setting: Promise<{ python: string; engine: string; models: string }> | undefined;
-const ensure = () => (setting ??= setUp().catch((e) => ((setting = undefined), Promise.reject(e))));
+const ensure = (onInstall: () => void) => (setting ??= setUp(onInstall).catch((e) => ((setting = undefined), Promise.reject(e))));
 
-export async function refineFaces({ files, timeline, values, workDir, signal }: EditorStepInput): Promise<Record<string, string>> {
+export async function refineFaces({ files, timeline, values, workDir, signal, say }: EditorStepInput): Promise<Record<string, string>> {
   const look = LOOKS[values.smoothing ?? ""] ? values.smoothing! : "medium";
   const out: Record<string, string> = {};
   const wanted = Object.entries(faceRanges(timeline)).filter(([id]) => files[id]);
   if (!wanted.length) return out;
-  const rt = await ensure();
+  const rt = await ensure(() => say("Face refinement: setting up its face tools, the first time only (a few minutes)"));
+  say("Face refinement");
   const ffmpeg = ffmpegCommand();
   const ffprobe = path.isAbsolute(ffmpeg) && existsSync(path.join(path.dirname(ffmpeg), "ffprobe")) ? path.join(path.dirname(ffmpeg), "ffprobe") : "ffprobe";
   for (const [id, ranges] of wanted) {

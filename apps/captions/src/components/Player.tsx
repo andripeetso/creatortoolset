@@ -526,6 +526,7 @@ export function Player() {
   const model = useStudio((s) => s.model);
   const setModel = useStudio((s) => s.setModel);
   const runTranscription = useStudio((s) => s.runTranscription);
+  const serverCaptioning = useStudio((s) => s.serverCaptioning);
   const setVideoMeta = useStudio((s) => s.setVideoMeta);
   const setCurrentTime = useStudio((s) => s.setCurrentTime);
   const setPlaying = useStudio((s) => s.setPlaying);
@@ -842,18 +843,25 @@ export function Player() {
         <div className="absolute inset-x-0 bottom-4 z-50 flex justify-center px-4">
           <div
             role={
-              processing || cadenceComplete || transcriptionComplete
+              processing || cadenceComplete || transcriptionComplete || serverCaptioning
                 ? "status"
                 : undefined
             }
             aria-live={
-              processing || cadenceComplete || transcriptionComplete
+              processing || cadenceComplete || transcriptionComplete || serverCaptioning
                 ? "polite"
                 : undefined
             }
             className="flex max-w-full items-center gap-3 rounded-xl border border-zinc-700/80 bg-zinc-900/95 px-4 py-3 shadow-xl"
           >
-            {words.length === 0 && status.phase === "idle" && (
+            {/* the server is making them (a video sent from the assistant's chat): they come in by themselves */}
+            {words.length === 0 && status.phase === "idle" && serverCaptioning && (
+              <span className="flex items-center gap-2 text-sm text-zinc-200">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-400" />
+                Making the captions
+              </span>
+            )}
+            {words.length === 0 && status.phase === "idle" && !serverCaptioning && (
               <>
                 <EnginePicker className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-200 outline-none" />
                 <button

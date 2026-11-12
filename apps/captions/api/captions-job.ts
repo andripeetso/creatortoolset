@@ -11,7 +11,8 @@ import { ffmpeg } from "./library/media/run";
 import { captioning, clipReadyToEdit, clipSourceFile, projectsApp } from "./projects";
 import { cloudTranscribeBlock, transcribeApp, userMayCloudTranscribe } from "./transcribe";
 import type { SessionUser } from "./users";
-import { DEFAULT_STYLE, type CaptionStyle, type Cue, type Word } from "../src/lib/types";
+import { storedStyle } from "../src/lib/export-request";
+import type { CaptionStyle, Cue, Word } from "../src/lib/types";
 import { waveformPeaks } from "../src/lib/waveform-peaks";
 
 /**
@@ -21,6 +22,8 @@ import { waveformPeaks } from "../src/lib/waveform-peaks";
  * POST /api/transcribe (their own key), else this computer's own model when the server is on it; the words through
  * POST /api/captions/auto (the page's script check, Match cadence and layout); saved with PUT /api/projects/:id/sync
  * at the revision that was read. When it ends, the card the assistant left ends and the chat says so (workEnded).
+ * The project can be opened meanwhile: GET /api/projects/:id carries `captioning`, the page shows that instead of
+ * Transcribe (and the transcribe route refuses a run for it), and takes the captions when they are saved.
  * ponytail: one job in memory, the whole audio in memory (350 MB an hour): a restart drops it, and the person
  * presses Transcribe on the page. Keep jobs on disk when long recordings are sent this way.
  */
@@ -111,8 +114,8 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
       const clip = p.clips.find((c) => c.id === clipId);
       if (!clip) throw new Error("The clip is not in the project any more");
       if (clip.words?.length || clip.cues?.length) return clip.cues?.length || clip.words!.length;
-      // the look a project opens with on the page (src/lib/persist.ts clipSlotFromServer)
-      const style = { ...DEFAULT_STYLE, ...(clip.style ?? {}), fitBox: true, lowercase: clip.style?.lowercase ?? false };
+      // the look a project opens with on the page
+      const style = storedStyle(clip.style);
       const auto = p.autoCadence ?? true;
       const frame = { words, style, width: clip.srcWidth || 1920, height: clip.srcHeight || 1080 };
       const laid: Laid = !words.length ? { cues: [] } : await ask<Laid>(`/api/captions/${auto ? "auto" : "layout"}`, "POST", { ...frame, script: p.script });
@@ -146,10 +149,7 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
           },
         },
       });
-      if (saved.ok) {
-        announceSoon(user.username, "projects");
-        return laid.cues.length;
-      }
+      if (saved.ok) return laid.cues.length;
       // the page saved in between: read it again once (their captions, if that is what they saved, stay)
       if (saved.body.code !== "REVISION_CONFLICT" || again) throw new Error(saved.body.error || "The captions could not be saved");
     }
@@ -181,13 +181,13 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
       },
     )
     .then(async (end) => {
+      // first no longer "being captioned", then told: a page that has the project open reads it again on this notice,
+      // takes the captions and offers Transcribe again (also when none were made)
       captioning.delete(projectId);
       started.delete(projectId);
       announceSoon(user.username, "projects");
       // loaded here, not at the top: assistant.ts loads this file through assistant-files.ts
       const { workEnded } = await import("./assistant");
-      // the card led to the project list while the captions were made (Transcribe pressed on the page meanwhile would
-      // have its own save refused when this one lands first): from here it opens the project
       const tell = () => workEnded(user.username, `captions:${projectId}`, { ...end, href: `/captions?project=${projectId}` });
       // a job that ends at once (a file that is no video) can end before use_file's answer has left its card: told once more
       if (!tell()) setTimeout(tell, 2000).unref();

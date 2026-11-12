@@ -13,7 +13,7 @@ const tl = (v1: object[], v2: object[] = [], sources: object = { t: { fps: 25, d
   ({ fps: 25, sources, tracks: { V1: { items: v1 }, V2: { items: v2 }, A1: { items: [] } } }) as unknown as Timeline;
 const box = (x: number, y = 100, w = 100): Box => [x, y, w, w, 0.9];
 const input = (timeline: Timeline, files: Record<string, string>, values: Record<string, string> = {}, notes: string[] = []) => ({
-  edit: { id: "e", name: "E", createdBy: "nobody-here" }, variant: "", files, timeline, values, workDir: dir, signal: new AbortController().signal, note: (t: string) => notes.push(t),
+  edit: { id: "e", name: "E", createdBy: "nobody-here" }, variant: "", files, timeline, values, workDir: dir, signal: new AbortController().signal, note: (t: string) => notes.push(t), say: () => {},
 });
 
 describe("which frames Blur faces looks at", () => {

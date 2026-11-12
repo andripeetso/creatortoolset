@@ -1,5 +1,9 @@
 import {
   CompleteMultipartUploadCommand,
+  CreateBucketCommand,
+  GetBucketCorsCommand,
+  HeadBucketCommand,
+  PutBucketCorsCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
@@ -67,6 +71,9 @@ export function memoryS3() {
   const objects = new Map<string, Buffer>();
   const parts = new Map<string, Buffer[]>();
   const log: string[] = [];
+  /** The buckets that exist, or null for any bucket; and the CORS rules each was given. */
+  let buckets: Set<string> | null = null;
+  const cors = new Map<string, unknown>();
   let uploads = 0;
   const missing = (name: string) => Object.assign(new Error(name), { name, $metadata: { httpStatusCode: 404 } });
   const bytesOf = async (body: unknown) => {
@@ -78,6 +85,7 @@ export function memoryS3() {
   };
   const send = async (cmd: { input: object }): Promise<unknown> => {
     const i = cmd.input as { Key: string; Body?: unknown; UploadId: string; PartNumber: number };
+    const b = cmd.input as { Bucket: string; CORSConfiguration?: unknown };
     log.push(cmd.constructor.name);
     if (cmd instanceof PutObjectCommand) objects.set(i.Key, await bytesOf(i.Body));
     else if (cmd instanceof HeadObjectCommand) {
@@ -97,8 +105,15 @@ export function memoryS3() {
       parts.get(i.UploadId)![i.PartNumber - 1] = await bytesOf(i.Body);
       return { ETag: `"e${i.PartNumber}"` };
     } else if (cmd instanceof CompleteMultipartUploadCommand) objects.set(i.Key, Buffer.concat(parts.get(i.UploadId)!));
+    else if (cmd instanceof HeadBucketCommand) {
+      if (buckets && !buckets.has(b.Bucket)) throw missing("NotFound");
+    } else if (cmd instanceof CreateBucketCommand) buckets?.add(b.Bucket);
+    else if (cmd instanceof GetBucketCorsCommand) {
+      if (!cors.has(b.Bucket)) throw missing("NoSuchCORSConfiguration");
+      return { CORSRules: [] };
+    } else if (cmd instanceof PutBucketCorsCommand) cors.set(b.Bucket, b.CORSConfiguration);
     else throw new Error(`Not in the mock: ${cmd.constructor.name}`);
     return {};
   };
-  return { send, objects, log };
+  return { send, objects, log, cors, onlyBuckets: (...names: string[]) => void (buckets = new Set(names)) };
 }
