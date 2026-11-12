@@ -138,9 +138,12 @@ final class UploadEngine: ObservableObject {
         defer { reconciling = false }
         repeat {
             reconcileAgain = false
-            let active = await transfers.activeItemIds()
-            for item in store.items where item.isWorking && !active.contains(item.id) {
+            for listed in store.items where listed.isWorking {
+                // asked fresh for each clip: the one before may have taken a while (a copy out of Photos), and a
+                // clip that started sending meanwhile must not be started twice
+                guard let item = store.item(listed.id), item.isWorking else { continue }
                 if let at = item.nextAttemptAt, at > Date() { continue }
+                if await transfers.activeItemIds().contains(item.id) { continue }
                 switch item.state {
                 case .preparing: await prepare(item.id)
                 case .confirming: break
