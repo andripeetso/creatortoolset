@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -8,7 +8,7 @@ import type { StepsView } from "../../contracts/editor-steps";
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), "edit-steps-"));
 process.env.CT_EDITOR_STEPS = path.resolve("editor-steps");
 const { definePlugin, mountPlugins } = await import("../lib/plugin");
-const { bundledSteps, chosenSteps, editStepsApp } = await import("./steps");
+const { bundledPlugins, chosenSteps, editStepsApp } = await import("./steps");
 
 const blur = definePlugin({
   id: "tiny-blur",
@@ -51,7 +51,43 @@ describe("Settings → AI Editor's steps", () => {
     expect((await app.request("/add/voice", { method: "POST" })).status).toBe(404);
   });
 
-  it("reads the steps that come with the app from their folders, without running them", () => {
-    expect(bundledSteps()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer" });
+  it("reads the plug-ins that come with the app from their folders, without running them, each with its own kind", () => {
+    expect(bundledPlugins()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer", kind: "AI Editor step" });
+    expect(Object.fromEntries(bundledPlugins().map((b) => [b.folder, b.kind]))).toEqual({
+      colour: "AI Editor step",
+      "face-blur": "AI Editor step",
+      "face-refine": "AI Editor step",
+      voice: "AI Editor step",
+    });
+  });
+
+  it("on the Mac app's own server: Community gets every team plug-in, Settings → AI Editor only the loaded steps", async () => {
+    const appFolder = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), "edit-steps-app-"));
+    // the team's folder: a step whose plugin.ts says no kind (an option's kind: "choice" must not stand in), and an engine
+    const team = path.join(appFolder, "team");
+    const plugin = (folder: string, text: string) => (mkdirSync(path.join(team, folder), { recursive: true }), writeFileSync(path.join(team, folder, "plugin.ts"), text));
+    plugin("tiny-step", `export default definePlugin({ id: "tiny-step", name: "Tiny step", about: "A step.", editor: { steps: [{ id: "s", options: [{ id: "o", kind: "choice" }] }] } });`);
+    plugin("tiny-enhance", `export default definePlugin({\n  id: "tiny-enhance",\n  name: "Tiny Enhance",\n  about: "Cleans voices.",\n  kind: "Audio Enhancer engine",\n  routes,\n});`);
+    Object.assign(process.env, { CT_LOCAL: "1", CT_APP_FOLDER: appFolder, CT_EDITOR_STEPS: team });
+    try {
+      const view = async () => (await (await app.request("/")).json()) as StepsView;
+      const row = async (id: string) => (await view()).steps.find((r) => r.id === id);
+      expect(await row("tiny-enhance")).toMatchObject({ title: "Tiny Enhance", about: "Cleans voices.", kind: "Audio Enhancer engine", state: "add", folder: "tiny-enhance" });
+      expect(await row("tiny-step")).toMatchObject({ kind: "", state: "add" });
+      // Download: the folder goes into the plug-ins folder, the same road as a step's
+      expect((await app.request("/add/tiny-enhance", { method: "POST" })).status).toBe(200);
+      expect(existsSync(path.join(appFolder, "plugins", "tiny-enhance", "plugin.ts"))).toBe(true);
+      expect((await row("tiny-enhance"))?.state).toBe("off");
+      // switched on and loaded: Installed in Community, and no row of it among the steps
+      mountPlugins(new Hono(), [blur, definePlugin({ id: "tiny-enhance", name: "Tiny Enhance" })]);
+      expect((await row("tiny-enhance"))?.state).toBe("loaded");
+      expect((await view()).steps.filter((r) => r.state === "on").map((r) => r.id)).toEqual(["blur"]);
+    } finally {
+      mountPlugins(new Hono(), [blur]);
+      process.env.CT_EDITOR_STEPS = path.resolve("editor-steps");
+      delete process.env.CT_LOCAL;
+      delete process.env.CT_APP_FOLDER;
+      rmSync(appFolder, { recursive: true, force: true });
+    }
   });
 });
