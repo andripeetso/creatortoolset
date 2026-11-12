@@ -185,7 +185,8 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: styleBlock(edit.style) });
     let found: RawMoment[];
     try {
-      // ponytail: the whole transcript in one request (an hour of talk is about 15,000 tokens); windows when a recording outgrows the person's AI
+      // ponytail: the whole transcript in one request (measured: 31.5 minutes of talk, 467 sentences, is a request of 16,600 tokens,
+      // so an hour is about 32,000); a model whose context is shorter refuses in words (ai-complete.ts). Windows when recordings outgrow people's AIs
       found = await completeWithFallback(asked.system, asked.user, signal, parseMoments, route);
     } catch (e) {
       const away = macAway(e);
