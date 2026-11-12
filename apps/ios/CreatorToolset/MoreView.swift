@@ -167,6 +167,8 @@ struct AddServerView: View {
                             .buttonStyle(.borderless)
                         }
                         .font(.subheadline)
+                        // here, not at the foot of the form, which the keyboard covers
+                        if let error { Problem(text: error) }
                         if recovery {
                             TextField("Recovery code", text: $code)
                                 .textInputAutocapitalization(.never)
@@ -203,7 +205,7 @@ struct AddServerView: View {
                         .onSubmit { if !blocked { Task { await connect() } } }
                 }
             }
-            if let error { Problem(text: error) }
+            if let error, codeAsk?.step == nil { Problem(text: error) }
             Button(needsPassword == nil && asked == nil ? "Connect" : "Sign in") { Task { await connect() } }
                 .disabled(blocked)
         }
@@ -235,10 +237,11 @@ struct AddServerView: View {
             #if DEBUG
             if Account.demo == "password", let computer = computers?.first(where: { $0.addedId != nil }) { ask(computer) }
             if Account.demo == "old", let computer = computers?.first { usePassword(computer) }
-            if Account.demo == "code" || Account.demo == "setup", let computer = computers?.first(where: { $0.addedId != nil }) {
+            if ["code", "wrong", "setup"].contains(Account.demo), let computer = computers?.first(where: { $0.addedId != nil }) {
                 ask(computer)
                 password = "demo"
-                codeAsk = (computer.url, Account.demo == "code" ? "demo" : nil)
+                codeAsk = (computer.url, Account.demo == "setup" ? nil : "demo")
+                if Account.demo == "wrong" { error = "Wrong code" }
                 typing = .code
             }
             #endif

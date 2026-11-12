@@ -2,8 +2,9 @@ import XCTest
 @testable import CreatorToolset
 
 /// The sign-in code step, with no network: what each refusal of /api/auth/login, /api/auth/ticket and /api/auth/code
-/// means to the phone. The bodies are the server's own answers (apps/captions/api/auth.ts, read back from a scratch
-/// server), the step token shortened.
+/// means to the phone. CODE_NEEDED, STEP_EXPIRED and "Wrong code" were read back from a scratch public server (the step
+/// token replaced); CODE_SETUP and the 429 come from apps/captions/api/auth.ts (`codeStep`, `locked`), which a server
+/// that is not hosted or not locked never sends.
 @MainActor
 final class SignInCodeTests: XCTestCase {
     private let needed = #"{"error":"This account asks for a code from an authenticator app, which this app can't take yet. Sign in with a link from a signed-in computer instead.","code":"CODE_NEEDED","step":"Xq3v9Tn0aBcD-eFgHiJkLmNoPqRsTuVwXyZ01234567"}"#

@@ -27,10 +27,10 @@ final class Account: ObservableObject {
     private var token: String? { Keychain.get(key) }
 
     #if DEBUG
-    /// `-signinDemo list|none|password|old|add|problem|partly|code|setup` at launch: a made-up account and its computers,
-    /// for simulator screenshots (`add` opens Add a computer from More; `problem` is a sign-in that failed, `partly` a list
-    /// whose added computers didn't load, `code` asks for the sign-in code, `setup` says to set it up on the website).
-    /// No server is asked anything.
+    /// `-signinDemo list|none|password|old|add|problem|partly|code|wrong|setup` at launch: a made-up account and its
+    /// computers, for simulator screenshots (`add` opens Add a computer from More; `problem` is a sign-in that failed,
+    /// `partly` a list whose added computers didn't load, `code` asks for the sign-in code, `wrong` after a wrong one,
+    /// `setup` says to set it up on the website). No server is asked anything.
     static let demo = UserDefaults.standard.string(forKey: "signinDemo")
     #endif
 
