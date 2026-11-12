@@ -15,7 +15,7 @@ describe("packContents", () => {
   });
 
   it("is empty for a pack with nothing in it", () => {
-    expect(packContents({})).toEqual({ slots: [], frameworks: [], captionStyles: [], home: null });
+    expect(packContents({})).toEqual({ slots: [], frameworks: [], captionStyles: [], skills: [], home: null });
   });
 
   it("names the tools a Home layout shows, and files the pack under Home layouts", () => {

@@ -500,6 +500,29 @@ describe.skipIf(rootReplaced)("An editing style's skill", () => {
     expect((await json<EditingStyle>(call("maker", "PUT", `/api/editor/styles/${s.id}`, { skill: null }))).skill).toBeNull();
   });
 
+  it("an AI Editor script skill, the person's own or from Community, reaches the script step only of an edit in a style that names it", async () => {
+    const own = await addSkill("maker", { name: "Script hooks", body: "OWN-SCRIPT-SKILL Open on the roll.", place: "editor.script" });
+    const pack = { format: 1, id: "tiny-scripts", name: "Tiny Scripts", version: "1.0.0", author: "Tiny Acrobatics", license: "CC-BY-4.0", description: "Script help.", skills: [{ slot: "editor.script", name: "Endings", text: "PACK-SCRIPT-SKILL End on the next class." }] };
+    expect((await call("maker", "POST", "/api/packs/install", { pack })).status).toBe(201);
+    const brief = { brief: "A reel for parents of crawlers.", targetS: 45 };
+    const plain = await sent("maker", brief);
+    expect(plain.system).not.toMatch(/OWN-SCRIPT-SKILL|PACK-SCRIPT-SKILL/);
+    const withOwn = await style("maker", { name: "Hooks style", notes: "Short lines.", skill: own.id });
+    const withPack = await style("maker", { name: "Endings style", notes: "Short lines.", skill: "pack:tiny-scripts:endings" });
+    const other = await style("maker", { name: "Other style", notes: "Short lines." });
+    const a = await sent("maker", { ...brief, style: withOwn.id });
+    expect(a.system).toBe(`${plain.system}\n\nEditing style "Hooks style", in the author's own words:\nShort lines.\n\n${await skillText("maker", [own.id])}`);
+    expect(a.system).toContain("OWN-SCRIPT-SKILL");
+    expect(a.system).not.toContain("PACK-SCRIPT-SKILL");
+    const b = await sent("maker", { ...brief, style: withPack.id });
+    expect(b.system).toContain(`[Skill "Endings" from pack "Tiny Scripts"]\nPACK-SCRIPT-SKILL End on the next class.`);
+    expect(b.system).not.toContain("OWN-SCRIPT-SKILL");
+    expect((await sent("maker", { ...brief, style: other.id })).system).toBe(`${plain.system}\n\nEditing style "Other style", in the author's own words:\nShort lines.`);
+    expect(await sent("maker", brief)).toEqual(plain);
+    await removeSkill("maker", own.id);
+    await call("maker", "DELETE", "/api/packs/tiny-scripts");
+  });
+
   it("the skill's text is never more than the skills' own cap", async () => {
     const big = await addSkill("maker", { name: "Long", when: "Always.", body: "w".repeat(20_000) });
     const s = await style("maker", { name: "Long skill", skill: big.id });

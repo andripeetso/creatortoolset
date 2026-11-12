@@ -141,6 +141,13 @@ const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
   return false;
 };
 
+const running = new Set<number>();
+
+/** The app is stopping (an update, Quit): the jobs this server runs go back in the queue at once, the try not counted. */
+export function releaseRunningJobs(now = Date.now()): void {
+  for (const id of running) defer(libraryDb(), id, 0, now);
+}
+
 /** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
 export async function tick(now = Date.now(), kinds: readonly string[] = LANES.flatMap((l) => l.kinds)): Promise<boolean> {
   const db = libraryDb();
@@ -157,6 +164,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     defer(db, job.id, 10, now);
     return false;
   }
+  running.add(job.id);
   // a slow step starts: the open pages say which clip it is on (a picture is over before they would ask)
   if (!PICTURES.includes(job.kind)) libraryChanged(job.library_id);
   // a job waiting its turn (the Mac's AI, this computer's transcriber) keeps its lease, so no second copy starts
@@ -186,6 +194,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
     if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   } finally {
+    running.delete(job.id);
     if (device) onDevice--;
     clearInterval(beat);
     release();

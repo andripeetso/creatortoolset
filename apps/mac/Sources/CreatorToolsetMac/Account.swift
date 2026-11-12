@@ -17,8 +17,9 @@ let accountProviders = ["apple", "google", "github"]
 
 /// The sign-ins the default account server offers, in the order setup's last screen shows them. A fixed list, so a
 /// signed-out person's status asks that server nothing and the app makes no call there before a press. A provider is
-/// listed only once the server has its keys (Google and Apple since 2026-11-11). Empty = no account screen in setup.
-let accountLive = ["google", "apple"]
+/// listed only once the server has its keys (Google and Apple since 2026-11-11, GitHub since 2026-11-12). Empty = no
+/// account screen in setup.
+let accountLive = ["google", "apple", "github"]
 
 /// The account server from This Mac → Account: never set = defaultAccountServer; "" = none (forks, own servers).
 func accountServerURL(_ saved: String?) -> URL? {
@@ -40,20 +41,39 @@ func accountCode(from url: URL) -> String? {
     return code
 }
 
+/// The account server's words from creatortoolset://account?error=… (a sign-in it turned down), or nil.
+func accountError(from url: URL) -> String? {
+    guard url.scheme?.lowercased() == "creatortoolset", url.host?.lowercased() == "account" else { return nil }
+    return URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "error" })?.value
+}
+
+/// A sign-in linked to the account after it was made: its provider and the email it has there.
+struct AccountLogin: Codable, Equatable {
+    let provider: String
+    let email: String
+}
+
 struct AccountProfile: Codable, Equatable {
     let name: String
     /// "" when the server has no verified email for the account (Google sends one only when it verified it).
     let email: String
+    /// The sign-in the account was made with ("" from a server from before it said), and the ones linked to it.
+    var provider = ""
+    var logins: [AccountLogin] = []
 
-    init(name: String, email: String) {
+    init(name: String, email: String, provider: String = "", logins: [AccountLogin] = []) {
         self.name = name
         self.email = email
+        self.provider = provider
+        self.logins = logins
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? ""
+        logins = (try? c.decodeIfPresent([AccountLogin].self, forKey: .logins)) ?? []
     }
 }
 
@@ -106,8 +126,28 @@ struct AccountClient {
     let server: URL
     var session: URLSession = .shared
 
-    func loginURL(_ provider: String, challenge: String) -> URL {
-        URL(string: "/api/account/login/\(provider)?app=1&challenge=\(challenge)", relativeTo: server)!.absoluteURL
+    /// `link`: a ticket from linkStart, so this sign-in joins the account that asked for it.
+    func loginURL(_ provider: String, challenge: String, link: String? = nil) -> URL {
+        let extra = link.flatMap { $0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) }.map { "&link=\($0)" } ?? ""
+        return URL(string: "/api/account/login/\(provider)?app=1&challenge=\(challenge)\(extra)", relativeTo: server)!.absoluteURL
+    }
+
+    /// POST /api/account/link-start with the token: a one-time ticket that adds the next sign-in to this account.
+    func linkStart(_ token: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "/api/account/link-start", relativeTo: server)!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        struct Reply: Decodable { let link: String }
+        let reply: Reply = try await send(request)
+        return reply.link
+    }
+
+    /// DELETE /api/account/logins/<provider> with the token: drops a linked sign-in; the account as it is now.
+    func unlink(_ provider: String, token: String) async throws -> AccountProfile {
+        var request = URLRequest(url: URL(string: "/api/account/logins/\(provider)", relativeTo: server)!)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
     }
 
     /// The providers whose sign-in the server has set up, in `accountProviders` order.
@@ -136,9 +176,9 @@ struct AccountClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["code": code, "verifier": verifier])
-        struct Reply: Decodable { let token: String; let name: String; let email: String? }
-        let reply: Reply = try await send(request)
-        return (reply.token, AccountProfile(name: reply.name, email: reply.email ?? ""))
+        struct Reply: Decodable { let token: String }
+        let data = try await sendData(request)
+        return (try JSONDecoder().decode(Reply.self, from: data).token, try JSONDecoder().decode(AccountProfile.self, from: data))
     }
 
     /// GET /api/account/me with the token: who it signs in as. 401 = the token no longer works.
@@ -172,13 +212,17 @@ struct AccountClient {
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
+        try JSONDecoder().decode(T.self, from: try await sendData(request))
+    }
+
+    private func sendData(_ request: URLRequest) async throws -> Data {
         var request = request
         request.timeoutInterval = 15
         request.httpShouldHandleCookies = false
         let (data, response) = try await session.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch code {
-        case 200..<300: return try JSONDecoder().decode(T.self, from: data)
+        case 200..<300: return data
         case 401 where request.url?.path == "/api/account/me" || request.url?.path == "/api/pack-catalog/submit": throw AccountError.signedOut
         case 400..<500 where request.url?.path == "/api/pack-catalog/submit":
             throw AccountError.refused((try? JSONDecoder().decode([String: AnyText].self, from: data))?["error"]?.text ?? "The catalog answered \(code).")
@@ -205,10 +249,13 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 
 /// The page's account message: "status" or "offered" (the same question; setup's account screen and Settings ask
 /// "offered", which an app from before 2026-11-10 answers "off" without asking its server which sign-ins exist),
-/// "signout", "apple", "google" or "github", and only from the window's own page, never from a frame inside it (an
-/// embed would read the name and email, open a sign-in or sign the person out).
+/// "signout", "apple", "google" or "github", "link:<provider>" (add that sign-in to the account) or "unlink:<provider>",
+/// and only from the window's own page, never from a frame inside it (an embed would read the name and email, open a
+/// sign-in or sign the person out).
 func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
-    guard mainFrame, let ask = body as? String, ["status", "offered", "signout"].contains(ask) || accountProviders.contains(ask) else { return nil }
+    guard mainFrame, let ask = body as? String else { return nil }
+    let provider = ask.hasPrefix("link:") ? String(ask.dropFirst(5)) : ask.hasPrefix("unlink:") ? String(ask.dropFirst(7)) : ask
+    guard ["status", "offered", "signout"].contains(ask) || accountProviders.contains(provider) else { return nil }
     return ask
 }
 
@@ -288,7 +335,11 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
 
     private func reply(_ profile: AccountProfile) -> AccountReply {
         var reply = ["state": "signedIn", "name": profile.name, "email": profile.email]
-        if let provider = UserDefaults.standard.string(forKey: providerKey), !provider.isEmpty { reply["provider"] = provider }
+        let provider = profile.provider.isEmpty ? UserDefaults.standard.string(forKey: providerKey) ?? "" : profile.provider
+        if !provider.isEmpty { reply["provider"] = provider }
+        // the linked sign-ins: "github,apple", each one's email as login.<provider>
+        reply["logins"] = profile.logins.map(\.provider).joined(separator: ",")
+        for l in profile.logins { reply["login.\(l.provider)"] = l.email }
         return reply
     }
 
@@ -306,7 +357,10 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             do {
                 let fresh = try await client.me(token)
                 keep(fresh)
-                return reply(fresh)
+                // the sign-ins on offer too, so Settings can link one more to the account
+                var signedIn = reply(fresh)
+                if let up = try? await offered(client) { signedIn["providers"] = up.joined(separator: ",") }
+                return signedIn
             } catch AccountError.signedOut {
                 DeviceVault.remove(for: host, service: Self.vault)
             } catch {
@@ -341,31 +395,53 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         return await status()
     }
 
+    /// Drops a linked sign-in from the account (Settings → Account → Connected accounts).
+    func unlink(_ provider: String) async -> AccountReply {
+        guard let server else { return ["state": "off"] }
+        guard let token = DeviceVault.token(for: host, service: Self.vault) else { return ["state": "signedOut"] }
+        do {
+            let fresh = try await AccountClient(server: server).unlink(provider, token: token)
+            keep(fresh)
+            return reply(fresh)
+        } catch {
+            return reply(error)
+        }
+    }
+
     /// "Continue with Apple" / "Google" / "GitHub": the server's sign-in in the system sheet, then the code exchange.
+    /// `link`: signed in already, this sign-in is added to the same account (a ticket from the server first).
     /// `done` is called exactly once.
-    func signIn(_ provider: String, done: @escaping (AccountReply) -> Void) {
+    func signIn(_ provider: String, link: Bool = false, done: @escaping (AccountReply) -> Void) {
         guard let server else { return done(["state": "off"]) }
         guard accountProviders.contains(provider) else { return done(["state": "error", "message": "Unknown sign-in."]) }
+        let token = DeviceVault.token(for: host, service: Self.vault)
+        if link && token == nil { return done(["state": "signedOut"]) }
         session?.cancel()
         pending?(["state": "cancelled"])
         pending = done
-        signingInWith = provider
+        // a link keeps the sign-in the account was made with as its provider
+        signingInWith = link ? (UserDefaults.standard.string(forKey: providerKey) ?? "") : provider
         let pair = Pkce.make()
         pkce = pair
         Task { () -> Void in
             let client = AccountClient(server: server)
+            var ticket: String?
             do {
                 guard try await client.isSetUp(provider) else { answer(reply(AccountError.notSetUp)); return }
+                if link, let token { ticket = try await client.linkStart(token) }
             } catch {
-                answer(unreachable(error))
+                answer(link ? reply(error) : unreachable(error))
                 return
             }
-            let sheet = ASWebAuthenticationSession(url: client.loginURL(provider, challenge: pair.challenge), callbackURLScheme: "creatortoolset") { [weak self] url, error in
+            let sheet = ASWebAuthenticationSession(url: client.loginURL(provider, challenge: pair.challenge, link: ticket), callbackURLScheme: "creatortoolset") { [weak self] url, error in
                 Task { @MainActor in
                     guard let self else { return }
                     self.session = nil
                     if let url, let code = accountCode(from: url) {
                         await self.finish(code: code)
+                    } else if let url, let why = accountError(from: url) {
+                        self.pkce = nil
+                        self.answer(["state": "error", "message": why])
                     } else if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
                         self.answer(["state": "cancelled"])
                     } else {

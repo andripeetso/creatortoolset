@@ -42,6 +42,7 @@ describe("Settings redirects", () => {
     expect(resolveSection("this-mac", local)).toEqual({ kind: "redirect", to: "/settings/devices" });
     expect(resolveSection("my-keys", local)).toEqual({ kind: "redirect", to: "/settings/keys" });
     expect(resolveSection("packs", local)).toEqual({ kind: "redirect", to: "/community/installed" });
+    expect(resolveSection("skills", local)).toEqual({ kind: "redirect", to: "/community/skills" });
   });
 
   it("sends the editor id out of Settings to the AI Editor page, except in the Mac app on its own server (its steps page)", () => {

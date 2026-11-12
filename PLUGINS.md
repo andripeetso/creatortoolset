@@ -121,6 +121,7 @@ A plug-in has one or both of these files, and any other files beside them:
 | A post-processing step in the AI Editor (it changes the footage a draft plays: the voice, the colour, faces) | `editor.steps` | `plugin.ts` |
 | AI provider kinds and presets | `providers` | `plugin.ts` |
 | Another way to set up a tool: the tool's row on Home and in setup names it, and the tool counts as set up once the account has it | `needs` | `plugin.ts` |
+| A skill for one of a tool's AI steps (text, checked like a pack's; each person switches it on in Community → Skills, never the assistant) | `skills` | `plugin.ts` |
 | Rows and menu items in the Mac app's menu bar | `activity`, `menu` | `plugin.ts` |
 
 A page, a tile, an API and a tool together make a whole new tool in the app. `plugin-examples/hello` has one of

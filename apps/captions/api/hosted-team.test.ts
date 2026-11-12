@@ -51,7 +51,7 @@ describe("hosted team", () => {
   });
 
   it("joining makes a team member whose plug-in gate starts off", async () => {
-    const res = await call("POST", `/api/auth/invite/${token}`, undefined, { username: "ann", password: "secret1" });
+    const res = await call("POST", `/api/auth/invite/${token}`, undefined, { username: "ann", password: "ann-secret-1" });
     expect(res.status).toBe(200);
     const ann = findUser("ann");
     expect(ann?.role).toBe("team");
@@ -65,7 +65,7 @@ describe("hosted team", () => {
   });
 
   it("a member sees the team but manages nothing and reaches no admin route", async () => {
-    annCookie = await login("ann", "secret1");
+    annCookie = await login("ann", "ann-secret-1");
     const ws = (await (await call("GET", "/api/workspace", annCookie)).json()) as { me: string; members: { username: string }[] };
     expect(ws.me).toBe("member");
     expect(ws.members.map((m) => m.username).sort()).toEqual([admin, "ann"].sort());

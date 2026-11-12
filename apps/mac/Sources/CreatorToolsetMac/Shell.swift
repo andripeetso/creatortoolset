@@ -163,6 +163,10 @@ final class Shell: NSObject, ObservableObject {
                 Task { done(await self.account.status()) }
             } else if ask == "signout" {
                 Task { done(await self.account.signOut()) }
+            } else if ask.hasPrefix("unlink:") {
+                Task { done(await self.account.unlink(String(ask.dropFirst(7)))) }
+            } else if ask.hasPrefix("link:") {
+                self.account.signIn(String(ask.dropFirst(5)), link: true, done: done)
             } else {
                 self.account.signIn(ask, done: done)
             }
@@ -334,7 +338,7 @@ final class Shell: NSObject, ObservableObject {
     func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
         guard let server else { return nil }
         if on && !server.hasOwnerPassword {
-            guard let password, password.count >= 6 else { return "Use at least 6 characters." }
+            guard let password, password.count >= 10 else { return "Use at least 10 characters." }
             guard let current = server.ownerPasswords().last else { return "The Keychain did not give the server's secret." }
             // the Keychain first: a password the server took but the app lost would lock the window out
             guard server.saveOwnerPassword(password) else { return "The Keychain did not keep the password." }
@@ -681,6 +685,7 @@ final class Shell: NSObject, ObservableObject {
         let id = UUID()
         let work = relayFolder(for: base, localData: runsHere ? server?.dataDir : nil)
         let relay = RelayRunner(base: base, token: token, work: work,
+            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }),
             onStatus: { [weak self] status in
                 Task { @MainActor in
                     guard let self, self.runnerID == id else { return }

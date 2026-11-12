@@ -3,6 +3,8 @@ import path from "node:path";
 import { Hono } from "hono";
 import { checkPack, isPackSlot, type PackSlot } from "../contracts/packs";
 import type { AuthVars } from "./auth";
+import { placeOf } from "../contracts/skills";
+import { listSkills } from "./lib/skills";
 import { env } from "./lib/env";
 import { installPack, listInstalled, parseProjectIds, removePack, setPackOn, setPackProjects } from "./lib/packs";
 import type { Framework } from "./lib/workshop/types";
@@ -61,7 +63,8 @@ packsApp.delete("/:id", async (c) => {
 
 /**
  * Building a pack (Publish to Community): `{id, name, version, description, license, niche?, frameworks: ids, presets: ids,
- * instructions: {slot: text}, home: {hidden}}` → a checked pack file built from the person's own items.
+ * skills: ids, instructions: {slot: text}, home: {hidden}}` → a checked pack file built from the person's own items. A
+ * skill goes with its place, so the pack checks refuse one for the assistant or the Workshop's writing.
  */
 packsApp.post("/export", async (c) => {
   const user = c.get("user");
@@ -77,10 +80,12 @@ packsApp.post("/export", async (c) => {
     frameworks.push({ name: f.name, role: f.role, summary: f.summary, steps: f.steps, whenToUse: f.whenToUse,
       ...(f.pairsWith ? { pairsWith: f.pairsWith } : {}), ...(f.example ? { example: f.example } : {}) });
   }
-  const want = new Set(ids(b.presets));
+  const wantPresets = new Set(ids(b.presets));
   const captionStyles = packPresetStore.all()
-    .filter((p) => want.has(p.id) && (p.owner === user.username || p.scope === "global"))
+    .filter((p) => wantPresets.has(p.id) && (p.owner === user.username || p.scope === "global"))
     .map((p) => ({ name: p.name, kind: p.kind, style: p.style }));
+  const want = new Set(ids(b.skills));
+  const skills = (await listSkills(user.username)).filter((s) => want.has(s.id)).map((s) => ({ slot: placeOf(s), name: s.name, ...(s.when ? { when: s.when } : {}), text: s.body }));
   const instructions: Partial<Record<PackSlot, string>> = {};
   if (b.instructions && typeof b.instructions === "object")
     for (const [slot, text] of Object.entries(b.instructions as Record<string, unknown>))
@@ -90,6 +95,7 @@ packsApp.post("/export", async (c) => {
     format: 1, id: b.id, name: b.name, version: b.version ?? "1.0.0", author: b.author ?? user.username,
     license: b.license, description: b.description, niche: b.niche, homepage: b.homepage,
     ...(Object.keys(instructions).length ? { instructions } : {}),
+    ...(skills.length ? { skills } : {}),
     ...(frameworks.length ? { frameworks } : {}),
     ...(captionStyles.length ? { captionStyles } : {}),
     ...(b.home !== undefined ? { home: b.home } : {}),
