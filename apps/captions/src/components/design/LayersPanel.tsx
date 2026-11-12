@@ -68,7 +68,7 @@ export function LayersPanel({
         dropped.current = false;
         setRenaming(null);
       }}
-      className="h-6 min-w-0 flex-1 rounded-sm bg-white px-1 text-[11px] text-zinc-900 outline outline-1 outline-[#0d99ff] dark:bg-[#1e1e1e] dark:text-white"
+      className="h-6 min-w-0 flex-1 rounded-sm bg-white px-1 text-[11px] text-zinc-50 outline outline-1 outline-[#0d99ff] dark:bg-[#1e1e1e]"
     />
   );
 
@@ -105,7 +105,7 @@ export function LayersPanel({
   const line = (key: string) => drop?.key === key && <span className={cn("pointer-events-none absolute inset-x-2 h-0.5 bg-[#0d99ff]", drop.after ? "bottom-0" : "top-0")} />;
 
   return (
-    <nav aria-label="Layers" className="flex w-60 shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-900 dark:border-[#444] dark:bg-[#2c2c2c] dark:text-white">
+    <nav aria-label="Layers" className="flex w-60 shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
         <h2 className="font-semibold">Layers</h2>
         <button type="button" aria-label="Add a page" title="Add a page" onClick={onAddPage} className="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-zinc-500/15">
@@ -179,7 +179,7 @@ export function LayersPanel({
                         onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
                       }}
                       onDoubleClick={() => setRenaming(key)}
-                      className={cn(ROW, "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-400 dark:text-[#7a7a7a]")}
+                      className={cn(ROW, "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
                     >
                       <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
                       {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}

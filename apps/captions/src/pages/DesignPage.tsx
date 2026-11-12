@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fileName = (name: string) => name.replace(/[^\p{L}\p{N} _-]+/gu, " ").trim().replace(/\s+/g, "-") || "design";
 /** The keys are someone else's: a field being typed in, or an open menu or popover. */
-const typingIn = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || !!t.closest('[role="menu"],[role="dialog"]'));
+const typingIn = (t: EventTarget | null) => t instanceof HTMLElement && ((t instanceof HTMLInputElement && t.type !== "color") || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || !!t.closest('[role="menu"],[role="dialog"]'));
 
 const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["move", "Move", "V", MousePointer2],
@@ -48,7 +48,8 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyR: "rect", KeyO: "ellipse", KeyT: "text" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-const BAR = "border-[#e6e6e6] bg-white text-zinc-900 dark:border-[#444] dark:bg-[#2c2c2c] dark:text-white";
+// the panels' colours. The app's zinc greys mirror in the light theme (tailwind.config.js), so zinc-50 is the ink in both
+const BAR = "border-[#e6e6e6] bg-white text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]";
 
 /**
  * What ⌘C took, for ⌘V. Kept here: a design's layers mean nothing to another program, which gets their names as
@@ -155,33 +156,45 @@ export default function DesignPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hist?.now]);
 
-  const change = useCallback((fn: (pages: Page[]) => Page[]) => {
+  // the pages as of the last drawing, for what finishes later (an upload)
+  const latest = useRef(pages);
+  useEffect(() => void (latest.current = pages), [pages]);
+  /**
+   * One step to undo. With `merge`, a change that follows another of the same name joins it: a colour dragged about
+   * in the picker is one step, not one for every shade it passed.
+   */
+  const merging = useRef<string | null>(null);
+  const change = useCallback((fn: (pages: Page[]) => Page[], merge?: string) => {
+    const join = !!merge && merging.current === merge;
+    merging.current = merge ?? null;
     setLive(null);
-    setHist((h) => (h ? histChange(h, fn) : h));
+    setHist((h) => (!h ? h : join ? { ...h, now: fn(h.now) } : histChange(h, fn)));
   }, []);
-  const setPage = useCallback((next: Page) => change((all) => all.map((p) => (p.id === next.id ? next : p))), [change]);
+  const setPage = useCallback((next: Page, merge?: string) => change((all) => all.map((p) => (p.id === next.id ? next : p)), merge), [change]);
   const pick = useCallback((to: number, ids: string[], frame = false) => {
+    merging.current = null;
     setAt(to);
     setSelected(ids);
     setFramed(frame);
     setError(null);
   }, []);
   const step = (back: boolean) => {
+    merging.current = null;
     setLive(null);
     setHist((h) => (h ? (back ? histUndo(h) : histRedo(h)) : h));
   };
 
   /** The saved page with every picked layer through `fn`. */
   const through = (fn: (l: Layer) => Layer): Page | null => (base ? { ...base, layers: base.layers.map((l) => (selected.includes(l.id) ? fn(l) : l)) } : null);
-  const patch = (fn: (l: Layer) => Layer) => {
+  const patch = (fn: (l: Layer) => Layer, merge?: string) => {
     const next = through(fn);
-    if (next) setPage(next);
+    if (next) setPage(next, merge);
   };
   const arrange = (next: Layer[]) => base && setPage({ ...base, layers: base.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
 
   /** New layers on a page, picked; null (and it says why) when the page is full. */
   const put = (to: number, count: number, make: (ids: string[]) => Layer[]): string[] | null => {
-    const target = pages[to];
+    const target = latest.current[to];
     if (!target || !count) return null;
     if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A page holds at most ${DESIGN_LIMITS.layers} layers`), null;
     const ids = freshIds(target, count);
@@ -255,7 +268,8 @@ export default function DesignPage() {
   };
 
   const fromComputer = async (files: readonly File[]) => {
-    if (!design || !files.length) return;
+    if (!design || !base || !files.length) return;
+    const onto = base.id;
     setError(null);
     try {
       const made: { picture: string; w: number; h: number }[] = [];
@@ -272,7 +286,8 @@ export default function DesignPage() {
         const w = Math.round(Math.min(design.width * 0.6, size.w));
         made.push({ picture, w, h: Math.round((w * size.h) / size.w) });
       }
-      put(k, made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round((design.width - m.w) / 2), y: Math.round((design.height - m.h) / 2), w: m.w, h: m.h })));
+      // onto the page it was started on, as that page is by now
+      put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round((design.width - m.w) / 2), y: Math.round((design.height - m.h) / 2), w: m.w, h: m.h })));
     } catch (e) {
       setError(message(e));
     }
@@ -488,7 +503,7 @@ export default function DesignPage() {
                 <section aria-label="Design with AI" className="flex flex-col gap-2 text-xs">
                   <label className="flex flex-col gap-1 text-zinc-500 dark:text-[#b3b3b3]">
                     Look
-                    <select value={look} onChange={(e) => setLook(e.target.value)} className="h-8 w-full rounded-[5px] bg-[#f5f5f5] px-2 text-zinc-900 outline-none dark:bg-[#383838] dark:text-white">
+                    <select value={look} onChange={(e) => setLook(e.target.value)} className="h-8 w-full rounded-[5px] bg-[#f5f5f5] px-2 text-zinc-50 outline-none dark:bg-[#383838]">
                       <option value="">The AI's own</option>
                       {styles.map((s) => (
                         <option key={s.id} value={s.id}>
@@ -523,7 +538,7 @@ export default function DesignPage() {
           picked={picked}
           onPreview={(fn) => setLive(fn ? through(fn) : null)}
           onPatch={patch}
-          onPage={(next, mid) => (mid ? setLive(next) : setPage(next))}
+          onPage={setPage}
           onAlign={(how) => arrange(alignLayers(mine, how, { w: design.width, h: design.height }))}
           onDistribute={(axis) => arrange(distribute(mine, axis))}
           zoom={view.z}

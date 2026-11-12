@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -31,7 +31,8 @@ import { cn } from "@/lib/utils";
 /**
  * The properties of what is picked: where it is, its size, how it looks, its fill and line, its type. Nothing picked:
  * the page's own. A number is typed (Enter or leaving the field sets it, the arrows step it, Shift by ten) or dragged
- * by its label; while it is dragged the canvas shows it, and it is one step to undo when let go.
+ * by its label; while it is dragged the canvas shows it, and it is one step to undo when let go. A choice made in a
+ * menu here gives the keys back to the canvas at once: ⌘Z right after picking a font undoes the font.
  */
 
 const FIELD = "flex h-6 min-w-0 items-center gap-1.5 rounded-[5px] border border-transparent bg-[#f5f5f5] px-1.5 focus-within:border-[#0d99ff] hover:border-[#e6e6e6] focus-within:hover:border-[#0d99ff] dark:bg-[#383838] dark:hover:border-[#4d4d4d]";
@@ -66,7 +67,8 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
     window.addEventListener("pointerup", up);
   };
   return (
-    <label title={title} className={FIELD}>
+    // not a <label>: a click that ends a drag on it would put the keys in the field
+    <div title={title} className={FIELD}>
       <span onPointerDown={scrub} className={cn("flex shrink-0 cursor-ew-resize select-none items-center", DIM)}>
         {label}
       </span>
@@ -96,32 +98,27 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
         }}
         className="w-full min-w-0 bg-transparent outline-none placeholder:text-zinc-400"
       />
-    </label>
+    </div>
   );
 }
 
-function Colour({ title, value, onLive, onCommit }: { title: string; value: string | null; onLive: (c: string) => void; onCommit: (c: string) => void }) {
-  const swatch = useRef<HTMLInputElement>(null);
-  const done = useRef(onCommit);
-  useEffect(() => void (done.current = onCommit), [onCommit]);
-  // the picker says "change" once, when it is let go: that is the step to undo (React's onChange is every move in it)
-  useEffect(() => {
-    const el = swatch.current;
-    if (!el) return;
-    const change = () => done.current(el.value);
-    el.addEventListener("change", change);
-    return () => el.removeEventListener("change", change);
-  }, []);
+/**
+ * A colour: the swatch opens the computer's picker, the field beside it takes a hex code. Every shade the picker
+ * passes is set at once, and `merge` names the picking they belong to, so the whole of it is one step to undo.
+ */
+function Colour({ title, value, onSet }: { title: string; value: string | null; onSet: (c: string, merge?: string) => void }) {
+  const picking = useRef(0);
   const [draft, setDraft] = useState<string | null>(null);
   const hex = value && /^#[0-9a-f]{6}$/i.test(value) ? value : "#000000";
   return (
     <div className={cn(FIELD, "flex-1")}>
       <input
-        ref={swatch}
         type="color"
         aria-label={title}
         value={hex}
-        onChange={(e) => onLive(e.target.value)}
+        // each press on the swatch is a new picking
+        onPointerDown={() => picking.current++}
+        onChange={(e) => onSet(e.target.value, `${title} ${picking.current}`)}
         className="h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-sm border border-black/15 bg-transparent p-0 dark:border-white/20 [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-sm [&::-webkit-color-swatch]:border-0"
       />
       <input
@@ -135,7 +132,7 @@ function Colour({ title, value, onLive, onCommit }: { title: string; value: stri
         onBlur={(e) => {
           const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(e.currentTarget.value.trim());
           const six = m && (m[1]!.length === 3 ? m[1]!.replace(/./g, "$&$&") : m[1]!);
-          if (draft !== null && six && `#${six.toLowerCase()}` !== value) onCommit(`#${six.toLowerCase()}`);
+          if (draft !== null && six && `#${six.toLowerCase()}` !== value) onSet(`#${six.toLowerCase()}`);
           setDraft(null);
         }}
         className="w-full min-w-0 bg-transparent uppercase outline-none placeholder:normal-case placeholder:text-zinc-400"
@@ -193,10 +190,10 @@ export function Inspector({
   picked: Layer[];
   /** what the canvas shows while a number or a colour is being dragged; null: back to what is saved */
   onPreview: (fn: ((l: Layer) => Layer) | null) => void;
-  /** every picked layer through `fn`: one step to undo */
-  onPatch: (fn: (l: Layer) => Layer) => void;
-  /** the page's own name and background; `live` while its colour is being dragged */
-  onPage: (page: DesignPage, live?: boolean) => void;
+  /** every picked layer through `fn`: one step to undo (`merge`: joined to the step before it of the same name) */
+  onPatch: (fn: (l: Layer) => Layer, merge?: string) => void;
+  /** the page's own name and background (`merge` as above) */
+  onPage: (page: DesignPage, merge?: string) => void;
   onAlign: (how: Align) => void;
   onDistribute: (axis: "x" | "y") => void;
   zoom: number;
@@ -217,7 +214,7 @@ export function Inspector({
   const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number } = {}) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
   );
-  const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} onLive={(c) => onPreview(to(c))} onCommit={(c) => onPatch(to(c))} />;
+  const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} onSet={(c, merge) => onPatch(to(c), merge)} />;
   /** The picked layers resized so the box round them is `w` × `h` (one layer: that layer; with the lock, in its shape). */
   const sized = (w: number, h: number) => (l: Layer) => (box ? resizeAll([l], box, { x: box.x, y: box.y, w, h })[0]! : l);
 
@@ -229,7 +226,7 @@ export function Inspector({
   const format = DESIGN_FORMATS.find((f) => f.id === design.format);
 
   return (
-    <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l border-[#e6e6e6] bg-white text-[11px] text-zinc-900 dark:border-[#444] dark:bg-[#2c2c2c] dark:text-white">
+    <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
         <h2 className="font-semibold">{picked.length > 1 ? `${picked.length} selected` : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.shape === "ellipse" ? "Ellipse" : "Rectangle") : "Design"}</h2>
         <DropdownMenu>
@@ -278,7 +275,7 @@ export function Inspector({
           </Section>
           <Section title="Fill">
             <div className="flex">
-              <Colour title="The page's colour" value={page.background} onLive={(background) => onPage({ ...page, background }, true)} onCommit={(background) => onPage({ ...page, background })} />
+              <Colour title="The page's colour" value={page.background} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
             </div>
           </Section>
         </>
@@ -361,7 +358,7 @@ export function Inspector({
           )}
           {text && (
             <Section title="Typography">
-              <select aria-label="Font" value={same((l) => (l.type === "text" ? l.font : undefined)) ?? ""} onChange={(e) => onPatch((l) => (l.type === "text" ? { ...l, font: e.target.value } : l))} className={cn(FIELD, "w-full outline-none")}>
+              <select aria-label="Font" value={same((l) => (l.type === "text" ? l.font : undefined)) ?? ""} onChange={(e) => (onPatch((l) => (l.type === "text" ? { ...l, font: e.target.value } : l)), e.currentTarget.blur())} className={cn(FIELD, "w-full outline-none")}>
                 <option value="" disabled hidden>
                   Mixed
                 </option>
@@ -406,7 +403,7 @@ export function Inspector({
           )}
           {every((l) => l.type === "image") && (
             <Section title="Picture">
-              <select aria-label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined)) ?? ""} onChange={(e) => onPatch((l) => (l.type === "image" ? { ...l, fit: e.target.value as "cover" | "contain" } : l))} className={cn(FIELD, "w-full outline-none")}>
+              <select aria-label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined)) ?? ""} onChange={(e) => (onPatch((l) => (l.type === "image" ? { ...l, fit: e.target.value as "cover" | "contain" } : l)), e.currentTarget.blur())} className={cn(FIELD, "w-full outline-none")}>
                 <option value="" disabled hidden>
                   Mixed
                 </option>

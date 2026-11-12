@@ -487,6 +487,7 @@ export function Stage({
               ref={typing}
               aria-label="The words of this layer"
               defaultValue={typed.text}
+              maxLength={DESIGN_LIMITS.text}
               onPointerDown={(e) => e.stopPropagation()}
               onDoubleClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
