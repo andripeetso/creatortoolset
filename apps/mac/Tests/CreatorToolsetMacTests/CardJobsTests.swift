@@ -516,4 +516,20 @@ final class CardJobsTests: XCTestCase {
             try part.data.write(to: folder.appendingPathComponent(part.filename))
         }
     }
+
+    /// `CT_CARD_SERVER=<address> CT_CARD_TOKEN=<device token> CT_CARD_STOP=<file>`: this Mac's own long poll serves a real
+    /// server, as the app's does (RelayRunner.serve and nothing else of the app), drawing every card step it is handed,
+    /// until the file exists. Run it with the home folder moved under TMPDIR: a failed step is written to the app's log.
+    func testServeARealServer() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let server = env["CT_CARD_SERVER"].flatMap(URL.init(string:)), let token = env["CT_CARD_TOKEN"], let stop = env["CT_CARD_STOP"]
+        else { throw XCTSkip("set CT_CARD_SERVER, CT_CARD_TOKEN and CT_CARD_STOP") }
+        let scratch = try XCTUnwrap(env["TMPDIR"])
+        guard AppLog.path.hasPrefix(scratch) else { return XCTFail("the app log would be \(AppLog.path), outside TMPDIR") }
+        let dir = temp()
+        let real = RelayRunner(base: server, token: token, work: dir.appendingPathComponent("relay"), home: dir,
+                               onStatus: { print("STATUS drawing=\($0.drawing) running=\($0.running) error=\($0.lastError ?? "-")") }, onRevoked: { print("REVOKED") })
+        // not asked to end within 4 s: a real server holds the poll in flight for up to 25 s after the stop
+        _ = await serving(real, upTo: 3 * 3600) { FileManager.default.fileExists(atPath: stop) }
+    }
 }
