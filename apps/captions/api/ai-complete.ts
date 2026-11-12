@@ -72,6 +72,8 @@ export type ProviderOpts = {
   off?: string;
   /** Pictures before the text (Anthropic only; pass `only: ["anthropic"]`, the others would never see them). */
   images?: Array<{ type: string; data: string }>;
+  /** The chosen AI answers or the call fails: a usage limit never moves it to another one (Compare, a plug-in). */
+  fixed?: boolean;
 };
 
 /** Who is asking: a session, or a username (background work names its owner). Nobody = no AI. */
@@ -242,7 +244,7 @@ async function streamMac(system: string, user: string, cancel: AbortSignal | und
     return await streamMacClaude(system, user, cancel, onDelta, onUsage, mac);
   } catch (e) {
     const p = mac.provider;
-    if (!(e instanceof MacClaudeError) || e.kind !== "limit" || !p) throw e;
+    if (!(e instanceof MacClaudeError) || e.kind !== "limit" || !p || opts.fixed) throw e;
     const scope = p.scope ?? "workspace";
     const inst = instanceIn(scope, p.instance);
     for (const next of inst ? limitFallbacks(scope, inst, p.model) : []) {
