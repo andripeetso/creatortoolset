@@ -159,9 +159,13 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
             defaults.set(false, forKey: "notify.ask")
             _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
         }
+        // a server that pushes gets the phone's token once he said yes (`Push`, studio plug-in only)
+        guard ServerPlugins.shared.studio else { return }
+        let status = await center.notificationSettings().authorizationStatus
+        if status == .authorized || status == .provisional { UIApplication.shared.registerForRemoteNotifications() }
     }
 
-    /// "Turn on notifications" in Settings: iOS asks once.
+    /// "Turn on notifications" in Settings: iOS asks once, and a yes hands the phone's token to a server that pushes.
     func turnOn() async {
         defaults.set(false, forKey: "notify.ask")
         _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
