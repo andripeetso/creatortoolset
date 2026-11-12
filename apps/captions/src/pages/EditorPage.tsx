@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, runEdit } from "@/lib/editor";
+import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ import { byName, matches, persistSort, storedSort, useBrowseView } from "@/compo
 import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
 import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
 import { FirstWay } from "./editor/FirstWay";
+import { FromScript } from "./editor/FromScript";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -254,6 +255,10 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
   const [versions, setVersions] = useState(1);
   const [targetS, setTargetS] = useState("");
   const [styleId, setStyleId] = useState<string | null>(null); // null: nothing picked here yet; "": None
+  // nothing filmed: the script is spoken by a voice and the whole picture comes from B-roll (editor/FromScript.tsx)
+  const [filmed, setFilmed] = useState(true);
+  const [voice, setVoice] = useState("");
+  const [broll, setBroll] = useState(""); // a folder's id; "": all the B-roll
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -368,13 +373,14 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
     setBusy(true);
     setError(null);
     try {
+      // nothing filmed: the script is spoken first, and that recording is the edit's one take
+      const spoken = filmed ? null : await makeVoice({ text: script, voice, name: name.trim() || undefined });
       const { id } = await createEdit({
-        sources: [...picked.keys()],
+        sources: spoken ? [spoken.versionId] : [...picked.keys()],
         name: name.trim() || undefined,
         brief,
         script,
-        versions,
-        targetS: Number(targetS) || 0,
+        ...(spoken ? { brollCollectionId: broll || null } : { versions, targetS: Number(targetS) || 0 }),
         // only an account with styles says anything about one: its pick, or null for None
         ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
       });
@@ -402,10 +408,23 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
           <div>
             <SheetTitle className="text-base">New edit</SheetTitle>
             <SheetDescription className="text-xs text-zinc-500">
-              Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI.
+              {filmed
+                ? "Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI."
+                : "A voice reads your script and the picture is cut from your B-roll. The voice runs on your own ElevenLabs key."}
             </SheetDescription>
           </div>
 
+          <div role="group" aria-label="What the edit is made from" className="flex gap-1.5">
+            <Button type="button" size="sm" variant={filmed ? "default" : "outline"} onClick={() => setFilmed(true)}>
+              My footage
+            </Button>
+            <Button type="button" size="sm" variant={filmed ? "outline" : "default"} onClick={() => setFilmed(false)}>
+              A script, nothing filmed
+            </Button>
+          </div>
+
+          {!filmed && <FromScript script={script} onScript={setScript} voice={voice} onVoice={setVoice} folders={folders} broll={broll} onBroll={setBroll} />}
+          {filmed && (
           <section aria-label="Footage" className="flex flex-col gap-2">
             {libId && items.length === 0 && !term && !folder && <FootageFolderCard libraryId={libId} />}
             <div className="flex flex-wrap items-center gap-2">
@@ -521,6 +540,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
               )}
             </div>
           </section>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-name">Name</Label>
@@ -543,11 +563,14 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             <Label htmlFor="edit-brief">What is the video?</Label>
             <Textarea id="edit-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} placeholder="A 45-second reel for new parents: the hook, three tips, the call to action." />
           </div>
+          {filmed && (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-script">Script (optional)</Label>
             <Textarea id="edit-script" value={script} onChange={(e) => setScript(e.target.value)} rows={3} placeholder="The text the takes were read from" />
           </div>
-          <div className="flex flex-wrap gap-4">
+          )}
+          {/* one voice says the script once: there is one version, as long as the voice */}
+          <div className={cn("flex flex-wrap gap-4", !filmed && "hidden")}>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-versions">Versions</Label>
               <select id="edit-versions" value={versions} onChange={(e) => setVersions(Number(e.target.value))} className="h-9 w-24 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
@@ -564,9 +587,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             </div>
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <Button type="submit" disabled={busy || picked.size === 0} className="self-start">
+          <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            Create and run
+            {filmed || !busy ? "Create and run" : "Making the voice"}
           </Button>
         </form>
         )}

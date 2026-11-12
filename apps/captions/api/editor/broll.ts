@@ -118,7 +118,11 @@ export function placeBroll(tl: Timeline, pool: TimelineSource[]): BrollResult {
 }
 
 /** A cut whose takes have no picture: nothing to cut away from, so the B-roll is the whole picture. */
-export const noPicture = (tl: Timeline): boolean => tl.tracks.V1.items.length > 0 && tl.tracks.V1.items.every((i) => !tl.sources[i.src]?.w);
+export function noPicture(tl: Timeline): boolean {
+  // only a take the cut knows to be sound only (w 0): a source it has no record of is not one
+  const items = tl.tracks?.V1?.items ?? [];
+  return items.length > 0 && items.every((i) => tl.sources?.[i.src]?.w === 0);
+}
 
 /** The longest shot of a covered picture, in frames at 25 fps (3 s): a longer line is cut into equal shots. */
 export const COVER_SHOT_FRAMES = 75;

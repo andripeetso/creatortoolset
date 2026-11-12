@@ -64,6 +64,13 @@ export const editorTools: ToolModule = {
     },
     // editing styles: make or change one, put one on an edit (editor-styles.ts)
     ...editorStyleTools.defs,
+    // a video with nothing filmed starts here: the script spoken, saved as a take (api/editor/voice.ts)
+    {
+      name: "voice_make",
+      description:
+        "Speak text in one of the user's ElevenLabs voices (their key, their credits) and save it in the Media Library: text (up to 5,000 characters), voice = a name or id (left out: the one used last). For a video with nothing filmed, give its version_id to editor_create as the only source: the picture is cut from B-roll.",
+      inputSchema: { type: "object", properties: { text: str, voice: str, name: str }, required: ["text"] },
+    },
   ],
   handlers: {
     editor_stop: async (a, ctx) => {
@@ -185,6 +192,17 @@ export const editorTools: ToolModule = {
         link: `${ctx.origin}/review/${p.assetId}`,
       };
     },
+    voice_make: async (a, ctx) => {
+      if (!a.text) throw new ToolError("Give text: what the voice says.");
+      const v = await ctx.json("/api/editor/voice", "POST", pick(a, ["text", "voice", "name"]));
+      return {
+        version_id: v.versionId,
+        name: v.name,
+        voice: (v.voice as Args).name,
+        link: `${ctx.origin}/library?library=${String(v.libraryId)}&asset=${String(v.assetId)}`,
+        next: "editor_create with sources [version_id] and the text as script makes the video: its whole picture comes from B-roll.",
+      };
+    },
     ...editorStyleTools.handlers,
   },
   steps: {
@@ -194,6 +212,7 @@ export const editorTools: ToolModule = {
     // in the dock this call only asks: the edit goes on Yes
     editor_delete: "Asking before the edit goes to the trash",
     editor_cut: "Working on the cut's timeline",
+    voice_make: "Making the voice",
     ...editorStyleTools.steps,
   },
   // a retry starts work again: its card opens the edit, and ends when the run does (api/editor/ended.ts)

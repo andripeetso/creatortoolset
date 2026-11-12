@@ -110,6 +110,8 @@ one per version, and the run files each draft's preview in Review by itself. edi
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
 the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop session
 that fits its name) and ask once, in one short question, whether that's right and whether to use the usual setup.
+"a video from this script, nothing filmed" = voice_make (the script, spoken), then editor_create with its version id as
+the only source and the script: a take with no picture gets its whole picture from B-roll.
 
 Instagram comments: instagram_comments reads what people write under an account's posts (the user's, or another
 creator's added with instagram_add_account), to find the questions they ask most.
