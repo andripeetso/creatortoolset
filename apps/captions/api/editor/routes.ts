@@ -16,6 +16,7 @@ import { forgetFinished, finishedOf, removeFinished } from "./finished";
 import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
 import { animationApp } from "./animation-styles";
 import { cardsApp } from "./cards/routes";
+import { markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -167,6 +168,19 @@ editorApp.delete("/styles/:id/finished/:editId", async (c) =>
 editorApp.route("/animation-styles", animationApp);
 // a version's cards on the edit page: a still, the 👍, Make cards again (cards/routes.ts)
 editorApp.route("/", cardsApp);
+
+/** Carry on, for an edit in passes: every drafted version's next pass is queued (and recorded as done); 409 while it is being made, or when no pass is left. */
+editorApp.post("/:id/pass", async (c) => {
+  const r = load(c);
+  if (!r) return notFound(c);
+  const db = libraryDb();
+  if (db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id)) return c.json({ error: "This edit is still being made", code: "conflict" }, 409);
+  const queued = Object.fromEntries(draftNames(r.e.id).flatMap((n) => { const p = nextPass(r.e, n); return p ? [[n, p]] : []; }));
+  if (!Object.keys(queued).length) return c.json({ error: "Nothing left to do", code: "conflict" }, 409);
+  await markPasses(r.e.id, queued);
+  for (const [n, p] of Object.entries(queued)) enqueueJob(db, r.e.workspaceId, `${r.e.id}:${n}`, p, r.e.createdBy, true, "edit_jobs");
+  return c.json(viewOf(r.e));
+});
 
 editorApp.get("/:id", (c) => {
   const r = load(c);

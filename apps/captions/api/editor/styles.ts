@@ -188,6 +188,10 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     if (z !== null && !known) return `size is null (the footage's own) or one of ${WORKING_SIZES.map((s) => `${s.w}x${s.h}`).join(", ")}`;
     out.size = known ? { w: known.w, h: known.h } : null;
   }
+  if (body.passes !== undefined) {
+    if (typeof body.passes !== "boolean") return "passes is true or false";
+    out.passes = body.passes;
+  }
   return out;
 }
 
@@ -202,7 +206,7 @@ export function createStyle(username: string, body: Record<string, unknown>, fro
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const base = from
-    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, size: from.size ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}) }
+    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, size: from.size ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}), ...(from.style?.passes ? { passes: true } : {}) }
     : PLAIN;
   const now = Date.now();
   const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
@@ -238,7 +242,7 @@ export const deleteStyle = (username: string, id: string): boolean =>
   });
 
 /** What an edit keeps of its style. */
-export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.animation ? { animation: s.animation } : {}), ...(s.skill ? { skill: s.skill } : {}) });
+export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.animation ? { animation: s.animation } : {}), ...(s.skill ? { skill: s.skill } : {}), ...(s.passes ? { passes: true as const } : {}) });
 
 /**
  * The one block an edit's style adds to the script step's prompt, after the installed packs' text: the person's own

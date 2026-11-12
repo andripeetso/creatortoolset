@@ -9,6 +9,7 @@ import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
 import { cardsView } from "./cards/state";
+import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
@@ -84,6 +85,8 @@ export interface StepFiles {
   first: { plans: Pick<VersionPlan, "name" | "lines">[] };
   /** the person took this edit off its style's finished list: it is never kept for a style again (finished.ts) */
   finished: { removed: boolean };
+  /** the passes Carry on queued for each version, in order (passes.ts) */
+  passes: Record<string, string[]>;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -447,10 +450,12 @@ export function viewOf(e: EditMeta): Edit {
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
   const cards = cardsView(e.id, draftNames(e.id));
+  const jobs = jobsOf(e.id);
+  const passes = passesView(e, draftNames(e.id), jobs.some((j) => j.state === "queued" || j.state === "running"));
   return {
     ...meta,
     ...summaryOf(e),
-    jobs: jobsOf(e.id),
+    jobs,
     eyeline: e.eyeline ?? {},
     ...(a?.eyeline ? { eyelineFound: a.eyeline } : {}),
     drafts: draftNames(e.id),
@@ -461,6 +466,7 @@ export function viewOf(e: EditMeta): Edit {
     previews: readStep(e.id, "review") ?? {},
     flagDefs: pluginEditFlags(),
     ...(cards ? { cards } : {}),
+    ...(passes ? { passes } : {}),
   };
 }
 

@@ -69,9 +69,16 @@ export function nextKinds(): Record<string, string[]> {
   return Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.next]));
 }
 
-/** What a finished step queues for this edit: `next`'s list, except that the cards come after the B-roll when the edit's style names an animation style. */
-export const nextFor = (kind: string, edit: Pick<EditMeta, "style">, next: Record<string, string[]>): string[] =>
-  kind === "broll" && edit.style?.animation ? ["cards"] : (next[kind] ?? []);
+/**
+ * What a finished step queues for this edit: `next`'s list, except that the cards come after the B-roll when the edit's
+ * style names an animation style. An edit in passes (passes.ts) goes from a draft or a B-roll straight to post, so each
+ * pass ends in a preview and waits; only a version whose cards pass ran (`done`) goes on to its cards after a B-roll
+ * (Make cards again lays the B-roll first).
+ */
+export const nextFor = (kind: string, edit: Pick<EditMeta, "style">, next: Record<string, string[]>, done: string[] = []): string[] =>
+  edit.style?.passes && (kind === "draft" || (kind === "broll" && !done.includes("cards")))
+    ? ["post"]
+    : kind === "broll" && edit.style?.animation ? ["cards"] : (next[kind] ?? []);
 
 const deviceKinds = (): string[] => Object.keys(KINDS).filter((k) => KINDS[k]!.source === "device");
 

@@ -32,6 +32,12 @@ describe("editor step registry", () => {
     for (const kind of Object.keys(NEXT)) expect(nextFor(kind, { style: { id: "s", name: "Plain", notes: "", pace: "tight" } }, NEXT)).toEqual(NEXT[kind]);
     expect(nextFor("broll", { style: { id: "s", name: "With cards", notes: "", pace: "tight", animation: "a" } }, NEXT)).toEqual(["cards"]);
     expect(nextFor("draft", { style: { id: "s", name: "With cards", notes: "", pace: "tight", animation: "a" } }, NEXT)).toEqual(["broll"]);
+    // edit in passes: a draft and a B-roll go straight to post, so each pass ends in a preview and waits; cards go on to post as always
+    const passes = { style: { id: "s", name: "Passes", notes: "", pace: "tight" as const, passes: true as const, animation: "a" } };
+    expect(nextFor("draft", passes, NEXT)).toEqual(["post"]);
+    expect(nextFor("broll", passes, NEXT)).toEqual(["post"]);
+    expect(nextFor("broll", passes, NEXT, ["broll", "cards"])).toEqual(["cards"]); // Make cards again lays the B-roll first
+    for (const kind of ["analyze", "script", "cards", "post", "preview", "file"]) expect(nextFor(kind, passes, NEXT)).toEqual(NEXT[kind]);
     expect(NEXT.post).toEqual(["preview"]);
     expect(NEXT.preview).toEqual(["file"]);
     expect(STEPS["fake-kind"]).toBeUndefined();

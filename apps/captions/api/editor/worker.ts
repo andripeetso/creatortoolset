@@ -9,6 +9,7 @@ import { trashDays } from "../library/trash";
 import { Waiting } from "./analyze";
 import { editStopped, runEnded } from "./ended";
 import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
+import { passesDone } from "./passes";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 export type { StepContext } from "./engine";
@@ -55,7 +56,7 @@ export function releaseRunningSteps(now = Date.now()): void {
 
 /** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
 function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
-  if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT)) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
+  if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT, passesDone(edit.id, variant))) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
 }
 
 /** "<editId>:<variant>" split: the variant is "" for a whole-edit step. */

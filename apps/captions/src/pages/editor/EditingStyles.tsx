@@ -113,6 +113,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [size, setSize] = useState(style ? sizeKey(style.size) : NEW_SIZE);
   const [folder, setFolder] = useState(style?.brollCollectionId ?? "");
   const [animation, setAnimation] = useState(style?.animation ?? "");
+  const [passes, setPasses] = useState(!!style?.passes);
   const [animations, setAnimations] = useState<AnimationStyle[]>([]);
   const [grade, setGrade] = useState<string | null>(null); // null: not changed here
   const [steps, setSteps] = useState<EditStepChoice[] | null>(null); // null: not changed here
@@ -165,6 +166,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
       pace,
       punch,
       size: sizeOfKey(size),
+      ...(passes !== !!style?.passes ? { passes } : {}),   // sent only when changed here
       ...(folders.length ? { brollCollectionId: folderShown || null } : {}),
       ...(animations.length ? { animation: animationShown || null } : {}),
       ...(skill !== null ? { skill: skill || null } : {}),
@@ -345,6 +347,13 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </ul>
             </section>
           )}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="style-passes">Edit in passes</Label>
+              <span className="text-xs text-muted-foreground">Each pass waits for you in Review</span>
+            </div>
+            <Switch id="style-passes" checked={passes} onCheckedChange={setPasses} />
+          </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <Button type="submit" disabled={busy || !name.trim()} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}

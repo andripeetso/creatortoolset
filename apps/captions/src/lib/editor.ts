@@ -23,6 +23,8 @@ export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "P
 export const getEdit = (id: string) => send<Edit>(base(id));
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");
+/** Edit in passes: Carry on queues each version's next pass. */
+export const carryOn = (id: string) => send<Edit>(`${base(id)}/pass`, "POST");
 export const stopEdit = (id: string) => send<Edit>(`${base(id)}/stop`, "POST");
 export const deleteEdit = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const patchEdit = (id: string, body: EditPatch) => send<Edit>(base(id), "PATCH", body);

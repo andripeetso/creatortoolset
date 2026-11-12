@@ -73,6 +73,8 @@ export interface EditingStyle {
   skill?: string | null;
   /** the working size, one of WORKING_SIZES; absent or null = the footage's own */
   size?: WorkingSize | null;
+  /** edit in passes: the first cut, then the B-roll, then the cards, each waits in Review for Carry on (POST /api/editor/:id/pass) */
+  passes?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -98,6 +100,8 @@ export interface EditStyleCopy {
   animation?: string;
   /** the skill the style named, by id: its text is read when the script step runs; absent = none */
   skill?: string;
+  /** edit in passes (api/editor/passes.ts); absent = the whole chain at once */
+  passes?: true;
 }
 
 /**

@@ -177,6 +177,8 @@ export interface Edit extends EditSummary, EditBrief {
   flagDefs: EditFlag[];
   /** each version's cards, for an edit whose style names an animation style and whose card step has run; else absent */
   cards?: Record<string, EditCards>;
+  /** an edit in passes: the next pass Carry on queues (POST /api/editor/:id/pass), and whether it waits for it (nothing queued or running) */
+  passes?: { waiting: boolean; next: "broll" | "cards" | null };
 }
 
 /** One version's cards as the edit page shows them. */

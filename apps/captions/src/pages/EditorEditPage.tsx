@@ -4,7 +4,7 @@ import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, ThumbsUp, Tra
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { cardStillUrl, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy } from "@/lib/setup";
@@ -273,6 +273,15 @@ export default function EditorEditPage() {
         {edit.drafts.length > 0 && (
           <section aria-label="Versions" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">Versions</h2>
+            {edit.passes?.waiting && edit.passes.next && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted px-3 py-2">
+                {/* N = 1 + the passes done: the cards come second when there is a B-roll pass before them */}
+                <span className="text-sm">Pass {edit.passes.next === "cards" && edit.brollCollectionId ? 2 : 1} is in Review</span>
+                <Button size="sm" onClick={() => void act(carryOn(id))}>
+                  Carry on: {edit.passes.next === "broll" ? "B-roll" : "cards"}
+                </Button>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {edit.drafts.map((n) => {
                 const pv = edit.previews[n];
