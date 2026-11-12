@@ -38,6 +38,8 @@ export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
 
 export const MAX_VERSIONS = 5;
+/** The most short videos one long recording is cut into (EditBrief.moments). */
+export const MAX_MOMENTS = 20;
 
 /** What the user says about the video. */
 export interface EditBrief {
@@ -47,8 +49,13 @@ export interface EditBrief {
   script: string;
   /** how many versions to cut, 1-5 */
   versions: number;
-  /** target length in seconds, 0 = none */
+  /** target length in seconds, 0 = none (with `moments`: about how long each one is) */
   targetS: number;
+  /**
+   * Short videos from a long recording: the AI finds up to this many parts that stand on their own (1 to MAX_MOMENTS)
+   * and each is cut as a version of its own, named m1, m2, … (api/editor/moments.ts). Absent: an edit as it always was.
+   */
+  moments?: number;
   /** a library collection to take B-roll from, or none */
   brollCollectionId: string | null;
   /** punch-in zoom on jump cuts */

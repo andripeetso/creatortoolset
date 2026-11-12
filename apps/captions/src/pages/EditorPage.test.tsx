@@ -286,3 +286,31 @@ describe("New edit: a script, nothing filmed", () => {
     expect(button("Create and run").disabled).toBe(true);
   });
 });
+
+describe("New edit: short videos from a long recording", () => {
+  const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text)!;
+
+  it("picks the recording as any footage is picked, asks how many and about how long, and sends moments in place of versions", async () => {
+    await open(null);
+    act(() => button("Short videos from a long recording").click());
+    await flush();
+    // the clip picker stays; the script box and the versions go; how many opens on 10
+    expect(document.querySelector('[aria-label="Footage"]')).not.toBeNull();
+    expect(field("edit-script")).toBeNull();
+    expect(field("edit-versions")).toBeNull();
+    expect([...field<HTMLSelectElement>("edit-moments")!.options].map((o) => o.value)).toEqual(["3", "5", "10", "15", "20"]);
+    expect(field<HTMLSelectElement>("edit-moments")!.value).toBe("10");
+    expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("About how long each (s)");
+    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("What should the short videos be about?");
+    await choose("edit-moments", "5");
+    expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", moments: 5, targetS: 0 });
+    // back to My footage: versions again, and no moments sent
+    act(() => button("My footage").click());
+    await flush();
+    expect(field("edit-moments")).toBeNull();
+    act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await flush();
+    await flush();
+    expect(posted.at(-1)).toEqual({ sources: ["ver_1"], brief: "", script: "", versions: 1, targetS: 0 });
+  });
+});

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
-import { MAX_VERSIONS } from "@contracts/editor";
+import { MAX_MOMENTS, MAX_VERSIONS } from "@contracts/editor";
 import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
@@ -260,7 +260,10 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
   const [targetS, setTargetS] = useState("");
   const [styleId, setStyleId] = useState<string | null>(null); // null: nothing picked here yet; "": None
   // nothing filmed: the script is spoken by a voice and the whole picture comes from B-roll (editor/FromScript.tsx)
-  const [filmed, setFilmed] = useState(true);
+  // and a long recording (a podcast, a talk): the AI finds the parts that stand on their own, each cut as its own short video
+  const [from, setFrom] = useState<"footage" | "script" | "long">("footage");
+  const filmed = from !== "script";
+  const [moments, setMoments] = useState(10);
   const [voice, setVoice] = useState("");
   const [broll, setBroll] = useState(""); // a folder's id; "": all the B-roll
   const [busy, setBusy] = useState(false);
@@ -383,10 +386,14 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
         sources: spoken ? [spoken.versionId] : [...picked.keys()],
         name: name.trim() || undefined,
         brief,
-        script,
+        script: from === "long" ? "" : script,
         // one voice says the script once: one version, as long as the voice, whatever the style says. No folder chosen
         // says nothing, so the style's own B-roll folder stands (with none: all their B-roll)
-        ...(spoken ? { versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) } : { versions, targetS: Number(targetS) || 0 }),
+        ...(spoken
+          ? { versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) }
+          : from === "long"
+            ? { moments, targetS: Number(targetS) || 0 }
+            : { versions, targetS: Number(targetS) || 0 }),
         // only an account with styles says anything about one: its pick, or null for None
         ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
       });
@@ -414,18 +421,23 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
           <div>
             <SheetTitle className="text-base">New edit</SheetTitle>
             <SheetDescription className="text-xs text-zinc-500">
-              {filmed
-                ? "Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI."
-                : "A voice reads your script and the picture is cut from your B-roll. The voice runs on your own ElevenLabs key."}
+              {from === "long"
+                ? "Pick a long recording from your Media Library. The AI finds the parts that stand on their own and cuts each as its own short video, in the recording's own shape."
+                : filmed
+                  ? "Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI."
+                  : "A voice reads your script and the picture is cut from your B-roll. The voice runs on your own ElevenLabs key."}
             </SheetDescription>
           </div>
 
-          <div role="group" aria-label="What the edit is made from" className="flex gap-1.5">
-            <Button type="button" size="sm" variant={filmed ? "default" : "outline"} onClick={() => setFilmed(true)}>
+          <div role="group" aria-label="What the edit is made from" className="flex flex-wrap gap-1.5">
+            <Button type="button" size="sm" variant={from === "footage" ? "default" : "outline"} onClick={() => setFrom("footage")}>
               My footage
             </Button>
-            <Button type="button" size="sm" variant={filmed ? "outline" : "default"} onClick={() => setFilmed(false)}>
+            <Button type="button" size="sm" variant={from === "script" ? "default" : "outline"} onClick={() => setFrom("script")}>
               A script, nothing filmed
+            </Button>
+            <Button type="button" size="sm" variant={from === "long" ? "default" : "outline"} onClick={() => setFrom("long")}>
+              Short videos from a long recording
             </Button>
           </div>
 
@@ -568,10 +580,16 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             </div>
           )}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit-brief">What is the video?</Label>
-            <Textarea id="edit-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} placeholder="A 45-second reel for new parents: the hook, three tips, the call to action." />
+            <Label htmlFor="edit-brief">{from === "long" ? "What should the short videos be about?" : "What is the video?"}</Label>
+            <Textarea
+              id="edit-brief"
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              rows={3}
+              placeholder={from === "long" ? "The clearest advice and the best stories, for new parents." : "A 45-second reel for new parents: the hook, three tips, the call to action."}
+            />
           </div>
-          {filmed && (
+          {from === "footage" && (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-script">Script (optional)</Label>
             <Textarea id="edit-script" value={script} onChange={(e) => setScript(e.target.value)} rows={3} placeholder="The text the takes were read from" />
@@ -579,6 +597,18 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
           )}
           {/* one voice says the script once: there is one version, as long as the voice */}
           <div className={cn("flex flex-wrap gap-4", !filmed && "hidden")}>
+            {from === "long" ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="edit-moments">How many, at most</Label>
+                <select id="edit-moments" value={moments} onChange={(e) => setMoments(Number(e.target.value))} className="h-9 w-24 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
+                  {[3, 5, 10, 15, MAX_MOMENTS].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-versions">Versions</Label>
               <select id="edit-versions" value={versions} onChange={(e) => setVersions(Number(e.target.value))} className="h-9 w-24 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
@@ -589,8 +619,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                 ))}
               </select>
             </div>
+            )}
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit-target">Target length (s)</Label>
+              <Label htmlFor="edit-target">{from === "long" ? "About how long each (s)" : "Target length (s)"}</Label>
               <Input id="edit-target" type="number" min={0} max={3600} value={targetS} onChange={(e) => setTargetS(e.target.value)} placeholder="Any" className="w-28" />
             </div>
           </div>

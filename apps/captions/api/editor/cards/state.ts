@@ -78,7 +78,7 @@ export interface CardsState {
   done?: boolean;
 }
 
-const VARIANT = /^v[1-9]$/;
+const VARIANT = /^(v[1-9]|m[1-9]\d?)$/; // a draft's name, as store.ts has it
 const CARD = /^c[1-9]$/;
 
 /** The folder a version's script and clips are in, relative to the edit's folder (a timeline source's `file` starts with it). */

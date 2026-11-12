@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
@@ -122,7 +122,8 @@ export interface DraftFile {
   notes: string[];
 }
 
-const DRAFT = /^v[1-9]$/;
+/** A draft's name: a version (v1…) or a moment of a long recording (m1…m20, moments.ts). Nothing else is a file name here. */
+const DRAFT = /^(v[1-9]|m[1-9]\d?)$/;
 
 export function readDraft(id: string, name: string): DraftFile | null {
   if (!DRAFT.test(name)) return null;
@@ -179,7 +180,8 @@ export function draftNames(id: string): string[] {
     return readdirSync(path.join(editDir(id), "drafts"))
       .map((f) => f.replace(/\.json$/, ""))
       .filter((n) => DRAFT.test(n))
-      .sort();
+      // by number, so m2 comes before m10
+      .sort((a, b) => a[0]!.localeCompare(b[0]!) || Number(a.slice(1)) - Number(b.slice(1)));
   } catch {
     return [];
   }
@@ -320,6 +322,9 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   if (versions !== undefined) out.versions = Math.round(versions);
   const targetS = num(body.targetS, 0, 3600);
   if (targetS !== undefined) out.targetS = Math.round(targetS);
+  // short videos from a long recording: how many to find. Kept only when asked for, so every other edit is as it was
+  const moments = num(body.moments, 1, MAX_MOMENTS);
+  if (moments !== undefined) out.moments = Math.round(moments);
   if (body.brollCollectionId === null) out.brollCollectionId = null;
   else if (typeof body.brollCollectionId === "string") {
     if (!collectionOk(username, ws, body.brollCollectionId)) throw new NoCollection("No such collection");

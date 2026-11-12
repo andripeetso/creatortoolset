@@ -210,7 +210,8 @@ export default function EditorEditPage() {
           </div>
         </section>
 
-        {edit.plans.length > 0 && (
+        {/* an edit of moments has one line a version: the versions below are the whole list, each under its own title */}
+        {edit.plans.length > 0 && !edit.moments && (
           <section aria-label="Script" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">Script</h2>
             {playing && (
@@ -285,7 +286,7 @@ export default function EditorEditPage() {
 
         {edit.drafts.length > 0 && (
           <section aria-label="Versions" className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">Versions</h2>
+            <h2 className="text-sm font-semibold">{edit.moments ? "Short videos" : "Versions"}</h2>
             {edit.passes?.waiting && edit.passes.next && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted px-3 py-2">
                 {/* N = 1 + the passes done: the cards come second when there is a B-roll pass before them */}
