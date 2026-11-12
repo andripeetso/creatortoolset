@@ -213,9 +213,10 @@ authApp.post("/login", async (c) => {
   // the lock is per account (a name no account has is held the same way); this Mac's own window is never held or counted
   const mac = fromThisMac(c);
   const key = user?.username ?? `?${username}`;
-  if (!mac && waitFor(key)) return locked(c, key);
+  const from = clientAddress(c);
+  if (!mac && waitFor(key, from)) return locked(c, key, from);
   if (!user || !password || !verifyPassword(user, password)) {
-    await sleep(Math.min((mac ? 1 : wrongTry(key)) * 250, 2000));
+    await sleep(Math.min((mac ? 1 : wrongTry(key, from)) * 250, 2000));
     return c.json({ error: "Wrong username or password" }, 401);
   }
   // after the password: a wrong guess from the LAN costs its delay and says nothing about the account
@@ -224,7 +225,7 @@ authApp.post("/login", async (c) => {
   const rule = ruleFor(user.username);
   if (rule && !rule.missing) return c.json({ error: `Your team signs in with ${rule.allowed.map(providerLabel).join(" or ")}: use that button`, code: "SIGNIN_RULE" }, 403);
   if (!mac && (user.code || codeRequired())) return codeStep(c, user);
-  clearTries(key);
+  clearTries(key, from);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({
@@ -269,14 +270,44 @@ export const setLoginCookie = (c: Context, user: UserRecord) => {
  * from this Mac alone. The socket's address decides, never a header (a LAN client writes those itself).
  */
 const isLoopback = (c: Context) => {
-  let a = "";
-  try {
-    a = getConnInfo(c).remote.address ?? "";
-  } catch {
-    /* no socket (tests): not loopback */
-  }
-  return a === "::1" || /^(::ffff:)?127\./.test(a);
+  const a = peerOf(c);
+  return a === "::1" || /^127\./.test(a);
 };
+/** The socket's address, an IPv4-mapped one as plain IPv4. Empty with no socket (tests): not loopback. */
+const peerOf = (c: Context) => {
+  try {
+    return (getConnInfo(c).remote.address ?? "").replace(/^::ffff:(?=\d+\.)/, "");
+  } catch {
+    return "";
+  }
+};
+const PRIVATE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|f[cd][0-9a-f]{2}:)/i;
+/** IPv6 by its /64: one network hands out a whole /64, so its addresses count as one. */
+const per64 = (a: string) => {
+  if (!a.includes(":")) return a;
+  const [head = "", tail] = a.toLowerCase().replace(/%.*$/, "").split("::");
+  const h = head ? head.split(":") : [];
+  const t = tail ? tail.split(":") : [];
+  const all = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill("0"), ...t];
+  return `${all.slice(0, 4).map((x) => x.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+};
+/**
+ * Who a wrong password or code counts against (the lock, lib/sign-in-code.ts). The socket's address, unless the socket
+ * is a proxy on this computer (cloudflared, nginx, Caddy) or, off the Mac app's server, on its private network (the
+ * Docker kit's Caddy): then the address that proxy wrote. Through this Mac's tunnel that is Cloudflare's
+ * CF-Connecting-IP (Cloudflare sets it and drops a caller's own), else the tunnel counts as one address; behind any
+ * other proxy it is the last X-Forwarded-For entry, the one the nearest proxy added (Caddy writes the header fresh;
+ * nginx appends to it). A caller that reaches the socket itself is its own address whatever it sends, and one behind a
+ * proxy can only put entries before the proxy's.
+ */
+export function clientAddress(c: Context): string {
+  const peer = peerOf(c);
+  const tunnel = tunnelHostname();
+  let a = peer;
+  if (isLoopback(c) && tunnel && hostOf(c) === tunnel.toLowerCase()) a = c.req.header("cf-connecting-ip")?.trim() || "tunnel";
+  else if (isLoopback(c) || (process.env.CT_LOCAL !== "1" && PRIVATE.test(peer))) a = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() || peer;
+  return per64(a.slice(0, 64));
+}
 /**
  * A request that came through this computer's tunnel (api/connect). cloudflared dials this server from loopback, so the
  * socket says "local"; the tunnel's own headers and its hostname say otherwise. A LAN client can write these headers
@@ -452,13 +483,14 @@ authApp.post("/ticket", async (c) => {
   if (!user) return c.json({ error: "This ticket doesn't work here. Ask for a new one." }, 403);
   // the computer's password must be set first: while it is APP_SECRET, only this Mac can sign in
   if (password === env.appSecret) return c.json({ error: NO_PASSWORD_YET }, 403);
-  if (waitFor(user.username)) return locked(c, user.username);
+  const from = clientAddress(c);
+  if (waitFor(user.username, from)) return locked(c, user.username, from);
   if (!password || !verifyPassword(user, password)) {
-    await sleep(Math.min(wrongTry(user.username) * 250, 2000));
+    await sleep(Math.min(wrongTry(user.username, from) * 250, 2000));
     return c.json({ error: "Wrong password" }, 401);
   }
   if (user.code || codeRequired()) return codeStep(c, user);
-  clearTries(user.username);
+  clearTries(user.username, from);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
@@ -487,8 +519,8 @@ authApp.post("/password", async (c) => {
 const signedInAccount = (cookie: string | undefined) => getSessionUser(cookie);
 
 /** Too many wrong tries in a row: no password or code is looked at until the wait is over (lib/sign-in-code.ts). */
-const locked = (c: Context, key: string) => {
-  const min = Math.ceil(waitFor(key) / 60_000);
+const locked = (c: Context, key: string, from: string) => {
+  const min = Math.ceil(waitFor(key, from) / 60_000);
   c.header("Retry-After", String(min * 60));
   return c.json({ error: `Too many wrong tries. Try again in ${min} minute${min === 1 ? "" : "s"}.`, code: "LOCKED" }, 429);
 };
@@ -531,16 +563,17 @@ authApp.post("/code", async (c) => {
   const user = hit && findUser(hit.username);
   c.header("Cache-Control", "no-store");
   if (!user || stamp(user) !== hit.stamp) return c.json({ error: "That sign-in expired. Sign in again.", code: "STEP_EXPIRED" }, 401);
-  if (waitFor(user.username)) return locked(c, user.username);
+  const from = clientAddress(c);
+  if (waitFor(user.username, from)) return locked(c, user.username, from);
   const made = hit.setup && !user.code ? confirmSecret(user.username, text(b.code)) : null;
   const next = made?.code ?? (!hit.setup && user.code ? checkCode(user.code, text(b.code)) : null);
   if (!next) {
-    await sleep(Math.min(wrongTry(user.username) * 250, 2000));
+    await sleep(Math.min(wrongTry(user.username, from) * 250, 2000));
     return c.json({ error: "Wrong code" }, 401);
   }
   setSignInCode(user, next, !!made);
   spendStep(text(b.step));
-  clearTries(user.username);
+  clearTries(user.username, from);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({ ok: true, user: withLogins(sessionOf(user)), ...(made ? { recovery: made.recovery } : {}) });
@@ -587,9 +620,10 @@ authApp.post("/code/off", async (c) => {
   if (!user.code) return c.json({ ok: true });
   if (codeRequired()) return c.json({ error: "This server asks everyone for a sign-in code" }, 400);
   if (!fromThisMac(c)) {
-    if (waitFor(user.username)) return locked(c, user.username);
+    const from = clientAddress(c);
+    if (waitFor(user.username, from)) return locked(c, user.username, from);
     if (!checkCode(user.code, text((await bodyOf(c)).code))) {
-      wrongTry(user.username);
+      wrongTry(user.username, from);
       return c.json({ error: "Wrong code" }, 400);
     }
   }

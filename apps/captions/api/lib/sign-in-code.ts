@@ -12,9 +12,11 @@ import type { SignInCode } from "../users";
  *   again. Ten recovery codes, kept as sha256, each works once.
  * - The step token: a right password for an account that needs the code answers with one, never a cookie. Only
  *   POST /api/auth/code takes it, for 5 minutes, for that account and its current password.
- * - The lock: per account, from any address. Five wrong passwords or codes in a row are free; from the fifth on each
- *   one waits twice as long as the last (1 min up to 1 h). It is cleared by a sign-in that sets a cookie, by an admin,
- *   by a day without a wrong try, or by a restart (it is kept in memory only).
+ * - The lock: per account and address (auth.ts clientAddress), so a stranger's guesses lock only the stranger. Five
+ *   wrong passwords or codes in a row from one address are free; from the fifth on each one waits twice as long as the
+ *   last (1 min up to 1 h). Across every address an account's wrong tries only slow each wrong answer (up to 2 s),
+ *   never lock it. A sign-in that sets a cookie clears its own address, an admin clears every address, a day without a
+ *   wrong try or a restart forgets it (it is kept in memory only).
  */
 
 const STEP_S = 30;
@@ -113,32 +115,46 @@ export const stepFor = (token: unknown) => {
 };
 export const spendStep = (token: string) => void steps.delete(token);
 
-// the lock: wrong tries by account ("?<typed name>" for a name no account has, so the answer is the same either way)
+// the lock: wrong tries by account and address ("?<typed name>" for a name no account has, so the answer is the same
+// either way), and by account alone for the delay
 const FREE = 5;
 const DAY = 86_400_000;
-const tries = new Map<string, { n: number; at: number; until: number }>();
+const locks = new Map<string, { n: number; at: number; until: number }>();
+const slow = new Map<string, { n: number; at: number }>();
+const pair = (account: string, address: string) => `${account}\n${address}`;
 
-/** Ms until this account may try again; 0 = now. */
-export function waitFor(key: string, now = Date.now()): number {
-  const t = tries.get(key);
+/** Ms until this account may be tried again from this address; 0 = now. */
+export function waitFor(account: string, address: string, now = Date.now()): number {
+  const t = locks.get(pair(account, address));
   return t && now - t.at < DAY ? Math.max(0, t.until - now) : 0;
 }
 
-/** One wrong password or code. Returns how many in a row. */
-export function wrongTry(key: string, now = Date.now()): number {
-  const old = tries.get(key);
+/** Whether some address is locked out of this account (Settings → Admin). */
+export const lockedAnywhere = (account: string, now = Date.now()) =>
+  [...locks].some(([k, t]) => k.startsWith(`${account}\n`) && now - t.at < DAY && t.until > now);
+
+/** One wrong password or code from this address. Returns the account's wrong tries in a row from every address (the delay). */
+export function wrongTry(account: string, address: string, now = Date.now()): number {
+  const k = pair(account, address);
+  const old = locks.get(k);
   const n = (old && now - old.at < DAY ? old.n : 0) + 1;
-  tries.delete(key); // set again below, so the oldest stay first
-  tries.set(key, { n, at: now, until: n >= FREE ? now + Math.min(60, 2 ** (n - FREE)) * 60_000 : 0 });
-  // ponytail: names no account has are dropped oldest first past 10,000; accounts' own entries are never dropped
-  if (tries.size > 10_000) for (const k of tries.keys()) if (k.startsWith("?")) {
-    tries.delete(k);
-    break;
-  }
-  return n;
+  locks.delete(k); // set again below, so the oldest stay first
+  locks.set(k, { n, at: now, until: n >= FREE ? now + Math.min(60, 2 ** (n - FREE)) * 60_000 : 0 });
+  const s = slow.get(account);
+  const all = (s && now - s.at < DAY ? s.n : 0) + 1;
+  slow.delete(account);
+  slow.set(account, { n: all, at: now });
+  // ponytail: past 50,000 entries the oldest goes first; a lock only holds back the address that guessed, so losing one frees only it
+  for (const m of [locks, slow]) if (m.size > 50_000) m.delete(m.keys().next().value!);
+  return all;
 }
 
-export const clearTries = (key: string) => void tries.delete(key);
+/** A sign-in that set a cookie clears its own address; an admin's lift (no address) clears every address. */
+export function clearTries(account: string, address?: string): void {
+  slow.delete(account);
+  if (address !== undefined) locks.delete(pair(account, address));
+  else for (const k of locks.keys()) if (k.startsWith(`${account}\n`)) locks.delete(k);
+}
 
 // an admin asked everyone on this hosted server for a code (Settings → Admin)
 const REQUIRED_FILE = path.join(env.dataDir, "sign-in-code.json");

@@ -8,7 +8,7 @@ import { VIEW_AS } from "./lib/view-as";
 import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./lib/workspaces";
 import { forgetGrants } from "./library/grants";
 import { deleteUserContent } from "./retention";
-import { clearTries, codeRequired, setCodeRequired, waitFor } from "./lib/sign-in-code";
+import { clearTries, codeRequired, lockedAnywhere, setCodeRequired } from "./lib/sign-in-code";
 import { isPluginGateId, isRetiredAppId, isTool } from "../contracts/tools";
 import {
   USERNAME_RE,
@@ -167,7 +167,7 @@ adminApp.get("/users", async (c) => {
       createdAt: u.createdAt,
       usage: u.usage,
       code: !!u.code,
-      locked: waitFor(u.username) > 0,
+      locked: lockedAnywhere(u.username),
       projects: footprints.get(u.username)?.projects ?? 0,
       instagramPosts: ig.get(u.username)?.posts ?? 0,
       storageBytes: (footprints.get(u.username)?.bytes ?? 0) + (ig.get(u.username)?.bytes ?? 0),
@@ -202,7 +202,7 @@ adminApp.post("/users", async (c) => {
 adminApp.patch("/users/:username", async (c) => {
   const user = findUser(c.req.param("username"));
   if (!user) return c.json({ error: "No such user" }, 404);
-  // `code: false` switches the account's sign-in code off (a lost phone); `unlock: true` lifts the lock on wrong tries
+  // `code: false` switches the account's sign-in code off (a lost phone); `unlock: true` lifts the lock on every address
   let body: { password?: string; role?: string; off?: unknown; code?: unknown; unlock?: unknown };
   try {
     body = await c.req.json();

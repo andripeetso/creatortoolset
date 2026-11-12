@@ -229,3 +229,17 @@ describe("with the sign-in code on, everything through the tunnel is asked for i
     expect((await call("POST", "/api/auth/login", { body: { username: "admin", password: "tinyacrobatics1" } })).status).toBe(200);
   });
 });
+
+describe("through the tunnel, each client is its own address", () => {
+  it("Cloudflare's CF-Connecting-IP: one client's wrong guesses lock that client only", { timeout: 30_000 }, async () => {
+    vi.stubEnv("CT_LOCAL", "1");
+    const from = (ip: string, password: string) =>
+      call("POST", "/api/auth/login", { host: hostname, headers: { "cf-connecting-ip": ip, "cf-ray": "8f00-SIN" }, body: { username: "admin", password } });
+    for (let i = 0; i < 5; i++) expect((await from("203.0.113.70", "not-the-password")).status).toBe(401);
+    expect((await from("203.0.113.70", "tinyacrobatics1")).status).toBe(429);
+    // another client through the tunnel gets the code step, as does the tunnel with no client named
+    expect(((await (await from("203.0.113.71", "tinyacrobatics1")).json()) as { code: string }).code).toBe("CODE_NEEDED");
+    const plain = await call("POST", "/api/auth/login", { host: hostname, body: { username: "admin", password: "tinyacrobatics1" } });
+    expect(((await plain.json()) as { code: string }).code).toBe("CODE_NEEDED");
+  });
+});

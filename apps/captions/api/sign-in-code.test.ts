@@ -217,34 +217,89 @@ describe("this Mac's own window, and everything that only looks like it", () => 
   });
 });
 
-describe("the lock on wrong tries", { timeout: 30_000 }, () => {
+describe("the lock on wrong tries", { timeout: 60_000 }, () => {
   const TINA = { username: "tina", password: "tina-password-1" };
+  const STRANGER = "198.51.100.66";
   beforeAll(() => void createUser(TINA.username, TINA.password));
+  const wrong = (username: string, o: Opts) => login(username, "wrong-guess", o);
+  const timed = async <T,>(work: () => Promise<T>) => {
+    const t = performance.now();
+    const value = await work();
+    return { value, ms: performance.now() - t };
+  };
 
-  it("five wrong passwords lock the account from every address, a right one included; the wait grows", async () => {
-    for (let i = 0; i < 5; i++) expect((await login(TINA.username, "wrong-guess", { address: `198.51.100.${i + 1}` })).status).toBe(401);
-    const held = await login(TINA.username, TINA.password, { address: LAN });
+  it("five wrong passwords from one address lock that address out of the account, a right one included; the wait grows", async () => {
+    for (let i = 0; i < 5; i++) expect((await wrong(TINA.username, { address: STRANGER })).status).toBe(401);
+    const held = await login(TINA.username, TINA.password, { address: STRANGER });
     expect(held.status).toBe(429);
     expect(held.headers.get("retry-after")).toBe("60");
     expect(await held.json()).toEqual({ error: "Too many wrong tries. Try again in 1 minute.", code: "LOCKED" });
+    // the person on their own address is not held: signed in at once
+    const own = await timed(() => login(TINA.username, TINA.password, { address: LAN }));
+    expect(own.value.status).toBe(200);
+    expect(own.ms).toBeLessThan(1000);
     later(61_000);
-    expect((await login(TINA.username, "wrong-guess", { address: LAN })).status).toBe(401);
-    expect(await (await login(TINA.username, TINA.password, { address: LAN })).json()).toMatchObject({ error: "Too many wrong tries. Try again in 2 minutes." });
+    expect((await wrong(TINA.username, { address: STRANGER })).status).toBe(401);
+    expect(await (await login(TINA.username, TINA.password, { address: STRANGER })).json()).toMatchObject({ error: "Too many wrong tries. Try again in 2 minutes." });
     later(121_000);
-    const back = await login(TINA.username, TINA.password, { address: LAN });
-    expect(back.status).toBe(200);
-    // a sign-in clears it
-    for (let i = 0; i < 4; i++) await login(TINA.username, "wrong-guess", { address: LAN });
-    expect((await login(TINA.username, TINA.password, { address: LAN })).status).toBe(200);
+    expect((await login(TINA.username, TINA.password, { address: STRANGER })).status).toBe(200);
+    // a sign-in clears its own address: four wrong, a sign-in, then one more wrong is not a fifth
+    for (let i = 0; i < 4; i++) await wrong(TINA.username, { address: STRANGER });
+    expect((await login(TINA.username, TINA.password, { address: STRANGER })).status).toBe(200);
+    await wrong(TINA.username, { address: STRANGER });
+    expect((await login(TINA.username, TINA.password, { address: STRANGER })).status).toBe(200);
+  });
+
+  it("with the code on, a stranger's guesses lock only the stranger: the owner signs in with password and code at once", async () => {
+    for (let i = 0; i < 5; i++) await wrong(OWNER.username, { address: STRANGER });
+    expect((await login(OWNER.username, OWNER.password, { address: STRANGER })).status).toBe(429);
+    later(30_000);
+    const { step, code } = (await (await login(OWNER.username, OWNER.password, { address: LAN })).json()) as { step: string; code: string };
+    expect(code).toBe("CODE_NEEDED");
+    expect((await req("POST", "/api/auth/code", { address: LAN, body: { step, code: codeNow(secret) } })).status).toBe(200);
+  });
+
+  it("behind a proxy on this computer the address is the last X-Forwarded-For entry; entries a caller puts before it change nothing", async () => {
+    createUser("piet", "piet-password-1");
+    const via = (xff: string) => ({ headers: { "x-forwarded-for": xff } });
+    for (let i = 0; i < 5; i++) await wrong("piet", via("203.0.113.50"));
+    expect((await login("piet", "piet-password-1", via("203.0.113.50"))).status).toBe(429);
+    expect((await login("piet", "piet-password-1", via("192.0.2.9, 203.0.113.50"))).status).toBe(429);
+    // another client behind the same proxy, and a direct caller naming the locked address, are not held
+    expect((await login("piet", "piet-password-1", via("203.0.113.51"))).status).toBe(200);
+    expect((await login("piet", "piet-password-1", { address: LAN, headers: { "x-forwarded-for": "203.0.113.50" } })).status).toBe(200);
+  });
+
+  it("an IPv6 network counts as one address (its /64)", async () => {
+    createUser("ines", "ines-password-1");
+    for (let i = 0; i < 5; i++) await wrong("ines", { address: "2001:db8:1:2::5" });
+    expect((await login("ines", "ines-password-1", { address: "2001:db8:1:2:ffff::9" })).status).toBe(429);
+    expect((await login("ines", "ines-password-1", { address: "2001:0db8:0001:0002:0:0:0:7" })).status).toBe(429);
+    expect((await login("ines", "ines-password-1", { address: "2001:db8:1:3::5" })).status).toBe(200);
+  });
+
+  it("many addresses guessing one account are slowed, never locked: each wrong answer waits at most 2 s, a right one not at all", async () => {
+    createUser("otto", "otto-password-1");
+    for (let i = 1; i <= 8; i++) await wrong("otto", { address: `198.51.100.${100 + i}` });
+    const ninth = await timed(() => wrong("otto", { address: "198.51.100.109" }));
+    expect(ninth.value.status).toBe(401);
+    expect(ninth.ms).toBeGreaterThanOrEqual(1950);
+    expect(ninth.ms).toBeLessThan(2900);
+    for (const address of ["198.51.100.101", LAN]) {
+      const ok = await timed(() => login("otto", "otto-password-1", { address }));
+      expect(ok.value.status).toBe(200);
+      expect(ok.ms).toBeLessThan(1000);
+    }
   });
 
   it("a name no account has is held the same way, so the answer says nothing about which names exist", async () => {
-    for (let i = 0; i < 5; i++) await login("nobody-here", "wrong-guess", { address: LAN });
-    expect(await (await login("nobody-here", "wrong-guess", { address: LAN })).json()).toEqual({ error: "Too many wrong tries. Try again in 1 minute.", code: "LOCKED" });
+    for (let i = 0; i < 5; i++) await wrong("nobody-here", { address: LAN });
+    expect(await (await wrong("nobody-here", { address: LAN })).json()).toEqual({ error: "Too many wrong tries. Try again in 1 minute.", code: "LOCKED" });
     later(61_000);
   });
 
   it("wrong codes count with wrong passwords, and a right password between them clears nothing", async () => {
+    later(30_000);
     const step = async () => ((await (await login(OWNER.username, OWNER.password, { address: LAN })).json()) as { step: string }).step;
     let s = await step();
     for (let i = 0; i < 4; i++) expect((await req("POST", "/api/auth/code", { address: LAN, body: { step: s, code: "000000" } })).status).toBe(401);
@@ -253,16 +308,28 @@ describe("the lock on wrong tries", { timeout: 30_000 }, () => {
     // locked now: the code step and the password step both wait, even with the right code
     expect((await req("POST", "/api/auth/code", { address: LAN, body: { step: s, code: codeNow(secret) } })).status).toBe(429);
     expect((await login(OWNER.username, OWNER.password, { address: LAN })).status).toBe(429);
-    expect((await login(OWNER.username, OWNER.password, { address: LAN, headers: { "x-forwarded-for": "127.0.0.1" } })).status).toBe(429);
+    // a caller that reaches the socket itself is its own address, whatever header it sends
+    expect((await login(OWNER.username, OWNER.password, { address: LAN, headers: { "x-forwarded-for": "198.51.100.200" } })).status).toBe(429);
   });
 
   it("never holds this Mac's window back, and the window's wrong tries are not counted", async () => {
     expect((await login(OWNER.username, "a-keychain-password-from-before")).status).toBe(401);
-    const res = await login(OWNER.username, OWNER.password);
-    expect(res.status).toBe(200);
+    expect((await login(OWNER.username, OWNER.password)).status).toBe(200);
     later(61_000);
-    // the window's sign-in set a cookie, so the count started again; the LAN gets the code step
+    // the LAN's minute is over: the code step again
     expect(((await (await login(OWNER.username, OWNER.password, { address: LAN })).json()) as { code: string }).code).toBe("CODE_NEEDED");
+  });
+
+  it("an admin's lift (every address) and a day without a wrong try both forget it", async () => {
+    const { clearTries, lockedAnywhere } = await import("./lib/sign-in-code");
+    for (let i = 0; i < 5; i++) await wrong(TINA.username, { address: STRANGER });
+    expect(lockedAnywhere(TINA.username)).toBe(true);
+    clearTries(TINA.username);
+    expect(lockedAnywhere(TINA.username)).toBe(false);
+    expect((await login(TINA.username, TINA.password, { address: STRANGER })).status).toBe(200);
+    for (let i = 0; i < 5; i++) await wrong(TINA.username, { address: STRANGER });
+    later(24 * 3600_000);
+    expect((await login(TINA.username, TINA.password, { address: STRANGER })).status).toBe(200);
   });
 });
 

@@ -35,6 +35,15 @@ const call = (method: string, p: string, cookie?: string, body?: unknown) =>
 const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0]!;
 const authed = async (cookie: string) => ((await (await call("GET", "/api/auth/check", cookie)).json()) as { authed: boolean }).authed;
 const login = (username: string, password: string) => call("POST", "/api/auth/login", undefined, { username, password });
+/** A sign-in as a server behind its proxy gets it: from the proxy on this computer, with the client in X-Forwarded-For. */
+const loginVia = (client: string, username: string, password: string) =>
+  Promise.resolve(
+    app.request(
+      "http://localhost/api/auth/login",
+      { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": client }, body: JSON.stringify({ username, password }) },
+      { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } },
+    ),
+  );
 const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const unbase32 = (s: string) => {
   let bits = 0;
@@ -125,12 +134,18 @@ describe("an admin helps a person who is locked out or lost their phone", () => 
     expect(await row("noel")).toMatchObject({ code: false, locked: false });
   });
 
-  it("lifts the lock", { timeout: 30_000 }, async () => {
-    for (let i = 0; i < 5; i++) await login(MIA.username, "wrong-guess");
-    expect((await login(MIA.username, MIA.password)).status).toBe(429);
+  it("behind its proxy, a stranger's guesses lock only the stranger; the admin lifts the lock on every address", { timeout: 60_000 }, async () => {
+    for (const stranger of ["198.51.100.1", "198.51.100.2"]) for (let i = 0; i < 5; i++) await loginVia(stranger, MIA.username, "wrong-guess");
+    expect((await loginVia("198.51.100.1", MIA.username, MIA.password)).status).toBe(429);
+    expect((await loginVia("198.51.100.2", MIA.username, MIA.password)).status).toBe(429);
+    // mia on her own address is not held
+    expect(((await (await loginVia("203.0.113.8", MIA.username, MIA.password)).json()) as { code: string }).code).toBe("CODE_NEEDED");
     expect(await row("mia")).toMatchObject({ locked: true });
     expect((await call("PATCH", "/api/admin/users/mia", admin, { unlock: true })).status).toBe(200);
-    expect(((await (await login(MIA.username, MIA.password)).json()) as { code: string }).code).toBe("CODE_NEEDED");
+    expect(await row("mia")).toMatchObject({ locked: false });
+    for (const stranger of ["198.51.100.1", "198.51.100.2"]) {
+      expect(((await (await loginVia(stranger, MIA.username, MIA.password)).json()) as { code: string }).code).toBe("CODE_NEEDED");
+    }
   });
 
   it("switches a person's code off; with the server's ask off too, the password alone signs in again", async () => {
