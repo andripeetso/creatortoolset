@@ -20,6 +20,8 @@ struct ChatRow: Identifiable, Hashable {
     var keys: [String] = []
     /// When its work last ended with nothing left to ask: the row says Done until it is opened.
     var finished: Date?
+    /// A New edit made on this phone (`PhoneEdit.id`): the phone keeps its row, and a swipe removes it.
+    var phoneEdit: UUID?
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
@@ -263,6 +265,9 @@ final class ChatsModel: ObservableObject {
     private var again = false
     private var loadedAt = Date.distantPast
     private var watching: Task<Void, Never>?
+    /// The account the change line and the assistant follow.
+    private var watchingKey: String?
+    private var observing = false
     private var soon: Task<Void, Never>?
     /// The screens open on Chats, as last seen: one that is left was looked at until then.
     private var open: [AppRoute] = []
@@ -295,12 +300,37 @@ final class ChatsModel: ObservableObject {
                 for route in seen { self.markOpened(ChatList.path(route)) }
             }
         }.store(in: &bag)
+        // the phone's New edits: their rows move with every Start, answer and clip that lands (not with each byte)
+        PhoneEdits.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuild() }
+        }.store(in: &bag)
+        UploadEngine.shared.store.$items
+            .map { $0.filter { $0.edit != nil }.map { "\($0.id) \($0.state.rawValue) \($0.uploadId ?? "")" } }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuild() } }
+            .store(in: &bag)
+        // another server picked (or the last one removed): its own conversation, change line and list
+        Servers.shared.$currentId.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.watching != nil else { return }
+                self.watch()
+                Task { await self.load() }
+            }
+        }.store(in: &bag)
     }
 
     /// Follows the server for as long as the app runs: once now, on every change it tells of,
-    /// and when the app comes back to the front.
+    /// and when the app comes back to the front. Another server in use starts it again, there.
     func watch() {
-        guard watching == nil else { return }
+        let now = ToolsetAPI.current?.cacheKey
+        guard watching == nil || watchingKey != now else { return }
+        if watching != nil {
+            watching?.cancel()
+            AssistantModel.shared.reset()
+        }
+        watchingKey = now
+        AssistantModel.shared.watch()
         watching = Task { [weak self] in
             await self?.load()
             for await event in ServerEvents.stream("/api/sync/events") {
@@ -315,6 +345,8 @@ final class ChatsModel: ObservableObject {
                 }
             }
         }
+        guard !observing else { return }
+        observing = true
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self, Date().timeIntervalSince(self.loadedAt) > 3 else { return }
@@ -351,6 +383,7 @@ final class ChatsModel: ObservableObject {
         }
         loading = true
         defer { loading = false }
+        await PhoneEdits.shared.refresh()
         repeat {
             again = false
             unreadable = 0
@@ -398,7 +431,8 @@ final class ChatsModel: ObservableObject {
     private func rebuild() {
         let fresh = link == .none ? [] : ChatList.arrange(
             assistant: ChatList.assistant(assistant),
-            rows: ChatList.settle(ChatList.merge(videos: videos, others: others), dismissed: dismissed),
+            rows: ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
+                                                 opened: Set(opened.keys)), dismissed: dismissed),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
         if fresh != rows { rows = fresh }
     }
@@ -406,11 +440,11 @@ final class ChatsModel: ObservableObject {
     // MARK: Dismiss and delete
 
     /// Which rows a swipe can dismiss: everything in play but the assistant.
-    nonisolated static func canDismiss(_ row: ChatRow) -> Bool { row.route != .assistant && row.shelf == .active }
+    nonisolated static func canDismiss(_ row: ChatRow) -> Bool { row.route != .assistant && row.shelf == .active && row.phoneEdit == nil }
 
     /// Only a Review video can be deleted from here: it goes to Review's trash and can be brought back.
     nonisolated static func canDelete(_ row: ChatRow) -> Bool {
-        if case .review = row.route { return true }
+        if case .review = row.route, row.phoneEdit == nil { return true }
         return false
     }
 
@@ -518,6 +552,10 @@ struct ChatsView: View {
     @State private var signingIn = false
     @State private var deleting: ChatRow?
     @State private var askDismissAll = false
+    /// `-newEdit YES` opens New edit at launch (simulator screenshots).
+    @State private var newEdit = UserDefaults.standard.bool(forKey: "newEdit")
+    /// A New edit that stopped: Try again or Remove.
+    @State private var stopped: ChatRow?
 
     var body: some View {
         Group {
@@ -569,6 +607,10 @@ struct ChatsView: View {
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    if let id = row.phoneEdit {
+                        // off the phone's list; the edit stays on the server
+                        Button("Remove", systemImage: "trash") { PhoneEdits.shared.forget(id) }.tint(.red)
+                    }
                     if ChatsModel.canDismiss(row) {
                         Button("Dismiss", systemImage: "checkmark") { Task { await model.dismiss([row]) } }.tint(.gray)
                     }
@@ -610,6 +652,9 @@ struct ChatsView: View {
         .searchable(text: $query, prompt: "Search")
         .refreshable { await model.load() }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("New edit") { newEdit = true }
+            }
             // everything that waits for his review, in one go
             let reviews = rows.filter { $0.shelf == .active && $0.status == .review }
             if reviews.count > 1 {
@@ -633,6 +678,14 @@ struct ChatsView: View {
         } message: {
             Text("It stays in Review's trash for 30 days.")
         }
+        .confirmationDialog(stopped?.title ?? "", isPresented: Binding(get: { stopped != nil }, set: { if !$0 { stopped = nil } }),
+                            titleVisibility: .visible, presenting: stopped) { row in
+            Button("Try again") { if let id = row.phoneEdit { Task { await PhoneEdits.shared.retry(id) } } }
+            Button("Remove", role: .destructive) { if let id = row.phoneEdit { PhoneEdits.shared.forget(id) } }
+        } message: { row in
+            Text(row.detail)
+        }
+        .sheet(isPresented: $newEdit) { NewEditView() }
         // the round New-message button and the tab bar sit over the end of the list
         .contentMargins(.bottom, 84, for: .scrollContent)
     }
@@ -677,7 +730,21 @@ struct ChatsView: View {
 
     /// A row that opens its screen the way a card or a notification does. No arrow at the right: the badge sits there.
     private func opens<Label: View>(_ row: ChatRow, @ViewBuilder label: () -> Label) -> some View {
-        Button { AppNavigator.shared.open(row.route) } label: { label() }.buttonStyle(.plain)
+        Button { tap(row) } label: { label() }.buttonStyle(.plain)
+    }
+
+    /// A New edit still starting has nothing to open yet, and one that stopped asks what to do.
+    private func tap(_ row: ChatRow) {
+        if let id = row.phoneEdit, let edit = PhoneEdits.shared.item(id) {
+            switch PhoneEdits.shared.state(edit) {
+            case .starting: return
+            case .failed:
+                stopped = row
+                return
+            default: break
+            }
+        }
+        AppNavigator.shared.open(row.route)
     }
 }
 
