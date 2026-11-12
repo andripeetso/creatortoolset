@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { EMPTIED, type KeptKind, type KeptRow, type KeptView } from "@contracts/storage";
 import { Button } from "@/components/ui/button";
+import { confirmDialog, type DialogOpts } from "@/lib/dialogs";
 import { useCachedLoad } from "@/lib/local-cache";
 import { call } from "./StorageRows";
 import { Card, EmptyRow, ErrorRow, LoadingRow, Row, Section } from "./ui";
@@ -9,8 +10,8 @@ import { Card, EmptyRow, ErrorRow, LoadingRow, Row, Section } from "./ui";
  * "Kept on the server" (api/kept.ts): what this account keeps in the server's data folder, one row per kind with its size,
  * the biggest first, and the total beside the title. Each row has a bar: its share of everything kept, all on one scale
  * and in one colour, so the rows compare at a glance (the same bar as Settings → Usage). The trash, a chat's pictures and
- * videos and finished renders have Empty (a second press confirms); the rest is the account's work, deleted one by one in
- * its own tool.
+ * videos and finished renders have Empty, which asks first in the app's own dialog; the rest is the account's work,
+ * deleted one by one in its own tool.
  */
 
 const KEPT_API = "/api/devices/storage/kept";
@@ -61,23 +62,41 @@ function ShareBar({ name, bytes, total }: { name: string; bytes: number; total: 
   );
 }
 
+/** What Empty deletes, and what stays, for the question asked before it: the thing in one word pair, then one line. */
+const ASK: Partial<Record<KeptKind, [thing: string, after: string]>> = {
+  "captions-trash": ["deleted Caption Studio project", "Nothing in this trash can be restored after that."],
+  "review-trash": ["deleted Review video", "Nothing in this trash can be restored after that."],
+  "chat-pictures": ["chat picture", "The chats stay; the pictures show as removed."],
+  exports: ["exported video", "The projects stay, so you can export again."],
+  "chat-videos": ["chat video", "A video already sent on to Review, Video Notes, Caption Studio or the Media Library stays there."],
+};
+
+/** The question Empty asks first, in the app's own dialog: how many of what, how much, what stays, and that it is for good. */
+export function emptyQuestion(r: KeptRow): DialogOpts {
+  const [thing, after] = ASK[r.kind] ?? [LABEL[r.kind][1], ""];
+  return {
+    title: `Delete ${r.items} ${thing}${r.items === 1 ? "" : "s"}?`,
+    body: [`${bytesLabel(r.bytes)}.`, after, "This cannot be undone."].filter(Boolean).join(" "),
+    ok: `Delete ${bytesLabel(r.bytes)}`,
+    danger: true,
+  };
+}
+
+/** Empty always asks first (never skipped by the "ask before deleting" setting: this deletes many things at once, for good). */
 function EmptyButton({ row, onEmpty }: { row: KeptRow; onEmpty: () => Promise<void> }) {
-  const [sure, setSure] = useState(false);
   const [busy, setBusy] = useState(false);
   return (
     <Button
       size="sm"
-      variant={sure ? "destructive" : "outline"}
+      variant="outline"
       disabled={busy}
-      onBlur={() => setSure(false)}
-      onClick={() => {
-        if (!sure) return setSure(true);
-        setSure(false);
+      onClick={async () => {
+        if (!(await confirmDialog(emptyQuestion(row)))) return;
         setBusy(true);
-        void onEmpty().finally(() => setBusy(false));
+        await onEmpty().finally(() => setBusy(false));
       }}
     >
-      {busy ? "Emptying…" : sure ? `Delete ${bytesLabel(row.bytes)}?` : "Empty"}
+      {busy ? "Emptying…" : "Empty"}
     </Button>
   );
 }
