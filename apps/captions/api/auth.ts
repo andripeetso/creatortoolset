@@ -85,19 +85,19 @@ export function getSessionUser(
   cookieHeader: string | undefined,
 ): SessionUser | null {
   if (!env.appSecret) return LOCAL_USER;
-  const m = new RegExp(
-    `(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`,
-  ).exec(cookieHeader ?? "");
-  if (!m) return null;
-  let username = "";
-  try {
-    username = Buffer.from(m[1], "base64url").toString();
-  } catch {
-    return null;
+  // a browser can hold several cookies by this name (an old one for the parent domain, a newer one for this host), and
+  // sends all of them: the first that is still valid is the session, so an old one never hides a new sign-in
+  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`, "g"))) {
+    let username = "";
+    try {
+      username = Buffer.from(m[1], "base64url").toString();
+    } catch {
+      continue;
+    }
+    const user = findUser(username);
+    if (user && signedBy(user.username, stamp(user), m[2])) return sessionOf(user);
   }
-  const user = findUser(username);
-  if (!user || !signedBy(user.username, stamp(user), m[2])) return null;
-  return sessionOf(user);
+  return null;
 }
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
