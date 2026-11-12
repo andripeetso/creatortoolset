@@ -1,8 +1,7 @@
-// Connect on this Mac: the account's other computers (from the broker, apps/relay), and this Mac's own tunnel. The
-// server does the linking (api/connect/routes.ts: the device grant and the link, signed with the computer's key); the
-// app asks the server to start it, shows the code, and once the server says linked it runs cloudflared with the
-// tunnel token the server saved (connect.json, mode 0600). The token goes in cloudflared's environment, never in its
-// arguments, so `ps` does not show it. Pure functions first, so the tests can check them.
+// Connect on this Mac: the account's other computers (from the broker, apps/relay), and adding this Mac. The server
+// does the linking and runs the tunnel (api/connect/routes.ts and connector.ts: a pinned cloudflared it starts once
+// linked and at each start, and stops with itself); the app asks the server to start a link, opens the page and waits.
+// Pure functions first, so the tests can check them.
 import AppKit
 import Foundation
 
@@ -95,97 +94,6 @@ func tunnelConfig(data: Data?) -> TunnelConfig? {
     return c
 }
 
-/// cloudflared runs as `cloudflared tunnel run`, with the token in TUNNEL_TOKEN: the arguments never carry it.
-func tunnelArguments() -> [String] { ["tunnel", "--no-autoupdate", "run"] }
-
-func tunnelEnvironment(_ token: String, base: [String: String]) -> [String: String] {
-    var env = base.filter { ["HOME", "TMPDIR", "PATH", "LANG"].contains($0.key) }
-    env["TUNNEL_TOKEN"] = token
-    return env
-}
-
-/// The cloudflared the release bundles beside the server's runtime (runtime/cloudflared, like ffmpeg). Nil when this build
-/// has none: no tunnel, and the Mac says so.
-func cloudflaredBinary(server: URL?) -> URL? {
-    guard let bin = server?.appendingPathComponent("runtime/cloudflared"), FileManager.default.isExecutableFile(atPath: bin.path) else { return nil }
-    return bin
-}
-
-/// Runs this Mac's tunnel while the server runs, and brings it back after a crash or a relaunch (the same backoff as
-/// the server). It stops with the app.
-@MainActor
-final class TunnelRunner: ObservableObject {
-    enum State: Equatable {
-        case off, running
-        case failed(String)
-    }
-
-    @Published private(set) var state = State.off
-    private var process: Process?
-    private var crashes: [Date] = []
-    private var stopping = false
-
-    init() {
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stop() }
-        }
-    }
-
-    /// Starts the tunnel if this computer is linked. Not linked = off, with no error; no binary = failed, said once.
-    func start(server: URL?, dataDir: URL) {
-        guard process == nil else { return }
-        stopping = false
-        guard let config = tunnelConfig(data: try? Data(contentsOf: dataDir.appendingPathComponent("connect.json"))) else {
-            state = .off
-            return
-        }
-        guard let bin = cloudflaredBinary(server: server) else {
-            state = .failed("This build has no cloudflared")
-            return
-        }
-        let p = Process()
-        p.executableURL = bin
-        p.arguments = tunnelArguments()
-        p.environment = tunnelEnvironment(config.tunnelToken, base: ProcessInfo.processInfo.environment)
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { [weak self] ended in
-            Task { @MainActor in self?.ended(ended, server: server, dataDir: dataDir) }
-        }
-        do {
-            try p.run()
-        } catch {
-            state = .failed("cloudflared could not start")
-            return
-        }
-        process = p
-        state = .running
-    }
-
-    func stop() {
-        stopping = true
-        process?.terminate()
-        process = nil
-        state = .off
-    }
-
-    private func ended(_ p: Process, server: URL?, dataDir: URL) {
-        guard p === process else { return }   // stop() already handled it
-        process = nil
-        if stopping { return }
-        let now = Date()
-        crashes.append(now)
-        guard let delay = restartDelay(crashes: crashes, now: now) else {
-            state = .failed("The tunnel stopped. Restart the app")
-            return
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(delay))
-            if !self.stopping { self.start(server: server, dataDir: dataDir) }
-        }
-    }
-}
-
 extension Shell {
     /// The account's other computers, from the broker, with a short token the account server mints from this Mac's sign-in.
     /// Signed out, or the broker does not answer: none (the list just stays empty).
@@ -214,7 +122,7 @@ extension Shell {
     }
 
     private func linkThisComputer() async -> String? {
-        guard let server, runsHere else { return "turn on This Mac's server first" }
+        guard server != nil, runsHere else { return "turn on This Mac's server first" }
         do {
             let start = try JSONDecoder().decode(ConnectStart.self, from: try await client().postData("/api/connect/start", [:]))
             notice = "Check that the page in your browser shows \(start.user_code), then add this Mac"
@@ -225,7 +133,6 @@ extension Shell {
                 let poll = try JSONDecoder().decode(ConnectPoll.self, from: try await client().postData("/api/connect/poll", [:]))
                 if poll.status == "pending" { continue }
                 guard poll.status == "linked" else { return poll.error ?? "try again" }
-                tunnel.start(server: LocalServer.folder, dataDir: server.dataDir)
                 accountComputers = await brokerComputers()
                 return nil
             }

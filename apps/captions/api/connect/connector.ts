@@ -85,10 +85,27 @@ export function connectorStatus(): { running: boolean; pid: number | null; start
   return { running: run !== null && !stopping, pid: child?.pid ?? null, starts };
 }
 
+/**
+ * The tunnel goes with the server: on SIGTERM or SIGINT (the Mac app stopping its server, Ctrl-C) cloudflared is told to
+ * stop as well, and then the signal does what it would have done anyway. Without this it ran on with no server behind it.
+ */
+let hooked = false;
+function stopWithServer(): void {
+  if (hooked) return;
+  hooked = true;
+  process.once("exit", () => child?.kill("SIGTERM"));
+  for (const sig of ["SIGTERM", "SIGINT"] as const)
+    process.once(sig, () => {
+      child?.kill("SIGTERM");
+      process.kill(process.pid, sig);
+    });
+}
+
 /** Starts the tunnel of a linked computer. Does nothing when this computer is not linked or already running. */
 export function startConnector(): void {
   const s = connectState();
   if (!s?.tunnelToken || run) return;
+  stopWithServer();
   stopping = false;
   const current: Promise<void> = supervise(s.tunnelToken)
     .catch((e: unknown) => console.error("connector:", e instanceof Error ? e.message : e))

@@ -53,7 +53,6 @@ final class Shell: NSObject, ObservableObject {
     /// The person's account (Account.swift): first run's sign-in with Apple or Google.
     let account = Account()
     /// This Mac's tunnel to the account's broker (Connect.swift), and the account's other computers from it (Servers).
-    let tunnel = TunnelRunner()
     @Published internal(set) var accountComputers: [ServerEntry] = []
 
     private let noteCenter = NoteCenter()
@@ -305,7 +304,6 @@ final class Shell: NSObject, ObservableObject {
     /// The server answers: the window signs in as the owner by itself and leaves the starting (or stopped) page. The AI
     /// comes on here only when it was on before; a first run leaves it off until the person presses Connect (startThisMac).
     private func serverReady() {
-        if let server { tunnel.start(server: LocalServer.folder, dataDir: server.dataDir) }   // a linked Mac's tunnel comes back
         Task {
             await signIn()
             // after a restart for the plug-ins (Plugins.swift) the window goes back to the page it was on

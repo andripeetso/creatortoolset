@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
@@ -9,6 +9,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "connect-"));
 process.env.APP_SECRET = "local-sign-in-test-secret";
 process.env.CT_CONNECT_URL = "https://broker.test";
+// a link starts the tunnel at once (routes.ts /poll): a stand-in for cloudflared that only sleeps
+const fakeTunnel = path.join(process.env.DATA_DIR, "cloudflared");
+writeFileSync(fakeTunnel, "#!/bin/sh\nexec sleep 60\n", { mode: 0o755 });
+process.env.CT_CLOUDFLARED_PATH = fakeTunnel;
 
 const app = (await import("../boot")).default;
 
@@ -108,10 +112,12 @@ beforeAll(async () => {
   broker.approved = true;
   const polled = (await (await call("POST", "/api/connect/poll", { cookie: adminCookie })).json()) as { status: string; hostname: string };
   expect(polled.status).toBe("linked");
+  expect((await import("./connector")).connectorStatus().running).toBe(true); // the tunnel runs without a restart
   hostname = polled.hostname;
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await (await import("./connector")).stopConnector();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
