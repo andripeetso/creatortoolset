@@ -31,7 +31,7 @@ import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
-import type { ClaudeSession, ClipRef, FileRef, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
+import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
@@ -70,7 +70,7 @@ import { renderDraft } from "./lib/workshop/render";
 import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, onVersion, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
-import { packInstructions } from "./lib/packs";
+import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
@@ -100,7 +100,7 @@ import {
  * API-key fallback for accounts: a Mac that is off or a run that fails says so. A request with no user
  * (carousel layouts) runs on the default.
  */
-const workshopAi = (user: SessionUser, own?: Selection): ProviderOpts => route(user, "workshop", "Workshop", own);
+export const workshopAi = (user: SessionUser, own?: Selection): ProviderOpts => route(user, "workshop", "Workshop", own);
 // the Workshop's own route: an account on an Anthropic key has AI elsewhere, but not here (aiFor onApiKey)
 const aiOn = (user: SessionUser) => !workshopAi(user).off;
 /** Which provider and model answer this session: a resumed Mac session belongs to exactly one. */
@@ -593,7 +593,7 @@ function reconcileRestart(): Promise<void> {
   })().catch((e) => console.error("[workshop] restart pass", errorMessage(e))));
 }
 
-async function ownedSession(id: string, user: SessionUser): Promise<SessionMeta | null> {
+export async function ownedSession(id: string, user: SessionUser): Promise<SessionMeta | null> {
   const meta = await readSession(id);
   return meta && canSee(meta.owner, user) ? meta : null;
 }
@@ -817,16 +817,7 @@ async function ensureDocuments(meta: SessionMeta): Promise<Document[]> {
       if (draft.status !== "ready") continue;
       const md = await readDraftMarkdown(meta.id, draft.id);
       if (!md) continue;
-      const doc = newDocument(randomUUID(), meta.id, draft.kind, draft.title || draft.kind, {
-        text: md,
-        author: "ai",
-        frameworkIds: draft.frameworkIds ?? [],
-        ruleIds: draft.ruleIds,
-        now: now + i++,
-      });
-      snapshot(doc, "generated draft", now + i);
-      await writeDoc(doc);
-      created.push(doc);
+      created.push(await draftDoc(meta.id, draft, md, now + i++));
     }
     // pieces made before the session was first opened (an AI on the Full key) stay listed
     docs = [...docs, ...created].sort((a, b) => a.createdAt - b.createdAt);
@@ -839,6 +830,14 @@ type PieceKind = Exclude<DocKind, "notes" | "free">;
 const PIECE_KINDS = new Set<string>(["reel", "carousel", "ad", "youtube", "newsletter", "thread", "article"] satisfies PieceKind[]);
 
 /** A session always has a document to write in besides Notes: the first kind its owner makes (setup's "What will you make?"), else a reel; the kind is switched in the editor. */
+/** A finished draft as a piece of its session, by the AI, its first version "generated draft". */
+async function draftDoc(sessionId: string, draft: DraftMeta, md: string, now: number): Promise<Document> {
+  const doc = newDocument(randomUUID(), sessionId, draft.kind, draft.title || draft.kind, { text: md, author: "ai", frameworkIds: draft.frameworkIds ?? [], ruleIds: draft.ruleIds, now });
+  snapshot(doc, "generated draft", now + 1);
+  await writeDoc(doc);
+  return doc;
+}
+
 async function withWorkingDoc(meta: SessionMeta, docs: Document[]): Promise<Document[]> {
   if (docs.some((d) => d.kind !== "notes")) return docs;
   const kind = readWorkPrefs(meta.owner).makes.find((m): m is PieceKind => PIECE_KINDS.has(m)) ?? "reel";
@@ -3705,54 +3704,77 @@ async function patchDraft(sessionId: string, draftId: string, patch: Partial<Dra
   });
 }
 
-/** Pack the sources, ask the model for a plan, render it, store it. Never awaited by a request. */
-async function runDraft(session: SessionMeta, draft: DraftMeta, user: SessionUser): Promise<void> {
-  try {
-    const noteFor = new Map(session.sources.map((s) => [s.postId, s.note]));
-    const { packs, warning, missing } = await packPostsForUser(draft.sourceIds, user);
-    if (draft.sourceIds.length && !packs.length) {
-      throw new Error("None of the selected sources are in the library anymore");
-    }
-    const [project, ...frameworkHits] = await Promise.all([
-      projectForAi(draft.projectId, user),
-      ...draft.frameworkIds.map((id) => readFramework(id, user)),
-    ]);
-    const frameworks = frameworkHits.filter((f): f is Framework => !!f);
-    const rules = await rulesFor(user, draft.ruleIds, project);
-    const notes = draft.includeNotes ? await readNotes(session.id) : "";
-    const { system, user: userMsg } = buildGeneratePrompt({
-      kind: draft.kind,
-      project: project ?? undefined,
-      frameworks,
-      rules: rules.map((r) => r.text),
-      packText: await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: workshopAi(user, session.ai) }),
-      notes,
-      prompt: draft.prompt,
-      packs: packs.map((p) => ({ ...p, note: noteFor.get(p.id), savedFor: p.savedFor })),
-    });
+/**
+ * Generate draft's request for a draft, built once: `ask` sends it to one of the person's AIs and renders the answer.
+ * `ais` are all the AIs it goes to (Compare, a plug-in, sends it to two): another person's pack text is in it only when
+ * each of them runs without tools.
+ */
+export async function draftRequest(session: SessionMeta, draft: DraftMeta, user: SessionUser, ais: ProviderOpts[]) {
+  const noteFor = new Map(session.sources.map((s) => [s.postId, s.note]));
+  const { packs, warning, missing } = await packPostsForUser(draft.sourceIds, user);
+  if (draft.sourceIds.length && !packs.length) {
+    throw new Error("None of the selected sources are in the library anymore");
+  }
+  const [project, ...frameworkHits] = await Promise.all([
+    projectForAi(draft.projectId, user),
+    ...draft.frameworkIds.map((id) => readFramework(id, user)),
+  ]);
+  const frameworks = frameworkHits.filter((f): f is Framework => !!f);
+  const rules = await rulesFor(user, draft.ruleIds, project);
+  const notes = draft.includeNotes ? await readNotes(session.id) : "";
+  const { system, user: userMsg } = buildGeneratePrompt({
+    kind: draft.kind,
+    project: project ?? undefined,
+    frameworks,
+    rules: rules.map((r) => r.text),
+    packText: await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: ais[0]!, tools: ais.some((ai) => !runsWithoutTools(ai)) }),
+    notes,
+    prompt: draft.prompt,
+    packs: packs.map((p) => ({ ...p, note: noteFor.get(p.id), savedFor: p.savedFor })),
+  });
+  const note = [warning, missing.length ? `${missing.length} source(s) were no longer in the library.` : ""].filter(Boolean).join(" ") || undefined;
+  const ask = async (ai: ProviderOpts) => {
     let usage: MacUsage | undefined;
-    const plan = await completeWithFallback(system, userMsg, undefined, PLAN_PARSERS[draft.kind], { ...workshopAi(user, session.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
+    const plan = await completeWithFallback(system, userMsg, undefined, PLAN_PARSERS[draft.kind], { ...ai, onUsage: (u) => (usage = sumUsage(usage, u)) });
     const markdown = renderDraft(plan, {
       projectName: project?.name,
       frameworkNames: frameworks.map((f) => f.name),
       sources: packs.map((p) => ({ handle: p.handle, kind: p.kind, url: p.url })),
       generatedAt: Date.now(),
     });
-    await mkdir(path.dirname(draftMdPath(session.id, draft.id)), { recursive: true });
-    await writeFile(draftMdPath(session.id, draft.id), markdown);
-    await writeJsonAtomic(draftJsonPath(session.id, draft.id), plan);
-    const notes2 = [warning, missing.length ? `${missing.length} source(s) were no longer in the library.` : ""]
-      .filter(Boolean)
-      .join(" ");
-    await patchDraft(session.id, draft.id, {
-      status: "ready",
-      title: plan.plan.title,
-      chars: markdown.length,
-      warning: notes2 || undefined,
-      usage,
-      finishedAt: Date.now(),
-      error: undefined,
-    });
+    return { plan, markdown, usage, note };
+  };
+  return { system, user: userMsg, ask };
+}
+export type DraftAnswer = Awaited<ReturnType<Awaited<ReturnType<typeof draftRequest>>["ask"]>>;
+
+/** A finished draft's files, and its row's fields once ready. */
+async function draftFiles(sessionId: string, draft: DraftMeta, out: DraftAnswer): Promise<Partial<DraftMeta>> {
+  await mkdir(path.dirname(draftMdPath(sessionId, draft.id)), { recursive: true });
+  await writeFile(draftMdPath(sessionId, draft.id), out.markdown);
+  await writeJsonAtomic(draftJsonPath(sessionId, draft.id), out.plan);
+  return { status: "ready", title: out.plan.plan.title, chars: out.markdown.length, warning: out.note, usage: out.usage, finishedAt: Date.now(), error: undefined };
+}
+
+/**
+ * A draft the person picked from draftRequest's answers (Compare, a plug-in): kept as Generate draft keeps one, and a
+ * piece at once when the session's pieces exist (before that, its first open makes it, as ensureDocuments does).
+ */
+export async function addDraft(session: SessionMeta, draft: DraftMeta, out: DraftAnswer, projectId?: string): Promise<void> {
+  const ready = { ...draft, ...(await draftFiles(session.id, draft, out)) };
+  await updateSession(session.id, async (m) => {
+    m.drafts = [ready, ...m.drafts];
+    if (projectId) m.projectId = projectId;
+    if ((await listDocs(session.id)).some((d) => d.kind === "notes")) await draftDoc(session.id, ready, out.markdown, Date.now());
+  });
+}
+
+/** Pack the sources, ask the model for a plan, render it, store it. Never awaited by a request. */
+async function runDraft(session: SessionMeta, draft: DraftMeta, user: SessionUser): Promise<void> {
+  try {
+    const ai = workshopAi(user, session.ai);
+    const out = await (await draftRequest(session, draft, user, [ai])).ask(ai);
+    await patchDraft(session.id, draft.id, await draftFiles(session.id, draft, out));
     bumpUsage(user.username, { aiRuns: 1 });
   } catch (e) {
     await patchDraft(session.id, draft.id, { status: "error", error: errorMessage(e).slice(0, 300), finishedAt: Date.now() });
@@ -3762,26 +3784,20 @@ async function runDraft(session: SessionMeta, draft: DraftMeta, user: SessionUse
   }
 }
 
-workshopApp.post("/sessions/:id/generate", async (c) => {
-  const user = c.get("user");
-  const meta = await ownedSession(c.req.param("id"), user);
-  if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
-  if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is already generating in this session — wait for it" }, 409);
-  }
+/** Generate draft's draft from a request body for this session, or the sentence its 400 answers. */
+export function draftFrom(meta: SessionMeta, raw: unknown): { draft: DraftMeta; input: GenerateInput } | { error: string } {
   let input;
   try {
-    input = parseGenerateInput(await c.req.json().catch(() => null));
+    input = parseGenerateInput(raw);
   } catch (e) {
-    return c.json({ error: errorMessage(e) }, 400);
+    return { error: errorMessage(e) };
   }
   const sessionIds = meta.sources.map((s) => s.postId);
   const sourceIds = (input.sourceIds ?? sessionIds.slice(0, LIMITS.generateSources)).filter((id) =>
     sessionIds.includes(id),
   );
   if (!sourceIds.length && !input.prompt) {
-    return c.json({ error: "Add a source or write a brief first" }, 400);
+    return { error: "Add a source or write a brief first" };
   }
   const draft: DraftMeta = {
     id: randomUUID(),
@@ -3797,6 +3813,20 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
     chars: 0,
     createdAt: Date.now(),
   };
+  return { draft, input };
+}
+
+workshopApp.post("/sessions/:id/generate", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedSession(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
+  if (meta.drafts.some((d) => d.status === "generating")) {
+    return c.json({ error: "A draft is already generating in this session — wait for it" }, 409);
+  }
+  const made = draftFrom(meta, await c.req.json().catch(() => null));
+  if ("error" in made) return c.json({ error: made.error }, 400);
+  const { draft, input } = made;
   generating.add(draft.id);
   const next = await updateSession(meta.id, (m) => {
     m.drafts = [draft, ...m.drafts];
