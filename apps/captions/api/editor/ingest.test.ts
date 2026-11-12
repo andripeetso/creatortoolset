@@ -20,8 +20,8 @@ describe("footage from this computer is filed as A-roll", () => {
   it("files into the account's own library, in one A-roll folder made on first use", async () => {
     const first = await footageTargetFor("ana");
     expect(first?.libraryId).toBe("lib_ana");
-    const row = libraryDb().prepare("SELECT name, kind, parent_id FROM collections WHERE id = ?").get(first!.collectionId) as Record<string, unknown>;
-    expect(row).toEqual({ name: A_ROLL, kind: "manual", parent_id: null });
+    const row = libraryDb().prepare("SELECT name, kind, query, parent_id FROM collections WHERE id = ?").get(first!.collectionId) as Record<string, unknown>;
+    expect(row).toEqual({ name: A_ROLL, kind: "smart", query: '{"roll":"a"}', parent_id: null });
     expect((await footageTargetFor("ana"))?.collectionId).toBe(first!.collectionId);
   });
 

@@ -47,11 +47,11 @@ enum PickerGeometry {
         return flipped(local, height: screenTopLeft.height)
     }
 
-    /// Which windows the picker offers: normal layer, another app's, not tiny. Unknown owners are left out.
-    static func isPickable(layer: Int, ownerBundleID: String?, ownBundleID: String?, frame: CGRect) -> Bool {
-        if layer != 0 || frame.width < 100 || frame.height < 100 { return false }
-        guard let owner = ownerBundleID, owner != ownBundleID else { return false }
-        return true
+    /// Which windows the picker offers: normal layer, of a known app, not tiny. This app's own window is one of them
+    /// (a recording of the app itself); the recorder's toolbar, bar, camera bubble and this overlay all float above
+    /// the normal layer, so that rule leaves them out.
+    static func isPickable(layer: Int, ownerBundleID: String?, frame: CGRect) -> Bool {
+        layer == 0 && ownerBundleID != nil && frame.width >= 100 && frame.height >= 100
     }
 
     /// The frontmost window containing `point`. `windows` is ordered front to back.
@@ -343,13 +343,12 @@ private final class PickerSession {
         Task { @MainActor [weak self] in
             guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true),
                   let self else { return }
-            let own = Bundle.main.bundleIdentifier
             var icons: [String: NSImage] = [:]
             // ScreenCaptureKit lists windows front to back.
             self.candidates = content.windows.compactMap { w -> PickableWindow? in
                 let app = w.owningApplication
                 guard PickerGeometry.isPickable(layer: w.windowLayer, ownerBundleID: app?.bundleIdentifier,
-                                                ownBundleID: own, frame: w.frame) else { return nil }
+                                                frame: w.frame) else { return nil }
                 let bundle = app?.bundleIdentifier ?? ""
                 if icons[bundle] == nil {
                     icons[bundle] = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first?.icon

@@ -30,6 +30,10 @@ export interface AssetCard {
   preparing?: { step: LibraryStage["kind"] | "probe" | "wave"; running: boolean };
   /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
   failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
+  /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
+  roll?: "a" | "b";
+  /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
+  finished?: true;
 }
 
 export interface AssetDetail extends AssetCard {
@@ -49,9 +53,15 @@ export interface SearchQuery {
   from?: number;
   to?: number;
   hasTranscript?: boolean;
+  /** only A-roll or only B-roll (`?roll=a|b`) */
+  roll?: "a" | "b";
+  /** only these versions' assets (`?versions=id,id`, at most 200) */
+  versions?: string[];
   /** plug-in sidebar filters: facet key → chosen values (api/library/sources.ts) */
   facets?: Record<string, string[]>;
   trashed?: boolean; // the trash instead of the library
+  /** only clips in none of the person's folders (the library's top level); Finals and saved searches don't count */
+  unfiled?: boolean;
   cursor?: string;
   limit?: number; // limit ≤ 200
 }
@@ -73,6 +83,36 @@ export interface ShareInput {
 export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
+  proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+}
+
+/** GET /api/library/:id/space: what the library's own made files take (the person's own files are not in it). */
+export interface LibrarySpace {
+  proxies: { bytes: number; files: number };
+  /** the cards' pictures and sound pictures: made at once again, so they are said, not cleared */
+  pictures: { bytes: number; files: number };
+  /** the downloaded speech and search models, on a server on the person's own computer only */
+  models: { bytes: number } | null;
+}
+
+/** What a step held for the person needs, in a few words, and the page where they add it. */
+export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
+  files: { needs: "a look", href: "/library" },
+  transcript: { needs: "a transcription key", href: "/settings/keys" },
+  describe: { needs: "an AI", href: "/settings/providers" },
+  embed: { needs: "an OpenAI key", href: "/settings/keys" },
+};
+
+/** "5 AI descriptions need an AI", and where to add it. */
+export function waitingLine(w: { step: LibraryStep; count: number }): { text: string; href: string } {
+  const one = w.count === 1;
+  const [thing, things] = {
+    files: ["file", "files"],
+    transcript: ["transcript", "transcripts"],
+    describe: ["AI description", "AI descriptions"],
+    embed: ["search entry", "search entries"],
+  }[w.step];
+  return { text: `${w.count.toLocaleString()} ${one ? thing : things} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
 }
 
 /** One of the caller's libraries. */
@@ -105,6 +145,8 @@ export interface LibraryEstimate {
   steps: LibraryStepEstimate[];
   /** the whole run: the slowest step (steps run side by side) */
   seconds: number;
+  /** the library makes proxies (its settings): the files step counts them */
+  proxies?: boolean;
   /** describe on the person's own Anthropic key instead (it runs six at once; a connected AI runs two): when that is faster */
   withApiKey?: { seconds: number; usd: number };
 }
@@ -123,11 +165,13 @@ export interface LibraryStage {
 
 /** GET /api/library/:id/progress: the processing still to do in a library. Nothing to do = `left` 0. */
 export interface LibraryProgress {
-  /** jobs done and still to do since the queue was last empty */
+  /** steps done since the queue was last empty, and steps still to do (a file a watch folder has found counts as one) */
   done: number;
   left: number;
-  /** clips with work left */
+  /** clips with a step still to run here (a held one does not count), and the files a watch folder has found and not handed over */
   clips: number;
+  /** how far this run is, 0 to 1: each clip counts the same, by the share of its steps through; a clip still to come counts 0 */
+  share: number;
   /** time left at this server's pace */
   seconds: number;
   /** jobs waiting for a key or an AI, with what to add */
@@ -145,13 +189,24 @@ export interface LibrarySummary {
 
 /**
  * Where a library's files live, as its owner sets it (PUT /api/library/:id/storage): the server's disk, the server's
- * bucket (set up by whoever runs the server), or the library's own S3-compatible bucket. Own keys may be left out to
- * keep the ones already saved; they are never sent back.
+ * bucket (set up by whoever runs the server), the library's own S3-compatible bucket, or Bunny Storage. Own keys may be
+ * left out to keep the ones already saved; they are never sent back. Bunny takes the account's API key once: the server
+ * makes a storage zone and a token-signed pull zone with it and keeps only the zone's own keys, never the account key.
  */
 export type LibraryStorageInput =
   | { kind: "local" }
   | { kind: "s3"; mode: "server" }
-  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string };
+  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string }
+  | { kind: "bunny"; apiKey?: string; region?: BunnyRegion };
+
+/** Bunny Storage's main regions, as its API names them. */
+export const BUNNY_REGIONS = [
+  { id: "DE", name: "Europe (Germany)" },
+  { id: "NY", name: "New York" },
+  { id: "LA", name: "Los Angeles" },
+  { id: "SG", name: "Singapore" },
+] as const;
+export type BunnyRegion = (typeof BUNNY_REGIONS)[number]["id"];
 
 /** GET /api/library/:id/usage, the owner only. */
 export interface LibraryStorage {
@@ -160,6 +215,7 @@ export interface LibraryStorage {
   endpoint?: string; // own bucket only
   region?: string;
   bucket?: string;
+  zone?: string; // Bunny: the storage zone's name
   pathStyle?: boolean;
   keysSet: boolean; // own bucket: its keys are saved (they never leave the server)
   serverBucket: boolean; // the server offers a bucket for libraries
@@ -181,6 +237,8 @@ export interface Collection {
   kind: "manual" | "smart";
   query?: SearchQuery; // smart only
   count?: number; // manual only: items in it
+  /** manual only: up to four of its clips' pictures (thumb addresses), for its card */
+  covers?: string[];
   createdBy: string;
 }
 
@@ -286,25 +344,24 @@ export interface Posting {
 }
 
 /**
- * Own-bucket presets for the storage form: the endpoint, region and URL style each S3-compatible provider wants. A preset
- * whose endpoint is per account or per server (R2, MinIO) sets `endpoint` to "" and `endpointHint`, shown as the field's
- * placeholder: the owner types the real address (the server rejects `<…>` text in it). Path-style URLs work on all four,
- * and MinIO needs them.
+ * Own-bucket presets for the storage form: Amazon S3 and Cloudflare R2 (with Bunny, the three storages offered; any other
+ * S3-compatible provider is typed in by hand), and where each makes its keys. R2's endpoint is per account: `endpoint` is "" and
+ * `endpointHint`, shown as the field's placeholder: the owner types the real address (the server rejects `<…>` text in
+ * it). Amazon's endpoint is empty for real: the SDK finds it from the region. The bucket need not exist yet: saving
+ * makes it, and gives it the CORS rule direct uploads need when it has none.
  */
 export const S3_PRESETS = [
-  { id: "r2", name: "Cloudflare R2", endpoint: "", endpointHint: "https://<account-id>.r2.cloudflarestorage.com", region: "auto", pathStyle: true },
-  { id: "b2", name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.com", endpointHint: "", region: "us-west-004", pathStyle: true },
-  { id: "wasabi", name: "Wasabi", endpoint: "https://s3.us-east-1.wasabisys.com", endpointHint: "", region: "us-east-1", pathStyle: true },
-  { id: "minio", name: "MinIO", endpoint: "", endpointHint: "https://your-minio-host:9000", region: "us-east-1", pathStyle: true },
+  { id: "aws", name: "Amazon S3", endpoint: "", endpointHint: "", region: "us-east-1", pathStyle: false, keysUrl: "https://console.aws.amazon.com/iam/home#/users" },
+  { id: "r2", name: "Cloudflare R2", endpoint: "", endpointHint: "https://<account-id>.r2.cloudflarestorage.com", region: "auto", pathStyle: true, keysUrl: "https://dash.cloudflare.com/?to=/:account/r2/api-tokens" },
 ] as const;
 
 export type S3PresetId = (typeof S3_PRESETS)[number]["id"];
 
 /**
- * The form with a preset's region and path-style set, and its endpoint when the preset has a fixed one (an empty preset
- * endpoint keeps what the field holds); the bucket and the keys are left as they are.
+ * The form with a preset's region and path-style set, and its endpoint: a fixed one is filled in, one per account
+ * (`endpointHint`) keeps what the field holds, and Amazon's clears it. The bucket and the keys are left as they are.
  */
 export function applyS3Preset<T extends { endpoint: string; region: string; pathStyle: boolean }>(form: T, id: S3PresetId): T {
   const p = S3_PRESETS.find((x) => x.id === id);
-  return p ? { ...form, endpoint: p.endpoint || form.endpoint, region: p.region, pathStyle: p.pathStyle } : form;
+  return p ? { ...form, endpoint: p.endpoint || (p.endpointHint ? form.endpoint : ""), region: p.region, pathStyle: p.pathStyle } : form;
 }

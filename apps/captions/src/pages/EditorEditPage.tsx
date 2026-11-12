@@ -4,11 +4,13 @@ import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, Trash2 } from
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { createStyle, deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
-import { confirmDialog } from "@/lib/dialogs";
+import { confirmDialog, promptDialog } from "@/lib/dialogs";
+import { toast } from "sonner";
+import { STYLE_NAME_MAX } from "@contracts/editor-styles";
 
 /**
  * One edit (/editor/:id): its steps (a step that needs a key or provider links to the setting), an eye line per source
@@ -79,9 +81,24 @@ export default function EditorEditPage() {
     }
   };
 
+  /** This edit's choices under a name, as a new editing style (its brief, script and footage stay here). */
+  const saveAsStyle = async () => {
+    const name = (await promptDialog({ title: "Save as style", ok: "Save", value: (edit.style?.name ?? edit.name).slice(0, STYLE_NAME_MAX) }))?.trim();
+    if (!name) return;
+    try {
+      const s = await createStyle({ fromEdit: id, name });
+      toast.success(`Saved “${s.name}” in Editing styles`);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor" to="/editor" trail={edit.name}>
+        <Button size="sm" variant="outline" onClick={() => void saveAsStyle()}>
+          Save as style
+        </Button>
         {busy && (
           <Button size="sm" variant="outline" onClick={() => void act(stopEdit(id))}>
             <Square className="h-3.5 w-3.5" />
@@ -123,9 +140,10 @@ export default function EditorEditPage() {
               <li key={j.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
                 <span className="font-medium">{STEP_NAME[j.kind] ?? j.kind}</span>
                 {j.variant && <span className="text-xs text-zinc-500">{edit.plans.find((p) => p.name === j.variant)?.title ?? j.variant}</span>}
-                <StateBadge state={j.state} />
+                <StateBadge state={j.error === "Stopped" ? "stopped" : j.state} />
                 {j.state === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
-                {j.error && (
+                {j.state === "running" && j.line && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{j.line}</span>}
+                {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
                     {j.state === "needs_key" && (
@@ -253,6 +271,9 @@ export default function EditorEditPage() {
                 const pv = edit.previews[n];
                 const d = drafts[n];
                 const title = edit.plans.find((p) => p.name === n)?.title ?? n;
+                // its newest post step not done: the server refuses the export (api/editor/store.ts postUnfinished), so say why here
+                const post = edit.jobs.filter((j) => j.kind === "post" && j.variant === n).at(-1);
+                const postHeld = !!post && post.state !== "done";
                 return (
                   <article key={n} aria-label={title} className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -272,7 +293,8 @@ export default function EditorEditPage() {
                       </ul>
                     )}
                     <div className="flex flex-wrap gap-1.5">
-                      {(["otio", "fcpxml", "zip"] as const).map((f) => (
+                      {postHeld && <p className="text-xs text-amber-600">Post-processing did not finish on this version: run it again before you export</p>}
+                      {!postHeld && (["otio", "fcpxml", "zip"] as const).map((f) => (
                         <Button key={f} asChild size="sm" variant="outline">
                           <a href={exportUrl(id, n, f)} download>
                             <Download className="h-3.5 w-3.5" />

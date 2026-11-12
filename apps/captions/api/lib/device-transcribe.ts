@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { spokenLanguage } from "../../src/workers/spoken-language";
-import { hfApp } from "../hfproxy";
+import { hfApp, OWN_COPY } from "../hfproxy";
 import { ffmpegSlot } from "../library/media/run";
 import { env, hostedMode } from "./env";
 
@@ -21,10 +21,13 @@ const MODEL_MB = 291;
 export const GETTING_MODEL = `Getting the speech model ready (${MODEL_MB} MB, only the first time)`;
 export const LISTENING = "Listening to your video";
 /** Kept with the person's data, never beside the server's own files (the library's default), which are part of a signed app. */
-const modelsDir = () => path.join(env.dataDir, "models");
+export const modelsDir = () => path.join(env.dataDir, "models");
 
 /** What a caller's ffmpeg writes for `transcribeOnDevice`: 16 kHz mono 32-bit float samples, no header. */
 export const DEVICE_AUDIO = ["-vn", "-ac", "1", "-ar", "16000", "-f", "f32le"];
+
+/** The speech model is not on this computer yet (its download stopped): a transcript waits and tries again (worker.ts). */
+export class ModelNotReady extends Error {}
 
 /** Whether this server transcribes by itself: one person's own computer, never a hosted server. */
 export const deviceTranscribes = (): boolean => process.env.CT_LOCAL === "1" && !hostedMode();
@@ -44,6 +47,15 @@ let current: { key: string; text: string } | null = null;
 
 /** What the transcript `key` names (a library version, a clip) is doing right now, in words for its owner; undefined when it is not running here. */
 export const deviceStatus = (key: string): string | undefined => (current?.key === key ? current.text : undefined);
+
+// the speech model and search by meaning's (device-embed.ts) never sit in memory side by side: together they took
+// 2.9 GB against 2.1 GB for the speech model alone (measured), so the other one is given back before a transcript
+let speaking = false;
+let freeOther: () => Promise<void> = async () => {};
+/** Whether the speech model is in memory now. */
+export const speechModelInUse = (): boolean => speaking;
+/** `free` gives the other model back (and waits for a run of it to end): called before the speech model loads. */
+export const beforeSpeechModel = (free: () => Promise<void>): void => void (freeOther = free);
 
 const half = (c: Chunk) => Math.floor(c.timestamp[0] / 30);
 const noLength = (c: Chunk) => (c.timestamp[1] ?? c.timestamp[0]) - c.timestamp[0] <= 0.05;
@@ -165,15 +177,26 @@ export async function relisten(first: DeviceWord[], pcm: Float32Array, hear: (fr
   return words.sort((x, y) => x.start - y.start);
 }
 
-async function loadModel(say: (text: string) => void): Promise<Transcriber> {
-  const { pipeline, env: lib } = await import("@huggingface/transformers");
-  lib.cacheDir = modelsDir();
-  lib.allowLocalModels = false;
+/** The model library, keeping its models in the person's data (modelsDir) and fetching them through this server. */
+export async function modelLibrary() {
+  const lib = await import("@huggingface/transformers");
+  lib.env.cacheDir = modelsDir();
+  lib.env.allowLocalModels = false;
   // through this server's own model route, without the network hop: its mirror fallback, and a model Caption Studio
   // already fetched is copied from that route's files instead of downloaded again
-  lib.remoteHost = "http://server/api/hf/";
-  lib.fetch = (async (url: string | URL | Request, init?: RequestInit) => hfApp.request(new URL(String(url)).pathname, init)) as typeof fetch;
-  const kept = existsSync(path.join(lib.cacheDir, MODEL, "onnx", "decoder_model_merged.onnx"));
+  lib.env.remoteHost = "http://server/api/hf/";
+  // the library keeps its own copy in modelsDir: the route keeps none beside it
+  lib.env.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set(OWN_COPY, "1");
+    return hfApp.request(new URL(String(url)).pathname, { ...init, headers });
+  }) as typeof fetch;
+  return lib;
+}
+
+async function loadModel(say: (text: string) => void): Promise<Transcriber> {
+  const { pipeline } = await modelLibrary();
+  const kept = existsSync(path.join(modelsDir(), MODEL, "onnx", "decoder_model_merged.onnx"));
   if (!kept) say(GETTING_MODEL);
   let shown = 0;
   const t = await pipeline("automatic-speech-recognition", MODEL, {
@@ -197,11 +220,16 @@ async function loadModel(say: (text: string) => void): Promise<Transcriber> {
 export function transcribeOnDevice(pcmFile: string, key: string, load = loadModel): Promise<{ words: DeviceWord[]; language: string | null }> {
   return ffmpegSlot(async () => {
     const say = (text: string) => void (current = { key, text });
+    speaking = true;
+    await freeOther();
     try {
-      const model = await load(say).catch(async (e) => {
+      const model = await load(say).catch((e) => {
+        // its files are left as they are, as the search model's are (device-embed.ts): the library is still writing the
+        // others, and deleting the folder under them ends the server (an error nobody catches); a half file never takes
+        // its real name (the library writes each under a temporary name and drops that when it breaks), so the next try
+        // fetches only what is missing
         console.warn("[transcribe] the speech model did not load:", e);
-        await rm(path.join(modelsDir(), MODEL), { recursive: true, force: true }); // a bad copy would fail every later run: the next try fetches it again
-        throw new Error(`The speech model could not be made ready. It downloads once (${MODEL_MB} MB): check the internet connection, then try again.`);
+        throw new ModelNotReady(`The speech model could not be downloaded (${MODEL_MB} MB, only the first time): check the internet connection.`);
       });
       try {
         say(LISTENING);
@@ -224,6 +252,7 @@ export function transcribeOnDevice(pcmFile: string, key: string, load = loadMode
       }
     } finally {
       current = null;
+      speaking = false;
     }
   });
 }

@@ -175,7 +175,7 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     expect((await githubIdentity("good-code", CALLBACK)).email).toBe("cy@tinyacrobatics.com");
   });
 
-  it("finishes a GitHub link only in the browser that started it, as Google's does", async () => {
+  it("finishes a GitHub link in the browser that started it; another browser is asked first, as Google's is", async () => {
     const login = await app.request("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -184,9 +184,9 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     const cookie = cookieOf(login);
     const start = await app.request("/api/account/login/github?for=link", { headers: { cookie } });
     const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
-    // the same callback from a browser that is not signed in: refused, and nothing is linked
+    // the same callback from a browser that is not signed in: a page naming the account, nothing linked without its press
     const other = await app.request(`/api/auth/github/callback?code=good-code&state=${state}`);
-    expect(other.headers.get("location")).toContain("/settings/account?signin=");
+    expect(await other.text()).toContain("will sign in to <b>cy</b>");
     expect(other.headers.get("set-cookie")).toBeNull();
     // the browser that started it: linked
     const again = await app.request("/api/account/login/github?for=link", { headers: { cookie } });

@@ -1,0 +1,295 @@
+{
+ "jobs": [
+  "draft",
+  "draft v1",
+  "draft v2",
+  "broll v1",
+  "broll v2",
+  "post v1",
+  "post v2",
+  "preview v1",
+  "preview v2"
+ ],
+ "v1": {
+  "timeline": {
+   "name": "Tiny Acrobatics hook v1",
+   "fps": 25,
+   "width": 1080,
+   "height": 1920,
+   "sources": {
+    "ver_a": {
+     "versionId": "ver_a",
+     "name": "Take A",
+     "fps": 25,
+     "tc": 90000,
+     "dur": 225,
+     "w": 1080,
+     "h": 1920
+    },
+    "ver_b": {
+     "versionId": "ver_b",
+     "name": "Take B",
+     "fps": 50,
+     "tc": 180000,
+     "dur": 450,
+     "w": 1080,
+     "h": 1920
+    }
+   },
+   "tracks": {
+    "V1": {
+     "name": "Speaker",
+     "items": [
+      {
+       "src": "ver_a",
+       "in": 10,
+       "len": 27,
+       "rec": 0,
+       "link": "c1"
+      },
+      {
+       "src": "ver_a",
+       "in": 44,
+       "len": 26,
+       "rec": 27,
+       "link": "c2",
+       "zoom": 1.15,
+       "tilt": -34.56
+      },
+      {
+       "src": "ver_a",
+       "in": 86,
+       "len": 27,
+       "rec": 53,
+       "link": "c3"
+      },
+      {
+       "src": "ver_b",
+       "in": 296,
+       "len": 19,
+       "rec": 80,
+       "link": "c4",
+       "zoom": 1.15,
+       "tilt": -34.56
+      },
+      {
+       "src": "ver_b",
+       "in": 345,
+       "len": 20,
+       "rec": 99,
+       "link": "c5"
+      }
+     ]
+    },
+    "V2": {
+     "name": "B-roll",
+     "items": []
+    },
+    "A1": {
+     "name": "Voice",
+     "items": [
+      {
+       "src": "ver_a",
+       "in": 10,
+       "len": 27,
+       "rec": 0,
+       "link": "c1"
+      },
+      {
+       "src": "ver_a",
+       "in": 44,
+       "len": 26,
+       "rec": 27,
+       "link": "c2"
+      },
+      {
+       "src": "ver_a",
+       "in": 86,
+       "len": 27,
+       "rec": 53,
+       "link": "c3"
+      },
+      {
+       "src": "ver_b",
+       "in": 296,
+       "len": 19,
+       "rec": 80,
+       "link": "c4"
+      },
+      {
+       "src": "ver_b",
+       "in": 345,
+       "len": 20,
+       "rec": 99,
+       "link": "c5"
+      }
+     ]
+    },
+    "A2": {
+     "name": "Music",
+     "items": []
+    },
+    "A3": {
+     "name": "Sound effects",
+     "items": []
+    }
+   },
+   "markers": [
+    {
+     "rec": 0,
+     "name": "L1",
+     "color": "BLUE",
+     "note": "we teach rolls to tiny ones every single day"
+    },
+    {
+     "rec": 80,
+     "name": "L2",
+     "color": "BLUE",
+     "note": "come and join us"
+    }
+   ]
+  },
+  "notes": []
+ },
+ "v2": {
+  "timeline": {
+   "name": "Tiny Acrobatics hook v2",
+   "fps": 25,
+   "width": 1080,
+   "height": 1920,
+   "sources": {
+    "ver_a": {
+     "versionId": "ver_a",
+     "name": "Take A",
+     "fps": 25,
+     "tc": 90000,
+     "dur": 225,
+     "w": 1080,
+     "h": 1920
+    },
+    "ver_b": {
+     "versionId": "ver_b",
+     "name": "Take B",
+     "fps": 50,
+     "tc": 180000,
+     "dur": 450,
+     "w": 1080,
+     "h": 1920
+    }
+   },
+   "tracks": {
+    "V1": {
+     "name": "Speaker",
+     "items": [
+      {
+       "src": "ver_a",
+       "in": 148,
+       "len": 19,
+       "rec": 0,
+       "link": "c1"
+      },
+      {
+       "src": "ver_a",
+       "in": 172,
+       "len": 20,
+       "rec": 19,
+       "link": "c2",
+       "zoom": 1.15,
+       "tilt": -34.56
+      },
+      {
+       "src": "ver_b",
+       "in": 21,
+       "len": 27,
+       "rec": 39,
+       "link": "c3"
+      },
+      {
+       "src": "ver_b",
+       "in": 88,
+       "len": 26,
+       "rec": 66,
+       "link": "c4",
+       "zoom": 1.15,
+       "tilt": -34.56
+      },
+      {
+       "src": "ver_b",
+       "in": 173,
+       "len": 27,
+       "rec": 92,
+       "link": "c5"
+      }
+     ]
+    },
+    "V2": {
+     "name": "B-roll",
+     "items": []
+    },
+    "A1": {
+     "name": "Voice",
+     "items": [
+      {
+       "src": "ver_a",
+       "in": 148,
+       "len": 19,
+       "rec": 0,
+       "link": "c1"
+      },
+      {
+       "src": "ver_a",
+       "in": 172,
+       "len": 20,
+       "rec": 19,
+       "link": "c2"
+      },
+      {
+       "src": "ver_b",
+       "in": 21,
+       "len": 27,
+       "rec": 39,
+       "link": "c3"
+      },
+      {
+       "src": "ver_b",
+       "in": 88,
+       "len": 26,
+       "rec": 66,
+       "link": "c4"
+      },
+      {
+       "src": "ver_b",
+       "in": 173,
+       "len": 27,
+       "rec": 92,
+       "link": "c5"
+      }
+     ]
+    },
+    "A2": {
+     "name": "Music",
+     "items": []
+    },
+    "A3": {
+     "name": "Sound effects",
+     "items": []
+    }
+   },
+   "markers": [
+    {
+     "rec": 0,
+     "name": "L2",
+     "color": "BLUE",
+     "note": "come and join us"
+    },
+    {
+     "rec": 39,
+     "name": "L1",
+     "color": "BLUE",
+     "note": "we teach rolls to tiny ones every single day"
+    }
+   ]
+  },
+  "notes": []
+ }
+}

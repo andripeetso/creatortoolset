@@ -4,8 +4,10 @@ import { AccountSection } from "./AccountSection";
 import { AdminSection } from "./AdminSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { AutomationsSection } from "./AutomationsSection";
+import { EditorStepsSection } from "./EditorStepsSection";
 import { ApiKeysSection } from "./ApiKeysSection";
 import { ConnectorsSection } from "./ConnectorsSection";
+import { MemorySection } from "./MemorySection";
 import { OwnAiSection } from "./OwnAiSection";
 import { ProvidersSection } from "./ProvidersSection";
 import { UsageSection } from "./UsageSection";
@@ -13,6 +15,7 @@ import { WorkspaceSection } from "./WorkspaceSection";
 import { ComputersSection } from "./ComputersSection";
 import { FoldersSection } from "./FoldersSection";
 import { ServersSection } from "./ServersSection";
+import { SkillsSection } from "./SkillsSection";
 import { GeneralSection } from "./GeneralSection";
 import { ToolsSection } from "./ToolsSection";
 
@@ -30,6 +33,9 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   providers: ProvidersSection,
   devices: ComputersSection,
   automations: AutomationsSection,
+  skills: SkillsSection,
+  memory: MemorySection,
+  editor: EditorStepsSection,
   usage: UsageSection,
   connectors: ConnectorsSection,
   keys: ApiKeysSection,

@@ -105,6 +105,16 @@ export function facetClauses(picked: Record<string, string[]>): { sql: string; p
     .map(([key, values]) => facets.get(key)!.where(values));
 }
 
+/**
+ * A source's list may throw this to say why it lists nothing for this caller ("this account has no AI access"): the
+ * list route answers no items and that sentence, so the assistant can say it. Any other error still lists nothing,
+ * in silence.
+ */
+export class SourceRefusal extends Error {}
+
+/** The plug-in source that is the install's Media Library, when one says so (LibrarySource.main). */
+export const mainSource = (): LibrarySource | undefined => [...sources.values()].find((s) => s.main);
+
 /** Test seam: forget every plug-in's registrations, leaving the built-in source and its owner-only policy. */
 export function resetLibrarySlots(): void {
   sources.clear();

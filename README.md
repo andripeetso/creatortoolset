@@ -71,7 +71,7 @@ project you're in.
 | Extras | **Story Splitter** | Cut a video into stories of about 20 seconds, on its own cuts, pauses and beats, and download them as one zip. |
 | Extras | **Video Notes** | Screen and camera recordings. Each one gets a transcript (through your cloud transcription key when you have one; without a key the Mac app makes it on your Mac, and a server makes none) and, with an AI connected, a title, a summary and chapters. |
 | Extras | **Guide Builder** | Put recordings in order, have AI draft a step-by-step page, and publish it as an unlisted link. |
-| Extras | **Screen Recorder** | In the Mac app, on macOS 15 or newer: record your screen, a window or an area, with your camera and voice. Make a version that zooms where you clicked, and send it to Review, Video Notes or the Guide Builder. |
+| Extras | **Screen Recorder** | In the Mac app, on macOS 15 or newer: record your screen, a window or an area, with your camera and voice. Make a version that zooms where you clicked, and send it to Review, Video Notes or the Guide Builder; or one with no background, saved as a video with a transparent background to lay over other video. |
 
 On the home screen Review sits in Make, the Content Workshop in Plan and Caption Studio in the Extras.
 
@@ -80,6 +80,8 @@ vault notes and Workshop sessions in step, and an **assistant**: a chat docked i
 app you connected on your own computer (Settings → Providers), never on an API key. With Claude Code, Codex, Gemini
 or Grok it works with the app's own tools: it sets things up with you, reads and changes your Workshop, Review and
 AI Editor work, schedules tasks, and sends a video you drop on it to Video Notes, Review or Caption Studio.
+What you tell it about yourself and your work it keeps for later chats, in your own words: Settings → Memory lists
+what is kept, each with a Remove.
 
 ## Make it work your way
 

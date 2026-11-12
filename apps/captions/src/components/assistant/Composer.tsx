@@ -121,7 +121,7 @@ export function Composer({
 
       {(draft.images.length > 0 || draft.pasted.length > 0 || draft.files.length > 0 || draft.folders.length > 0) && (
         <div className="flex flex-wrap gap-2 px-1 pt-1.5">
-          {/* a folder dropped in the Mac app: its path goes with the message, nothing uploads */}
+          {/* a folder dropped in the Mac app: its path goes with the message */}
           {draft.folders.map((p) => (
             <div key={p} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={p}>
               <div className="flex h-14 max-w-52 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-[11px]">
@@ -143,7 +143,7 @@ export function Composer({
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{f.name}</span>
                   <span className={cn("block tabular-nums", f.error ? "text-destructive" : "text-muted-foreground")}>
-                    {f.error ? "Didn't upload: remove it and add it again" : f.id ? "Ready" : `Uploading · ${f.pct}%`}
+                    {f.error ? "Didn't upload: remove it and add it again" : f.done ? "Ready" : `Uploading · ${f.pct}%`}
                   </span>
                 </span>
               </div>

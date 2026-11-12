@@ -22,7 +22,7 @@ const base = {
   joinNote: null as { ok: boolean; text: string } | null,
   account: undefined as ReactNode,
 };
-const view = (over: Partial<typeof base & { pasteCommand: string }> = {}) => renderToStaticMarkup(<ConnectStepView {...base} {...over} />);
+const view = (over: Partial<Parameters<typeof ConnectStepView>[0]> = {}) => renderToStaticMarkup(<ConnectStepView {...base} {...over} />);
 const phone = (code: PhoneState | undefined, over: Partial<Parameters<typeof PhoneRowView>[0]> = {}) =>
   renderToStaticMarkup(
     <PhoneRowView code={code} now={1_000} canTurnOn={false} turningOn={false} problem={null} onTurnOn={() => {}} {...over} />,
@@ -184,4 +184,14 @@ it("on a hosted server: no row for this server and no add-a-computer form, the M
   expect(html).not.toContain('aria-label="Studio Mac"');
   expect(html).not.toContain("Add a computer");
   expect(html).toContain("Creator Toolset Mac app");
+});
+
+it("offers Add this computer while this Mac is not on the account, says to answer in the browser while it waits, and shows a refusal", () => {
+  const add = { onAdd: () => {}, busy: false };
+  expect(view()).not.toContain("Add this computer");
+  const idle = view({ addHere: add });
+  expect(idle).toContain("Creator Toolset Connect");
+  expect(idle).toContain("Add this computer");
+  expect(view({ addHere: { ...add, busy: true } })).toContain("Say yes in your browser");
+  expect(view({ addHere: { ...add, problem: "This Mac was not added: the code ran out, start again" } })).toContain("the code ran out");
 });

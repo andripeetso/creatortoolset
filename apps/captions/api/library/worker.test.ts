@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,7 +9,9 @@ const dir = mkdtempSync(path.join(scratch, "library-worker-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
 const { claimJob, enqueueJob, finishJob, prepareFirst, takingClips } = await import("./jobs");
-const { LANES, nextJob } = await import("./worker");
+const { LANES, nextJob, tick } = await import("./worker");
+const { blobs } = await import("./db");
+const { ffmpegSlot } = await import("./media/run");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -28,6 +30,44 @@ const next = (name: string, now = Date.now()) => {
 beforeEach(() => {
   d.prepare("DELETE FROM jobs").run();
   takingClips.clear();
+});
+
+// a transcript whose speech model is not downloaded yet: the stand-in for transcribeVersion says so (lib/device-transcribe.ts)
+import { vi } from "vitest";
+const stuck = vi.hoisted(() => ({ model: false }));
+vi.mock("./transcribe", async (real) => {
+  const m = await real<typeof import("./transcribe")>();
+  const { ModelNotReady } = await import("../lib/device-transcribe");
+  return { ...m, transcribeVersion: (...a: Parameters<typeof m.transcribeVersion>) => (stuck.model ? Promise.reject(new ModelNotReady("not downloaded")) : m.transcribeVersion(...a)) };
+});
+
+describe("a transcript whose speech model did not download", () => {
+  it("waits a minute and tries again, saying why, without spending an attempt or failing its clip", async () => {
+    // its own imports: it is picked onto other branches by itself
+    const { MODEL_WAITS, tick: run } = await import("./worker");
+    const { blobs: store } = await import("./db");
+    const { writeFileSync: write } = await import("node:fs");
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_m', 'lib_a', 'video', 'm', 'v_m', 'local', 1)").run();
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+       VALUES ('v_m', 'a_m', 1, 'k/v_m', 1, 'v_m', '{"duration":5,"vcodec":"h264","acodec":"aac"}', 'processing', 'local', 1)`,
+    ).run();
+    const f = path.join(dir, "v_m.bin");
+    write(f, "sound");
+    await store.put("k/v_m", f);
+    enqueueJob(d, "lib_a", "v_m", "transcribe", "local");
+    stuck.model = true;
+    try {
+      const before = Date.now();
+      expect(await run(before, LANES.find((l) => l.name === "transcripts")!.kinds)).toBe(true);
+      const j = d.prepare("SELECT state, attempts, run_after, error FROM jobs WHERE version_id = 'v_m'").get() as { state: string; attempts: number; run_after: number; error: string };
+      expect(j).toMatchObject({ state: "queued", attempts: 0, error: MODEL_WAITS });
+      expect(j.run_after).toBeGreaterThanOrEqual(before + 60_000);
+      expect(d.prepare("SELECT state FROM asset_versions WHERE id = 'v_m'").get()).toEqual({ state: "processing" });
+    } finally {
+      stuck.model = false;
+    }
+  });
 });
 
 describe("the order clips are prepared in", () => {
@@ -61,11 +101,15 @@ describe("the order clips are prepared in", () => {
     expect(next("transcripts")).toBeNull();
   });
 
-  it("a clip the person opens goes before the others, its slow steps too", () => {
+  it("a clip the person opens: its picture before the other pictures, its slow steps only after every picture", () => {
     for (const v of ["v1", "v2"]) enqueueJob(d, "lib_a", v, "proxy", "local");
-    enqueueJob(d, "lib_a", "v3", "thumb", "local");
+    for (const v of ["v3", "v4"]) enqueueJob(d, "lib_a", v, "thumb", "local");
+    enqueueJob(d, "lib_a", "v2", "wave", "local");
+    enqueueJob(d, "lib_a", "v2", "transcribe", "local");
     prepareFirst("v2");
-    expect([next("files"), next("files"), next("files")]).toEqual(["v2 proxy", "v3 thumb", "v1 proxy"]);
+    expect(next("transcripts")).toBeNull(); // its transcript waits for the pictures like any other
+    expect([1, 2, 3, 4, 5].map(() => next("files"))).toEqual(["v2 wave", "v3 thumb", "v4 thumb", "v2 proxy", "v1 proxy"]);
+    expect(next("transcripts")).toBe("v2 transcribe");
   });
 
   it("a description waits, unclaimed, while its clip's transcript is to come", () => {
@@ -74,5 +118,77 @@ describe("the order clips are prepared in", () => {
     expect(next("ai")).toBeNull();
     next("transcripts");
     expect(next("ai")).toBe("v1 describe");
+  });
+});
+
+describe("a step is running only while it really runs", () => {
+  /** A clip with a sound track whose source blob is there (its bytes are not a real video: ffmpeg fails on them). */
+  const clip = async (v: string) => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_a', 'video', ?, ?, 'local', 1)").run(`a_${v}`, v, v);
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+       VALUES (?, ?, 1, ?, 1, ?, '{"duration":5,"vcodec":"h264","acodec":"aac"}', 'processing', 'local', 1)`,
+    ).run(v, `a_${v}`, `k/${v}`, v);
+    const f = path.join(dir, `${v}.bin`);
+    writeFileSync(f, "not a video");
+    await blobs.put(`k/${v}`, f);
+    enqueueJob(d, "lib_a", v, "transcribe", "local");
+  };
+  const running = () => (d.prepare("SELECT version_id AS v FROM jobs WHERE state = 'running' ORDER BY version_id").all() as { v: string }[]).map((r) => r.v);
+
+  it("this computer claims one search entry at a time too", async () => {
+    process.env.CT_LOCAL = "1";
+    delete process.env.OPENAI_API_KEY;
+    const net = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new TypeError("no network in tests"))) as typeof fetch; // the search model is never fetched here
+    let free!: () => void;
+    const held = ffmpegSlot(() => new Promise<void>((r) => (free = r))); // the line every heavy job runs in is busy
+    try {
+      for (const v of ["e1", "e2"]) {
+        d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_a', 'video', ?, ?, 'local', 1)").run(
+          `a_${v}`,
+          `Tiny Acrobatics handstand on the beach at sunset ${v}`,
+          v,
+        );
+        d.prepare(
+          `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+           VALUES (?, ?, 1, ?, 1, ?, '{"duration":5,"vcodec":"h264"}', 'ready', 'local', 1)`,
+        ).run(v, `a_${v}`, `k/${v}`, v);
+        enqueueJob(d, "lib_a", v, "embed", "local");
+      }
+      const lane = LANES.find((l) => l.name === "ai")!.kinds;
+      const ticks = [tick(Date.now(), lane), tick(Date.now(), lane)];
+      expect(await Promise.race([ticks[1], new Promise((r) => setTimeout(() => r("waiting"), 300))])).toBe(false);
+      expect(running()).toEqual(["e1"]);
+      free();
+      await Promise.all([...ticks, held]);
+    } finally {
+      free?.();
+      globalThis.fetch = net;
+      delete process.env.CT_LOCAL;
+    }
+  });
+
+  it("this computer claims one transcript at a time; a key's service takes several at once", async () => {
+    process.env.CT_LOCAL = "1";
+    let free!: () => void;
+    const held = ffmpegSlot(() => new Promise<void>((r) => (free = r))); // a picture holds ffmpeg: the transcripts wait inside their run
+    try {
+      for (const v of ["t1", "t2", "t3"]) await clip(v);
+      const lane = LANES.find((l) => l.name === "transcripts")!.kinds;
+      const onDevice = [tick(Date.now(), lane), tick(Date.now(), lane), tick(Date.now(), lane)];
+      expect(await Promise.race([Promise.all(onDevice.slice(1)), new Promise((r) => setTimeout(() => r("waiting"), 500))])).toEqual([false, false]);
+      expect(running()).toEqual(["t1"]); // the other two wait, queued: their cards say nothing yet
+      process.env.DEEPGRAM_API_KEY = "test-key";
+      const onKey = [tick(Date.now(), lane), tick(Date.now(), lane)];
+      await new Promise((r) => setTimeout(r, 50));
+      expect(running()).toEqual(["t1", "t2", "t3"]);
+      free();
+      await Promise.all([...onDevice, ...onKey, held]);
+    } finally {
+      free?.();
+      delete process.env.CT_LOCAL;
+      delete process.env.DEEPGRAM_API_KEY;
+    }
   });
 });

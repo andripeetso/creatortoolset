@@ -349,4 +349,18 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE edit_jobs ADD COLUMN started_at INTEGER;
   ALTER TABLE edit_jobs ADD COLUMN done_at INTEGER;
   `,
+  // 16: A-roll and B-roll (roll.ts): the clip's roll, what it was filed as ('a' for good, 'none' for finished work), the
+  // AI's answer. The A-roll folder the AI Editor made (top level, plain, videos only) becomes the smart folder of the
+  // clips sorted A-roll and its videos are filed as A-roll; its item rows stay, unread. A folder of that name holding
+  // anything else stays as it is. Exports saved into the library before are finished work
+  `
+  ALTER TABLE assets ADD COLUMN roll TEXT;
+  ALTER TABLE assets ADD COLUMN filed_roll TEXT;
+  ALTER TABLE descriptions ADD COLUMN roll TEXT;
+  UPDATE collections SET kind = 'smart', query = '{"roll":"a"}' WHERE kind = 'manual' AND parent_id IS NULL AND name = 'A-roll'
+    AND NOT EXISTS (SELECT 1 FROM collection_items i JOIN assets a ON a.id = i.asset_id WHERE i.collection_id = collections.id AND a.kind <> 'video');
+  UPDATE assets SET filed_roll = 'a' WHERE kind = 'video' AND id IN (SELECT i.asset_id FROM collection_items i JOIN collections c ON c.id = i.collection_id
+    WHERE c.kind = 'smart' AND c.query = '{"roll":"a"}');
+  UPDATE assets SET filed_roll = 'none' WHERE id IN (SELECT v.asset_id FROM derived_from f JOIN asset_versions v ON v.id = f.version_id WHERE f.note = 'export');
+  `,
 ];

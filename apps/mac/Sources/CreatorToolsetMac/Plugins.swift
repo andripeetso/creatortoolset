@@ -234,12 +234,12 @@ func pluginsPauseInsteadOfStopping(on: Int, paused: Bool) -> Bool {
 /// person can find in Finder. With Update automatically on (`auto`), the click also covers what the folder holds later,
 /// and the alert says so.
 func switchOnAlertText(name: String, folder: String, server: Bool, web: Bool, auto: Bool) -> (message: String, detail: String?) {
-    var detail: String?
-    if server {
-        detail = "This plug-in was not made by Creator Toolset. It runs on this Mac inside the app, with the app's access to your files, your keys and the internet."
-    } else if web {
-        detail = "This plug-in was not made by Creator Toolset. It adds pages to the app, and they can see and change everything in it."
-    }
+    // one sentence for both halves: a plug-in's page is drawn as the app's own page, signed in as the person, so it
+    // can press everything they can, the settings that start a program on this Mac and the assistant included. Pages
+    // only is no lesser kind, and the alert never says it is.
+    var detail: String? = server || web
+        ? "This plug-in was not made by Creator Toolset. It runs on this Mac inside the app, with the app's access to your files, your keys and the internet."
+        : nil
     if detail != nil { detail = "It is the folder “\(folder)” in your plug-ins folder. " + detail! }
     if auto, detail != nil { detail! += " Later changes to its folder run by themselves unless you switch off Update automatically." }
     return ("Switch on “\(name)”?", detail)

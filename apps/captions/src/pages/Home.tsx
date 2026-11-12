@@ -18,6 +18,7 @@ import {
   flushPendingSave,
   listSessions,
   loadSession,
+  takeServerCopy,
   type SessionMeta,
 } from "@/lib/persist";
 import { fmtClock } from "@/lib/ass";
@@ -219,8 +220,11 @@ export default function Home() {
     if (
       useStudio.getState().projectId === projectRequested &&
       !clipRequested
-    )
+    ) {
+      // already open: untouched, it takes what the server has made for it since
+      void takeServerCopy(projectRequested);
       return;
+    }
     void (async () => {
       if (!(await confirmDiscardUnsavedProject("Open another project"))) return;
       await flushPendingSave();

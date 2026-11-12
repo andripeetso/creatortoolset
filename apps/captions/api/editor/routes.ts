@@ -1,15 +1,20 @@
 import { Hono, type Context } from "hono";
 import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
-import type { AuthVars } from "../auth";
+import { MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
+import { foundIn, saidInChat } from "../assistant";
+import { innerCall, jobTurn, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
+import { onUploadDone } from "../library/routes";
 import { ZipFile } from "yazl";
 import { toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
+import { forgetFinished, finishedOf, removeFinished } from "./finished";
+import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { createStyle, deleteStyle, findStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
 /**
@@ -27,19 +32,26 @@ const body = async (c: C): Promise<Record<string, unknown>> => {
   return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
 };
 
+/** A request an AI makes (one of its tools' own calls, or one with an AI key), not the person at their own screen. */
+const viaTool = (c: C) => !!innerCall.getStore() || !!c.req.header("authorization");
+
 /** The caller's own edit, or null (answer 404). */
 function load(c: C): { e: EditMeta } | null {
   const e = readEdit(c.req.param("id") ?? "");
   return e && editRole(c.get("user").username, e) ? { e } : null;
 }
 
+// an edit made from clips still uploading (a phone's New edit) starts once the last one is in
+onUploadDone.push((id, version) => void uploadFinished(id, version));
+
 editorApp.post("/", async (c) => {
   const user = c.get("user").username;
   try {
-    const e = await createEdit(user, await body(c));
+    const e = await createEdit(user, await body(c), viaTool(c));
     return e ? c.json({ id: e.id }) : notFound(c);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
+    if (e instanceof NoStyle) return c.json({ error: e.message, code: "not_found" }, 404);
     throw e;
   }
 });
@@ -73,6 +85,76 @@ editorApp.put("/defaults/:slot", async (c) => {
   return c.json(await editorDefaults(user));
 });
 
+// the person's editing styles (contracts/editor-styles.ts); registered before /:id, as the defaults are
+editorApp.get("/styles", (c) => c.json(stylesView(c.get("user").username)));
+
+const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
+
+/**
+ * A style's notes go into the script prompt of every later edit in that style, so no AI writes them. A save that comes
+ * from a reply the assistant is writing (it carries that reply's job token) keeps notes only when they stand in
+ * something the person typed in that chat: the check a remembered fact is held to (saidInChat, foundIn, and its
+ * shortest quote, so notes are never put together a word at a time), and what is kept is their wording. A scheduled
+ * run has nobody typing, so it saves no notes. A save from the person's own page, or from their own AI with an access
+ * key, is theirs and is not checked. True when the save is refused.
+ */
+function notesNotTyped(c: C, b: Record<string, unknown>): boolean {
+  const auth = c.req.header("authorization");
+  if (!/^Bearer ctj_/.test(auth ?? "")) return false;
+  const said = saidInChat(c.get("user").username, jobTurn(auth) ?? "") ?? [];
+  for (const k of ["notes", "addNotes"]) {
+    const sent = b[k];
+    if (typeof sent !== "string" || !sent.trim()) continue;
+    const typed = tidy(sent).length < MEMORY_QUOTE_MIN ? null : said.map((m) => foundIn(sent, m.text)).find((t) => !!t);
+    if (!typed) return true;
+    b[k] = typed;
+  }
+  return false;
+}
+
+/** A new style from the fields sent, or with `fromEdit` from an edit of the caller's own (its choices, never its brief, script or footage). */
+editorApp.post("/styles", async (c) => {
+  const user = c.get("user").username;
+  const b = await body(c);
+  if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
+  const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
+  if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
+  const made = createStyle(user, b, from ?? undefined);
+  return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
+});
+
+/** Changes the fields sent. `addNotes` adds a line under the notes the style has (one it already holds is not added twice). */
+editorApp.put("/styles/:id", async (c) => {
+  const user = c.get("user").username;
+  const b = await body(c);
+  if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
+  if (typeof b.addNotes === "string" && b.addNotes.trim()) {
+    const had = findStyle(user, c.req.param("id"))?.notes ?? "";
+    const add = b.addNotes.trim();
+    b.notes = had.toLowerCase().includes(add.toLowerCase()) ? had : [had, add].filter(Boolean).join("\n");
+  }
+  const changed = updateStyle(user, c.req.param("id"), b);
+  if (!changed) return notFound(c);
+  return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
+});
+
+// a deleted style takes the edits finished with it along (finished.ts)
+editorApp.delete("/styles/:id", (c) => {
+  const user = c.get("user").username;
+  if (!deleteStyle(user, c.req.param("id"))) return notFound(c);
+  forgetFinished(user, c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// the edits the person finished in a style, newest first, and × on one: it never counts for a style again
+editorApp.get("/styles/:id/finished", (c) => {
+  const user = c.get("user").username;
+  return findStyle(user, c.req.param("id")) ? c.json(finishedOf(user, c.req.param("id"))) : notFound(c);
+});
+
+editorApp.delete("/styles/:id/finished/:editId", async (c) =>
+  (await removeFinished(c.get("user").username, c.req.param("id"), c.req.param("editId"))) ? c.json({ ok: true }) : notFound(c));
+
 editorApp.get("/:id", (c) => {
   const r = load(c);
   return r ? c.json(viewOf(r.e)) : notFound(c);
@@ -82,15 +164,25 @@ editorApp.patch("/:id", async (c) => {
   const r = load(c);
   if (!r) return notFound(c);
   let patch;
+  let styled: Partial<EditMeta> = {};
+  const b = await body(c);
   try {
-    patch = cleanBrief(await body(c), r.e.createdBy, r.e.workspaceId);
+    patch = cleanBrief(b, r.e.createdBy, r.e.workspaceId);
+    // `style` puts an editing style's choices on the edit, under what this patch sets itself; null takes the style off
+    if (typeof b.style === "string") styled = await styleFields(r.e.createdBy, r.e.workspaceId, b.style, r.e);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
+    if (e instanceof NoStyle) return c.json({ error: e.message, code: "not_found" }, 404);
     throw e;
   }
   delete patch.framing; // set per source in a later step
   // a flag the patch leaves out keeps its state
-  const e = { ...r.e, ...patch, flags: { ...r.e.flags, ...patch.flags } };
+  const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
+  if (b.style === null) delete e.style;
+  // whose words the name and the brief are now: an AI's tool's, or the person's own (finished.ts keeps only theirs)
+  const byTool = byToolAfter(r.e.byTool, patch, viaTool(c)).byTool;
+  if (byTool) e.byTool = byTool;
+  else delete e.byTool;
   await saveEdit(e);
   return c.json(viewOf(readEdit(e.id)!));
 });
@@ -207,7 +299,9 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
+  if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
   const m = await mediaPaths(r.e, Object.keys(tl.sources));
+  Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
   const send = (body: string | Buffer, file: string, type: string) =>

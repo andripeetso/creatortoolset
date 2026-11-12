@@ -55,6 +55,19 @@ export const MY_KEYS = [
 
 export type MyKeyEnv = (typeof MY_KEYS)[number]["env"];
 
+/**
+ * A model the person runs themselves, on the same page (api/local-model.ts): the address its server answers at and the
+ * model's name there, both typed by the person. An install's own admin only; a hosted server refuses all three.
+ *
+ *   GET /api/my-keys/local-model              → LocalModel | {}
+ *   PUT /api/my-keys/local-model              { url, model } | { url: null }  (null = forget it)
+ *   GET /api/my-keys/local-model/models?url=  → { models: string[] }  (what that address lists; none when it does not answer)
+ */
+export interface LocalModel {
+  url: string;
+  model: string;
+}
+
 export interface MyKeyView {
   env: MyKeyEnv;
   name: string;

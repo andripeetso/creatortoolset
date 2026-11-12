@@ -7,6 +7,7 @@ import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeu
 import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
 import { Waiting } from "./analyze";
+import { editStopped, runEnded } from "./ended";
 import { claimableBy, claimStep, coreSteps, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
@@ -32,8 +33,8 @@ export const NEXT: Record<string, string[]> = nextKinds();
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
-/** A step moved (claimed, done, failed, parked): the account's open AI Editor pages and Home's to-do refetch (api/lib/sync.ts). */
-const moved = (job: JobRow) => void (job.actor && announce(job.actor, "editor"));
+/** A step moved (claimed, done, failed, parked): the account's open AI Editor pages and Home's to-do refetch (api/lib/sync.ts), and a run that ended is said in the chat that started it (ended.ts). */
+const moved = (job: JobRow) => void (job.actor && (announce(job.actor, "editor"), runEnded(job)));
 
 const fail = (db: DatabaseSync, job: JobRow, why: string) => {
   db.prepare(`UPDATE ${T} SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?`).run(why, job.id);
@@ -44,6 +45,7 @@ const fail = (db: DatabaseSync, job: JobRow, why: string) => {
 export function stopEdit(editId: string): void {
   libraryDb().prepare(`UPDATE ${T} SET state = 'failed', lease_until = NULL, error = 'Stopped' WHERE edit_id = ? AND state IN ('queued', 'running')`).run(editId);
   for (const r of running.values()) if (r.edit === editId) r.ctl.abort();
+  editStopped(editId);
 }
 
 /** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */

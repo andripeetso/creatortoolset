@@ -31,9 +31,9 @@ func normalizedPointer(_ location: CGPoint, display: CGRect, mainHeight: CGFloat
     return (round((location.x - display.minX) / display.width), round((mainHeight - location.y - display.minY) / display.height))
 }
 
-/// The capture size: the display's pixels, scaled down to fit 3840 on the long side and 4K's pixel count in all
-/// (H.264's hardware limit is about 4K; a tall window at full sharpness passes the side limit and stops the encoder
-/// midway), even numbers for the encoder.
+/// The capture size: the display's pixels, scaled down to fit 3840 on the long side and 4K's pixel count in all,
+/// which keeps the file at H.264 level 5.2 (a 3008×3130 window at full sharpness comes out as level 6.0, which
+/// fewer players and web views take), even numbers for the encoder.
 func captureSize(points: CGSize, scale: CGFloat) -> (width: Int, height: Int) {
     let w = points.width * scale, h = points.height * scale
     let k = min(1, 3840 / max(w, h), (3840 * 2160 / (w * h)).squareRoot())
@@ -79,6 +79,14 @@ func clockText(_ t: TimeInterval) -> String {
 
 private func hostNow() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
 
+/// An error for the log with its domain and code, and those of the one under it: "could not be completed" alone
+/// says nothing.
+private func withCodes(_ error: Error) -> String {
+    let e = error as NSError
+    let under = (e.userInfo[NSUnderlyingErrorKey] as? NSError).map { ", under it \($0.domain) \($0.code)" } ?? ""
+    return "\(e.localizedDescription) (\(e.domain) \(e.code)\(under))"
+}
+
 enum RecorderError: LocalizedError {
     case noDisplay, nothingRecorded, write(String)
 
@@ -107,6 +115,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     private var last: [ObjectIdentifier: CMTime] = [:]
     private var lastMove = -1.0
     private var failed: Error?
+    /// Each sound track is written in one layout, whatever layout its buffers come in (SoundLayout).
+    private var micLayout = SoundLayout()
+    private var systemLayout = SoundLayout()
     private(set) var events: ScreenEvents
     /// The stream stopped by itself (display gone, permission taken away): called once, on `queue`.
     var onStop: ((Error) -> Void)?
@@ -116,18 +127,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     init(file: URL, width: Int, height: Int, mic withMic: Bool, system withSystem: Bool) throws {
         writer = try AVAssetWriter(outputURL: file, fileType: .mp4)
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)   // a crash leaves a playable file
-        video = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [
-                // ponytail: one bitrate for every screen (~20 Mbit/s at 4K, more than text needs); per-content rate control if files run big
-                AVVideoAverageBitRateKey: max(6_000_000, width * height * 60 / 25),
-                AVVideoExpectedSourceFrameRateKey: 60,
-                AVVideoMaxKeyFrameIntervalDurationKey: 2,   // Review seeks fast
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-            ],
-        ])
+        // ponytail: one bitrate for every screen (~20 Mbit/s at 4K, more than text needs); per-content rate control if files run big
+        video = AVAssetWriterInput(mediaType: .video, outputSettings: recorderVideoSettings(
+            width: width, height: height, bitRate: max(6_000_000, width * height * 60 / 25), frameRate: 60))
         video.expectsMediaDataInRealTime = true
         let aac: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000]
         mic = withMic ? AVAssetWriterInput(mediaType: .audio, outputSettings: aac) : nil
@@ -177,11 +179,14 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
                     done.resume(throwing: self.failed ?? self.writer.error ?? RecorderError.nothingRecorded)
                     return
                 }
+                let leftOut = self.micLayout.leftOut + self.systemLayout.leftOut
+                if leftOut > 0 { AppLog.write("recording: \(leftOut) sound buffers that could not be read left out") }
                 [self.video, self.mic, self.system].compactMap { $0 }.forEach { $0.markAsFinished() }
                 self.writer.endSession(atSourceTime: max((self.pausedAt ?? now) - offset, self.last[ObjectIdentifier(self.video)] ?? .zero))
                 self.writer.finishWriting {
-                    if self.writer.status == .completed { done.resume(returning: self.events) }
-                    else { done.resume(throwing: RecorderError.write(self.writer.error?.localizedDescription ?? "unknown")) }
+                    if self.writer.status == .completed { return done.resume(returning: self.events) }
+                    if let error = self.writer.error { AppLog.write("recording not closed: \(withCodes(error))") }
+                    done.resume(throwing: RecorderError.write(self.writer.error?.localizedDescription ?? "unknown"))
                 }
             }
         }
@@ -227,8 +232,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
                 onFirstFrame?(buffer.presentationTimeStamp)
             }
             append(buffer, to: video)
-        case .microphone: if let mic { append(buffer, to: mic) }
-        case .audio: if let system { append(buffer, to: system) }
+        case .microphone: if let mic, let plain = micLayout.take(buffer) { append(plain, to: mic) }
+        case .audio: if let system, let plain = systemLayout.take(buffer) { append(plain, to: system) }
         @unknown default: break
         }
     }
@@ -466,7 +471,8 @@ final class Recorder: ObservableObject {
             config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             config.colorSpaceName = CGColorSpace.sRGB
             config.capturesAudio = setup.systemAudio
-            config.excludesCurrentProcessAudio = true
+            // "Mac sound" is everything the Mac plays, this app's too: a recording of the app itself has its sound
+            config.excludesCurrentProcessAudio = false
             config.sampleRate = 48_000
             config.channelCount = 2
             config.captureMicrophone = micDevice != nil
@@ -587,8 +593,7 @@ final class Recorder: ObservableObject {
                         throw error
                     }
                     early = error
-                    let e = error as NSError
-                    AppLog.write("recording stopped early, \(clockText(kept)) kept: \(e.localizedDescription) (\(e.domain) \(e.code))")
+                    AppLog.write("recording stopped early, \(clockText(kept)) kept: \(withCodes(error))")
                     events = await withCheckedContinuation { done in capture.eventsSoFar { done.resume(returning: $0) } }
                     await rejoin(project.screenURL)
                 }
@@ -652,8 +657,7 @@ final class Recorder: ObservableObject {
 
     private func stoppedByItself(_ error: Error) {
         guard phase == .recording || phase == .paused else { return }
-        let e = error as NSError   // the domain and code: "could not be completed" alone says nothing
-        AppLog.write("recording stopped: \(e.localizedDescription) (\(e.domain) \(e.code)\(e.userInfo[NSUnderlyingErrorKey].map { ", \($0)" } ?? ""))")
+        AppLog.write("recording stopped: \(withCodes(error))")
         stop()
     }
 
@@ -825,11 +829,19 @@ final class Recorder: ObservableObject {
         panel = nil
     }
 
+    /// Shows a message in the open page's own dialog and answers whether it could (Shell sets it).
+    var pageAlert: ((String, String, @escaping (Bool) -> Void) -> Void)?
+
+    /// A message in the app's own dialog; the system's alert only when no page can draw it.
     private func alert(_ title: String, _ text: String) {
-        let a = NSAlert()
-        a.messageText = title
-        a.informativeText = text
-        a.runModal()
+        let system = {
+            let a = NSAlert()
+            a.messageText = title
+            a.informativeText = text
+            a.runModal()
+        }
+        guard let pageAlert else { return system() }
+        pageAlert(title, text) { shown in if !shown { system() } }
     }
 }
 

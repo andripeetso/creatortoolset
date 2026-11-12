@@ -2,10 +2,15 @@ import { useRef, type ReactNode } from "react";
 import { Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { BROWSE_TOOLS, BROWSE_VIEWS, persistDefaultView, resetDefaultViews, useDefaultViews, type BrowseTool } from "@/components/browse/views";
+import { canUse, canUseTile, useMe } from "@/lib/auth";
+import { canRecordScreen } from "@/lib/mac-record";
 import { persistHomeGlow, persistOwnColour, persistProjectTint, useAppearance } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { isHexColour, PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
-import { Section } from "./ui";
+import { persistClipView, useClipView, type ClipView } from "@/pages/library/clip";
+import { Card, Row, Section, SettingsSelect } from "./ui";
 
 const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
   { id: "system", label: "System", icon: Monitor },
@@ -13,8 +18,8 @@ const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
   { id: "dark", label: "Dark", icon: Moon },
 ];
 
-// each preview is drawn in its own theme's colours (a preview cannot follow the theme it previews)
-const LOOKS = {
+// each preview is drawn in its own theme's colours (a preview cannot follow the theme it previews); setup's look cards too
+export const LOOKS = {
   light: { page: "#ffffff", rail: "#f4f4f5", line: "#d4d4d8", soft: "#e4e4e7", edge: "#e4e4e7" },
   dark: { page: "#0b0b10", rail: "#111116", line: "#3f3f46", soft: "#27272a", edge: "#27272a" },
 };
@@ -53,9 +58,10 @@ function Preview({ look }: { look: Look }) {
   );
 }
 
-/** Settings → Appearance: the theme, then the colour. */
+/** Settings → Appearance: the theme, the colour, and what a Media Library clip opens in. */
 export function AppearanceSection() {
   const { choice, setChoice, dark } = useShareTheme();
+  const clipView = useClipView();
   return (
     <>
       <Section id="theme" title="Theme">
@@ -98,7 +104,80 @@ export function AppearanceSection() {
       </Section>
 
       <Colour dark={dark} />
+
+      <Section title="Media Library">
+        <Card>
+          <Row
+            id="clip-view"
+            title="Clips open in"
+            control={
+              <SettingsSelect
+                label="Clips open in"
+                value={clipView}
+                onValueChange={(v) => persistClipView(v as ClipView)}
+                options={[
+                  { value: "window", label: "A window" },
+                  { value: "side", label: "A side panel" },
+                ]}
+              />
+            }
+          />
+        </Card>
+      </Section>
+
+      <DefaultViews />
     </>
+  );
+}
+
+/** Which tools this person has: a row only for a tool they can open (the Screen Recorder only in the Mac app). */
+function hasTool(me: ReturnType<typeof useMe>, t: BrowseTool): boolean {
+  if (t === "recorder") return canRecordScreen() && canUseTile(me, "record");
+  return canUse(me, t === "finals" ? "media" : t);
+}
+
+/**
+ * Default view: what each tool's list opens with, cards or rows, until the person picks one on its page. Picking here
+ * also drops that page's own pick, so the change shows. Reset puts every tool back to ours.
+ */
+export function DefaultViews() {
+  const me = useMe();
+  const views = useDefaultViews();
+  const tools = BROWSE_TOOLS.filter((t) => hasTool(me, t));
+  if (!tools.length) return null;
+  const changed = tools.some((t) => views[t] !== BROWSE_VIEWS[t].view);
+  return (
+    <Section
+      id="default-view"
+      title="Default view"
+      action={
+        changed && (
+          <Button size="sm" variant="ghost" onClick={resetDefaultViews}>
+            Reset
+          </Button>
+        )
+      }
+    >
+      <Card>
+        {tools.map((t) => (
+          <Row
+            key={t}
+            title={BROWSE_VIEWS[t].label}
+            control={
+              <SettingsSelect
+                label={`${BROWSE_VIEWS[t].label}: default view`}
+                value={views[t]}
+                onValueChange={(v) => persistDefaultView(t, v === "list" ? "list" : "grid")}
+                options={[
+                  { value: "grid", label: "Cards" },
+                  { value: "list", label: "List" },
+                ]}
+              />
+            }
+          />
+        ))}
+      </Card>
+    </Section>
   );
 }
 

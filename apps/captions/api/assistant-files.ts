@@ -4,16 +4,21 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partsStatus, readUploadState, receivePart, startUpload } from "./lib/uploads";
+import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
-import { addVersion } from "./review";
+import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { createProjectFromFile, linkOrCopy } from "./projects";
+import { captionEngine, captionInBackground } from "./captions-job";
+import { ensureLibrary } from "./library/access";
+import { libraryDb } from "./library/db";
+import { saveToLibrary } from "./library/routes";
+import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
 
 /**
  * Videos and recordings dropped in the assistant's chat (owner, 2026-11-07: "drop in a random screen recording…
- * hey, caption this, put this up"). The dock uploads each one here in parts before the message goes;
+ * hey, caption this, put this up"). The dock uploads each one here in parts, and the message may go before the last one (assistant.ts waits for it);
  * the message names it by id, and the assistant's use_file tool (mcp.ts) hands it to Video Notes, Review or Caption
  * Studio as the same file under a second name (no copy). A file is kept 7 days: what used it keeps its own name for it.
  * $DATA_DIR/assistant/files/<user>/<id>/{file, meta.json} (parts/ while it uploads).
@@ -28,7 +33,8 @@ export const isMedia = (mime: string, name: string) => /^(video|audio)\//.test(m
 
 const rootOf = (user: string) => path.join(env.dataDir, "assistant", "files", user);
 const dirOf = (user: string, id: string) => path.join(rootOf(user), id);
-const fileOf = (user: string, id: string) => path.join(dirOf(user, id), "file");
+/** Where a dropped file is kept (a plug-in hands it on, e.g. to a Mac that fetches it). */
+export const fileOf = (user: string, id: string) => path.join(dirOf(user, id), "file");
 
 /** One of this account's dropped files, or null (a strict id only, never a path; gone after 7 days). */
 export async function readFileMeta(user: string, id: string): Promise<AssistantFile | null> {
@@ -75,26 +81,61 @@ assistantFilesApp.post("/:id/parts/:partNumber", (c) => {
   return receivePart(c, path.join(dirOf(c.get("user").username, id), "parts"), c.get("user"));
 });
 
-assistantFilesApp.post("/:id/complete", async (c) => {
-  const user = c.get("user").username;
-  const id = c.req.param("id");
-  const done = await readFileMeta(user, id);
-  if (done) return c.json(done);
+/**
+ * The upload of one dropped file joined into its file, once: /complete and a turn waiting on the file (assistant.ts, after
+ * its last part lands) both come here, and a second caller gets the same promise. An error carries the answer's status.
+ */
+const finishing = new Map<string, Promise<AssistantFile | { error: string; status: 400 | 409 }>>();
+export function finishUpload(user: string, id: string): Promise<AssistantFile | { error: string; status: 400 | 409 }> {
+  const key = `${user}/${id}`;
+  const running = finishing.get(key);
+  if (running) return running;
+  const p = (async () => {
+    const done = await readFileMeta(user, id);
+    if (done) return done;
+    const parts = UUID.test(id) ? path.join(dirOf(user, id), "parts") : "";
+    const state = parts ? await readUploadState(parts) : null;
+    if (!state || state.owner !== user) return { error: "No upload in progress", status: 409 as const };
+    try {
+      await assembleParts(parts, fileOf(user, id), state);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e), status: 400 as const };
+    }
+    const meta: AssistantFile = { id, name: state.name, mime: state.mime, size: state.total };
+    await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
+    await rm(parts, { recursive: true, force: true });
+    return meta;
+  })().finally(() => finishing.delete(key));
+  finishing.set(key, p);
+  return p;
+}
+
+/** Whether every part of this account's upload is in (a turn waits on it: the server joins it without waiting for /complete). */
+export async function allPartsIn(user: string, id: string): Promise<boolean> {
   const parts = UUID.test(id) ? path.join(dirOf(user, id), "parts") : "";
   const state = parts ? await readUploadState(parts) : null;
-  if (!state || state.owner !== user) return c.json({ error: "No upload in progress" }, 409);
-  try {
-    await assembleParts(parts, fileOf(user, id), state);
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-  }
-  const meta: AssistantFile = { id, name: state.name, mime: state.mime, size: state.total };
-  await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
-  await rm(parts, { recursive: true, force: true });
-  return c.json(meta);
+  return !!state && state.owner === user && (await receivedParts(parts, state)).length === partCount(state.total, state.partSize);
+}
+
+/**
+ * One of this account's dropped files as a message can take it: done (`file`), still uploading (its name, and when its
+ * last part landed), or null (no such file of theirs).
+ */
+export async function uploadOf(user: string, id: string): Promise<{ file: AssistantFile } | { name: string; at: number } | null> {
+  const file = await readFileMeta(user, id);
+  if (file) return { file };
+  const parts = UUID.test(id) ? path.join(dirOf(user, id), "parts") : "";
+  const state = parts ? await readUploadState(parts) : null;
+  if (!state || state.owner !== user) return null;
+  return { name: state.name, at: (await stat(parts).catch(() => null))?.mtimeMs ?? 0 };
+}
+
+assistantFilesApp.post("/:id/complete", async (c) => {
+  const r = await finishUpload(c.get("user").username, c.req.param("id"));
+  return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 
-const TOOL_OF = { notes: "notes", review: "review", captions: "captions" } as const;
+const TOOL_OF = { notes: "notes", review: "review", captions: "captions", library: "media" } as const;
 const MIME: Record<string, string> = {
   mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo",
   mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", aac: "audio/aac", ogg: "audio/ogg",
@@ -129,38 +170,72 @@ assistantFilesApp.post("/path", async (c) => {
   }
 });
 
-const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio" };
+const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio", library: "Media Library" };
 
-/** Hand a dropped file to a tool; answers what it became and its page. */
-export async function useFile(user: SessionUser, id: string, to: AssistantFileUse, name?: string): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string }> {
+/**
+ * Hand a dropped file to a tool; answers what it became and its page. versionOf (Review only): the id of a Review
+ * video of this account's own, which gets the file as its next version instead of a new video being made.
+ */
+export async function useFile(
+  user: SessionUser,
+  id: string,
+  to: AssistantFileUse,
+  name?: string,
+  versionOf?: string,
+): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean }> {
   const meta = await readFileMeta(user.username, id);
   if (!meta) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${NAMES[to]} isn't switched on for this account.`);
+  if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
   const file = fileOf(user.username, id);
   const title = (name?.trim() || meta.name).slice(0, 120);
   if (to === "notes") {
     const made = await notesFromFile(file, title, meta.mime, user);
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };
   }
-  if (to === "review") {
-    const added = await addVersion(undefined, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
-    if (!added) throw new Error("Review couldn't take it.");
-    return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
+  if (to === "library") {
+    // where a plug-in's source is the Media Library, the page never shows the storage library: nothing goes where nobody looks
+    const main = mainSource();
+    if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
+    // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
+    ensureLibrary(user.username);
+    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, true);
+    if (!saved) throw new Error("This account has no Media Library it may add to.");
+    if ("error" in saved) throw new Error(saved.error);
+    const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
+    const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
+    const href = `/library?library=${a.library_id}&asset=${assetId}`;
+    return { to, id: assetId, versionId: a.current_version_id, libraryId: a.library_id, name: title, href, ...("duplicateOf" in saved ? { note: "Already in the Media Library" } : {}) };
   }
-  // Caption Studio builds its editing copy first: a long file can take minutes, so the answer doesn't wait past 40 s
-  const job = createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file) });
-  const made = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), 40_000))]);
-  // ponytail: no id until the copy is built; the project list shows it then
-  if (!made) return { to, id: "", name: title, href: "/captions?view=projects", note: "Still preparing: it shows in Caption Studio's projects in a few minutes." };
-  return { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
+  if (to === "review") {
+    // a fix for a video already there: its next version, and only on the owner's own video
+    const of = versionOf ? await readReview(versionOf) : null;
+    if (versionOf && of?.owner !== user.username) throw new Error("That Review video isn't here, or isn't this account's.");
+    const added = await addVersion(of?.id, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
+    if (!added) throw new Error("Review couldn't take it.");
+    if (!of) return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
+    // the people who commented hear of the new version, as they do when it is uploaded on the page
+    await notifyNewVersion(added.meta, user.username, added.n);
+    return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
+  }
+  // Caption Studio: the project is there at once, with its id; its editing copy and its captions are made behind the
+  // answer (captions-job.ts), and the chat says when they are ready. It can be opened at once: the page shows that
+  // the captions are being made instead of Transcribe, and takes them when they land (src/lib/persist.ts)
+  const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file), later: true });
+  const project = { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
+  const route = captionEngine(user);
+  // nothing on this server transcribes for them: said in the route's own words (on the page, their browser still can)
+  if ("refused" in route) return { ...project, note: `Not transcribed: ${route.refused}. On the project's page, Transcribe runs in the browser and needs no key.` };
+  captionInBackground(user, made.projectId, made.clipId, title, route.engine);
+  return { ...project, captioning: true, note: "Being prepared and transcribed: the chat says when the captions are ready." };
 }
 
 assistantFilesApp.post("/:id/use", async (c) => {
-  const b = (await c.req.json().catch(() => null)) as { to?: unknown; name?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { to?: unknown; name?: unknown; version_of?: unknown } | null;
   const to = b?.to as AssistantFileUse;
   if (!FILE_USES.includes(to)) return c.json({ error: `to is one of ${FILE_USES.join(", ")}` }, 400);
   try {
-    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined));
+    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined, typeof b?.version_of === "string" && b.version_of ? b.version_of : undefined));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
   }

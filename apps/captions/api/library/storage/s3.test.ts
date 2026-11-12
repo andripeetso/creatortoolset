@@ -72,7 +72,7 @@ describe("s3 BlobStore", () => {
     expect(url.searchParams.get("X-Amz-Expires")).toBe("900");
     expect(url.searchParams.get("X-Amz-Signature")).toBeTruthy();
     expect(url.searchParams.get("response-content-type")).toBe("video/mp4");
-    expect(url.searchParams.get("response-content-disposition")).toBe('attachment; filename="Roll.mp4"');
+    expect(url.searchParams.get("response-content-disposition")).toBe(`attachment; filename="Roll.mp4"`);
     expect(log).toEqual([]); // signing is local: no request to the bucket
   });
 

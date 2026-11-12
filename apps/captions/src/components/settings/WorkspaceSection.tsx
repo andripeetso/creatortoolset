@@ -1,6 +1,6 @@
 import { Plus } from "lucide-react";
-import { useCallback, useState } from "react";
-import { useNavigate } from "react-router";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,13 @@ export function WorkspaceSection() {
   const view: WorkspaceView | null | undefined = saved.data ? saved.data.team : undefined;
   const failed = !saved.data && !!saved.error;
   const [inviting, setInviting] = useState(false);
+  const [params, setParams] = useSearchParams();
+  // `?add=1` opens Invite once for the team's owner, then the parameter goes
+  useEffect(() => {
+    if (params.get("add") !== "1" || view === undefined) return;
+    if (view?.me === "owner") setInviting(true);
+    setParams((p) => (p.delete("add"), p), { replace: true });
+  }, [params, setParams, view]);
   const [editing, setEditing] = useState<MemberView | null>(null);
   const [aiFor, setAiFor] = useState<MemberView | null>(null);
   // the sign-ins this server has switched on (the Account page's list): the team can only be set to these

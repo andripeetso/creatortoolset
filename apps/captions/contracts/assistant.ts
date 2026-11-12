@@ -26,11 +26,20 @@ export interface AssistantMessage {
   media?: AssistantMedia[];
   /** Answers the reply offers as buttons (offer_choices): a press sends that one as the user's message. */
   choices?: string[];
+  /** The reply asks for a folder on the user's computer (ask_folder): in the Mac app a Choose a folder button under it; the chosen folder goes with their next message. */
+  folderAsk?: { why: string };
+  /** Questions the reply put before deleting, publishing or sending something: a Yes / No card each. */
+  confirms?: AssistantConfirm[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
-  /** Videos and recordings sent with a user message (api/assistant-files.ts), by name. */
-  files?: Array<{ id: string; name: string }>;
+  /** Videos and recordings sent with a user message (api/assistant-files.ts), by name; `uploading` until the file is in. */
+  files?: Array<{ id: string; name: string; uploading?: true }>;
+  /**
+   * A reply that hasn't started (status "thinking"): it waits for the message's videos to finish uploading ("videos",
+   * with how many), or for the reply before it to end ("reply"). `text` is the line to show: "Waiting for 2 videos".
+   */
+  wait?: { for: "videos" | "reply"; videos?: number; text: string };
   /** Folders dropped in the Mac app with a user message: their paths on the user's computer (nothing uploaded). */
   folders?: string[];
   /** The highlighted text a user message asked about. */
@@ -80,6 +89,19 @@ export interface AssistantApproval {
   status: "waiting" | "allowed" | "denied" | "expired";
 }
 
+/**
+ * A question the assistant put before a tool deleted, published or sent something. POST /api/assistant/confirms/:id
+ * { yes } answers it: Yes runs the tool as the person and the card says how it went ("done", or "failed" with why in
+ * `result`); No drops it ("no").
+ */
+export interface AssistantConfirm {
+  id: string;
+  question: string;
+  at: number;
+  status: "waiting" | "done" | "failed" | "no";
+  result?: string;
+}
+
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */
 export interface AssistantPending {
   env: string;
@@ -110,6 +132,8 @@ export interface AssistantContext {
   visible?: string;
   /** The browser's IANA time zone, so a task the assistant schedules runs on the person's clock. */
   timezone?: string;
+  /** Sent from the Mac app, whose own open panel can choose a folder (ask_folder). */
+  mac?: boolean;
 }
 
 /** POST /api/assistant/turn's body. */
@@ -117,14 +141,17 @@ export interface AssistantTurnInput {
   text: string;
   images?: AssistantImage[];
   pasted?: AssistantPaste[];
-  /** Ids of videos or recordings uploaded first (POST /api/assistant/files, parts, complete). */
+  /**
+   * Ids of videos or recordings (POST /api/assistant/files). One may still be uploading: the message is saved at once and
+   * its reply waits (`wait`) until the last part is in, then runs. More messages while a reply waits or runs queue behind it.
+   */
   files?: string[];
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
   paths?: string[];
   context?: AssistantContext;
 }
 
-/** A video or recording dropped in the chat, uploaded before the message goes (api/assistant-files.ts; kept 7 days). */
+/** A video or recording dropped in the chat, uploaded in parts while the message goes (api/assistant-files.ts; kept 7 days). */
 export interface AssistantFile {
   id: string;
   name: string;
@@ -132,8 +159,8 @@ export interface AssistantFile {
   size: number;
 }
 
-/** Where the assistant's use_file can send a dropped file: Video Notes, Review or Caption Studio. */
-export const FILE_USES = ["notes", "review", "captions"] as const;
+/** Where the assistant's use_file can send a dropped file: Video Notes, Review, Caption Studio or the Media Library. */
+export const FILE_USES = ["notes", "review", "captions", "library"] as const;
 export type AssistantFileUse = (typeof FILE_USES)[number];
 
 /** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */
@@ -158,6 +185,9 @@ export interface AssistantView {
   /** Earlier conversations, newest first. */
   past: AssistantPast[];
   pending: AssistantPending | null;
+  /** This server takes a message whose videos are still uploading (POST /turn with their ids) and queues messages sent
+   *  while a reply runs. Absent on older servers: there a client posts only after its uploads are done. */
+  sendNow?: true;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. */
   navigate: string | null;
 }

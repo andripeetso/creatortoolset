@@ -1,22 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, JOB_SETUP, jobNeeds, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
-import { TOOLS } from "@contracts/tools";
+import { readiness, TOOLS, type Tool } from "@contracts/tools";
+import { JOBS } from "@contracts/work-prefs";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("is three screens, and a fourth that installs Creator Toolset in her AI apps after In my own AI or Both", () => {
-    // Connect your AI, What do you make?, How do you work best? The owner asked for the third back on 2026-11-10
-    expect(stepsFor()).toEqual(["agents", "make", "how"]);
-    expect(stepsFor()).toBe(SETUP_PATH);
-    for (const talk of ["app", null, undefined]) expect(stepsFor(talk)).toEqual(["agents", "make", "how"]);
+  it("is five screens, and a sixth that installs Creator Toolset in her AI apps after In my own AI or Both", () => {
+    // Pick your look, Connect your AI, What do you make?, What do you want to do first?, How do you work best?
+    const five = ["theme", "agents", "make", "job", "how"];
+    expect(stepsFor()).toEqual(five);
+    expect(stepsFor()).toEqual(SETUP_PATH);
+    for (const talk of ["app", null, undefined]) expect(stepsFor(talk)).toEqual(five);
     // the owner picked Both and setup "ended abruptly": the answer is carried out on a screen of its own, last
-    for (const talk of ["chat", "both"]) expect(stepsFor(talk)).toEqual(["agents", "make", "how", "own"]);
+    for (const talk of ["chat", "both"]) expect(stepsFor(talk)).toEqual([...five, "own"]);
+    // the account screen is last of all, and only when the Mac app offers a sign-in that works
+    expect(stepsFor("app", true)).toEqual([...five, "account"]);
+    expect(stepsFor("both", true)).toEqual([...five, "own", "account"]);
+    expect(stepsFor("both", false)).not.toContain("account");
+  });
+
+  it("opens the two new screens from a link, and no old id lands on them", () => {
+    expect(setupStepFromParam("theme")).toBe("theme");
+    expect(setupStepFromParam("job")).toBe("job");
+    for (const old of ["tools", "ai", "project", "left", "done", "try"]) expect(["theme", "job"]).not.toContain(setupStepFromParam(old));
   });
 
   it("keeps Connect, Folders and the AI apps screen as screens a link can open alone", () => {
@@ -127,19 +139,21 @@ describe("setupFinished", () => {
 
 describe("Not now and resume", () => {
   it("reopens at the step Not now was pressed on", () => {
-    vi.stubGlobal("sessionStorage", { getItem: () => "agents", setItem: () => {} });
-    expect(resumeStep()).toBe("agents");
+    for (const at of ["theme", "agents", "job", "how"]) {
+      vi.stubGlobal("sessionStorage", { getItem: () => at, setItem: () => {} });
+      expect(resumeStep()).toBe(at);
+    }
   });
 
   it("starts at the first step when the stored step is not a step", () => {
     vi.stubGlobal("sessionStorage", { getItem: () => "tools-old-junk", setItem: () => {} });
-    expect(resumeStep()).toBe("agents");
+    expect(resumeStep()).toBe("theme");
   });
 
   it("never reopens on a screen that is off the path (one an older build remembered)", () => {
     for (const old of ["connect", "folders"]) {
       vi.stubGlobal("sessionStorage", { getItem: () => old, setItem: () => {} });
-      expect(resumeStep()).toBe("agents");
+      expect(resumeStep()).toBe("theme");
     }
     vi.stubGlobal("sessionStorage", { getItem: () => "project", setItem: () => {} });
     expect(resumeStep()).toBe("make");
@@ -154,7 +168,7 @@ describe("Not now and resume", () => {
         throw new Error("denied");
       },
     });
-    expect(resumeStep()).toBe("agents");
+    expect(resumeStep()).toBe("theme");
   });
 
   it("keeps a dismissal for this page load even when storage throws", () => {
@@ -251,5 +265,48 @@ describe("the work preferences' saved copy", () => {
     await useWorkPrefs.getState().load();
     expect(useWorkPrefs.getState().prefs?.talk).toBe("app");
     expect(readCached<{ talk: string }>("tinyacrobatics", "/api/work-prefs")?.talk).toBe("app");
+  });
+});
+
+describe("What do you want to do first?", () => {
+  const all = [...TOOLS];
+  it("offers only the jobs this account has a tool for, and Just look around always; the Video Cleaner is in none", () => {
+    expect(jobsFor(all)).toEqual([...JOBS]);
+    expect(jobsFor(["workshop", "captions"])).toEqual(["write", "captions", "look"]);
+    expect(jobsFor(["editor"])).toEqual(["edit", "look"]); // one of its two tools is enough
+    expect(jobsFor([])).toEqual(["look"]);
+    for (const j of JOBS) expect(JOB_SETUP[j].tools).not.toContain("clean");
+  });
+
+  it("lists a job's missing required rows from the tools' own list (readiness), each once, never an optional one", () => {
+    const have = ["deviceTranscripts", "library"] as const; // a fresh account on the Mac app
+    const edit = jobNeeds("edit", all, [...have]);
+    expect(edit.map((n) => n.anyOf)).toEqual([["ai"]]); // the library and transcripts are there; the AI Editor needs an AI
+    expect(edit).toEqual(readiness("editor", [...have]).missing); // the same rows as the AI Editor's card
+    expect(jobNeeds("ideas", all, [...have]).map((n) => n.form)).toEqual(["apify"]);
+    expect(jobNeeds("write", all, [...have]).map((n) => n.anyOf)).toEqual([["ownAi"]]);
+    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.optional)).toBe(false);
+  });
+
+  it("counts the project as made (leaving setup makes it), and a job with nothing missing as ready", () => {
+    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.anyOf.includes("project"))).toBe(false);
+    expect(jobNeeds("captions", all, [])).toEqual([]); // Caption Studio needs nothing it cannot do without
+    expect(jobNeeds("look", all, [])).toEqual([]);
+    expect(jobNeeds(null, all, [])).toEqual([]);
+    expect(jobNeeds("write", all, ["ownAi"])).toEqual([]);
+    // the Media Library and the AI Editor both need a library: one row
+    expect(jobNeeds("edit", all, []).filter((n) => n.anyOf.includes("library"))).toHaveLength(1);
+  });
+
+  it("leaves out the rows of a tool the account may not use", () => {
+    expect(jobNeeds("edit", ["media"], [])).toEqual(readiness("media", ["project"]).missing);
+  });
+
+  it("switches the job's tools on when setup is left", () => {
+    const mine: Tool[] = ["instagram", "workshop", "captions", "media", "editor"];
+    expect(toolsWithJob(["workshop", "media"], "captions", mine)).toEqual(["workshop", "captions", "media"]);
+    expect(toolsWithJob(["workshop"], null, mine)).toEqual(["workshop"]);
+    expect(toolsWithJob(["workshop"], "look", mine)).toEqual(["workshop"]);
+    expect(toolsWithJob([], "captions", ["workshop"])).toEqual([]); // not a tool this account may use
   });
 });

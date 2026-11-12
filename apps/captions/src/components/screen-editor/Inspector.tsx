@@ -50,6 +50,8 @@ export function Inspector({
   player,
   aim,
   hasCamera,
+  canClear,
+  floor,
 }: {
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
@@ -64,10 +66,16 @@ export function Inspector({
   player: Player;
   aim: (t: number) => { x: number; y: number };
   hasCamera: boolean;
+  /** A see-through video can be made here: the background can be None. */
+  canClear: boolean;
+  /** The least depth a zoom is seen at (lib/screen-recording.ts zoomFloor, in tenths): above 1 where zooms fill the whole frame. */
+  floor: number;
 }) {
+  // a recording of an iPhone or iPad has no pointer log: nothing of the pointer's is offered for it
+  const hasPointer = events.moves.length > 0 || events.clicks.length > 0;
   const tabs: { id: InspectorTab; label: string; icon: typeof ImageIcon }[] = [
     { id: "background", label: "Background", icon: ImageIcon },
-    { id: "pointer", label: "Pointer", icon: MousePointer2 },
+    ...(hasPointer ? [{ id: "pointer" as const, label: "Pointer", icon: MousePointer2 }] : []),
     { id: "zoom", label: "Zoom", icon: ZoomIn },
     ...(hasCamera ? [{ id: "camera" as const, label: "Camera", icon: Video }] : []),
   ];
@@ -94,10 +102,10 @@ export function Inspector({
         ))}
       </div>
       <div role="tabpanel" className="min-h-0 flex-1 space-y-6 overflow-y-scroll p-4 bars:pr-2">
-        {shown === "background" && <BackgroundTab look={look} initial={initial} change={change} />}
+        {shown === "background" && <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} />}
         {shown === "pointer" && <PointerTab look={look} initial={initial} change={change} />}
         {shown === "zoom" && (
-          <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} />
+          <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
         {shown === "camera" && <CameraTab look={look} change={change} />}
       </div>
@@ -107,9 +115,9 @@ export function Inspector({
 
 type TabProps = { look: ScreenLook; initial: ScreenLook; change: (patch: Partial<ScreenLook>) => void };
 
-function BackgroundTab({ look, initial, change }: TabProps) {
+function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClear: boolean }) {
   const [from, to] = backgroundStops(look);
-  const kind = look.background === "color" ? "color" : "gradient";
+  const kind = look.background === "none" ? "none" : look.background === "color" ? "color" : "gradient";
   return (
     <>
       <Group title="Frame">
@@ -126,10 +134,13 @@ function BackgroundTab({ look, initial, change }: TabProps) {
           options={[
             { id: "gradient", label: "Gradient" },
             { id: "color", label: "Color" },
+            ...(canClear ? [{ id: "none" as const, label: "None", title: "Nothing behind the window: Export makes a video with a transparent background" }] : []),
           ]}
-          onChange={(k) => change(k === "color" ? { background: "color", color: look.color ?? from } : { background: BACKGROUNDS[0].id })}
+          onChange={(k) =>
+            change(k === "none" ? { background: "none" } : k === "color" ? { background: "color", color: look.color ?? from } : { background: BACKGROUNDS[0].id })
+          }
         />
-        {kind === "gradient" ? (
+        {kind === "none" ? null : kind === "gradient" ? (
           <>
             <Swatches
               label="Gradient"
@@ -185,7 +196,7 @@ function PointerTab({ look, initial, change }: TabProps) {
       {!look.pointerHidden && (
         <>
           <SliderRow label="Size" value={look.pointer} min={0.8} max={3} step={0.1} format={(v) => `${v.toFixed(1)}×`} initial={initial.pointer} onChange={(pointer) => change({ pointer })} />
-          <SliderRow label="Smooth movement" value={look.smooth} min={0} max={0.4} step={0.01} format={pct} initial={initial.smooth} onChange={(smooth) => change({ smooth })} />
+          <SliderRow label="Smooth movement" value={look.smooth} min={0} max={0.8} step={0.01} format={pct} initial={initial.smooth} onChange={(smooth) => change({ smooth })} />
           <SwitchRow label="Hide when it stays still" checked={look.hideIdle} onChange={(hideIdle) => change({ hideIdle })} />
         </>
       )}
@@ -203,6 +214,7 @@ function ZoomTab({
   onPick,
   player,
   aim,
+  floor,
 }: {
   look: ScreenLook;
   change: (patch: Partial<ScreenLook>) => void;
@@ -212,8 +224,13 @@ function ZoomTab({
   onPick: (index: number | null) => void;
   player: Player;
   aim: (t: number) => { x: number; y: number };
+  floor: number;
 }) {
   const zoom = picked !== null ? look.zooms[picked] : undefined;
+  // where zooms fill the whole frame none is shallower than what covers it: the slider starts there, and the
+  // depths shown are the ones seen
+  const least = Math.max(1.2, floor);
+  const depth = (z: Zoom) => Math.max(z.scale, least);
   const setZoom = (patch: Partial<Zoom>) => change({ zooms: look.zooms.map((z, i) => (i === picked ? { ...z, ...patch } : z)) });
   // where the clicks were or, with none, where the pointer was at work (lib/screen-recording.ts autoZooms)
   const laidOut = autoZooms(events, duration, zoom?.scale ?? look.zooms[0]?.scale);
@@ -239,23 +256,27 @@ function ZoomTab({
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <SliderRow label="Depth" value={zoom.scale} min={1.2} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
+          {least < 4 && (
+            <SliderRow label="Depth" value={depth(zoom)} min={least} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
+          )}
           <AimPad look={look} zoom={zoom} player={player} onAim={(x, y) => setZoom({ x, y })} />
-          <PanelButton
-            onClick={() => {
-              const at = aim(player.time());
-              setZoom({ x: at.x, y: at.y });
-            }}
-            title="Look where the pointer is at the playhead"
-          >
-            <Crosshair /> Aim at the pointer
-          </PanelButton>
+          {(events.moves.length > 0 || events.clicks.length > 0) && (
+            <PanelButton
+              onClick={() => {
+                const at = aim(player.time());
+                setZoom({ x: at.x, y: at.y });
+              }}
+              title="Look where the pointer is at the playhead"
+            >
+              <Crosshair /> Aim at the pointer
+            </PanelButton>
+          )}
         </Group>
-        <EveryZoom look={look} change={change} />
+        <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
         <Group>
           {look.zooms.length > 1 && (
             <PanelButton onClick={() => change({ zooms: look.zooms.map((z) => ({ ...z, scale: zoom.scale })) })}>
-              Use {zoom.scale.toFixed(1)}× for every zoom
+              Use {depth(zoom).toFixed(1)}× for every zoom
             </PanelButton>
           )}
           <PanelButton
@@ -292,7 +313,7 @@ function ZoomTab({
       </Group>
       {look.zooms.length > 0 && (
         <>
-          <EveryZoom look={look} change={change} />
+          <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
           <Group title="Zooms">
             <div className="space-y-1">
               {look.zooms.map((z, i) => (
@@ -305,7 +326,7 @@ function ZoomTab({
                   <span>
                     {clock(z.start, true)} – {clock(z.end, true)}
                   </span>
-                  <span className="text-zinc-400">{z.scale.toFixed(1)}×</span>
+                  <span className="text-zinc-400">{depth(z).toFixed(1)}×</span>
                 </button>
               ))}
             </div>
@@ -317,29 +338,34 @@ function ZoomTab({
 }
 
 /**
- * What holds for every zoom: whether the view follows the pointer, and what a zoom does to the window the recording
- * sits in. The window can only grow where the whole recording is shown; "Use the space" only where the frame has
- * space beside it (another shape than the recording's).
+ * What holds for every zoom: whether the view moves on to a click it would not show, and what a zoom does to the window the recording
+ * sits in. The window can only grow where the whole recording is shown; up to the padding only where the frame has
+ * space beside the window (another shape than the recording's).
  */
-function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void }) {
+function EveryZoom({ look, change, clicks }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; clicks: boolean }) {
   const filled = look.fill && look.shape !== "source";
   const room = look.shape !== "source";
   const fit = look.zoomFit === "frame" ? "frame" : look.zoomFit === "space" && room ? "space" : "inside";
+  if (!clicks && filled) return null; // nothing here would change anything
   return (
     <Group title="Every zoom">
-      <SwitchRow label="Follow the pointer while zoomed" checked={look.follow} onChange={(follow) => change({ follow })} />
+      {/* only where there are clicks for the view to move to */}
+      {clicks && <SwitchRow label="Move to clicks outside the view" checked={look.follow} onChange={(follow) => change({ follow })} />}
       {!filled && (
-        <Segmented
-          stacked
-          label="What zooming does to the window"
-          value={fit}
-          options={[
-            { id: "inside", label: "Zoom inside the window", title: "The window stays as it is; the picture is zoomed inside it" },
-            ...(room ? [{ id: "space" as const, label: "Grow into the empty space", title: "The window grows into the empty space beside it before anything is cut off" }] : []),
-            { id: "frame", label: "Zoom the whole frame", title: "The window itself is zoomed, past the padding to the frame's edges" },
-          ]}
-          onChange={(zoomFit) => change({ zoomFit })}
-        />
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">While zoomed, the window</p>
+          <Segmented
+            stacked
+            label="While zoomed, the window"
+            value={fit}
+            options={[
+              { id: "inside", label: "Keeps its size", title: "The window stays as it is; the picture is zoomed inside it" },
+              ...(room ? [{ id: "space" as const, label: "Grows up to the padding", title: "The window grows into the empty space beside it, as far as the padding" }] : []),
+              { id: "frame", label: "Fills the whole frame", title: "The window grows past the padding until the picture fills the frame" },
+            ]}
+            onChange={(zoomFit) => change({ zoomFit })}
+          />
+        </div>
       )}
     </Group>
   );

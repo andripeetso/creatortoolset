@@ -70,6 +70,24 @@ copy each one's licence next to the files they install.
 - Video fingerprints (`scripts/install-fingerprint-runtime.sh`): Meta's ThreatExchange PDQ and TMK reference
   code, BSD licence (`THREATEXCHANGE-LICENSE`). PDQ includes CImg, dual-licensed CeCILL-C or CeCILL 2.1
   (`CIMG-NOTICE`).
+- The AI Editor's face steps, Face refinement and Blur faces (`apps/captions/editor-steps/face-refine`, `face-blur`),
+  install one shared Python runtime on the computer the first time one of them runs, into the app's data folder
+  (`runtime/mediapipe-<hash>/`, the list in `apps/captions/api/editor/mediapipe-requirements.ts`), never before the
+  person switches a step on. pip installs these from PyPI:
+  - `mediapipe` 1.2.2: Apache-2.0.
+  - `opencv-contrib-python` 5.0.0.93: OpenCV under Apache-2.0, its packaging MIT. The wheel bundles FFmpeg (LGPL
+    2.1) and other libraries; their licences are in the wheel's `cv2/LICENSE-3RD-PARTY.txt`.
+  - their dependencies: NumPy (BSD-3-Clause and others, as its metadata lists), matplotlib (the matplotlib licence,
+    PSF-based), Pillow (MIT-CMU), certifi (MPL-2.0, unmodified, source at https://github.com/certifi/python-certifi),
+    absl-py, flatbuffers and tzdata (Apache-2.0), sounddevice and pyparsing (MIT), cffi (MIT-0), and contourpy,
+    cycler, kiwisolver, pycparser, python-dateutil and packaging (BSD, packaging also Apache-2.0). Versions are
+    what pip picks for that Python, so check `pip freeze` in the venv for the exact set.
+
+  Each step then downloads its MediaPipe models from Google's model storage (URLs and SHA-256 in the step's
+  `plugin.ts`), all under Apache-2.0 according to their model cards:
+  - Face refinement: `face_landmarker.task` (BlazeFace short range, Face Mesh V2 and Blendshape V2) and
+    `selfie_multiclass_256x256.tflite` (Multiclass Segmentation).
+  - Blur faces: `blaze_face_short_range.tflite` (BlazeFace short range).
 
 ## Mac app
 

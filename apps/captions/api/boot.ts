@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
@@ -24,10 +23,13 @@ import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
+import { editStepsApp } from "./editor/steps";
+import { foldersApp } from "./folders";
 import { startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
+import { skillsApp } from "./skills";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
@@ -37,7 +39,8 @@ import { adminApp } from "./admin";
 import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
-import { assistantApp } from "./assistant";
+import { assistantApp, resumeFromDisk } from "./assistant";
+import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
 import { mcpApp, pluginToolsOf } from "./mcp";
@@ -121,7 +124,7 @@ app.use(async (c, next) => {
 });
 
 // 50 MB body cap, except video uploads and transcription audio
-const limit = bodyLimit({ maxSize: 50 * 1024 * 1024 });
+const MAX_BODY = 50 * 1024 * 1024;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 app.use(async (c, next) => {
   if (
@@ -140,16 +143,17 @@ app.use(async (c, next) => {
   ) {
     return next();
   }
-  // Without a Content-Length, hono's bodyLimit re-wraps the request via
-  // `new Request(...)`, which the node adapters choke on. Browser JSON
-  // fetches always declare a length; refuse chunked bodies and let
+  // Browser JSON fetches always declare a length; refuse chunked bodies and let
   // body-less POSTs (logout) through untouched.
   if (!c.req.raw.headers.has("content-length")) {
     return c.req.raw.headers.has("transfer-encoding")
       ? c.json({ error: "Length Required" }, 411)
       : next();
   }
-  return limit(c, next);
+  // The cap is read from the header alone, never from the body: asking the request for its body starts the node
+  // request flowing into a web stream nobody reads, and a route that then streams the request itself (an upload
+  // part, a Review reference) stalls after the first socket read (about 64 KB).
+  return Number(c.req.raw.headers.get("content-length")) > MAX_BODY ? c.text("Payload Too Large", 413) : next();
 });
 
 const PUBLIC_UUID =
@@ -193,6 +197,8 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/enhance", ["enhance"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
+  ["/api/edit-steps", ["editor"]],
+  ["/api/folders/editor", ["editor"]],
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
   ["/api/workshop", ["instagram", "workshop"]],
@@ -337,6 +343,8 @@ app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init)), serverPlugins));
 app.route("/api/assistant", assistantApp);
+// what the assistant keeps from one chat to the next (memory.ts): only a reply being written can add to it
+app.route("/api/memory", memoryApp);
 // automations (automations.ts): scheduled prompts for the account's own assistant; REST here, and the MCP tools in mcp.ts
 app.route("/api/automations", automationsApp);
 startAutomations();
@@ -372,6 +380,8 @@ app.route("/api/export", exportApp);
 app.route("/api/hf", hfApp);
 app.route("/api/presets", presetsApp);
 app.route("/api/packs", packsApp);
+// Settings → Skills: a person's own skills (skills.ts)
+app.route("/api/skills", skillsApp);
 app.route("/api/pack-catalog", packCatalogApp);
 app.route("/api/projects", projectsApp);
 app.route("/api/enhance", enhanceApp);
@@ -408,6 +418,7 @@ app.route("/api/library", grantsApp);
 // a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)
 mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);
+app.route("/api/edit-steps", editStepsApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {
   startLibraryWorker();
@@ -415,8 +426,11 @@ if (process.env.NODE_ENV !== "test") {
   startTrashPurge();
   startWatchFolders();
   startPlugins(serverPlugins, startFolderPlugin);
+  // assistant messages that waited for their videos when the server stopped
+  resumeFromDisk();
 }
 app.route("/api/stories", storiesApp);
+app.route("/api/folders", foldersApp);
 app.route("/api/account-profile", accountProfileApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 mountPlugins(app, serverPlugins);

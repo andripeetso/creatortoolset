@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { copyFile, link, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { AuthVars } from "./auth";
@@ -36,6 +36,7 @@ import {
   plainWords,
 } from "./lib/clip-cleanup";
 import { announceSoon } from "./lib/announce-soon";
+import { workEnded } from "./assistant";
 import { capChapters, chapterCountRange, timedTranscript } from "./lib/timed-transcript";
 import { type SessionUser } from "./users";
 import {
@@ -163,6 +164,15 @@ const children = new Map<string, ReturnType<typeof spawn>>();
 const writeQ = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Set<BlockKind>>();
 
+/** This account's notes being made and sections being written, for Home (api/activity.ts). */
+export async function notesWork(username: string) {
+  const writing = (await Promise.all([...generating.keys()].filter((id) => !active.has(id)).map(readMeta))).filter((m) => m?.owner === username);
+  return [
+    ...[...active.values()].filter((m) => m.owner === username && m.status === "processing").map((m) => ({ id: m.id, name: m.name, progress: m.progress, section: false })),
+    ...writing.map((m) => ({ id: m!.id, name: m!.name, progress: undefined, section: true })),
+  ];
+}
+
 void mkdir(CLIPS_DIR, { recursive: true }).catch(() => {});
 
 function claimKind(id: string, k: BlockKind): boolean {
@@ -272,10 +282,11 @@ function applyBlock(
 async function persist(meta: Meta): Promise<void> {
   meta.updatedAt = Date.now();
   try {
-    await writeFile(
-      path.join(sesDir(meta.id), "meta.json"),
-      JSON.stringify(meta),
-    );
+    // written beside and renamed in: a read during the save gets the note as it was, never half a file (which reads as "not found")
+    const file = path.join(sesDir(meta.id), "meta.json");
+    const tmp = `${file}.${randomUUID()}.tmp`;
+    await writeFile(tmp, JSON.stringify(meta));
+    await rename(tmp, file);
   } catch {
     /* deleted mid-job */
   }
@@ -786,6 +797,18 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     await jobPersist(meta);
   } finally {
     stopCrawl();
+    // a note the assistant started from a dropped file: its card in the chat ends, and the chat says so (a stopped one says nothing)
+    if (meta.status !== "processing" && meta.owner) {
+      // ffmpeg's own words can run to pages: the chat gets their last line, the note's page keeps all of them
+      const why = (meta.error ?? "").trim().split("\n").at(-1)!.slice(0, 160);
+      workEnded(
+        meta.owner,
+        `notes:${id}`,
+        meta.status === "ready"
+          ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up", "Show me"] }
+          : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}`, choices: ["Show me"] },
+      );
+    }
     active.delete(id);
     children.get(id)?.kill("SIGKILL");
     children.delete(id);

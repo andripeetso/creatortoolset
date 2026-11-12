@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -79,6 +79,13 @@ describe("with a service named in the server's .env", () => {
     expect(asked).toEqual([]);
   });
 
+  it("keeps a sign-in in progress in the data folder, so a restart between start and way back loses nothing", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    const to = await start("google", "site");
+    const kept = JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "sign-ins-in-progress.json"), "utf8"));
+    expect(Object.keys(kept)).toContain(to.searchParams.get("state"));
+  });
+
   it("signs a linked account in with what the service vouches for, once", async () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     createUser("ana", "anapass12", { role: "user" });
@@ -125,18 +132,29 @@ describe("with a service named in the server's .env", () => {
     expect(asked).toEqual([]);
   });
 
-  it("links a sign-in to the account that started it, only in the browser that started it", async () => {
+  it("links a sign-in to the account that started it; another browser gets a page naming the account and links on its press", async () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     createUser("ben", "benpass12", { role: "user" });
     const login = await app.request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "ben", password: "benpass12" }) });
     const cookie = cookieOf(login);
 
-    // the way back in another browser (no session): nothing is linked
+    // the way back in another browser (no session; the Mac app finishes sign-ins in the system browser): a page that
+    // names the account, and nothing linked until its button is pressed
     let to = await start("apple", "link", cookie);
-    service({ provider: "apple", sub: "a-9", email: "", name: "Ben" }, () => to.searchParams.get("challenge")!);
+    service({ provider: "apple", sub: "a-8", email: "ben@example.test", name: "Ben" }, () => to.searchParams.get("challenge")!);
     const elsewhere = await app.request(`/api/auth/service/callback?state=${to.searchParams.get("state")}&ticket=T1`);
-    expect(elsewhere.headers.get("location")).toMatch(/^\/settings\/account\?signin=Finish%20linking/);
-    expect(findByIdentity("apple", "a-9")).toBeNull();
+    const page = await elsewhere.text();
+    expect(elsewhere.status).toBe(200);
+    expect(page).toContain("<b>ben@example.test</b> will sign in to <b>ben</b>");
+    expect(findByIdentity("apple", "a-8")).toBeNull();
+    const id = /name="id" value="([^"]+)"/.exec(page)![1];
+    const press = () => app.request("/api/auth/link-confirm", { method: "POST", body: new URLSearchParams({ id }) });
+    const done = await press();
+    expect(await done.text()).toContain("Apple is linked");
+    expect(findByIdentity("apple", "a-8")?.username).toBe("ben");
+    // single use
+    expect((await press()).status).toBe(400);
+    linkIdentity(findUser("ben")!, { provider: "apple", sub: "a-0", email: "" }); // replaces a-8, so the next case starts clean
     vi.unstubAllGlobals();
 
     to = await start("apple", "link", cookie);
@@ -146,12 +164,34 @@ describe("with a service named in the server's .env", () => {
     expect(findByIdentity("apple", "a-9")?.username).toBe("ben");
   });
 
-  it("passes on a way back it did not start", async () => {
+  it("says a way back it has no record of expired, and asks the service nothing", async () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     const asked = service({ provider: "google", sub: "g-77" }, () => "");
     const res = await app.request("/api/auth/service/callback?state=not-ours&ticket=T1");
-    expect([400, 401, 404]).toContain(res.status);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("That sign-in expired");
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(asked).toEqual([]);
+  });
+
+  it("links nothing from a made-up confirm, or from a sign-in already on another account", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    // a confirm no sign-in started
+    const made = await app.request("/api/auth/link-confirm", { method: "POST", body: new URLSearchParams({ id: "not-ours" }) });
+    expect(made.status).toBe(400);
+    expect(await made.text()).toContain("That sign-in expired");
+    // a Google account that already signs in to another account: no confirm page, nothing moves
+    createUser("dee", "deepass12", { role: "user" });
+    createUser("eve", "evepass12", { role: "user" });
+    linkIdentity(findUser("eve")!, { provider: "google", sub: "g-eve", email: "eve@example.test" });
+    const login = await app.request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "dee", password: "deepass12" }) });
+    const to = await start("google", "link", cookieOf(login));
+    service({ provider: "google", sub: "g-eve", email: "eve@example.test", name: "Eve" }, () => to.searchParams.get("challenge")!);
+    const back = await app.request(`/api/auth/service/callback?state=${to.searchParams.get("state")}&ticket=T1`);
+    const page = await back.text();
+    expect(back.status).toBe(400);
+    expect(page).toContain("already signs in to another account here");
+    expect(page).not.toContain("link-confirm");
+    expect(findByIdentity("google", "g-eve")?.username).toBe("eve");
   });
 });

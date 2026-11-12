@@ -16,7 +16,7 @@ delete process.env.APP_SECRET; // the solo install: "local" is the admin, the se
 delete process.env.ANTHROPIC_API_KEY;
 process.env.DEEPGRAM_API_KEY = "dg-test";
 const { libraryDb } = await import("./db");
-const { claimJob, enqueueJob } = await import("./jobs");
+const { claimJob, enqueueJob, folderWalks } = await import("./jobs");
 const { estimate, progress } = await import("./estimate");
 const { describeSlot } = await import("./describe");
 const { holdForLimit, releaseLimit, tick } = await import("./worker");
@@ -48,6 +48,11 @@ describe("estimate", () => {
     expect(step("describe")).toMatchObject({ route: "provider", seconds: 1000 });
     expect(step("embed").route).toBe("none"); // on by default, no OpenAI key
     expect(e.seconds).toBe(Math.max(...e.steps.map((s) => s.seconds)));
+    // the person's own computer makes them with no key
+    process.env.CT_LOCAL = "1";
+    const here = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
+    delete process.env.CT_LOCAL;
+    expect(here.steps.find((x) => x.step === "embed")).toMatchObject({ route: "device", seconds: 200 });
   });
 
   it("a music folder costs nobody AI or keys; sound-only files are never described", async () => {
@@ -116,6 +121,54 @@ describe("what the page counts", () => {
     // search by meaning has no key here: it is no line (it waits for a key in `waiting`, once claimed)
     expect(await counts()).toEqual(["thumb 1/1", "proxy 1/1", "transcribe 1/1", "describe 1/1"]);
     d.prepare("DELETE FROM jobs WHERE kind != 'describe'").run();
+  });
+});
+
+describe("one set of numbers while clips come in", () => {
+  it("counts the folder's clips from the moment they are found, never goes back, and leaves out a clip whose only step is held", async () => {
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    const seen: number[] = [];
+    const look = async () => {
+      const p = await progress("lib_e", "local");
+      seen.push(p.share);
+      return p;
+    };
+    const done = (v: string, kind: string) => d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = ?").run(v, kind);
+    // the folder holds three clips, none handed over yet
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.watch', json('[{"path":"/Volumes/Card/Trip","mode":"reference"}]')) WHERE id = 'lib_e'`).run();
+    folderWalks.set("lib_e\0/Volumes/Card/Trip", { files: 3, adding: 3 });
+    try {
+    expect(await look()).toMatchObject({ clips: 3, left: 3, share: 0 });
+    for (const [i, v] of ["v1", "v2", "v3"].entries()) {
+      enqueueJob(d, "lib_e", v, "probe", "local");
+      folderWalks.set("lib_e\0/Volumes/Card/Trip", { files: 3, adding: 2 - i });
+      expect((await look()).clips).toBe(3);
+      // read: its steps appear all at once, which must not pull the share back
+      done(v, "probe");
+      for (const k of ["thumb", "wave", "proxy", "transcribe"]) enqueueJob(d, "lib_e", v, k, "local");
+      await look();
+      done(v, "thumb");
+      await look();
+    }
+    for (const v of ["v1", "v2", "v3"]) for (const k of ["wave", "proxy", "transcribe"]) done(v, k);
+    // v3's description waits for the plan's limit: v3 is not being prepared, and the run is through
+    d.prepare("DELETE FROM jobs WHERE version_id = 'v3' AND kind = 'describe'").run();
+    enqueueJob(d, "lib_e", "v3", "describe", "local");
+    holdForLimit(d, "local", "Your Claude plan's weekly limit is reached; it resets 5pm.", Date.now() + 60_000);
+    enqueueJob(d, "lib_e", "v1", "embed", "local", true);
+    expect(await look()).toMatchObject({ clips: 1 });
+    for (let i = 1; i < seen.length; i++) expect(seen[i]).toBeGreaterThanOrEqual(seen[i - 1]!);
+    expect(seen.at(-1)).toBeGreaterThan(0.9);
+    // a folder taken off the watch list while clips were still to come: they are no longer counted, and the run ends
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    folderWalks.set("lib_e\0/Volumes/Card/Trip", { files: 3, adding: 2 });
+    expect((await progress("lib_e", "local")).left).toBe(2);
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.watch', json('[]')) WHERE id = 'lib_e'`).run();
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 0, clips: 0 });
+    } finally {
+      folderWalks.clear();
+      d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    }
   });
 });
 

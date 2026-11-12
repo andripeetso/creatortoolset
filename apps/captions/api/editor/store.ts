@@ -6,9 +6,15 @@ import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_VERSIONS, type Edit, type EditBundle, 
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
+import type { EditStepChoice } from "../../contracts/editor-steps";
+import type { EditStyleCopy } from "../../contracts/editor-styles";
+import { chosenSteps } from "./steps";
+import { lineOf } from "./progress";
+import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
+import { enqueueJob } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
 
 /**
@@ -24,10 +30,18 @@ export interface EditMeta extends EditBrief {
   createdAt: number;
   updatedAt: number;
   sources: string[];
+  /** clips still uploading from a phone, in the order picked; when the last is in they become `sources` and the edit starts */
+  uploads?: { id: string; version?: string }[];
   /** per source version, set on the edit page (PUT eyeline) */
   eyeline?: Record<string, number>;
   /** the items the edit was made with, recorded by createEdit and never changed by a later default */
   bundle: EditBundle;
+  /** the post-processing steps it was made with (Settings → AI Editor at the time), run by post.ts */
+  steps?: EditStepChoice[];
+  /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
+  style?: EditStyleCopy;
+  /** which of the name and the brief came through an AI's tool, not from the person at their own screen (routes.ts): finished.ts keeps neither */
+  byTool?: ("name" | "brief")[];
   trashedAt?: number;
 }
 
@@ -60,6 +74,12 @@ export interface StepFiles {
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
+  /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
+  post: Record<string, { files: Record<string, string>; notes: string[] }>;
+  /** each version's lines and takes as the script step first planned them, before the person changed any (finished.ts: what they took out) */
+  first: { plans: Pick<VersionPlan, "name" | "lines">[] };
+  /** the person took this edit off its style's finished list: it is never kept for a style again (finished.ts) */
+  finished: { removed: boolean };
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -68,6 +88,22 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
   } catch {
     return null;
   }
+}
+
+/** The copies the post step made for a version, by source version id: the preview and the export play these (none: the sources' own files). */
+export const postFiles = (editId: string, variant: string): Record<string, string> => readStep(editId, "post")?.[variant]?.files ?? {};
+
+/** Said when a version's newest post step did not finish (failed, stopped, or not done yet). */
+export const POST_UNFINISHED = "Post-processing did not finish on this version: run it again before you export";
+
+/**
+ * True when a version's newest post step is not done: its copies (post.json) are an older run's, which may carry faces
+ * unblurred or a look the cut no longer has, so neither the export nor a preview may play them. A version that never
+ * had a post step (edits from before it) is not held.
+ */
+export function postUnfinished(editId: string, variant: string): boolean {
+  const row = libraryDb().prepare("SELECT state FROM edit_jobs WHERE edit_id = ? AND version_id = ? AND kind = 'post' ORDER BY id DESC LIMIT 1").get(editId, `${editId}:${variant}`) as { state: string } | undefined;
+  return !!row && row.state !== "done";
 }
 
 export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: StepFiles[K]) => writeJsonAtomic(path.join(root(), id, `${name}.json`), value);
@@ -266,14 +302,85 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   return out;
 }
 
-/** A new edit of `sources` for `username`, or null when a source is not theirs to read. */
-export async function createEdit(username: string, body: Record<string, unknown>): Promise<EditMeta | null> {
-  const sources = Array.isArray(body.sources) ? [...new Set(body.sources.filter((s): s is string => typeof s === "string"))] : [];
-  if (!sources.length || sources.length > MAX_SOURCES) return null;
-  const ws = sourcesWorkspace(username, sources);
+/**
+ * EditMeta.byTool once `patch` set the name or the brief: a field an AI's tool wrote (`tool`) is listed, one the person
+ * wrote themselves is theirs again. No key when neither is a tool's.
+ */
+export function byToolAfter(was: EditMeta["byTool"], patch: Partial<EditBrief>, tool: boolean): Pick<EditMeta, "byTool"> {
+  const set = (["name", "brief"] as const).filter((k) => patch[k] !== undefined);
+  const now = [...(was ?? []).filter((k) => !set.includes(k)), ...(tool ? set : [])];
+  return now.length ? { byTool: now } : {};
+}
+
+/** An editing style that is not there: the routes answer 404. */
+export class NoStyle extends Error {}
+
+/**
+ * What an editing style gives an edit in workspace `ws`: its choices, and the copy the edit keeps. A B-roll folder the
+ * edit cannot read and a grade the person no longer has are left out, not an error. `on` is an edit that already
+ * exists (PATCH): where the style names no folder or grade, that edit keeps its own.
+ */
+export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">): Promise<Partial<EditMeta>> {
+  const s = findStyle(username, id);
+  if (!s) throw new NoStyle("No such style");
+  const d = await editorDefaults(username);
+  return {
+    versions: s.versions,
+    targetS: s.targetS,
+    framing: { punch: s.punch },
+    brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
+    bundle: { ...(on?.bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
+    ...(s.steps ? { steps: s.steps } : {}),
+    style: styleCopy(s),
+  };
+}
+
+/** The workspace of uploads `username` started and has not finished, all in one; null otherwise. */
+function uploadsWorkspace(username: string, uploadIds: string[]): string | null {
+  let ws: string | null = null;
+  for (const id of uploadIds) {
+    const row = libraryDb()
+      .prepare("SELECT u.library_id, l.workspace_id FROM uploads u JOIN libraries l ON l.id = u.library_id WHERE u.id = ? AND u.created_by = ? AND u.state = 'open'")
+      .get(id, username) as { library_id: string; workspace_id: string } | undefined;
+    if (!row || !libraryRole(username, row.library_id) || (ws && ws !== row.workspace_id)) return null;
+    ws = row.workspace_id;
+  }
+  return ws;
+}
+
+// ponytail: one chain for every waiting edit (edit.json is read, changed and written); per-edit chains if phones ever queue many at once
+let waiting = Promise.resolve();
+
+/**
+ * An upload finished as `versionId`: the edit waiting on it notes that, and once its last clip is in, its clips become
+ * its sources and it starts (the phone that picked them need not be open). Edits are found by a scan of all of them.
+ */
+export function uploadFinished(uploadId: string, versionId: string): Promise<void> {
+  waiting = waiting.then(async () => {
+    const e = allEdits().find((x) => !x.trashedAt && x.uploads?.some((u) => u.id === uploadId));
+    if (!e) return;
+    const uploads = e.uploads!.map((u) => (u.id === uploadId ? { ...u, version: versionId } : u));
+    if (uploads.some((u) => !u.version)) return void (await saveEdit({ ...e, uploads }));
+    const { uploads: _, ...rest } = e;
+    await saveEdit({ ...rest, sources: [...new Set(uploads.map((u) => u.version!))] });
+    enqueueJob(libraryDb(), e.workspaceId, `${e.id}:`, "analyze", e.createdBy, true, "edit_jobs");
+  }).catch((err) => console.error("editor: an edit waiting on uploads", err));
+  return waiting;
+}
+
+/** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
+export async function createEdit(username: string, body: Record<string, unknown>, tool = false): Promise<EditMeta | null> {
+  const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
+  const sources = ids(body.sources);
+  const uploads = sources.length ? [] : ids(body.uploads);
+  const count = sources.length || uploads.length;
+  if (!count || count > MAX_SOURCES) return null;
+  const ws = sources.length ? sourcesWorkspace(username, sources) : uploadsWorkspace(username, uploads);
   if (!ws) return null;
   const now = Date.now();
   const brief = cleanBrief(body, username, ws);
+  // `style` names an editing style: its choices go under the request's own. No `style` key at all: none, as before.
+  const styled = typeof body.style === "string" ? await styleFields(username, ws, body.style) : {};
   const e: EditMeta = {
     id: randomUUID(),
     workspaceId: ws,
@@ -281,6 +388,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     createdAt: now,
     updatedAt: now,
     sources,
+    ...(uploads.length ? { uploads: uploads.map((id) => ({ id })) } : {}),
     name: "Untitled edit",
     brief: "",
     script: "",
@@ -289,11 +397,16 @@ export async function createEdit(username: string, body: Record<string, unknown>
     brollCollectionId: null,
     framing: { punch: 1.15 },
     bundle: (await editorDefaults(username)).bundle,
+    steps: chosenSteps(username),
+    ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
+    ...byToolAfter(undefined, brief, tool),
   };
   mkdirSync(path.dirname(fileOf(e.id)), { recursive: true });
   await saveEdit(e);
+  // New edit opens on the style used last; an explicit null (None picked there) forgets it
+  if (e.style || body.style === null) rememberStyle(username, e.style?.id ?? null);
   return e;
 }
 
@@ -308,16 +421,23 @@ interface JobDbRow {
 
 export function jobsOf(id: string): EditJob[] {
   const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as JobDbRow[];
-  return rows.map((r) => ({ id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error }));
+  return rows.map((r) => {
+    const line = r.state === "running" ? lineOf(r.id) : undefined;
+    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}) };
+  });
 }
 
 export function summaryOf(e: EditMeta): EditSummary {
-  const last = libraryDb().prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as EditSummary["last"] | undefined;
-  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, last: last ? { ...last } : null };
+  // a step the person stopped is saved as failed with "Stopped" (worker.ts): `stopped` keeps it off Home's failed list
+  const row = libraryDb().prepare("SELECT kind, state, error = 'Stopped' AS stopped FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as
+    { kind: EditJob["kind"]; state: EditJob["state"]; stopped: number | null } | undefined;
+  const last = row ? { kind: row.kind, state: row.state, ...(row.stopped ? { stopped: true as const } : {}) } : null;
+  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
 }
 
 export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
+  delete meta.byTool; // the server's own mark (finished.ts): `meta` is this call's own copy
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
   return {

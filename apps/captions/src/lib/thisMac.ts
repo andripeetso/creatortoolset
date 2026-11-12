@@ -2,7 +2,7 @@
 // in a browser there is none and the functions answer null.
 
 /** `device`: this Mac's device id on the open server, once paired (null before that). */
-export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null };
+export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean };
 type Bridge = { postMessage: (m: string) => Promise<ThisMacState> };
 
 /** The Mac app's bridge, or undefined in a browser (no window at all in a test). */
@@ -38,6 +38,28 @@ export async function chooseFolderOnMac(): Promise<string | null | undefined> {
     return reply.path ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Where a file picked in the Mac app's own open panel is on this Mac (ThisMacBridge.swift pickedFilesReply), so the
+ * server can add it in place instead of taking an upload. Matched by name and size (and the time it was last changed
+ * when two picked files share both). undefined in a browser, in a Mac app from before it could say (it answers every
+ * unknown question with its state), on a server that is not this Mac, or when the match is not sure: then the page uploads.
+ */
+export async function pathOnMac(file: File): Promise<string | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  try {
+    const r = ((await bridge.postMessage("files")) ?? {}) as unknown as { files?: unknown };
+    const picked = Array.isArray(r.files) ? (r.files as { path?: unknown; name?: unknown; size?: unknown; modified?: unknown }[]) : [];
+    // one form of accented letters on both sides: the Mac's file names and the page's may differ (õ, ä)
+    const name = file.name.normalize("NFC");
+    const same = picked.filter((f) => typeof f?.path === "string" && typeof f.name === "string" && f.name.normalize("NFC") === name && f.size === file.size);
+    const one = same.length > 1 ? same.filter((f) => Math.abs(Number(f.modified) - file.lastModified) < 2000) : same;
+    return one.length === 1 ? (one[0].path as string) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -84,6 +106,35 @@ export async function allowOtherDevices(): Promise<string | null> {
   try {
     const s = await bridge.postMessage("access");
     return s.problem ?? null;
+  } catch {
+    return "The Creator Toolset Mac app did not answer. Try again.";
+  }
+}
+
+/**
+ * Whether this Mac is on an account through the connect service: true or false from the Mac app, undefined in a browser
+ * or from an app too old to say (setup then shows no Add this computer).
+ */
+export async function thisMacLinked(): Promise<boolean | undefined> {
+  try {
+    const s = await thisMacBridge()?.postMessage("state");
+    return typeof s?.linked === "boolean" ? s.linked : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Setup's Add this computer: the Mac app opens the site's page with this Mac's code in the browser, waits for the yes and
+ * starts this Mac's tunnel (the Servers menu's Add this Mac to my account…). Resolves to null once it is on the account,
+ * else the problem to show.
+ */
+export async function connectThisMac(): Promise<string | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return "Open Creator Toolset on this Mac to add it.";
+  try {
+    const s = await bridge.postMessage("connect");
+    return s.linked ? null : `This Mac was not added: ${s.problem ?? "try again"}`;
   } catch {
     return "The Creator Toolset Mac app did not answer. Try again.";
   }

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
-import { setDialogHost, type DialogAsk } from "@/lib/dialogs";
+import { alertDialog, setDialogHost, type DialogAsk } from "@/lib/dialogs";
 
 type Ask = DialogAsk & { id: number };
 
@@ -21,7 +21,13 @@ export function AppDialogs() {
   useEffect(() => {
     let n = 0;
     setDialogHost((a) => setQueue((q) => [...q, { ...a, id: ++n }]));
-    return () => setDialogHost(null);
+    // the Mac app's own messages (a recording that could not be saved) are drawn here too, instead of the system's alert
+    const w = window as unknown as { ctAlert?: (title: string, body?: string) => void };
+    w.ctAlert = (title, body) => void alertDialog({ title, body });
+    return () => {
+      setDialogHost(null);
+      delete w.ctAlert;
+    };
   }, []);
   const cur = queue[0];
   if (!cur) return null;

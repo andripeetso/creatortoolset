@@ -1,8 +1,8 @@
 # Packs
 
 A pack is one JSON file (`*.ctpack.json`) that adds things to someone's account: storytelling frameworks, caption
-styles, and instructions that go on top of the app's own AI prompts. People make them with Publish to Community on
-one of their own frameworks or caption styles, or by hand, and install them from Community (the account menu, top
+styles, instructions that go on top of the app's own AI prompts, and a Home layout. People make them with Publish to
+Community on one of their own frameworks or caption styles, or on Settings → Tools, or by hand, and install them from Community (the account menu, top
 right). A pack file installs through the API (`POST /api/packs/install`).
 
 Code: `contracts/packs.ts` (format, checks), `api/lib/packs.ts` (install, update, remove, instructions, default
@@ -35,12 +35,21 @@ side). Official packs live in `packs/`.
   catalog lists a newer version.
 - `license` is required. The pack must be yours to share: no quoted books, no fonts, sounds or images you
   don't have the rights to.
-- Everything else is optional, but a pack needs at least one of instructions, frameworks, caption styles or editor
-  items.
+- Everything else is optional, but a pack needs at least one of instructions, frameworks, caption styles, a Home
+  layout or editor items.
+- A caption style's values are plain: text of one line, numbers, on/off.
 - The format also has `designSystems` and an `editor.cards` slot, for apps that draw animated cards. This app
   accepts files that have them and leaves those parts out.
 
 Check a file before you share it: `pnpm --filter @creator-toolset/captions pack:check my-pack.ctpack.json`.
+
+## Home layout
+
+`"home": { "hidden": ["clean", "stories"] }`: the tiles switched off under Settings → Tools, by the app's own ids
+(`HOME_TILES` in `contracts/tools.ts`); every other tile shows. It is a list of choices from that list and nothing
+else: an id the app doesn't have is dropped, and it can't add a tile, name a page or change who may open a tool.
+Installing or updating a pack never changes Home. The installed pack has a **Use on Home** button; pressing it sets
+the person's own switches, which stay theirs to change.
 
 ## Editor items
 
@@ -59,11 +68,14 @@ A pack can carry items the AI editor uses. All are data only (level 0):
 
 ## Instructions and slots
 
-A pack's instructions are added to one prompt, named by its slot:
+A pack's instructions are added to one prompt, named by its slot. A pack someone else wrote only reaches an AI that can't
+act on your computer: your AI key, a local model, or Claude, Codex, Gemini, Grok, Muse Code or OpenCode on your Mac
+(their tools are off for these jobs). Cursor, Antigravity, Pi, a local ACP command, and the Workshop's chat and fact
+check on your Mac get only the app's own packs.
 
 | Slot | Where |
 |---|---|
-| `workshop.write` | Content Workshop: writing and editing pieces |
+| `workshop.write` | Content Workshop: writing and editing pieces. Not the chat turn on the Mac, which reads its folder and may search the web: only the app's own shipped packs go there |
 | `workshop.review` | Content Workshop: the follower read and the fact check |
 | `analyzer.ideas` | Content Analyzer: ideas and tags from posts |
 | `captions.lines` | Caption Studio: where captions break into lines |
@@ -104,6 +116,9 @@ styles, editing styles, analyzer guides), search, a page per pack with what it a
 a pack the catalog pulls is flagged and its instructions stop being used. This server keeps no catalog of its
 own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
 
+What people share in Community has no code. A pack from the catalog that carries drawing code (a design system's
+motion kit) is refused on install, whatever the catalog lists (`api/pack-catalog.ts`).
+
 ## What may go in a pack
 
 - Your own words. Name a framework's originator, but write the summary, steps and example yourself.
@@ -113,7 +128,10 @@ own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
 
 ## Publishing
 
-Publish to Community sits on each of your own Workshop frameworks and caption styles. Once you've ticked that it's
-yours to share, the app builds the pack and checks it, then points you to the catalog's site: download the file and
-send it there. It runs the same checks, then waits for a person to review
-it. Once approved, it's listed.
+Publish to Community sits on each of your own Workshop frameworks and caption styles, and on Settings → Tools for
+your Home layout. Once you've ticked that it's
+yours to share, the app builds the pack and checks it. In the Mac app, signed in to your Creator Toolset account (Google,
+Apple or GitHub), the app shows its own alert with the pack's name and what it holds, and a click on Publish sends it
+to the catalog under that account. Anywhere else it points you to the catalog's site: download the file and send it
+there. The catalog runs the same checks, refuses a pack with code, keeps at most five of one person's packs waiting,
+then waits for a person to review it. Once approved, it's listed.

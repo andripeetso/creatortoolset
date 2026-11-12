@@ -24,6 +24,12 @@ export function ftsQuery(q: string): string | null {
 const SHOWN = (version: string) =>
   `(SELECT source || char(31) || text FROM descriptions dd WHERE dd.version_id = ${version} ORDER BY dd.source = 'user' DESC LIMIT 1)`;
 
+/**
+ * Finished work, which never has a roll (roll.ts): a file saved as finished (filed_roll 'none', an export) or an asset
+ * with a version in a Finals piece. Review's videos are told by their files (inReview): toCard and roll.ts check those.
+ */
+export const FINISHED = `(a.filed_roll IS 'none' OR EXISTS (SELECT 1 FROM piece_items fp JOIN asset_versions fv ON fv.id = fp.version_id WHERE fv.asset_id = a.id))`;
+
 /** Rewrites an asset's search row (FTS5 has no upsert): its title, tags and the shown description of its current version. */
 export function indexAsset(db: DatabaseSync, assetId: string): void {
   const a = db.prepare(`SELECT library_id, title, ${SHOWN("assets.current_version_id")} AS description FROM assets WHERE id = ?`).get(assetId) as
@@ -64,6 +70,9 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.cursor ? { cursor: p.cursor } : {}),
     ...(p.collectionId ? { collectionId: p.collectionId.slice(0, 64) } : {}),
     ...(p.trashed === "1" ? { trashed: true } : {}),
+    ...(p.unfiled === "1" ? { unfiled: true } : {}),
+    ...(p.roll === "a" || p.roll === "b" ? { roll: p.roll } : {}),
+    ...(p.versions ? { versions: p.versions.split(",").filter(Boolean).slice(0, MAX_LIMIT) } : {}),
     ...(Object.keys(picked).length ? { facets: picked } : {}),
     limit: Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT))),
   };
@@ -74,7 +83,7 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
-  ${SHOWN("v.id")} AS description,
+  ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished,
   (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
     ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
   CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
@@ -97,6 +106,8 @@ export interface CardRow {
   description: string | null;
   preparing?: string | null;
   failed?: string | null;
+  roll: AssetCard["roll"] | null;
+  finished: number;
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -124,9 +135,22 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     where.push("a.created_at < ?");
     params.push(query.to);
   }
+  if (query.roll) {
+    where.push(`a.roll = ? AND NOT ${FINISHED}`);
+    params.push(query.roll);
+  }
+  if (query.versions?.length) {
+    where.push(`v.id IN (${query.versions.map(() => "?").join(",")})`);
+    params.push(...query.versions);
+  }
   if (query.collectionId) {
     where.push("a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)");
     params.push(query.collectionId);
+  }
+  if (query.unfiled) {
+    // a folder is a plain collection; Finals (finals.ts) and a saved search's old item rows are not
+    where.push(`a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
+      WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
   }
   for (const f of facetClauses(query.facets ?? {})) {
     where.push(f.sql);
@@ -156,6 +180,7 @@ function cursorOf(c: string): { createdAt: number; id: string } | null {
 export function toCard(r: CardRow): AssetCard {
   const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
   const split = (s: string | null) => (s ? s.split("\x1f") : []);
+  const review = inReview(r.id);
   return {
     id: r.id,
     libraryId: r.library_id,
@@ -172,7 +197,9 @@ export function toCard(r: CardRow): AssetCard {
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
-    ...(inReview(r.id) ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
+    ...(r.roll && !review ? { roll: r.roll } : {}),
+    ...(r.finished || review ? { finished: true as const } : {}),
+    ...(review ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
     ...(r.preparing ? { preparing: { step: r.preparing.split("\x1f")[0] as NonNullable<AssetCard["preparing"]>["step"], running: r.preparing.endsWith("running") } } : {}),
     ...(r.failed ? { failed: { step: r.failed.split("\x1f")[0] as NonNullable<AssetCard["failed"]>["step"], error: r.failed.split("\x1f")[1] ?? "" } } : {}),
   };

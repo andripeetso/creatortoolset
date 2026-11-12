@@ -499,6 +499,15 @@ async function processVersion(id: string, n: number): Promise<void> {
 const queued = new Set<string>();
 let chain = Promise.resolve();
 
+/** This account's videos being prepared, for Home (api/activity.ts). */
+export async function reviewWork(username: string) {
+  const metas = await Promise.all([...queued].map(async (key) => [key, await readMeta(key.split("/")[0]!)] as const));
+  return metas.flatMap(([key, m]) => {
+    const v = m?.owner === username ? m.versions.find((x) => `${m.id}/${x.n}` === key && x.status === "processing") : undefined;
+    return v ? [{ id: key, assetId: m!.id, name: m!.name, progress: v.progress }] : [];
+  });
+}
+
 function enqueue(id: string, n: number): void {
   const key = `${id}/${n}`;
   if (queued.has(key)) return;
@@ -1245,6 +1254,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
     { versionId: ver.versionId },
   );
   if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+  emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
   return c.json({ pieceId: out.pieceId });
 });
 
@@ -1274,6 +1284,7 @@ reviewApp.post("/assets/:id/v/:n/content", async (c) => {
     if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
     pieceId = out.pieceId;
   }
+  emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
   return c.json({ pieceId }, 201);
 });
 
@@ -1923,6 +1934,9 @@ async function openPath(user: string, m: Meta): Promise<string | null> {
   return p?.share?.enabled ? `/rp/${p.share.token}/${m.id}` : null;
 }
 
+/** A new version of a video, told to the people who commented on it: the page's upload says it, and so does a file added as the next version from the assistant's chat. */
+export const notifyNewVersion = (m: Meta, by: string, n: number): Promise<void> => notify(m, { name: by, user: by }, { kind: "version", text: `V${n}`, query: `?v=${n}` });
+
 /** Tell the owner and every signed-in person who commented on this video,
  *  except whoever did it. Never fails the request that triggered it. */
 async function notify(
@@ -2337,6 +2351,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       m.approval = { status, by, at: Date.now() };
     });
     if (!meta) return c.json({ error: "Not found" }, 404);
+    if (status === "approved") emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }

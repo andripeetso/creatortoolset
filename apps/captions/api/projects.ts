@@ -266,7 +266,10 @@ function probeAudioCodec(file: string): Promise<string> {
   });
 }
 
-/** Probe a video's pixel dimensions (0×0 when ffprobe fails). */
+/**
+ * Probe a video's size as it is shown (0×0 when ffprobe fails). A phone clip filmed upright is stored lying down
+ * with a quarter turn beside it: every player, the editing copy and a render show it turned, so that is its size.
+ */
 function probeDims(file: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
     const p = spawn(
@@ -277,9 +280,9 @@ function probeDims(file: string): Promise<{ width: number; height: number }> {
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height",
+        "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
         "-of",
-        "csv=p=0",
+        "default=noprint_wrappers=1",
         file,
         // a wedged file must never hang a project load — kill after 10s
       ],
@@ -288,8 +291,11 @@ function probeDims(file: string): Promise<{ width: number; height: number }> {
     let out = "";
     p.stdout.on("data", (d) => (out += d.toString()));
     p.on("close", () => {
-      const [w, h] = out.trim().split(",").map(Number);
-      resolve({ width: w || 0, height: h || 0 });
+      const n = (key: string) => Number(new RegExp(`^${key}=(-?[\\d.]+)`, "m").exec(out)?.[1]) || 0;
+      const [w, h] = [n("width"), n("height")];
+      // the turn is side data on today's ffprobe, a `rotate` tag on older ones
+      const turned = Math.abs(n("rotation") || n("TAG:rotate")) % 180 === 90;
+      resolve(turned ? { width: h, height: w } : { width: w, height: h });
     });
     p.on("error", () => resolve({ width: 0, height: 0 }));
   });
@@ -1446,6 +1452,7 @@ projectsApp.get("/:id", async (c) => {
     autoCadence: projData.autoCadence ?? null,
     script: projData.script ?? "",
     clips,
+    ...(captioning.has(id) ? { captioning: captioning.get(id) } : {}),
   });
 });
 
@@ -2455,6 +2462,8 @@ export async function createProjectFromFile(o: {
   file: string;
   duration: number;
   libraryVersionId?: string;
+  /** Answer once the project is on disk: its editing copy is built behind it (clipReadyToEdit waits for that). */
+  later?: boolean;
 }): Promise<{ projectId: string; clipId: string }> {
   const id = randomUUID();
   const clipId = randomUUID();
@@ -2483,9 +2492,15 @@ export async function createProjectFromFile(o: {
   await writeJson(clipDataPath(id, clipId), {});
   await linkOrCopy(o.file, clipOriginalPath(id, clipId));
   bumpUsage(o.owner, { projectsCreated: 1 });
-  await buildProxyFromOriginal(id, clipId);
+  // later: a build that fails is tried once more, and reported, by whoever waits for it
+  if (o.later) void buildProxyFromOriginal(id, clipId).catch(() => {});
+  else await buildProxyFromOriginal(id, clipId);
   return { projectId: id, clipId };
 }
+
+/** What the server itself is doing to a project right now (api/captions-job.ts), by project id: in memory only. */
+export type Captioning = "preparing" | "transcribing";
+export const captioning = new Map<string, Captioning>();
 
 /** Exists for this user with its editing proxy built (waits for a build). */
 export async function clipReadyToEdit(

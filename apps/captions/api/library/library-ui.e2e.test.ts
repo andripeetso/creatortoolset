@@ -61,7 +61,9 @@ beforeAll(async () => {
   await server.listen();
   base = server.resolvedUrls?.local?.[0] ?? `http://127.0.0.1:${server.config.server.port}/`;
 
-  const { startLibraryWorker } = await import("./worker");
+  // the worker runs in the server's own copy of the modules (boot.ts leaves it off under tests), as it does in the app:
+  // a copy of this test's own would tell nobody when a clip is ready, and the page reads the clip again only when told
+  const { startLibraryWorker } = (await server.ssrLoadModule("/api/library/worker.ts")) as typeof import("./worker");
   stopWorker = startLibraryWorker();
 
   const { chromium } = await import("playwright-chromium");
@@ -81,10 +83,11 @@ describe.skipIf(!enabled)("Media Library in the browser", () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => errors.push(e.message));
+    await page.addInitScript(() => localStorage.setItem("ct-setup-dismissed", "1")); // setup's Not now: its window would cover the page
     await page.goto(new URL("/library", base).toString());
 
-    await page.getByRole("heading", { name: "Media Library" }).waitFor({ timeout: 60_000 });
-    await page.getByText("Nothing here yet").waitFor();
+    // the empty library's first screen (the top bar's tool name sits inside its menu button, so it is not a heading)
+    await page.getByText("Where are your videos?").waitFor({ timeout: 60_000 });
 
     await page.locator('input[type="file"]').setInputFiles(fixture);
     const card = page.getByRole("button", { name: /Tiny Acrobatics clip/ });

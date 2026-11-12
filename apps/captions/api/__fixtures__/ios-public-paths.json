@@ -1,0 +1,21 @@
+[
+  { "id": "auth.check", "method": "GET", "path": "/api/auth/check", "probe": "list", "shape": { "type": "object", "keys": ["required", "authed", "user"] } },
+  { "id": "auth.login", "method": "POST", "path": "/api/auth/login", "probe": "route" },
+  { "id": "auth.link-make", "method": "POST", "path": "/api/auth/link", "probe": "route" },
+  { "id": "auth.link", "method": "GET", "path": "/api/auth/link/:code", "probe": "route" },
+  { "id": "auth.app", "method": "POST", "path": "/api/auth/app", "probe": "route" },
+  { "id": "auth.ticket", "method": "POST", "path": "/api/auth/ticket", "probe": "route" },
+  { "id": "library.list", "method": "GET", "path": "/api/library", "probe": "list", "shape": { "type": "object", "keys": ["libraries"] } },
+  { "id": "library.assets", "method": "GET", "path": "/api/library/:id/assets", "probe": "route" },
+  { "id": "library.collections", "method": "GET", "path": "/api/library/:id/collections", "probe": "route" },
+  { "id": "library.pieces", "method": "GET", "path": "/api/library/:id/pieces", "probe": "route" },
+  { "id": "library.media", "method": "GET", "path": "/api/library/media/:versionId/:kind", "probe": "route" },
+  { "id": "uploads.create", "method": "POST", "path": "/api/library/:id/uploads", "probe": "route" },
+  { "id": "uploads.offset", "method": "GET", "path": "/api/library/uploads/:uploadId", "probe": "route" },
+  { "id": "uploads.patch", "method": "PATCH", "path": "/api/library/uploads/:uploadId", "probe": "route" },
+  { "id": "uploads.finish", "method": "POST", "path": "/api/library/uploads/:uploadId/finish", "probe": "route" },
+  { "id": "workshop.sessions", "method": "GET", "path": "/api/workshop/sessions", "probe": "list", "shape": { "type": "array" } },
+  { "id": "workshop.session-docs", "method": "GET", "path": "/api/workshop/sessions/:id/docs", "probe": "route" },
+  { "id": "assistant.get", "method": "GET", "path": "/api/assistant", "probe": "list", "shape": { "type": "object", "keys": ["aiName", "messages"] } },
+  { "id": "assistant.turn", "method": "POST", "path": "/api/assistant/turn", "probe": "route" }
+]

@@ -9,7 +9,7 @@ import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
-import { editDir, gradeOf, readDraft, readStep, saveStep } from "./store";
+import { editDir, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -150,7 +150,7 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
 }
 
 /** Local files for a timeline's sources (a bucket library's are downloaded into the library's cache once). */
-async function localFiles(tl: Timeline): Promise<Record<string, string>> {
+export async function localFiles(tl: Timeline): Promise<Record<string, string>> {
   const q = libraryDb().prepare("SELECT source_key FROM asset_versions WHERE id = ?");
   const out: Record<string, string> = {};
   for (const id of Object.keys(tl.sources)) {
@@ -165,9 +165,11 @@ async function localFiles(tl: Timeline): Promise<Record<string, string>> {
 export async function previewStep({ edit, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
+  // a preview from an older run's copies would be filed in Review as this cut (faces unblurred, say)
+  if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = path.join(editDir(edit.id), "previews", `${variant}.mp4`);
   await mkdir(path.dirname(out), { recursive: true });
-  await renderPreview(d.timeline, await localFiles(d.timeline), out, signal, await gradeOf(edit.createdBy, edit.bundle));
+  await renderPreview(d.timeline, { ...(await localFiles(d.timeline)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
   if (signal.aborted) return;
   const v = { owner: edit.createdBy, name: `${edit.name} ${variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size };
   const place = (dest: string) => rename(out, dest);

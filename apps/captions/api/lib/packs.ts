@@ -8,6 +8,7 @@ import { findUser } from "../users";
 import { env } from "./env";
 import { packItemInstaller } from "./plugin";
 import type { Framework } from "./workshop/types";
+import type { ProviderOpts } from "../ai-complete";
 
 /**
  * Installed packs. Install copies a pack's frameworks and caption styles into the person's account with
@@ -240,6 +241,7 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       })(),
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
+      ...(pack.home ? { home: pack.home } : {}),
       items: { frameworks, presets, designSystems },
       ...(held ? { held } : {}),
       ...(prev?.default ? { default: true } : {}),
@@ -352,8 +354,29 @@ export function renderPackInstructions(packs: InstalledPack[], slot: PackSlot, p
   ].join("\n\n");
 }
 
-/** `renderPackInstructions` for a person, read from disk. */
-export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null): Promise<string> {
-  return renderPackInstructions(await listInstalled(username), slot, projectId);
+/** Whether an installed pack's text at a slot is the app's own shipped pack's, word for word (packs/*.ctpack.json). */
+export const isShippedText = (p: InstalledPack, slot: PackSlot): boolean =>
+  readOfficialPacks().some((o) => o.pack.id === p.id && o.pack.instructions?.[slot] === p.instructions[slot]);
+
+/**
+ * The AI programs whose tools stay off on the Mac for a job with no folder, no web and no assistant (apps/mac
+ * ClaudeRequest.swift): Claude (`--tools ""`), Codex (a read-only profile), Gemini (plan mode and a deny policy), Grok
+ * (its to-do list only), Muse Code (no tools) and OpenCode (acpRules). Cursor, Antigravity, Pi and a local ACP command
+ * keep their own tools there, which this app does not switch off.
+ */
+export const TOOLS_OFF_DRIVERS: ReadonlySet<string> = new Set(["claude", "codex", "gemini", "grok", "musecode", "opencode"]);
+
+/** Whether a job's AI has no tools: the API key or a local model, or a Mac program from the list above. */
+export const runsWithoutTools = (ai: ProviderOpts): boolean => !ai.mac?.provider || TOOLS_OFF_DRIVERS.has(ai.mac.provider.driver);
+
+/**
+ * `renderPackInstructions` for a person, read from disk. Every caller names the job's AI (`ai`), or says the run has
+ * tools (`tools`: the Workshop's turn on the Mac reads its folder and may search the web). A run with tools gets only the
+ * app's own shipped packs: text other people wrote never reaches an AI that can act on the person's computer.
+ */
+export async function packInstructions(username: string, slot: PackSlot, projectId: string | null | undefined, run: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
+  const packs = await listInstalled(username);
+  const shippedOnly = run.tools || !runsWithoutTools(run.ai);
+  return renderPackInstructions(shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);
 }
 

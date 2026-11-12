@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { LoginKind, SocialPlatform, SocialPost, SocialStats } from "../../../contracts/connectors";
+import type { LoginKind, SocialPlatform, SocialPost, SocialStats, SocialVideo } from "../../../contracts/connectors";
 import { apifyRun } from "../instagram/apify";
 import { nextAccountDaily } from "../instagram/account-insights";
 import { businessDiscoveryOn, fetchBusinessDiscovery, fetchMineAccountStats, fetchMineCatalog, fetchMineProfile, META_VERSION, withGraphCreds } from "../instagram/graph";
@@ -197,6 +197,8 @@ export interface Pulled {
   avatar?: string;
   /** A login's full report set, rows keyed by each report's dimension and metric names (YouTube). A report the platform withholds is absent. */
   reports?: Partial<Record<YtReportId, Rec[]>>;
+  /** Every video's analytics (YouTube), kept on the account. Absent when the videos report is withheld. */
+  videos?: SocialVideo[];
   /** The account's snapshot history with this pull's day added (TikTok). Replaces the stored history as a whole. */
   snapshots?: VideoSnapshot[];
   /** The account's daily insights with this pull's days added (Instagram login). Replaces the stored history as a whole. */
@@ -277,7 +279,12 @@ export interface YtReport {
   sort: string;
   /** Row limit for a ranked report (the API takes up to 200). */
   maxResults?: number;
+  /** Rows wanted in all: a ranked report past `maxResults` is paged with startIndex up to this. */
+  cap?: number;
 }
+
+/** Where the channel's videos report starts: before any channel could have a video, so it covers the whole channel. */
+const YT_LIFETIME_START = "2005-01-01";
 
 /**
  * The channel's own report set (`ids=channel==MINE`). Each one is a combination the Analytics API takes for channel
@@ -286,7 +293,8 @@ export interface YtReport {
  */
 export const YT_REPORTS = {
   day: { dimensions: ["day"], metrics: ["views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost", "likes", "dislikes", "comments", "shares", "averageViewDuration", "averageViewPercentage"], sort: "day" },
-  videos: { dimensions: ["video"], metrics: ["views", "estimatedMinutesWatched", "averageViewDuration", "averageViewPercentage", "likes", "comments", "shares", "subscribersGained"], sort: "-views", maxResults: 25 },
+  // every video, Shorts and long videos told apart by creatorContentType (paged 200 at a time, up to 500 videos)
+  videos: { dimensions: ["video", "creatorContentType"], metrics: ["views", "estimatedMinutesWatched", "averageViewDuration", "averageViewPercentage", "likes", "comments", "shares", "subscribersGained"], sort: "-views", maxResults: 200, cap: 500 },
   traffic: { dimensions: ["insightTrafficSourceType"], metrics: ["views", "estimatedMinutesWatched"], sort: "-views", maxResults: 25 },
   countries: { dimensions: ["country"], metrics: ["views", "estimatedMinutesWatched", "averageViewDuration", "subscribersGained"], sort: "-views", maxResults: 25 },
   devices: { dimensions: ["deviceType"], metrics: ["views", "estimatedMinutesWatched"], sort: "-views", maxResults: 25 },
@@ -295,8 +303,11 @@ export const YT_REPORTS = {
 } satisfies Record<string, YtReport>;
 export type YtReportId = keyof typeof YT_REPORTS;
 
-/** The query for one report over [start, end] (YYYY-MM-DD). */
-export function ytReportParams(r: YtReport, start: string, end: string): URLSearchParams {
+/** One video's audience retention at each point of its length. Asked one video at a time (the `video` filter). */
+export const YT_RETENTION: YtReport = { dimensions: ["elapsedVideoTimeRatio"], metrics: ["audienceWatchRatio", "relativeRetentionPerformance"], sort: "elapsedVideoTimeRatio" };
+
+/** The query for one report over [start, end] (YYYY-MM-DD). `from` is the 1-based startIndex, `video` one video's id. */
+export function ytReportParams(r: YtReport, start: string, end: string, o: { from?: number; video?: string } = {}): URLSearchParams {
   return new URLSearchParams({
     ids: "channel==MINE",
     startDate: start,
@@ -305,6 +316,8 @@ export function ytReportParams(r: YtReport, start: string, end: string): URLSear
     metrics: r.metrics.join(","),
     sort: r.sort,
     ...(r.maxResults ? { maxResults: String(r.maxResults) } : {}),
+    ...(o.from && o.from > 1 ? { startIndex: String(o.from) } : {}),
+    ...(o.video ? { filters: `video==${o.video}` } : {}),
   });
 }
 
@@ -312,6 +325,21 @@ export function ytReportParams(r: YtReport, start: string, end: string): URLSear
 function ytRows(r: YtReport, rep: Rec): Rec[] {
   const cols = [...r.dimensions, ...r.metrics];
   return (Array.isArray(rep.rows) ? rep.rows : []).filter(Array.isArray).map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+}
+
+/** Every row of a report: a ranked one is paged `maxResults` at a time until `cap` rows or a short page. Undefined when the first page is withheld. */
+async function ytAllRows(r: YtReport, start: string, end: string, h: RequestInit): Promise<Rec[] | undefined> {
+  const size = r.maxResults ?? 0;
+  const all: unknown[] = [];
+  for (let from = 1; ; from += size) {
+    // a later page that fails keeps the rows before it
+    const rep = await getJson(`https://youtubeanalytics.googleapis.com/v2/reports?${ytReportParams(r, start, end, { from })}`, h).catch(() => null);
+    if (!rep) return from === 1 ? undefined : ytRows(r, { rows: all.slice(0, r.cap ?? all.length) });
+    const page = Array.isArray(rep.rows) ? rep.rows : [];
+    all.push(...page);
+    if (!size || page.length < size || all.length >= (r.cap ?? size)) break;
+  }
+  return ytRows(r, { rows: all.slice(0, r.cap ?? all.length) });
 }
 
 /** YouTube Data API calls: with the channel owner's sign-in (Bearer), or with an API key for public channels. */
@@ -361,12 +389,25 @@ async function pullYoutube(a: StoredAccount): Promise<Pulled> {
   // each report on its own: one the channel can't run is left out (absent, not zero) and the others still come
   await Promise.all(
     (Object.keys(YT_REPORTS) as YtReportId[]).map(async (id) => {
-      const rep = await getJson(`https://youtubeanalytics.googleapis.com/v2/reports?${ytReportParams(YT_REPORTS[id], start, end)}`, h).catch(() => null);
-      if (rep) reports[id] = ytRows(YT_REPORTS[id], rep);
+      const rows = await ytAllRows(YT_REPORTS[id], id === "videos" ? YT_LIFETIME_START : start, end, h);
+      if (rows) reports[id] = rows;
     }),
   );
   const days = (reports.day ?? []).map((r) => ({ day: str(r.day), views: num(r.views), watchMinutes: num(r.estimatedMinutesWatched), followersGained: num(r.subscribersGained) }));
-  return { stats: { followers: num(st.subscriberCount), views: num(st.viewCount), posts: num(st.videoCount), days }, posts, reports };
+  const videos: SocialVideo[] | undefined = reports.videos
+    ?.map((r) => ({ id: str(r.video), kind: str(r.creatorContentType), views: num(r.views), watchMinutes: num(r.estimatedMinutesWatched), averageViewSeconds: num(r.averageViewDuration), averageViewPercent: num(r.averageViewPercentage), likes: num(r.likes), comments: num(r.comments), shares: num(r.shares), subscribersGained: num(r.subscribersGained) }))
+    .filter((v) => v.id);
+  // retention for the newest uploads (the channel's upload list is newest first): one call per video, a withheld one has none
+  if (videos) {
+    await Promise.all(
+      posts.filter((p) => p.id).slice(0, 10).map(async (p) => {
+        const v = videos.find((x) => x.id === p.id);
+        const rep = v ? await getJson(`https://youtubeanalytics.googleapis.com/v2/reports?${ytReportParams(YT_RETENTION, isoDay(p.at), end, { video: p.id })}`, h).catch(() => null) : null;
+        if (v && rep) v.retention = ytRows(YT_RETENTION, rep).map((r) => ({ elapsed: num(r.elapsedVideoTimeRatio) ?? 0, watch: num(r.audienceWatchRatio), relative: num(r.relativeRetentionPerformance) }));
+      }),
+    );
+  }
+  return { stats: { followers: num(st.subscriberCount), views: num(st.viewCount), posts: num(st.videoCount), days }, posts, reports, videos };
 }
 
 async function pullTiktok(a: StoredAccount): Promise<Pulled> {

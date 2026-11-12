@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -113,6 +113,19 @@ describe("library uploads", () => {
     expect(count()).toBe(before);
   });
 
+  it("downloads the original under its own name, letters like õ included; the picture to play has no name", async () => {
+    const data = clip(1200, 9);
+    const up = await read(create("owner-a", data.length, { filename: "Õhtune hüpe.MOV" }));
+    expect((await patch("owner-a", up.id, 0, data, data.length)).status).toBe(204);
+    const { versionId } = await read(finish("owner-a", up.id));
+    const source = await app.request(`/api/library/media/${versionId}/source`, { headers: who("owner-a") });
+    expect(source.status).toBe(200);
+    expect(source.headers.get("content-disposition")).toBe(`attachment; filename="_htune h_pe.mov"; filename*=UTF-8''%C3%95htune%20h%C3%BCpe.mov`);
+    expect(Buffer.from(await source.arrayBuffer()).equals(data)).toBe(true);
+    const play = await app.request(`/api/library/media/${versionId}/play`, { headers: who("owner-a") });
+    expect(play.headers.get("content-disposition")).toBeNull();
+  });
+
   it("refuses to start an upload when it would leave less than the disk reserve free", async () => {
     process.env.LIBRARY_DISK_RESERVE_GB = "1000000000";
     try {
@@ -134,6 +147,26 @@ describe("library uploads", () => {
       expect((await create("owner-a", GB)).status).toBe(507);
     } finally {
       delete process.env.LIBRARY_DISK_RESERVE_GB;
+    }
+  });
+
+  it("says the real numbers when a file is larger than this server takes, and has no such limit on the person's own computer", async () => {
+    const GB = 1024 ** 3;
+    process.env.LIBRARY_MAX_UPLOAD_GB = "8";
+    process.env.LIBRARY_WATCH_FOLDERS = "0"; // a hosted server, or another account on that computer
+    try {
+      const res = await create("owner-a", Math.round(12.4 * GB));
+      expect(res.status).toBe(413);
+      expect(await read(res)).toEqual({ error: "This file is 12.4 GB. This server takes files up to 8 GB. Export a smaller copy and upload that.", code: "too_large" });
+      process.env.LIBRARY_MAX_UPLOAD_GB = "0.000001"; // about 1 KB, so a small file is over it
+      expect((await create("owner-a", 5000)).status).toBe(413);
+      process.env.LIBRARY_WATCH_FOLDERS = "1"; // a server its operator opened to folders is still a server: the limit stays
+      expect((await create("owner-a", 5000)).status).toBe(413);
+      delete process.env.LIBRARY_WATCH_FOLDERS; // the person's own computer (a local server, as these tests run): only the disk counts
+      expect((await create("owner-a", 5000)).status).toBe(201);
+    } finally {
+      delete process.env.LIBRARY_MAX_UPLOAD_GB;
+      delete process.env.LIBRARY_WATCH_FOLDERS;
     }
   });
 
@@ -186,6 +219,98 @@ describe("library: uploading into a folder", () => {
     expect(await read(finish("owner-a", init.id))).toMatchObject({ assetId: expect.any(String) });
     expect(items("col_gone")).toEqual([]);
     expect((await create("owner-a", 800, { collectionId: "col_smart" })).status).toBe(409);
+  });
+
+  it("takes an upload into the A-roll folder (the AI Editor's footage) and files it as A-roll", async () => {
+    libraryDb().prepare(`INSERT INTO collections (id, library_id, name, kind, query, created_at, created_by) VALUES ('col_aroll', 'lib_a', 'A-roll', 'smart', '{"roll":"a"}', 0, 'owner-a')`).run();
+    const { assetId } = await upload("col_aroll", 13);
+    expect(libraryDb().prepare("SELECT roll, filed_roll FROM assets WHERE id = ?").get(assetId)).toEqual({ roll: "a", filed_roll: "a" });
+  });
+});
+
+describe("library: a file added where it is (picked in the Mac app on its own server)", () => {
+  // its real path, outside the data folder: macOS hands out /var/folders under /private
+  const footage = realpathSync(mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-in-place-")));
+  const add = (body: Record<string, unknown>) =>
+    app.request("/api/library/lib_a/in-place", { method: "POST", headers: { ...who("owner-a"), "content-type": "application/json" }, body: JSON.stringify(body) });
+  const version = (id: string) =>
+    libraryDb().prepare("SELECT source_path, source_key, state FROM asset_versions WHERE id = ?").get(id) as { source_path: string; source_key: string; state: string };
+  const file = path.join(footage, "Tiny Acrobatics C0001.MP4");
+
+  beforeAll(() => {
+    process.env.LIBRARY_WATCH_FOLDERS = "1";
+    writeFileSync(file, clip(5000, 30));
+  });
+  afterAll(() => {
+    delete process.env.LIBRARY_WATCH_FOLDERS;
+    rmSync(footage, { recursive: true, force: true });
+  });
+
+  it("links it under its key instead of copying it, and the same file again is already in", async () => {
+    const r = await add({ path: file, size: 5000, collectionId: "col_folder" });
+    expect(r.status).toBe(200);
+    const { assetId, versionId } = (await read(r)) as { assetId: string; versionId: string };
+    const v = version(versionId);
+    expect(v.source_path).toBe(file);
+    expect(lstatSync(path.join(dir, "library", "blobs", v.source_key)).isSymbolicLink()).toBe(true);
+    expect(libraryDb().prepare("SELECT 1 FROM collection_items WHERE collection_id = 'col_folder' AND asset_id = ?").get(assetId)).toBeTruthy();
+    // its download is the file's own name
+    const got = await app.request(`/api/library/media/${versionId}/source`, { headers: who("owner-a") });
+    expect(got.headers.get("content-disposition")).toContain(`filename="${path.basename(file)}"`);
+    // picked again: no second asset; the page's second ask for a file still being read gets it as added
+    expect(await read(add({ path: file, size: 5000 }))).toEqual({ duplicateOf: assetId });
+    expect(await read(add({ path: file, size: 5000, again: true }))).toEqual({ assetId, versionId });
+    // the same bytes in another file are a duplicate too
+    writeFileSync(path.join(footage, "copy.mp4"), clip(5000, 30));
+    expect(await read(add({ path: path.join(footage, "copy.mp4"), size: 5000 }))).toEqual({ duplicateOf: assetId });
+  });
+
+  it("refuses what an upload must do instead (the page then uploads), and a hosted server", async () => {
+    writeFileSync(path.join(footage, "notes.txt"), "a script");
+    mkdirSync(path.join(dir, "inside"), { recursive: true });
+    writeFileSync(path.join(dir, "inside", "own.mp4"), clip(100, 31));
+    writeFileSync(path.join(footage, "kept out.mp4"), clip(100, 33));
+    chmodSync(path.join(footage, "kept out.mp4"), 0); // as macOS keeps a server out of Desktop or Downloads
+    for (const body of [
+      { path: "C0001.MP4", size: 5000 }, // not a full path
+      { path: path.join(footage, "nope.mp4"), size: 1 },
+      { path: footage, size: 1 }, // a folder
+      { path: file, size: 4999 }, // changed since it was picked
+      { path: path.join(footage, "notes.txt"), size: 8 },
+      { path: path.join(dir, "inside", "own.mp4"), size: 100 }, // the app's own data
+      { path: path.join(footage, "kept out.mp4"), size: 100 }, // this server may not read it
+    ]) {
+      const r = await add(body);
+      expect(r.status, JSON.stringify(body)).toBe(400);
+      expect(await read(r)).toMatchObject({ code: "invalid" });
+    }
+    expect((await add({ path: file, size: 5000, collectionId: "col_smart" })).status).toBe(404);
+    expect((await app.request("/api/library/lib_a/in-place", { method: "POST", headers: { ...who("stranger"), "content-type": "application/json" }, body: "{}" })).status).toBe(404);
+    process.env.LIBRARY_WATCH_FOLDERS = "0";
+    try {
+      expect((await add({ path: file, size: 5000 })).status).toBe(403);
+    } finally {
+      process.env.LIBRARY_WATCH_FOLDERS = "1";
+    }
+  });
+
+  it("turns missing while its drive is away, deletes nothing, comes back with it, and says when it is in the trash", async () => {
+    const { scanWatchFolders } = await import("./watch");
+    const moved = path.join(footage, "Away.MP4");
+    writeFileSync(moved, clip(3000, 32));
+    const { assetId, versionId } = (await read(add({ path: moved, size: 3000 }))) as { assetId: string; versionId: string };
+    renameSync(moved, `${moved}.away`);
+    await scanWatchFolders(); // no watch folder at all: the in-place file is still looked after
+    expect(version(versionId).state).toBe("missing");
+    expect(libraryDb().prepare("SELECT 1 FROM assets WHERE id = ? AND trashed_at IS NULL").get(assetId)).toBeTruthy();
+    renameSync(`${moved}.away`, moved);
+    await scanWatchFolders();
+    expect(version(versionId).state).not.toBe("missing");
+
+    libraryDb().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(Date.now(), assetId);
+    const r = await add({ path: moved, size: 3000 });
+    expect(r.status).toBe(409);
+    expect(await read(r)).toMatchObject({ error: expect.stringMatching(/trash/) });
   });
 });
 

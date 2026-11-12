@@ -10,6 +10,7 @@ const ffmpegFiles = [
   "api/assistant.test.ts",
   "api/editor/analyze.test.ts",
   "api/editor/editor-ui.e2e.test.ts",
+  "api/editor/finished-finals.test.ts",
   "api/editor/grade.test.ts",
   "api/editor/preview.test.ts",
   "api/editor/sync.test.ts",
@@ -23,10 +24,17 @@ const ffmpegFiles = [
   "api/library/shares.test.ts",
   "api/library/similar.test.ts",
   "api/library/transcribe.test.ts",
+  "api/mcp-tools/notes.test.ts",
+  "api/mcp-tools/captions.test.ts",
+  "api/mcp-tools/captions-export.test.ts",
   "api/projects-handover.test.ts",
   "api/review-library.test.ts",
   "api/review.test.ts",
   "scripts/plugin-build.test.mjs",
+  "editor-steps/colour/plugin.test.ts",
+  "editor-steps/face-blur/plugin.test.ts",
+  "editor-steps/face-refine/plugin.test.ts",
+  "editor-steps/voice/plugin.test.ts",
 ];
 
 const include = [
@@ -36,6 +44,7 @@ const include = [
   "src/**/*.test.ts",
   "src/**/*.test.tsx",
   "scripts/**/*.test.mjs",
+  "editor-steps/**/*.test.ts",
 ];
 
 export default defineConfig({

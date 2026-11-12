@@ -10,7 +10,7 @@ import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, homeOf, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
-import { enqueueJob, takingClips } from "./jobs";
+import { enqueueJob, folderWalks, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
 import { findUser } from "../users";
 
@@ -210,7 +210,7 @@ function serial<T>(libraryId: string, job: () => Promise<T>): Promise<T> {
  * A file into the library once: one already taken at this size and mtime gives its version again (null when it was
  * never taken), anything else is ingested and remembered in `watch_seen`. `fresh` = whether it was ingested now.
  */
-function takeFile(libraryId: string, f: WatchFolder, file: string, size: number, mtime: number): Promise<{ versionId: string | null; fresh: boolean }> {
+export function takeFile(libraryId: string, f: WatchFolder, file: string, size: number, mtime: number): Promise<{ versionId: string | null; fresh: boolean }> {
   return serial(libraryId, async () => {
     const seen = db().prepare("SELECT size, mtime, version_id FROM watch_seen WHERE library_id = ? AND path = ?").get(libraryId, file) as
       | { size: number; mtime: number; version_id: string | null }
@@ -349,7 +349,7 @@ export async function removeWatchFolder(username: string, folderPath: string): P
 const pending = new Map<string, { size: number; mtime: number; since: number }>();
 // what the last walk of each folder found, by library and folder path: its media files, and how many are still to be
 // taken (the status reads it; a walk per status read would be a walk per file taken). In memory: a restart walks again.
-const walked = new Map<string, { files: number; adding: number }>();
+const walked = folderWalks;
 // files that failed to come in: tried again, but not counted as still to come (the count would never reach zero)
 const stuck = new Set<string>();
 /** The wait before a file is taken: short when it was already old the first time it was seen (or seen changed). */

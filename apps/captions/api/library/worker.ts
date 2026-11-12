@@ -5,12 +5,12 @@ import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { describeSlot, describeVersion } from "./describe";
-import { embedVersion } from "./embed";
+import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
-import { keyFor } from "../my-keys";
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
+import { ModelNotReady } from "../lib/device-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
@@ -18,7 +18,8 @@ import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
-import { NeedsKey, transcribeVersion } from "./transcribe";
+import { NeedsKey, transcribeRoute, transcribeVersion } from "./transcribe";
+import { sortAfter, sortUnsorted } from "./roll";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -29,7 +30,7 @@ import { NeedsKey, transcribeVersion } from "./transcribe";
  * The order is what a person sees (nextJob): every clip in, a picture for each, then the slow steps. A lane takes its
  * kinds in the order LANES lists them (all lighter copies before the duplicate checks), oldest first within a kind; a
  * library's slow steps wait while one of its pictures can run or its watch folders are handing clips over; a clip the
- * person opened (prepareFirst) goes before the others.
+ * person opened (prepareFirst) goes before the others, its picture among the pictures and its slow steps after them.
  */
 
 const IDLE_MS = 2000;
@@ -71,6 +72,10 @@ function waitFor(e: unknown): number {
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
 
+const MODEL_RETRY_S = 60;
+/** What the clip says while its transcript waits for the speech model (shown in its panel). */
+export const MODEL_WAITS = "The speech model's download stopped: it tries again in a minute.";
+
 /** How a description held for the plan's limit is known (limitLine's words, contracts/plans.ts). */
 export const LIMIT_LIKE = "%limit is reached%";
 
@@ -102,14 +107,16 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
       .all(...PICTURES, now) as { library_id: string }[]).map((r) => r.library_id),
   ];
   const first = firstClips();
+  // an opened clip's own picture goes before the other pictures, and its slow steps (a 4K proxy takes as long as many
+  // pictures) before the other slow steps: never before another clip's picture
   const row = db
     .prepare(
       `SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(kinds)})
-         AND (kind IN (${marks(PICTURES)}) OR version_id IN (${marks(first)}) OR library_id NOT IN (${marks(held)}))
+         AND (kind IN (${marks(PICTURES)}) OR library_id NOT IN (${marks(held)}))
          AND NOT (kind = 'describe' AND EXISTS (SELECT 1 FROM jobs t WHERE t.version_id = j.version_id AND t.kind = 'transcribe' AND t.state IN ('queued', 'running')))
-       ORDER BY version_id IN (${marks(first)}) DESC, CASE kind ${kinds.map((_, i) => `WHEN ? THEN ${i}`).join(" ")} END, id LIMIT 1`,
+       ORDER BY kind IN (${marks(PICTURES)}) DESC, version_id IN (${marks(first)}) DESC, CASE kind ${kinds.map((_, i) => `WHEN ? THEN ${i}`).join(" ")} END, id LIMIT 1`,
     )
-    .get(now, ...kinds, ...PICTURES, ...first, ...held, ...first, ...kinds) as { id: number } | undefined;
+    .get(now, ...kinds, ...PICTURES, ...held, ...PICTURES, ...first, ...kinds) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
@@ -118,13 +125,32 @@ export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | n
   db.prepare("UPDATE jobs SET error = NULL WHERE kind = 'describe' AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
 }
 
+// this computer's transcripts and search entries run one at a time (lib/device-transcribe.ts, lib/device-embed.ts: the
+// one line every ffmpeg runs in): the next is claimed when the one before ends, so a clip is "running" (its card and the
+// step line say Transcribing, Adding to search) only while it really is
+// ponytail: one such job first in its lane holds back a key's job behind it (another account's)
+let onDevice = 0;
+const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
+  const j = db.prepare("SELECT kind, actor FROM jobs WHERE id = ?").get(id) as { kind: string; actor: string | null };
+  try {
+    if (j.kind === "transcribe") return transcribeRoute(j.actor).provider === "device";
+    if (j.kind === "embed") return "device" in embedRoute(j.actor);
+  } catch {
+    // no route: it parks as needs_key when it runs
+  }
+  return false;
+};
+
 /** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
 export async function tick(now = Date.now(), kinds: readonly string[] = LANES.flatMap((l) => l.kinds)): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now);
   const id = nextJob(db, now, kinds);
+  const device = id !== null && onThisComputer(db, id);
+  if (device && onDevice > 0) return false;
   const job = id === null ? null : claimJob(db, LEASE_S, now, "jobs", kinds, id);
   if (!job) return false;
+  if (device) onDevice++;
   // on a connected AI, two descriptions at a time: the others wait in the queue (describe.ts describeSlot)
   const release = job.kind === "describe" ? describeSlot(job.actor) : () => {};
   if (!release) {
@@ -147,18 +173,23 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     }
     // a description that met the plan's usage limit, a rate limit or a Mac that is off waits for it, never fails: a
     // big drop would otherwise end in hundreds of failed cards
-    const wait = job.kind === "describe" ? waitFor(e) : 0;
+    // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
+    // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
+    const wait = job.kind === "describe" ? waitFor(e) : e instanceof ModelNotReady ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
+      if (e instanceof ModelNotReady) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(MODEL_WAITS, job.id);
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
     if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   } finally {
+    if (device) onDevice--;
     clearInterval(beat);
     release();
+    sortAfter(job); // A-roll or B-roll, again with what this job added (roll.ts)
     libraryChanged(job.library_id); // a picture, a transcript or the card's state: the open pages refetch
   }
   return true;
@@ -167,6 +198,8 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
 /** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
+  const stopCatchUp = startEmbedCatchUp();
+  void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {
@@ -182,6 +215,7 @@ export function startLibraryWorker(): () => void {
     }
   return () => {
     stopped = true;
+    stopCatchUp();
   };
 }
 
@@ -220,7 +254,7 @@ async function run(job: JobRow): Promise<void> {
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
-    if (needsProxy(p)) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    if (needsProxy(p) && librarySetting(v.library_id, "proxy")) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // after transcribe in the queue, so the description reads what is said
@@ -244,8 +278,8 @@ async function run(job: JobRow): Promise<void> {
     // frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
     else await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
-    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a key for it
-    if (librarySetting(v.library_id, "embed") && !keyFor(job.actor, "OPENAI_API_KEY").missing) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a route for it
+    if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
   } else if (job.kind === "fingerprint") {
     // the lighter copy's frames hash as the original's do (within 6 bits of the 10 a match allows, fingerprint.test.ts)
     // and decode many times faster: 0.3 to 2 s a 4K clip, where its original took 1.4 to 91 s

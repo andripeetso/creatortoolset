@@ -47,6 +47,9 @@ final class AccountTests: XCTestCase {
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://account?code=")!))
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://review/abc?code=abc123")!))
         XCTAssertNil(accountCode(from: URL(string: "https://accounts.example.com/account?code=abc123")!))
+        XCTAssertTrue(isConnectDone(URL(string: "creatortoolset://connect")!))
+        XCTAssertFalse(isConnectDone(URL(string: "creatortoolset://review/connect")!))
+        XCTAssertFalse(isConnectDone(URL(string: "https://creatortoolset.com/connect")!))
     }
 
     func testAccountServerSetting() {
@@ -169,8 +172,31 @@ final class AccountTests: XCTestCase {
         XCTAssertEqual(none, [])
     }
 
+    /// Signed out on the default account server: the answer comes from the app's own list of proven sign-ins, with no
+    /// call to that server (a call there would hang or fail in this test: nothing answers a request here). An empty list
+    /// means no sign-in is offered, which setup reads as "no account screen".
+    @MainActor func testASignedOutStatusAsksTheDefaultAccountServerNothing() async {
+        XCTAssertTrue(Set(accountLive).isSubset(of: Set(accountProviders)))
+        let account = Account()
+        guard account.server?.absoluteString == defaultAccountServer.absoluteString, account.profile == nil else { return }   // this Mac's own setting, or a kept sign-in
+        let started = Date()
+        let reply = await account.status()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+        if accountLive.isEmpty {
+            XCTAssertEqual(reply["state"], "notSetUp")
+        } else {
+            XCTAssertEqual(reply, ["state": "signedOut", "providers": accountLive.joined(separator: ",")])
+        }
+        // signing out with nothing signed in is the same answer, and still no call
+        let out = await account.signOut()
+        XCTAssertEqual(out, reply)
+    }
+
     func testAccountMessagesOnlyFromTheWindowsOwnPage() {
         XCTAssertEqual(accountAsk("status", mainFrame: true), "status")
+        XCTAssertEqual(accountAsk("signout", mainFrame: true), "signout")
+        XCTAssertEqual(accountAsk("offered", mainFrame: true), "offered")
+        XCTAssertNil(accountAsk("signout", mainFrame: false))
         XCTAssertEqual(accountAsk("google", mainFrame: true), "google")
         XCTAssertEqual(accountAsk("github", mainFrame: true), "github")
         XCTAssertNil(accountAsk("microsoft", mainFrame: true))   // not a provider here
@@ -191,6 +217,39 @@ final class AccountTests: XCTestCase {
             _ = try await client.me("tok-1")
             XCTFail("401 should fail")
         } catch {
+            XCTAssertEqual(error as? AccountError, .signedOut)
+        }
+    }
+
+    func testAPackIsReadByTheAppForItsAlert() throws {
+        let text = #"{"format":1,"id":"tiny","name":"  Tiny Home ","captionStyles":[{"name":"a"},{"name":"b"}],"instructions":{"captions.lines":"x"},"home":{"hidden":[]}}"#
+        let pack = try XCTUnwrap(packToPublish(text))
+        XCTAssertEqual(pack.name, "Tiny Home")
+        XCTAssertEqual(pack.holds, "1 instruction, 2 caption styles, a Home layout")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: pack.body) as? [String: Any])
+        XCTAssertEqual(body["rights"] as? Bool, true)
+        XCTAssertEqual((body["pack"] as? [String: Any])?["id"] as? String, "tiny")
+        // not a pack: nothing to publish
+        XCTAssertEqual(packToPublish("{\"name\":\"Two\\nlines\\u0007\"}")?.name, "Two lines")
+        XCTAssertNil(packToPublish("[1,2]"))
+        XCTAssertNil(packToPublish(#"{"id":"no-name"}"#))
+        XCTAssertNil(packToPublish(#"{"name":"big","x":"\#(String(repeating: "a", count: 600_000))"}"#))
+        let words = publishAlertText(name: "Tiny Home", holds: "a Home layout", host: "creatortoolset.com", who: "zoe@example.com")
+        XCTAssertEqual(words.message, "Publish “Tiny Home” to Community?")
+        XCTAssertEqual(words.detail, "It goes to creatortoolset.com for review, from your account zoe@example.com. It holds: a Home layout.")
+    }
+
+    func testSubmitSendsTheTokenAndSaysWhatTheCatalogSaid() async throws {
+        let body = try XCTUnwrap(packToPublish(#"{"name":"Tiny"}"#)).body
+        StubServer.routes["/api/pack-catalog/submit"] = (201, #"{"status":"pending"}"#)
+        try await client.submit(body, token: "cta_x")
+        XCTAssertEqual(StubServer.seen.last?.value(forHTTPHeaderField: "Authorization"), "Bearer cta_x")
+        StubServer.routes["/api/pack-catalog/submit"] = (429, #"{"error":"You have 5 packs waiting for review.","problems":[]}"#)
+        do { try await client.submit(body, token: "cta_x"); XCTFail("refused") } catch {
+            XCTAssertEqual(error as? AccountError, .refused("You have 5 packs waiting for review."))
+        }
+        StubServer.routes["/api/pack-catalog/submit"] = (401, #"{"error":"Sign in to publish packs"}"#)
+        do { try await client.submit(body, token: "cta_x"); XCTFail("signed out") } catch {
             XCTAssertEqual(error as? AccountError, .signedOut)
         }
     }

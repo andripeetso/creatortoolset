@@ -1,3 +1,5 @@
+// first, so its ⌘Z listener is ahead of every page's own (lib/undo.ts)
+import "@/lib/undo";
 import { CornerNav } from "@/components/CornerNav";
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, type Location } from "react-router";
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from "react";

@@ -15,10 +15,21 @@ let defaultAccountServer = URL(string: "https://creatortoolset.com")!
 /// no keys for is not offered (its sign-in page answers 404 or 501), so its button is not shown.
 let accountProviders = ["apple", "google", "github"]
 
+/// The sign-ins the default account server offers, in the order setup's last screen shows them. A fixed list, so a
+/// signed-out person's status asks that server nothing and the app makes no call there before a press. A provider is
+/// listed only once the server has its keys (Google and Apple since 2026-11-11). Empty = no account screen in setup.
+let accountLive = ["google", "apple"]
+
 /// The account server from This Mac → Account: never set = defaultAccountServer; "" = none (forks, own servers).
 func accountServerURL(_ saved: String?) -> URL? {
     guard let saved else { return defaultAccountServer }
     return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
+}
+
+/// creatortoolset://connect: the site's "Added" page handing back to the app. It only brings the window forward (the
+/// wait in Shell.connectThisComputer sees the link within seconds); never loaded as a page.
+func isConnectDone(_ url: URL) -> Bool {
+    url.scheme?.lowercased() == "creatortoolset" && url.host?.lowercased() == "connect"
 }
 
 /// The one-time code from creatortoolset://account?code=…, or nil for any other link.
@@ -76,6 +87,8 @@ enum AccountError: LocalizedError, Equatable {
     case codeRejected(String)
     case signedOut
     case status(Int)
+    /// The catalog said no to a pack (publish): its own words.
+    case refused(String)
 
     var errorDescription: String? {
         switch self {
@@ -83,6 +96,7 @@ enum AccountError: LocalizedError, Equatable {
         case .codeRejected(let why): return "That sign-in didn't go through (\(why)). Sign in again."
         case .signedOut: return "Signed out. Sign in again."
         case .status(let code): return "The account server answered \(code)."
+        case .refused(let why): return why
         }
     }
 }
@@ -145,6 +159,18 @@ struct AccountClient {
         return reply.token
     }
 
+    /// POST a pack to the community catalog on this account server, as the account the token signs in as (`body` is
+    /// {pack, rights}). It waits there for an admin's review. 401 = signed out; any other no is the catalog's own words.
+    func submit(_ body: Data, token: String) async throws {
+        var request = URLRequest(url: URL(string: "/api/pack-catalog/submit", relativeTo: server)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body
+        struct Reply: Decodable { let status: String }
+        let _: Reply = try await send(request)
+    }
+
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         var request = request
         request.timeoutInterval = 15
@@ -153,7 +179,9 @@ struct AccountClient {
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch code {
         case 200..<300: return try JSONDecoder().decode(T.self, from: data)
-        case 401 where request.url?.path == "/api/account/me": throw AccountError.signedOut
+        case 401 where request.url?.path == "/api/account/me" || request.url?.path == "/api/pack-catalog/submit": throw AccountError.signedOut
+        case 400..<500 where request.url?.path == "/api/pack-catalog/submit":
+            throw AccountError.refused((try? JSONDecoder().decode([String: AnyText].self, from: data))?["error"]?.text ?? "The catalog answered \(code).")
         // "not set up" is only the sign-in page's answer (isSetUp): past it, a 404 is a code the server doesn't know
         case 400..<500:
             let why = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
@@ -163,17 +191,59 @@ struct AccountClient {
     }
 }
 
+/// One value of a JSON object read as text when it is text (the catalog's error replies carry lists beside the words).
+struct AnyText: Decodable {
+    let text: String?
+    init(from decoder: Decoder) throws { text = try? decoder.singleValueContainer().decode(String.self) }
+}
+
 /// Keeps a probe from following the server's redirect to Apple or Google.
 private final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? { nil }
 }
 
-/// The page's account message: "status", "apple", "google" or "github", and only from the window's own page, never from a
-/// frame inside it (an embed would read the name and email, or open a sign-in).
+/// The page's account message: "status" or "offered" (the same question; setup's account screen and Settings ask
+/// "offered", which an app from before 2026-11-10 answers "off" without asking its server which sign-ins exist),
+/// "signout", "apple", "google" or "github", and only from the window's own page, never from a frame inside it (an
+/// embed would read the name and email, open a sign-in or sign the person out).
 func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
-    guard mainFrame, let ask = body as? String, ["status"].contains(ask) || accountProviders.contains(ask) else { return nil }
+    guard mainFrame, let ask = body as? String, ["status", "offered", "signout"].contains(ask) || accountProviders.contains(ask) else { return nil }
     return ask
+}
+
+// MARK: publishing a pack to Community
+
+/// A pack the page asks to publish (PublishDialog.tsx, the "publishPack" message), read by this app itself: the body
+/// to send ({pack, rights}), its name, and what it holds, for the alert. The alert's words come from the pack, never from
+/// the page. Nil for anything that is not a JSON object with a name, or is over 512 KB.
+func packToPublish(_ text: String) -> (body: Data, name: String, holds: String)? {
+    guard text.utf8.count <= 512 * 1024, let data = text.data(using: .utf8),
+          let pack = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          // the name goes in the alert's title: one line, no control characters
+          let name = (pack["name"] as? String)?.components(separatedBy: .controlCharacters).joined(separator: " ")
+              .trimmingCharacters(in: .whitespaces), !name.isEmpty,
+          let body = try? JSONSerialization.data(withJSONObject: ["pack": pack, "rights": true]) else { return nil }
+    func count(_ key: String) -> Int { (pack[key] as? [Any])?.count ?? (pack[key] as? [String: Any])?.count ?? 0 }
+    let kinds = [("instructions", "instruction", "instructions"), ("frameworks", "framework", "frameworks"),
+                 ("captionStyles", "caption style", "caption styles"), ("designSystems", "design system", "design systems"),
+                 ("grades", "colour grade", "colour grades"), ("voiceMixes", "voice mix", "voice mixes"),
+                 ("sfxSets", "sound set", "sound sets"), ("resolve", "Resolve setting", "Resolve settings"),
+                 ("skills", "skill", "skills")]
+    var parts = kinds.compactMap { key, one, many -> String? in
+        let n = count(key)
+        return n == 0 ? nil : n == 1 ? "1 \(one)" : "\(n) \(many)"
+    }
+    if pack["home"] is [String: Any] { parts.append("a Home layout") }
+    if pack["editorDefaults"] is [String: Any] { parts.append("editor defaults") }
+    return (body, String(name.prefix(80)), parts.isEmpty ? "nothing" : parts.joined(separator: ", "))
+}
+
+/// The alert before a pack leaves this Mac. It is this app's own alert because the ask comes from the page, where a
+/// plug-in's pages run too: only a click on Publish sends it.
+func publishAlertText(name: String, holds: String, host: String, who: String) -> (message: String, detail: String) {
+    ("Publish “\(name)” to Community?",
+     "It goes to \(host) for review, from your account\(who.isEmpty ? "" : " \(who)"). It holds: \(holds).")
 }
 
 /// What the page's account step is told (AccountStep.tsx): state signedIn / signedOut / notSetUp / off / cancelled /
@@ -192,6 +262,8 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var pending: ((AccountReply) -> Void)?
     /// The verifier of the sign-in in flight: a code is swapped only with it.
     private var pkce: Pkce?
+    /// The provider of the sign-in in flight, kept with the account once it goes through.
+    private var signingInWith = ""
 
     var server: URL? { accountServerURL(UserDefaults.standard.string(forKey: serverKey)) }
     /// The text This Mac shows ("" when off).
@@ -210,8 +282,14 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         return try? JSONDecoder().decode(AccountProfile.self, from: data)
     }
 
+    /// Which sign-in this Mac's account was made with ("google", "apple"…), kept beside the profile so Settings can show
+    /// its mark; "" for a sign-in from before this was kept.
+    private var providerKey: String { "accountProvider.\(host)" }
+
     private func reply(_ profile: AccountProfile) -> AccountReply {
-        ["state": "signedIn", "name": profile.name, "email": profile.email]
+        var reply = ["state": "signedIn", "name": profile.name, "email": profile.email]
+        if let provider = UserDefaults.standard.string(forKey: providerKey), !provider.isEmpty { reply["provider"] = provider }
+        return reply
     }
 
     private func reply(_ error: Error) -> AccountReply {
@@ -236,11 +314,31 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             }
         }
         do {
-            let up = try await client.offeredProviders()
+            let up = try await offered(client)
             return up.isEmpty ? ["state": "notSetUp", "server": host] : ["state": "signedOut", "providers": up.joined(separator: ",")]
         } catch {
             return unreachable(error)
         }
+    }
+
+    /// The sign-ins a signed-out person is offered. The default account server is asked nothing (accountLive); a server
+    /// the person set themselves (This Mac → Account) is theirs, so it is asked which of its sign-ins are set up.
+    private func offered(_ client: AccountClient) async throws -> [String] {
+        server?.absoluteString == defaultAccountServer.absoluteString ? accountLive : try await client.offeredProviders()
+    }
+
+    /// Sign out: the token leaves the Keychain and the kept name and email go with it. The name this Mac's own server
+    /// shows stays as it is. Answers as `status` does for a signed-out person.
+    /// ponytail: the token is only forgotten here; call the account server's revoke when it has one.
+    func signOut() async -> AccountReply {
+        session?.cancel()
+        session = nil
+        answer(["state": "cancelled"])
+        pkce = nil
+        DeviceVault.remove(for: host, service: Self.vault)
+        UserDefaults.standard.removeObject(forKey: profileKey)
+        UserDefaults.standard.removeObject(forKey: providerKey)
+        return await status()
     }
 
     /// "Continue with Apple" / "Google" / "GitHub": the server's sign-in in the system sheet, then the code exchange.
@@ -251,6 +349,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         session?.cancel()
         pending?(["state": "cancelled"])
         pending = done
+        signingInWith = provider
         let pair = Pkce.make()
         pkce = pair
         Task { () -> Void in
@@ -280,6 +379,38 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         }
     }
 
+    /// Publish a pack to Community with this Mac's account: this app's alert names the pack, what it holds and the
+    /// account; only a click on Publish sends it, with the token, to the account server (never to an address the page
+    /// names). `done` once: sent, signedOut, cancelled, off, or error with the catalog's words.
+    func publish(_ text: String, done: @escaping (AccountReply) -> Void) {
+        guard let server else { return done(["state": "off"]) }
+        guard let token = DeviceVault.token(for: host, service: Self.vault) else { return done(["state": "signedOut"]) }
+        guard let pack = packToPublish(text) else { return done(["state": "error", "message": "That isn't a pack this app can read."]) }
+        let who = profile.map { $0.email.isEmpty ? $0.name : $0.email } ?? ""
+        let words = publishAlertText(name: pack.name, holds: pack.holds, host: host, who: who)
+        let alert = pluginAlert(message: words.message, detail: words.detail, agree: "Publish")
+        let answer: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .alertSecondButtonReturn else { return done(["state": "cancelled"]) }
+            Task { @MainActor in
+                do {
+                    try await AccountClient(server: server).submit(pack.body, token: token)
+                    done(["state": "sent"])
+                } catch AccountError.signedOut {
+                    // the token still signs in: it is the catalog that doesn't take packs from the app (a site from
+                    // before it could), not a sign-out
+                    if (try? await AccountClient(server: server).me(token)) != nil {
+                        done(["state": "error", "message": "\(self.host) doesn't take packs from the app yet. Download the file and send it on the catalog's site."])
+                    } else {
+                        done(["state": "signedOut"])
+                    }
+                } catch {
+                    done(["state": "error", "message": error.localizedDescription])
+                }
+            }
+        }
+        if let w = window() { alert.beginSheetModal(for: w, completionHandler: answer) } else { answer(alert.runModal()) }
+    }
+
     /// Offline or the account server is down: the step may be passed (it asks again next time), with a retry.
     private func unreachable(_ error: Error) -> AccountReply {
         ["state": "unreachable", "server": host, "message": "Can't reach \(host): \(error.localizedDescription)"]
@@ -306,6 +437,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             guard DeviceVault.save(token, for: host, service: Self.vault) else {
                 return answer(["state": "error", "message": "The Keychain didn't keep the sign-in."])
             }
+            UserDefaults.standard.set(signingInWith, forKey: providerKey)
             keep(profile)
             return answer(reply(profile))
         } catch {

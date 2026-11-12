@@ -61,7 +61,7 @@ packsApp.delete("/:id", async (c) => {
 
 /**
  * Building a pack (Publish to Community): `{id, name, version, description, license, niche?, frameworks: ids, presets: ids,
- * instructions: {slot: text}}` → a checked pack file built from the person's own items.
+ * instructions: {slot: text}, home: {hidden}}` → a checked pack file built from the person's own items.
  */
 packsApp.post("/export", async (c) => {
   const user = c.get("user");
@@ -92,6 +92,7 @@ packsApp.post("/export", async (c) => {
     ...(Object.keys(instructions).length ? { instructions } : {}),
     ...(frameworks.length ? { frameworks } : {}),
     ...(captionStyles.length ? { captionStyles } : {}),
+    ...(b.home !== undefined ? { home: b.home } : {}),
   });
   return r.ok ? c.json({ pack: r.pack, level: r.level }) : c.json({ error: "Not ready to share yet", problems: r.problems }, 400);
 });

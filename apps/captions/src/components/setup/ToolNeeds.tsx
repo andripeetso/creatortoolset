@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import {
   AudioLines, Captions, CheckCircle2, Circle, Clapperboard, FileText, Library, MessageSquareText, NotebookPen, ScanSearch, Scissors, Video,
@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { PLANS, type PlanId } from "@contracts/plans";
-import { DEFAULT_TOOLS, NEED_SENTENCE, NEED_SHORT, readiness, TOOL_LINES, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { DEFAULT_TOOLS, NEED_SENTENCE, readiness, TOOL_LINES, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
@@ -42,30 +42,39 @@ function NeedForm({ need }: { need: Need }) {
   );
 }
 
-/** The welcome's wording for a need: its short name and one plain sentence (contracts/tools.ts). */
-const shortOf = (n: Need): string => {
-  const s = NEED_SHORT[n.anyOf[0]];
-  return s.charAt(0).toUpperCase() + s.slice(1);
-};
-
-function NeedRow({ need, met, welcome, focus }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean }) {
-  const [open, setOpen] = useState(false);
+/** One checklist line: ticked or open, its name and sentence, its one button; what the button opens goes under it. */
+export function NeedLine({ met, name, line, button, children }: { met: boolean; name: ReactNode; line?: ReactNode; button?: ReactNode; children?: ReactNode }) {
   return (
     <li className="py-2">
       <div className="flex items-center gap-2 text-sm">
         {met ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <Circle className="h-4 w-4 shrink-0 text-muted-foreground/60" />}
         <span className={met ? "flex-1 text-muted-foreground" : "flex-1"}>
-          {welcome ? shortOf(need) : need.what}
-          {welcome && <span className="block text-xs text-muted-foreground">{NEED_SENTENCE[need.anyOf[0]]}</span>}
+          {name}
+          {line && <span className="block text-xs text-muted-foreground">{line}</span>}
         </span>
-        {!met && (
-          <Button size="sm" variant="outline" className="h-7" autoFocus={focus} onClick={() => setOpen(!open)}>
-            {open ? "Close" : need.form === "keys" ? "Add key" : need.form === "ai" ? "Connect" : "Set up"}
-          </Button>
-        )}
+        {!met && button}
       </div>
-      {open && !met && <div className="mt-2 pl-6"><NeedForm need={need} /></div>}
+      {!met && children && <div className="mt-2 pl-6">{children}</div>}
     </li>
+  );
+}
+
+/** A need's line. `form`: what Set up opens in place of the need's own form (setup opens its own Connect your AI). */
+export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean; form?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <NeedLine
+      met={met}
+      name={need.what}
+      line={welcome && NEED_SENTENCE[need.anyOf[0]]}
+      button={
+        <Button size="sm" variant="outline" className="h-7" autoFocus={focus} onClick={() => setOpen(!open)}>
+          {open ? "Close" : need.form === "keys" ? "Add key" : need.form === "ai" ? "Connect" : "Set up"}
+        </Button>
+      }
+    >
+      {open && (form ?? <NeedForm need={need} />)}
+    </NeedLine>
   );
 }
 

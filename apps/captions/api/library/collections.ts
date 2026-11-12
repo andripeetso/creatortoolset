@@ -16,6 +16,7 @@ import { ffmpegTo } from "./media/run";
 import { externalCanSee, externalRefById } from "./refs";
 import { KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
+import { fileRoll, rollFolder } from "./roll";
 
 /**
  * Folders and collections (tasks/media-library-plan.md, sections 2, 7 and 9). One table: a folder is a collection with
@@ -60,6 +61,7 @@ export function savedQuery(raw: unknown): SearchQuery {
     ...(tag ? { tag } : {}),
     ...(from !== undefined ? { from } : {}),
     ...(to !== undefined ? { to } : {}),
+    ...(r.roll === "a" || r.roll === "b" ? { roll: r.roll } : {}),
   };
 }
 
@@ -74,16 +76,18 @@ export function expandCollection(libraryId: string, query: SearchQuery): SearchQ
   return col.kind === "smart" ? { ...savedQuery(JSON.parse(col.query ?? "{}")), ...query, collectionId: undefined } : query;
 }
 
-const toCollection = (r: Row, count?: number): Collection => ({
+const toCollection = (r: Row, count?: number, covers?: string[]): Collection => ({
   id: r.id,
   name: r.name,
   parentId: r.parent_id,
   kind: r.kind,
   createdBy: r.created_by,
   ...(r.kind === "smart" ? { query: savedQuery(JSON.parse(r.query ?? "{}")) } : count !== undefined ? { count } : {}),
+  ...(covers?.length ? { covers } : {}),
 });
 
-// GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId
+// GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId. A folder's
+// card shows up to four pictures of its clips (the media route checks each viewer, as it does for the grid)
 collectionApp.get("/:id/collections", (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
@@ -94,7 +98,15 @@ collectionApp.get("/:id/collections", (c) => {
        FROM collections c WHERE c.library_id = ? ORDER BY c.created_at, c.id`,
     )
     .all(libraryId) as unknown as (Row & { n: number })[];
-  return c.json({ collections: rows.map((r) => toCollection(r, r.n)) });
+  const pictures = db().prepare(
+    `SELECT a.current_version_id AS v FROM collection_items i JOIN assets a ON a.id = i.asset_id
+     WHERE i.collection_id = ? AND a.trashed_at IS NULL
+       AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
+     ORDER BY i.position, i.asset_id LIMIT 4`,
+  );
+  const coversOf = (r: Row) =>
+    r.kind === "manual" ? (pictures.all(r.id) as { v: string }[]).map((p) => `/api/library/media/${p.v}/thumb`) : undefined;
+  return c.json({ collections: rows.map((r) => toCollection(r, r.n, coversOf(r))) });
 });
 
 // is `cid` the same as `parent` or somewhere above it? (a folder can't move inside itself)
@@ -176,13 +188,21 @@ async function changeItems(c: Ctx, add: boolean) {
   if (!libraryRole(user.username, libraryId)) return notFound(c);
   const row = rowIn(libraryId, c.req.param("cid") ?? "");
   if (!row) return notFound(c);
-  if (row.kind !== "manual") return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+  const roll = add ? rollFolder(db(), libraryId, row.id) : null;
+  if (row.kind !== "manual" && !roll) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   const body = (await c.req.json().catch(() => null)) as { assetIds?: unknown } | null;
   const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string").slice(0, 500) : [];
   if (!asked.length) return c.json({ error: "No assets given", code: "invalid" }, 400);
   // only the assets the policies let this account change; the rest are skipped, as trashed or foreign ones are
   const ids = await writableAssets(user.username, libraryId, asked);
   const d = db();
+  if (roll) {
+    // the A-roll folder lists the clips sorted or filed as A-roll: a clip put in it is filed so (roll.ts)
+    const video = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND kind = 'video'");
+    const filed = ids.filter((id) => video.get(id, libraryId));
+    for (const id of filed) fileRoll(d, id, roll);
+    return c.json({ added: filed.length });
+  }
   if (!add) {
     const del = d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?");
     let removed = 0;

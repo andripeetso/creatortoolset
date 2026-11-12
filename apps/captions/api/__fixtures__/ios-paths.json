@@ -252,6 +252,55 @@
     "probe": "route"
   },
   {
+    "id": "editor.chat-edit",
+    "method": "GET",
+    "path": "/api/editor/chat?edit=",
+    "probe": "list",
+    "shape": {
+      "type": "object",
+      "keys": [
+        "messages",
+        "turn"
+      ]
+    }
+  },
+  {
+    "id": "editor.todo",
+    "method": "GET",
+    "path": "/api/editor/todo",
+    "probe": "list",
+    "shape": {
+      "type": "object",
+      "keys": [
+        "worker",
+        "review",
+        "changes",
+        "running",
+        "queued",
+        "sheets",
+        "failed"
+      ]
+    }
+  },
+  {
+    "id": "editor.todo-read",
+    "method": "POST",
+    "path": "/api/editor/todo/read",
+    "probe": "route"
+  },
+  {
+    "id": "editor.job-go",
+    "method": "POST",
+    "path": "/api/editor/:id/jobs/:job/go",
+    "probe": "route"
+  },
+  {
+    "id": "editor.feedback",
+    "method": "POST",
+    "path": "/api/editor/:id/feedback",
+    "probe": "route"
+  },
+  {
     "id": "review.list",
     "method": "GET",
     "path": "/api/review",
@@ -297,6 +346,110 @@
     "id": "review.approval",
     "method": "POST",
     "path": "/api/review/assets/:id/approval",
+    "probe": "route"
+  },
+  {
+    "id": "review.notifications",
+    "method": "GET",
+    "path": "/api/review/notifications",
+    "probe": "list",
+    "shape": {
+      "type": "object",
+      "keys": [
+        "items",
+        "unread"
+      ]
+    }
+  },
+  {
+    "id": "assistant.get",
+    "method": "GET",
+    "path": "/api/assistant",
+    "probe": "list",
+    "shape": {
+      "type": "object",
+      "keys": [
+        "id",
+        "provider",
+        "aiName",
+        "tools",
+        "messages",
+        "past",
+        "pending",
+        "navigate"
+      ]
+    }
+  },
+  {
+    "id": "assistant.turn",
+    "method": "POST",
+    "path": "/api/assistant/turn",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.stop",
+    "method": "POST",
+    "path": "/api/assistant/stop",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.new-chat",
+    "method": "DELETE",
+    "path": "/api/assistant",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.past-open",
+    "method": "POST",
+    "path": "/api/assistant/past/:id/open",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.approval",
+    "method": "POST",
+    "path": "/api/assistant/approvals/:id",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.navigated",
+    "method": "POST",
+    "path": "/api/assistant/navigated",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.image",
+    "method": "GET",
+    "path": "/api/assistant/images/:id",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.files-start",
+    "method": "POST",
+    "path": "/api/assistant/files",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.files-parts",
+    "method": "GET",
+    "path": "/api/assistant/files/:id/parts",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.files-part",
+    "method": "POST",
+    "path": "/api/assistant/files/:id/parts/:partNumber",
+    "probe": "route"
+  },
+  {
+    "id": "assistant.files-complete",
+    "method": "POST",
+    "path": "/api/assistant/files/:id/complete",
+    "probe": "route"
+  },
+  {
+    "id": "sync.events",
+    "method": "GET",
+    "path": "/api/sync/events",
     "probe": "route"
   },
   {

@@ -92,6 +92,8 @@ function SearchBox({ value, onChange, placeholder, hotkey = true }: { value: str
       <Search className="h-3.5 w-3.5 shrink-0" />
       <input
         ref={input}
+        role="searchbox"
+        aria-label="Search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

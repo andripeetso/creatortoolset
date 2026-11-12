@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { useCachedList } from "@/lib/local-cache";
 import { Pencil, Plus } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
@@ -25,6 +26,13 @@ export function ProjectList() {
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const select = useWorkspace((s) => s.select);
   const [editing, setEditing] = useState<string | "new" | null>(null);
+  const [params, setParams] = useSearchParams();
+  // `/projects?add=1` opens the New project form once, then the parameter goes
+  useEffect(() => {
+    if (params.get("add") !== "1") return;
+    setEditing("new");
+    setParams((p) => (p.delete("add"), p), { replace: true });
+  }, [params, setParams]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // every project's accounts, from their saved copy (warmed at sign-in), live

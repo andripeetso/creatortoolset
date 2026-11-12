@@ -9,6 +9,8 @@ import { getWorkshopFinals, isFinals, listAllAssets, listCollections, listLibrar
 import { useCachedLoad } from "@/lib/local-cache";
 import { libraryBadges, libraryFacets, pickedFor } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
+import { BrowseBar } from "@/components/browse/Bar";
+import { matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 
 /**
  * Finals (/finals): the library's Finals collection shown as pieces. A piece is one reel, carousel or other item made
@@ -35,6 +37,10 @@ const KIND_BADGE: Record<FinalsKind, string> = {
   carousel: "bg-sky-600/90 text-white",
   other: "bg-zinc-600/90 text-white",
 };
+
+// the server sends the pieces in the order they were made: Oldest is that order, as before
+const SORTS = ["oldest", "newest", "name"] as const;
+const SORT_KEY = "finals:sort";
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -86,13 +92,22 @@ export function FinalsView({
   workshop?: Record<string, WorkshopFinal>;
 }) {
   const [kind, setKind] = useState<FinalsKind | null>(null);
+  const [view, setView] = useBrowseView("finals");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
   if (!hasFinals) return <p className="py-16 text-center text-sm text-zinc-500">Nothing in Finals yet.</p>;
 
   // Only the facets Finals shows narrow it: a Media Library facet (scope "library") never filters these pieces.
   const own = pickedFor(picked, "finals");
   const faceted = Object.values(own).some((v) => v.length > 0);
   const all = finalsTiles(pieces, cards, faceted);
-  const shown = all.filter((t) => !kind || t.kind === kind);
+  const kept = all.filter((t) => (!kind || t.kind === kind) && matches(find, t.piece.label));
+  const shown =
+    sort === "newest"
+      ? [...kept].reverse()
+      : sort === "name"
+        ? [...kept].sort((a, b) => a.piece.label.localeCompare(b.piece.label, undefined, { numeric: true, sensitivity: "base" }))
+        : kept;
   const kinds: (FinalsKind | null)[] = [null, "reel", "carousel", "other"];
 
   return (
@@ -125,8 +140,34 @@ export function FinalsView({
         <LibraryFacetBar facets={libraryFacets("finals")} value={picked} onChange={onFacets} />
       </div>
 
+      {all.length > 0 && (
+        <BrowseBar
+          search={{ value: find, onChange: setFind, placeholder: "Search Finals (⌘K)" }}
+          sort={{
+            value: sort,
+            onChange: (v) => {
+              setSort(v);
+              persistSort(SORT_KEY, v);
+            },
+            label: "Sort pieces",
+            options: [
+              { id: "oldest", label: "Oldest" },
+              { id: "newest", label: "Newest" },
+              { id: "name", label: "Name" },
+            ],
+          }}
+          view={{ value: view, onChange: setView }}
+        />
+      )}
+
       {shown.length === 0 ? (
-        <p className="py-16 text-center text-sm text-zinc-500">{faceted || kind ? "No pieces match." : "Nothing in Finals yet."}</p>
+        <p className="py-16 text-center text-sm text-zinc-500">{faceted || kind || find.trim() ? "No pieces match." : "Nothing in Finals yet."}</p>
+      ) : view === "list" ? (
+        <div className="flex flex-col gap-1.5">
+          {shown.map((t) => (
+            <PieceRow key={t.piece.id} tile={t} work={workshop[t.piece.id]} />
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-5">
           {shown.map((t) => (
@@ -135,6 +176,39 @@ export function FinalsView({
         </div>
       )}
     </>
+  );
+}
+
+/** A piece in the list view: its cover small, its name, what it is, how many versions, posted or not. */
+function PieceRow({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
+  const { piece, kind, cover, posted } = tile;
+  const versions = piece.items.length;
+  const noun = kind === "carousel" ? "slide" : "version";
+  return (
+    <Link to={`/finals/${piece.id}`} className="flex items-center gap-3 rounded-lg border border-zinc-500/25 bg-zinc-500/5 px-2 py-1.5 transition-colors hover:border-zinc-400/60">
+      <span className="relative block h-12 w-10 shrink-0 overflow-hidden rounded bg-black">
+        <ImageOff className="absolute inset-0 m-auto h-4 w-4 text-zinc-800" />
+        {cover && (
+          <img
+            src={cover}
+            alt=""
+            draggable={false}
+            loading="lazy"
+            onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+            onLoad={(e) => (e.currentTarget.style.visibility = "")}
+            className="relative h-full w-full object-cover"
+          />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{piece.label}</span>
+        <span className="mt-0.5 block truncate text-xs text-zinc-500">
+          {versions} {versions === 1 ? noun : `${noun}s`} · {posted ? "Posted" : "Not posted yet"}
+        </span>
+      </span>
+      {work?.status === "toPost" && <span className="shrink-0 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">Ready to post</span>}
+      <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", KIND_BADGE[kind])}>{KIND_LABEL[kind]}</span>
+    </Link>
   );
 }
 

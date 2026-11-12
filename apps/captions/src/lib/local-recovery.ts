@@ -45,6 +45,12 @@ export interface RecoveryProject {
   serverProjectReady: boolean;
   serverRevision: number;
   serverConflict: boolean;
+  /**
+   * The page had changes the server had not taken when this copy was written (a save waiting or refused). Only such
+   * a copy is sent to the server when it is opened again; any other is what the server already has, or older.
+   * Absent in copies written before this field.
+   */
+  unsynced?: boolean;
   fileName: string;
   activeClipId: string;
   fps: number;
@@ -122,6 +128,7 @@ export function buildRecoveryProject(
     serverProjectReady: state.serverProjectReady,
     serverRevision: state.serverRevision,
     serverConflict: state.serverConflict,
+    unsynced: unsent(state),
     fileName: state.fileName,
     activeClipId: state.activeClipId,
     fps: state.fps,
@@ -133,6 +140,39 @@ export function buildRecoveryProject(
     setupPending: state.setupPending,
     clips,
   };
+}
+
+/**
+ * The page holds something the server has not taken: a save waiting or refused, or a clip in a phase in which the
+ * autosave sends nothing (persist.ts: a transcript that has landed while its lines are still being matched).
+ */
+function unsent(state: StudioSnapshot): boolean {
+  const held = (phase: string) => phase !== "idle" && phase !== "done";
+  return (
+    state.saveState === "saving" ||
+    state.saveState === "error" ||
+    held(state.status.phase) ||
+    state.clips.some((clip) => held(clip.status.phase))
+  );
+}
+
+/**
+ * The project just opened from a copy the server already has: its own (persist.ts), or a stored one with nothing
+ * unsent. The autosave reads this once and does not send that project back.
+ */
+export const openedInSync = { id: null as string | null };
+
+/**
+ * Whether a stored copy holds changes the server never took, so it is sent when it is opened again. A copy from
+ * before `unsynced` does not say: one with a transcript or a text is sent, as it always was.
+ */
+export function holdsUnsentChanges(project: Pick<RecoveryProject, "unsynced" | "clips">): boolean {
+  return (
+    project.unsynced ??
+    project.clips.some(
+      ({ slot }) => slot.words.length + slot.cues.length + slot.texts.length > 0,
+    )
+  );
 }
 
 function openRecoveryDb(): Promise<IDBDatabase> {
@@ -592,6 +632,8 @@ async function restoreRecoveryProject(
   bumpTextIdCounter(textMax);
   clearEditHistory();
 
+  const unsynced = holdsUnsentChanges(project);
+  openedInSync.id = unsynced ? null : project.projectId;
   const activeIndex = Math.max(
     0,
     clips.findIndex((clip) => clip.id === project.activeClipId),
@@ -603,6 +645,8 @@ async function restoreRecoveryProject(
     serverProjectReady: project.serverProjectReady,
     serverRevision: project.serverRevision,
     serverConflict: project.serverConflict,
+    // asked of the server when this copy is opened (persist.ts takeServerCopy)
+    serverCaptioning: false,
     fileName: project.fileName,
     clips,
     activeClipId: active.id,
@@ -634,10 +678,13 @@ async function restoreRecoveryProject(
     scriptCheckError: null,
     status: active.status,
     setupPending: project.setupPending,
+    // "saving" is what has the autosave send this copy (persist.ts)
     saveState: project.serverConflict
       ? "error"
       : project.serverProjectReady
-        ? "saved"
+        ? unsynced
+          ? "saving"
+          : "saved"
         : "idle",
     saveError: project.serverConflict
       ? "A newer server version exists. This local copy is preserved."

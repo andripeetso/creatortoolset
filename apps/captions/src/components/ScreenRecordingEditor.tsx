@@ -5,17 +5,22 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+  alphaFileName,
+  defaultCamera,
   defaultLook,
   normalizeLook,
+  opaqueLook,
   outputSize,
   pointerAt,
   pointerPath,
   trimOf,
+  zoomFloor,
   type ScreenEvents,
   type ScreenLook,
 } from "@/lib/screen-recording";
 import { clock } from "@/lib/screen-timeline";
 import { renderScreenVideo } from "@/lib/screen-export";
+import { canSaveTransparent, transparentVideoMade } from "@/lib/mac-record";
 import type { ScreenSource } from "@/lib/screen-source";
 import { Inspector, type InspectorTab } from "@/components/screen-editor/Inspector";
 import { Timeline } from "@/components/screen-editor/Timeline";
@@ -42,11 +47,15 @@ const typing = (e: KeyboardEvent) => {
  * computer; the caller says where it goes (`actions`): Review adds it as the next version, the Screen Recorder saves
  * it or uploads it. `extra` goes before Export. `embedded` fills its parent (a page) instead of covering the window;
  * such a page hands over a place in its own top bar (`barSlot`) and Export goes there, so the screen has one bar.
+ * `download` saves a file the way the page's downloads go. With it, in a Mac app that turns the editor's packed file
+ * into a see-through video (lib/mac-record.ts canSaveTransparent), the background can be None: Export then has one
+ * way out, that video. Anywhere else None is not offered and a look that says it is shown with the first gradient.
  */
 export function ScreenRecordingEditor({
   source,
   meta,
   actions,
+  download,
   onClose,
   extra,
   embedded = false,
@@ -55,13 +64,17 @@ export function ScreenRecordingEditor({
   source: ScreenSource;
   meta: { name: string; duration: number; width: number; height: number };
   actions: EditorAction[];
+  download?: (blob: Blob, fileName: string) => void;
   onClose?: () => void;
   extra?: ReactNode;
   embedded?: boolean;
   barSlot?: HTMLElement | null;
 }) {
   const [events, setEvents] = useState<ScreenEvents | null>(null);
-  const [look, setLook] = useState<ScreenLook | null>(null);
+  const [saved, setLook] = useState<ScreenLook | null>(null);
+  const canClear = !!download && canSaveTransparent();
+  // what is shown and made; changes go to the saved one, which keeps its "none" for where it can be made
+  const look = useMemo(() => (saved && !canClear ? opaqueLook(saved) : saved), [saved, canClear]);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
   const [tab, setTab] = useState<InspectorTab>("background");
@@ -226,13 +239,14 @@ export function ScreenRecordingEditor({
     };
   }, [player, picked, change, step]);
 
-  const run = async (a: EditorAction) => {
+  /** Makes the video and hands it to `a`; null: the see-through video (1080p), handed to the app as a download, which writes it. */
+  const run = async (a: EditorAction | null) => {
     if (!look || !events) return;
     setExporting(false);
     player.pause();
     const ctl = new AbortController();
     abort.current = ctl;
-    const out = outputSize(look.shape, width, height, uhd);
+    const out = outputSize(look.shape, width, height, uhd && !!a);
     const kept = trimOf(look, duration);
     try {
       setError("");
@@ -246,10 +260,18 @@ export function ScreenRecordingEditor({
         look,
         ...out,
         trim: look.trim ? kept : undefined,
+        alpha: !a,
         signal: ctl.signal,
         onProgress: (p) => setMaking({ step: "Making", pct: Math.round(p * 100) }),
       });
       if (ctl.signal.aborted) return;
+      if (!a) {
+        // the app asks where the video goes and writes it; the button counts along until it is there (Stop ends it)
+        const made = transparentVideoMade((part) => setMaking({ step: "Writing", pct: Math.round(part * 100) }), ctl.signal);
+        setMaking({ step: "Writing", pct: 0 });
+        download?.(blob, alphaFileName(`${base} (transparent)`, out.width, out.height));
+        return await made;
+      }
       await a.run({ blob, name: `${base} (zoomed)` }, (step, pct) => {
         if (!ctl.signal.aborted) setMaking({ step, pct: Math.round(pct) });
       });
@@ -261,7 +283,13 @@ export function ScreenRecordingEditor({
   };
 
   const sizes = look ? { hd: outputSize(look.shape, width, height, false), uhd: outputSize(look.shape, width, height, true) } : null;
+  // no background (only where the see-through video can be made): one way out, at 1080p
+  const clear = look?.background === "none";
+  const size = sizes && (uhd && !clear ? sizes.uhd : sizes.hd);
   const kept = look ? trimOf(look, duration) : null;
+  // where zooms fill the whole frame, none is shallower than what covers it: the panel and the timeline say that depth
+  const shape = (width && height ? width / height : player.ratio()) || 16 / 9;
+  const floor = look ? Math.ceil(zoomFloor(look, shape, source.cameraUrl ? (look.camera ?? defaultCamera()) : null) * 10 - 1e-6) / 10 : 1;
   const initial = useMemo(() => (events ? defaultLook(events, duration) : null), [events, duration]);
   const h = history.current;
 
@@ -285,31 +313,43 @@ export function ScreenRecordingEditor({
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-72 space-y-3 border-zinc-800 bg-zinc-950 p-3 text-zinc-100">
-            {sizes && kept && (
+            {size && kept && (
               <>
-                <Segmented
-                  label="Video size"
-                  value={uhd ? "4k" : "hd"}
-                  options={[
-                    { id: "hd", label: "1080p" },
-                    { id: "4k", label: "4K" },
-                  ]}
-                  onChange={(v) => {
-                    setUhd(v === "4k");
-                    try {
-                      localStorage.setItem(SIZE_KEY, v);
-                    } catch {
-                      // kept for this visit only
-                    }
-                  }}
-                />
+                {!clear && (
+                  <Segmented
+                    label="Video size"
+                    value={uhd ? "4k" : "hd"}
+                    options={[
+                      { id: "hd", label: "1080p" },
+                      { id: "4k", label: "4K" },
+                    ]}
+                    onChange={(v) => {
+                      setUhd(v === "4k");
+                      try {
+                        localStorage.setItem(SIZE_KEY, v);
+                      } catch {
+                        // kept for this visit only
+                      }
+                    }}
+                  />
+                )}
                 <p className="text-center text-[11px] tabular-nums text-zinc-400">
-                  {(uhd ? sizes.uhd : sizes.hd).width} × {(uhd ? sizes.uhd : sizes.hd).height} pixels · {clock(kept.end - kept.start, true)}
+                  {size.width} × {size.height} pixels · {clock(kept.end - kept.start, true)}
                 </p>
               </>
             )}
             <div className="space-y-1.5">
-              {actions.map((a) => (
+              {clear && (
+                <Button
+                  size="sm"
+                  title="Makes a .mov with a transparent background (ProRes 4444) where you choose, to lay over other video"
+                  onClick={() => void run(null)}
+                  className="w-full bg-violet-600 text-white hover:bg-violet-500"
+                >
+                  Save transparent video…
+                </Button>
+              )}
+              {(clear ? [] : actions).map((a) => (
                 <Button
                   key={a.label}
                   size="sm"
@@ -390,6 +430,7 @@ export function ScreenRecordingEditor({
               change={change}
               aim={aim}
               depth={look.zooms.at(-1)?.scale ?? 2}
+              floor={floor}
               undo={h.past.length ? () => step(true) : null}
               redo={h.future.length ? () => step(false) : null}
             />
@@ -413,6 +454,8 @@ export function ScreenRecordingEditor({
             player={player}
             aim={aim}
             hasCamera={!!source.cameraUrl}
+            canClear={canClear}
+            floor={floor}
           />
         )}
       </div>

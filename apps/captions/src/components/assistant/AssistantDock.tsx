@@ -30,11 +30,12 @@ import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
 import { chunkedUpload } from "@/lib/uploads";
-import { droppedFoldersOnMac } from "@/lib/thisMac";
+import { chooseFolderOnMac, droppedFoldersOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
+import { ConfirmCards } from "./ConfirmCards";
 import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
 import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 
@@ -104,6 +105,8 @@ export function AssistantDock() {
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
+  /** Each video upload of this window, by its file id, so Stop can end it. ponytail: a removed chip's upload still runs to the end */
+  const uploads = useRef(new Map<string, AbortController>());
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +202,9 @@ export function AssistantDock() {
     if (!view?.navigate) return;
     navigate(view.navigate);
     void navigated().then((r) => r.ok && setView(r.data));
-  }, [view?.navigate, navigate]);
+    // `navigate` changes with the page, which ran this twice: two history entries, and Back reopened a dialog the link had opened
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.navigate]);
 
   useEffect(() => {
     if (!collapsed) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -287,13 +292,18 @@ export function AssistantDock() {
         setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
         media = media.slice(0, Math.max(room, 0));
       }
-      // a video uploads at once; the message waits for it (Send is off until it's in)
+      // a video uploads at once, and the message may go as soon as the upload is made: the server waits for the rest.
+      // It keeps uploading after the message goes (its chip has left the box: the chat shows it as uploading)
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
         const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
         setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
-        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }))
-          .then((r) => patch({ id: r.id, pct: 100 }))
+        const ctl = new AbortController();
+        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }), (id) => {
+          uploads.current.set(id, ctl);
+          patch({ id });
+        }, ctl.signal)
+          .then((r) => patch({ id: r.id, pct: 100, done: true }))
           .catch((e) => patch({ error: e instanceof Error ? e.message : String(e) }));
       }
       if (!pics.length) return;
@@ -339,7 +349,8 @@ export function AssistantDock() {
   const connectedNow = !!view && view.provider !== "none";
   useEffect(() => {
     const next = queue[0];
-    if (!next || thinking || held || !connectedNow || sending.current) return;
+    // the server queues a message sent while a reply is being written: only a send in flight or a refused one holds this
+    if (!next || held || !connectedNow || sending.current) return;
     sending.current = true;
     void send(next).then((ok) => {
       sending.current = false;
@@ -348,14 +359,14 @@ export function AssistantDock() {
     });
     // send is a fresh function each render; the queue, the reply and the hold decide when to go
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, thinking, held, connectedNow]);
+  }, [queue, held, connectedNow]);
   /** A message (and the highlighted text it asks about) back in the box, after what's there. */
   const putBack = (it: Queued) => {
     setDraft((cur) => ({
       text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
-      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id }))],
+      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id, done: true }))],
       folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
     }));
     if (it.quote) setQuote(it.quote);
@@ -373,13 +384,21 @@ export function AssistantDock() {
     // the first thing sent ends the welcome and any notice a tool left
     set({ notice: null });
     welcome.end("sent");
-    if (thinking || busy || queue.length) setQueue((q) => [...q, it]);
+    // a reply being written doesn't hold it: the server queues it behind that reply
+    if (busy || queue.length) setQueue((q) => [...q, it]);
     // refused or failed: it comes back to the box rather than being lost
     else void send(it).then((ok) => !ok && putBack(it));
   };
   /** A notice's chip: its words go out as a message. */
   const chipSend = (text: string) => submit({ ...EMPTY_DRAFT, text });
-  const stop = () => void stopTurn().then((r) => r.ok && setView(r.data));
+  const stop = () => {
+    // Stop on a reply that waits for its videos: those videos stop uploading too (nothing will use them)
+    const msgs = view?.messages ?? [];
+    const w = [...msgs].reverse().findIndex((m) => m.role === "assistant" && m.status === "thinking" && m.wait?.for === "videos");
+    const i = w < 0 ? -1 : msgs.length - 1 - w;
+    for (const f of i > 0 ? (msgs[i - 1]!.files ?? []) : []) uploads.current.get(f.id)?.abort();
+    void stopTurn().then((r) => r.ok && setView(r.data));
+  };
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
     setHeld(false);
@@ -662,7 +681,12 @@ export function AssistantDock() {
                   : undefined;
               // the newest reply's buttons (offer_choices) answer it in one press, until something else is said
               const choose = i === all.length - 1 && m.status === "done" && m.choices?.length && !thinking && !busy ? chipSend : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} />;
+              // the newest reply asked for a folder (ask_folder): the Mac app's own open panel, and the choice goes as the next message
+              const folder =
+                i === all.length - 1 && m.status === "done" && m.folderAsk && !thinking && !busy && thisMacBridge()
+                  ? () => void chooseFolderOnMac().then((p) => p && submit({ ...EMPTY_DRAFT, folders: [p] }))
+                  : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -763,13 +787,13 @@ const attachmentsLabel = (it: Queued) =>
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (
-    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code and Codex can) or do things on your Mac for you.`}>
+    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code, Codex, Gemini CLI and Grok can) or do things on your Mac for you.`}>
       {view.aiName} · no app tools
     </span>
   );
 }
 
-function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void }) {
+export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -797,6 +821,7 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
               <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{f.name}</span>
+                {f.uploading && <span className="shrink-0 text-muted-foreground">Uploading</span>}
               </span>
             ))}
             {m.folders?.map((p) => (
@@ -830,10 +855,13 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
     return (
       <div className="space-y-1">
         <Steps steps={steps} working />
-        <Elapsed since={m.at} />
+        {/* a reply waiting for its videos or its turn isn't working yet: its wait line says what it waits for */}
+        {!m.wait && <Elapsed since={m.at} />}
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
+        <ConfirmCards confirms={m.confirms} onView={onView} />
+        {m.wait && <p className="text-xs text-muted-foreground">{m.wait.text}</p>}
         <Dots />
       </div>
     );
@@ -853,6 +881,7 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
+        <ConfirmCards confirms={m.confirms} onView={onView} />
         <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
         {again}
       </div>
@@ -876,9 +905,20 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       <ApprovalCards approvals={m.approvals} />
+        <ConfirmCards confirms={m.confirms} onView={onView} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {again}
+      {onFolder && (
+        <button
+          type="button"
+          onClick={onFolder}
+          title={m.folderAsk!.why}
+          className="mt-2 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in"
+        >
+          <Folder className="size-3.5" aria-hidden /> Choose a folder
+        </button>
+      )}
       {onChoose && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {m.choices!.map((c) => (

@@ -34,6 +34,8 @@ final class Shell: NSObject, ObservableObject {
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
+    /// The files picked in the open panel for the page (rememberPicks, ThisMacBridge.swift): the page's "files" ask.
+    private var pickedFiles: [URL] = []
     /// The servers added by address (Servers.swift) and the one the window shows: thisMacID, an added one's id, or nil
     /// (no server picked: the window asks to pick or add one).
     @Published private(set) var servers: [ServerEntry] = []
@@ -64,6 +66,10 @@ final class Shell: NSObject, ObservableObject {
     private let museLogin = MuseLogin()
 
     private var lastBlankReload = Date.distantPast
+    /// The editor's packed see-through videos on their way in (AlphaVideo.swift): where each is kept, and the video it becomes.
+    private var alphaDownloads: [WKDownload: (file: URL, final: URL, stacked: Bool)] = [:]
+    /// The see-through video being made; the page's Stop ends it ("record-alpha-stop").
+    private var alphaTask: Task<Void, Never>?
 
     override init() {
         AppLog.trim()
@@ -114,6 +120,10 @@ final class Shell: NSObject, ObservableObject {
             return try await self.client().uploadRecording(project, to: destination, progress: progress)
         }
         recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
+        recorder.pageAlert = { [weak self] title, text, done in
+            guard let self else { return done(false) }
+            self.pageAlert(title, text, done)
+        }
         if Recorder.available { RecordShortcut.shared.install(recorder) }
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
@@ -134,16 +144,25 @@ final class Shell: NSObject, ObservableObject {
             switch ask {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }
+            // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
+            case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             case "folder": done(self.chooseFolder())
+            case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
         }
         account.window = { [weak self] in self?.webView.window }
+        view.onPublishPack = { [weak self] text, done in
+            guard let self else { return done(["state": "off"]) }
+            self.account.publish(text, done: done)
+        }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }
-            if ask == "status" {
+            if ask == "status" || ask == "offered" {
                 Task { done(await self.account.status()) }
+            } else if ask == "signout" {
+                Task { done(await self.account.signOut()) }
             } else {
                 self.account.signIn(ask, done: done)
             }
@@ -472,6 +491,7 @@ final class Shell: NSObject, ObservableObject {
         case "reveal": if let project { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) }
         case "trash": if let project { recorder.delete(project) }   // the page has asked
         case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
+        case "alpha-stop": alphaTask?.cancel()   // the editor's Stop while its see-through video is made
         default: break   // "state": only the answer
         }
         pushRecorderState()
@@ -482,6 +502,21 @@ final class Shell: NSObject, ObservableObject {
         let items = recorder.recordings.map(\.listing)
         guard let data = try? JSONSerialization.data(withJSONObject: ["items": items]), let json = String(data: data, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-recordings', {detail: \(json)}))")
+    }
+
+    /// A message in the app's own dialog instead of the system's alert: the window comes forward and the page draws
+    /// it (AppDialogs sets window.ctAlert). `done` hears false when no page can: no server, or a page without it.
+    private func pageAlert(_ title: String, _ text: String, _ done: @escaping (Bool) -> Void) {
+        guard hasServer, let data = try? JSONSerialization.data(withJSONObject: [title, text]),
+              let said = String(data: data, encoding: .utf8) else { return done(false) }
+        showWindow()
+        webView.evaluateJavaScript("window.ctAlert ? (window.ctAlert(...\(said)), true) : false") { shown, _ in done(shown as? Bool == true) }
+    }
+
+    /// How the see-through video stands, for the editor that waits on it ('mac-alpha'): "making" (`part` 0 to 1),
+    /// then "done", "failed" or "cancelled".
+    private func pushAlpha(_ state: String, part: Double = 0) {
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-alpha', {detail: {state: '\(state)', part: \(part)}}))")
     }
 
     private func pushRecorderState(_ phase: Recorder.Phase? = nil) {
@@ -845,12 +880,57 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        // The screen recording editor's packed picture is not a video to keep: it becomes a see-through video
+        // (downloadDidFinish). That one is about 3 GB a minute, so where it goes is asked (the dialog remembers the
+        // folder), and the packed picture waits in that same folder: nothing of it lands on another disk.
+        if let alpha = alphaDownload(named: suggestedFilename) {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = alpha.name + ".mov"
+            panel.allowedContentTypes = [.quickTimeMovie]
+            let chosen = { [weak self] (response: NSApplication.ModalResponse) in
+                guard let self, response == .OK, let final = panel.url else {
+                    self?.pushAlpha("cancelled")
+                    return completionHandler(nil)
+                }
+                let file = alphaWorkFile(beside: final, ext: "mp4")
+                self.alphaDownloads[download] = (file, final, alpha.stacked)
+                completionHandler(file)
+            }
+            if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { panel.begin(completionHandler: chosen) }
+            return
+        }
         let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         completionHandler(uniqueURL(in: folder, named: suggestedFilename))
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        if let alpha = alphaDownloads.removeValue(forKey: download) { try? FileManager.default.removeItem(at: alpha.file) }
+        pushAlpha("failed")   // an editor waiting on its see-through video stops waiting (one that failed before it had a place too)
         _ = dialog("The download failed: \(error.localizedDescription)", buttons: ["OK"])
+    }
+
+    /// A packed see-through video has arrived: it becomes the .mov that was asked for, shown in Finder when it is
+    /// there. The editor hears how far it is, and its Stop ends it.
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let alpha = alphaDownloads.removeValue(forKey: download) else { return }
+        alphaTask = Task {
+            do {
+                try await makeAlphaVideo(packed: alpha.file, stacked: alpha.stacked, to: alpha.final) { [weak self] part in
+                    DispatchQueue.main.async { self?.pushAlpha("making", part: part) }
+                }
+                pushAlpha("done")
+                NSWorkspace.shared.activateFileViewerSelecting([alpha.final])
+            } catch where Task.isCancelled || error is CancellationError {
+                pushAlpha("cancelled")   // Stop in the editor: nothing is left of it, and nothing failed
+            } catch {
+                pushAlpha("failed")
+                // the system's own errors say little alone ("Cannot Open"): its reason goes with it ("This media may be damaged.")
+                let e = error as NSError
+                let why = [e.localizedDescription, e.localizedFailureReason].compactMap { $0 }.joined(separator: ". ")
+                _ = dialog("The transparent video could not be made: \(why)", buttons: ["OK"])
+            }
+            alphaTask = nil
+        }
     }
 
     /// The assistant's mic: the open server's page gets it without a second WebKit prompt; macOS still asks once
@@ -875,7 +955,11 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
-        let done: (NSApplication.ModalResponse) -> Void = { completionHandler($0 == .OK ? panel.urls : nil) }
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            // remembered first: the page asks where they are ("files") as soon as it has them
+            if response == .OK, let self { self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles) }
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
         if let window = webView.window {
             panel.beginSheetModal(for: window, completionHandler: done)
         } else {

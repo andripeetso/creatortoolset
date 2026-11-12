@@ -83,6 +83,9 @@ import {
   keepSession,
   sessionKeys,
   type ChangeScope,
+  sessionStatusLabel,
+  sessionStatusOf,
+  statusSteps,
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
 import { useDeskLayout } from "@/lib/workshop-desk";
@@ -95,6 +98,7 @@ import { WorkshopSidebar } from "@/components/workshop/WorkshopSidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import InstagramAccountPage from "@/pages/InstagramAccountPage";
 import { markSeen, patchSummary, refreshSummaries } from "@/lib/workshop-summary";
+import { undoable } from "@/lib/undo";
 import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 
@@ -190,6 +194,12 @@ export default function WorkshopSessionPage() {
   // ?doc= opens on that piece (a Convert to copy opens on the piece being written)
   const [searchParams] = useSearchParams();
   const [activeDocId, setActiveDocId] = useState<string | null>(() => searchParams.get("doc") ?? pickActive(docs, null));
+  // and follows it: a link to another piece of the session that is open shows that piece, once the list has it
+  const linkedDoc = searchParams.get("doc");
+  const linkedHere = docs.some((d) => d.id === linkedDoc);
+  useEffect(() => {
+    if (linkedDoc && linkedHere) setActiveDocId(linkedDoc);
+  }, [linkedDoc, linkedHere]);
   const [closed, setClosed] = useState<Array<{ doc: WorkshopDocument; index: number }>>([]);
   const setChatData = chatLoad.set;
   const messages = useMemo(() => chatLoad.data ?? [], [chatLoad.data]);
@@ -604,9 +614,22 @@ export default function WorkshopSessionPage() {
   };
   const setStatus = (status: SessionStatus) => {
     if (!session) return;
-    setSession({ ...session, status });
-    patchSummary(session.id, { status });
-    patchSession(session.id, { status }).catch(fail);
+    const id = session.id;
+    // an old record with no status counts as an idea
+    const was = sessionStatusOf(session.status);
+    const put = (to: SessionStatus) => {
+      setSession((s) => (s && s.id === id ? { ...s, status: to } : s));
+      patchSummary(id, { status: to });
+      return patchSession(id, { status: to });
+    };
+    put(status).then(
+      () =>
+        was !== status &&
+        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+          for (const s of statusSteps(status, was)) await put(s);
+        }),
+      fail,
+    );
   };
   const setPosted = (posted: SessionPatch["posted"]) => {
     if (!session) return;

@@ -8,7 +8,7 @@ import WebKit
 struct CreatorToolsetMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var shell: Shell
-    /// Sparkle: reads the appcast at FEED_URL every 4 hours and installs what it finds (Info.plist keys from
+    /// Sparkle: reads the appcast at FEED_URL every hour and installs what it finds (Info.plist keys from
     /// build-app.sh). A build without a feed (`swift run`) starts no updater.
     private let updater = SPUStandardUpdaterController(
         startingUpdater: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,
@@ -141,6 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // an account sign-in's one-time code: swapped for the account, never loaded as a page
             if let code = accountCode(from: url) {
                 shell.accountLink(code)
+                continue
+            }
+            if isConnectDone(url) {
+                shell.showWindow()
                 continue
             }
             if let href = appHref(from: url, site: shell.base) { shell.showWindow(href: href) }

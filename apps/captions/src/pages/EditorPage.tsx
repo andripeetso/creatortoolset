@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { Check, Folder, Loader2, Plus } from "lucide-react";
+import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_VERSIONS } from "@contracts/editor";
+import type { EditingStylesView } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Badge } from "@/components/ui/badge";
@@ -10,14 +11,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { createEdit, footageTarget, listEdits, runEdit } from "@/lib/editor";
+import { createEdit, footageTarget, listEdits, listStyles, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
+import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
+import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
+import { useToolFolders } from "@/lib/folders";
+import { FolderGrid, ItemCard } from "@/components/browse/Grid";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
+import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -25,6 +33,8 @@ import { FootageFolderCard } from "@/components/FootageFolderCard";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const SORTS = ["recent", "name"] as const;
+const SORT_KEY = "editor:sort";
 export const thumb = (versionId: string) => `/api/library/media/${versionId}/thumb`;
 
 const STATE_TONE: Record<string, string> = {
@@ -33,8 +43,9 @@ const STATE_TONE: Record<string, string> = {
   done: "bg-emerald-500/15 text-emerald-500",
   failed: "bg-red-500/15 text-red-500",
   needs_key: "bg-amber-500/15 text-amber-600",
+  stopped: "bg-zinc-500/15 text-zinc-500",
 };
-export const STATE_LABEL: Record<string, string> = { queued: "Queued", running: "Running", done: "Done", failed: "Failed", needs_key: "Needs setup" };
+export const STATE_LABEL: Record<string, string> = { queued: "Queued", running: "Running", done: "Done", failed: "Failed", needs_key: "Needs setup", stopped: "Stopped" };
 
 export function StateBadge({ state }: { state: string }) {
   return <Badge className={cn("border-transparent", STATE_TONE[state])}>{STATE_LABEL[state] ?? state}</Badge>;
@@ -46,22 +57,68 @@ export default function EditorPage() {
   const edits = list.data;
   const error = edits ? null : list.error || null;
   // /editor?new=1&folder=<Media Library folder id>&name=<name>: New edit opens with them (the assistant's "Change the setup")
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "" } : undefined;
   const [creating, setCreating] = useState(!!start);
+  const [view, setView] = useBrowseView("editor");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  // the open folder's edits (every folder's when searching); the server sends them newest change first
+  const folders = useToolFolders("editor", edits ?? [], find);
+  const shown = folders.here.filter((e) => matches(find, e.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const firstClip = (id: string) => {
+    const v = edits?.find((e) => e.id === id)?.sources[0];
+    return v ? thumb(v) : undefined;
+  };
+  const anything = !!edits?.length || folders.folders.length > 0 || !!folders.open;
+  // the person's editing styles: the second tab (/editor?tab=styles), and New edit's Style select. `own`: it is read again after this window's own saves
+  const styleList = useCachedLoad<EditingStylesView>("/api/editor/styles", listStyles, { own: true });
+  const [openStyle, setOpenStyle] = useState<OpenStyle>(null);
+  const tab = params.get("tab") === "styles" ? "styles" : "edits";
+  const tabs = (
+    <Tabs value={tab} onValueChange={(t) => setParams(t === "styles" ? { tab: t } : {})}>
+      <TabsList>
+        <TabsTrigger value="edits">Edits</TabsTrigger>
+        <TabsTrigger value="styles">Editing styles</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  // only one tab is drawn at a time: the styles tab has its own bar button and nothing of the edits list
+  if (tab === "styles") {
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <AppBar tool="AI Editor">
+          {!!styleList.data?.styles.length && (
+            <Button size="sm" onClick={() => setOpenStyle("new")}>
+              <Plus className="h-4 w-4" />
+              New editing style
+            </Button>
+          )}
+        </AppBar>
+        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
+          {tabs}
+          {styleList.data && <EditingStyles styles={styleList.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styleList.refresh} />}
+          {!styleList.data && styleList.error && <p className="text-sm text-red-400">{styleList.error}</p>}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor">
-        <EditorDefaultsButton />
+        {anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
+        <EditorDefaultsButton slots={["grade"]} />
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" />
           New edit
         </Button>
       </AppBar>
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
+        {tabs}
         {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
-        {edits?.length === 0 && (
+        {edits?.length === 0 && !anything && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <p className="max-w-md text-sm text-zinc-500">
               Pick raw takes from your Media Library and say what the video is. The AI picks the best take of each line, cuts the restarts and
@@ -73,11 +130,54 @@ export default function EditorPage() {
             </Button>
           </div>
         )}
-        {edits && edits.length > 0 && (
+        <FolderTrail state={folders} top="AI Editor" />
+        {anything && (
+          <BrowseBar
+            search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}
+            sort={{
+              value: sort,
+              onChange: (v) => {
+                setSort(v);
+                persistSort(SORT_KEY, v);
+              },
+              label: "Sort edits",
+              options: [
+                { id: "recent", label: "Recent" },
+                { id: "name", label: "Name" },
+              ],
+            }}
+            view={{ value: view, onChange: setView }}
+          />
+        )}
+        {find.trim() && shown.length === 0 && folders.folders.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches.</p>}
+        {(shown.length > 0 || folders.folders.length > 0) && view === "grid" && (
+          <FolderGrid size="small">
+            <ToolFolderCards state={folders} pictureOf={firstClip} />
+            {shown.map((e) => (
+              <ItemCard
+                key={e.id}
+                to={`/editor/${e.id}`}
+                picture={e.sources[0] ? thumb(e.sources[0]) : undefined}
+                icon={Clapperboard}
+                name={e.name}
+                meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
+                badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
+                drag={folders.drag(e.id)}
+                actions={folders.folders.length > 0 || folders.open ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
+              />
+            ))}
+          </FolderGrid>
+        )}
+        {view === "list" && folders.folders.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <ToolFolderRows state={folders} />
+          </div>
+        )}
+        {shown.length > 0 && view === "list" && (
           <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-            {edits.map((e) => (
-              <li key={e.id}>
-                <Link to={`/editor/${e.id}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
+            {shown.map((e) => (
+              <li key={e.id} className="group flex items-center">
+                <Link to={`/editor/${e.id}`} {...folders.drag(e.id)} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
                   <div className="flex shrink-0 -space-x-3">
                     {e.sources.slice(0, 3).map((v) => (
                       <img key={v} src={thumb(v)} alt="" className="h-10 w-16 rounded-md border border-zinc-500/30 bg-zinc-800 object-cover" />
@@ -90,21 +190,25 @@ export default function EditorPage() {
                       {e.last && ` · ${e.last.kind}`}
                     </div>
                   </div>
-                  {e.last && <StateBadge state={e.last.state} />}
+                  {e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 </Link>
+                <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
               </li>
             ))}
           </ul>
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
       </main>
-      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} />
+      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} />
     </div>
   );
 }
 
-/** The New edit sheet: footage from the library (search, a folder, several at once or the whole folder), then the brief. */
-function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => void; start?: { folder: string; name: string } }) {
+/**
+ * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder), then the brief.
+ * `styles`: the person's editing styles. With none there is no Style select and the edit is made as it always was.
+ */
+export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string }; styles?: EditingStylesView | null }) {
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [libId, setLibId] = useState("");
@@ -120,9 +224,25 @@ function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => 
   const [script, setScript] = useState("");
   const [versions, setVersions] = useState(1);
   const [targetS, setTargetS] = useState("");
+  const [styleId, setStyleId] = useState<string | null>(null); // null: nothing picked here yet; "": None
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** Picking a style fills the fields it sets that this sheet shows; they stay the person's to change. */
+  const pickStyle = (id: string) => {
+    setStyleId(id);
+    const s = styles?.styles.find((x) => x.id === id);
+    if (!s) return;
+    setVersions(s.versions);
+    setTargetS(s.targetS ? String(s.targetS) : "");
+  };
+  // the sheet opens on the style the last edit was made with
+  const last = styles?.last;
+  useEffect(() => {
+    if (open && styleId === null && last) pickStyle(last);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, last]);
 
   useEffect(() => {
     if (!open) return;
@@ -194,11 +314,12 @@ function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => 
   /** Files from this computer: filed in the library (the A-roll folder, or a plug-in\'s), then picked for this edit. */
   const fromComputer = async (files: FileList | null) => {
     if (!files?.length) return;
+    const picked = Array.from(files); // before any await: clearing the input empties this very list in WebKit
     setBusy(true);
     setError(null);
     try {
       const target = await footageTarget();
-      for (const file of Array.from(files)) {
+      for (const file of picked) {
         const up = await uploadFile(target.libraryId, file, () => {}, target.collectionId);
         const assetId = up.assetId ?? up.duplicateOf;
         if (!assetId) throw new Error(`${file.name} was not filed in the library`);
@@ -225,6 +346,8 @@ function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => 
         script,
         versions,
         targetS: Number(targetS) || 0,
+        // only an account with styles says anything about one: its pick, or null for None
+        ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
       });
       await runEdit(id);
       navigate(`/editor/${id}`);
@@ -371,6 +494,19 @@ function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => 
             <Label htmlFor="edit-name">Name</Label>
             <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Untitled edit" maxLength={120} />
           </div>
+          {!!styles?.styles.length && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-style">Style</Label>
+              <select id="edit-style" value={styles.styles.some((x) => x.id === styleId) ? styleId! : ""} onChange={(e) => pickStyle(e.target.value)} className="h-9 w-fit max-w-full rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
+                <option value="">None</option>
+                {styles.styles.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-brief">What is the video?</Label>
             <Textarea id="edit-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} placeholder="A 45-second reel for new parents: the hook, three tips, the call to action." />

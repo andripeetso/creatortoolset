@@ -55,14 +55,22 @@ final class SourcePickerTests: XCTestCase {
         XCTAssertNil(PickerGeometry.handle(at: CGPoint(x: 50, y: 50), in: r))
     }
 
-    func testOnlyOtherAppsNormalWindowsAreOffered() {
+    func testNormalWindowsAreOfferedThisAppsOwnToo() {
         let big = CGRect(x: 0, y: 0, width: 800, height: 600)
-        XCTAssertTrue(PickerGeometry.isPickable(layer: 0, ownerBundleID: "app.other", ownBundleID: "app.ours", frame: big))
-        XCTAssertFalse(PickerGeometry.isPickable(layer: 0, ownerBundleID: "app.ours", ownBundleID: "app.ours", frame: big))
-        XCTAssertFalse(PickerGeometry.isPickable(layer: 25, ownerBundleID: "app.other", ownBundleID: "app.ours", frame: big))
-        XCTAssertFalse(PickerGeometry.isPickable(layer: 0, ownerBundleID: "app.other", ownBundleID: "app.ours",
-                                                 frame: CGRect(x: 0, y: 0, width: 80, height: 300)))
-        XCTAssertFalse(PickerGeometry.isPickable(layer: 0, ownerBundleID: nil, ownBundleID: "app.ours", frame: big))
+        XCTAssertTrue(PickerGeometry.isPickable(layer: 0, ownerBundleID: "app.other", frame: big))
+        XCTAssertTrue(PickerGeometry.isPickable(layer: 0, ownerBundleID: Bundle.main.bundleIdentifier ?? "app.ours", frame: big))
+        XCTAssertFalse(PickerGeometry.isPickable(layer: 25, ownerBundleID: "app.other", frame: big))
+        XCTAssertFalse(PickerGeometry.isPickable(layer: 0, ownerBundleID: "app.other", frame: CGRect(x: 0, y: 0, width: 80, height: 300)))
+        XCTAssertFalse(PickerGeometry.isPickable(layer: 0, ownerBundleID: nil, frame: big))
+    }
+
+    /// The recorder's own floating windows are kept out of the picker by their layer alone.
+    func testTheRecordersFloatingWindowsSitAboveTheNormalLayer() {
+        let levels: [NSWindow.Level] = [.floating, .statusBar, NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue - 1)]
+        for level in levels {
+            XCTAssertFalse(PickerGeometry.isPickable(layer: level.rawValue, ownerBundleID: "app.ours",
+                                                     frame: CGRect(x: 0, y: 0, width: 800, height: 600)))
+        }
     }
 
     func testFrontmostWindowUnderThePointWins() {

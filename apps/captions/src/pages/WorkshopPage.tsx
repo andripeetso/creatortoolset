@@ -21,6 +21,7 @@ import { saveObsidianMany } from "@/components/workshop/ExportMarkdown";
 import { KIND_DOT } from "@/components/workshop/DocumentTabs";
 import { useWorkshopTitle } from "@/components/workshop/WorkshopSidebar";
 import { MAKING, patchSummary, useSessionSummaries } from "@/lib/workshop-summary";
+import { undoable } from "@/lib/undo";
 import { KindTile } from "@/components/workshop/KindTile";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
@@ -53,6 +54,9 @@ import {
   type SessionStatus,
   type WorkshopFramework,
   type WorkshopRule,
+  sessionStatusLabel,
+  sessionStatusOf,
+  statusSteps,
 } from "@/lib/workshop";
 import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { onSettingsClosed } from "@/lib/setup";
@@ -214,12 +218,26 @@ export default function WorkshopPage() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const setStatus = (id: string, status: SessionStatus) => {
-    patchSummary(id, { status });
-    setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status } : s)));
-    patchSession(id, { status }).catch((e) => {
-      setError(e instanceof Error ? e.message : String(e));
-      load();
-    });
+    const row = sessions.find((s) => s.id === id);
+    // an old record with no status counts as an idea
+    const was = row && sessionStatusOf(row.status);
+    const put = (to: SessionStatus) => {
+      patchSummary(id, { status: to });
+      setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: to } : s)));
+      return patchSession(id, { status: to }).catch((e) => {
+        load();
+        throw e;
+      });
+    };
+    put(status).then(
+      () =>
+        was &&
+        was !== status &&
+        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+          for (const s of statusSteps(status, was)) await put(s);
+        }),
+      (e) => setError(e instanceof Error ? e.message : String(e)),
+    );
   };
 
   // the rows the list shows: type filter, sort, then the search

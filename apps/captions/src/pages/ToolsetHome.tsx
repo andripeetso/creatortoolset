@@ -7,7 +7,7 @@ import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
-import { HomeTodo, useTodoLists } from "@/components/HomeTodo";
+import { editWaits, HomeActivity, useRunning, useTodoLists, type Chip } from "@/components/HomeActivity";
 import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/HomeIntro";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
@@ -15,7 +15,7 @@ import { useSessionSummaries } from "@/lib/workshop-summary";
 import { accentFor, accentTones, currentProject, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
-import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
+import { needsLine, onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
 import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -81,9 +81,9 @@ export default function ToolsetHome() {
   const waiting = useWaiting(me);
   const project = useWorkspace(currentProject);
   const { projectTint, homeGlow, ownColour } = useAppearance();
-  // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
-  const rows = useSessionSummaries();
-  const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
+  // what's working right now (HomeActivity.tsx useRunning: replies, clips being prepared, edits, exports): its stage's
+  // box pulses while it moves and the tile says how far it is
+  const running = useRunning(me);
   // which tools are ready: the saved setup, live (lib/setup.ts useSetupSync). Read again on coming Home and when Settings
   // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
   const view = useSetup((s) => s.view);
@@ -116,13 +116,14 @@ export default function ToolsetHome() {
     return <Navigate to={{ pathname: "/", search: location.search }} replace />;
   }
 
-  /** What a tile still needs, from the account's setup (none when nothing): one entry per missing thing. */
-  const statusOf = (k: Key): string[] => {
-    if (!view || !canUseKey(me, k)) return [];
+  /** What a tile still needs, from the account's setup, in one line ("Needs an Apify key"); null when nothing. */
+  const statusOf = (k: Key): string | null => {
+    if (!view || !canUseKey(me, k)) return null;
     // the recorder needs nothing Review doesn't; Finals is a view of the Media Library
     const tool = k === "record" ? "review" : k === "finals" ? "media" : k;
-    if (view.tools && !view.tools.includes(tool)) return [];
-    return readiness(tool, view.have).missing.map((n) => n.what);
+    if (view.tools && !view.tools.includes(tool)) return null;
+    const missing = readiness(tool, view.have).missing;
+    return missing.length ? needsLine(missing) : null;
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome);
@@ -146,8 +147,8 @@ export default function ToolsetHome() {
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
-          {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
-          {ok && missing.length > 0 && <NeedsSetup what={missing} />}
+          {ok && running[dest] ? <Running chip={running[dest]} /> : null}
+          {ok && missing && <NeedsSetup what={missing} />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
       </>
@@ -226,7 +227,7 @@ export default function ToolsetHome() {
       {beat && <HomeIntro beat={beat} />}
       <AppBar className="intro-bar absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] bg-transparent">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
-        <HomeTodo />
+        <HomeActivity />
       </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
@@ -255,7 +256,7 @@ export default function ToolsetHome() {
           >
             <span>
               <span className="block text-sm text-zinc-100">Finish setting up</span>
-              <span className="block text-xs text-zinc-400">Three short screens. Your answers are saved.</span>
+              <span className="block text-xs text-zinc-400">A few short questions. Your answers are saved.</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>
@@ -274,7 +275,7 @@ export default function ToolsetHome() {
               )}
               <section
                 style={{ "--i": i } as CSSProperties}
-                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]) ? "home-busy" : ""} ${boxLook(g.id)}`}
+                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]?.moving) ? "home-busy" : ""} ${boxLook(g.id)}`}
               >
                 {/* the welcome only: the stage before it is a box (its number, name and what you do there), and the frame that opens into the box */}
                 {beat && (
@@ -326,28 +327,24 @@ export default function ToolsetHome() {
 
 /**
  * A tool that needs setup: a small amber dot on its icon, nothing for one that is ready (owner, 2026-11-09). Hovering the
- * dot says so and lists what is missing (owner, 2026-11-10); opening the tool brings up its checklist (FirstOpen). The
+ * dot says what is missing in one line, the same words every screen uses (owner, 2026-11-10 and 11-11: "one specific
+ * concrete statement"); opening the tool brings up its checklist (FirstOpen). The
  * dot's empty `title` keeps the tile's own description from showing under the tooltip; the ring around it is only a
  * larger place to point at.
  */
-function NeedsSetup({ what }: { what: string[] }) {
+function NeedsSetup({ what }: { what: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
           role="img"
-          aria-label={`Not set up yet. Needs: ${what.join(", ")}`}
+          aria-label={what}
           title=""
           className="intro-late absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-400 before:absolute before:-inset-2 before:content-['']"
         />
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="max-w-64 text-left">
-        <p className="font-medium">Not set up yet</p>
-        <ul className="mt-0.5">
-          {what.map((w) => (
-            <li key={w}>{w}</li>
-          ))}
-        </ul>
+        {what}
       </TooltipContent>
     </Tooltip>
   );
@@ -356,12 +353,12 @@ function NeedsSetup({ what }: { what: string[] }) {
 /**
  * What waits on you at a tool, by its route: only what needs you, never what the AI or someone else is working on.
  * Workshop: replies you haven't read. AI Editor: edits whose last step failed or needs a key. Review: videos marked
- * Needs review. From the to-do's saved lists, live (HomeTodo.tsx useTodoLists).
+ * Needs review. From the Activity list's saved lists, live (HomeActivity.tsx useTodoLists).
  */
 function useWaiting(me: Me | null): Record<string, number> {
   const { edits, assets } = useTodoLists(me);
   return {
-    editor: edits.filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key").length,
+    editor: edits.filter(editWaits).length,
     review: assets.filter((a) => a.approval.status === "needs_review").length,
   };
 }
@@ -378,14 +375,14 @@ const BADGE_MEANS: Partial<Record<Tool, (n: number) => string>> = {
   review: (n) => `${plural(n, "video")} to review`,
 };
 
-/** Work running at a tool, quiet beside its badge: a spinner and the count, never red. */
-function Running({ n, verb }: { n: number; verb: string }) {
+/** Work running at a tool, quiet beside its badge: a spinner and how far it is, never red; work that waits has no spinner. */
+function Running({ chip }: { chip: Chip }) {
   return (
     <span
-      title={`${n} ${verb}`}
-      className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-[#0b0b10]"
+      title={chip.title}
+      className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-zinc-950"
     >
-      <Loader2 className="h-2.5 w-2.5 animate-spin" /> {n} {verb}
+      {chip.moving && <Loader2 className="h-2.5 w-2.5 animate-spin" />} {chip.text}
     </span>
   );
 }

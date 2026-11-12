@@ -6,11 +6,12 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, EmptyRow, FormDialog, LoadingRow, Row, RowMenu, Section } from "./ui";
+import { Loader2, UserRound } from "lucide-react";
+import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
+import { SIGN_IN_BUTTON, useMacAccount } from "@/components/setup/AccountStep";
+import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 
-type Provider = "google" | "apple" | "github";
-const PROVIDER_NAME: Record<Provider, string> = { google: "Google", apple: "Apple", github: "GitHub" };
-const PROVIDERS = Object.keys(PROVIDER_NAME) as Provider[];
+const PROVIDERS: Provider[] = ["google", "apple", "github"];
 
 /** GET /api/auth/account: the names the app shows, the sign-ins linked here (with their address and picture URL). */
 interface SignIn {
@@ -76,7 +77,7 @@ export function useSignInApps(): Record<Provider, boolean> | null {
   return data ?? (error ? NO_SIGN_INS : null);
 }
 
-/** Settings → Account: the photo, name, sign-in name and password; Google, Apple and GitHub sign-in; sign out. */
+/** Settings → Account: the photo, name, sign-in name and password; the connected accounts (Google, Apple, GitHub); sign out. */
 export function AccountSection() {
   const me = useAuth((s) => s.me);
   const required = useAuth((s) => s.required);
@@ -107,6 +108,15 @@ export function AccountSection() {
     // load and setParams are stable for this one-time read
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
+
+  // a link finished in the system browser (the Mac app opens sign-ins there): coming back to the window shows it
+  useEffect(() => {
+    const again = () => void load();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+    // load is stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!me) return <LoadingRow />;
   if (noAccount) {
@@ -142,47 +152,16 @@ export function AccountSection() {
         </Card>
       </Section>
 
-      {linkable.length > 0 && (
-        <Section id="sign-in-with" title="Sign in with">
-          <Card>
-            {linkable.map((p) => {
-              const s = account.signins.find((x) => x.provider === p);
-              const who = s ? [s.name, s.email].filter(Boolean).join(" · ") : "";
-              return (
-                <Row
-                  key={p}
-                  title={PROVIDER_NAME[p]}
-                  description={who || undefined}
-                  control={
-                    s ? (
-                      <RowMenu
-                        label={`More for ${PROVIDER_NAME[p]}`}
-                        items={[
-                          {
-                            label: "Unlink",
-                            destructive: true,
-                            confirm: { title: `Unlink ${PROVIDER_NAME[p]} from your account?`, body: "You can link it again any time.", ok: "Unlink" },
-                            onSelect: async () => {
-                              const r = await fetch(`/api/auth/identity/${p}`, { method: "DELETE" });
-                              const d = (await r.json().catch(() => ({}))) as { error?: string };
-                              if (!r.ok) throw failure(r, d);
-                              await load();
-                            },
-                          },
-                        ]}
-                      />
-                    ) : (
-                      <Button asChild size="sm" variant="outline">
-                        <a href={`/api/account/login/${p}?for=link`}>Link</a>
-                      </Button>
-                    )
-                  }
-                />
-              );
-            })}
-          </Card>
-        </Section>
-      )}
+      <ConnectedAccounts
+        signins={account.signins.filter((x) => linkable.includes(x.provider))}
+        open={linkable.filter((p) => !account.signins.some((x) => x.provider === p))}
+        unlink={async (p) => {
+          const r = await fetch(`/api/auth/identity/${p}`, { method: "DELETE" });
+          const d = (await r.json().catch(() => ({}))) as { error?: string };
+          if (!r.ok) throw failure(r, d);
+          await load();
+        }}
+      />
       {required && (
         <Section title="Session">
           <Card>
@@ -191,6 +170,75 @@ export function AccountSection() {
         </Section>
       )}
     </>
+  );
+}
+
+const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS as string[]).includes(p);
+
+/**
+ * Connected accounts: each sign-in this account has, with the provider's mark, who it is there and its own menu, then
+ * a Continue with … button (the provider's mark) for each one still open. On a server with sign-in set up they are the account's linked sign-ins
+ * (Unlink; a Continue with … button links another). In the Mac app it is also the Creator Toolset account this Mac is signed in
+ * to (Sign out; its button signs in, only for a sign-in the Mac app offers). Nothing connected and nothing to
+ * connect means no section at all, so it is never a dead row.
+ */
+function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
+  const mac = useMacAccount({ first: "offered" });
+  const macIn = mac.account.state === "signedIn" ? mac.account : null;
+  // a provider this server links is its button; the Mac app's own account sign-in only for one the server does not
+  const macOpen = macIn ? [] : mac.providers.filter((p) => !open.includes(p));
+  // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
+  const failed = mac.account.state === "error" ? mac.account.message || "The sign-in didn't work. Try again." : mac.account.state === "unreachable" ? "Couldn't reach the account server. Try again." : null;
+  useEffect(() => {
+    if (failed) toast.error(failed);
+  }, [failed]);
+  if (!signins.length && !macIn && !open.length && !macOpen.length) return null;
+  const mark = (p: Provider | undefined) => (
+    <span className="text-foreground">{p ? <ProviderMark provider={p} className="size-4" /> : <UserRound className="size-4" />}</span>
+  );
+  return (
+    <Section id="sign-in-with" title="Connected accounts">
+      <Card>
+        {signins.map((s) => (
+          <ListRow
+            key={s.provider}
+            icon={mark(s.provider)}
+            title={PROVIDER_NAME[s.provider]}
+            subtitle={[s.name, s.email].filter(Boolean).join(" · ") || undefined}
+            actions={
+              <RowMenu
+                label={`More for ${PROVIDER_NAME[s.provider]}`}
+                items={[{ label: "Unlink", destructive: true, confirm: { title: `Unlink ${PROVIDER_NAME[s.provider]} from your account?`, body: "You can link it again any time.", ok: "Unlink" }, onSelect: () => unlink(s.provider) }]}
+              />
+            }
+          />
+        ))}
+        {macIn && (
+          <ListRow
+            icon={mark(isProvider(macIn.provider) ? macIn.provider : undefined)}
+            title={isProvider(macIn.provider) ? PROVIDER_NAME[macIn.provider] : "Creator Toolset account"}
+            subtitle={[macIn.name, macIn.email].filter(Boolean).join(" · ") || undefined}
+            actions={<RowMenu label="More for this account" items={[{ label: "Sign out", onSelect: async () => mac.signOut() }]} />}
+          />
+        )}
+        {(open.length > 0 || macOpen.length > 0) && (
+          <div className="flex flex-col gap-2 p-2 sm:flex-row">
+            {open.map((p) => (
+              <a key={`link-${p}`} href={`/api/account/login/${p}?for=link`} className={cn(SIGN_IN_BUTTON, "sm:flex-1")}>
+                <ProviderMark provider={p} className="size-4 shrink-0" />
+                <span>Continue with {PROVIDER_NAME[p]}</span>
+              </a>
+            ))}
+            {macOpen.map((p) => (
+              <button key={`mac-${p}`} type="button" disabled={!!mac.busy} onClick={() => mac.signIn(p)} className={cn(SIGN_IN_BUTTON, "sm:flex-1", mac.busy && mac.busy !== p && "opacity-50")}>
+                {mac.busy === p ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ProviderMark provider={p} className="size-4 shrink-0" />}
+                <span>{mac.busy === p ? "Signing in…" : `Continue with ${PROVIDER_NAME[p]}`}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+    </Section>
   );
 }
 

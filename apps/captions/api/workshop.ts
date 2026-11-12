@@ -39,6 +39,7 @@ import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { announce } from "./lib/sync";
+import { workEnded } from "./assistant";
 import { inJob, keepJob, saved } from "./lib/workshop/job";
 import { IllegalTransition } from "./lib/transition";
 import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
@@ -70,6 +71,7 @@ import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, onVersion,
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions } from "./lib/packs";
+import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
 import { readThrough } from "./lib/workshop/readthrough";
@@ -282,6 +284,9 @@ function patchSource(id: string, change: (s: KnowledgeSource) => KnowledgeSource
 }
 /** Sources being read in this process: a second read of one waits for the first. */
 const inRead = new Set<string>();
+/** This account's sources its AI is reading, for Home (api/activity.ts); inJob tells "workshop" as they start and end. */
+export const knowledgeWork = async (username: string) =>
+  (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name }] : []));
 
 /**
  * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,
@@ -619,7 +624,13 @@ async function updateSession(
   });
 }
 
+/**
+ * A session's notes: its Notes document once the session has one (what the page shows and edits), else notes.md.
+ * A notes.md written after that document last changed (before writeNotes kept the two in step) is still the newer text.
+ */
 async function readNotes(id: string): Promise<string> {
+  const doc = (await listDocs(id)).find((d) => d.kind === "notes");
+  if (doc && doc.updatedAt >= Math.floor(await stat(notesPath(id)).then((s) => s.mtimeMs, () => 0))) return docToMarkdown(doc).trim();
   try {
     return await readFile(notesPath(id), "utf-8");
   } catch {
@@ -627,11 +638,14 @@ async function readNotes(id: string): Promise<string> {
   }
 }
 
-async function writeNotes(id: string, text: string): Promise<void> {
+async function writeNotes(id: string, text: string, by: "user" | "ai" = "user"): Promise<void> {
   await mkdir(sessionDir(id), { recursive: true });
   const tmp = `${notesPath(id)}.tmp-${process.pid}`;
   await writeFile(tmp, text);
   await rename(tmp, notesPath(id));
+  // an opened session shows its Notes document, so the notes go there too (never called inside chained: updateDoc is)
+  const doc = (await listDocs(id)).find((d) => d.kind === "notes");
+  if (doc) await updateDoc(id, doc.id, (d) => void userEdit(d, [{ id: d.blocks[0]?.id, text }], Date.now(), {}, by));
 }
 
 async function readDraftMarkdown(id: string, draftId: string): Promise<string | null> {
@@ -1002,10 +1016,25 @@ function resumableClaude(session: SessionMeta, before: string | undefined, sourc
 const projectAccount = (project: Project | null | undefined): string | null | undefined => (project ? (project.accountId ?? null) : undefined);
 const contextKey = (project: Project | null, frameworks: Framework[]) => createHash("sha1").update(JSON.stringify([project, frameworks])).digest("hex");
 
+/**
+ * A reply of the writer's has ended. When the assistant asked for it (workshop_chat; the card is api/mcp.ts workFor's)
+ * that card gets its end and the assistant's chat one line with a button. A reply asked on this page left no card, so
+ * nothing is said; a Stop is the person's own press, so the card ends without a line.
+ */
+async function writerEnded(session: SessionMeta, user: SessionUser, docId: string, failed?: string): Promise<void> {
+  // the name workshop_sessions lists, so the assistant can find what "Show me" means; an unnamed session goes by its piece
+  const named = (await readSession(session.id))?.title.trim() ?? "";
+  const title = UNTITLED.test(named) ? ((await readDoc(session.id, docId))?.title ?? "your piece") : named;
+  const say = failed === TURN_STOPPED ? {} : { say: failed ? `The writer could not finish “${title}”.` : `The writer finished “${title}”.`, choices: ["Show me"] };
+  for (const username of new Set([session.owner, user.username])) workEnded(username, `workshop:${session.id}`, { status: failed ? "failed" : "done", detail: failed ?? "The writer is done", ...say });
+}
+
 async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage, assistantId: string): Promise<void> {
   const progress = progressWriter(session.id, assistantId);
   const signal = stopSignal(assistantId);
   let outcome = "Reply ready";
+  /** Why the reply did not finish (a Stop, or the error), for the assistant's card. */
+  let failed: string | undefined;
   // Edits applied while the answer streams; undone if the provider fails or the turn does.
   let versionBefore: string | undefined;
   let applied = 0;
@@ -1196,7 +1225,11 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
 
     // The Mac's Claude session for this conversation, when it holds the reply before this message (see the Mac relay).
     const askAt = chat.messages.findIndex((m) => m.id === ask.id);
-    const context = contextKey(project, frameworks);
+    // The author's own skills for this project (lib/skills.ts): a file each in the folder, a line each in the prompt, and
+    // a change to them starts the Mac's session over. Not for Grok, whose prompt gets the folder's files whole.
+    const skills = folder && workshopAi(user, session.ai).mac?.provider?.driver !== "grok" ? await skillsFor(user.username, session.projectId) : [];
+    Object.assign(folder ?? {}, skillFiles(skills));
+    const context = contextKey(project, frameworks) + skills.map((s) => `:${s.id}@${s.updatedAt}`).join("");
     const claude = folder ? resumableClaude(session, askAt > 0 ? chat.messages[askAt - 1]!.id : undefined, ids, context, providerKey(user, session.ai)) : undefined;
     // say what sits next to the piece, before the thinking step (a resumed session has it from its first turn)
     if (!captionOnly && !(claude && folder) && (nearPosts.length || rewrites.pieces.length)) {
@@ -1237,7 +1270,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       }
       // Tagged sources first, then the open one, then the most recently pulled ones.
       views.sort((a, b) => Number(!!b.tagged) - Number(!!a.tagged) || Number(!!b.open) - Number(!!a.open) || b.at - a.at);
-      const packText = await packInstructions(user.username, "workshop.write", project?.id ?? null);
+      // on the Mac the turn has tools (it reads its folder, and may search the web): the app's own packs only there
+      const packText = [await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: workshopAi(user, session.ai), tools: onMac(user, session.ai) }), skillLines(skills, "folder")].filter(Boolean).join("\n\n");
       const prompt = buildTurnPrompt({
         project: project ?? undefined,
         account: account ?? undefined,
@@ -1556,12 +1590,14 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // a Claude session a stop or a failure cut short may hold half a turn: the next turn starts over
     if (macStarted) await updateSession(session.id, (m) => { m.claudeSession = undefined; }).catch(() => {});
     outcome = signal.aborted ? "Stopped" : "Failed";
+    failed = signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300);
     await patchMessage(session.id, assistantId, { status: "error", stage: undefined, error: signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300), usage });
     console.warn(`[workshop] turn ${assistantId} failed: ${errorMessage(e)}`);
   } finally {
     chatting.delete(assistantId);
     stops.delete(assistantId);
     liveEnd(assistantId);
+    await writerEnded(session, user, ask.docId, failed).catch(() => {});
     const title = session.title || "Untitled";
     await notifyWorkshopOwner(session.owner, { kind: "workshop", by: "Content Workshop", name: title, text: `${outcome}: ${title}`, href: `/workshop/sessions/${session.id}`, ref: session.id }).catch(() => {});
   }
@@ -1605,11 +1641,11 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     if (!doc?.blocks.length) throw new Error("That document is empty");
     const project = await projectForAi(session.projectId, user);
     const { handle, best } = await bestPosts(user, project, 8);
-    const packText = await packInstructions(user.username, "workshop.review", project?.id ?? null);
+    const reader = fableProvider(user);
+    const packText = await packInstructions(user.username, "workshop.review", project?.id ?? null, { ai: { only: ["mac"], mac: { label: "Workshop follower's read", provider: reader } } });
     const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best, packText });
     let usage: MacUsage | undefined;
     const write = progressWriter(session.id, messageId);
-    const reader = fableProvider(user);
     const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL });
     await write({}, true);
     // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
@@ -1667,7 +1703,8 @@ async function runAudit(session: SessionMeta, user: SessionUser, messageId: stri
       text = postAuditText(pack.handle, pack.kind, pack.markdown);
     }
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
-    const packText = await packInstructions(user.username, "workshop.review", session.projectId ?? null);
+    // on the Mac the check searches the web: a run with tools, so the app's own packs only (Perplexity has none)
+    const packText = await packInstructions(user.username, "workshop.review", session.projectId ?? null, { ai: workshopAi(user), tools: onWebMac(user) });
     const system = packText ? `${AUDIT_SYSTEM}\n\n${packText}` : AUDIT_SYSTEM;
     const answer = await webResearch(user, system, text, { depth: input.depth, jsonSchema: AUDIT_JSON_SCHEMA, signal });
     const result = { ...parseAuditResult(answer.content, answer.citations), ...(covered ? { covered } : {}) };
@@ -2436,7 +2473,7 @@ workshopApp.patch("/sessions/:id", async (c) => {
       else if (patch.ai) m.ai = patch.ai;
     }, { touch: patch.notes !== undefined || !!patch.sources });
     if (!next) return c.json({ error: "Not found" }, 404);
-    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes); // after the status check: a refused PATCH writes nothing
+    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes, fromAiKey(c) ? "ai" : "user"); // after the status check: a refused PATCH writes nothing
     // a video just added starts its transcript now, so it's there by the time a reply reads the folder
     const added = (patch.sources ?? []).map((x) => x.postId).filter((id) => !meta.sources.some((x) => x.postId === id));
     if (added.length) void transcribeForUser(added, user, 0).catch(() => {});
@@ -3688,7 +3725,7 @@ async function runDraft(session: SessionMeta, draft: DraftMeta, user: SessionUse
       project: project ?? undefined,
       frameworks,
       rules: rules.map((r) => r.text),
-      packText: await packInstructions(user.username, "workshop.write", project?.id ?? null),
+      packText: await packInstructions(user.username, "workshop.write", project?.id ?? null, { ai: workshopAi(user, session.ai) }),
       notes,
       prompt: draft.prompt,
       packs: packs.map((p) => ({ ...p, note: noteFor.get(p.id), savedFor: p.savedFor })),

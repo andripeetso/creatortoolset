@@ -162,6 +162,10 @@ export async function chunkedUpload<T>(
   file: Blob,
   fields: Record<string, string>,
   onProgress: (pct: number) => void,
+  /** The upload's id, as soon as the server has made it (before any part): a message can name the file then. */
+  onStart?: (id: string) => void,
+  /** Abort: no further part is sent (one already on its way finishes); the upload rejects. */
+  signal?: AbortSignal,
 ): Promise<T> {
   const key = `upload:${initUrl}:${file.size}:${file instanceof File ? file.lastModified : ""}:${JSON.stringify(fields)}`;
   const resumed = await resumable(base, key);
@@ -173,6 +177,7 @@ export async function chunkedUpload<T>(
       body: JSON.stringify({ ...fields, size: file.size }),
     }).then((r) => json<{ id: string; partSize: number }>(r)));
   remember(key, init.id);
+  onStart?.(init.id);
   const partSize = init.partSize || PART_BYTES;
   const totalParts = Math.ceil(file.size / partSize);
   const progress = new Map<number, number>();
@@ -187,6 +192,7 @@ export async function chunkedUpload<T>(
   let cursor = 0;
   const worker = async () => {
     while (cursor < pending.length) {
+      signal?.throwIfAborted();
       const partNumber = pending[cursor++];
       const start = (partNumber - 1) * partSize;
       const chunk = file.slice(start, Math.min(start + partSize, file.size));

@@ -1,8 +1,9 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
+import type { SessionUser } from "./users";
 import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
@@ -11,11 +12,14 @@ import type { Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
 import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
+import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import { assistantFilesApp, readFileMeta } from "./assistant-files";
+import { allPartsIn, assistantFilesApp, finishUpload, uploadOf } from "./assistant-files";
+import { needsAttention, type Attention } from "./lib/attention";
+import { memoryBlock } from "./lib/memory";
 import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
@@ -28,6 +32,16 @@ import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage
  */
 
 export const assistantApp = new Hono<{ Variables: AuthVars }>();
+// a part or a complete for a file a waiting turn needs: the turn starts once its last file is in. The last part joins the
+// file here, so a phone that is locked before it can say /complete still gets its answer
+assistantApp.use("/files/:id/*", async (c, next) => {
+  await next();
+  const user = c.get("user")?.username;
+  const id = c.req.param("id");
+  if (c.req.method !== "POST" || c.res.status !== 200 || !user || !Object.values(load(user).held ?? {}).some((h) => h.files.includes(id))) return;
+  if (c.req.path.endsWith("/complete")) await pump(user);
+  else if (await allPartsIn(user, id)) void finishUpload(user, id).then(() => pump(user));
+});
 assistantApp.route("/files", assistantFilesApp);
 
 /** The job whose provider answers the dock: its own pick, else the default (contracts/providers.ts). */
@@ -41,15 +55,19 @@ export const SYSTEM = `You are the assistant built into Creator Toolset, a web a
 
 Your reply is shown in a small chat dock. You act in the app only through its tools (the creator-toolset MCP server):
 - setup_status: what is set up (the AI, logins, which keys are saved, the project count). Call it before you walk someone through setup.
-- The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content.
-- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's.
-- media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders (B-roll).
-- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the takes' version ids (with the script and a B-roll folder) and starts it.
+- The workshop_* tools (projects, sessions, pieces, a session's sources, the project the app is in), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content. review_comment writes a comment or a reply on a video, review_update renames or files it, review_folders lists or makes folders, review_trash bins it.
+- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.
+- media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, and media_share makes a share link for a clip or a folder.
+- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the takes' version ids (with the script and a B-roll folder) and starts it. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking.
+- Where the install has them: finals_pieces lists the user's Finals (finished pieces, each with versions and a winner) and gives the ids finals_piece_update, finals_piece_trash and finals_link_session take.
 - schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
-- navigate opens a page of the app for the user, given as a relative path such as /workshop.
+- navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new project), /settings/team?add=1 (invite someone, on a team's server).
+- A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>). When you list reviews, edits or sessions the user can open, link each that way (a tool's link ends in that path).
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
-- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link) or Caption Studio (captions on the video). notes_get follows a Video Note until it's ready and reads what it found.
+- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet. After use_file to captions the captions are made in the background and the chat says when they are ready; the project (/captions?project=<id>) can be opened meanwhile. Read them with captions_get, find projects with captions_list. captions_export renders the video with its captions burned in by itself, and the chat says when the file is ready.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.
+- ask_folder puts a Choose a folder button under your reply when you need a folder from their computer (in the Mac app; elsewhere it tells you to ask for a drop or a typed path). The folder they choose comes with their next message.
+- A tool that deletes, publishes or sends asks the user itself, with a Yes / No card under your reply. When a tool answers that it asked, say so in a few words and end your reply: it is done when they press Yes.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
 A folder the user dropped comes as its path on their computer. Asked to edit it, keep it to a tap or two:
@@ -88,8 +106,31 @@ interface Conv {
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
+  /** The newest message came from the Mac app (its page context said so): its open panel can choose a folder (askFolder). */
+  mac?: boolean;
+  /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
+  calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
   past?: Chat[];
+  /** What each turn that hasn't started needs to start, by its reply's id (it survives a restart). Never sent to the dock. */
+  held?: Record<string, Held>;
+}
+
+/** A turn sent before its videos were in, or while another reply was being written: started by pump(). */
+interface Held {
+  /** The user message it answers. */
+  ask: string;
+  /** Its videos' ids (api/assistant-files.ts): the turn starts once every one is in. */
+  files: string[];
+  pasted: AssistantPaste[];
+  context?: AssistantContext;
+  /** Read when the message was sent (memoryBlock, skillLines), as the turn would have read them then. */
+  memory: string;
+  skills: string;
+  /** This server's MCP address, as the request that sent it saw it. */
+  url: string;
+  admin: boolean;
+  at: number;
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
@@ -226,6 +267,7 @@ function parseTurn(raw: unknown): TurnInput {
         selection: capped(c.selection, CONTEXT_CAPS.selection),
         visible: capped(c.visible, CONTEXT_CAPS.visible),
         ...(typeof c.timezone === "string" && validTimezone(c.timezone) ? { timezone: c.timezone } : {}),
+        ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
   return { text, images, pasted, fileIds, files: [], paths, context };
@@ -255,7 +297,7 @@ function load(username: string): Conv {
   conv.id ??= randomUUID();
   // a reply the server stopped in the middle of: it can't finish any more
   // and it can't do what it asked
-  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking") {
+  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id]) {
     m.status = "error";
     expireApprovals(m, 0);
   }
@@ -316,6 +358,10 @@ export function noteWork(username: string, turn: string, card: NonNullable<Assis
   if (m?.status !== "thinking") return;
   const work = (m.work ??= []);
   const had = work.find((w) => w.id === card.id);
+  // this reply has just read work that ended while it was being written: it says so itself, so the waiting line is dropped
+  const waiting = later.get(turn)?.filter((x) => !cardOf(card.id, x.idStart));
+  if (waiting && !waiting.length) later.delete(turn);
+  else if (waiting) later.set(turn, waiting);
   if (had) Object.assign(had, { status: card.status, detail: card.detail });
   else if (!onlyUpdate && work.length < 20) work.push(card);
   else return;
@@ -334,12 +380,125 @@ export function noteMedia(username: string, turn: string, card: AssistantMedia):
   saveSoon(username);
 }
 
+/**
+ * The reply asks for a folder on the user's computer (ask_folder, mcp.ts): a Choose a folder button under it. Only the
+ * Mac app can choose one (its own open panel hands the page the path); elsewhere the AI is told to ask for a drop or a typed path.
+ */
+export function askFolder(username: string, turn: string, why: string): void {
+  if (!load(username).mac) throw new Error("The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path.");
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  m.folderAsk = { why: why.replace(/\s+/g, " ").trim().slice(0, 200) };
+  saveSoon(username);
+}
+
 /** Answers the reply offers as buttons (offer_choices, mcp.ts): the newest offer replaces an earlier one. */
 export function noteChoices(username: string, turn: string, choices: string[]): void {
   const m = messageOf(username, turn);
   if (m?.status !== "thinking") return;
   m.choices = choices;
   saveSoon(username);
+}
+
+/* ---- a tool asks before it deletes, publishes or sends (mcp.ts sure) ---- */
+
+const MAX_CONFIRMS = 10;
+
+/** Every message list of the account: the open chat's, then each earlier chat's. */
+const everyChat = (conv: Conv): AssistantMessage[][] => [conv.messages, ...(conv.past ?? []).map((p) => p.messages)];
+
+/**
+ * A tool's question as a Yes / No card under the reply, with the call it stands for kept here. The same call asked
+ * twice in one reply keeps its one card. false when the reply is gone or already has too many.
+ */
+export function askConfirm(username: string, turn: string, question: string, call: { tool: string; args: unknown }): boolean {
+  const m = messageOf(username, turn);
+  if (!m || m.role !== "assistant") return false;
+  const conv = load(username);
+  const calls = (conv.calls ??= {});
+  const list = (m.confirms ??= []);
+  const same = JSON.stringify(call);
+  if (list.some((x) => x.status === "waiting" && JSON.stringify(calls[x.id]) === same)) return true;
+  if (list.length >= MAX_CONFIRMS) return false;
+  const id = randomUUID();
+  list.push({ id, question: question.replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), status: "waiting" });
+  calls[id] = call;
+  save(username);
+  tell(username);
+  attend(username, turn, "asks", question);
+  return true;
+}
+
+/** Runs a confirmed call as the person who pressed Yes (mcp.ts registers it: this file can't import that one). */
+type ConfirmRunner = (user: SessionUser, headers: Headers, origin: string, tool: string, args: unknown) => Promise<{ ok: boolean; text: string }>;
+let confirmRunner: ConfirmRunner | undefined;
+export const setConfirmRunner = (run: ConfirmRunner): void => void (confirmRunner = run);
+const answering = new Set<string>();
+
+/** What this install's plug-ins add to the assistant's guide (mcp.ts gathers it at boot). */
+let installGuide = "";
+export const setInstallGuide = (text: string): void => void (installGuide = text ? `\n\n${text}` : "");
+
+/** The reply belongs to a scheduled run: nobody is at the screen (api/automations.ts posts the prompt with its task). */
+export function unattended(username: string, turn: string): boolean {
+  for (const list of everyChat(load(username))) {
+    const i = list.findIndex((m) => m.id === turn);
+    if (i >= 0) return !!list[i - 1]?.task;
+  }
+  return false;
+}
+
+/* ---- work the assistant started has ended: its cards finish, and the chat says so ---- */
+
+/** Lines waiting for a reply that is still being written in their chat, by that reply's id (said when it ends). */
+const later = new Map<string, Array<{ line: AssistantMessage; idStart: string }>>();
+const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(`${idStart}:`);
+
+/**
+ * Work the assistant started has ended (an edit's job, a Video Note, the Workshop's writer). Its running cards, in
+ * whatever chat they sit, get their end; the cards are found by the start of their id ("edit:<id>" ends
+ * "edit:<id>:new" and "edit:<id>:draft"). With `say`, one line is posted in that chat as the assistant's, with
+ * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
+ * started on its own page tells nobody in the chat. While a reply is being written in that chat the line waits for
+ * it to end, and is dropped if that reply reads the ended work with a tool meanwhile (noteWork): it then says so in
+ * its own words, once. Returns whether a card was running.
+ */
+export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[]; href?: string }): boolean {
+  const conv = load(username);
+  let hit = false;
+  let said = false;
+  for (const list of everyChat(conv)) {
+    const mine = (w: NonNullable<AssistantMessage["work"]>[number]) => w.status === "running" && cardOf(w.id, idStart);
+    const holders = list.filter((m) => m.work?.some(mine));
+    if (!holders.length) continue;
+    hit = true;
+    // href: where the card leads once the work is there (a card may lead elsewhere while it runs)
+    for (const w of holders.flatMap((m) => m.work!.filter(mine))) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}), ...(end.href ? { href: end.href } : {}) });
+    if (!end.say || said) continue;
+    said = true;
+    // the line carries the card it is about, so "Show me" has a page to open however far back the work was started
+    const about = holders.flatMap((m) => m.work!.filter((w) => cardOf(w.id, idStart)))[0];
+    const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(about ? { work: [{ ...about }] } : {}), ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
+    const last = list.at(-1);
+    // a reply being written there keeps the last word until it ends
+    if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), { line, idStart }]);
+    else list.push(line);
+  }
+  if (hit) {
+    save(username);
+    tell(username);
+  }
+  return hit;
+}
+
+/** A reply ended: the lines that waited for it go under it. */
+function sayLater(username: string, replyId: string): void {
+  const lines = later.get(replyId);
+  if (!lines) return;
+  later.delete(replyId);
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === replyId));
+  const now = Date.now();
+  list?.push(...lines.map((l, i) => ({ ...l.line, at: now + i })));
 }
 
 /* ---- what the reply asks to do on the user's Mac (MacOpts.onAsk) ---- */
@@ -397,6 +556,7 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
     list.push(a);
     save(username);
     tell(username);
+    attend(username, turn, "asks", `Asks to ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`);
   } else if (expireApprovals(m)) {
     save(username);
     tell(username);
@@ -434,10 +594,11 @@ export async function navigateTo(username: string, p: string): Promise<string> {
 }
 
 /** The assistant's ask_secret tool: a pending request for one key, shown as a secure box. Never takes a value. */
-export async function askSecret(username: string, env: MyKeyEnv, why: string): Promise<void> {
+export async function askSecret(username: string, env: MyKeyEnv, why: string, turn?: string): Promise<void> {
   load(username).pending = { env, why, at: Date.now() };
   save(username);
   tell(username);
+  if (turn) attend(username, turn, "asks", `Asks for your ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
 }
 
 /* ---- the turn ---- */
@@ -475,12 +636,20 @@ function view(username: string, admin: boolean): AssistantView {
     past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
+    sendNow: true,
   };
 }
 
+/** What a reply asked before a tool deleted or sent something, and how it was answered. */
+const asked = (m: AssistantMessage) =>
+  (m.confirms ?? []).map((q) => `[asked: "${q.question}" → ${q.status === "waiting" ? "not answered yet" : q.status === "no" ? "the user said no" : q.status === "done" ? `yes, done${q.result ? `: ${q.result}` : ""}` : `yes, but it failed: ${q.result ?? ""}`}]`);
+
+/** What a reply started or opened, with its page, so "show me" a few messages later has somewhere to go. */
+const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : "made"}: ${w.title} → ${w.href}]`);
+
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
+  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {
@@ -488,7 +657,7 @@ function newestFacts(input: TurnInput): string[] {
   const n = input.images.length;
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
-  for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
+  for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
   const c = input.context;
   if (c) {
@@ -533,6 +702,10 @@ export async function answerWithTools(
     files?: Record<string, string>;
     /** Someone is there to answer: Claude may use the Mac's own tools and asks (MacOpts.onAsk). Never for scheduled runs. */
     onAsk?: (ask: MacAsk) => MacAskStatus;
+    /** What the person told the assistant to keep (lib/memory.ts memoryBlock): a dock turn's alone, "" with nothing kept. */
+    memory?: string;
+    /** The person's own skills, a line each (lib/skills.ts skillLines): a dock turn's alone, "" with none on. */
+    skills?: string;
   },
 ): Promise<string> {
   // Claude Code, Codex, Gemini CLI and Grok get Creator Toolset's MCP tools (under a job token for this answer); only Claude
@@ -540,9 +713,12 @@ export async function answerWithTools(
   // ponytail: an old Codex or Gemini CLI (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
-  const system = !token ? SYSTEM + NO_TOOLS_NOTE : claude && opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
+  const guide = SYSTEM + installGuide;
+  let system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
+  // only where the reply has the tool that opens a skill
+  if (token && opts.skills) system += `\n\n${opts.skills}`;
   try {
-    return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
+    return await streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
@@ -573,7 +749,7 @@ export async function answerWithTools(
 const running = new Map<string, AbortController>();
 
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
-async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>): Promise<void> {
+async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
   const stop = new AbortController();
   running.set(username, stop);
   try {
@@ -582,6 +758,8 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
       turn: replyId,
       cancel: stop.signal,
       files,
+      memory,
+      skills,
       onAsk: (ask) => approvalFor(username, replyId, ask),
       onDelta: (t) => {
         const m = messageOf(username, replyId);
@@ -599,12 +777,203 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
     if (m) expireApprovals(m, 0);
+    sayLater(username, replyId);
     if (running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
     tell(username);
+    // the person hears it ended (a Stop is their own doing), and the next message's turn starts
+    if (m && !stop.signal.aborted) attend(username, replyId, m.status === "error" ? "failed" : "done", m.text);
+    void pump(username);
+  }
+}
+
+/* ---- turns that wait: for their message's videos, or for the reply before them ---- */
+
+/** A video that stops arriving: this long after its last part (or the message), the reply says it didn't arrive. */
+export const WAIT_MS = 12 * 3600_000;
+/** Replies that may wait behind the one being written; one more is refused. */
+const MAX_WAITING = 10;
+
+/** One line about a reply for whatever listens (lib/attention.ts): not for a scheduled run, nobody sent it. */
+function attend(username: string, reply: string, kind: Attention["kind"], body: string): void {
+  if (unattended(username, reply)) return;
+  const conv = load(username);
+  const chat = [{ id: conv.id!, title: conv.title, messages: conv.messages }, ...(conv.past ?? [])].find((c) => c.messages.some((m) => m.id === reply));
+  if (!chat) return;
+  const i = chat.messages.findIndex((m) => m.id === reply);
+  const line = body.replace(/\s+/g, " ").trim();
+  needsAttention({
+    username,
+    reply,
+    kind,
+    title: chat.title ?? titleOf(chat.messages),
+    body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "The answer failed." : "Answered."),
+    path: `/?chat=${chat.id}`,
+    sentAt: chat.messages.slice(0, i).reverse().find((m) => m.role === "user")?.at ?? chat.messages[i]!.at,
+  });
+}
+
+/** A turn that never started ends: stopped by the person, or its video never arrived. The next one may start. */
+function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost"): void {
+  const conv = load(username);
+  const asked = conv.messages.find((x) => x.id === conv.held?.[m.id]?.ask);
+  if (conv.held) delete conv.held[m.id];
+  const lost = (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
+  const text = how === "stopped" ? "*Stopped.*" : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
+  Object.assign(m, { status: how === "stopped" ? "done" : "error", text, wait: undefined });
+  sayLater(username, m.id);
+  save(username);
+  tell(username);
+  if (how === "lost") attend(username, m.id, "failed", text);
+}
+
+const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
+const wakes = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * The account's waiting turns, in order: each shows what it waits for, one whose video stopped arriving ends, and the
+ * first whose videos are all in starts once no reply is being written. Called whenever that may have changed (a turn
+ * sent or ended, a file in, a Stop, the clock, a restart); a call during a run makes it run again, and resolves with it.
+ */
+function pump(username: string): Promise<void> {
+  const on = pumping.get(username);
+  if (on) {
+    on.again = true;
+    return on.done ?? Promise.resolve();
+  }
+  const state: { again: boolean; done?: Promise<void> } = { again: false };
+  pumping.set(username, state);
+  state.done = (async () => {
+    try {
+      do {
+        state.again = false;
+        await pumpOnce(username);
+      } while (state.again);
+    } finally {
+      pumping.delete(username);
+    }
+  })();
+  return state.done;
+}
+
+async function pumpOnce(username: string): Promise<void> {
+  const conv = load(username);
+  const ids = [...new Set(Object.values(conv.held ?? {}).flatMap((h) => h.files))];
+  const files = new Map(
+    await Promise.all(
+      ids.map(async (id) => {
+        let f = await uploadOf(username, id);
+        // every part is in and nobody joined it: its last part came before the message did, or before a restart
+        if (f && !("file" in f) && (await allPartsIn(username, id))) {
+          const done = await finishUpload(username, id);
+          if (!("error" in done)) f = { file: done };
+        }
+        return [id, f] as const;
+      }),
+    ),
+  );
+  // from here on nothing awaits: the conversation is read and changed in one go
+  const held = conv.held ?? {};
+  const t = Date.now();
+  let changed = false;
+  let soonest = Infinity;
+  let ahead = running.has(username);
+  for (const id of Object.keys(held)) if (messageOf(username, id)?.status !== "thinking") {
+    delete held[id];
+    changed = true;
+  }
+  for (const [i, m] of conv.messages.entries()) {
+    if (m.status !== "thinking") continue;
+    const h = held[m.id];
+    if (!h) {
+      ahead = true; // being written (a turn, or a scheduled run in this chat)
+      continue;
+    }
+    const asked = conv.messages.find((x) => x.id === h.ask);
+    const inNow = (id: string) => {
+      const f = files.get(id);
+      return f && "file" in f ? f.file : null;
+    };
+    for (const f of asked?.files ?? []) if (f.uploading && inNow(f.id)) {
+      delete f.uploading;
+      changed = true;
+    }
+    const missing = h.files.filter((id) => !inNow(id));
+    let wait: AssistantMessage["wait"];
+    if (missing.length) {
+      // a file between its last part and its meta (being joined) has neither: only the clock says it is lost
+      const last = Math.max(h.at, ...missing.map((id) => {
+        const f = files.get(id);
+        return f && "at" in f ? f.at : 0;
+      }));
+      if (t - last >= WAIT_MS) {
+        endHeld(username, m, "lost");
+        changed = true;
+        continue;
+      }
+      soonest = Math.min(soonest, last + WAIT_MS);
+      wait = { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
+    } else if (ahead) wait = { for: "reply", text: "Waiting for the reply before it" };
+    if (wait) {
+      if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
+        m.wait = wait;
+        changed = true;
+      }
+      ahead = true;
+      continue;
+    }
+    // one that can't start ends there, and the next may start in its place
+    if (startHeld(username, conv, i, h, h.files.map((id) => inNow(id)!))) ahead = true;
+    changed = true;
+  }
+  if (changed) {
+    save(username);
+    tell(username);
+  }
+  clearTimeout(wakes.get(username));
+  wakes.delete(username);
+  if (soonest < Infinity) wakes.set(username, setTimeout(() => void pump(username), Math.min(soonest - t + 1000, 2 ** 31 - 1)).unref());
+}
+
+/** A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. false: it ended instead. */
+function startHeld(username: string, conv: Conv, i: number, h: Held, files: AssistantFile[]): boolean {
+  const reply = conv.messages[i]!;
+  const asked = conv.messages.find((x) => x.id === h.ask);
+  delete conv.held![reply.id];
+  reply.wait = undefined;
+  const route = routeOf(username, h.admin);
+  if (!route || !asked) {
+    Object.assign(reply, { status: "error", text: route ? "The message is gone." : "Connect your AI first." });
+    sayLater(username, reply.id);
+    attend(username, reply.id, "failed", reply.text);
+    return false;
+  }
+  const images = (asked.images ?? []).flatMap((im) => {
+    const f = imageFile(username, im.id);
+    return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
+  });
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], context: h.context };
+  conv.mac = h.context?.mac === true;
+  void runTurn(username, reply.id, route, h.url, promptFor(conv.messages.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
+  return true;
+}
+
+/** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */
+export function resumeFromDisk(): void {
+  let names: string[] = [];
+  try {
+    names = readdirSync(dirOf()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return;
+  }
+  for (const f of names) {
+    if (!readFileSync(path.join(dirOf(), f), "utf-8").includes('"held":{"')) continue;
+    const username = f.slice(0, -5);
+    cache.delete(username);
+    void pump(username);
   }
 }
 
@@ -619,6 +988,23 @@ export function chatOfTurn(username: string, turn: string): string | null {
   if (conv.messages.some((m) => m.id === turn)) return conv.id!;
   return conv.past?.find((p) => p.messages.some((m) => m.id === turn))?.id ?? null;
 }
+
+/**
+ * What the person typed themselves in the chat a reply is being written in, newest first, among the messages its
+ * prompt carries. A quote to remember is checked against these alone (api/memory.ts): never a reply, a note, a
+ * paste or a highlight, never a scheduled task's prompt (an AI may have written it), and never an answer button
+ * they pressed (offer_choices: the AI wrote those words). null for a reply that is not being written, or one of a
+ * scheduled run.
+ */
+export function saidInChat(username: string, turn: string): Array<{ id: string; text: string; at: number }> | null {
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn && m.status === "thinking"));
+  if (!list || unattended(username, turn)) return null;
+  const sent = list.filter((m) => m.status !== "thinking");
+  const typed = (m: AssistantMessage, i: number) => m.role === "user" && !m.task && !sent[i - 1]?.choices?.includes(m.text);
+  return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
+}
+/** The check a quote is held to against those; an editing style's notes are held to it too (api/editor/routes.ts). */
+export { foundIn } from "./lib/memory";
 
 /** A reply is being written in this chat now: a run waits for it to end. */
 export function chatBusy(username: string, chat: string | undefined): boolean {
@@ -671,12 +1057,15 @@ export async function runInChat(
     Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
     throw new Error(why);
   } finally {
+    sayLater(username, reply.id);
     if (open && running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
     tell(username);
+    // a message sent while it ran waited for it
+    if (open) void pump(username);
   }
 }
 
@@ -698,42 +1087,72 @@ assistantApp.post("/turn", async (c) => {
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
+  // a video may still be uploading (the caller's own upload): the message goes now and its turn waits for the file
+  const files: NonNullable<AssistantMessage["files"]> = [];
+  input.fileIds = [...new Set(input.fileIds)];
   for (const id of input.fileIds) {
-    const f = await readFileMeta(u.username, id);
-    if (!f) return c.json({ error: "A video didn't finish uploading: add it again" }, 400);
-    input.files.push(f);
+    const f = await uploadOf(u.username, id);
+    if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
+    files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
+  const memory = await memoryBlock(u);
+  const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
-  if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering the last message: wait for it" }, 409);
+  if (conv.messages.filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
   const now = Date.now();
-  // the pictures are kept only once the turn runs
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
-  conv.messages.push({
+  const asked: AssistantMessage = {
     id: randomUUID(),
     role: "user",
     text: input.text,
     at: now,
     ...(images.length ? { images } : {}),
     ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
-    ...(input.files.length ? { files: input.files.map((f) => ({ id: f.id, name: f.name })) } : {}),
+    ...(files.length ? { files } : {}),
     ...(input.paths.length ? { folders: input.paths } : {}),
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
-  });
+  };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
-  conv.messages.push(reply);
+  conv.messages.push(asked, reply);
+  // every turn goes through the queue: one with nothing ahead and its videos in starts in this call (Stop counts on that)
+  (conv.held ??= {})[reply.id] = {
+    ask: asked.id,
+    files: input.fileIds,
+    pasted: input.pasted,
+    ...(input.context ? { context: input.context } : {}),
+    memory,
+    skills,
+    url: `${publicOrigin(c)}/api/mcp`,
+    admin: u.role === "admin",
+    at: now,
+  };
   save(u.username);
-  void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages, input), filesFor(input));
+  await pump(u.username);
   return c.json(view(u.username, u.role === "admin"), 202);
 });
 
-/** Stop the reply that's running (the dock's Stop, or Steer to send a queued message now). */
+/**
+ * Stop a reply (the dock's Stop, or Steer to send a queued message now). { reply: id } stops that one: being written,
+ * or waiting (for its videos, or its turn); without it, the one being written, else the first that waits. A waiting one
+ * ends at once as stopped; the next waiting message carries on.
+ */
 assistantApp.post("/stop", async (c) => {
   const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { reply?: unknown } | null;
+  const want = typeof b?.reply === "string" ? b.reply : undefined;
+  const conv = load(u.username);
+  const waiting = want ? (conv.held?.[want] ? want : undefined) : running.has(u.username) ? undefined : conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id])?.id;
+  const m = waiting ? conv.messages.find((x) => x.id === waiting) : undefined;
+  if (m) {
+    endHeld(u.username, m, "stopped");
+    await pump(u.username);
+    return c.json(view(u.username, u.role === "admin"));
+  }
   const stop = running.get(u.username);
-  if (!stop) return c.json({ error: "Nothing is running" }, 404);
+  if (!stop || (want && messageOf(u.username, want)?.status !== "thinking")) return c.json({ error: "Nothing is running" }, 404);
   stop.abort();
   // the turn ends on the next tick (the Mac call rejects): answer with the view after it
   await new Promise((r) => setTimeout(r, 0));
@@ -807,6 +1226,37 @@ assistantApp.post("/approvals/:id", async (c) => {
   const a = answerApproval(u.username, c.req.param("id"), b.allow);
   if (!a) return c.json({ error: "Not found" }, 404);
   if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Too late: it waited 10 minutes and wasn't done" : "Already answered" }, 409);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/**
+ * Yes or No to a question a tool asked before deleting, publishing or sending (only the caller's own; anyone else's
+ * is not found). Yes runs the call it stands for as the caller, and the card says how it went.
+ */
+assistantApp.post("/confirms/:id", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { yes?: unknown } | null;
+  if (typeof b?.yes !== "boolean") return c.json({ error: "Say yes: true or false" }, 400);
+  const id = c.req.param("id");
+  const conv = load(u.username);
+  const q = everyChat(conv).flat().flatMap((m) => m.confirms ?? []).find((x) => x.id === id);
+  if (!q) return c.json({ error: "Not found" }, 404);
+  if (q.status !== "waiting" || answering.has(id)) return c.json({ error: "Already answered" }, 409);
+  const call = conv.calls?.[id];
+  if (!b.yes) q.status = "no";
+  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "It can't be done from here any more: ask again." });
+  else {
+    answering.add(id);
+    try {
+      const r = await confirmRunner(u, c.req.raw.headers, publicOrigin(c), call.tool, call.args);
+      Object.assign(q, { status: r.ok ? "done" : "failed", result: r.text.replace(/\s+/g, " ").trim().slice(0, 300) });
+    } finally {
+      answering.delete(id);
+    }
+  }
+  if (conv.calls) delete conv.calls[id];
+  save(u.username);
+  tell(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
 

@@ -1,0 +1,1649 @@
+{
+ "system": "You are the assistant built into Creator Toolset, a web app for content creators. Its tools: Content Analyzer, Content Workshop, Audio Enhancer, Caption Studio, Review, Media Library, AI Editor, Video Cleaner, Story Splitter, Video Notes, Guide Builder. Each has its own page in the app.\n\nYour reply is shown in a small chat dock. You act in the app only through its tools (the creator-toolset MCP server):\n- setup_status: what is set up (the AI, logins, which keys are saved, the project count). Call it before you walk someone through setup.\n- The workshop_* tools (projects, sessions, pieces, a session's sources, the project the app is in), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content. review_comment writes a comment or a reply on a video, review_update renames or files it, review_folders lists or makes folders, review_trash bins it.\n- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.\n- media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, and media_share makes a share link for a clip or a folder.\n- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the takes' version ids (with the script and a B-roll folder) and starts it. An edit you start runs by itself and the chat says when it ends, so say it has started and end your reply instead of waiting. When the user answers \"Show me\", play the draft with show_video (edit and draft, as editor_get lists them) or open its page. Where the install has them: editor_stop stops an edit, editor_retry runs its failed or stopped steps again, editor_update changes its name, brief, script or settings, editor_delete moves it to the trash after asking.\n- Where the install has them: finals_pieces lists the user's Finals (finished pieces, each with versions and a winner) and gives the ids finals_piece_update, finals_piece_trash and finals_link_session take.\n- schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.\n- navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new project), /settings/team?add=1 (invite someone, on a team's server).\n- A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>). When you list reviews, edits or sessions the user can open, link each that way (a tool's link ends in that path).\n- show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.\n- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet. After use_file to captions the captions are made in the background and the chat says when they are ready; the project (/captions?project=<id>) can be opened meanwhile. Read them with captions_get, find projects with captions_list. captions_export renders the video with its captions burned in by itself, and the chat says when the file is ready.\n- offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.\n- ask_folder puts a Choose a folder button under your reply when you need a folder from their computer (in the Mac app; elsewhere it tells you to ask for a drop or a typed path). The folder they choose comes with their next message.\n- A tool that deletes, publishes or sends asks the user itself, with a Yes / No card under your reply. When a tool answers that it asked, say so in a few words and end your reply: it is done when they press Yes.\n- ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.\n\nA folder the user dropped comes as its path on their computer. Asked to edit it, keep it to a tap or two:\n1. Find what it is: a script file in the folder (look in the folder yourself when you run on their computer; media_import_folder returns the script files' text where the server is on that computer, and refuses elsewhere: then go by the other clues), a Workshop session or piece whose title or script fits the folder's name, or an edit already made from it (editor_list). Nothing fits by name and the editor can sort footage first: start it sorting, say you are reading the clips, and match what is said in them (the editor tool says how). If one fits, say which in one line and offer_choices \"Yes, that's it\" / \"No, it's a new video\".\n2. Then offer_choices \"Start with my usual setup\" / \"Change the setup\". The usual setup is how their newest edit was set up. Change the setup = navigate to the AI Editor's New edit with the footage chosen (/editor?new=1&folder=<Media Library folder id>&name=<name>, unless the editor tool says another link).\nAfter the go, start the edit at once and say where to follow it.\n\nThe keys the app takes, and what each one is for:\n- DEEPGRAM_API_KEY (Deepgram): Captions and transcripts in Caption Studio and the Media Library\n- ELEVENLABS_API_KEY (ElevenLabs): Voice isolation in the Audio Enhancer\n- NVIDIA_API_KEY (NVIDIA): Studio Voice in the Audio Enhancer\n- PERPLEXITY_API_KEY (Perplexity): Accuracy check and research in the Content Workshop\n- YOUTUBE_API_KEY (YouTube Data API): Public YouTube channels you follow in Social accounts\n- OPENAI_API_KEY (OpenAI): Media Library transcripts without Deepgram, and search by meaning\n- TYPESAFE_API_KEY (TypeSafe Jev): Analyzer comments and ideas, and Workshop rules\n- ANTHROPIC_API_KEY (Anthropic API): Used by the tools, except Content Workshop, when you have no AI of your own here\n\nYou also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.",
+ "user": "User: What can you do?\n\nAnswer the user's last message.",
+ "dock": [
+  {
+   "name": "workshop_projects",
+   "description": "The Workshop's projects (brands): id, name, audience, voice, CTA, notes. current is the id of the one the app is in.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "workshop_sessions",
+   "description": "Workshop sessions, newest first: id, title, status, project, pinned, posted.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string",
+      "description": "only this project's (id)"
+     }
+    }
+   }
+  },
+  {
+   "name": "workshop_session",
+   "description": "One session: title, status, notes, sources, every piece with its blocks (ids and text), hooks, caption and pinned comment, and the last chat messages.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "messages": {
+      "type": "integer",
+      "description": "how many recent chat messages (default 10)"
+     }
+    },
+    "required": [
+     "session"
+    ]
+   }
+  },
+  {
+   "name": "workshop_new_session",
+   "description": "Start a session (in the current project unless one is named). It comes with one empty piece to write in.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "project": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string",
+      "description": "the idea, what it's for, anything the writer should know"
+     }
+    },
+    "required": [
+     "title"
+    ]
+   }
+  },
+  {
+   "name": "workshop_update_session",
+   "description": "Change a session's title, notes or status (moves it through the stages), or its posts: post_url links an Instagram post (the session becomes published), unlink_post_url unlinks that one, remove_post: true unlinks them all.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "draft",
+       "writing",
+       "ready",
+       "production",
+       "editing",
+       "toPost",
+       "published",
+       "shelved"
+      ]
+     },
+     "post_url": {
+      "type": "string"
+     },
+     "unlink_post_url": {
+      "type": "string"
+     },
+     "remove_post": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session"
+    ]
+   }
+  },
+  {
+   "name": "workshop_new_piece",
+   "description": "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "reel",
+       "carousel",
+       "ad",
+       "free",
+       "youtube",
+       "newsletter",
+       "thread",
+       "article"
+      ]
+     },
+     "title": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "session",
+     "kind"
+    ]
+   }
+  },
+  {
+   "name": "workshop_edit_piece",
+   "description": "Write in a piece yourself. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "piece": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "blocks": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      }
+     },
+     "hooks": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      }
+     },
+     "caption": {
+      "type": "string"
+     },
+     "pinned": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "session",
+     "piece"
+    ]
+   }
+  },
+  {
+   "name": "workshop_chat",
+   "description": "Ask the Workshop's writer, in a session's chat, about one piece (it may edit the piece). Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "piece": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     },
+     "scope": {
+      "type": "string",
+      "enum": [
+       "slight",
+       "rewrite"
+      ],
+      "description": "how much it may change (unset = normal)"
+     },
+     "my_words_only": {
+      "type": "boolean",
+      "description": "it only picks, trims and orders the user's own sentences in message"
+     },
+     "deep_research": {
+      "type": "boolean",
+      "description": "web research first (takes minutes): ask the user before"
+     },
+     "wait_s": {
+      "type": "integer",
+      "description": "default and max 55"
+     }
+    },
+    "required": [
+     "session",
+     "piece",
+     "message"
+    ]
+   }
+  },
+  {
+   "name": "workshop_wait",
+   "description": "Keep waiting for a workshop_chat reply.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "reply": {
+      "type": "string"
+     },
+     "wait_s": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "session",
+     "reply"
+    ]
+   }
+  },
+  {
+   "name": "finals_link_session",
+   "description": "Link a Finals piece (its id, from finals_pieces) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "piece": {
+      "type": "string"
+     },
+     "session": {
+      "type": "string"
+     },
+     "workshop_piece": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "piece",
+     "session"
+    ]
+   }
+  },
+  {
+   "name": "list_reviews",
+   "description": "His videos in Review: approval, versions, latest file, comment counts, link.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "get_review",
+   "description": "One review (its link or id, or a share link): each version, and every comment with its time, text, author, replies, resolved, drawing and references, plus the frames the open timed comments point at (drawing painted on).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string"
+     },
+     "version": {
+      "type": "integer"
+     },
+     "frames": {
+      "type": "integer",
+      "description": "how many comment frames to show (default 4, max 12)"
+     }
+    },
+    "required": [
+     "link"
+    ]
+   }
+  },
+  {
+   "name": "resolve_comment",
+   "description": "Mark a Review comment done once the change it asks for is made (resolved: false reopens it).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string"
+     },
+     "comment_id": {
+      "type": "string"
+     },
+     "resolved": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "link",
+     "comment_id"
+    ]
+   }
+  },
+  {
+   "name": "review_set_approval",
+   "description": "Set a Review video's approval: approved, changes (sent back to the editor), or in_progress / needs_review / none.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "none",
+       "in_progress",
+       "needs_review",
+       "changes",
+       "approved"
+      ]
+     }
+    },
+    "required": [
+     "link",
+     "status"
+    ]
+   }
+  },
+  {
+   "name": "review_share",
+   "description": "A Review video's public share link (anyone with it can watch and comment, no account), as the Share button on its page: on (default true) turns the link on and returns it, the same link each time; false turns it off. download lets viewers download the file. Make one only when the user asks for a link to share.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string"
+     },
+     "on": {
+      "type": "boolean"
+     },
+     "download": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "link"
+    ]
+   }
+  },
+  {
+   "name": "instagram_refresh",
+   "description": "Start a pull of one of the user's Analyzer accounts (by handle): its catalog of posts, profile, stats or tags. It runs in the background; instagram_posts shows the state.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "account": {
+      "type": "string"
+     },
+     "types": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "enum": [
+        "profile",
+        "catalog",
+        "stats",
+        "tags"
+       ]
+      }
+     }
+    },
+    "required": [
+     "account"
+    ]
+   }
+  },
+  {
+   "name": "instagram_posts",
+   "description": "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, id (once the post is saved in the library: instagram_post reads it), and the state of its pulls.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "account": {
+      "type": "string"
+     },
+     "since": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "account"
+    ]
+   }
+  },
+  {
+   "name": "editor_list",
+   "description": "AI Editor edits, newest first: id, name, the last step and its state.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "editor_get",
+   "description": "One AI Editor edit: its brief, drafts, notes and jobs.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "edit": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "edit"
+    ]
+   }
+  },
+  {
+   "name": "editor_run",
+   "description": "Run an AI Editor edit from a step on (analyze, script, draft); the run ends with each draft's preview filed in Review. send_to_review renders one draft's preview again and files it as the next version of its Review video (needs draft): only after the draft changed, never to show one that is already there.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "edit": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "analyze",
+       "script",
+       "draft",
+       "send_to_review"
+      ]
+     },
+     "draft": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "edit",
+     "kind"
+    ]
+   }
+  },
+  {
+   "name": "editor_create",
+   "description": "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "sources": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "name": {
+      "type": "string"
+     },
+     "brief": {
+      "type": "string"
+     },
+     "script": {
+      "type": "string"
+     },
+     "versions": {
+      "type": "integer"
+     },
+     "target_s": {
+      "type": "integer"
+     },
+     "broll_folder": {
+      "type": "string"
+     },
+     "start": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "sources"
+    ]
+   }
+  },
+  {
+   "name": "media_import_folder",
+   "description": "Bring a folder on this computer into the Media Library now (read in place, nothing copied): its videos, photos and sound changed on or after since (an ISO date-time with the user's offset, like 2026-11-10T00:00:00+02:00 for today; leave out for all). Returns each file's version_id (for editor_create), said (the line to tell the user: clips added, A-roll and B-roll) and the text of the script files at the top of that folder (.txt, .md, .docx, .rtf, .pages). Never a whole disk or home folder: the folder the files are in. folder = a Media Library folder id to file them in. Only where the app runs on the user's own computer.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string"
+     },
+     "since": {
+      "type": "string"
+     },
+     "folder": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "path"
+    ]
+   }
+  },
+  {
+   "name": "media_search",
+   "description": "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips (best match first; said = where it is said); leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "q": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "video",
+       "image",
+       "audio",
+       "doc"
+      ]
+     },
+     "roll": {
+      "type": "string",
+      "enum": [
+       "a",
+       "b"
+      ]
+     },
+     "folder": {
+      "type": "string"
+     },
+     "since": {
+      "type": "string"
+     },
+     "versions": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "limit": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "name": "media_folders",
+   "description": "The Media Library's folders: id, name, how many files. A folder id goes into media_search and editor_create's broll_folder; media_import_folder files into a plain folder (kind manual), not a smart one.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "instagram_add_account",
+   "description": "Add an Instagram account to the Analyzer by handle and start pulling its posts: the user's own (mine=true) or any other creator's public account (on the user's Apify key). Its posts take a few minutes to come in: instagram_posts shows them (and the pull's state) once they have.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "handle": {
+      "type": "string"
+     },
+     "mine": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "handle"
+    ]
+   }
+  },
+  {
+   "name": "instagram_comments",
+   "description": "The comments on an Analyzer account's posts (the user's or another creator's), to find what people ask and push back on: the posts taken on or after since (newest first, up to posts, default 10), or the posts given by shortcode. Comments not pulled yet are pulled now (on the user's Apify key; about a minute) and waited for; a post still pulling is listed under pending: call again for it. Each comment: post, text, likes, replies, and kind (question, pushback, praise…) when it has been read. Up to max comments (default 100, most liked first), spam and one-word replies left out.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "account": {
+      "type": "string"
+     },
+     "since": {
+      "type": "string"
+     },
+     "posts": {
+      "type": "integer"
+     },
+     "shortcodes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "max": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "account"
+    ]
+   }
+  },
+  {
+   "name": "schedule_task",
+   "description": "Create a scheduled task, or change one (id: only the fields given change; enabled=false pauses it). Each run sends prompt to the user's AI with these tools and posts it and the answer in an assistant chat. schedule: {kind:'fixed',at:'HH:MM',weekdays?:[0-6, 0=Sunday; leave out for every day]} (needs timezone: the user's IANA zone, which their message gives), {kind:'once',runAt:'ISO date-time with offset'} or {kind:'interval',everyMinutes}. destination: continue (default from a chat: runs post in this chat), fresh (this chat, each run without earlier runs' context), new_chat (a new chat each run). It runs on the AI answering now; the user changes that in Settings, Scheduled tasks. project = a Workshop project id. Tell the user the returned next_run.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "prompt": {
+      "type": "string"
+     },
+     "schedule": {
+      "type": "object",
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "fixed",
+         "once",
+         "interval"
+        ]
+       },
+       "at": {
+        "type": "string"
+       },
+       "weekdays": {
+        "type": "array",
+        "items": {
+         "type": "integer"
+        }
+       },
+       "runAt": {
+        "type": "string"
+       },
+       "everyMinutes": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "kind"
+      ]
+     },
+     "timezone": {
+      "type": "string"
+     },
+     "destination": {
+      "type": "string",
+      "enum": [
+       "continue",
+       "fresh",
+       "new_chat"
+      ]
+     },
+     "project": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "enabled": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "name": "list_scheduled_tasks",
+   "description": "The user's scheduled tasks: id, name, prompt, schedule, destination, enabled, next_run and the last result (done, error or skipped, with its text). Use an id with schedule_task, run_scheduled_task_now or delete_scheduled_task.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "run_scheduled_task_now",
+   "description": "Run a scheduled task (id) now, as its schedule would. It runs in the background: its answer lands in its chat.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "delete_scheduled_task",
+   "description": "Delete a scheduled task (id) for good. To pause it instead, schedule_task with enabled=false.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "get_work_prefs",
+   "description": "How the user wants to work: talk (app | chat | both), check (app | editor | both), their editor and what they make.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "set_work_prefs",
+   "description": "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make; job = what they want to do first (or null).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "talk": {
+      "type": "string",
+      "enum": [
+       "app",
+       "chat",
+       "both"
+      ]
+     },
+     "check": {
+      "type": "string",
+      "enum": [
+       "app",
+       "editor",
+       "both"
+      ]
+     },
+     "editor": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "enum": [
+       "resolve-studio",
+       "resolve",
+       "premiere",
+       "final-cut",
+       "avid",
+       "other",
+       null
+      ]
+     },
+     "makes": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "enum": [
+        "reel",
+        "youtube",
+        "carousel",
+        "ad",
+        "podcast",
+        "course",
+        "recording",
+        "newsletter",
+        "thread",
+        "article",
+        "other"
+       ]
+      }
+     },
+     "job": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "enum": [
+       "ideas",
+       "write",
+       "edit",
+       "captions",
+       "look",
+       null
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "workshop_sources",
+   "description": "A session's sources: the posts from the Analyzer's library its writer reads. With only the session it lists them; add and remove take posts by library id or by their link.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "session": {
+      "type": "string"
+     },
+     "add": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "remove": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "session"
+    ]
+   }
+  },
+  {
+   "name": "workshop_set_project",
+   "description": "Switch the Workshop's current project (its id from workshop_projects): new sessions start in it, and the app opens in it next time. A window that is open stays in its own project.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "project"
+    ]
+   }
+  },
+  {
+   "name": "instagram_post",
+   "description": "One post saved in the Analyzer's library, by its library id, link or shortcode: who posted it, when, the counts, the whole post description, the idea, and per slide what is said and the text on screen (subtitles = that text only repeats what is said). state says when it is still being read; a link that is not saved yet goes to instagram_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "post": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "post"
+    ]
+   }
+  },
+  {
+   "name": "instagram_search",
+   "description": "Find saved posts in the Analyzer's library by words (any of them, in what is said, on screen, the post description, the idea or the comments), best match first, each with the id instagram_post reads. kind = reel, carousel or post; account = a handle.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "q": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "reel",
+       "carousel",
+       "post"
+      ]
+     },
+     "account": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "description": "default 20, max 50"
+     }
+    },
+    "required": [
+     "q"
+    ]
+   }
+  },
+  {
+   "name": "instagram_save",
+   "description": "Save posts to the Analyzer's library by their links (Instagram posts, reels and carousels, YouTube videos and Shorts), read on the user's own Apify key in a minute or two: instagram_post shows the state. read = stats (counts and post description), watch (default: plus what is said and the text on screen) or full (plus comments, tags and the idea); a link already saved is not read again unless again: true (new counts, and what it lacks).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "links": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "read": {
+      "type": "string",
+      "enum": [
+       "stats",
+       "watch",
+       "full"
+      ]
+     },
+     "again": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "links"
+    ]
+   }
+  },
+  {
+   "name": "media_get",
+   "description": "One Media Library clip by its id (media_search gives it): title, kind, length, when it was shot, roll (a or b, as the app sorted it) or finished, tags, its description in full, what is said in it (the first 12,000 characters), its folders and its link in the app. A clip from a plug-in's source comes with what that source has.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "media_update",
+   "description": "Change a clip's title, tags or description. tags is the whole list (a tag left out is removed); description \"\" removes the user's own, so the AI's shows again. A-roll and B-roll are sorted by the app, never set here.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "tags": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "description": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "media_add_to_folder",
+   "description": "Put clips (their ids) in a Media Library folder: folder = a plain folder's id (media_folders, kind manual), or name = a new folder to make first. Never Finals.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "clips": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "folder": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "clips"
+    ]
+   }
+  },
+  {
+   "name": "media_share",
+   "description": "A share link to one clip or one folder (its id) for people without an account: they can watch, and with download: true also download the files. days = how long the link lasts (default 7, max 90). The user is asked first. Make one only when the user asks for a link to share.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "clip": {
+      "type": "string"
+     },
+     "folder": {
+      "type": "string"
+     },
+     "download": {
+      "type": "boolean"
+     },
+     "days": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "name": "editor_stop",
+   "description": "Stop an AI Editor edit: its running and waiting steps end as Stopped. editor_retry carries on from there.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "edit": {
+      "type": "string",
+      "description": "the edit's id"
+     }
+    },
+    "required": [
+     "edit"
+    ]
+   }
+  },
+  {
+   "name": "editor_retry",
+   "description": "Run an edit's failed step again, also one that was stopped or needs setup (job: its id, as editor_get lists them; leave out for every such step). The steps after it follow.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "edit": {
+      "type": "string",
+      "description": "the edit's id"
+     },
+     "job": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "edit"
+    ]
+   }
+  },
+  {
+   "name": "editor_update",
+   "description": "Change an AI Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or \"none\") and flags ({id: true or false}; a wrong id is answered with the ones this edit has). Drafts already cut stay as they are until the edit runs again.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "edit": {
+      "type": "string",
+      "description": "the edit's id"
+     },
+     "name": {
+      "type": "string"
+     },
+     "brief": {
+      "type": "string"
+     },
+     "script": {
+      "type": "string"
+     },
+     "versions": {
+      "type": "integer"
+     },
+     "target_s": {
+      "type": "integer"
+     },
+     "broll_folder": {
+      "type": "string"
+     },
+     "flags": {
+      "type": "object",
+      "additionalProperties": {
+       "type": "boolean"
+      }
+     }
+    },
+    "required": [
+     "edit"
+    ]
+   }
+  },
+  {
+   "name": "editor_delete",
+   "description": "Move an AI Editor edit to the trash; what still runs is stopped.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "edit": {
+      "type": "string",
+      "description": "the edit's id"
+     }
+    },
+    "required": [
+     "edit"
+    ]
+   }
+  },
+  {
+   "name": "review_comment",
+   "description": "Write a comment on a Review video (link: its link or id, or a share link), or reply to one (reply_to: that comment's id). version defaults to the newest; at and end (seconds) pin it to a moment or a range.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "version": {
+      "type": "integer"
+     },
+     "at": {
+      "type": "number"
+     },
+     "end": {
+      "type": "number"
+     },
+     "reply_to": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "link",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "review_update",
+   "description": "Rename a Review video (name), file it in a folder (folder: its name or id, as review_folders lists; \"none\" takes it out), or mark it finished or not (finished).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string",
+      "description": "the video's link or id"
+     },
+     "name": {
+      "type": "string"
+     },
+     "folder": {
+      "type": "string"
+     },
+     "finished": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "link"
+    ]
+   }
+  },
+  {
+   "name": "review_folders",
+   "description": "Review's folders: id and name. With name, makes that folder (or finds the one already called that).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "review_trash",
+   "description": "Move a Review video to the trash, or bring it back with restore: true. With no link, lists what is in the trash.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string",
+      "description": "the video's link or id"
+     },
+     "restore": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "name": "finals_pieces",
+   "description": "The user's Finals pieces (finished work, each kept in versions), newest first: id, name, each version's id and name, which is the winner, the Workshop session it is linked to, its link in the app. limit defaults to 20; piece (an id) gives that one in full, with each version's post description and where it was posted.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "limit": {
+      "type": "integer"
+     },
+     "piece": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "finals_piece_update",
+   "description": "Change one Finals piece (piece: its id): name renames it, winner is a version's id (\"none\" clears it), order is version ids first to last (ones left out follow as they are). With version (its id), version_name and post_description set that version's own (\"\" removes it).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "piece": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "winner": {
+      "type": "string"
+     },
+     "order": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "version": {
+      "type": "string"
+     },
+     "version_name": {
+      "type": "string"
+     },
+     "post_description": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "piece"
+    ]
+   }
+  },
+  {
+   "name": "finals_piece_trash",
+   "description": "Move a Finals piece (its id) to the trash, where it stays 5 days, or bring it back with restore: true. Its versions stay in the Media Library. With no piece, lists what is in the trash.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "piece": {
+      "type": "string"
+     },
+     "restore": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "name": "captions_list",
+   "description": "Caption Studio projects, newest first: id, name, each clip and whether it has captions yet, and the link that opens it. limit = how many (default 20).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "limit": {
+      "type": "number"
+     }
+    }
+   }
+  },
+  {
+   "name": "captions_get",
+   "description": "A Caption Studio project's captions (the lines on the video, not the post description): each line with its start time, per clip, or that they are still being made; and its exports, with the download link of a finished one. project = its id (captions_list, or use_file to: captions).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "project"
+    ]
+   }
+  },
+  {
+   "name": "captions_export",
+   "description": "Export a Caption Studio project's video with its captions burned in, as an MP4 that renders by itself (captions_get says when it is ready). project = its id; clip = its name, only when several clips have captions; format = h264 (default) or h265; finals: true also puts the file in Finals.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string"
+     },
+     "clip": {
+      "type": "string"
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "h264",
+       "h265"
+      ]
+     },
+     "finals": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "project"
+    ]
+   }
+  },
+  {
+   "name": "notes_list",
+   "description": "The user's Video Notes, newest first: id, name, status (processing, ready, error), length (minutes:seconds), when it was recorded (UTC) and its link. limit = how many (default 30). notes_get reads one.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "limit": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "name": "remember",
+   "description": "Keep a standing fact or preference about the user or their work for later chats. quote: their exact words, never a guess. Not for a request about the piece at hand.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "quote": {
+      "type": "string"
+     },
+     "project_only": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "quote"
+    ]
+   }
+  },
+  {
+   "name": "forget",
+   "description": "Remove a kept fact when the user asks. quote: its words.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "quote": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "setup_status",
+   "description": "What is set up: the AI, connected logins, which API keys the user has saved (never their values), the project count, the tools the user picked and their plan, and for each tool what it still needs (missing) and what would add to it (extra).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "save_setup",
+   "description": "Save the user's answers: the tools they want to use (ids from setup_status), their AI plan, or that setup is done.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "tools": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "enum": [
+        "instagram",
+        "workshop",
+        "enhance",
+        "captions",
+        "review",
+        "media",
+        "editor",
+        "clean",
+        "stories",
+        "notes",
+        "guides"
+       ]
+      }
+     },
+     "plan": {
+      "type": "string"
+     },
+     "done": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "name": "ask_secret",
+   "description": "Ask the user for one API key. It opens a secure box in the chat; the key goes straight to the server, never to you. Pass only the key's name and why it's needed.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "env": {
+      "type": "string",
+      "enum": [
+       "DEEPGRAM_API_KEY",
+       "ELEVENLABS_API_KEY",
+       "NVIDIA_API_KEY",
+       "PERPLEXITY_API_KEY",
+       "YOUTUBE_API_KEY",
+       "OPENAI_API_KEY",
+       "TYPESAFE_API_KEY",
+       "ANTHROPIC_API_KEY"
+      ]
+     },
+     "why": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "env",
+     "why"
+    ]
+   }
+  },
+  {
+   "name": "offer_choices",
+   "description": "Put 2 to 4 short answers under your reply as buttons, for a question the user answers in one tap (\"Start with my usual setup\" / \"Change the setup\"). A press sends that answer as their next message. Ask the question in your reply too.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "choices": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "choices"
+    ]
+   }
+  },
+  {
+   "name": "ask_folder",
+   "description": "Ask the user to choose a folder on their computer (a shoot to edit, footage to bring in): a Choose a folder button under your reply. why = what the folder is for, in a few words. Their choice comes with their next message. Ask for it in your reply too.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "why": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "why"
+    ]
+   }
+  },
+  {
+   "name": "navigate",
+   "description": "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "path"
+    ]
+   }
+  },
+  {
+   "name": "show_video",
+   "description": "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an AI Editor draft's preview (edit and draft, as editor_get lists them).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "link": {
+      "type": "string"
+     },
+     "version": {
+      "type": "integer"
+     },
+     "edit": {
+      "type": "string"
+     },
+     "draft": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "use_file",
+   "description": "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project whose captions are made at once (the chat says when they are ready; captions_get reads them), library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "file": {
+      "type": "string"
+     },
+     "files": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "path": {
+      "type": "string"
+     },
+     "to": {
+      "type": "string",
+      "enum": [
+       "notes",
+       "review",
+       "captions",
+       "library"
+      ]
+     },
+     "name": {
+      "type": "string"
+     },
+     "version_of": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "to"
+    ]
+   }
+  },
+  {
+   "name": "notes_get",
+   "description": "A Video Note (use_file to: notes gives its id; notes_list finds one): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action plan and quotes it has. add = the ones to write when it has none yet (the user's AI writes them; when the answer says still_writing, call again). transcript: true adds what is said in it. Waits up to 50 s (wait_s: less).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "transcript": {
+      "type": "boolean"
+     },
+     "add": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "enum": [
+        "takeaways",
+        "action plan",
+        "quotes",
+        "summary",
+        "chapters"
+       ]
+      }
+     },
+     "wait_s": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  }
+ ],
+ "outside": [
+  "workshop_projects",
+  "workshop_sessions",
+  "workshop_session",
+  "workshop_new_session",
+  "workshop_update_session",
+  "workshop_new_piece",
+  "workshop_edit_piece",
+  "workshop_chat",
+  "workshop_wait",
+  "finals_link_session",
+  "list_reviews",
+  "get_review",
+  "resolve_comment",
+  "review_set_approval",
+  "review_share",
+  "instagram_refresh",
+  "instagram_posts",
+  "editor_list",
+  "editor_get",
+  "editor_run",
+  "editor_create",
+  "media_import_folder",
+  "media_search",
+  "media_folders",
+  "instagram_add_account",
+  "instagram_comments",
+  "schedule_task",
+  "list_scheduled_tasks",
+  "run_scheduled_task_now",
+  "delete_scheduled_task",
+  "get_work_prefs",
+  "set_work_prefs",
+  "workshop_sources",
+  "workshop_set_project",
+  "instagram_post",
+  "instagram_search",
+  "instagram_save",
+  "media_get",
+  "media_update",
+  "media_add_to_folder",
+  "media_share",
+  "editor_stop",
+  "editor_retry",
+  "editor_update",
+  "editor_delete",
+  "review_comment",
+  "review_update",
+  "review_folders",
+  "review_trash",
+  "finals_pieces",
+  "finals_piece_update",
+  "finals_piece_trash",
+  "captions_list",
+  "captions_get",
+  "captions_export",
+  "notes_list"
+ ]
+}

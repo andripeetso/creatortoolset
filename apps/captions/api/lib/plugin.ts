@@ -1,7 +1,8 @@
 import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
 import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
-import type { EditFlag, FootageTarget } from "../../contracts/editor";
+import type { EditFlag, FootageTarget, Timeline } from "../../contracts/editor";
+import type { StepInfo } from "../../contracts/editor-steps";
 import { DRIVERS, type DriverKind, type ProviderPreset } from "../../contracts/providers";
 import { checkLibrarySlots, registerLibrarySlot } from "../library/sources";
 import type { ActivityFn, MenuFn } from "../activity";
@@ -59,7 +60,9 @@ export interface ServerPlugin {
   };
   // editor.ingest: where footage an account adds to an AI Editor edit from its computer is filed (api/editor/ingest.ts).
   // The first plug-in that answers wins; null or absent = the account's own library's A-roll folder. A throw refuses (fails closed).
-  editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null> };
+  // editor.steps: post-processing steps of the AI Editor (contracts/editor-steps.ts), run in `order` after the B-roll and
+  // before the preview (api/editor/post.ts); Settings → AI Editor lists them for each account to use or not.
+  editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null>; steps?: EditorStep[] };
   // Workshop "check now" for a post he pasted or shared (PATCH /sessions/:id with posted): reads it and matches it to a version.
   // The session's own write stays in core; the first plug-in that answers wins. `account` is the project's Instagram account.
   workshop?: {
@@ -148,6 +151,7 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     const tools = (p.tools as { defs?: unknown[] } | undefined)?.defs?.length ?? 0;
     if (tools) adds.push({ text: `${tools} ${tools === 1 ? "tool" : "tools"} for your own AI`, to: "/settings/own-ai" });
     for (const f of p.editFlags ?? []) adds.push({ text: `AI Editor flag: ${f.label}`, to: "/editor" });
+    for (const st of p.editor?.steps ?? []) adds.push({ text: `AI Editor step: ${st.title}`, to: "/settings/editor" });
     for (const i of p.packItems ?? []) adds.push({ text: `Pack items: ${i.kind === "designSystems" ? "design systems" : i.kind}` });
     if (p.library) adds.push({ text: "Media Library source", to: "/library" });
     if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });
@@ -155,6 +159,40 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     d.adds = adds;
     return d;
   });
+}
+
+/**
+ * A post-processing step. `run` gets the files a draft plays now (by source version id; an earlier step's copies where
+ * it made one) and returns the copies it made, by the same ids: the same length, frame rate and timecode as the file it
+ * replaces, so every cut stays where it is. Files go in `workDir` (the edit's own folder). A source it leaves alone is
+ * not in the answer. A throw fails the edit's post step with its message.
+ */
+export interface EditorStep extends StepInfo {
+  run(input: EditorStepInput): Promise<Record<string, string>>;
+}
+
+export interface EditorStepInput {
+  edit: { id: string; name: string; createdBy: string };
+  /** the version of the edit this draft is ("" when there is one) */
+  variant: string;
+  files: Record<string, string>;
+  /** the draft: which source plays where (V1 the speaker, V2 B-roll, A1 the voice) */
+  timeline: Timeline;
+  /** the person's values for the step's options, with the defaults filled in */
+  values: Record<string, string>;
+  workDir: string;
+  signal: AbortSignal;
+  /** a line for the draft's notes, a whole sentence ("Blur faces found no face that matches …"): shown with the edit */
+  note(text: string): void;
+  /** one line on the edit page while it runs: what it is doing now (a first-time install, waiting for the person's AI) */
+  say(text: string): void;
+}
+
+/** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */
+export function pluginEditorSteps(): (EditorStep & { pluginId: string })[] {
+  return loaded
+    .flatMap((p) => (p.editor?.steps ?? []).map((s) => ({ ...s, pluginId: p.id })))
+    .sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
 }
 
 /** The loaded plug-in that installs a pack item kind, or null (the core then holds those items on the account). */
@@ -297,6 +335,14 @@ function checkEditFlags(plugins: ServerPlugin[]): void {
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(f.id)) throw new Error(`plug-in ${plugin.id}: edit flag "${f.id}" is not lowercase words and dashes`);
       if (seen.has(f.id)) throw new Error(`edit flag "${f.id}" is declared twice`);
       seen.add(f.id);
+    }
+  }
+  const steps = new Set<string>();   // and the editor steps' ids, the same way
+  for (const plugin of plugins) {
+    for (const st of plugin.editor?.steps ?? []) {
+      if (!/^[a-z][a-z0-9-]{0,39}$/.test(st.id)) throw new Error(`plug-in ${plugin.id}: editor step "${st.id}" is not lowercase words and dashes`);
+      if (steps.has(st.id)) throw new Error(`editor step "${st.id}" is declared twice`);
+      steps.add(st.id);
     }
   }
 }

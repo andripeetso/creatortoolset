@@ -27,6 +27,12 @@ import { isPhoneHub, toolsetHomePath } from "@/lib/mobile";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { thumbClipUrl } from "@/lib/clips";
+import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
+import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
+import { useToolFolders } from "@/lib/folders";
+import { FolderGrid, ItemCard } from "@/components/browse/Grid";
+import { askRename } from "@/components/browse/browse";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import {
   createDocument,
   deleteDocument,
@@ -37,6 +43,7 @@ import {
   listDocuments,
   patchDocument,
   type DocSource,
+  type DocumentMeta,
   type DocumentRecord,
   type MediaClip,
 } from "@/lib/documents";
@@ -779,6 +786,9 @@ function Editor({
   );
 }
 
+const GUIDES_SORTS = ["recent", "name"] as const;
+const GUIDES_SORT_KEY = "guides:sort";
+
 export default function DocumentsPage() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -806,6 +816,25 @@ export default function DocumentsPage() {
   const opening = !!docId && !composing && !current && !error;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [view, setView] = useBrowseView("guides");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(GUIDES_SORT_KEY, GUIDES_SORTS));
+  // the open folder's guides (every folder's when searching); the server sends them newest change first
+  const folders = useToolFolders("guides", docs, find);
+  const listed = folders.here.filter((d) => matches(find, d.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const guidePicture = (id: string) => {
+    const clip = docs.find((d) => d.id === id)?.sources.find((x) => x.type === "clip");
+    return clip ? thumbClipUrl(clip.id) : undefined;
+  };
+  // renamed or deleted from its row or its card: the list changes at once, a refused rename goes back
+  const renameTo = (d: DocumentMeta, name: string) => {
+    setDocs((list) => list.map((x) => (x.id === d.id ? { ...x, name } : x)));
+    void patchDocument(d.id, { name }).catch(() => setDocs((list) => list.map((x) => (x.id === d.id ? { ...x, name: d.name } : x))));
+  };
+  const remove = async (d: DocumentMeta) => {
+    if (!(await confirmDialog({ title: `Delete “${d.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+    void deleteDocument(d.id).then(() => setDocs((list) => list.filter((x) => x.id !== d.id)));
+  };
 
   useEffect(() => {
     if (!canUse(me, "guides") || composing || docId) return;
@@ -823,6 +852,7 @@ export default function DocumentsPage() {
     <div className="flex min-h-screen flex-col bg-background pb-12 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Guide Builder" to={docId ? "/documents" : undefined} trail={current?.name} account={!!me}>
         {isPublicSharePath(pathname) ? <ShareThemeSwitch /> : null}
+        {canUse(me, "guides") && !docId && !composing && docs.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {!me && required ? (
           <Link
             to={home}
@@ -912,16 +942,69 @@ export default function DocumentsPage() {
               }}
             />
           </>
-        ) : (
+        ) : docs.length === 0 ? (
           <div className="flex flex-col gap-1.5">
-            {docs.length === 0 ? (
               <p className="py-10 text-center text-sm text-zinc-500">
                 No documents yet. Pick a clip to start.
               </p>
+          </div>
+        ) : (
+          <>
+            <FolderTrail state={folders} top="Guide Builder" />
+            <BrowseBar
+              search={{ value: find, onChange: setFind, placeholder: "Search guides (⌘K)" }}
+              sort={{
+                value: sort,
+                onChange: (v) => {
+                  setSort(v);
+                  persistSort(GUIDES_SORT_KEY, v);
+                },
+                label: "Sort guides",
+                options: [
+                  { id: "recent", label: "Recent" },
+                  { id: "name", label: "Name" },
+                ],
+              }}
+              view={{ value: view, onChange: setView }}
+            />
+            {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+            {view === "grid" ? (
+              <FolderGrid size="small">
+                <ToolFolderCards state={folders} pictureOf={guidePicture} />
+                {listed.map((d) => {
+                  const clip = d.sources.find((x) => x.type === "clip");
+                  const guide = parseDocKind(d.kind) === "guide";
+                  return (
+                    <ItemCard
+                      key={d.id}
+                      to={`/documents/${d.id}`}
+                      picture={clip ? thumbClipUrl(clip.id) : undefined}
+                      icon={guide ? ListOrdered : FileText}
+                      name={d.name}
+                      meta={`${timeAgo(d.updatedAt)}${guide ? " · Guide" : ""}${d.published ? " · Shared" : ""}`}
+                      drag={folders.drag(d.id)}
+                      actions={
+                        <>
+                          <MoveToMenu state={folders} id={d.id} className="rounded p-1 hover:bg-white/20" />
+                          <button type="button" title="Rename" aria-label={`Rename ${d.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename", d.name).then((name) => name && renameTo(d, name))}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button type="button" title="Delete" aria-label={`Delete ${d.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void remove(d)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      }
+                    />
+                  );
+                })}
+              </FolderGrid>
             ) : (
-              docs.map((d) => (
+          <div className="flex flex-col gap-1.5">
+              <ToolFolderRows state={folders} />
+              {listed.map((d) => (
                 <div
                   key={d.id}
+                  {...folders.drag(d.id)}
                   onClick={() => {
                     if (renaming !== d.id) navigate(`/documents/${d.id}`);
                   }}
@@ -944,18 +1027,7 @@ export default function DocumentsPage() {
                           const name = e.currentTarget.value.trim().slice(0, 120);
                           setRenaming(null);
                           if (!name || name === d.name) return;
-                          setDocs((list) =>
-                            list.map((x) =>
-                              x.id === d.id ? { ...x, name } : x,
-                            ),
-                          );
-                          void patchDocument(d.id, { name }).catch(() =>
-                            setDocs((list) =>
-                              list.map((x) =>
-                                x.id === d.id ? { ...x, name: d.name } : x,
-                              ),
-                            ),
-                          );
+                          renameTo(d, name);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") e.currentTarget.blur();
@@ -974,6 +1046,7 @@ export default function DocumentsPage() {
                       {d.published ? " · Shared" : ""}
                     </p>
                   </div>
+                  <MoveToMenu state={folders} id={d.id} className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
                   <button
                     type="button"
                     onClick={(e) => {
@@ -988,16 +1061,9 @@ export default function DocumentsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.stopPropagation();
-                      if (
-                        !(await confirmDialog({ title: `Delete “${d.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
-                      ) {
-                        return;
-                      }
-                      void deleteDocument(d.id).then(() =>
-                        setDocs((list) => list.filter((x) => x.id !== d.id)),
-                      );
+                      void remove(d);
                     }}
                     className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
                     title="Delete"
@@ -1005,9 +1071,10 @@ export default function DocumentsPage() {
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
-              ))
-            )}
+              ))}
           </div>
+            )}
+          </>
         )}
       </div>
       </div>

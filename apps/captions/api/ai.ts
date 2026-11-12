@@ -112,7 +112,7 @@ aiApp.post("/segment", async (c) => {
     const marks = await thoughtMarks(words, {
       signal: controller.signal,
       provider: providerFor(c.get("user")),
-      packText: await packInstructions(c.get("user").username, "captions.lines"),
+      packText: await packInstructions(c.get("user").username, "captions.lines", null, { ai: providerFor(c.get("user")) }),
     });
     bumpUsage(c.get("user").username, { aiRuns: 1 });
     return c.json({ marks });
@@ -163,7 +163,7 @@ aiApp.post("/split", async (c) => {
     const splits = await splitPoints(lines as string[][], Math.floor(maxChars), {
       signal: c.req.raw.signal,
       provider: providerFor(c.get("user")),
-      packText: await packInstructions(c.get("user").username, "captions.lines"),
+      packText: await packInstructions(c.get("user").username, "captions.lines", null, { ai: providerFor(c.get("user")) }),
     });
     return c.json({ splits });
   } catch (e) {

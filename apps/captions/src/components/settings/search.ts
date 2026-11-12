@@ -36,6 +36,8 @@ const STATIC_ROWS = [
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
   { section: "appearance", id: "colour", title: "Colour", keywords: ["tint", "accent", "project", "own", "color", "violet", "sky", "emerald", "amber", "rose", "orange", "teal", "pink"] },
   { section: "appearance", id: "background-glow", title: "Glow behind Home", keywords: ["glow", "background", "dark", "home"] },
+  { section: "appearance", id: "clip-view", title: "Clips open in", keywords: ["media library", "clip", "window", "side panel", "open", "player"] },
+  { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
   // Storage: where footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
@@ -52,17 +54,18 @@ const STATIC_ROWS = [
   { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
+  // Skills
+  { section: "skills", id: "skills", title: "Skills", keywords: ["skill", "prompt", "instructions", "reference", "load", "file", "markdown"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
   { section: "usage", id: "your-plan", title: "Your AI plan", description: "On Pro or Plus, big jobs ask before they start", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
   { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage"] },
-  // Social accounts: sign in to one, or follow one by handle (the Add account menu on the section)
-  { section: "connectors", id: "social-platforms", title: "Platforms", description: "Instagram, Facebook, YouTube, TikTok and X: sign in, or follow by @handle", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "x", "twitter", "sign in", "login", "follow", "handle", "add account"] },
+  // Social accounts: the accounts the person signs in to, one row each
+  { section: "connectors", id: "social-platforms", title: "Platforms", description: "Instagram, Facebook, YouTube and TikTok: sign in to your own accounts", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "sign in", "login", "add account"] },
   { section: "connectors", id: "platform-instagram", title: "Instagram", description: "Your own Instagram account", keywords: ["instagram", "sign in", "login", "reach", "saves"] },
-  { section: "connectors", id: "platform-facebook", title: "Facebook", description: "Your Pages by sign-in; public Pages by @handle", keywords: ["facebook", "pages", "meta", "sign in", "login", "follow", "handle"] },
-  { section: "connectors", id: "platform-youtube", title: "YouTube", description: "Your channel by sign-in; public channels by @handle", keywords: ["youtube", "channel", "sign in", "login", "google", "subscribers", "follow", "handle"] },
-  { section: "connectors", id: "platform-tiktok", title: "TikTok", description: "Your account by sign-in; public accounts by @handle", keywords: ["tiktok", "sign in", "login", "follow", "handle", "followers", "likes"] },
-  { section: "connectors", id: "platform-x", title: "X", description: "Public accounts by @handle", keywords: ["x", "twitter", "follow", "handle", "tweets"] },
+  { section: "connectors", id: "platform-facebook", title: "Facebook", description: "Your Pages, by sign-in", keywords: ["facebook", "pages", "meta", "sign in", "login"] },
+  { section: "connectors", id: "platform-youtube", title: "YouTube", description: "Your channel, by sign-in", keywords: ["youtube", "channel", "sign in", "login", "google", "subscribers"] },
+  { section: "connectors", id: "platform-tiktok", title: "TikTok", description: "Your account, by sign-in", keywords: ["tiktok", "sign in", "login", "followers", "likes"] },
   // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
   { section: "keys", id: "apify-key", title: "Apify", description: "Public accounts on TikTok, YouTube, X, Facebook and Instagram", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "facebook", "x", "follow", "handle", "api key"] },
   // Headless access: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you
@@ -86,7 +89,7 @@ const STATIC_ROWS = [
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
   { section: "account", id: "photo", title: "Photo", description: "From your Google or GitHub sign-in", keywords: ["picture", "avatar", "image", "profile photo"] },
-  { section: "account", id: "sign-in-with", title: "Sign in with Google, Apple or GitHub", keywords: ["google", "apple", "github", "link", "unlink", "sign in"], needs: "sign-in" },
+  { section: "account", id: "sign-in-with", title: "Connected accounts", keywords: ["google", "apple", "github", "link", "unlink", "sign in", "connect"], needs: "sign-in" },
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
 ] as const satisfies readonly SearchRow[];
 

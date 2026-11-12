@@ -1,10 +1,12 @@
 import type {
+  AssetKind,
   AssetCard,
   AssetDetail,
   AssetPage,
   Collection,
   LibraryEstimate,
   LibraryProgress,
+  LibrarySpace,
   LibrarySettings,
   LibraryStorage,
   LibraryStorageInput,
@@ -19,12 +21,14 @@ import type {
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
+import { pathOnMac } from "@/lib/thisMac";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
+/** The body, or the server's error with its `code` ("too_large": a refusal that a retry cannot change). */
 async function json<T>(r: Response): Promise<T> {
-  const body = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
+  const body = (await r.json().catch(() => ({}))) as T & { error?: string; code?: string };
+  if (!r.ok) throw Object.assign(new Error(body.error ?? `Request failed (${r.status})`), { code: body.code });
   return body;
 }
 
@@ -69,6 +73,11 @@ export const updateLibrary = (libraryId: string, patch: { name?: string; setting
 /** Where the library's files live and how much its bucket holds (the owner only). */
 export const getLibraryStorage = (libraryId: string) => send<LibraryStorage>(`/api/library/${libraryId}/usage`, "GET");
 
+/** What the library's own made files take (the owner only), and clearing the ones it makes again. */
+export const getLibrarySpace = (libraryId: string) => send<LibrarySpace>(`/api/library/${libraryId}/space`, "GET");
+export const clearLibrarySpace = (libraryId: string, what: "proxies" | "models") =>
+  send<{ cleared: number; kept: number }>(`/api/library/${libraryId}/space/clear`, "POST", { what });
+
 export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput) => send<LibraryStorage>(`/api/library/${libraryId}/storage`, "PUT", input);
 
 /** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
@@ -82,6 +91,8 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.collectionId) p.set("collectionId", q.collectionId);
   if (q.limit) p.set("limit", String(q.limit));
   if (q.trashed) p.set("trashed", "1");
+  if (q.unfiled) p.set("unfiled", "1");
+  if (q.roll) p.set("roll", q.roll);
   if (q.cursor) p.set("cursor", q.cursor);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
   if (q.source) p.set("source", q.source);
@@ -112,15 +123,34 @@ export const createCollection = (libraryId: string, input: { name: string; kind?
 export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>
   send<unknown>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
 
+export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
+  send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
+
+/** The folder goes (api/library/collections.ts): its folders move up one level, its clips stay in the library. */
+export const deleteCollection = (libraryId: string, collectionId: string) =>
+  send<{ ok: true }>(`/api/library/${libraryId}/collections/${collectionId}`, "DELETE");
+
 /** Into the trash (`trash` true) or back out of it. */
 export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =>
   send<unknown>(`/api/library/${libraryId}/assets/${assetId}${trash ? "" : "/restore"}`, trash ? "DELETE" : "POST");
 
-/** Titles, tags and what is said in the clips: a hit with `seconds` is a line said at that second. */
-export const searchLibrary = (libraryId: string, q: string, facets?: Record<string, string[]>) => {
+/**
+ * Titles, tags, descriptions, what is said in the clips and, when it is on, what they mean, best first: a hit with
+ * `seconds` is a line said at that second. `meaningGettingReady`: search by meaning is not ready yet (its model is
+ * fetched the first time), so these hits are by words.
+ */
+export const searchLibrary = async (
+  libraryId: string,
+  q: string,
+  narrow: { facets?: Record<string, string[]>; kind?: AssetKind; collectionId?: string; roll?: "a" | "b" } = {},
+): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean }> => {
   const p = new URLSearchParams({ q });
-  setFacets(p, facets);
-  return send<SearchHit[]>(`/api/library/${libraryId}/search?${p}`, "GET");
+  if (narrow.kind) p.set("kind", narrow.kind);
+  if (narrow.collectionId) p.set("collectionId", narrow.collectionId);
+  if (narrow.roll) p.set("roll", narrow.roll);
+  setFacets(p, narrow.facets);
+  const r = await fetch(`/api/library/${libraryId}/search?${p}`);
+  return { hits: await json<SearchHit[]>(r), meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready" };
 };
 
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */
@@ -182,11 +212,41 @@ export interface UploadResult {
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 /**
- * One file into the library: create the upload, then PATCH chunks from the offset the server reports. A 409 gives the
+ * A file the Mac app knows the place of, added where it is (api/library/routes.ts in-place): asked again while the
+ * server is still reading it. null when this server or library cannot take it in place: it is uploaded instead.
+ */
+async function addInPlace(libraryId: string, where: string, size: number, collectionId?: string): Promise<UploadResult | null> {
+  for (let again = false; ; again = true) {
+    const r = await fetch(`/api/library/${libraryId}/in-place`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: where, size, collectionId, again }),
+    });
+    if (r.status === 202) continue;
+    if (r.status === 400 || r.status === 403) return null;
+    return json<UploadResult>(r);
+  }
+}
+
+/**
+ * One file into the library. Picked in the Mac app on its own server: added where it is, no copy (`onProgress(0, true)`
+ * says so). Otherwise uploaded: create the upload, then PATCH chunks from the offset the server reports. A 409 gives the
  * offset to resume from; a dropped request asks HEAD where the server stopped. Five failures in a row give up.
  * With `collectionId` (a manual folder) the server puts the new asset in that folder when it finishes.
  */
-export async function uploadFile(libraryId: string, file: File, onProgress: (sent: number) => void, collectionId?: string): Promise<UploadResult> {
+export async function uploadFile(
+  libraryId: string,
+  file: File,
+  onProgress: (sent: number, inPlace?: boolean) => void,
+  collectionId?: string,
+): Promise<UploadResult> {
+  const where = await pathOnMac(file);
+  if (where) {
+    onProgress(0, true);
+    const kept = await addInPlace(libraryId, where, file.size, collectionId);
+    if (kept) return kept;
+    onProgress(0, false);
+  }
   const init = await fetch(`/api/library/${libraryId}/uploads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
