@@ -110,7 +110,7 @@ export function CodeStep({ step, setup, onDone, onExpired }: { step: string; set
           {setup && (
             <div className="mb-2 flex flex-col items-center gap-2">
               {secret ? <Qr uri={secret.uri} /> : <div className="size-44" />}
-              <p className="select-text text-center font-mono text-xs text-zinc-500">{secret ? grouped(secret.secret) : " "}</p>
+              <p className="select-text whitespace-nowrap text-center font-mono text-[11px] text-zinc-500">{secret ? grouped(secret.secret) : " "}</p>
             </div>
           )}
           {error && <p className="text-xs text-red-400">{error}</p>}
