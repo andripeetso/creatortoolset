@@ -28,8 +28,13 @@ export function isPublicLibraryPath(pathname: string): boolean {
   return /^\/library\/s\/[A-Za-z0-9_-]{22}\/?$/.test(pathname);
 }
 
+/** A shared Video Notes folder: /clips/f/<token>, viewable without an account. */
+export function isPublicClipFolderPath(pathname: string): boolean {
+  return /^\/clips\/f\/[A-Za-z0-9_-]{22}\/?$/.test(pathname);
+}
+
 export function isPublicSharePath(pathname: string): boolean {
-  return isPublicClipPath(pathname) || isPublicDocumentPath(pathname);
+  return isPublicClipPath(pathname) || isPublicClipFolderPath(pathname) || isPublicDocumentPath(pathname);
 }
 
 /** Review share links: /r/<token>, and a project's /rp/<token>[/<video>];

@@ -65,8 +65,8 @@ import {
 } from "@/pages/mobile/MobileClipView";
 import { confirmDialog } from "@/lib/dialogs";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
-import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
-import { useToolFolders } from "@/lib/folders";
+import { FolderShareButton, FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
+import { moveItems, useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
@@ -612,8 +612,11 @@ export default function ClipsPage() {
     uploadingRef.current = true;
     setUploadError(null);
     setUploadPct(0);
+    // made inside a folder: it goes in that folder
+    const into = folders.open;
     try {
       const s = await uploadClip(blob, name, mime, setUploadPct);
+      if (into) await moveItems("notes", [s.id], into).catch(() => {});
       rec.discard();
       putCached(me?.username, `/api/clips/${s.id}`, s);
       navigate(`/clips/${s.id}`);
@@ -926,8 +929,15 @@ export default function ClipsPage() {
 
             {showLibrary && sessions.length > 0 && (
               <div className="mt-8">
-                <h2 className={label}>Your clips</h2>
-                <FolderTrail state={folders} top="Your clips" />
+                {folders.open ? (
+                  // inside a folder: the way back up, and sharing the whole folder
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 [&>nav]:mb-0">
+                    <FolderTrail state={folders} top="Your clips" />
+                    <FolderShareButton state={folders} />
+                  </div>
+                ) : (
+                  <h2 className={label}>Your clips</h2>
+                )}
                 <BrowseBar
                   search={{ value: find, onChange: setFind, placeholder: "Search clips (⌘K)" }}
                   sort={{
@@ -945,6 +955,9 @@ export default function ClipsPage() {
                   view={{ value: view, onChange: setView }}
                 />
                 {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+                {!find.trim() && folders.open && listed.length === 0 && folders.folders.length === 0 && (
+                  <p className="rounded-lg border border-dashed border-zinc-800 py-10 text-center text-sm text-zinc-500">Empty folder. Drag clips here, or use Move to on a clip.</p>
+                )}
                 {view === "grid" ? (
                   <FolderGrid ref={clipsBox} size="column">
                     <ToolFolderCards state={folders} pictureOf={clipPicture} />
@@ -980,7 +993,7 @@ export default function ClipsPage() {
                     ))}
                   </FolderGrid>
                 ) : (
-                <div ref={clipsBox} className="flex max-h-80 flex-col gap-1.5 overflow-y-auto pr-1">
+                <div ref={clipsBox} className="flex flex-col gap-1.5">
                   <ToolFolderRows state={folders} />
                   {shownClips.map((s) => (
                     <div

@@ -12,6 +12,21 @@ export interface ToolFolder {
   /** The folder it is in; null at the top. */
   parentId: string | null;
   createdAt: number;
+  /** Its share link's token (anyone with the link sees it and what is inside); only tools in SHAREABLE_TOOLS. */
+  share?: string;
+}
+
+/** Tools whose items have a page anyone with a link can open, so a whole folder can be shared. */
+export const SHAREABLE_TOOLS: readonly FolderTool[] = ["notes"];
+
+/** A shared folder as someone with its link sees it (GET /api/clips/f/:token[?f=<folder inside>]). */
+export interface SharedFolder {
+  name: string;
+  /** From the shared folder down to the one shown; the first is the shared folder. */
+  trail: { id: string; name: string }[];
+  /** `pictures`: up to four of its clips that have one (their ids), for the folder card. */
+  folders: { id: string; name: string; count: number; pictures: string[] }[];
+  items: { id: string; name: string; duration: number; createdAt: number; hasThumb: boolean }[];
 }
 
 export interface ToolFolders {

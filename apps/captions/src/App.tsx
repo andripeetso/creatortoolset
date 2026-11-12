@@ -25,6 +25,7 @@ import FinalsPiecePage from "./pages/FinalsPiece";
 import ScreenRecorderPage from "./pages/ScreenRecorderPage";
 import ScreenProjectPage from "./pages/ScreenProjectPage";
 import LibrarySharePage from "./pages/LibrarySharePage";
+import SharedFolderPage from "./pages/SharedFolderPage";
 import EditorPage from "./pages/EditorPage";
 import EditorEditPage from "./pages/EditorEditPage";
 import type { Tool } from "@contracts/tools";
@@ -359,6 +360,7 @@ export default function App() {
           <Route path="/record/:id" element={<ScreenProjectPage />} />
           <Route path="/clips" element={<ClipsRoute />} />
           <Route path="/clips/:clipId" element={<ClipsRoute />} />
+          <Route path="/clips/f/:token" element={<SharedFolderPage />} />
           <Route path="/documents" element={<DocumentsRoute />} />
           <Route path="/documents/:docId" element={<DocumentsRoute />} />
           <Route path="/video-notes" element={<ClipsRoute />} />

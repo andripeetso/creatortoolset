@@ -1,9 +1,9 @@
 import { Hono, type Context } from "hono";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
-import { isFolderTool, type FolderTool, type ToolFolder, type ToolFolders } from "../contracts/folders";
+import { isFolderTool, SHAREABLE_TOOLS, type FolderTool, type ToolFolder, type ToolFolders } from "../contracts/folders";
 import { env } from "./lib/env";
 
 /**
@@ -21,7 +21,7 @@ const MAX_MOVE = 500;
 
 const fileOf = (tool: FolderTool, username: string) => path.join(env.dataDir, "folders", tool, `${username}.json`);
 
-async function read(tool: FolderTool, username: string): Promise<ToolFolders> {
+export async function read(tool: FolderTool, username: string): Promise<ToolFolders> {
   try {
     const v = JSON.parse(await readFile(fileOf(tool, username), "utf-8")) as Partial<ToolFolders>;
     return { folders: Array.isArray(v.folders) ? v.folders : [], items: v.items && typeof v.items === "object" ? v.items : {} };
@@ -135,6 +135,51 @@ foldersApp.delete("/:tool/:fid", async (c) => {
   });
   return out instanceof Response ? out : c.json(out);
 });
+
+// POST /api/folders/:tool/:fid/share → the folder with its link's token (kept if it has one): anyone with the link
+// sees it and what is inside, its folders too. DELETE turns the link off; sharing again makes a new one.
+foldersApp.post("/:tool/:fid/share", async (c) => {
+  const [tool] = ctx(c);
+  if (!SHAREABLE_TOOLS.includes(tool)) return c.json({ error: "Not found" }, 404);
+  const fid = c.req.param("fid");
+  const out = await change(...ctx(c), (d) => {
+    const folder = d.folders.find((f) => f.id === fid);
+    if (!folder) return c.json({ error: "Not found" }, 404);
+    folder.share ??= randomBytes(16).toString("base64url");
+    return folder;
+  });
+  return out instanceof Response ? out : c.json(out);
+});
+foldersApp.delete("/:tool/:fid/share", async (c) => {
+  const fid = c.req.param("fid");
+  const out = await change(...ctx(c), (d) => {
+    const folder = d.folders.find((f) => f.id === fid);
+    if (!folder) return c.json({ error: "Not found" }, 404);
+    delete folder.share;
+    return folder;
+  });
+  return out instanceof Response ? out : c.json(out);
+});
+
+export const SHARE_TOKEN = /^[A-Za-z0-9_-]{22}$/;
+
+/** The folder a link's token shares, and whose it is. null: no such link (or it was turned off). */
+// ponytail: reads every person's file of the tool per open; an index file if a server has thousands of people
+export async function sharedFolder(tool: FolderTool, token: string): Promise<{ username: string; data: ToolFolders; folder: ToolFolder } | null> {
+  if (!SHARE_TOKEN.test(token)) return null;
+  const files = await readdir(path.join(env.dataDir, "folders", tool)).catch(() => [] as string[]);
+  for (const file of files) {
+    const username = file.endsWith(".json") ? file.slice(0, -5) : "";
+    if (!USER.test(username)) continue;
+    const data = await read(tool, username);
+    const folder = data.folders.find((f) => f.share === token);
+    if (folder) return { username, data, folder };
+  }
+  return null;
+}
+
+/** Is folder `id` the folder `root` or inside it (at any depth)? */
+export const isWithin = (d: ToolFolders, root: string, id: string) => isAbove(d, id, root);
 
 // PUT /api/folders/:tool/items { ids, folderId } → { items }: these items into a folder (null: the top)
 foldersApp.put("/:tool/items", async (c) => {

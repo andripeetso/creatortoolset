@@ -25,6 +25,8 @@ import {
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
 import { env } from "./lib/env";
+import { isWithin, sharedFolder } from "./folders";
+import type { SharedFolder, ToolFolder } from "../contracts/folders";
 import {
   applyTranscriptCleanup,
   CLEANUP_CHUNK,
@@ -882,8 +884,15 @@ clipsApp.get("/availability", (c) => {
   });
 });
 
-clipsApp.get("/", async (c) => {
-  const user = c.get("user");
+/** The folders from the top down to `id`. */
+function folderTrail(folders: ToolFolder[], id: string): ToolFolder[] {
+  const out: ToolFolder[] = [];
+  for (let f = folders.find((x) => x.id === id); f && !out.includes(f); f = folders.find((x) => x.id === f!.parentId)) out.unshift(f);
+  return out;
+}
+
+/** Every clip's meta that `keep` takes, newest first. */
+async function clipMetas(keep: (m: Meta) => boolean): Promise<Meta[]> {
   let ids: string[] = [];
   try {
     ids = (await readdir(CLIPS_DIR, { withFileTypes: true }))
@@ -891,14 +900,44 @@ clipsApp.get("/", async (c) => {
       .map((d) => d.name)
       .filter(okId);
   } catch {
-    return c.json([]);
+    return [];
   }
-  const metas = (await Promise.all(ids.map(readMeta))).filter(
-    (m): m is Meta =>
-      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner)),
-  );
-  metas.sort((a, b) => b.createdAt - a.createdAt);
+  const metas = (await Promise.all(ids.map(readMeta))).filter((m): m is Meta => !!m && keep(m));
+  return metas.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+clipsApp.get("/", async (c) => {
+  const user = c.get("user");
+  const metas = await clipMetas((m) => m.owner === user.username || (user.role === "admin" && !m.owner));
   return c.json(metas.map(publicMeta));
+});
+
+// GET /api/clips/f/:token[?f=<a folder inside>] → SharedFolder: a shared folder of Video Notes, no account needed (its
+// link is the key). Only that folder and the ones inside it, and only its owner's clips in them.
+clipsApp.get("/f/:token", async (c) => {
+  const shared = await sharedFolder("notes", c.req.param("token"));
+  if (!shared) return c.json({ error: "Not found" }, 404);
+  const { data, folder: root, username } = shared;
+  const at = data.folders.find((f) => f.id === (c.req.query("f") || root.id));
+  if (!at || !isWithin(data, root.id, at.id)) return c.json({ error: "Not found" }, 404);
+  const clips = await clipMetas((m) => m.owner === username && m.status !== "error");
+  const inFolder = (fid: string) => clips.filter((m) => data.items[m.id] === fid);
+  const trail = folderTrail(data.folders, at.id);
+  const out: SharedFolder = {
+    name: root.name,
+    trail: trail.slice(trail.findIndex((f) => f.id === root.id)).map(({ id, name }) => ({ id, name })),
+    folders: data.folders
+      .filter((f) => f.parentId === at.id)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((f) => ({
+        id: f.id,
+        name: f.name,
+        count: inFolder(f.id).length + data.folders.filter((x) => x.parentId === f.id).length,
+        pictures: inFolder(f.id).map((m) => m.id).filter((id) => existsSync(thumbPath(id))).slice(0, 4),
+      })),
+    items: inFolder(at.id).map((m) => ({ id: m.id, name: m.name, duration: m.duration, createdAt: m.createdAt, hasThumb: existsSync(thumbPath(m.id)) })),
+  };
+  return c.json(out, 200, { "Cache-Control": "no-store" });
 });
 
 clipsApp.post("/init", async (c) => {

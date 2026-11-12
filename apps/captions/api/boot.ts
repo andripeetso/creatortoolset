@@ -163,6 +163,8 @@ const PUBLIC_CLIP_GET = new RegExp(
   `^/api/clips/${PUBLIC_UUID}(?:/(?:play|thumb|transcript))?$`,
   "i",
 );
+// a shared Video Notes folder (clips.ts /f/:token): the folder's list; its clips play by their own public routes
+const PUBLIC_CLIP_FOLDER_GET = /^\/api\/clips\/f\/[A-Za-z0-9_-]{22}$/;
 const PUBLIC_AGENT_GET =
   /^\/api\/agent-(?:context\.json|transcript\.json|frame\.jpg)$/;
 const PUBLIC_DOC_GET = new RegExp(
@@ -291,6 +293,7 @@ app.use("/api/*", async (c, next) => {
   if (
     c.req.method === "GET" &&
     (PUBLIC_CLIP_GET.test(c.req.path) ||
+      PUBLIC_CLIP_FOLDER_GET.test(c.req.path) ||
       PUBLIC_LIBRARY_SHARE.test(c.req.path) ||
       PUBLIC_AGENT_GET.test(c.req.path) ||
       PUBLIC_DOC_GET.test(c.req.path) ||
