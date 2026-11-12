@@ -153,7 +153,8 @@ export function useCodeState() {
 /** Settings → Account: the sign-in code's switch, with its dialogs. */
 export function SignInCodeRow() {
   const state = useCodeState();
-  const s = state.data;
+  // drawn at once (nothing below it moves when the state comes in); the switch waits for it
+  const s = state.data ?? { on: false, required: false, mac: false };
   const [dialog, setDialog] = useState<"on" | "off" | null>(null);
   const [secret, setSecret] = useState<Secret | null>(null);
   const [code, setCode] = useState("");
@@ -190,14 +191,13 @@ export function SignInCodeRow() {
     }
   };
 
-  if (!s) return null;
   return (
     <>
       <Row
         id="sign-in-code"
         title="Sign-in code"
         description="Ask for a code from an authenticator app when you sign in with your password"
-        control={<Switch checked={s.on} disabled={s.on && s.required} aria-label="Sign-in code" onCheckedChange={(on) => void open(on ? "on" : "off")} />}
+        control={<Switch checked={s.on} disabled={!state.data || (s.on && s.required)} aria-label="Sign-in code" onCheckedChange={(on) => void open(on ? "on" : "off")} />}
       />
       <FormDialog
         open={dialog === "on"}

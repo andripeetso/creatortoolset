@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+vi.setConfig({ testTimeout: 30_000 }); // scrypt and the deliberate delay after each wrong try, beside the whole suite
+
 // The sign-in code on a hosted server (CT_MODE=hosted), through the real routes: an admin asks everyone for one (a new
 // sign-in sets one up before anything opens; an invite's new account too), lifts a lock, switches off a person's code
 // after a lost phone. A provider sign-in an app swaps (POST /api/auth/app) keeps its own proof.

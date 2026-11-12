@@ -3,6 +3,8 @@ import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+vi.setConfig({ testTimeout: 30_000 }); // scrypt and the deliberate delay after each wrong try, beside the whole suite
+
 // The sign-in code on a server on this Mac (CT_LOCAL=1, what the Mac app runs), through the real routes: switching it
 // on, the code step after a password, recovery codes, the Mac window's own sign-in (never asked, never locked) against
 // the tunnel, a proxy and the network (always asked), and the lock on wrong tries.
