@@ -7,20 +7,27 @@ or a hosted one.
 Tabs (Finals and Scripts only for an account that has them; each tab's badge counts what waits there). The app
 follows the phone's light or dark look:
 
-- **Chats**: what is going on, each row opening its own screen, and a round button to message the assistant. The
-  Assistant is the same chat as on the computer. **New edit** at the top of the Assistant: pick clips from Photos (in
-  the order picked), then Start. The clips' uploads are made first, then the AI Editor edit from them, then the bytes go
-  by background transfers; the server starts the edit when the last clip is in, with the phone locked or the app
-  closed. Its row shows how far it is (uploaded, Editing, Ready to review) and opens the edit's page or its Review
-  video; a clip the server never got shows Try again (a fresh edit from the clips still on the phone).
-- **Upload**: pick clips from Photos or Files, then Upload. Each file is copied into the app first, then sent in
-  32 MB chunks (or straight to the library's storage bucket) by background transfers: uploads carry on with the
-  phone locked or the app closed, and resume from the server's own byte count after a dropped connection. The server
-  says when a file is already in the library.
-- **Finals**: what is ready to post, then the finished pieces, each version in the iPhone's player.
-- **Scripts**: the Workshop sessions that are ready to film, read big, scrolling on their own, and filmed with the
-  script on screen (takes go to Photos).
-- **More**: your computers, the account, the Media Library, the rest of the web app signed in, and Wi-Fi-only uploads.
+- **Chats** opens first: the assistant's chats, each video in Review and each New edit, one row each, with a badge
+  when it waits on you. Swipe a row to dismiss it, or to delete a Review video (it stays in Review's trash for 30
+  days). The round button starts a new chat with the assistant. **New edit** at the top: pick clips from Photos (in
+  the order picked), then Start; the clips go up by background transfers and the server starts the edit when the last
+  one is in, with the phone locked or the app closed. Its row shows how far it is and opens the edit or its Review
+  video; one that stopped offers Try again. The line that tells the phone what changed is closed while the app is in
+  the background. Replies are text only: a picture in a reply keeps its description, and the app never loads an
+  address a reply names.
+- **Upload** is the camera roll. Pick clips and press Upload; they keep going with the phone locked. On a server whose
+  Media Library belongs to a plug-in, the clips go there with the same sign-in. The Media Library sits beside the roll.
+- **Finals** shows what is ready to post and every finished piece: save it to Photos, copy its post description, split
+  it into stories, send it to the team or mark it published.
+- **Scripts** opens a script to read while filming, with a record button that films with the script by the lens.
+- **More**: the tools the account has (Story Splitter cuts a video into stories on the phone; Caption Studio captions
+  a video with the server's own layout and keeps the video on the phone until the server has it), and Settings: your
+  computers, the account, notifications, appearance, Wi-Fi-only uploads and Photos access.
+
+On a server with a plug-in for the AI Editor, each AI Editor edit is a row in Chats and opens its own thread, and the
+phone registers for push (then it posts no notifications of its own, so nothing is told twice). Share → Creator
+Toolset links your own post to its Workshop session or saves a link to the Analyzer, using the sign-in the app shares
+through its keychain group.
 
 ## Connecting a computer
 
