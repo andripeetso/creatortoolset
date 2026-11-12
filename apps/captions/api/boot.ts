@@ -32,6 +32,7 @@ import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
 import { skillsApp } from "./skills";
 import { projectsApp } from "./projects";
+import { designsApp } from "./designs";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
 import { reportCrash, startTelemetry, telemetryApp } from "./lib/telemetry";
@@ -456,6 +457,8 @@ if (process.env.NODE_ENV !== "test") {
   setInterval(() => void sweepAll(), 3600_000).unref();
 }
 app.route("/api/stories", storiesApp);
+// designs: carousel slides, covers and thumbnails as pages of layers (contracts/design.ts); each route checks what the design is made from
+app.route("/api/designs", designsApp);
 app.route("/api/folders", foldersApp);
 app.route("/api/account-profile", accountProfileApp);
 app.route("/api/telemetry", telemetryApp);

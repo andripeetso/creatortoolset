@@ -8,6 +8,7 @@ const templateRoot = path.resolve(import.meta.dirname);
 // and a 30 s per-test timeout. Add a new ffmpeg test file here.
 const ffmpegFiles = [
   "api/assistant.test.ts",
+  "api/designs.test.ts",
   "api/editor/analyze.test.ts",
   "api/editor/animation-styles.test.ts",
   "api/editor/cards/step.test.ts",
