@@ -413,7 +413,7 @@ final class UploadEngine: ObservableObject {
                 $0.note = why
             }
         case .signedOut:
-            if Servers.shared.currentId == store.item(id)?.server { Servers.shared.sessionExpired() }
+            // the server in use is marked signed out by the read that was refused (`API.data`), only if it still is
             fail(id, "Signed out: sign in again in More, then Upload")
         case .failed(let why):
             fail(id, why)

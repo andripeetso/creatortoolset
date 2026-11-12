@@ -30,6 +30,19 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(MarkdownTests.words(Markdown.blocks("Look ![shot](https://elsewhere.example.test/p.png?x=secret) here")).contains("elsewhere"))
     }
 
+    /// A request that went with an old sign-in and comes back refused signs out nothing newer.
+    @MainActor func testARefusalOfAnOldSignInKeepsTheNewOne() {
+        let server = Server(url: URL(string: "https://stale.example.test/")!, username: "sam")
+        Servers.shared.add(server, cookie: "new")
+        defer { Servers.shared.remove(server.id) }
+        Servers.shared.sessionExpired("old")
+        XCTAssertEqual(Keychain.get(server.id), "new")
+        XCTAssertFalse(Servers.shared.signedOut)
+        Servers.shared.sessionExpired("new")
+        XCTAssertNil(Keychain.get(server.id))
+        XCTAssertTrue(Servers.shared.signedOut)
+    }
+
     func testWhatIsKeptOnDiskIsKeptPerServerAndAccount() {
         XCTAssertEqual(API(server: URL(string: "https://studio.example.test/")!, cookie: nil, username: "sam").cacheKey, "studio.example.test-sam")
         XCTAssertEqual(API(server: URL(string: "http://192.0.2.20:43127/")!, cookie: nil).cacheKey, "192.0.2.20-43127-local")

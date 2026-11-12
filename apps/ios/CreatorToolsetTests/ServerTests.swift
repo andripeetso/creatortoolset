@@ -70,6 +70,8 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(on.statusCode, 200, String(decoding: data, as: UTF8.self))
         let recovery = try JSONDecoder().decode(On.self, from: data).recovery
         let own = SignIn.cookie(from: on)
+        // switching the code on signs every other sign-in out: the phone keeps the one this answer gave
+        Servers.shared.add(Server(url: origin, username: "admin"), cookie: own)
         addTeardownBlock { [origin] in
             _ = try? await API(server: origin!, cookie: own).send("/api/auth/code/off", json: ["code": recovery[1]])
         }
@@ -79,7 +81,7 @@ final class ServerTests: XCTestCase {
             return XCTFail("the password didn't ask for the code")
         }
         XCTAssertFalse(Servers.shared.signedOut)
-        XCTAssertEqual(Keychain.get(origin.absoluteString), cookie)
+        XCTAssertEqual(Keychain.get(origin.absoluteString), own)
 
         // a wrong code says so and the step stays good; the next code signs in
         let right = Self.totp(key, ahead: 1)
@@ -110,7 +112,7 @@ final class ServerTests: XCTestCase {
             XCTAssertEqual(expired.localizedDescription, "That sign-in expired. Sign in again.")
         }
         XCTAssertFalse(Servers.shared.signedOut)
-        XCTAssertEqual(Keychain.get(origin.absoluteString), cookie)
+        XCTAssertEqual(Keychain.get(origin.absoluteString), own)
     }
 
     /// An authenticator app's code, as the server counts it: HMAC-SHA1, 30-second steps, six digits; `ahead` steps on.

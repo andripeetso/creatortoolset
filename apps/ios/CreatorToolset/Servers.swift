@@ -75,8 +75,9 @@ final class Servers: ObservableObject {
         }
     }
 
-    func sessionExpired() {
-        guard let id = currentId else { return }
+    /// The server in use turned `refused` away. A sign-in made since (a request still on its way with the old one) stays.
+    func sessionExpired(_ refused: String?) {
+        guard let id = currentId, Keychain.get(id) == refused else { return }
         Keychain.set(id, nil)
         signedOut = true
     }
@@ -176,7 +177,7 @@ struct API {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
             // only the server in use: an upload to another server failing must not sign this one out
-            await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired() } }
+            await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired(cookie) } }
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else { throw APIError.server(status, Self.message(data, status: status)) }

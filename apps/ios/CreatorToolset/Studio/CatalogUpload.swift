@@ -102,8 +102,8 @@ struct CatalogAPI {
         // the proxy's own 401: the library doesn't know this sign-in; the computer's sign-in still holds
         if status == 401, CatalogRules.libraryRefused(message) { return .server(403, message) }
         if status == 401 {
-            let id = api.server.absoluteString
-            await MainActor.run { if Servers.shared.currentId == id { Servers.shared.sessionExpired() } }
+            let (id, refused) = (api.server.absoluteString, api.cookie)
+            await MainActor.run { if Servers.shared.currentId == id { Servers.shared.sessionExpired(refused) } }
             return .signedOut
         }
         if CatalogRules.restarting(status, object) { return .server(503, "The library is restarting") }
