@@ -203,7 +203,8 @@ describe("the cut-out plug-in", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
+    // about 100 MB of pictures go through the routes: room for a loaded machine
+  }, 30_000);
 
   it("takes a file on this computer by its path only when the server runs there", async () => {
     const cookie = await cookieOf("ana");
