@@ -33,10 +33,12 @@ const { pairDevice } = await import("../../api/lib/devices");
 const { saveSettings } = await import("../../api/lib/providers");
 const { MacClaudeError } = await import("../../api/lib/mac-claude");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
+const { installPack } = await import("../../api/lib/packs");
 const { default: plugin, PICKS_MAX, COMPARES_MAX } = await import("./plugin");
 
 createUser("nico", "password1");
 createUser("ola", "password1");
+createUser("ada", "password1", { role: "admin" });
 const mac = pairDevice("nico", "Nico's Mac").device;
 await saveSettings(
   {
@@ -44,6 +46,8 @@ await saveSettings(
     instances: [
       { id: "claude_work", driver: "claude", name: "Claude (work)", enabled: true, device: mac.id },
       { id: "codex", driver: "codex", name: "Codex", enabled: true, device: mac.id },
+      // an AI that runs with tools on the Mac: another person's pack text never goes to it
+      { id: "agent", driver: "acp", name: "Agent", enabled: true, device: mac.id, model: "local", acp: { command: "agent", args: [] } },
     ],
     default: { instance: "claude_work", model: "opus", effort: "high" },
   },
@@ -54,10 +58,10 @@ const CODEX = { instance: "codex", model: "gpt-6-luna", effort: "high" };
 // every word that would say which AI wrote what: names, drivers, tools, models, the Mac
 const NAMES = /claude|codex|opus|luna|nico/i;
 
-const as = (username: string, off: string[] = []) => {
+const as = (username: string, off: string[] = [], role = "member") => {
   const app = new Hono<{ Variables: { user: unknown } }>();
   app.use("*", async (c, next) => {
-    c.set("user", { username, role: "member", cloud: true, off });
+    c.set("user", { username, role, cloud: true, off });
     await next();
   });
   app.route("/api/workshop", workshopApp as never);
@@ -262,6 +266,28 @@ describe("Compare", () => {
     ]);
   });
 
+  it("another person's pack text reaches both AIs when both run without tools, as in Generate draft, and neither when one has tools", async () => {
+    const LINE = "Tiny Acrobatics pack line: open on the result.";
+    await installPack("nico", { format: 1, id: "tiny-hooks", name: "Tiny Hooks", version: "1.0.0", author: "Tiny Acrobatics", license: "CC-BY-4.0", description: "Hook habits.", instructions: { "workshop.write": LINE } }, 0);
+    const id = session();
+    await call("POST", `/api/workshop/sessions/${id}/generate`, { kind: "free", prompt: "Three reasons to stretch" });
+    await until(async () => relay.calls.length, (k) => k === 1);
+    const generated = relay.calls[0]!;
+    expect(generated.system + generated.user).toContain(LINE);
+    relay.calls = [];
+    await start(id);
+    await finished(id);
+    expect(relay.calls.map((c) => c.system + c.user)).toEqual([generated.system + generated.user, generated.system + generated.user]);
+    await call("POST", `/api/x/compare/sessions/${id}/pick`, { side: null });
+    relay.calls = [];
+    relay.answer.agent = plan("Agent", "Stretch at noon.");
+    await start(id, { b: { instance: "agent", model: "local", effort: "high" } });
+    await finished(id);
+    expect(relay.calls.map((c) => c.instance).sort()).toEqual(["agent", "claude_work"]);
+    for (const c of relay.calls) expect(c.system + c.user).not.toContain(LINE);
+    expect(relay.calls[0]!.system + relay.calls[0]!.user).toBe(relay.calls[1]!.system + relay.calls[1]!.user);
+  });
+
   it("another account can neither read nor pick a compare, and an account with the plug-in off gets nothing", async () => {
     const id = session();
     await start(id);
@@ -270,6 +296,10 @@ describe("Compare", () => {
     expect((await ola("GET", `/api/x/compare/sessions/${id}`)).status).toBe(404);
     expect((await ola("POST", `/api/x/compare/sessions/${id}/pick`, { side: "A" })).status).toBe(404);
     expect(((await (await ola("GET", "/api/x/compare/tally")).json()) as { rows: unknown[] }).rows).toEqual([]);
+    // an admin may open the session, but the compare is nico's own
+    const ada = as("ada", [], "admin");
+    expect(await (await ada("GET", `/api/x/compare/sessions/${id}`)).json()).toEqual({ compare: null });
+    expect((await ada("POST", `/api/x/compare/sessions/${id}/pick`, { side: "A" })).status).toBe(404);
     const off = as("nico", ["compare"]);
     expect((await off("GET", `/api/x/compare/sessions/${id}`)).status).toBe(403);
     expect((await off("POST", `/api/x/compare/sessions/${id}`, { a: CLAUDE, b: CODEX, kind: "free", prompt: "x" })).status).toBe(403);

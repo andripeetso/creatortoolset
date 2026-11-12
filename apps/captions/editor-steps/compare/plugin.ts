@@ -223,7 +223,8 @@ app.post("/sessions/:id/pick", async (c) => {
     const chosen = side ? cmp.sides[side === "A" ? 0 : 1]! : null;
     if (chosen && !chosen.out) return { error: "That one has no draft", status: 400 as const };
     if (chosen) {
-      await addDraft(meta, cmp.draft, chosen.out!, cmp.projectId);
+      // as Generate draft's own save: the session's open pages hear of it
+      await inJob([meta.owner, user.username], () => addDraft(meta, cmp.draft, chosen.out!, cmp.projectId), meta.id);
       s.picks.unshift({ at: Date.now(), kind: cmp.draft.kind, instance: chosen.ai.instance, model: chosen.ai.model, name: chosen.name });
     }
     cmp.picked = side ?? "neither";
