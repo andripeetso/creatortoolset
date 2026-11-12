@@ -99,7 +99,7 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
     out.push({ ...workshop, spot: "A piece's Shape menu",
       does: "You pick up to one per role for a piece: Shape sets the order, Persuasion shapes the ask, Argument shapes the reasoning. The AI writes the piece along the steps of the ones you picked; with none picked, it can look through all of them." });
   if (has("workshop.write"))
-    out.push({ ...workshop, spot: "Every message to the AI on a piece", does: "Added to what the AI is told when it writes and edits your reels, carousels and ads." });
+    out.push({ ...workshop, spot: "Every message to the AI on a piece", does: "Added to what the AI is told when it writes and edits your reels, carousels and ads. Not in the Workshop's chat on your Mac, which can read files and search the web." });
   if (has("workshop.review"))
     out.push({ ...workshop, spot: "Follower read and Fact check", does: "Added to what the AI is told when it reads a piece as a follower and checks its claims." });
   if (has("analyzer.ideas"))

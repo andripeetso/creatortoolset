@@ -6,10 +6,20 @@ import remarkGfm from "remark-gfm";
 /** A path of this app ("/review/…"), not another site's address. */
 const inApp = (href?: string) => !!href && /^\/(?!\/)/.test(href);
 
-/** A link in a reply: a page of this app opens here, with the chat still there; anything else opens in a new tab. */
+/** A file this server hands out ("/api/exports/…/file"): it is saved, not a page to move to. */
+const isFile = (href?: string) => !!href && href.startsWith("/api/");
+
+/** A link in a reply: a page of this app opens here, with the chat still there; a file of this server downloads; anything else opens in a new tab. */
 function ReplyLink({ href, children }: { href?: string; children?: ReactNode }) {
   const look = "select-text text-violet-300 underline decoration-violet-500/40 underline-offset-2 hover:text-violet-200";
   const routed = useInRouterContext();
+  if (isFile(href)) {
+    return (
+      <a href={href} download className={look}>
+        {children}
+      </a>
+    );
+  }
   return inApp(href) && routed ? (
     <AppLink href={href!} className={look}>
       {children}

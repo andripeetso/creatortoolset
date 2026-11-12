@@ -499,6 +499,15 @@ async function processVersion(id: string, n: number): Promise<void> {
 const queued = new Set<string>();
 let chain = Promise.resolve();
 
+/** This account's videos being prepared, for Home (api/activity.ts). */
+export async function reviewWork(username: string) {
+  const metas = await Promise.all([...queued].map(async (key) => [key, await readMeta(key.split("/")[0]!)] as const));
+  return metas.flatMap(([key, m]) => {
+    const v = m?.owner === username ? m.versions.find((x) => `${m.id}/${x.n}` === key && x.status === "processing") : undefined;
+    return v ? [{ id: key, assetId: m!.id, name: m!.name, progress: v.progress }] : [];
+  });
+}
+
 function enqueue(id: string, n: number): void {
   const key = `${id}/${n}`;
   if (queued.has(key)) return;

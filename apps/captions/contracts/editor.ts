@@ -91,6 +91,8 @@ export interface EditJob {
   attempts: number;
   /** the failure, or for needs_key what to add */
   error: string | null;
+  /** while it runs: what it is doing now, when the step says (a first-time install, waiting for the person's AI) */
+  line?: string;
 }
 
 export interface EditSummary {
@@ -103,8 +105,8 @@ export interface EditSummary {
   sources: string[];
   /** clips still uploading from a phone (its New edit); the edit starts by itself when the last is in, and these become `sources` */
   uploads?: { id: string; version?: string }[];
-  /** the latest job's state and kind, if any ran */
-  last: Pick<EditJob, "kind" | "state"> | null;
+  /** the latest job's state and kind, if any ran; `stopped`: it failed because the person stopped it */
+  last: (Pick<EditJob, "kind" | "state"> & { stopped?: true }) | null;
 }
 
 /** One spoken sentence of the footage (analyze): numbered from 1 across every source, in recording order. */

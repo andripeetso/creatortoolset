@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { canUseTile, useMe } from "@/lib/auth";
 import { useSetup, useSetupLive } from "@/lib/setup";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
-import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, NEED_SHORT, readiness, type Have, type HomeTile, type Need } from "@contracts/tools";
+import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, needsLine, readiness, type Have, type HomeTile, type Need } from "@contracts/tools";
 import { PublishButton } from "@/components/community/PublishDialog";
 import { Card, LoadingRow, Section, Status, saveFailed } from "./ui";
 
@@ -24,7 +24,7 @@ export function missingNeeds(tile: HomeTile, have: readonly Have[]): Need[] {
 }
 
 /** One missing need in the row's words: "Needs an Apify key". */
-export const needLabel = (need: Need): string => `Needs ${NEED_SHORT[need.anyOf[0]]}`;
+export const needLabel = (need: Need): string => needsLine([need]);
 
 const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
 /** Where a need is set up, and what the button that goes there says: the Settings row that holds it, or the page that makes it. */

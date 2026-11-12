@@ -140,9 +140,10 @@ export default function EditorEditPage() {
               <li key={j.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
                 <span className="font-medium">{STEP_NAME[j.kind] ?? j.kind}</span>
                 {j.variant && <span className="text-xs text-zinc-500">{edit.plans.find((p) => p.name === j.variant)?.title ?? j.variant}</span>}
-                <StateBadge state={j.state} />
+                <StateBadge state={j.error === "Stopped" ? "stopped" : j.state} />
                 {j.state === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
-                {j.error && (
+                {j.state === "running" && j.line && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{j.line}</span>}
+                {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
                     {j.state === "needs_key" && (

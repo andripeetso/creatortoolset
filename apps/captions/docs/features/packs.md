@@ -72,7 +72,7 @@ A pack's instructions are added to one prompt, named by its slot:
 
 | Slot | Where |
 |---|---|
-| `workshop.write` | Content Workshop: writing and editing pieces |
+| `workshop.write` | Content Workshop: writing and editing pieces. Not the chat turn on the Mac, which reads its folder and may search the web: only the app's own shipped packs go there |
 | `workshop.review` | Content Workshop: the follower read and the fact check |
 | `analyzer.ideas` | Content Analyzer: ideas and tags from posts |
 | `captions.lines` | Caption Studio: where captions break into lines |
@@ -127,6 +127,8 @@ motion kit) is refused on install, whatever the catalog lists (`api/pack-catalog
 
 Publish to Community sits on each of your own Workshop frameworks and caption styles, and on Settings → Tools for
 your Home layout. Once you've ticked that it's
-yours to share, the app builds the pack and checks it, then points you to the catalog's site: download the file and
-send it there. It runs the same checks, then waits for a person to review
-it. Once approved, it's listed.
+yours to share, the app builds the pack and checks it. In the Mac app, signed in to your Creator Toolset account (Google,
+Apple or GitHub), the app shows its own alert with the pack's name and what it holds, and a click on Publish sends it
+to the catalog under that account. Anywhere else it points you to the catalog's site: download the file and send it
+there. The catalog runs the same checks, refuses a pack with code, keeps at most five of one person's packs waiting,
+then waits for a person to review it. Once approved, it's listed.

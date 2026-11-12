@@ -16,6 +16,7 @@ import {
 import { storedAutoCadence } from "./cadence-preference";
 import { onTopic, whenVisible } from "./sync";
 import { bumpCueIdCounter, type CadenceFit } from "./captions";
+import { storedStyle, storedTexts } from "./export-request";
 import {
   deleteLocalRecoveryProject,
   listLocalRecoveryProjects,
@@ -101,6 +102,8 @@ interface ProjectData {
   /** The script the video was filmed from (see the store's `script`). */
   script?: string | null;
   clips: ServerClip[];
+  /** Set while the server itself is making the project's captions (api/captions-job.ts). */
+  captioning?: string;
 }
 
 export async function listSessions(): Promise<SessionMeta[]> {
@@ -194,34 +197,17 @@ export async function renameSession(
 function clipSlotFromServer(cm: ServerClip): ClipSnapshot {
   const cues = cm.cues ?? [];
   const words = cm.words ?? cues.flatMap((c) => c.words);
-  const texts = (cm.texts ?? []).map((t) => ({
-    ...t,
-    w: t.w ?? 40,
-    fontFamily: t.fontFamily ?? "Anton",
-    outlineColor: t.outlineColor ?? "#000000",
-    outlineWidth: t.outlineWidth ?? 4,
-    shadowDepth: t.shadowDepth ?? 0,
-    boxEnabled: t.boxEnabled ?? false,
-    boxColor: t.boxColor ?? "#000000",
-    rotation: t.rotation ?? 0,
-  }));
   return {
     words,
     cues,
     originalWords: cm.originalWords ?? null,
     posSegments: cm.posSegments ?? [],
-    texts,
+    texts: storedTexts(cm.texts),
     cadenceApplied: cm.cadenceApplied ?? false,
     cadenceFit: cm.cadenceFit ?? null,
     cadenceDirty: cm.cadenceDirty ?? false,
     done: cm.done ?? false,
-    // fitBox is always on now; old saves also predate the lowercase flag
-    style: {
-      ...DEFAULT_STYLE,
-      ...(cm.style ?? {}),
-      fitBox: true,
-      lowercase: cm.style?.lowercase ?? false,
-    },
+    style: storedStyle(cm.style),
     peaks: cm.peaks?.length ? Float32Array.from(cm.peaks) : null,
     pcm: null,
     file: null,
@@ -334,7 +320,8 @@ export async function takeServerCopy(id: string): Promise<boolean> {
   };
   const before = open();
   if (before) askForVideoAgain(before);
-  if (!before || !untouched(before)) return false;
+  // a project the server is captioning is asked about whatever was done here: Transcribe is held until that ends
+  if (!before || !(untouched(before) || before.serverCaptioning)) return false;
   // A save on its way lands first (the server judges it), and the read comes after it: a read that started before a
   // save would bring the older copy. A save still waiting is not sent early: with the captions one save ahead it
   // would only be refused.
@@ -346,7 +333,10 @@ export async function takeServerCopy(id: string): Promise<boolean> {
   }
   // the person may have done something while that was under way: looked at again, now
   const s = open();
-  if (!p || !s || syncTails.has(id)) return false;
+  if (!p || !s) return false;
+  // also when the server's captions were not made (no newer copy to take): Transcribe is offered again
+  if (s.serverCaptioning !== !!p.captioning) useStudio.setState({ serverCaptioning: !!p.captioning });
+  if (syncTails.has(id)) return false;
   // a file of this computer's stays with its clip (upload, export without the server)
   if (s.clips.some((c) => getClipSnapshot(c.id)?.file)) return false;
   // a transcript the server has and the page does not: lines or words, or the record of a run that heard none
@@ -465,6 +455,7 @@ function applyServerProject(id: string, p: ProjectData, keep?: StudioSnapshot): 
     serverProjectReady: true,
     serverRevision: p.revision ?? 0,
     serverConflict: false,
+    serverCaptioning: !!p.captioning,
     setupPending: false,
     saveState: "saved",
     saveError: null,

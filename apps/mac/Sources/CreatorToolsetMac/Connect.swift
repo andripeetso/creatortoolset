@@ -199,9 +199,22 @@ extension Shell {
     }
 
     /// "Add this Mac to my account": the server asks the broker for a code, the person approves it on the site, and the
-    /// server links this computer; then this Mac's tunnel starts. Problems go to the window's notice.
-    func connectThisComputer() async {
-        guard let server, runsHere else { notice = "Turn on This Mac's server first"; return }
+    /// server links this computer; then this Mac's tunnel starts. Problems go to the window's notice and are returned
+    /// (nil = on the account), for setup's Add this computer (the page's "connect" ask).
+    @discardableResult func connectThisComputer() async -> String? {
+        let problem = await linkThisComputer()
+        notice = problem.map { "This Mac was not added: \($0)" } ?? "This Mac is on your account"
+        return problem
+    }
+
+    /// Whether this Mac is on an account already (its server's connect.json, written once a link finishes).
+    var linkedHere: Bool {
+        guard let server else { return false }
+        return tunnelConfig(data: try? Data(contentsOf: server.dataDir.appendingPathComponent("connect.json"))) != nil
+    }
+
+    private func linkThisComputer() async -> String? {
+        guard let server, runsHere else { return "turn on This Mac's server first" }
         do {
             let start = try JSONDecoder().decode(ConnectStart.self, from: try await client().postData("/api/connect/start", [:]))
             notice = "Check that the page in your browser shows \(start.user_code), then add this Mac"
@@ -211,15 +224,14 @@ extension Shell {
                 try await Task.sleep(for: .seconds(Double(max(start.interval, 2))))
                 let poll = try JSONDecoder().decode(ConnectPoll.self, from: try await client().postData("/api/connect/poll", [:]))
                 if poll.status == "pending" { continue }
-                guard poll.status == "linked" else { notice = "This Mac was not added: \(poll.error ?? "try again")"; return }
-                notice = "This Mac is on your account"
+                guard poll.status == "linked" else { return poll.error ?? "try again" }
                 tunnel.start(server: LocalServer.folder, dataDir: server.dataDir)
                 accountComputers = await brokerComputers()
-                return
+                return nil
             }
-            notice = "The code ran out. Start again."
+            return "the code ran out, start again"
         } catch {
-            notice = "This Mac was not added: \(error.localizedDescription)"
+            return error.localizedDescription
         }
     }
 }

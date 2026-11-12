@@ -9,6 +9,7 @@ import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy } from "../../contracts/editor-styles";
 import { chosenSteps } from "./steps";
+import { lineOf } from "./progress";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
 import { libraryRole } from "../library/access";
@@ -420,12 +421,18 @@ interface JobDbRow {
 
 export function jobsOf(id: string): EditJob[] {
   const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as JobDbRow[];
-  return rows.map((r) => ({ id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error }));
+  return rows.map((r) => {
+    const line = r.state === "running" ? lineOf(r.id) : undefined;
+    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}) };
+  });
 }
 
 export function summaryOf(e: EditMeta): EditSummary {
-  const last = libraryDb().prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as EditSummary["last"] | undefined;
-  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last: last ? { ...last } : null };
+  // a step the person stopped is saved as failed with "Stopped" (worker.ts): `stopped` keeps it off Home's failed list
+  const row = libraryDb().prepare("SELECT kind, state, error = 'Stopped' AS stopped FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as
+    { kind: EditJob["kind"]; state: EditJob["state"]; stopped: number | null } | undefined;
+  const last = row ? { kind: row.kind, state: row.state, ...(row.stopped ? { stopped: true as const } : {}) } : null;
+  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
 }
 
 export function viewOf(e: EditMeta): Edit {
