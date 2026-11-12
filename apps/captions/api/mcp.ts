@@ -28,7 +28,7 @@ import { rollCount, rollLine } from "./library/roll";
 /**
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
  * (boot.ts: the key is the account itself), sent as `Authorization: Bearer ctk_…` (claude.ai: the connector's
- * Request headers). Every tool calls the site's own routes with the caller's credentials, so each route's checks
+ * Request headers), or one an AI app got by signing in (oauth.ts: ChatGPT, Claude's directory connectors). Every tool calls the site's own routes with the caller's credentials, so each route's checks
  * stay the only checks. The assistant's job token (ctj_…, auth.ts) also gets here: it sees the same tools plus
  * ASSISTANT_DEFS, and only it may call those (isJob checks the header). A Full key sees TOOLS and use_file. The check is on
  * the header, not the account: a signed-in session that sends a ctj_ header can call them as its own account. That
@@ -1323,7 +1323,10 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
+          // the labels are for an AI app outside (it asks before a tool that can remove); the dock's list stays as it was
+          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name) },
+        ) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));
@@ -1331,6 +1334,24 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       return { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `Method not found: ${String(msg.method)}` } };
   }
 }
+
+/**
+ * How each tool is labelled for the AI apps (MCP annotations, which ChatGPT and Claude ask for): READS only read,
+ * REPLACES can remove or overwrite something the user has, ADDS add or change without losing anything. OUTSIDE reach
+ * past this account (a link for other people, a pull from Instagram). A tool in none of them (a plug-in's) is labelled
+ * as one that can remove, so an AI app asks before it runs.
+ */
+const READS = new Set("captions_get captions_list editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait navigate show_video offer_choices".split(" "));
+const REPLACES = new Set("delete_scheduled_task editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_sources workshop_update_session".split(" "));
+const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export editor_create editor_retry editor_run editor_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project".split(" "));
+const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
+export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
+export const annotationsOf = (name: string) => ({
+  title: name.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase()),
+  readOnlyHint: READS.has(name),
+  destructiveHint: !READS.has(name) && !ADDS.has(name),
+  openWorldHint: OUTSIDE.has(name),
+});
 
 /** The MCP route. `plugins` (the server's plug-ins, boot.ts) add their tools to the list and the calls; checked here, once. */
 export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {

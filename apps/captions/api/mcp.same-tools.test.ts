@@ -28,7 +28,9 @@ type Tool = { name: string; description: string; inputSchema: unknown };
 type Golden = { system: string; user: string; dock: Tool[]; outside: string[] };
 const json = (body: unknown, extra: Record<string, string> = {}) => ({ method: "POST", headers: { "content-type": "application/json", ...extra }, body: JSON.stringify(body) });
 const toolsOf = async (authorization: string) =>
-  ((await (await app.request("/api/mcp", json({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { authorization }))).json()) as { result: { tools: Tool[] } }).result.tools;
+  ((await (await app.request("/api/mcp", json({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { authorization }))).json()) as { result: { tools: Tool[] } }).result.tools
+    // what the model reads of each tool; a title and annotations are labels for the AI app around it
+    .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */

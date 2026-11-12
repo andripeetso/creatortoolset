@@ -64,6 +64,7 @@ import { serverPlugins } from "./plugins.gen";
 import { clearLoadingMark, loadFolderPlugins, mountFolderPlugins, startFolderPlugin } from "./lib/folder-plugins";
 import { announceWrites, syncApp } from "./lib/sync";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
+import { mcpChallenge, oauthApp } from "./oauth";
 import { activityApp } from "./activity";
 import { VISITOR, mayUse, touchActive, type Tool } from "./users";
 import { env, hostedMode } from "./lib/env";
@@ -263,6 +264,8 @@ mountPublicRoutes(app, serverPlugins);
 app.route("/api/upload", uploadLinkApp);
 // a social sign-in's way back may land in the computer's browser, without the session: its state names the account
 app.route("/api/connectors", connectorsCallbackApp);
+// an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access
+app.route("/", oauthApp);
 
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {
@@ -318,7 +321,11 @@ app.use("/api/*", async (c, next) => {
     const keyUser = keyRoute(KEY_ROUTES, c.req.method, c.req.path)
       ? getApiKeyUser(c.req.header("authorization"))
       : null;
-    if (!keyUser) return c.json({ error: "Unauthorized" }, 401);
+    if (!keyUser) {
+      // an AI app reads where to sign in from this header (oauth.ts)
+      if (c.req.path === "/api/mcp") c.header("WWW-Authenticate", mcpChallenge(c));
+      return c.json({ error: "Unauthorized" }, 401);
+    }
     // same rule as a signed-in user below: an unlinked member's AI key doesn't get past the team's sign-in
     if (ruleFor(keyUser.username)?.missing) {
       return c.json({ error: "Your team signs in with Google or Apple: link one in Settings → Account", code: "LINK_SIGNIN" }, 403);

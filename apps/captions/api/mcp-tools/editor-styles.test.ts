@@ -54,7 +54,9 @@ const rpc = async (authorization: string, method: string, params: unknown = {}) 
   (await (await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method, params }, { authorization }) })).json()) as {
     result: { tools?: Array<{ name: string; description: string; inputSchema: unknown }>; content?: Array<{ text: string }>; isError?: boolean };
   };
-const toolsOf = async (authorization: string) => (await rpc(authorization, "tools/list")).result.tools!;
+// what the model reads of each tool (a title and annotations are labels for the AI app around it)
+const toolsOf = async (authorization: string) =>
+  (await rpc(authorization, "tools/list")).result.tools!.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 const tool = async (authorization: string, name: string, args: Row = {}) => {
   const r = (await rpc(authorization, "tools/call", { name, arguments: args })).result;
   const text = r.content![0]!.text;

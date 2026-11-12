@@ -98,7 +98,9 @@ describe("the cut-out plug-in", () => {
     expect(JSON.stringify(outside.slice(0, -1))).toBe(JSON.stringify(outsideBare));
     const def = dock.at(-1)!;
     expect(def.name).toBe("picture_cutout");
-    expect(outside.at(-1)).toEqual(def);
+    // the same definition; an AI app outside also gets its title and labels
+    const { title: _title, annotations: _labels, ...plain } = outside.at(-1)! as Tool & { title?: string; annotations?: unknown };
+    expect(plain).toEqual(def);
     // what every turn now carries with the plug-in on: the definition, and the comma before it
     expect(Buffer.byteLength(def.description)).toBe(176);
     expect(Buffer.byteLength(JSON.stringify(dock)) - Buffer.byteLength(JSON.stringify(dockBare))).toBe(319);

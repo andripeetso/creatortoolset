@@ -145,9 +145,9 @@ export function signinUrl(kind: Kind, redirect: string, state: string): string |
 /** `back`: the page the person was on when they pressed sign in (a path on this server), where a browser sign-in ends. */
 type Mode = { type: "site"; app?: string; back?: string } | { type: "link"; username: string };
 
-/** A path on this server to go back to after a sign-in, or undefined: one that starts with a single "/", never another site. */
+/** A path on this server to go back to after a sign-in, or undefined: one that starts with a single "/", never another site. An AI app's Allow page (oauth.ts) comes back here with its whole request, over 500 characters. */
 export const backPath = (v: string | undefined): string | undefined =>
-  v && /^\/(?![/\\])[^\s]{0,500}$/.test(v) && !v.startsWith("/api/") ? v : undefined;
+  v && /^\/(?![/\\])[^\s]{0,2000}$/.test(v) && !v.startsWith("/api/") ? v : undefined;
 /** Where an app's sign-in ends: the link the app registers, with ?code= or ?error=. */
 const APP_LINK = "creatortoolset://signin";
 /**

@@ -72,11 +72,13 @@ const turn = async (cookie: string, text: string) => {
 };
 
 describe("tools kept in their own files", () => {
-  it("are listed after the built-in ones, a dock-only one for the assistant alone, and the listing says nothing but name, description and schema", async () => {
+  it("are listed after the built-in ones, a dock-only one for the assistant alone, and the listing says nothing but name, description and schema (and, to an AI app outside, a title and labels)", async () => {
     const outside = (await rpc(fullKey, "tools/list")).result.tools!;
     expect(outside.map((t) => t.name)).toEqual(expect.arrayContaining(["workshop_projects", "tiny_prefs", "tiny_wipe"]));
     expect(outside.map((t) => t.name)).not.toContain("tiny_card");
-    expect(outside.find((t) => t.name === "tiny_prefs")).toEqual({ name: "tiny_prefs", description: "How the user wants to work, by one of the app's own routes.", inputSchema: { type: "object", properties: {} } });
+    // a plug-in's tool is labelled as one that can remove, so the AI app asks first (mcp.ts annotationsOf)
+    const labels = { title: "Tiny prefs", readOnlyHint: false, destructiveHint: true, openWorldHint: false };
+    expect(outside.find((t) => t.name === "tiny_prefs")).toEqual({ name: "tiny_prefs", title: "Tiny prefs", description: "How the user wants to work, by one of the app's own routes.", inputSchema: { type: "object", properties: {} }, annotations: labels });
     expect((await tool(fullKey, "tiny_card", { id: "e1" })).text).toBe("tiny_card is for the assistant only.");
     const t = await turn(await cookieOf("ana"), "List them");
     expect((await rpc(t.token, "tools/list")).result.tools!.map((x) => x.name)).toEqual(expect.arrayContaining(["tiny_card", "navigate"]));
