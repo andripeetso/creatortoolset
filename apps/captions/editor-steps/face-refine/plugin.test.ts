@@ -50,7 +50,7 @@ describe.skipIf(!ready)("the Face refinement engine", () => {
     const take = path.join(dir, "noface.mov");
     await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=320x568:rate=25:duration=2", "-c:v", "mpeg4", "-timecode", "01:00:10:00", take]);
     const timeline = tl([{ src: "t", in: 0, len: 50, rec: 0 }], [], { t: { fps: 25, dur: 50, w: 320, h: 568 } });
-    const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take }, timeline, values: {}, workDir: dir, signal: new AbortController().signal, note: () => {} };
+    const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take }, timeline, values: {}, workDir: dir, signal: new AbortController().signal, note: () => {}, say: () => {} };
     expect(await refineFaces(input)).toEqual({});
     expect(readdirSync(dir).filter((f) => f.endsWith(".noface"))).toHaveLength(1);
     expect(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream_tags=timecode", "-of", "csv=p=0", take], { encoding: "utf8" })).toContain("01:00:10:00");

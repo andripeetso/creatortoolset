@@ -56,3 +56,13 @@ describe("one post copy per version", () => {
     expect([existsSync(side), existsSync(faceSide)]).toEqual([true, false]);   // a kept copy's own files stay with it
   });
 });
+
+describe("what a running step says", () => {
+  it("names each step as it starts, and passes the step's own line on", async () => {
+    const said: string[] = [];
+    const talks: EditorStep = { id: "faces", title: "Face refinement", about: "", run: async (i) => (i.say("Face refinement: setting up its face tools, the first time only (a few minutes)"), {}) };
+    const quiet: EditorStep = { id: "voice", title: "Voice", about: "", run: async () => ({}) };
+    await runSteps([{ id: "faces", values: {} }, { id: "voice", values: {} }], [talks, quiet], { ...input, say: (t) => said.push(t) });
+    expect(said).toEqual(["Face refinement", "Face refinement: setting up its face tools, the first time only (a few minutes)", "Voice"]);
+  });
+});

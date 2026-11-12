@@ -43,7 +43,7 @@ async function findPython(): Promise<string | null> {
   return null;
 }
 
-async function setUp(title: string, selftest: (python: string) => Promise<unknown>): Promise<string> {
+async function setUp(title: string, selftest: (python: string) => Promise<unknown>, onInstall: () => void): Promise<string> {
   if (process.platform === "darwin" && process.arch !== "arm64") throw new Error(`${title} needs a Mac with Apple silicon (its face models have no Intel build)`);
   // Darwin 22 is macOS 13: OpenCV 5's Mac build starts there
   if (process.platform === "darwin" && Number(os.release().split(".")[0]) < 22) throw new Error(`${title} needs macOS 13 or newer`);
@@ -51,6 +51,7 @@ async function setUp(title: string, selftest: (python: string) => Promise<unknow
   const python = path.join(venv, "bin", "python");
   const ready = path.join(venv, "ready");
   if (existsSync(ready)) return python;
+  onInstall();
   const system = await findPython();
   if (!system) throw new Error(`${title} needs Python 3.9 to 3.14 on this Mac: install it from python.org (or run xcode-select --install), then run the edit again`);
   await rm(venv, { recursive: true, force: true });
@@ -70,10 +71,17 @@ async function setUp(title: string, selftest: (python: string) => Promise<unknow
 
 // one install at a time for every step that asks (each folder plug-in is its own bundle; this file is the app's one copy)
 let setting: Promise<string> | undefined;
+let installing = false;
 
-/** The venv's python, made first when it isn't there. `selftest` runs the asking step's engine once on a new install. */
-export function ensureMediapipe(title: string, selftest: (python: string) => Promise<unknown>): Promise<string> {
-  return (setting ??= setUp(title, selftest).catch((e) => ((setting = undefined), Promise.reject(e))));
+/**
+ * The venv's python, made first when it isn't there. `selftest` runs the asking step's engine once on a new install.
+ * `onInstall` is called when an install really starts (or is already under way), so the step can say so on the edit.
+ */
+export function ensureMediapipe(title: string, selftest: (python: string) => Promise<unknown>, onInstall: () => void = () => {}): Promise<string> {
+  if (installing) onInstall();
+  return (setting ??= setUp(title, selftest, () => ((installing = true), onInstall()))
+    .finally(() => (installing = false))
+    .catch((e) => ((setting = undefined), Promise.reject(e))));
 }
 
 /** Runs a step's Python engine; its own process group, so an abort ends its ffmpeg and workers too. */

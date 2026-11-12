@@ -224,7 +224,7 @@ async function fetchModel(dir: string): Promise<void> {
 }
 
 type Runtime = { python: string; engine: string; models: string };
-async function setUp(): Promise<Runtime> {
+async function setUp(onInstall: () => void): Promise<Runtime> {
   const dir = home();
   const engine = path.join(dir, `engine-${sha1(ENGINE).slice(0, 8)}.py`);
   const models = path.join(dir, "models");
@@ -234,11 +234,11 @@ async function setUp(): Promise<Runtime> {
     await rename(`${engine}.part`, engine);
   }
   await fetchModel(models);
-  const python = await ensureMediapipe("Blur faces", (py) => engineRun(py, [engine, "--selftest"], new AbortController().signal, { FACE_BLUR_MODELS: models }));
+  const python = await ensureMediapipe("Blur faces", (py) => engineRun(py, [engine, "--selftest"], new AbortController().signal, { FACE_BLUR_MODELS: models }), onInstall);
   return { python, engine, models };
 }
 let setting: Promise<Runtime> | undefined;
-const ensure = () => (setting ??= setUp().catch((e) => ((setting = undefined), Promise.reject(e))));
+const ensure = (onInstall: () => void) => (setting ??= setUp(onInstall).catch((e) => ((setting = undefined), Promise.reject(e))));
 
 const tools = () => {
   const ff = ffmpegCommand();
@@ -329,7 +329,8 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
   }
   if (!given && !anyVisionConfigured(edit.createdBy)) throw new Error("Blur faces needs your AI to decide which faces match: connect one in Settings → Providers. Nothing was blurred, and this draft has no preview until it runs again");
   const ask = given ?? askAi;
-  const rt = await ensure();
+  const rt = await ensure(() => input.say("Blur faces: setting up its face tools, the first time only (a few minutes)"));
+  input.say("Blur faces: finding the faces");
   const fail = (id: string) => (e: unknown) => {
     throw new Error(`Blur faces failed on ${timeline.sources[id]?.name ?? id}: ${(e as Error).message}`);
   };
@@ -371,6 +372,7 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
       return describe(t, f.info, role, role === "speaker" && f.tracks[0] === t);
     });
     const user = `The editor's instruction: "${who}"\n\nThe face tracks, one picture each, in this order:\n${lines.join("\n")}\n\nWhich tracks match the instruction?`;
+    input.say("Blur faces: asking your AI which faces to blur");
     const answer = await ask(SYSTEM, user, images, edit.createdBy, signal).catch((e: Error) => {
       if (signal.aborted) throw e;
       throw new Error(`Blur faces could not ask your AI which faces to blur (${e.message}). Nothing was blurred, and this draft has no preview until it runs again`);
