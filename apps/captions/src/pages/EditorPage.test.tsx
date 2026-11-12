@@ -18,6 +18,8 @@ vi.mock("@/components/FootageFolderCard", () => ({ FootageFolderCard: () => null
 let posted: Record<string, unknown>[];
 let calls: { url: string; body: Record<string, unknown> }[];
 let installed: { folders: object[]; steps: object[] };
+/** Every listing of the library's clips the sheet asked for, by its address. */
+let listed: string[];
 /** The person's ElevenLabs voices as GET /api/editor/voice answers; null: no key yet. */
 let voices: VoicesView | null;
 let root: Root | undefined;
@@ -32,6 +34,7 @@ beforeEach(() => {
   posted = [];
   calls = [];
   installed = { folders: [], steps: [] };
+  listed = [];
   voices = { voices: [{ id: "v_mine", name: "Jordan", own: true }, { id: "v_stock", name: "Sam", own: false, preview: "https://example.com/sam.mp3" }], last: null };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
@@ -52,6 +55,7 @@ beforeEach(() => {
     if (url === "/api/library") return reply({ libraries: [{ id: "lib_1", name: "Tiny Acrobatics" }] });
     if (url.includes("/collections")) return reply({ collections: installed.folders });
     if (url === "/api/edit-steps") return reply({ steps: installed.steps, canAdd: false });
+    listed.push(url);
     return reply({ items: [{ id: "ast_1", versionId: "ver_1", title: "Take one", state: "ready", thumbUrl: null }] });
   });
 });
@@ -302,6 +306,9 @@ describe("New edit: short videos from a long recording", () => {
     expect(field<HTMLSelectElement>("edit-moments")!.value).toBe("10");
     expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("About how long each (s)");
     expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("What should the short videos be about?");
+    // a long recording can be sound only: the picker asks the library for videos and recordings there, videos alone elsewhere
+    expect(listed.at(-1)).toContain("kind=video%2Caudio");
+    expect(listed.find((u) => u.includes("kind="))).toMatch(/kind=video(&|$)/);
     await choose("edit-moments", "5");
     expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", moments: 5, targetS: 0 });
     // back to My footage: versions again, and no moments sent

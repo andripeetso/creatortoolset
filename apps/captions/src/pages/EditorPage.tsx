@@ -303,7 +303,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
     return () => clearTimeout(t);
   }, [q]);
 
-  const query = { q: term || undefined, kind: ["video" as const], collectionId: folder || undefined };
+  // a long recording can be sound only (a podcast): those are listed there too, beside the videos
+  const kinds: ("video" | "audio")[] = from === "long" ? ["video", "audio"] : ["video"];
+  const query = { q: term || undefined, kind: kinds, collectionId: folder || undefined };
   useEffect(() => {
     if (!libId || !open) return;
     let live = true;
@@ -319,7 +321,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libId, term, folder, open]);
+  }, [libId, term, folder, open, from === "long"]);
 
   const ready = (a: AssetCard) => a.state === "ready";
   const toggle = (a: AssetCard) =>
@@ -515,7 +517,10 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                           on ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-500/20 hover:border-zinc-500/50",
                         )}
                       >
-                        <img src={a.thumbUrl ?? thumb(a.versionId)} alt="" className="aspect-video w-full bg-zinc-800 object-cover" />
+                        {/* a sound-only recording has no picture: its box stays, with no broken-image icon */}
+                        <span className="block aspect-video w-full bg-zinc-800">
+                          <Picture src={a.thumbUrl ?? thumb(a.versionId)} alt="" className="h-full w-full object-cover" />
+                        </span>
                         <span className="truncate px-2 py-1 text-xs">{a.title}</span>
                         {on && (
                           <span className="absolute right-1.5 top-1.5 rounded-full bg-violet-500 p-0.5 text-white">
