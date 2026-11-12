@@ -323,8 +323,8 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   const targetS = num(body.targetS, 0, 3600);
   if (targetS !== undefined) out.targetS = Math.round(targetS);
   // short videos from a long recording: how many to find. Kept only when asked for, so every other edit is as it was
-  const moments = num(body.moments, 1, MAX_MOMENTS);
-  if (moments !== undefined) out.moments = Math.round(moments);
+  const moments = num(body.moments, 0, MAX_MOMENTS);
+  if (moments !== undefined && Math.round(moments) >= 1) out.moments = Math.round(moments);
   if (body.brollCollectionId === null) out.brollCollectionId = null;
   else if (typeof body.brollCollectionId === "string") {
     if (!collectionOk(username, ws, body.brollCollectionId)) throw new NoCollection("No such collection");

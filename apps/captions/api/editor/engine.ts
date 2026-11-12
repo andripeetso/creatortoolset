@@ -75,11 +75,13 @@ export function nextKinds(): Record<string, string[]> {
  * pass ends in a preview and waits; only a version whose cards pass ran (`done`) goes on to its cards after a B-roll
  * (Make cards again lays the B-roll first). A draft with no picture (a voice recording's) is recorded as having had its
  * B-roll (timeline.ts), so it goes on to it at once: that B-roll is its picture, and the first cut is filed with it.
+ * A moment of a long recording is one line with no room for a card (cards/place.ts keeps the last line clear), so an
+ * edit of moments never goes to the cards: no AI call and no Mac draw is spent on them.
  */
-export const nextFor = (kind: string, edit: Pick<EditMeta, "style">, next: Record<string, string[]>, done: string[] = []): string[] =>
+export const nextFor = (kind: string, edit: Pick<EditMeta, "style" | "moments">, next: Record<string, string[]>, done: string[] = []): string[] =>
   edit.style?.passes && ((kind === "draft" && !done.includes("broll")) || (kind === "broll" && !done.includes("cards")))
     ? ["post"]
-    : kind === "broll" && edit.style?.animation ? ["cards"] : (next[kind] ?? []);
+    : kind === "broll" && edit.style?.animation && !edit.moments ? ["cards"] : (next[kind] ?? []);
 
 const deviceKinds = (): string[] => Object.keys(KINDS).filter((k) => KINDS[k]!.source === "device");
 

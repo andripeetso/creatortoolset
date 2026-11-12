@@ -167,7 +167,8 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     punch: edit.framing.punch,
     eyeline: { ...analysis.eyeline, ...edit.eyeline },
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
-    size: edit.size,
+    // a moment of a long recording keeps the recording's own shape: fitted into another frame it would be a small picture between bars
+    size: edit.moments && Object.values(sources).some((x) => x.w > 0) ? null : edit.size,
   });
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
   await saveDraft(edit.id, version.name, { timeline, notes });

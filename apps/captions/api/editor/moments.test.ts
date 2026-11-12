@@ -24,8 +24,9 @@ const { enqueueJob } = await import("../library/jobs");
 const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
 const { MOMENTS_SYSTEM, momentMap, momentRange, momentsPrompt, parseMoments } = await import("./moments");
-const { createEdit, readDraft, readEdit, readStep, saveStep, viewOf } = await import("./store");
-const { STEPS, tick } = await import("./worker");
+const { nextFor } = await import("./engine");
+const { createEdit, readDraft, readEdit, readStep, saveEdit, saveStep, viewOf } = await import("./store");
+const { NEXT, STEPS, tick } = await import("./worker");
 
 /** A long talk: 40 sentences of 5 s, one every 6 s (1-30 in the first file, 31-40 in a second one), four words each. */
 const sentences: Sentence[] = Array.from({ length: 40 }, (_, k) => ({
@@ -135,7 +136,8 @@ describe("short videos from a long recording: the step", () => {
   it("an edit that asks for none is as it always was: no moments key, and the script step asks for lines and versions", async () => {
     const e = await start({});
     expect("moments" in e).toBe(false);
-    expect((await start({ moments: 0 })).moments).toBe(1); // a number under 1 is the fewest there can be; no number, none
+    expect("moments" in (await start({ moments: 0 }))).toBe(false); // 0 is none, as no number is
+    expect((await start({ moments: 2.4 })).moments).toBe(2);
     expect((await start({ moments: 99 })).moments).toBe(MAX_MOMENTS);
     vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
     vi.mocked(completeWithFallback).mockImplementationOnce(async (system, _u, _c, parse) => {
@@ -171,6 +173,36 @@ describe("short videos from a long recording: the step", () => {
     expect(seconds).toBeGreaterThan(20);
     expect(seconds).toBeLessThanOrEqual(29.5);
     expect(tl.markers).toHaveLength(1);
+  });
+
+  it("found again: a name that now means another part lets go of its Review video; one that is the same part keeps it", async () => {
+    const e = await start({ moments: 5 });
+    const answer = (moments: object[]) => {
+      vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+      vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, _u, _c, parse) => parse(JSON.stringify({ moments })));
+    };
+    answer([{ first: 3, last: 7, title: "Tuck the chin", score: 0.9 }, { first: 32, last: 36, title: "Soft landings", score: 0.7 }]);
+    await run(e.id);
+    await saveStep(e.id, "review", { m1: { assetId: "rev_chin", n: 1 }, m2: { assetId: "rev_soft", n: 1 } });
+    // the second time the AI ranks a new part first; "Soft landings" is still second
+    answer([{ first: 12, last: 16, title: "Spot the wall", score: 0.95 }, { first: 32, last: 36, title: "Soft landings", score: 0.7 }]);
+    const view = await run(e.id);
+    expect(view.plans.map((p) => p.title)).toEqual(["Spot the wall", "Soft landings"]);
+    expect(readStep(e.id, "review")).toEqual({ m2: { assetId: "rev_soft", n: 1 } });
+  });
+
+  it("with an editing style: the recording's own shape whatever size the style names, and no cards, no B-roll pass", async () => {
+    const e = await start({ moments: 2 });
+    await saveEdit({ ...readEdit(e.id)!, size: { w: 1080, h: 1920 }, brollCollectionId: null, style: { id: "st_1", name: "Tiny way", notes: "", pace: "tight", passes: true, animation: "an_1" } });
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, _u, _c, parse) => parse(JSON.stringify({ moments: [{ first: 3, last: 7, title: "Tuck the chin", score: 0.9 }] })));
+    const view = await run(e.id);
+    expect([readDraft(e.id, "m1")!.timeline.width, readDraft(e.id, "m1")!.timeline.height]).toEqual([1920, 1080]);
+    // in passes the first cut goes draft → post → preview → file and nothing waits after it; never the cards
+    expect(view.jobs.filter((j) => j.variant).map((j) => j.kind)).toEqual(["draft", "post", "preview", "file"]);
+    expect(view.passes).toEqual({ waiting: false, next: null });
+    expect(nextFor("broll", { style: { id: "s", name: "s", notes: "", pace: "tight", animation: "an_1" }, moments: 3 }, NEXT)).toEqual(["post"]);
+    expect(nextFor("broll", { style: { id: "s", name: "s", notes: "", pace: "tight", animation: "an_1" } }, NEXT)).toEqual(["cards"]);
   });
 
   it("an answer with nothing usable fails the step in words", async () => {
