@@ -148,6 +148,9 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Each release carries the disk image, `appcast.xml` (the update feed) and the source of the bundled FFmpeg
   (GPL). Don't drop any of the three.
 - The notes list what a person gets, in plain words; `release.sh` drafts them from the commit subjects.
+- A server's pages can be newer than someone's Mac app (teammates update at different times). When a page change
+  needs a newer Mac app, raise `MIN_MAC_APP` (`apps/captions/src/components/MacAppUpdateBanner.tsx`) to that
+  release in the same commit: older apps then show "Update Creator Toolset" instead of a feature that does nothing.
 
 ## Working in the code
 

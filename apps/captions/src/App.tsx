@@ -39,6 +39,7 @@ import { AssistantDock } from "@/components/assistant/AssistantDock";
 import { AskAboutSelection } from "@/components/assistant/AskAboutSelection";
 import { AppDialogs } from "@/components/AppDialogs";
 import { ViewAsBanner } from "@/components/ViewAsBanner";
+import { MacAppUpdateBanner } from "@/components/MacAppUpdateBanner";
 import { Toaster } from "@/components/ui/sonner";
 import { useShareTheme } from "@/components/ShareTheme";
 import { canUse, useAuth, useMe } from "@/lib/auth";
@@ -339,6 +340,7 @@ export default function App() {
       <AppDialogs />
       <AppToaster />
       <ViewAsBanner />
+      <MacAppUpdateBanner />
       <main className="contents">
         <Routes location={page}>
           <Route path="/" element={<ToolsetHome />} />
