@@ -234,6 +234,13 @@ func checkedHome(_ home: String, root: URL) throws -> String {
           FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
         throw RelayError(message: "not a folder under your home: \(home)")
     }
+    // never a folder the app or a server writes into (the relay's work and session folders, the assistant's folder sit
+    // under ~/Library; the temporary folder): a server could fill it with settings that start programs
+    let temp = realPath(FileManager.default.temporaryDirectory.path)
+    let inTemp = !rootPath.hasPrefix(temp + "/") && (path.hasPrefix(temp + "/") || path == temp)   // a test's home sits in it
+    if path.hasPrefix(rootPath + "/Library/") || path == rootPath + "/Library" || inTemp {
+        throw RelayError(message: "not a settings folder this Mac uses: \(home)")
+    }
     return path
 }
 

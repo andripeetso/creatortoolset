@@ -7,6 +7,7 @@ import { useWorkspace } from "@/lib/workspace";
 import { JoinPage } from "@/pages/JoinPage";
 import { joinToken } from "@/lib/workspaces";
 import { siteFrameFor } from "@/lib/plugin";
+import { CodeStep } from "@/components/SignInCode";
 import { webPlugins } from "@/plugins.gen";
 
 const PUBLIC_UUID =
@@ -107,6 +108,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState(() => new URLSearchParams(window.location.search).get("error") ?? "");
   // a team that signs in with Google / Apple: the providers this account must link first (auth.ts ruleFor)
   const [mustLink, setMustLink] = useState<("apple" | "google")[]>([]);
+  // the password was right and the sign-in code comes next (api/auth.ts codeStep): its one-time step token
+  const [step, setStep] = useState<{ token: string; setup: boolean } | null>(null);
   const setAuth = useAuth((s) => s.setAuth);
   const hosted = useAuth((s) => s.hosted);
   // /join/<token> is an invite to a team: hosted servers only (elsewhere the path is just an unknown page)
@@ -186,16 +189,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ username, password }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok) {
-        const back = returnTo(window.location.search, window.location.origin);
-        if (back) {
-          window.location.replace(back);
-          return;
-        }
-        setAuth(true, d.user ?? null);
-        writeSnap(d.user ? { required: true, user: d.user, hosted: useAuth.getState().hosted, viewedBy: null } : null);
-        setState("ok");
-      } else {
+      if (res.ok) signedIn(d.user ?? null);
+      else if (typeof d.step === "string") setStep({ token: d.step, setup: d.code === "CODE_SETUP" });
+      else {
         setError(d.error || "Login failed");
       }
     } catch {
@@ -204,6 +200,24 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       setBusy(false);
     }
   };
+
+  function signedIn(user: Me | null) {
+    const back = returnTo(window.location.search, window.location.origin);
+    if (back) {
+      window.location.replace(back);
+      return;
+    }
+    setAuth(true, user);
+    writeSnap(user ? { required: true, user, hosted: useAuth.getState().hosted, viewedBy: null } : null);
+    setStep(null);
+    setState("ok");
+  }
+
+  const expired = (message: string) => {
+    setStep(null);
+    setError(message);
+  };
+  if (step) return <CodeStep step={step.token} setup={step.setup} onDone={signedIn} onExpired={expired} />;
 
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-200">

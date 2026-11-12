@@ -221,7 +221,7 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 
 Off by default: the server listens on `127.0.0.1` only. The switch **Let phones and other computers sign in**
 under **This Mac → Access from other devices** asks for a
-password of your own first (twice, 6 characters or more): the app changes the owner's password with
+password of your own first (twice, 10 characters or more): the app changes the owner's password with
 `POST /api/auth/password` (the window gets its new cookie in the same answer), keeps it in the Keychain
 (`owner-password`), and restarts the server on every interface (`HOST=0.0.0.0`). Phones and other computers
 then sign in as `admin` with that password. The server refuses a sign-in or a sign-in link from any address

@@ -106,10 +106,10 @@ describe("checkPack", () => {
 
   it("gives someone else's pack text only to an AI program whose tools are off on the Mac", async () => {
     const mac = (driver: string) => ({ only: ["mac" as const], mac: { label: "t", provider: { instance: "i", driver, home: "", model: "", effort: "high", device: "d", scope: "own" } } }) as never;
-    for (const d of ["claude", "codex", "gemini", "grok", "musecode", "opencode"]) {
+    for (const d of ["claude", "codex", "grok", "opencode"]) {
       expect(await packInstructions("tools-run", "workshop.write", null, { ai: mac(d) }), d).toContain("Open on the result");
     }
-    for (const d of ["cursor", "antigravity", "pi", "acp", "something-new"]) {
+    for (const d of ["gemini", "musecode", "cursor", "antigravity", "pi", "acp", "something-new"]) {
       expect(await packInstructions("tools-run", "workshop.write", null, { ai: mac(d) }), d).not.toContain("Open on the result");
     }
   });

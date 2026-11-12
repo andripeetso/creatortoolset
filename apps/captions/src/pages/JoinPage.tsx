@@ -65,7 +65,7 @@ export function JoinPage({ token }: { token: string }) {
         )}
         {info && !info.expired && !info.member && !info.signedInAs && (
           <form onSubmit={join} className="flex flex-col gap-2">
-            <p className="text-xs text-zinc-500">Make your account: pick a username and a password (6 characters or more).</p>
+            <p className="text-xs text-zinc-500">Make your account: pick a username and a password (10 characters or more).</p>
             <div className={field}>
               <UserRound className="h-4 w-4 shrink-0 text-zinc-500" />
               <input autoFocus autoCapitalize="none" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" className={input} />
@@ -74,7 +74,7 @@ export function JoinPage({ token }: { token: string }) {
               <Lock className="h-4 w-4 shrink-0 text-zinc-500" />
               <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className={input} />
             </div>
-            <button type="submit" className={button} disabled={busy || !username || password.length < 6}>
+            <button type="submit" className={button} disabled={busy || !username || password.length < 10}>
               {busy ? "Joining…" : "Create account and join"}
             </button>
             <a href={`/?next=${encodeURIComponent(`/join/${token}`)}`} className="text-center text-xs text-zinc-500 hover:text-zinc-300">

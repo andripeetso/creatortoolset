@@ -187,7 +187,7 @@ struct ThisMacView: View {
             Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(macHostName()):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
                 .font(.caption).foregroundStyle(.secondary)
             if askPassword {
-                SecureField("This computer's password (6 characters or more)", text: $password)
+                SecureField("This computer's password (10 characters or more)", text: $password)
                 SecureField("Type it again", text: $again)
                 HStack {
                     Button("Cancel") { askPassword = false; password = ""; again = "" }
@@ -198,7 +198,7 @@ struct ThisMacView: View {
                             if accessMessage == nil { askPassword = false; password = ""; again = "" }
                         }
                     }
-                    .disabled(password.count < 6)
+                    .disabled(password.count < 10)
                 }
             }
             if let accessMessage {

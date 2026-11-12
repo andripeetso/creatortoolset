@@ -15,13 +15,13 @@ import { LICENCES, slugify } from "./packs-helpers";
 
 /** One of the person's own items, published on its own. */
 export type PublishItem = { defaultName: string; defaultDescription?: string } & (
-  | { kind: "framework" | "captionStyle"; /** The framework id or the caption style's preset id. */ id: string }
+  | { kind: "framework" | "captionStyle" | "skill"; /** The framework id, the caption style's preset id or the skill's id. */ id: string }
   | { kind: "home"; /** The Home tiles switched off (Settings → Tools). */ hidden: string[] }
 );
 
 type Licence = (typeof LICENCES)[number];
 
-const FIELD = { framework: "frameworks", captionStyle: "presets" } as const;
+const FIELD = { framework: "frameworks", captionStyle: "presets", skill: "skills" } as const;
 
 /** The entry point on an item, for a signed-in account: opens the publish dialog. */
 export function PublishButton({ item, compact, className }: { item: PublishItem; compact?: boolean; className?: string }) {

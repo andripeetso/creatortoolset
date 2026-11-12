@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, UserRound } from "lucide-react";
 import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
 import { SIGN_IN_BUTTON, useMacAccount } from "@/components/setup/AccountStep";
+import { SignInCodeRow } from "@/components/SignInCode";
 import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 
 const PROVIDERS: Provider[] = ["google", "apple", "github"];
@@ -149,6 +150,7 @@ export function AccountSection() {
           <NameRow name={account.name} username={account.username} onSaved={saved} />
           {required && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => ({ ...a, login }))} />}
           {required && <PasswordRow />}
+          {required && <SignInCodeRow />}
         </Card>
       </Section>
 
@@ -412,7 +414,7 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
       onSubmit={submit}
     >
       <Input name="current" type="password" autoComplete="current-password" placeholder="Current password" aria-label="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} autoFocus required />
-      <Input name="next" type="password" autoComplete="new-password" placeholder="New password (6+ characters)" aria-label="New password" minLength={6} value={next} onChange={(e) => setNext(e.target.value)} required />
+      <Input name="next" type="password" autoComplete="new-password" placeholder="New password (10+ characters)" aria-label="New password" minLength={10} value={next} onChange={(e) => setNext(e.target.value)} required />
     </FormDialog>
   );
 }
