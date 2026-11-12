@@ -545,6 +545,8 @@ struct UploadView: View {
             .padding(.horizontal)
         }
         .toolbar { ToolbarItem(placement: .topBarTrailing) { filterMenu } }
+        // a debug run asks by itself (a simulator granted Photos beforehand answers without a prompt)
+        .task { if debugArg("UploadDo") != nil || debugArg("UploadPick") != nil { await library.requestAccess() } }
     }
 }
 
@@ -656,7 +658,8 @@ struct PhoneClipCell: View {
             }
             .overlay(alignment: .topTrailing) {
                 Group {
-                    if case .uploading = clip.badge {
+                    // a debug build's made-up uploads (-UploadFake) are drawn as worked out, over any real ones
+                    if case .uploading = clip.badge, debugArg("UploadFake") == nil {
                         LiveRing(key: key, drawn: clip.badge)
                     } else {
                         StatusBadge(kind: clip.badge)
