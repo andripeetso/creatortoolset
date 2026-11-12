@@ -717,7 +717,7 @@ function newestFacts(input: TurnInput): string[] {
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const f of input.uploading ?? [])
-    out.push(`The user attached a video still uploading from their phone: "${f.name}", file id ${f.id}. Go on with it now (start the edit or whatever they asked): the tools that take the file id wait for it, and an edit starts by itself once it is in. Never wait for it or ask them to.`);
+    out.push(`The user attached a video still uploading from their phone: "${f.name}", file id ${f.id}. Go on with it now: use_file waits for it (and says when to call again), and a tool whose description says it takes videos still uploading takes it at once. Never wait for it yourself or ask the user to.`);
   for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const p of input.local) out.push(`The user dropped a video from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
   if (input.note) out.push(input.note);
@@ -925,7 +925,8 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
   const h = conv.held?.[m.id];
   const asked = everyChat(conv).flat().find((x) => x.id === h?.ask);
   if (conv.held) delete conv.held[m.id];
-  if (how === "stopped") for (const id of h?.files ?? []) void removeFile(username, id).catch((e) => console.warn("[assistant] remove a stopped upload:", e instanceof Error ? e.message : e));
+  // a `later` turn's videos go on up from the phone whatever happens to the reply: deleting them would only make it send parts to nothing
+  if (how === "stopped" && !h?.later) for (const id of h?.files ?? []) void removeFile(username, id).catch((e) => console.warn("[assistant] remove a stopped upload:", e instanceof Error ? e.message : e));
   const lost = m.send ? [`"${m.send.name}"`] : (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
   const text =
     how === "stopped"

@@ -629,11 +629,13 @@ final class AssistantTests: XCTestCase {
         var stops: [String] = []
         /// Uploads begun and not all in yet.
         var missing: Set<String> = []
+        /// The server starts a reply at once and its videos go on up after it (`videosLater`).
+        var later = false
 
         var view: Data {
             try! JSONSerialization.data(withJSONObject: [
                 "id": "3441cbd5-c2c7-4ca9-b10f-1cddb2cad321", "provider": "claude", "aiName": "Claude Code", "tools": true,
-                "messages": messages, "past": [], "sendNow": true,
+                "messages": messages, "past": [], "sendNow": true, "videosLater": later,
             ] as [String: Any])
         }
 
@@ -798,6 +800,29 @@ final class AssistantTests: XCTestCase {
         await third.load()
         XCTAssertTrue(third.outbox.items.isEmpty)
         XCTAssertTrue(ended.turns.isEmpty)
+
+        // on a server that starts the reply at once, the reply ending is no reason to stop: the video goes on up,
+        // and the message leaves once it is in
+        let started = Stand()
+        started.later = true
+        started.missing = ["f-c4"]
+        started.take("Four with a clip", files: ["f-c4"])
+        _ = try? started.call("/api/assistant/stop", "POST", ["reply": "r1"])
+        let four = Gate()
+        var sent: [String] = []
+        let fourth = AssistantModel()
+        fourth.server = { started.server(send: { video in
+            await four.pass()
+            sent.append(video.file ?? "")
+        }) }
+        fourth.outbox.add(QueuedMessage(text: "Four with a clip", videos: [.init(name: "Clip.mov", copy: "c4", file: "f-c4")], reply: "r1"))
+        await fourth.load()
+        await until("its video goes up after the reply ended") { four.waiting != nil }
+        XCTAssertEqual(fourth.outbox.items.count, 1)
+        four.open()
+        await until("its video is up") { fourth.outbox.items.isEmpty }
+        XCTAssertEqual(sent, ["f-c4"])
+        XCTAssertTrue(started.turns.isEmpty)
     }
 
     func testTheCrossStopsAWaitingReplyByItsIdAndTheNextOneGoesOn() async {
