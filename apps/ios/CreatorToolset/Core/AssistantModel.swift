@@ -199,8 +199,6 @@ final class AssistantModel: ObservableObject {
     private var stopping: Set<String> = []
 
     init() {
-        // the box's videos go up from the moment they are picked
-        outbox.box = draft
         draft.changed = { [weak self] in self?.carryOn() }
         draft.handedOver = { [weak self] video, picked in
             self?.outbox.handed(video, picked)

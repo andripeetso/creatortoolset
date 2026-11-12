@@ -285,9 +285,9 @@ extension QueuedMessage.Video {
     }
 }
 
-/// What is in the message box: the words, pictures ready to go, and picked videos. A video goes up from
-/// the moment it is picked (`AssistantOutbox` sends it), and Send empties the box at once, even while
-/// Photos is still handing a video over: the message then waits for it as for any upload.
+/// What is in the message box: the words, pictures ready to go, and picked videos. A video stays on the phone
+/// until Send: Send empties the box at once, even while Photos is still handing a video over, and the
+/// message's videos go up behind it (`AssistantOutbox` sends them).
 @MainActor
 final class AssistantDraft: ObservableObject {
     static let maxPictures = 6
@@ -367,26 +367,6 @@ final class AssistantDraft: ObservableObject {
             videos.remove(at: index)
             notice = "A video could not be read"
         }
-    }
-
-    /// The server gave a video in the box its id.
-    func began(_ video: String, as file: String) {
-        if let index = videos.firstIndex(where: { $0.id == video }) { videos[index].file = file }
-    }
-
-    /// A video is up while still in the box: the message will name it by the server's id, and its copy goes.
-    func arrived(_ video: String, as file: String) {
-        guard let index = videos.firstIndex(where: { $0.id == video }) else { return }
-        let up = videos.remove(at: index)
-        files.append(.init(id: file, name: up.name))
-        up.discard()
-    }
-
-    /// A video in the box that can't go up (the server will not take it, its copy is gone): it leaves, and the box says why.
-    func failed(_ video: String, _ why: String) {
-        guard let index = videos.firstIndex(where: { $0.id == video }) else { return }
-        videos.remove(at: index).discard()
-        notice = why
     }
 
     func remove(picture id: String) {
