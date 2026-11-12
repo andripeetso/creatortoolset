@@ -5,7 +5,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import type { AuthVars } from "./auth";
+import { sessionOf, type AuthVars } from "./auth";
 import {
   assembleParts,
   MAX_UPLOAD_BYTES,
@@ -40,7 +40,7 @@ import {
 import { announceSoon } from "./lib/announce-soon";
 import { workEnded } from "./assistant";
 import { capChapters, chapterCountRange, timedTranscript } from "./lib/timed-transcript";
-import { type SessionUser } from "./users";
+import { findUser, LOCAL_USER, type SessionUser } from "./users";
 import {
   cloudTranscribeBlock,
   transcribeWav,
@@ -159,6 +159,8 @@ interface Meta {
   blocks?: ClipBlock[];
   createdAt: number;
   updatedAt: number;
+  /** How many times a restart has started its processing again (resumeJob). */
+  resumes?: number;
 }
 
 const active = new Map<string, Meta>();
@@ -307,12 +309,14 @@ async function readMeta(id: string): Promise<Meta | null> {
     const meta: Meta = JSON.parse(
       await readFile(path.join(sesDir(id), "meta.json"), "utf-8"),
     );
-    if (meta.status === "processing") {
-      meta.status = "error";
-      meta.error = "Interrupted by a server restart — try again.";
+    if (meta.status === "processing" && !active.has(id)) {
+      if (!resumeJob(meta)) {
+        meta.status = "error";
+        meta.error = "Processing stopped several times when the server restarted. Try again.";
+      }
       await persist(meta);
     }
-    return meta;
+    return active.get(id) ?? meta;
   } catch {
     return null;
   }
@@ -790,6 +794,7 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     meta.step = undefined;
     meta.progress = 1;
     meta.error = undefined;
+    meta.resumes = undefined;
     await jobPersist(meta);
   } catch (e) {
     stopCrawl();
@@ -817,6 +822,28 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     await rm(wavPath(id), { force: true }).catch(() => {});
   }
 }
+
+/** The most times a restart starts a note's processing again: a file that takes the server down doesn't do it forever. */
+const MAX_RESUMES = 3;
+
+/**
+ * A note whose processing a server restart stopped (a build, an update) starts again in the background as its owner;
+ * the video plays meanwhile. False: no owner to run it as, or it has been started again too often.
+ */
+// ponytail: starts over from the thumbnail, so a long transcription is done again; keep the words heard so far if that hurts
+function resumeJob(meta: Meta): boolean {
+  if ((meta.resumes ?? 0) >= MAX_RESUMES) return false;
+  const rec = meta.owner ? findUser(meta.owner) : null;
+  const user = rec ? sessionOf(rec) : !env.appSecret ? LOCAL_USER : null;
+  if (!user) return false;
+  meta.resumes = (meta.resumes ?? 0) + 1;
+  console.log(`[clips] ${meta.id}: processing again after a restart (${meta.resumes}/${MAX_RESUMES})`);
+  enqueue(meta, user);
+  return true;
+}
+
+/** At start: every note a restart stopped picks up again, without anyone opening it. */
+export const resumeStoppedClips = () => clipMetas(() => false).then(() => undefined);
 
 function enqueue(meta: Meta, user: SessionUser): void {
   active.set(meta.id, meta);
@@ -1052,6 +1079,7 @@ clipsApp.post("/:id/retry", async (c) => {
   if (meta.status === "processing") {
     return c.json({ error: "Already processing" }, 409);
   }
+  meta.resumes = undefined;
   enqueue(meta, user);
   await persist(meta);
   return c.json(publicMeta(meta));

@@ -5,7 +5,7 @@ import { appRouter } from "./router";
 import { createContext } from "./context";
 import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
-import { clipsApp } from "./clips";
+import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
@@ -496,6 +496,8 @@ if (env.isProduction) {
       console.log(`Server running on http://${host ?? "localhost"}:${port}/`);
       // a computer linked to the account runs its tunnel while the server runs (api/connect/connector.ts)
       if (connectState()) startConnector();
+      // Video Notes a restart stopped mid-processing carry on in the background
+      void resumeStoppedClips().catch((e) => console.warn("[clips] resume:", e));
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);

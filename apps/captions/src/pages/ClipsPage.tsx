@@ -418,41 +418,43 @@ function ClipView({
       {!cinema && <div className={col}>{header}</div>}
 
       <div className={cinema ? "w-full" : col}>
-        {isProcessing(session) ? (
-          <ProcessPanel session={session} />
-        ) : (
-          <div
-            className={
-              cinema
-                ? undefined
-                : showChapters
-                  ? "flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_17.5rem] lg:items-stretch"
-                  : undefined
-            }
-          >
-            <ClipPlayer
-              src={playClipUrl(session.id)}
-              poster={session.hasThumb ? thumbClipUrl(session.id) : undefined}
-              duration={session.duration}
-              playerRef={playerRef}
-              onTime={setPlayhead}
-              words={words}
-              theater={theater}
-              onTheaterChange={setTheater}
-              start={start}
-              end={end}
+        {/* the video plays while its notes are made: the steps sit under it until they are done */}
+        <div
+          className={
+            cinema
+              ? undefined
+              : showChapters
+                ? "flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_17.5rem] lg:items-stretch"
+                : undefined
+          }
+        >
+          <ClipPlayer
+            src={playClipUrl(session.id)}
+            poster={session.hasThumb ? thumbClipUrl(session.id) : undefined}
+            duration={session.duration}
+            playerRef={playerRef}
+            onTime={setPlayhead}
+            words={words}
+            theater={theater}
+            onTheaterChange={setTheater}
+            start={start}
+            end={end}
+          />
+          {!cinema && showChapters && (
+            <ChapterRail
+              chapters={chapters}
+              playhead={playhead}
+              seek={seek}
+              pending={making.pending}
+              failed={making.failed}
+              onRetry={owns ? retryChapters : undefined}
+              retrying={chapterBusy}
             />
-            {!cinema && showChapters && (
-              <ChapterRail
-                chapters={chapters}
-                playhead={playhead}
-                seek={seek}
-                pending={making.pending}
-                failed={making.failed}
-                onRetry={owns ? retryChapters : undefined}
-                retrying={chapterBusy}
-              />
-            )}
+          )}
+        </div>
+        {isProcessing(session) && (
+          <div className="mt-3">
+            <ProcessPanel session={session} />
           </div>
         )}
       </div>
