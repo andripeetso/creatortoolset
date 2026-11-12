@@ -127,7 +127,7 @@ describe("Duplicate", () => {
 describe("The style sheet", () => {
   it("a new style: the grade, the folder and the steps are drawn when there is a choice, and an untouched grade and steps are not sent", async () => {
     await render([], "new");
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Grade", "B-roll folder", "What to blur", "How"]);
+    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Grade", "B-roll folder", "What to blur", "How", "Edit in passes"]);
     expect(field<HTMLSelectElement>("style-size")!.value).toBe("1080x1920"); // a new style works in vertical HD
     expect(document.querySelector('[aria-label="Post-processing"]')).not.toBeNull();
     expect(field<HTMLSelectElement>("style-grade")!.value).toBe("none"); // the person's default grade is shown
@@ -152,6 +152,9 @@ describe("The style sheet", () => {
     expect(field("style-step-blur-how")).toBeNull(); // a step that is off shows no options
     put = await save();
     expect(put.body.steps).toEqual([]);
+    act(() => document.getElementById("style-passes")!.click());
+    await flush();
+    expect((await save()).body.passes).toBe(true);
   });
 
   it("a step the style has that this app does not is kept when another one changes", async () => {
@@ -166,7 +169,7 @@ describe("The style sheet", () => {
   it("with one grade, no folder and no step in this app, none of the three is drawn or sent", async () => {
     has = { grades: false, folders: false, steps: false };
     await render([style], style);
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size"]);
+    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Edit in passes"]);
     expect(document.querySelector('[aria-label="Post-processing"]')).toBeNull();
     expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "size", "targetS", "versions"]);
   });

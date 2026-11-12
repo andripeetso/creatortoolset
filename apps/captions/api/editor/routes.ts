@@ -14,6 +14,9 @@ import { toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
 import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { animationApp } from "./animation-styles";
+import { cardsApp } from "./cards/routes";
+import { markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -161,6 +164,24 @@ editorApp.get("/styles/:id/finished", (c) => {
 editorApp.delete("/styles/:id/finished/:editId", async (c) =>
   (await removeFinished(c.get("user").username, c.req.param("id"), c.req.param("editId"))) ? c.json({ ok: true }) : notFound(c));
 
+// the person's animation styles and their pictures (animation-styles.ts); before /:id, as the styles are
+editorApp.route("/animation-styles", animationApp);
+// a version's cards on the edit page: a still, the 👍, Make cards again (cards/routes.ts)
+editorApp.route("/", cardsApp);
+
+/** Carry on, for an edit in passes: every drafted version's next pass is queued (and recorded as done); 409 while it is being made, or when no pass is left. */
+editorApp.post("/:id/pass", async (c) => {
+  const r = load(c);
+  if (!r) return notFound(c);
+  const db = libraryDb();
+  if (db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id)) return c.json({ error: "This edit is still being made", code: "conflict" }, 409);
+  const queued = Object.fromEntries(draftNames(r.e.id).flatMap((n) => { const p = nextPass(r.e, n); return p ? [[n, p]] : []; }));
+  if (!Object.keys(queued).length) return c.json({ error: "Nothing left to do", code: "conflict" }, 409);
+  await markPasses(r.e.id, queued);
+  for (const [n, p] of Object.entries(queued)) enqueueJob(db, r.e.workspaceId, `${r.e.id}:${n}`, p, r.e.createdBy, true, "edit_jobs");
+  return c.json(viewOf(r.e));
+});
+
 editorApp.get("/:id", (c) => {
   const r = load(c);
   return r ? c.json(viewOf(r.e)) : notFound(c);
@@ -307,9 +328,10 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   if (!["otio", "fcpxml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml or zip", code: "invalid" }, 400);
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
-  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
+  // (a card is the edit's own file, not footage: TimelineSource.file)
+  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources).filter((k) => !tl.sources[k]!.file)) !== r.e.workspaceId) return notFound(c);
   if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
-  const m = await mediaPaths(r.e, Object.keys(tl.sources));
+  const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip");
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
@@ -321,6 +343,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const at = { mtime: new Date("2000-01-01T00:00:00Z") };
   zip.addBuffer(Buffer.from(await otio()), `${base}/${base}.otio`, at);
   zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
+  for (const o of m.own) zip.addFile(o.file, `${base}/media/${o.name}`, at);
   if (m.downloads.length) {
     const hours = LINK_TTL_S / 3600;
     const list = [`Download these into the media folder next to the timeline, then open the timeline (links work for ${hours} hours):`, ""];

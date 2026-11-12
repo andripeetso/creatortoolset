@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { Crosshair, Image as ImageIcon, MousePointer2, Plus, Sparkles, Trash2, Video, X, ZoomIn } from "lucide-react";
+import { AudioLines, Crosshair, Image as ImageIcon, MousePointer2, Plus, Sparkles, Trash2, Video, X, ZoomIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   BACKGROUNDS,
@@ -16,10 +16,11 @@ import {
   type Zoom,
 } from "@/lib/screen-recording";
 import { clock, zoomSlot } from "@/lib/screen-timeline";
+import { soundTracks } from "@/lib/screen-sound";
 import { ColorField, Group, PanelButton, Segmented, SliderRow, SwitchRow, Swatches } from "./controls";
 import type { Player } from "./usePlayer";
 
-export type InspectorTab = "background" | "pointer" | "zoom" | "camera";
+export type InspectorTab = "background" | "pointer" | "zoom" | "sound" | "camera";
 
 const SHAPES: { id: FrameShape; label: string; title: string }[] = [
   { id: "source", label: "Auto", title: "The shape of what you recorded" },
@@ -73,10 +74,13 @@ export function Inspector({
 }) {
   // a recording of an iPhone or iPad has no pointer log: nothing of the pointer's is offered for it
   const hasPointer = events.moves.length > 0 || events.clicks.length > 0;
+  const recorded = soundTracks(events);
+  const hasSound = recorded.voice !== null || recorded.sound !== null;
   const tabs: { id: InspectorTab; label: string; icon: typeof ImageIcon }[] = [
     { id: "background", label: "Background", icon: ImageIcon },
     ...(hasPointer ? [{ id: "pointer" as const, label: "Pointer", icon: MousePointer2 }] : []),
     { id: "zoom", label: "Zoom", icon: ZoomIn },
+    ...(hasSound ? [{ id: "sound" as const, label: "Sound", icon: AudioLines }] : []),
     ...(hasCamera ? [{ id: "camera" as const, label: "Camera", icon: Video }] : []),
   ];
   const shown = tabs.some((t) => t.id === tab) ? tab : "background";
@@ -107,6 +111,7 @@ export function Inspector({
         {shown === "zoom" && (
           <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
+        {shown === "sound" && <SoundTab look={look} change={change} events={events} />}
         {shown === "camera" && <CameraTab look={look} change={change} />}
       </div>
     </aside>
@@ -435,6 +440,23 @@ function AimPad({ look, zoom, player, onAim }: { look: ScreenLook; zoom: Zoom; p
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Which of the recorded sounds are heard, in the editor and in the video it makes: the voice, and what the Mac (or
+ * the device) played. Only the ones that were recorded.
+ */
+function SoundTab({ look, change, events }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; events: ScreenEvents }) {
+  const recorded = soundTracks(events);
+  const device = (events.audio ?? []).includes("device");
+  return (
+    <Group>
+      {recorded.voice !== null && <SwitchRow label="Your voice" checked={look.voice !== false} onChange={(voice) => change({ voice })} />}
+      {recorded.sound !== null && (
+        <SwitchRow label={device ? "Device sound" : "Mac sound"} checked={look.sound !== false} onChange={(sound) => change({ sound })} />
+      )}
+    </Group>
   );
 }
 

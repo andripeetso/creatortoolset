@@ -8,6 +8,8 @@ import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
+import { cardsView } from "./cards/state";
+import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
@@ -72,7 +74,8 @@ export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, u
 
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
-  analysis: { sentences: Sentence[]; notes: string[] };
+  /** `eyeline`: per source version, the eye line found on this computer (eyeline.ts) */
+  analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number> };
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
@@ -82,6 +85,8 @@ export interface StepFiles {
   first: { plans: Pick<VersionPlan, "name" | "lines">[] };
   /** the person took this edit off its style's finished list: it is never kept for a style again (finished.ts) */
   finished: { removed: boolean };
+  /** the passes Carry on queued for each version, in order (passes.ts) */
+  passes: Record<string, string[]>;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -444,11 +449,15 @@ export function viewOf(e: EditMeta): Edit {
   delete meta.byTool; // the server's own mark (finished.ts): `meta` is this call's own copy
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
+  const cards = cardsView(e.id, draftNames(e.id));
+  const jobs = jobsOf(e.id);
+  const passes = passesView(e, draftNames(e.id), jobs.some((j) => j.state === "queued" || j.state === "running"));
   return {
     ...meta,
     ...summaryOf(e),
-    jobs: jobsOf(e.id),
+    jobs,
     eyeline: e.eyeline ?? {},
+    ...(a?.eyeline ? { eyelineFound: a.eyeline } : {}),
     drafts: draftNames(e.id),
     sentences: a?.sentences.length ?? 0,
     lines: p?.lines ?? [],
@@ -456,6 +465,8 @@ export function viewOf(e: EditMeta): Edit {
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
     previews: readStep(e.id, "review") ?? {},
     flagDefs: pluginEditFlags(),
+    ...(cards ? { cards } : {}),
+    ...(passes ? { passes } : {}),
   };
 }
 

@@ -9,6 +9,7 @@ import {
   PUNCHES,
   STYLE_NAME_MAX,
   STYLE_NOTES_MAX,
+  type AnimationStyle,
   type EditingStyle,
   type EditingStyleInput,
   type EditingStylesView,
@@ -32,15 +33,17 @@ import type { EditMeta } from "./store";
 const USER = /^[a-zA-Z0-9._-]{1,64}$/;
 const fileOf = (username: string) => path.join(env.dataDir, "editor-styles", `${username}.json`);
 
-interface Saved {
+export interface Saved {
   last?: string;
   /** New edit's "How do you like to work?" was answered */
   asked?: true;
   editing: EditingStyle[];
+  /** the person's animation styles (animation-styles.ts) */
+  animation?: AnimationStyle[];
   [other: string]: unknown;
 }
 
-function read(username: string): Saved {
+export function read(username: string): Saved {
   try {
     if (!USER.test(username)) throw new Error("Bad account name");
     const f = JSON.parse(readFileSync(fileOf(username), "utf8")) as Saved;
@@ -51,7 +54,7 @@ function read(username: string): Saved {
 }
 
 /** Read, change and write with nothing awaited in between, so two requests of one account never lose each other's change. */
-function change<T>(username: string, fn: (f: Saved) => T): T {
+export function change<T>(username: string, fn: (f: Saved) => T): T {
   if (!USER.test(username)) throw new Error("Bad account name");
   const f = read(username);
   const out = fn(f);
@@ -170,6 +173,10 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     if (typeof steps === "string") return steps;
     out.steps = steps;
   }
+  if (body.animation !== undefined) {
+    if (body.animation !== null && !read(username).animation?.some((a) => a.id === body.animation)) return "No such animation style";
+    out.animation = body.animation as string | null;
+  }
   // one of the person's skills, by id; one that is not there (or is switched off) when an edit's script step runs adds nothing
   if (body.skill !== undefined) {
     if (body.skill !== null && (!short(body.skill, 100) || !body.skill)) return "skill is a skill's id, or null";
@@ -180,6 +187,10 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     const known = z && WORKING_SIZES.find((s) => s.w === z.w && s.h === z.h);
     if (z !== null && !known) return `size is null (the footage's own) or one of ${WORKING_SIZES.map((s) => `${s.w}x${s.h}`).join(", ")}`;
     out.size = known ? { w: known.w, h: known.h } : null;
+  }
+  if (body.passes !== undefined) {
+    if (typeof body.passes !== "boolean") return "passes is true or false";
+    out.passes = body.passes;
   }
   return out;
 }
@@ -195,7 +206,7 @@ export function createStyle(username: string, body: Record<string, unknown>, fro
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const base = from
-    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, size: from.size ?? null, ...(from.style?.skill ? { skill: from.style.skill } : {}) }
+    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, size: from.size ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}), ...(from.style?.passes ? { passes: true } : {}) }
     : PLAIN;
   const now = Date.now();
   const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
@@ -231,7 +242,7 @@ export const deleteStyle = (username: string, id: string): boolean =>
   });
 
 /** What an edit keeps of its style. */
-export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.skill ? { skill: s.skill } : {}) });
+export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.animation ? { animation: s.animation } : {}), ...(s.skill ? { skill: s.skill } : {}), ...(s.passes ? { passes: true as const } : {}) });
 
 /**
  * The one block an edit's style adds to the script step's prompt, after the installed packs' text: the person's own

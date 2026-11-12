@@ -11,7 +11,7 @@ The app is a thin native shell around the same web UI, plus the local runner
 it supervises: the web stays the one UI. A fix on the site reaches
 the Mac app on the next load, and a reviewer on a share link keeps using the website.
 Nothing here re-builds a screen. The native parts only do what a web page can't: run this
-Mac's AI jobs, post notifications, set the Dock badge, and record the screen.
+Mac's AI jobs, draw an edit's cards, post notifications, set the Dock badge, and record the screen.
 
 ## Build and run
 
@@ -390,6 +390,62 @@ Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacRep
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
 written there.
 
+## Draws an edit's cards
+
+While **Use this Mac for my AI** is on, the same runner also draws the AI Editor's cards for the account's own edits
+(`CardJobs.swift`, `KitRunner.swift`, `CardClip.swift`). It makes no request of its own to find out whether one
+waits. The long poll it already holds says which editor kinds this Mac would take now (`"editor": ["cards-draw"]`
+beside `blobs` in the body of `relay/wait`), and a server with such a step queued answers that poll with
+`{"editor": true}`. Only then does the Mac post `POST /api/devices/relay/editor/claim` with
+`{"kinds":["cards-draw"]}`. A server that never answers so, which is every server without the card step, is never
+asked. The poll lists no kind while cards are being drawn and for 25 s after a hint that led to no step (an hour
+after a claim the server refused), so a server that hints wrongly gets one claim, not a loop. The server can say the
+same on its answer to a step's `done` or `fail` (`"editor": true` beside `ok`), and the next step is then claimed at
+once; without it the next step is seen on a later poll, up to 25 s on.
+
+A step it gets is read with `GET /api/devices/relay/editor/job/<id>/cards`:
+`{ width, height, fps, script, cards: [{ id, seconds, content }] }`, one script for every card of a version. Each card
+is drawn frame by frame at that size and rate, made into an H.264 `.mp4` with no sound, plus three PNG stills 540 px
+wide (the first, middle and last frame), and posted to `…/job/<id>/cards/<cardId>` as multipart: `clip`, then `still`
+three times. What the script leaves unpainted is black. The step ends with `…/done`, or with `…/fail` and a sentence
+a person can read ("Card 2 of 6 took longer than 20 seconds to draw."); `…/beat` goes out every 15 s meanwhile. Every
+card that drew is sent even when another failed, and the server tries a failed step again, so a card's id can arrive
+more than once. A step is one of the runner's four slots and only one is drawn at a time; the menu bar's row says
+"Drawing cards". A card that fails is told to the server and written to the app log, never shown as an AI error.
+
+**The script is the person's AI's output and is never trusted.** It runs only in a web view made for that one card
+(`KitRunner.swift`), never in the app's window or its pages. What holds it, each measured by a script that tries the
+opposite against a listener on this Mac (`KitSandboxTests.swift`):
+
+- The script's page is a sandboxed frame (scripts only) of a page whose Content-Security-Policy is
+  `default-src 'none'`: nothing loads or is sent (fetch, sockets, images, fonts, frames, workers), and the engine
+  refuses the frame's own navigations, forms and new windows before the app is asked.
+- The web view refuses every navigation but that page and that frame. It has no message handlers, cookies or storage
+  of the app's, and its own data store is gone with the card. It can read no file.
+- Lockdown Mode is on for the page, because the policy does not govern WebRTC. A card's script therefore has no
+  WebRTC, WebAssembly, WebGL or Web Audio.
+- Lockdown Mode and the preconnect switch below could fail to take without saying so. So before the first card a
+  page with no card's script in it is asked two things of its own engine: is WebRTC gone, and does it no longer know
+  `preconnect` as a link type (`relList.supports`, which reads the setting the click's preconnect reads). If either
+  answer is wrong, nothing is drawn. It has the DOM, CSS, SVG and a 2D canvas, the system's fonts and `data:`
+  images.
+- WebKit's link preconnect is switched off for the page: a link with `target="_blank"` that the script clicks, or a
+  `<link rel="preconnect">`, otherwise opens a connection whatever the policy says. WebKit has no public switch for
+  it, so this uses a private one (`_features`, `_setEnabled:forFeature:`, `_isEnabledForFeature:` on
+  `WKPreferences`). A Mac whose WebKit lacks one of them draws no card: the step fails with a sentence saying which,
+  and from then on its long poll lists no kind (`"editor": []`), so the server stops counting on it.
+- Whatever else asks for a name outside this Mac is handed to a proxy address where nothing listens (port 1 on this
+  Mac), set on the page's own data store.
+- One limit of 20 s covers the whole card: its page loading, every call into the script and every picture. The
+  page's process is ended with every card (`SIGKILL` to the process `_webProcessIdentifier` names, another private
+  call): a script that loops forever otherwise keeps a processor busy until the app quits, and WebKit's own kill
+  does not stop it. Each card's page has a process of its own.
+
+Not measured: a DNS lookup that sends nothing else (the switch for `<link rel="dns-prefetch">` is turned off where
+this macOS has it, but nothing here can watch a lookup); the proxy for a bare address outside this Mac (trying one
+would be real traffic; a name goes to the proxy); a script that takes memory without end (the limit and the end of
+its process stop it, after up to 20 s). See also "Not checked yet".
+
 ## Notifications and the Dock badge
 
 Every 30 s the app asks `GET /api/review/notifications`. Each new unread item becomes a banner
@@ -417,6 +473,7 @@ reply finishing or an AI edit failing, so those notifications need a server chan
   `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop session's
   folder while its Claude session is kept (14 days) and `blobs/` big files by their hash (30 days).
 - `~/Library/Application Support/Creator Toolset/assistant/<server>/`: the assistant's own folder (its working folder on this Mac).
+- `cards/<step>/` in the runner's folder: the clip of the card being drawn, removed when its step ends.
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
 between launches; Sign out on the site clears it. The one secret the app keeps is the device token of
@@ -440,6 +497,9 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   environment, the stream reading, usage, folder sync (plain functions).
 - `Sources/CreatorToolsetMac/ClaudeRun.swift`: one Claude run (the process, streaming, the answer).
 - `Sources/CreatorToolsetMac/MacReport.swift`: the CLIs and config folders the Mac reports.
+- `Sources/CreatorToolsetMac/CardJobs.swift`: one card step (the read, each card, the upload, done or fail, the lease).
+- `Sources/CreatorToolsetMac/KitRunner.swift`: the web view a card's script is shut in, its time limit and its frames.
+- `Sources/CreatorToolsetMac/CardClip.swift`: a card's frames as an H.264 clip and three stills.
 - `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop,
   the owner's password, data location).
 - `Sources/CreatorToolsetMac/Plugins.swift`: plug-ins (the asks, Switch on's alert, the record in the Keychain, the
@@ -453,6 +513,12 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
 - `Tests/CreatorToolsetMacTests/RelayTests.swift`: the relay offline (request checks, command line,
   env, stream, usage, folder, sessions, report). `CT_REAL_CLAUDE=1 swift test --filter RealRun`
   makes one real `claude` call through `~/.claude-work` (a fraction of a cent).
+- `Tests/CreatorToolsetMacTests/KitSandboxTests.swift`: what a card's script can't do (reach the network, read a file,
+  leave its page, run past its limit, leave a process behind), each beside a control that can.
+- `Tests/CreatorToolsetMacTests/CardJobsTests.swift`: a card step against a stand-in server (`FakeSite.swift`): the
+  claim and its pace, the read, the upload, each way a step ends. `CT_CARD_REPORT=<folder> swift test --filter
+  testReportOneCard` writes one card's clip and stills there.
+- `Tests/CreatorToolsetMacTests/CardClipTests.swift`, `KitRunnerTests.swift`: the clip, the stills, the frames.
 - `Tests/CreatorToolsetMacTests/ServerTests.swift`: the restart backoff, the log rotation, the pid check, the
   missing disk, a move's checks, folder sizes and the runner's folder.
 - `Tests/CreatorToolsetMacTests/PluginsTests.swift`: the plug-in asks, the server's environment, the Switch on
@@ -467,6 +533,15 @@ The first run, Access from other devices and Data location (Local server 4–6) 
 but not yet launched: the window's cookie landing in WebKit's store before the page loads, the setup inside the
 window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-password` on a signed build, a real
 `ditto` move to an external disk and back, and the unplugged-disk message still need a run on a Mac.
+
+The card step (see "Draws an edit's cards") has run only in the tests, on macOS 26 on Apple silicon, against a
+stand-in for the server: not in the launched app, not in a signed build with the hardened runtime, not against a real
+server, and not on macOS 14 or 15. For those, WebKit's source as it shipped with 14.0 and 15.0 was read: it has
+every call the card's page uses (the feature list and its switch, the link preconnect feature behind which the
+click's preconnect sits, the page's process id, Lockdown Mode for one page), so they are expected to draw. Each call
+is looked for before it is used, and a Mac that lacks one draws no card and says which. Whether
+Lockdown Mode for a page shows anything the first time in a real app bundle, and what the drawing costs the window
+while a person uses the app or records (each frame is taken on the main thread, at the screen's scale), are not known.
 
 The app has not been launched on a Mac in this build (so far it has been built and unit-tested). The plug-ins'
 alert, the record's Keychain path on a signed build, the restart's page reload and the five-crash pause have not

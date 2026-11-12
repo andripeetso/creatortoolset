@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { countLabel, destinations, firstSentence, packContents, packKinds, packProjects, slugify, toolLine } from "./packs-helpers";
 
 describe("packContents", () => {
-  it("lists instruction slots in the app's slot order, with their labels, and leaves out ones this app doesn't use", () => {
+  it("lists instruction slots in the app's slot order, with their labels", () => {
     const c = packContents({
       instructions: { "editor.cards": "cards text", "editor.script": "script text", "workshop.write": "write text" },
       frameworks: [{ name: "Hook, proof, ask", role: "persuasion", summary: "", steps: [], whenToUse: "" }],
       captionStyles: [{ name: "Bold", kind: "caption", style: {} }],
     });
-    expect(c.slots.map((s) => s.slot)).toEqual(["workshop.write", "editor.script"]);
+    expect(c.slots.map((s) => s.slot)).toEqual(["workshop.write", "editor.script", "editor.cards"]);
     expect(c.slots[0].label).toBe("Content Workshop: writing and editing pieces");
     expect(c.frameworks).toEqual([{ name: "Hook, proof, ask", role: "persuasion" }]);
     expect(c.captionStyles).toEqual(["Bold"]);
@@ -41,7 +41,9 @@ describe("packKinds", () => {
     expect(packKinds({ instructions: ["captions.lines"], frameworks: 0, captionStyles: 0, designSystems: 0 })).toEqual([
       { id: "captions", label: "Caption styles", count: undefined },
     ]);
-    expect(packKinds({ instructions: ["editor.cards"], frameworks: 0, captionStyles: 0, designSystems: 2 })).toEqual([]);
+    expect(packKinds({ instructions: [], frameworks: 0, captionStyles: 0, designSystems: 2 })).toEqual([]);
+    // the cards' instructions are read by the AI Editor's card step: an editing kind
+    expect(packKinds({ instructions: ["editor.cards"], frameworks: 0, captionStyles: 0, designSystems: 0 })).toEqual([{ id: "editing", label: "Editing styles", count: 1 }]);
   });
 });
 
@@ -66,7 +68,7 @@ describe("slugify", () => {
 
 describe("where a pack goes", () => {
   it("maps frameworks, guides and styles to their tool and spot, and leaves out what this app doesn't read", () => {
-    const c = { instructions: ["workshop.write" as const, "editor.cards" as const], frameworks: 3, captionStyles: 2, designSystems: 1 };
+    const c = { instructions: ["workshop.write" as const], frameworks: 3, captionStyles: 2, designSystems: 1 };
     expect(destinations(c).map((x) => `${x.stage} ${x.tool} › ${x.spot}`)).toEqual([
       "Plan Content Workshop › A piece's Shape menu",
       "Plan Content Workshop › Every message to the AI on a piece",

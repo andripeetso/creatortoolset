@@ -1,26 +1,9 @@
 import { useEffect, useRef } from "react";
 
-/** The camera's framing of the render: zoom, and the pan and tilt in pixels. */
-export type Framing = { zoom: number; pan: number; tilt: number };
-/** A reframe box as fractions of the frame: x/y = its top-left, k = its width. */
-export type CropBox = { x: number; y: number; k: number };
+import { cameraIn, clampCrop, type CropBox, type Framing } from "@contracts/edit-timeline";
 
-/**
- * Keeps a reframe box on the camera frame: the zoom stays 1x-3x, so the box may
- * be bigger than the render (out to the whole camera frame, which reaches past
- * the render when `f` is zoomed in) and never shows past the camera frame's edges.
- */
-export function clampCrop(f: Framing, b: CropBox, w: number, h: number): CropBox {
-  const k = Math.min(f.zoom, Math.max(f.zoom / 3, b.k));
-  const [x0, y0] = [0.5 + f.pan / w - f.zoom / 2, 0.5 - f.tilt / h - f.zoom / 2]; // the camera frame's corner, in the render
-  const r = (v: number) => Math.round(v * 1e6) / 1e6;
-  return { k: r(k), x: r(Math.min(x0 + f.zoom - k, Math.max(x0, b.x))), y: r(Math.min(y0 + f.zoom - k, Math.max(y0, b.y))) };
-}
-
-/** Where the camera frame sits in the reframe window (fractions of the window: corner, size). */
-export const cameraIn = (f: Framing, b: CropBox, w: number, h: number) => ({
-  x: (0.5 + f.pan / w - f.zoom / 2 - b.x) / b.k, y: (0.5 - f.tilt / h - f.zoom / 2 - b.y) / b.k, s: f.zoom / b.k,
-});
+// the reframe maths lives with the timeline edits (contracts/edit-timeline.ts)
+export { cameraIn, clampCrop, type CropBox, type Framing };
 
 /**
  * Reframe: the frame stays where it is and the footage moves and zooms inside

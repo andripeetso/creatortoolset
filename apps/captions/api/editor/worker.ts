@@ -8,7 +8,8 @@ import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
 import { Waiting } from "./analyze";
 import { editStopped, runEnded } from "./ended";
-import { claimableBy, claimStep, coreSteps, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
+import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
+import { passesDone } from "./passes";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 export type { StepContext } from "./engine";
@@ -55,7 +56,7 @@ export function releaseRunningSteps(now = Date.now()): void {
 
 /** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
 function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
-  if (variant || job.kind !== "draft") for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
+  if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT, passesDone(edit.id, variant))) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
 }
 
 /** "<editId>:<variant>" split: the variant is "" for a whole-edit step. */
@@ -132,6 +133,12 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
   if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), null;
   if (sourcesWorkspace(job.actor ?? "", edit.sources) !== edit.workspaceId) return fail(db, job, "Some footage is gone or no longer yours to read"), null;
   return { id: job.id, kind: job.kind, editId, variant };
+}
+
+/** Whether a claim by a device of `owner` with these kinds would be handed a step right now: what its long poll is told (devices.ts). */
+export function waitsForDevice(owner: string, kinds: string[], now = Date.now()): boolean {
+  const k = claimableBy(kinds);
+  return !!k.length && !!libraryDb().prepare(`SELECT 1 FROM ${T} WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${k.map(() => "?").join(", ")})`).get(now, owner, ...k);
 }
 
 /** The job row this device holds (claimed by it and still running), or undefined. */

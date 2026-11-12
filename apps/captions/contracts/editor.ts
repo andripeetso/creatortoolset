@@ -19,6 +19,10 @@
  *   GET    /api/editor/defaults            → EditorDefaults (the set a new edit gets, and the items each slot can take)
  *   PUT    /api/editor/defaults/:slot      { id: string | null } (null = back to the built-in one) → EditorDefaults
  *   GET, POST /api/editor/styles, PUT, DELETE /api/editor/styles/:id   the person's editing styles (contracts/editor-styles.ts)
+ *   /api/editor/animation-styles…        the person's animation styles and their pictures (contracts/editor-styles.ts)
+ *   GET    /api/editor/:id/cards/:variant/:card/still   a card's middle frame, as the Mac drew it (PNG)
+ *   POST   /api/editor/:id/cards/:variant/:card/like    its still goes into the animation style's Made & liked → Edit
+ *   POST   /api/editor/:id/cards/:variant/again         the version's cards are made again from nothing → Edit
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
 
@@ -156,6 +160,8 @@ export interface Edit extends EditSummary, EditBrief {
   size?: WorkingSize | null;
   /** per source version: the speaker's eye line, a fraction of the picture's height from the top (punch-ins keep it in place) */
   eyeline: Record<string, number>;
+  /** per source version: the eye line found on this computer at analyze, used where `eyeline` has none */
+  eyelineFound?: Record<string, number>;
   /** the versions with a draft timeline, by name */
   drafts: string[];
   jobs: EditJob[];
@@ -169,6 +175,18 @@ export interface Edit extends EditSummary, EditBrief {
   previews: Record<string, ReviewPreview>;
   /** the flags the loaded plug-ins declare, shown as chips; `flags` above holds this edit's state for each */
   flagDefs: EditFlag[];
+  /** each version's cards, for an edit whose style names an animation style and whose card step has run; else absent */
+  cards?: Record<string, EditCards>;
+  /** an edit in passes: the next pass Carry on queues (POST /api/editor/:id/pass), and whether it waits for it (nothing queued or running) */
+  passes?: { waiting: boolean; next: "broll" | "cards" | null };
+}
+
+/** One version's cards as the edit page shows them. */
+export interface EditCards {
+  /** the cards with a clip, in the order planned */
+  cards: { id: string; text: string; liked: boolean }[];
+  /** why there are none, or fewer than planned ("Cards: no Mac with Creator Toolset is on") */
+  note?: string;
 }
 
 /** A preview video in Review: its asset and version number. */
@@ -182,7 +200,7 @@ export interface PlansPatch {
   plans: { name: string; lines: { line: string; take: Pick<Take, "first" | "last"> }[] }[];
 }
 
-/** The eye line when the user has not set one: a little above the middle, where a speaker's eyes usually are. */
+/** The eye line when the user has set none and none was found: a little above the middle, where a speaker's eyes usually are. */
 export const DEFAULT_EYELINE = 0.38;
 
 export const TRACKS = ["V1", "V2", "A1", "A2", "A3"] as const;
@@ -219,6 +237,8 @@ export interface TimelineSource {
   /** picture size as shown (rotation applied); 0 for sound only */
   w: number;
   h: number;
+  /** a clip that is the edit's own file and not footage from the library (a card): its path inside the edit's folder */
+  file?: string;
 }
 
 /** A draft: one version's cut, the single model every export and check reads. */

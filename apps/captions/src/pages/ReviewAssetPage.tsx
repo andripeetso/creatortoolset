@@ -91,8 +91,9 @@ import { VoiceMix } from "@/components/VoiceMix";
 import { saveVoiceMix } from "@/lib/editor";
 import { ScreenRecordingEditor } from "@/components/ScreenRecordingEditor";
 import { reviewSource } from "@/lib/screen-source";
-import { reviewSlotsFor, type ReviewActionEntry } from "@/lib/plugin";
-import { ReviewActionButtons, ReviewPanelSlots, type ReviewBaseContext, type ReviewBind } from "@/components/ReviewSlots";
+import { reviewSlotsFor, reviewTimelineOf, type ReviewActionEntry } from "@/lib/plugin";
+import { ReviewActionButtons, ReviewPanelSlots, reviewSlotShown, type ReviewBaseContext, type ReviewBind } from "@/components/ReviewSlots";
+import ReviewEdits, { REVIEW_TIMELINE_ID } from "@/components/ReviewEdits";
 import { ReviewSlotBridge } from "@/lib/review-slots";
 import { mutedAt, usePlanFollow } from "@/lib/review-play";
 import { PlanOverlay } from "@/components/PlanOverlay";
@@ -105,10 +106,8 @@ const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600"
 const avatarColor = (name: string) =>
   AVATARS[[...name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % AVATARS.length];
 const SPEEDS = [0.5, 1, 1.5, 2];
-
-
-/** Timeline edits not sent yet, with undo. */
-/** A talent shot's framing as rendered. */
+// what plug-ins add to the timeline editor (clips in cards, the camera frame, full-quality colour)
+const timelineHooks = reviewTimelineOf(webPlugins);
 
 const typing = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
@@ -703,6 +702,8 @@ function Review({
         slotCtx={slotCtx}
         bind={bindSlot}
       />
+      {/* the timeline editor on a version with a timeline (managers), then the plug-ins' panels */}
+      {reviewSlotShown(slotCtx) && <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} />}
       <ReviewPanelSlots slots={slots.panels} ctx={slotCtx} bind={bindSlot} />
       {comparing && (
         <ReviewCompare

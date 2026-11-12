@@ -152,7 +152,7 @@ final class RecorderTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appendingPathComponent("screen.mp4")
         // a phone held upright: taller than wide
-        let capture = try Capture(file: file, width: 320, height: 692, mic: true, system: true)
+        let capture = try Capture(file: file, width: 320, height: 692, mic: true, system: true, soundName: "device")
         try capture.open()
         let host = { CMClockGetTime(CMClockGetHostTimeClock()) }
         let send = { (buffer: CMSampleBuffer, track: Capture.Track) in capture.queue.sync { capture.take(buffer, track) } }
@@ -171,7 +171,7 @@ final class RecorderTests: XCTestCase {
         }
         let events = try await capture.stop()
         let lasted = (host() - began).seconds
-        XCTAssertEqual(events.audio, ["mic", "system"])
+        XCTAssertEqual(events.audio, ["mic", "device"])   // the editor calls it Device sound
         XCTAssertTrue(events.moves.isEmpty && events.clicks.isEmpty)
         XCTAssertEqual([events.width, events.height], [320, 692])
         let asset = AVURLAsset(url: file)

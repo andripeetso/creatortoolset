@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { drawFrame, outputSize, trimOf, type CameraImage, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
 import { frameReader, type FrameReader } from "@/lib/frame-reader";
+import { soundTracks } from "@/lib/screen-sound";
 import { Deck } from "./deck";
+import { SoundPlayer } from "./sound";
 
 type Path = [number, number, number][];
 
@@ -84,7 +86,8 @@ const LOOP_KEY = "screen-editor-loop";
  * What keeps it steady: the video is never asked to announce its frames (requestVideoFrameCallback made every start
  * stand still after 0.3 s), and each video is on two elements that take turns (deck.ts), because one that has played
  * and is then moved stands still for a quarter of a second soon after it starts again.
- * It plays round and round (the kept part) unless that is switched off.
+ * It plays round and round (the kept part) unless that is switched off. The sound is played beside the picture
+ * (sound.ts), which follows its clock.
  * `o` is read through a ref, so a new look never restarts the loop.
  */
 export function usePlayer(o: {
@@ -102,6 +105,7 @@ export function usePlayer(o: {
   const stage = useRef<HTMLDivElement>(null);
   const screen = useRef<Deck | null>(null);
   const camera = useRef<Deck | null>(null);
+  const sound = useRef<SoundPlayer | null>(null);
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -146,6 +150,30 @@ export function usePlayer(o: {
 
   const emit = useCallback((t: number) => s.times.forEach((fn) => fn(t)), [s]);
   const length = useCallback(() => live.current.duration || screen.current?.el.duration || 0, []);
+
+  // the sound, played beside the picture once it is known which tracks the recording has; the video's own sound
+  // stays on where that cannot be done
+  const tracks = o.events ? JSON.stringify(o.events.audio ?? null) : null;
+  useEffect(() => {
+    if (tracks === null) return;
+    const audio = JSON.parse(tracks) as string[] | null;
+    const player = new SoundPlayer(o.url, soundTracks({ audio: audio ?? undefined }), length);
+    sound.current = player;
+    player.setMuted(mutedRef.current);
+    const look = live.current.look;
+    player.setHeard(look?.voice !== false, look?.sound !== false);
+    let alive = true;
+    void player.works.then((works) => alive && screen.current?.setSound(!works));
+    return () => {
+      alive = false;
+      sound.current = null;
+      player.dispose();
+      screen.current?.setSound(true);
+    };
+  }, [o.url, tracks, length]);
+  useEffect(() => {
+    sound.current?.setHeard(o.look?.voice !== false, o.look?.sound !== false);
+  }, [o.look?.voice, o.look?.sound]);
 
   useEffect(() => {
     s.dirty = true;
@@ -373,6 +401,7 @@ export function usePlayer(o: {
         } else if (t >= kept.end - 0.03) pause();
         if (t !== s.takenAt && now - s.takenWhen >= 12) s.fresh = true;
       }
+      sound.current?.follow(running && !s.held, t);
 
       if (s.dirty || moving) {
         if (paint(s.target ?? t, false)) {
@@ -420,6 +449,7 @@ export function usePlayer(o: {
 
   useEffect(() => {
     screen.current?.setMuted(muted);
+    sound.current?.setMuted(muted);
   }, [muted]);
 
   const seek = useCallback(

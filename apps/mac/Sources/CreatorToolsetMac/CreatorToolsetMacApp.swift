@@ -133,7 +133,7 @@ final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
     private func whenIdle(every seconds: TimeInterval, inBackground: Bool, _ go: @escaping () -> Void) {
         Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { timer in
             MainActor.assumeIsolated {
-                guard let shell = AppDelegate.shell, shell.ai.running == 0, !shell.recorder.busy else { return }
+                guard let shell = AppDelegate.shell, shell.ai.running == 0, !shell.ai.drawing, !shell.recorder.busy else { return }
                 if inBackground {
                     let away = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
                     guard updateMayInstall(appActive: NSApp.isActive, aiJobs: shell.ai.running, recording: shell.recorder.busy,

@@ -24,7 +24,7 @@ struct ScreenEvents: Codable {
     var moves: [[Double]] = []    // [t, x, y]
     var clicks: [[Double]] = []   // [t, x, y], the press
     var releases: [[Double]] = [] // [t, x, y], the button coming up again: a drag lasts from its press to here
-    var audio: [String] = []      // the sound tracks in file order: "mic", "system"
+    var audio: [String] = []      // the sound tracks in file order: "mic", then "system" (the Mac's sound) or "device" (a phone's)
 }
 
 /// The pointer at `location` (NSEvent.mouseLocation: global points, origin bottom left of the main display) as 0–1 of
@@ -142,7 +142,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideoD
     /// The first frame arrived, at this host time (the file's 0): the camera starts its clock there. On `queue`.
     var onFirstFrame: ((CMTime) -> Void)?
 
-    init(file: URL, width: Int, height: Int, mic withMic: Bool, system withSystem: Bool) throws {
+    /// `soundName` names the second sound track in the log: "system" for the Mac's sound, "device" for a phone's.
+    init(file: URL, width: Int, height: Int, mic withMic: Bool, system withSystem: Bool, soundName: String = "system") throws {
         writer = try AVAssetWriter(outputURL: file, fileType: .mp4)
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)   // a crash leaves a playable file
         // ponytail: one bitrate for every screen (~20 Mbit/s at 4K, more than text needs); per-content rate control if files run big
@@ -160,7 +161,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideoD
         writer.add(video)
         // the voice first: players, Review's transcode and the export all take the first sound track
         if let mic { writer.add(mic); mic.expectsMediaDataInRealTime = true; events.audio.append("mic") }
-        if let system { writer.add(system); system.expectsMediaDataInRealTime = true; events.audio.append("system") }
+        if let system { writer.add(system); system.expectsMediaDataInRealTime = true; events.audio.append(soundName) }
     }
 
     /// Opens the file for writing: the first thing either kind of recording does.
@@ -639,7 +640,7 @@ final class Recorder: ObservableObject {
             let project = try LocalProject.create(in: folder, at: Date())
             made.project = project
             let capture = try Capture(file: project.screenURL, width: size.width, height: size.height,
-                                      mic: micDevice != nil, system: setup.systemAudio)
+                                      mic: micDevice != nil, system: setup.systemAudio, soundName: source.isDevice ? "device" : "system")
             made.capture = capture
             capture.onStop = { [weak self] error in
                 Task { @MainActor in self?.stoppedByItself(error) }

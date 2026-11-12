@@ -8,6 +8,7 @@ import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
+import { clearPasses } from "./passes";
 import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -162,10 +163,11 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     words,
     energy,
     punch: edit.framing.punch,
-    eyeline: edit.eyeline ?? {},
+    eyeline: { ...analysis.eyeline, ...edit.eyeline },
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
     size: edit.size,
   });
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
   await saveDraft(edit.id, version.name, { timeline, notes });
+  await clearPasses(edit.id, version.name); // cut again: its passes start over
 }

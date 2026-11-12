@@ -167,6 +167,14 @@ describe("New edit: How do you like to work?", () => {
     expect(calls.at(-1)!.body).toEqual({ name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, brollCollectionId: null, steps: [] });
   });
 
+  it("Edit in passes: what Full edit saves, with passes on", async () => {
+    installed = { folders: [{ id: "col_1", name: "B-roll", parentId: null, kind: "manual", createdBy: "me" }], steps: [blur] };
+    await open({ styles: [], last: null }, async () => {});
+    await press("Edit in passes");
+    await press("Continue");
+    expect(calls.at(-1)!.body).toEqual({ name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, passes: true, brollCollectionId: "col_1", steps: [{ id: "blur", values: { who: "everyone" } }] });
+  });
+
   it("Not now answers it without a style", async () => {
     const done = vi.fn(async () => {});
     await open({ styles: [], last: null }, done);

@@ -15,17 +15,18 @@ import { brollFolders, sizeKey, sizeOfKey, SIZE_OPTIONS } from "./EditingStyles"
 /**
  * New edit's first screen for someone with no editing style who hasn't answered it yet: how they like to work, saved as
  * their first editing style, "My way", which New edit then opens on. Its own sheet (Editing styles tab) changes it later.
- * Not now answers it too. `onDone` reads the styles again, which takes this screen away.
+ * Edit in passes saves the style with passes on (each pass waits in Review for Carry on). Not now answers it too. `onDone` reads the styles again, which takes this screen away.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const WAYS = [
   { id: "full", title: "Full edit", sub: "Cut, B-roll and post-processing" },
+  { id: "passes", title: "Edit in passes", sub: "The cut, then the B-roll: each waits for you in Review" },
   { id: "rough", title: "Rough cut only", sub: "The cut, nothing added" },
 ] as const;
 
 export function FirstWay({ onDone }: { onDone: () => Promise<unknown> }) {
-  const [way, setWay] = useState<"full" | "rough">("full");
+  const [way, setWay] = useState<(typeof WAYS)[number]["id"]>("full");
   const [versions, setVersions] = useState(2);
   const [size, setSize] = useState(sizeKey({ w: WORKING_SIZES[0].w, h: WORKING_SIZES[0].h }));
   const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
@@ -58,13 +59,14 @@ export function FirstWay({ onDone }: { onDone: () => Promise<unknown> }) {
       setBusy(false);
     }
   };
-  const full = way === "full";
+  const full = way !== "rough";   // Full edit and Edit in passes both bring the B-roll and the steps
   const save = () =>
     createStyle({
       name: "My way",
       first: true,
       versions,
       size: sizeOfKey(size),
+      ...(way === "passes" ? { passes: true } : {}),
       brollCollectionId: full ? folder || null : null,
       // Rough cut: no steps at all. Full edit: the ones switched on here (none installed: whatever Settings has in use)
       steps: !full ? [] : rows?.length ? rows.filter((r) => on.has(r.id)).map((r) => ({ id: r.id, values: r.values })) : null,
@@ -77,7 +79,7 @@ export function FirstWay({ onDone }: { onDone: () => Promise<unknown> }) {
         <SheetDescription className="text-xs text-muted-foreground">You set this up once. Change it any time under Editing styles.</SheetDescription>
       </div>
 
-      <div role="group" aria-label="How it should work" className="grid gap-2 sm:grid-cols-2">
+      <div role="group" aria-label="How it should work" className="grid gap-2 sm:grid-cols-3">
         {WAYS.map((w) => (
           <button
             key={w.id}

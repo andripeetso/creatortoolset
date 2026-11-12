@@ -63,8 +63,8 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
     expect(Buffer.byteLength(def.description)).toBe(131);
-    // the description, the name and nine typed fields (those alone are 359 bytes; size is 52), and the comma before it in the list
-    expect(bytes(dock) - bytes(main(dock))).toBe(506);
-    expect(bytes(outside) - bytes(main(outside))).toBe(506);
+    // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the list
+    expect(bytes(dock) - bytes(main(dock))).toBe(534);
+    expect(bytes(outside) - bytes(main(outside))).toBe(534);
   });
 });

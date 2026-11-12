@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 import { MAX_VERSIONS, type EditorDefaults } from "@contracts/editor";
 import type { EditStepChoice, StepRow } from "@contracts/editor-steps";
-import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type WorkingSize } from "@contracts/editor-styles";
+import { PACES, PACE_NAME, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type AnimationStyle, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type WorkingSize } from "@contracts/editor-styles";
 import { placeOf } from "@contracts/skills";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { RowMenu } from "@/components/settings/ui";
-import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listFinished, removeFinished, updateStyle } from "@/lib/editor";
+import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listAnimationStyles, listFinished, removeFinished, updateStyle } from "@/lib/editor";
 import { listCollections, listLibraries } from "@/lib/library";
 import { listSkills } from "@/lib/skills";
 
@@ -112,6 +112,9 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [punch, setPunch] = useState(style?.punch ?? 1.15);
   const [size, setSize] = useState(style ? sizeKey(style.size) : NEW_SIZE);
   const [folder, setFolder] = useState(style?.brollCollectionId ?? "");
+  const [animation, setAnimation] = useState(style?.animation ?? "");
+  const [passes, setPasses] = useState(!!style?.passes);
+  const [animations, setAnimations] = useState<AnimationStyle[]>([]);
   const [grade, setGrade] = useState<string | null>(null); // null: not changed here
   const [steps, setSteps] = useState<EditStepChoice[] | null>(null); // null: not changed here
   const [defaults, setDefaults] = useState<EditorDefaults | null>(null);
@@ -126,6 +129,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   useEffect(() => {
     getEditorDefaults().then(setDefaults, () => {});
     brollFolders().then(setFolders, () => {});
+    listAnimationStyles().then((v) => setAnimations(v.styles ?? []), () => {});
     getEditSteps().then((v) => setRows(v.steps.filter((s) => s.state === "on")), () => {});
     listSkills().then(
       (r) =>
@@ -141,6 +145,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const grades = defaults?.items.grade ?? [];
   const gradeShown = grade ?? (grades.some((g) => g.id === style?.grade) ? style!.grade! : (defaults?.bundle.grade ?? ""));
   const folderShown = folders.some((f) => f.id === folder) ? folder : "";
+  const animationShown = animations.some((a) => a.id === animation) ? animation : "";
   const skillShown = skill ?? (skills.some((s) => s.id === style?.skill) ? style!.skill! : "");
   // the steps as an edit made now would get them: this style's, else the ones in use in Settings → AI Editor
   const stepsShown = steps ?? style?.steps ?? rows.filter((r) => r.use).map((r) => ({ id: r.id, values: r.values }));
@@ -161,7 +166,9 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
       pace,
       punch,
       size: sizeOfKey(size),
+      ...(passes !== !!style?.passes ? { passes } : {}),   // sent only when changed here
       ...(folders.length ? { brollCollectionId: folderShown || null } : {}),
+      ...(animations.length ? { animation: animationShown || null } : {}),
       ...(skill !== null ? { skill: skill || null } : {}),
       ...(grade !== null ? { grade } : {}),
       ...(steps ? { steps } : {}),
@@ -241,7 +248,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </select>
             </div>
           </div>
-          {(grades.length > 1 || folders.length > 0 || skills.length > 0) && (
+          {(grades.length > 1 || folders.length > 0 || animations.length > 0 || skills.length > 0) && (
             <div className="flex flex-wrap gap-4">
               {grades.length > 1 && (
                 <div className="flex flex-col gap-1.5">
@@ -263,6 +270,19 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
                     {folders.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {animations.length > 0 && (
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <Label htmlFor="style-animation">Animation style</Label>
+                  <select id="style-animation" value={animationShown} onChange={(e) => setAnimation(e.target.value)} className={`${select} min-w-40 max-w-full`}>
+                    <option value="">None</option>
+                    {animations.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
                       </option>
                     ))}
                   </select>
@@ -327,6 +347,13 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </ul>
             </section>
           )}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="style-passes">Edit in passes</Label>
+              <span className="text-xs text-muted-foreground">Each pass waits for you in Review</span>
+            </div>
+            <Switch id="style-passes" checked={passes} onCheckedChange={setPasses} />
+          </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <Button type="submit" disabled={busy || !name.trim()} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}

@@ -15,7 +15,7 @@ import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } fr
 export const hasStyle = (username: string): boolean => stylesView(username).styles.length > 0;
 
 /** What the tool calls a field → the route's name for it. The notes are sent apart. */
-const FIELDS = { name: "name", versions: "versions", target_s: "targetS", pace: "pace", punch: "punch" } as const;
+const FIELDS = { name: "name", versions: "versions", target_s: "targetS", pace: "pace", punch: "punch", passes: "passes" } as const;
 
 const styles = async (ctx: ToolContext) => (await ctx.json<EditingStylesView>("/api/editor/styles")).styles;
 const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions, target_s: s.targetS, pace: s.pace, punch: s.punch, size: s.size ? `${s.size.w}x${s.size.h}` : "footage", has_notes: !!s.notes });
@@ -40,7 +40,7 @@ export const editorStyleTools: ToolModule = {
       description: "Make or change an AI Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat.",
       inputSchema: {
         type: "object",
-        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { enum: ["tight", "natural"] }, punch: { enum: [1, 1.15, 1.3] }, size: { enum: ["1080x1920", "2160x3840", "footage"] }, from_edit: str },
+        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { enum: ["tight", "natural"] }, punch: { enum: [1, 1.15, 1.3] }, size: { enum: ["1080x1920", "2160x3840", "footage"] }, passes: { type: "boolean" }, from_edit: str },
       },
     },
     {

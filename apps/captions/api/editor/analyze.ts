@@ -10,6 +10,7 @@ import { enqueueJob, prepareFirst } from "../library/jobs";
 import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
 import { transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
+import { eyelineOf } from "./eyeline";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
 import type { StepContext } from "./worker";
@@ -17,7 +18,7 @@ import type { StepContext } from "./worker";
 /**
  * The AI Editor's analyze step: every source's words (the library's transcript, fillers and false starts kept) split
  * into sentences numbered across the footage in recording order, and each source's loudness at 100 reads a second,
- * cached by version for the cut. A source with no words yet queues the library's `transcribe` as the edit's creator,
+ * cached by version for the cut, and its eye line where this computer finds one (eyeline.ts). A source with no words yet queues the library's `transcribe` as the edit's creator,
  * on their key, and the step waits.
  */
 
@@ -181,11 +182,16 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
 
   ready.sort((a, b) => (a.probe.capturedAt ?? Infinity) - (b.probe.capturedAt ?? Infinity) || a.row.title.localeCompare(b.row.title));
   const sentences: Sentence[] = [];
-  for (const { row, words } of ready) {
+  const eyeline: Record<string, number> = {};
+  for (const { row, probe, words } of ready) {
     if (signal.aborted) return;
     await energyOf(row.id, () => blobs.localCopy(row.source_key), signal);
     sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
+    const turned = probe.rotation === 90 || probe.rotation === 270;
+    const dims = { w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, duration: probe.duration };
+    const y = probe.vcodec ? await eyelineOf(row.id, () => blobs.localCopy(row.source_key), dims, signal) : null;
+    if (y !== null) eyeline[row.id] = y;
   }
   if (!sentences.length) throw new Error("No speech found in the footage");
-  await saveStep(edit.id, "analysis", { sentences, notes });
+  await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}) });
 }

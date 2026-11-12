@@ -67,10 +67,14 @@ export interface EditingStyle {
   brollCollectionId: string | null;
   /** the post-processing steps and their values, as an edit keeps them; null = the ones Settings → AI Editor has in use when the edit is made */
   steps: EditStepChoice[] | null;
+  /** an animation style of theirs: an edit made with this style gets cards in it; absent or null = no cards */
+  animation?: string | null;
   /** one of the person's own skills (contracts/skills.ts), by id, for the script step; absent or null = none */
   skill?: string | null;
   /** the working size, one of WORKING_SIZES; absent or null = the footage's own */
   size?: WorkingSize | null;
+  /** edit in passes: the first cut, then the B-roll, then the cards, each waits in Review for Carry on (POST /api/editor/:id/pass) */
+  passes?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -92,8 +96,61 @@ export interface EditStyleCopy {
   name: string;
   notes: string;
   pace: Pace;
+  /** the animation style the edit's cards are made in (its id); absent = no cards */
+  animation?: string;
   /** the skill the style named, by id: its text is read when the script step runs; absent = none */
   skill?: string;
+  /** edit in passes (api/editor/passes.ts); absent = the whole chain at once */
+  passes?: true;
+}
+
+/**
+ * Animation styles: a collection the AI makes an edit's cards from. A short brief in the person's own words,
+ * inspirations they dropped in, and stills of cards they liked. It holds no rules, no tokens and no drawing code.
+ *
+ * Routes (api/editor/animation-styles.ts, inside /api/editor):
+ *   GET    /api/editor/animation-styles                     → AnimationStylesView
+ *   POST   /api/editor/animation-styles                     { name, brief? } → AnimationStyle
+ *   PUT    /api/editor/animation-styles/:id                 { name?, brief? } → AnimationStyle
+ *   DELETE /api/editor/animation-styles/:id                 → { ok: true }
+ *   POST   /api/editor/animation-styles/:id/pictures        multipart, `file` once or more → AnimationStyle (each one an inspiration)
+ *   GET    /api/editor/animation-styles/:id/pictures/:pid   the picture (JPEG)
+ *   DELETE /api/editor/animation-styles/:id/pictures/:pid   → AnimationStyle
+ */
+
+/** How many animation styles one account keeps. */
+export const MAX_ANIMATION_STYLES = 20;
+/** The brief is the only text of a style an AI reads (the card step), so this is the most a style adds to a prompt. */
+export const ANIMATION_BRIEF_MAX = 600;
+/** Stills of cards the person liked: the oldest goes when one more arrives. */
+export const MAX_MADE = 12;
+/** Pictures the person dropped in: one more than this is refused. */
+export const MAX_INSPIRATIONS = 12;
+/** A picture is kept as a JPEG no longer than this on its long side, and no bigger than this. */
+export const PICTURE_MAX_SIDE = 1024;
+export const PICTURE_MAX_BYTES = 300_000;
+
+export interface StylePicture {
+  id: string;
+  /** `made`: a still of a card this account's Mac drew and the person liked. `inspiration`: a picture they added. */
+  kind: "made" | "inspiration";
+  at: number;
+}
+
+export interface AnimationStyle {
+  id: string;
+  name: string;
+  /** the look, in the person's own words */
+  brief: string;
+  pictures: StylePicture[];
+  /** where it was installed from; absent for a style the person made. Only a style without it makes cards. */
+  from?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AnimationStylesView {
+  styles: AnimationStyle[];
 }
 
 /**

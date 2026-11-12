@@ -137,7 +137,7 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     expect((await tool(t.token, "editor_style_save", { id, size: "footage" })).value).toMatchObject({ id, size: "footage" });
     expect((await styleOf(id)).size).toBeNull();
     expect((await styleOf(id)).notes).toBe("Cut it fast with no pauses, and keep the bloopers in");
-    expect(await tool(t.token, "editor_style_save", { id })).toMatchObject({ error: true, text: "Nothing to change: give name, versions, target_s, pace, punch, size or notes." });
+    expect(await tool(t.token, "editor_style_save", { id })).toMatchObject({ error: true, text: "Nothing to change: give name, versions, target_s, pace, punch, passes, size or notes." });
     expect(await tool(t.token, "editor_style_save", { notes: "Cut it fast with no pauses" })).toMatchObject({ error: true, text: "Give the new style a name." });
     expect(await tool(t.token, "editor_style_save", { id: "nope", versions: 2 })).toMatchObject({ error: true, text: `No style has that id or name. The user's styles: Tiny faster (${id}).` });
     expect(await tool(t.token, "editor_style_save", { id, pace: "slow" })).toMatchObject({ error: true, text: "pace is one of tight, natural" });
