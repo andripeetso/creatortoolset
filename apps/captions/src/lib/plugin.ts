@@ -5,6 +5,7 @@ import type { PluginGateId } from "@contracts/tools";
 import { canUse, type Me } from "./auth";
 import type { ReviewAsset, ReviewVersion } from "./review";
 import type { reviewApi } from "./review";
+import type { Still } from "./grade-look";
 
 // Browser half of a plug-in (plugins/<id>/web.tsx). Core code imports this file and never the generated
 // registry (src/plugins.gen.ts), so the registry can import plug-ins without an import cycle.
@@ -186,6 +187,26 @@ export interface ReviewActionSlot {
   onRun: (ctx: ReviewSlotContext) => void | Promise<void>;
 }
 
+/** The AI edit a Review version previews (ReviewVersion.edit). */
+export type ReviewEditRef = { project: string; draft: string };
+
+/**
+ * What a plug-in adds to Review's timeline editor (components/ReviewEdits.tsx), which every install has on a version
+ * with a timeline. All optional; the first plug-in that gives one is used.
+ * - `clipSrc`: a planned card's clip (TimelineItem.clip) plays in the card from this URL.
+ * - `camera`: on an AI edit, the whole camera frame shown under Reframe (a video URL), once it is there; Reframe is
+ *   offered only where this is set. Rejects with a message the panel shows.
+ * - `look`: on an AI edit, the Color panel's full-quality frame and clip of a shot (frame `at`).
+ */
+export interface ReviewTimelineSlot {
+  clipSrc?: (clip: number) => string;
+  camera?: (edit: ReviewEditRef, signal: AbortSignal) => Promise<string>;
+  look?: {
+    still: (edit: ReviewEditRef, key: string, at: number, signal?: AbortSignal) => Promise<Still>;
+    clip: (edit: ReviewEditRef, key: string, at: number, signal?: AbortSignal) => Promise<string>;
+  };
+}
+
 /**
  * A product site a plug-in serves on its own hosts, signed in or not, in place of the app (the hosted front page, its
  * download and legal pages). `claims` says which pages the site takes; any other page is the app as usual.
@@ -214,7 +235,7 @@ export interface WebPlugin {
   replaces?: PluginReplacements;
   itemActions?: Partial<Record<ItemKind, PluginItemAction[]>>;
   // Review: panels under the header and toolbar buttons, for the version on screen (ReviewAssetPage).
-  review?: { panels?: ReviewPanelSlot[]; actions?: ReviewActionSlot[] };
+  review?: { panels?: ReviewPanelSlot[]; actions?: ReviewActionSlot[]; timeline?: ReviewTimelineSlot };
 }
 
 export const defineWebPlugin = (plugin: WebPlugin): WebPlugin => plugin;
@@ -222,6 +243,12 @@ export const defineWebPlugin = (plugin: WebPlugin): WebPlugin => plugin;
 /** A Review slot entry with a React key unique across plug-ins: `<plug-in id>/<slot id or label>`. */
 export type ReviewPanelEntry = ReviewPanelSlot & { key: string; pluginId: string };
 export type ReviewActionEntry = ReviewActionSlot & { key: string; pluginId: string };
+
+/** The timeline editor's plug-in parts: each one from the first plug-in that gives it (see ReviewTimelineSlot). */
+export function reviewTimelineOf(plugins: WebPlugin[]): ReviewTimelineSlot {
+  const pick = <K extends keyof ReviewTimelineSlot>(k: K) => plugins.find((p) => p.review?.timeline?.[k])?.review?.timeline?.[k];
+  return { clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look") };
+}
 
 /** The Review panels and toolbar buttons this account may see: a gated one is left out while its gate is off (canUse). */
 export function reviewSlotsFor(me: Me | null, plugins: WebPlugin[]): { panels: ReviewPanelEntry[]; actions: ReviewActionEntry[] } {

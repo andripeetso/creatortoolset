@@ -8,29 +8,10 @@
  * it on each GET (an EDL needs the video's frame rate, known once processed).
  */
 
-/* The view types below are the subset this parser fills. They mirror
- * contracts/edit-timeline.ts (TimelineView, TimelineItem), which lands with the
- * AI Editor contract; replace these with that import when it is ported. */
-export interface TimelineItem {
-  key: string;
-  track: string;
-  rec: number;
-  len: number;
-  label: string;
-  detail?: string;
-}
+import type { TimelineItem, TimelineView } from "./edit-timeline";
 
-export interface TimelineView {
-  name: string;
-  fps: number;
-  duration: number;
-  width: number;
-  height: number;
-  tracks: { id: string; name: string; items: TimelineItem[] }[];
-  markers: { frame: number; name: string; color?: string }[];
-  words: { t: string; rs: number; re: number }[];
-  flags: { rec: number; len?: number; check: string; what: string }[];
-}
+// the view this parser fills (a subset: no framing, grades or media room), the one Review's timeline draws
+export type { TimelineItem, TimelineView };
 
 export const TIMELINE_ACCEPT = ".otio,.xml,.fcpxml,.edl";
 export const isTimelineFile = (name: string) => /\.(otio|xml|fcpxml|edl)$/i.test(name);
