@@ -59,8 +59,18 @@ utimesSync(path.join(dataDir, "clips/old-note/meta.json"), (now - 20 * DAY) / 10
 
 const { sweepUserContent, deleteUserContent } = await import("./retention");
 
-it("keeps a plain user's files 14 days, team's 28, admin's always, deleted accounts' not at all", async () => {
+it("with no age limit, only a deleted account's files go", async () => {
   await sweepUserContent();
+  expect(has("projects/gone-new")).toBe(false);
+  expect(has("projects/plain-old")).toBe(true);
+  expect(has("projects/team-old")).toBe(true);
+  expect(has(`review/${PLAIN_VIDEO}`)).toBe(true);
+});
+
+it("CONTENT_EXPIRES=1: keeps a plain user's files 14 days, team's 28, admin's always, deleted accounts' not at all", async () => {
+  process.env.CONTENT_EXPIRES = "1";
+  await sweepUserContent();
+  delete process.env.CONTENT_EXPIRES;
   expect(has("projects/plain-old")).toBe(false);
   expect(has("projects/team-old")).toBe(false);
   expect(has("enhance/team-old")).toBe(false);

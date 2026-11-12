@@ -6,11 +6,12 @@ import { env } from "./lib/env";
 import { adminCount, findUser } from "./users";
 
 /**
- * How long accounts' files stay, so other people's media never fills the server: Caption Studio projects (originals
- * included), Review videos and their folders, Audio Enhancer sessions, Video Notes and guides are deleted for good once
- * they haven't changed for 14 days (plain `user`) or 28 days (team). Admins keep theirs. Deleting an account deletes
- * everything it owned right away, and anything still owned by an account that no longer exists goes on the next sweep.
- * Video Notes (clips) are shared links: they stay until their account is deleted.
+ * What happens to accounts' files. Each account keeps its own work and clears it itself (Settings → Storage lists what
+ * it keeps, api/kept.ts): nothing is deleted for its age. Deleting an account deletes everything it owned right away,
+ * and anything still owned by an account that no longer exists goes on the next sweep.
+ * A server that wants an age limit sets CONTENT_EXPIRES=1: then Caption Studio projects (originals included), Review
+ * videos and their folders, Audio Enhancer sessions and guides that haven't changed for 14 days (plain `user`) or
+ * 28 days (team) are deleted for good. Admins keep theirs; Video Notes (clips) are shared links and stay.
  * Exports expire on their own after EXPORTS_KEEP_HOURS (api/exports.ts).
  */
 export const KEEP_DAYS = { user: 14, team: 28 } as const;
@@ -23,7 +24,7 @@ export function retentionRule(now = Date.now()): Expired {
     if (!owner) return false; // pre-account saves are the admin's
     const user = findUser(owner);
     if (!user) return true;
-    if (user.role === "admin") return false;
+    if (user.role === "admin" || process.env.CONTENT_EXPIRES !== "1") return false;
     return at < now - KEEP_DAYS[user.role] * 86_400_000;
   };
 }

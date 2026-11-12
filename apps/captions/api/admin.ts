@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./lib/env";
 import { secureAttr, type AuthVars } from "./auth";
@@ -8,6 +8,7 @@ import { VIEW_AS } from "./lib/view-as";
 import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./lib/workspaces";
 import { forgetGrants } from "./library/grants";
 import { deleteUserContent } from "./retention";
+import { dirBytes } from "./kept";
 import { clearTries, codeRequired, lockedAnywhere, setCodeRequired } from "./lib/sign-in-code";
 import { isPluginGateId, isRetiredAppId, isTool } from "../contracts/tools";
 import {
@@ -52,20 +53,6 @@ interface AdminProject {
   updatedAt: number;
   duration: number;
   bytes: number;
-}
-
-/** Total size of a directory tree (clips live in subdirectories). */
-async function dirBytes(dir: string): Promise<number> {
-  let total = 0;
-  for (const e of await readdir(dir, { withFileTypes: true })) {
-    try {
-      if (e.isDirectory()) total += await dirBytes(path.join(dir, e.name));
-      else total += (await stat(path.join(dir, e.name))).size;
-    } catch {
-      /* entry vanished mid-scan */
-    }
-  }
-  return total;
 }
 
 async function scanProjectDir(root: string, kind: AdminProject["kind"]): Promise<AdminProject[]> {

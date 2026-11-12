@@ -219,6 +219,20 @@ export async function deleteExportsForProject(
   }
 }
 
+/** How long a finished render stays, in days (Settings → Storage says it). */
+export const EXPORTS_KEEP_DAYS = KEEP_HOURS / 24;
+const finishedOf = (owner: string) => [...jobs.values()].filter((j) => j.owner === owner && j.status !== "queued" && j.status !== "running");
+/** The folders of an account's finished renders (Settings → Storage counts them). */
+export async function finishedExportDirs(owner: string): Promise<string[]> {
+  await loaded;
+  return finishedOf(owner).map((j) => jobDir(j.id));
+}
+/** Empty on Settings → Storage: an account's finished renders go; one still rendering stays. */
+export async function removeFinishedExports(owner: string): Promise<void> {
+  await loaded;
+  for (const job of finishedOf(owner)) await removeJob(job.id);
+}
+
 async function sweepExports(): Promise<void> {
   await loaded;
   const cutoff = Date.now() - KEEP_HOURS * 3600 * 1000;

@@ -145,6 +145,16 @@ export function SlideViewer({
         )}
       </div>
 
+      {ready && (
+        <a
+          href={mediaUrl(post.id, index)}
+          download={`${post.shortcode || post.id}${count > 1 ? `-${index + 1}` : ""}.${(slide.mime || (slide.kind === "video" ? "video/mp4" : "image/jpeg")).split("/")[1]?.replace("jpeg", "jpg") ?? "mp4"}`}
+          className="mt-2 inline-block text-xs text-zinc-400 hover:text-zinc-200"
+        >
+          Save original
+        </a>
+      )}
+
       {count > 1 && (
         <div className="mt-2 grid grid-cols-6 gap-1.5 sm:grid-cols-7">
           {slides.map((s) => {

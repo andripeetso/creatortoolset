@@ -8,12 +8,26 @@ import { devicesSectionsFor, replacementFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section } from "./ui";
 import { AddStorageButton, Storage, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
+import { KeptSection } from "./KeptRows";
 
 /**
  * Settings → Storage: where finished videos, footage and music live (one row each), "Add storage", and for an admin the
- * drives under Advanced. A plug-in's Devices sections come after.
+ * drives under Advanced. A plug-in's Devices sections come after. Every account then sees what it keeps on the server.
  */
 export function FoldersSection() {
+  const me = useAuth((s) => s.me);
+  // a plug-in that owns storage keeps the server's folders, which only admins edit: a member there has its kept files only
+  const pluginStorage = webPlugins.some((p) => !!p.replaces?.storage);
+  if (me && pluginStorage && me.role !== "admin") return <KeptSection />;
+  return (
+    <>
+      <Folders />
+      <KeptSection />
+    </>
+  );
+}
+
+function Folders() {
   const me = useAuth((s) => s.me);
   const hosted = useAuth((s) => s.hosted);
   const providers = useProviders();

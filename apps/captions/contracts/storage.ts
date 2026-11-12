@@ -134,3 +134,22 @@ export interface UploadRelayView {
   active: UploadRelayId;
   relays: Array<{ id: UploadRelayId; label: string; available: boolean }>;
 }
+
+/**
+ * Settings → Storage, "Kept on the server": what one account keeps in the server's data folder, by kind (api/kept.ts).
+ * Each account clears its own: nothing here is deleted for its age (api/retention.ts), except a chat's videos (7 days)
+ * and finished renders (EXPORTS_KEEP_HOURS), which say so with `keepDays`.
+ */
+export const KEPT_KINDS = ["chat-pictures", "chat-videos", "exports", "analyzer", "workshop", "captions", "review", "notes", "enhance"] as const;
+export type KeptKind = (typeof KEPT_KINDS)[number];
+/** The kinds Empty clears: copies no work needs. The rest is the account's work, deleted one by one in its own tool. */
+export const EMPTIED: readonly KeptKind[] = ["chat-pictures", "chat-videos", "exports"];
+export interface KeptRow {
+  kind: KeptKind;
+  bytes: number;
+  items: number;
+  keepDays?: number;
+}
+export interface KeptView {
+  rows: KeptRow[];
+}

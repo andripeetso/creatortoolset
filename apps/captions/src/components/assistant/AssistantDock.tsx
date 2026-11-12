@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, ImageOff, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -879,7 +879,7 @@ export function Message({
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
               <button key={im.id} type="button" onClick={() => setBig(`/api/assistant/images/${encodeURIComponent(im.id)}`)} title={im.name} aria-label={`Show ${im.name}`} className="cursor-zoom-in">
-                <img src={`/api/assistant/images/${encodeURIComponent(im.id)}`} alt={im.name} loading="lazy" className="size-16 rounded-lg border bg-muted object-cover" />
+                <ChatPicture id={im.id} name={im.name} />
               </button>
             ))}
             {m.files?.map((f) => (
@@ -1118,4 +1118,16 @@ function Dots() {
       ))}
     </span>
   );
+}
+
+/** A message's picture; one emptied in Settings → Storage shows as removed. */
+function ChatPicture({ id, name }: { id: string; name: string }) {
+  const [gone, setGone] = useState(false);
+  if (gone)
+    return (
+      <span className="flex size-16 items-center justify-center rounded-lg border bg-muted text-muted-foreground" title={`${name} (removed)`}>
+        <ImageOff className="size-4" aria-label="Picture removed" />
+      </span>
+    );
+  return <img src={`/api/assistant/images/${encodeURIComponent(id)}`} alt={name} loading="lazy" onError={() => setGone(true)} className="size-16 rounded-lg border bg-muted object-cover" />;
 }

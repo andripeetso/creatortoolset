@@ -9,6 +9,7 @@ import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
 import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
+import { keptApp } from "./kept";
 
 /**
  * Settings → Storage (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
@@ -17,6 +18,7 @@ import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./li
  *   POST   /folders   {role, host, path} → use a folder you already have as footage or music (this computer's also go on
  *                                          the Library's watch list, which the Library and the AI Editor read)
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
+ *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
  * Each account has its own list in $DATA_DIR/storage/<user>.json. `host` is a device id this account owns.
  * Nothing here moves a file: the folders are recorded, and each computer finds them by their marker.
  */
@@ -68,6 +70,8 @@ storageApp.use("*", async (c, next) => {
   if (c.get("user").role === "visitor") return c.json({ error: "Not for guests" }, 403);
   return next();
 });
+
+storageApp.route("/kept", keptApp);
 
 /** The server's own disks only on a server run on the owner's computer (CT_LOCAL=1), and only for an admin (Drives is an
  *  admin's Advanced view); a hosted server reports none. The Library's disk is read here too when its computer reports

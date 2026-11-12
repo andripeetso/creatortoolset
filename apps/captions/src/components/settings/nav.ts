@@ -70,11 +70,8 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */
 export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): SettingsEntry[] {
-  // a plug-in that owns storage (replaces.storage) keeps the server's folders, which only admins edit: a member's own
-  // folder list would be read by nothing there, so a member has no Storage page on such a server
-  const pluginStorage = plugins.some((p) => !!p.replaces?.storage);
   const allowed = BUILTIN.filter(
-    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && !(ctx.hosted && s.localOnly) && (ctx.admin || !s.adminOnly) && !(s.id === "folders" && pluginStorage && !ctx.admin),
+    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && !(ctx.hosted && s.localOnly) && (ctx.admin || !s.adminOnly),
   );
   return visibleSettings(settingsWithPlugins(allowed, plugins), { role: ctx.admin ? "admin" : "user" });
 }
