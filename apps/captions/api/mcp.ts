@@ -1046,7 +1046,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const env = MY_KEYS.find((k) => k.env === a.env);
       if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
       // only the name and the reason: any other argument (a value included) is dropped unread
-      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300));
+      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300), jobTurn(auth.get("authorization") ?? undefined) ?? undefined);
       return { status: "asked", note: "The user will type the key into a secure box in the chat. It does not come to you; carry on without it until it's saved." };
     },
     offer_choices: async (a) => {
@@ -1205,7 +1205,7 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
       if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
       // Caption Studio: the card runs while the captions are being made (captions-job.ts ends it, and says so in the chat)
       if (a.to === "captions")
-        return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: r.captioning ? "/captions?view=projects" : String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;
+        return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;
       const kind = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
       const where = { notes: "Video Notes", review: "Review", captions: "Caption Studio" }[kind];
       return r.href

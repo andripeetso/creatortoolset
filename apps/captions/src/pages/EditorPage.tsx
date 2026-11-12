@@ -44,8 +44,9 @@ const STATE_TONE: Record<string, string> = {
   done: "bg-emerald-500/15 text-emerald-500",
   failed: "bg-red-500/15 text-red-500",
   needs_key: "bg-amber-500/15 text-amber-600",
+  stopped: "bg-zinc-500/15 text-zinc-500",
 };
-export const STATE_LABEL: Record<string, string> = { queued: "Queued", running: "Running", done: "Done", failed: "Failed", needs_key: "Needs setup" };
+export const STATE_LABEL: Record<string, string> = { queued: "Queued", running: "Running", done: "Done", failed: "Failed", needs_key: "Needs setup", stopped: "Stopped" };
 
 export function StateBadge({ state }: { state: string }) {
   return <Badge className={cn("border-transparent", STATE_TONE[state])}>{STATE_LABEL[state] ?? state}</Badge>;
@@ -186,7 +187,7 @@ export default function EditorPage() {
                 icon={Clapperboard}
                 name={e.name}
                 meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
-                badge={e.last && <StateBadge state={e.last.state} />}
+                badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 drag={folders.drag(e.id)}
                 actions={folders.folders.length > 0 || folders.open ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
               />
@@ -215,7 +216,7 @@ export default function EditorPage() {
                       {e.last && ` · ${e.last.kind}`}
                     </div>
                   </div>
-                  {e.last && <StateBadge state={e.last.state} />}
+                  {e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 </Link>
                 <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
               </li>

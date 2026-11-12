@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { droppedFiles } from "./draft";
+import { droppedFiles, EMPTY_DRAFT, filesPending } from "./draft";
 
 const file = (name: string) => ({ isFile: true, isDirectory: false, name, file: (ok: (f: File) => void) => ok(new File(["x"], name)) });
 // a folder whose reader hands its entries over in batches of two, then an empty one
@@ -30,5 +30,14 @@ describe("droppedFiles", () => {
     const got = await droppedFiles(drop([dir("Shoot", [file("clip.mov")]), file("notes.mov")]), async () => ["/Users/you/Movies/Shoot"]);
     expect(got).toMatchObject({ folder: false, folders: ["/Users/you/Movies/Shoot"] });
     expect(got.files.map((f) => f.name)).toEqual(["notes.mov"]);
+  });
+});
+
+describe("filesPending", () => {
+  const withFile = (f: Record<string, unknown>) => ({ ...EMPTY_DRAFT, files: [{ key: "k", name: "a.mov", size: 1, pct: 10, ...f }] });
+  it("lets a message go once its video's upload is made, before the video is all in", () => {
+    expect(filesPending(withFile({}))).toBe(true);
+    expect(filesPending(withFile({ id: "u1" }))).toBe(false);
+    expect(filesPending(withFile({ id: "u1", error: "Network" }))).toBe(true);
   });
 });

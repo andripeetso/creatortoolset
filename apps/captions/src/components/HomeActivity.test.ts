@@ -40,6 +40,10 @@ describe("todoRows", () => {
   it("is empty when nothing waits on the account", () => {
     expect(todoRows([edit("e1", null)], [asset("a1", "none")])).toEqual([]);
   });
+
+  it("leaves out an edit whose last step the person stopped", () => {
+    expect(todoRows([edit("e1", { kind: "draft", state: "failed", stopped: true })], [])).toEqual([]);
+  });
 });
 
 const row = (id: string, href: string, more: Partial<ActivityRow> = {}): ActivityRow => ({ id, title: "Media Library", detail: `Row ${id}`, state: "working", href, ...more });
@@ -71,6 +75,40 @@ describe("runningByTile", () => {
     expect(chips["/editor"]).toMatchObject({ text: "2 editing", moving: true });
     expect(chips["/captions?view=projects"]?.text).toBe("1 exporting");
     expect(chips["/workshop"]?.text).toBe("2 writing");
+  });
+
+  it("never counts the menu bar's own rows (a worker with a Start button)", () => {
+    const start = { actions: [{ id: "start", title: "Start", run: "start" as const, label: "com.example.worker" }] };
+    expect(runningByTile([row("e1", "/editor/e1"), row("w", "/editor", start)], 0)["/editor"]?.text).toBe("1 editing");
+  });
+
+  it("counts each tool's running things with its own word, and two kinds of work at one tool as working", () => {
+    const chips = runningByTile(
+      [
+        row("p1", "/instagram/p1", { title: "@tiny" }), row("a1", "/instagram/accounts/a1"), row("i", "/instagram"),
+        row("n1", "/clips/n1"), row("s1", "/enhance/s1"), row("r1", "/review/r1"), row("g1", "/documents"),
+        row("c1", "/captions?view=projects"),
+      ],
+      0,
+    );
+    expect(Object.fromEntries(Object.entries(chips).map(([tile, c]) => [tile, c.text]))).toEqual({
+      "/instagram": "3 reading",
+      "/clips": "1 processing",
+      "/enhance": "1 enhancing",
+      "/review": "1 preparing",
+      "/documents": "1 writing",
+      "/captions?view=projects": "1 captioning",
+    });
+    // the hover names the things
+    expect(chips["/instagram"]?.title.split("\n")[0]).toBe("@tiny");
+    // captions being made and an export at once: one count, one word
+    const both = runningByTile([row("c1", "/captions?view=projects"), row("x", "/captions?project=p")], 0);
+    expect(both["/captions?view=projects"]).toMatchObject({ text: "2 working", moving: true });
+    // a Workshop source being read while a reply is written: one count, one word
+    expect(runningByTile([row("k1", "/workshop")], 1)["/workshop"]).toMatchObject({ text: "2 working", moving: true });
+    expect(runningByTile([row("k1", "/workshop")], 0)["/workshop"]?.text).toBe("1 reading");
+    // a row that is not working (it failed, it ended) gives no chip
+    expect(runningByTile([row("n1", "/clips/n1", { state: "ready" })], 0)).toEqual({});
   });
 
   it("says when work held by a plan's limit carries on, without a spinner, and nothing for a tool with no work", () => {

@@ -355,6 +355,15 @@ const idleWaiters = new Map<string, Set<() => void>>();
 const writeQ = new Map<string, Promise<unknown>>();
 let running = 0;
 
+/** What the Analyzer does for this account right now (posts read, accounts pulled, idea boards written), for Home (api/activity.ts). */
+export const analyzerWork = (username: string) => [
+  ...[...active.values()].filter((m) => m.status === "processing" && jobUsers.get(m.id)?.username === username)
+    .map((m) => ({ id: m.id, kind: "post" as const, name: m.creator.username ? `@${m.creator.username}` : m.shortcode || m.input, waits: m.step === "queued" })),
+  ...[...accountActive.values()].filter((m) => m.status === "processing" && jobUsers.get(`a:${m.id}`)?.username === username)
+    .map((m) => ({ id: m.id, kind: "account" as const, name: `@${m.username}`, waits: m.step === "queued" })),
+  ...[...boardLocks.keys()].filter((k) => k.startsWith(`${username}:`)).map((k) => ({ id: k, kind: "ideas" as const, name: "Ideas", waits: false })),
+];
+
 void mkdir(IG_ROOT, { recursive: true }).catch(() => {});
 void mkdir(ACCOUNTS_ROOT, { recursive: true }).catch(() => {});
 
@@ -2277,8 +2286,9 @@ async function generateIdeaBoard(
   const key = `${user.username}:${projectId ?? ""}`;
   const pending = boardLocks.get(key);
   if (pending) return pending;
-  const run = generateIdeaBoardNow(user, signal, projectId).finally(() => boardLocks.delete(key));
+  const run = generateIdeaBoardNow(user, signal, projectId).finally(() => (boardLocks.delete(key), announceSoon(user.username, "instagram")));
   boardLocks.set(key, run);
+  announceSoon(user.username, "instagram"); // Home's chip (api/activity.ts analyzerWork)
   return run;
 }
 

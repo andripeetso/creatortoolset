@@ -58,9 +58,12 @@ export function pcmToWav(pcm: Float32Array, sampleRate = 16000): Blob {
   return new Blob([buf], { type: "audio/wav" });
 }
 
-/** `name` (the video's file name) labels guest runs in Admin → Guests. */
-export async function transcribeCloud(pcm: Float32Array, name = ""): Promise<Word[]> {
-  const res = await fetch("/api/transcribe", {
+/**
+ * `name` (the video's file name) labels guest runs in Admin → Guests. `project`: the Caption Studio project it is
+ * for, so the server can refuse a run for one it is captioning by itself.
+ */
+export async function transcribeCloud(pcm: Float32Array, name = "", project = ""): Promise<Word[]> {
+  const res = await fetch(`/api/transcribe${project ? `?project=${encodeURIComponent(project)}` : ""}`, {
     method: "POST",
     headers: { "Content-Type": "audio/wav", "X-File-Name": encodeURIComponent(name) },
     body: pcmToWav(pcm),

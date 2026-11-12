@@ -103,10 +103,11 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
   const dir = path.join(editDir(edit.id), "media");
   for (const r of rows.filter((x) => keys.includes(x.id))) {
     const name = names[r.id]!;
-    if (r.storage_kind === "s3") {
+    // a bucket or Bunny zone that signs links: the worker downloads the file itself
+    const at = r.storage_kind === "local" ? null : await blobs.locate(r.source_key, LINK_TTL_S, { download: name });
+    if (at?.kind === "url") {
       out.files[r.id] = `media/${name}`;
-      const at = await blobs.locate(r.source_key, LINK_TTL_S, { download: name });
-      if (at.kind === "url") out.downloads.push({ name, url: at.url });
+      out.downloads.push({ name, url: at.url });
     } else if (r.source_path) {
       out.files[r.id] = r.source_path;
     } else {

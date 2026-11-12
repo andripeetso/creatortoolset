@@ -2,7 +2,7 @@
 // in a browser there is none and the functions answer null.
 
 /** `device`: this Mac's device id on the open server, once paired (null before that). */
-export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null };
+export type ThisMacState = { aiOn: boolean; paired: boolean; problem?: string | null; device?: string | null; linked?: boolean };
 type Bridge = { postMessage: (m: string) => Promise<ThisMacState> };
 
 /** The Mac app's bridge, or undefined in a browser (no window at all in a test). */
@@ -106,6 +106,35 @@ export async function allowOtherDevices(): Promise<string | null> {
   try {
     const s = await bridge.postMessage("access");
     return s.problem ?? null;
+  } catch {
+    return "The Creator Toolset Mac app did not answer. Try again.";
+  }
+}
+
+/**
+ * Whether this Mac is on an account through the connect service: true or false from the Mac app, undefined in a browser
+ * or from an app too old to say (setup then shows no Add this computer).
+ */
+export async function thisMacLinked(): Promise<boolean | undefined> {
+  try {
+    const s = await thisMacBridge()?.postMessage("state");
+    return typeof s?.linked === "boolean" ? s.linked : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Setup's Add this computer: the Mac app opens the site's page with this Mac's code in the browser, waits for the yes and
+ * starts this Mac's tunnel (the Servers menu's Add this Mac to my account…). Resolves to null once it is on the account,
+ * else the problem to show.
+ */
+export async function connectThisMac(): Promise<string | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return "Open Creator Toolset on this Mac to add it.";
+  try {
+    const s = await bridge.postMessage("connect");
+    return s.linked ? null : `This Mac was not added: ${s.problem ?? "try again"}`;
   } catch {
     return "The Creator Toolset Mac app did not answer. Try again.";
   }

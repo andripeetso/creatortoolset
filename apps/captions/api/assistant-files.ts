@@ -4,7 +4,7 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partsStatus, readUploadState, receivePart, startUpload } from "./lib/uploads";
+import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
 import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
@@ -18,7 +18,7 @@ import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contrac
 
 /**
  * Videos and recordings dropped in the assistant's chat (owner, 2026-11-07: "drop in a random screen recording…
- * hey, caption this, put this up"). The dock uploads each one here in parts before the message goes;
+ * hey, caption this, put this up"). The dock uploads each one here in parts, and the message may go before the last one (assistant.ts waits for it);
  * the message names it by id, and the assistant's use_file tool (mcp.ts) hands it to Video Notes, Review or Caption
  * Studio as the same file under a second name (no copy). A file is kept 7 days: what used it keeps its own name for it.
  * $DATA_DIR/assistant/files/<user>/<id>/{file, meta.json} (parts/ while it uploads).
@@ -81,23 +81,58 @@ assistantFilesApp.post("/:id/parts/:partNumber", (c) => {
   return receivePart(c, path.join(dirOf(c.get("user").username, id), "parts"), c.get("user"));
 });
 
-assistantFilesApp.post("/:id/complete", async (c) => {
-  const user = c.get("user").username;
-  const id = c.req.param("id");
-  const done = await readFileMeta(user, id);
-  if (done) return c.json(done);
+/**
+ * The upload of one dropped file joined into its file, once: /complete and a turn waiting on the file (assistant.ts, after
+ * its last part lands) both come here, and a second caller gets the same promise. An error carries the answer's status.
+ */
+const finishing = new Map<string, Promise<AssistantFile | { error: string; status: 400 | 409 }>>();
+export function finishUpload(user: string, id: string): Promise<AssistantFile | { error: string; status: 400 | 409 }> {
+  const key = `${user}/${id}`;
+  const running = finishing.get(key);
+  if (running) return running;
+  const p = (async () => {
+    const done = await readFileMeta(user, id);
+    if (done) return done;
+    const parts = UUID.test(id) ? path.join(dirOf(user, id), "parts") : "";
+    const state = parts ? await readUploadState(parts) : null;
+    if (!state || state.owner !== user) return { error: "No upload in progress", status: 409 as const };
+    try {
+      await assembleParts(parts, fileOf(user, id), state);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e), status: 400 as const };
+    }
+    const meta: AssistantFile = { id, name: state.name, mime: state.mime, size: state.total };
+    await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
+    await rm(parts, { recursive: true, force: true });
+    return meta;
+  })().finally(() => finishing.delete(key));
+  finishing.set(key, p);
+  return p;
+}
+
+/** Whether every part of this account's upload is in (a turn waits on it: the server joins it without waiting for /complete). */
+export async function allPartsIn(user: string, id: string): Promise<boolean> {
   const parts = UUID.test(id) ? path.join(dirOf(user, id), "parts") : "";
   const state = parts ? await readUploadState(parts) : null;
-  if (!state || state.owner !== user) return c.json({ error: "No upload in progress" }, 409);
-  try {
-    await assembleParts(parts, fileOf(user, id), state);
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-  }
-  const meta: AssistantFile = { id, name: state.name, mime: state.mime, size: state.total };
-  await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
-  await rm(parts, { recursive: true, force: true });
-  return c.json(meta);
+  return !!state && state.owner === user && (await receivedParts(parts, state)).length === partCount(state.total, state.partSize);
+}
+
+/**
+ * One of this account's dropped files as a message can take it: done (`file`), still uploading (its name, and when its
+ * last part landed), or null (no such file of theirs).
+ */
+export async function uploadOf(user: string, id: string): Promise<{ file: AssistantFile } | { name: string; at: number } | null> {
+  const file = await readFileMeta(user, id);
+  if (file) return { file };
+  const parts = UUID.test(id) ? path.join(dirOf(user, id), "parts") : "";
+  const state = parts ? await readUploadState(parts) : null;
+  if (!state || state.owner !== user) return null;
+  return { name: state.name, at: (await stat(parts).catch(() => null))?.mtimeMs ?? 0 };
+}
+
+assistantFilesApp.post("/:id/complete", async (c) => {
+  const r = await finishUpload(c.get("user").username, c.req.param("id"));
+  return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 
 const TOOL_OF = { notes: "notes", review: "review", captions: "captions", library: "media" } as const;
@@ -184,15 +219,15 @@ export async function useFile(
     return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
   }
   // Caption Studio: the project is there at once, with its id; its editing copy and its captions are made behind the
-  // answer (captions-job.ts), and the chat says when they are ready. "Open it only then": an open, untouched project
-  // takes the captions when they land (src/lib/persist.ts), but Transcribe pressed on the page meanwhile would be refused
+  // answer (captions-job.ts), and the chat says when they are ready. It can be opened at once: the page shows that
+  // the captions are being made instead of Transcribe, and takes them when they land (src/lib/persist.ts)
   const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file), later: true });
   const project = { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
   const route = captionEngine(user);
   // nothing on this server transcribes for them: said in the route's own words (on the page, their browser still can)
   if ("refused" in route) return { ...project, note: `Not transcribed: ${route.refused}. On the project's page, Transcribe runs in the browser and needs no key.` };
   captionInBackground(user, made.projectId, made.clipId, title, route.engine);
-  return { ...project, captioning: true, note: "Being prepared and transcribed: the chat says when the captions are ready. Open the project only then." };
+  return { ...project, captioning: true, note: "Being prepared and transcribed: the chat says when the captions are ready." };
 }
 
 assistantFilesApp.post("/:id/use", async (c) => {

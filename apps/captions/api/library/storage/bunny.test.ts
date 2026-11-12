@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { blobContract } from "./blob-contract";
 import { bunnyBlobs } from "./bunny";
 
@@ -93,6 +93,36 @@ describe("bunny BlobStore", () => {
     expect(expires - Math.floor(Date.now() / 1000)).toBeGreaterThan(890);
     const want = createHmac("sha256", "tk-test").update(`/libraries/lib_1/v/ver_1/proxy.mp4${expires}`).digest("base64url");
     expect(url.searchParams.get("token")).toBe(`HS256-${want}`);
+  });
+
+  it("signs exactly as a production Bunny signer does (spaces and accents too)", async () => {
+    const blobs = bunnyBlobs({ ...place(), cdnHost: "tinyacrobatics.b-cdn.net", tokenKey: "tk-test" }, path.join(fresh("pinned"), "cache"), { cacheBytes: 0 });
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    try {
+      expect(await blobs.locate("libraries/lib_1/v/ver_1/proxy.mp4", 900)).toEqual({
+        kind: "url",
+        url: "https://tinyacrobatics.b-cdn.net/libraries/lib_1/v/ver_1/proxy.mp4?token=HS256-TPwCKxjbzKlC6q-jaAO-t6uI20KlUDVfrAdrc4WkAeg&expires=1800000900",
+      });
+      expect(await blobs.locate("libraries/lib 1/v/ünï/thumb.jpg", 900)).toEqual({
+        kind: "url",
+        url: "https://tinyacrobatics.b-cdn.net/libraries/lib%201/v/%C3%BCn%C3%AF/thumb.jpg?token=HS256-uMgY1d2dH5GjhPdJPK70OrjbJ1m8yMrZIwvKho7gb54&expires=1800000900",
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("a key with no extension, or a download, comes from this server's copy: the pull zone can't set its type or name", async () => {
+    files.clear();
+    const dir = fresh("unnamed");
+    const blobs = bunnyBlobs({ ...place(), cdnHost: "tinyacrobatics.b-cdn.net", tokenKey: "tk-test" }, path.join(dir, "cache"), { cacheBytes: 0 });
+    const src = path.join(dir, "src.bin");
+    writeFileSync(src, "v");
+    await blobs.put("libraries/lib_1/v/ver_1/source", src);
+    expect((await blobs.locate("libraries/lib_1/v/ver_1/source", 900, { contentType: "video/mp4" })).kind).toBe("path");
+    writeFileSync(src, "v");
+    await blobs.put("libraries/lib_1/v/ver_1/proxy.mp4", src);
+    expect((await blobs.locate("libraries/lib_1/v/ver_1/proxy.mp4", 900, { download: "Roll.mp4" })).kind).toBe("path");
   });
 
   it("without a pull zone, locate gives a local copy path and signs nothing", async () => {

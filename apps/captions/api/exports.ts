@@ -73,6 +73,8 @@ interface JobParams {
   /** burn only: send the render to the owner's Finals when it is done */
   finals?: boolean;
   finalsLabel?: string;
+  /** started from the assistant's chat (the captions_export tool): the chat hears how it ended (tellChat) */
+  chat?: boolean;
 }
 
 interface Job {
@@ -104,12 +106,43 @@ interface Job {
 const canSee = (job: Job, user: SessionUser) =>
   user.role === "admin" || job.owner === user.username;
 
-/** Client-facing shape (params stay server-side). */
-function publicJob(j: Job): Omit<Job, "params"> {
-  const pub: Partial<Job> = { ...j };
+/** Client-facing shape (params stay server-side, but for the project a render was made from). */
+function publicJob(j: Job): Omit<Job, "params"> & { projectId?: string } {
+  const pub: Partial<Job> & { projectId?: string } = { ...j, projectId: j.params.projectId };
   delete pub.params;
   return pub as Omit<Job, "params">;
 }
+
+/** Why a render failed, as one plain sentence: what ffmpeg or the frame browser printed stays in the job, for the log and the page's tray. */
+const FAILURES: Array<[RegExp, string]> = [
+  [/^Source video is not on the server/, "The video is no longer on the server"],
+  [/^Interrupted by a server restart/, "The server restarted while it was rendering, so it has to be exported again"],
+  [/^(Downloading the export browser failed|playwright-chromium is not installed|Caption renderer is missing)/, "The browser that draws the captions could not be started on this server"],
+];
+export const exportFailure = (error = ""): string => FAILURES.find(([known]) => known.test(error))?.[1] ?? "The video could not be rendered";
+
+/**
+ * A render the assistant started (captions_export) has ended: its card ends, and the chat says so once with the
+ * file's link (api/assistant.ts workEnded). A render started on the page says nothing there. `stopped`: someone
+ * cancelled it, so the card ends and nothing is said.
+ */
+async function tellChat(job: Job, stopped = false): Promise<void> {
+  if (!job.params.chat || !job.owner) return;
+  const file = `“${job.filename}”`;
+  const finals = job.finals?.status === "sent" ? " It is in Finals too." : job.finals?.error ? ` It was not put in Finals: ${job.finals.error.replace(/\.$/, "")}.` : "";
+  const why = exportFailure(job.error);
+  const end = stopped
+    ? { status: "failed" as const, detail: "Stopped" }
+    : job.status === "done"
+      ? { status: "done" as const, detail: job.finals?.status === "sent" ? "Ready, and in Finals" : "Ready to download", say: `${file} is ready: [Download it](/api/exports/${job.id}/file).${finals}` }
+      : { status: "failed" as const, detail: why, say: `${file} was not exported: ${why}.` };
+  // loaded here, not at the top: assistant.ts reaches this file through its own imports
+  const { workEnded } = await import("./assistant");
+  const tell = () => workEnded(job.owner!, `export:${job.id}`, end);
+  // a render that fails at once can end before the tool's answer has left its card: told once more
+  if (!tell()) setTimeout(tell, 2000).unref();
+}
+const chatHears = (job: Job, stopped = false) => void tellChat(job, stopped).catch((e: unknown) => console.error("[exports] the chat was not told:", e));
 
 const jobs = new Map<string, Job>();
 const children = new Map<string, ChildProcess>();
@@ -153,6 +186,7 @@ const loaded = (async () => {
         job.error = "Interrupted by a server restart — export again.";
         job.finishedAt = Date.now();
         await persist(job);
+        chatHears(job);
       }
       // jobs persisted before the engine field existed are DOM renders
       if (!job.engine) job.engine = "wysiwyg";
@@ -165,6 +199,8 @@ const loaded = (async () => {
 
 /** Cancel a job if still rendering and remove its files. */
 async function removeJob(id: string): Promise<void> {
+  const job = jobs.get(id);
+  if (job && (job.status === "queued" || job.status === "running")) chatHears(job, true);
   jobs.delete(id); // runJob checks this before writing results
   const qi = queue.indexOf(id);
   if (qi >= 0) queue.splice(qi, 1);
@@ -560,7 +596,9 @@ async function runJob(job: Job): Promise<void> {
           src,
           ...frameInput,
           "-filter_complex",
-          "[0:v][1:v]overlay=0:0:format=auto:eof_action=pass[v]",
+          // sidedata: a clip filmed upright is turned as it is read, and FFmpeg 7.1 still hands its quarter turn on
+          // to the file after a filter graph like this one, so every player turned the finished video a second time
+          "[0:v][1:v]overlay=0:0:format=auto:eof_action=pass,sidedata=mode=delete:type=DISPLAYMATRIX[v]",
           "-map",
           "[v]",
           "-map",
@@ -666,6 +704,7 @@ async function runJob(job: Job): Promise<void> {
     // success only: an error, a cancel and the restart recovery (which marks jobs as failed) do not emit
     emitEvent("export.finished", { id: job.id, owner: job.owner, kind: job.kind, format: job.format, bytes: st.size });
     if (job.params.finals && job.owner) await sendToFinals(job);
+    chatHears(job);
   } catch (e) {
     // cancelled — dir is gone, don't resurrect; a job already done keeps its file
     if (!jobs.has(job.id) || !canMove(EXPORT_MOVES, job.status, "error")) return;
@@ -673,6 +712,8 @@ async function runJob(job: Job): Promise<void> {
     job.error = e instanceof Error ? e.message : String(e);
     job.finishedAt = Date.now();
     await jobPersist(job);
+    if (job.params.chat) console.warn(`[exports] ${job.id} failed: ${job.error}`);
+    chatHears(job);
   }
 }
 
@@ -721,6 +762,8 @@ interface CreateBody {
   fps?: number;
   /** burn only: send the render to the owner's Finals when it is done */
   finals?: boolean;
+  /** burn only: the assistant's tool started it, so the chat is told how it ended */
+  chat?: boolean;
 }
 
 const OVERLAY_FORMATS: Record<string, string> = {
@@ -873,6 +916,7 @@ exportsApp.post("/", async (c) => {
         duration,
         crf: body.crf,
         ...(body.finals ? { finals: true, finalsLabel: base } : {}),
+        ...(body.chat ? { chat: true } : {}),
       },
     };
   } else if (kind === "overlay") {

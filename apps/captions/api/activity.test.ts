@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { ActivityRow, ActivityState } from "./activity";
 import type { SessionUser } from "./users";
@@ -84,7 +84,7 @@ describe("GET /api/activity", () => {
     const res = await app.request("/api/activity");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ id: "tiny:a", title: "Row a", detail: "Tiny", state: "working", href: "/editor" }]);
-  });
+  }, 30_000); // the first call loads every tool's module (appWork), slow on a busy machine
 });
 
 describe("appRows", () => {
@@ -128,6 +128,79 @@ describe("appRows", () => {
       ["next.mp4", "Export · waits its turn", "/captions"],
     ]);
     expect(rows[2]).not.toHaveProperty("progress");
+  });
+
+  it("lists each tool's running work: the thing, the tool and what it does, how far when it is not waiting", () => {
+    const rows = appRows({
+      libraries: [],
+      edits: [],
+      exports: [],
+      analyzer: [
+        { id: "p1", kind: "post", name: "@tinyacrobatics", waits: false },
+        { id: "p2", kind: "post", name: "@tinyacrobatics", waits: true },
+        { id: "a1", kind: "account", name: "@tinyacrobatics", waits: false },
+        { id: "tiny:", kind: "ideas", name: "Ideas", waits: false },
+      ],
+      notes: [{ id: "n1", name: "Tiny walkthrough", progress: 0.4, section: false }, { id: "n2", name: "Older note", progress: undefined, section: true }],
+      enhance: [{ id: "s1", name: "voice.wav", waits: false, progress: 0.3 }, { id: "s2", name: "next.wav", waits: true, progress: 0 }],
+      review: [{ id: "r1/2", assetId: "r1", name: "Tiny cut", progress: 0.5 }],
+      guides: [{ id: "g1", name: "Tiny walkthrough" }],
+      captioning: [{ id: "c1", name: "Tiny talk" }],
+      knowledge: [{ id: "k1", name: "Tiny handbook" }],
+    });
+    expect(rows.map((r) => [r.title, r.detail, r.href, r.progress])).toEqual([
+      ["@tinyacrobatics", "Content Analyzer · reading the post", "/instagram/p1", undefined],
+      ["@tinyacrobatics", "Content Analyzer · waits its turn", "/instagram/p2", undefined],
+      ["@tinyacrobatics", "Content Analyzer · pulling the account", "/instagram/accounts/a1", undefined],
+      ["Ideas", "Content Analyzer · finding ideas", "/instagram", undefined],
+      ["Tiny walkthrough", "Video Notes · making the note", "/clips/n1", 0.4],
+      ["Older note", "Video Notes · writing a section", "/clips/n2", undefined],
+      ["voice.wav", "Audio Enhancer · enhancing", "/enhance/s1", 0.3],
+      ["next.wav", "Audio Enhancer · waits its turn", "/enhance/s2", undefined],
+      ["Tiny cut", "Review · preparing the video", "/review/r1", 0.5],
+      ["Tiny walkthrough", "Guide Builder · writing", "/documents", undefined],
+      ["Tiny talk", "Caption Studio · captioning", "/captions?view=projects", undefined],
+      ["Tiny handbook", "Content Workshop · reading the source", "/workshop", undefined],
+    ]);
+    expect(rows.every((r) => r.state === "working")).toBe(true);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+  });
+});
+
+describe("GET /api/activity", () => {
+  const rowsFor = async (off: string[]) => {
+    const tiny: SessionUser = { ...admin, username: "tiny-activity", role: "user", off };
+    const app = new Hono<any>();
+    app.use("*", async (c, next) => { c.set("user", tiny); await next(); });
+    app.route("/api/activity", activityApp([]));
+    const res = await app.request("/api/activity");
+    expect(res.status).toBe(200);
+    return (await res.json()) as ActivityRow[];
+  };
+
+  it("reads a tool's rows while its gate is on, none when it is off, and a tool that fails to read hides nobody else's", async () => {
+    vi.doMock("./clips", () => ({ notesWork: async () => [{ id: "n1", name: "Tiny walkthrough", progress: 0.5, section: false }] }));
+    vi.doMock("./review", () => ({ reviewWork: async () => { throw new Error("tiny read failed"); } }));
+    const others = ["instagram", "enhance", "guides", "captions", "workshop", "media", "editor"];
+    try {
+      expect((await rowsFor(others)).map((r) => [r.id, r.detail])).toEqual([["notes:n1", "Video Notes · making the note"]]);
+      expect(await rowsFor([...others, "notes"])).toEqual([]);
+    } finally {
+      vi.doUnmock("./clips");
+      vi.doUnmock("./review");
+    }
+  });
+
+  it("counts an Audio Enhancer pass on a plug-in engine's own worker until it is back", async () => {
+    const { enhanceHost, enhancing } = await import("./enhance");
+    const meta = { id: "tiny-away-1", name: "voice.wav", owner: "tiny", hasVideo: false, duration: 1, bytes: 1, status: "queued" as const, remote: { state: "waiting" as const, at: 1 }, progress: 0.05, createdAt: 1, updatedAt: 1 };
+    await enhanceHost.persist(meta);
+    expect(enhancing("tiny")).toEqual([{ id: "tiny-away-1", name: "voice.wav", waits: true, progress: 0.05 }]);
+    expect(enhancing("someone-else")).toEqual([]);
+    await enhanceHost.persist({ ...meta, status: "running", remote: { state: "claimed", at: 2 } });
+    expect(enhancing("tiny")[0]?.waits).toBe(false);
+    await enhanceHost.persist({ ...meta, status: "done", remote: undefined });
+    expect(enhancing("tiny")).toEqual([]);
   });
 });
 

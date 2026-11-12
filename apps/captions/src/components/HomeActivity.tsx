@@ -21,6 +21,9 @@ export interface TodoRow {
   asset?: string;
 }
 
+/** An edit whose last step failed (not one the person stopped) or needs a key: it waits on you. */
+export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.last.stopped) || e.last?.state === "needs_key";
+
 /** What waits on you, from the lists the Home page already reads: videos to review, and edits whose last step failed
  *  or needs a key. Pure, so the rows can be tested without a server. */
 export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[] {
@@ -28,7 +31,7 @@ export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[]
     .filter((a) => a.approval.status === "needs_review")
     .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name} is waiting for your review`, icon: "review", asset: a.id }));
   const edit = edits
-    .filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key")
+    .filter(editWaits)
     .map((e): TodoRow => {
       const needsKey = e.last?.state === "needs_key";
       return {
@@ -82,10 +85,14 @@ export function useTodoLists(me: Me | null) {
 const loadActivity = () =>
   fetch("/api/activity").then((r) => (r.ok ? (r.json() as Promise<ActivityRow[]>) : Promise.reject(new Error(`Request failed (${r.status})`))));
 
-/** GET /api/activity: the app's own background work and the plug-ins' rows, live: read again when the Media Library, an
- *  edit or an export changes (lib/sync.ts), never on a timer. An upload's progress is read again when the list opens. */
+/** The topics of the tools whose work has a row (api/activity.ts): a change to one reads the rows again. */
+const WORK_TOPICS = ["library", "editor", "exports", "instagram", "clips", "enhance", "review", "documents", "projects", "workshop"];
+
+/** GET /api/activity: the app's own background work and the plug-ins' rows, live: read again when a tool with running
+ *  work changes (lib/sync.ts), never on a timer, this window's own writes included (a stop pressed here ends a row).
+ *  An upload's progress is read again when the list opens. */
 export function useActivityRows(me: Me | null) {
-  return useCachedLoad<ActivityRow[]>(me ? "/api/activity" : null, loadActivity, { topic: ["library", "editor", "exports"] });
+  return useCachedLoad<ActivityRow[]>(me ? "/api/activity" : null, loadActivity, { topic: WORK_TOPICS, own: true });
 }
 
 /** One line of the list. `reason`: why running work waits (a plan's limit), said once, in place of a spinner. */
@@ -138,27 +145,45 @@ export interface Chip {
   moving: boolean;
 }
 
-/** Each server row's tile, by the page it opens ("/editor/e1" → the AI Editor's tile). */
+/** Each server row's tile and its word, by the page it opens ("/editor/e1" → the AI Editor's tile); the first line that
+ *  matches takes the row, so a longer page comes before the one it starts with. */
 const TILE: [string, string, string][] = [
   ["/library", "/library", ""],
   ["/editor", "/editor", "editing"],
+  ["/captions?view=projects", "/captions?view=projects", "captioning"],
   ["/captions", "/captions?view=projects", "exporting"],
+  ["/instagram", "/instagram", "reading"],
+  ["/clips", "/clips", "processing"],
+  ["/enhance", "/enhance", "enhancing"],
+  ["/review", "/review", "preparing"],
+  ["/documents", "/documents", "writing"],
+  ["/workshop", "/workshop", "reading"],
 ];
+const lineOf = (href: string) => TILE.find(([p]) => href === p || href.startsWith(`${p}/`) || href.startsWith(`${p}?`));
 
 /**
  * Home's tiles, by their page: the Media Library says how far it is ("45%"), or when the plan's limit lets it carry on
- * ("until 5pm"); the AI Editor and Caption Studio how many edits and exports run; the Workshop how many replies are being
- * written. Pure.
+ * ("until 5pm"); the other tools how many things run there and one word ("2 editing", "1 reading"), two kinds of work at
+ * one tool "2 working"; the Workshop how many replies are being written. The hover lists what runs. Pure.
  */
 export function runningByTile(server: ActivityRow[], writing: number): Record<string, Chip> {
   const out: Record<string, Chip> = {};
-  if (writing) out["/workshop"] = { text: `${writing} writing`, title: `${writing} writing`, moving: true };
-  for (const [prefix, tile, verb] of TILE) {
-    const rows = server.filter((r) => r.state === "working" && (r.href === prefix || r.href.startsWith(`${prefix}/`) || r.href.startsWith(`${prefix}?`)));
+  const counts: Record<string, number> = {};
+  const count = (tile: string, n: number, verb: string, title: string, moving: boolean) => {
+    const before = out[tile];
+    counts[tile] = (counts[tile] ?? 0) + n;
+    out[tile] = { text: `${counts[tile]} ${before ? "working" : verb}`, title: before ? `${before.title}\n${title}` : title, moving: moving || !!before?.moving };
+  };
+  if (writing) count("/workshop", writing, "writing", `${writing} writing`, true);
+  for (const line of TILE) {
+    const [, tile, verb] = line;
+    // a row with buttons is the menu bar's own (a worker's Start), left out here as in the list
+    const rows = server.filter((r) => r.state === "working" && !r.actions?.length && lineOf(r.href) === line);
     if (!rows.length) continue;
     const moving = rows.filter((r) => !r.reason);
-    const title = rows.map((r) => r.reason ?? r.detail).join("\n");
-    if (verb) out[tile] = { text: `${rows.length} ${verb}`, title, moving: moving.length > 0 };
+    // the hover: what each thing is (the Media Library's one row says how far it is)
+    const title = rows.map((r) => r.reason ?? (verb ? r.title : r.detail)).join("\n");
+    if (verb) count(tile, rows.length, verb, title, moving.length > 0);
     else if (moving.length) {
       // the stage furthest behind: a folder still being taken in at 92% while its clips are prepared at 39% says 39%
       const far = Math.min(...moving.map((r) => r.progress ?? 1));
