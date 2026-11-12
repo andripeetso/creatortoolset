@@ -11,7 +11,7 @@ import { findUser, newAiKey } from "./users";
  * OAuth for the MCP server (/api/mcp), so an AI app (ChatGPT, Claude) connects by signing in instead of pasting a key.
  * The app registers itself (POST /api/oauth/register), sends the person to /oauth/authorize (sign in, then Allow), and
  * swaps the code for a token (POST /api/oauth/token, PKCE S256). The token is a named Full key (users.ts newAiKey): it
- * opens what a Full key does, shows under Settings → Headless access with the app's name, and Disconnect there ends it.
+ * opens what a Full key does, shows under Settings → Headless access with the app's name, and Remove there ends it.
  * Pasted keys keep working beside it. Only on a server with accounts (APP_SECRET); without one /api/mcp is open anyway.
  *
  * A client id carries what it was registered with (name, redirect links, auth method), signed with APP_SECRET, so
@@ -100,6 +100,9 @@ oauthApp.get("/.well-known/openai-apps-challenge", (c) =>
   process.env.OPENAI_APPS_CHALLENGE ? c.text(process.env.OPENAI_APPS_CHALLENGE.trim()) : c.json({ error: "Not Found" }, 404),
 );
 
+/** The AI apps Settings → Headless access has a row for, by where they come back to: their key then has that row's name. */
+const KNOWN: Record<string, string> = { "chatgpt.com": "ChatGPT", "chat.openai.com": "ChatGPT", "claude.ai": "Claude", "claude.com": "Claude" };
+
 oauthApp.post("/api/oauth/register", async (c) => {
   const b = (await c.req.json().catch(() => null)) as { redirect_uris?: unknown; client_name?: unknown; token_endpoint_auth_method?: unknown } | null;
   const uris = Array.isArray(b?.redirect_uris) ? b.redirect_uris : [];
@@ -107,7 +110,7 @@ oauthApp.post("/api/oauth/register", async (c) => {
     return c.json({ error: "invalid_redirect_uri", error_description: "redirect_uris: 1 to 5 https links (http only on localhost)" }, 400);
   }
   const m: Client["m"] = b?.token_endpoint_auth_method === "client_secret_post" || b?.token_endpoint_auth_method === "client_secret_basic" ? b.token_endpoint_auth_method : "none";
-  const name = (typeof b?.client_name === "string" && b.client_name.trim().slice(0, 60)) || new URL(uris[0] as string).hostname;
+  const name = KNOWN[new URL(uris[0] as string).hostname] ?? ((typeof b?.client_name === "string" && b.client_name.trim().slice(0, 60)) || new URL(uris[0] as string).hostname);
   const id = sign("client", { n: name, r: uris, m } satisfies Client);
   return c.json(
     {
@@ -163,7 +166,7 @@ oauthApp.get("/oauth/authorize", (c) => {
     c,
     `<h1>Connect ${esc(client.n)}?</h1>
 <p><b>${esc(client.n)}</b> (${esc(host)}) will use Creator Toolset as <b>${esc(me.name ?? me.username)}</b>, like a Full access key.</p>
-<p>Disconnect it any time in Settings → Headless access.</p>
+<p>Remove it any time in Settings → Headless access.</p>
 <form method="post" action="/oauth/authorize"><input type="hidden" name="ask" value="${esc(ask)}"><button name="do" value="deny">Cancel</button><button name="do" value="allow" autofocus>Allow</button></form>`,
   );
 });
@@ -217,6 +220,6 @@ oauthApp.post("/api/oauth/token", async (c) => {
     createHash("sha256").update(verifier).digest("base64url") === hit.challenge;
   const user = proved ? findUser(hit.username) : null;
   if (!user) return refuse("invalid_grant");
-  // ponytail: a key that never expires, so no refresh tokens; Disconnect in Settings ends it
-  return c.json({ access_token: newAiKey(user, client.n).key, token_type: "Bearer" });
+  // ponytail: a key that never expires, so no refresh tokens; Remove in Settings ends it
+  return c.json({ access_token: newAiKey(user, client.n, true).key, token_type: "Bearer" });
 });

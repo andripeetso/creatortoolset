@@ -19,6 +19,16 @@ export const APPS: Record<AiApp, { name: string; logo?: string; after: string }>
   other: { name: "Another app", after: "Add it as an MCP server in that app." },
 };
 
+/**
+ * The AI apps that connect over the web: the person adds this server's address in the app, signs in here and presses
+ * Allow (api/oauth.ts names their key after the app). Only a server the internet reaches, over https.
+ */
+export const WEB_APPS = [
+  { name: "ChatGPT", logo: "codex", open: "https://chatgpt.com/#settings/Connectors" },
+  { name: "Claude", logo: "claude", open: "https://claude.ai/settings/connectors" },
+] as const;
+const onTheWeb = () => typeof window !== "undefined" && window.location.protocol === "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
 const NAME = "creator-toolset";
 
 /** What to paste into Terminal for one AI app: it adds this server to that app, with the key in it. Pure, so it is tested. */
@@ -90,12 +100,13 @@ export function OwnAiSection() {
 
   const here = local?.local ? connectableRows(local) : [];
   // the apps with a row of their own above are not listed again under Installed in
-  const rowed = local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name);
+  const web = onTheWeb() ? WEB_APPS : [];
+  const rowed = [...(local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name)), ...web.map((a) => a.name)];
   const listed = (keys ?? []).filter((k) => !rowed.includes(k.name));
 
   return (
     <>
-      <Section id="connect-ai" title="Use Creator Toolset from Claude Code or Codex">
+      <Section id="connect-ai" title={web.length ? "Use Creator Toolset from your AI" : "Use Creator Toolset from Claude Code or Codex"}>
         <p className="px-0.5 text-sm text-muted-foreground">
           Install it in your AI app once. From then on it can find your clips, start edits and work in your Workshop projects, as you, without this window open.
         </p>
@@ -106,12 +117,18 @@ export function OwnAiSection() {
             {here.map((r) => (
               <LocalAppRow key={r.id} row={r} aiKey={keys.find((k) => k.name === r.name)} onDone={load} onDisconnect={disconnect} />
             ))}
+            {web.map((a) => (
+              <WebAppRow key={a.name} app={a} aiKey={newest(keys, a.name)} onDisconnect={disconnect} />
+            ))}
             <OtherAppRow onMade={load} />
           </Card>
         ) : (
           <Card>
             {REMOTE_APPS.map((a) => (
               <RemoteAppRow key={a} app={a} aiKey={keys.find((k) => k.name === APPS[a].name)} onDone={load} onDisconnect={disconnect} />
+            ))}
+            {web.map((a) => (
+              <WebAppRow key={a.name} app={a} aiKey={newest(keys, a.name)} onDisconnect={disconnect} />
             ))}
             <OtherAppRow onMade={load} />
           </Card>
@@ -230,6 +247,43 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
         ) : step === "connect" ? (
           button("connect", true)
         ) : null
+      }
+    />
+  );
+}
+
+const newest = (keys: AiKeyInfo[], name: string) => keys.filter((k) => k.name === name).sort((a, b) => b.at - a.at)[0];
+
+/**
+ * ChatGPT or Claude: Install copies this server's address and opens the app's connector settings, where the person
+ * adds it and signs in here. The row says Installed once the app has its key.
+ */
+function WebAppRow({ app, aiKey, onDisconnect }: { app: (typeof WEB_APPS)[number]; aiKey?: AiKeyInfo; onDisconnect: (id: string) => Promise<unknown> }) {
+  const [opened, setOpened] = useState(false);
+  const install = () => {
+    const url = `${window.location.origin}/api/mcp`;
+    window.open(app.open, "_blank", "noopener");
+    void navigator.clipboard.writeText(url).then(
+      () => setOpened(true),
+      () => saveFailed(`Couldn't copy it. The address is ${url}`),
+    );
+  };
+  return (
+    <ListRow
+      icon={<ProviderLogo driver={app.logo} className="size-4" />}
+      title={app.name}
+      subtitle={aiKey ? usedText(aiKey) : opened ? `Address copied. Add it in ${app.name} as a connector, then sign in.` : undefined}
+      actions={
+        aiKey ? (
+          <>
+            <InUse>Installed</InUse>
+            <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
+          </>
+        ) : (
+          <Button size="sm" variant={opened ? "outline" : "default"} onClick={install}>
+            {opened ? "Open again" : "Install"}
+          </Button>
+        )
       }
     />
   );

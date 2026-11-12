@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "oauth-"));
 process.env.APP_SECRET = "oauth-test-secret";
 
-const { createUser, findUser, newApiKey } = await import("./users");
+const { createUser, findUser, newAiKey, newApiKey } = await import("./users");
 const { mintJobToken } = await import("./auth");
 const app = (await import("./boot")).default;
 const { LABELLED } = await import("./mcp");
@@ -126,6 +126,28 @@ describe("OAuth for the MCP server", () => {
     const basic = Buffer.from(`${encodeURIComponent(reg.client_id)}:${encodeURIComponent(reg.client_secret)}`).toString("base64");
     expect((await token({ code: b.code, code_verifier: b.verifier }, { authorization: `Basic ${basic}` })).status).toBe(200);
   });
+});
+
+it("names a known app's key after its Settings row, and connecting again replaces the key", async () => {
+  const reg = (await (await register({ client_name: "openai-mcp", redirect_uris: [REDIRECT.replace("chat.example.com", "chatgpt.com")] })).json()) as { client_id: string; client_name: string };
+  expect(reg.client_name).toBe("ChatGPT");
+  const once = async () => {
+    const verifier = randomBytes(32).toString("base64url");
+    const q = new URLSearchParams({ response_type: "code", client_id: reg.client_id, redirect_uri: "https://chatgpt.com/oauth/callback", code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" });
+    const ask = /name="ask" value="([^"]+)"/.exec(await (await app.request(`/oauth/authorize?${q}`, { headers: { cookie } })).text())![1]!;
+    const r = await app.request("/oauth/authorize", { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ask, do: "allow" }) });
+    const code = new URL(r.headers.get("location")!).searchParams.get("code")!;
+    const t = await app.request("/api/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, client_id: reg.client_id, code_verifier: verifier }) });
+    return ((await t.json()) as { access_token: string }).access_token;
+  };
+  // a key Install made, under the name an app could claim for itself, is left alone
+  const installed = newAiKey(findUser("oauthowner")!, "ChatGPT").key;
+  const first = await once();
+  const second = await once();
+  expect(findUser("oauthowner")!.aiKeys!.filter((k) => k.name === "ChatGPT" && k.oauth)).toHaveLength(1);
+  expect((await mcp(`Bearer ${first}`)).status).toBe(401);
+  expect((await mcp(`Bearer ${second}`)).status).toBe(200);
+  expect((await mcp(`Bearer ${installed}`)).status).toBe(200);
 });
 
 describe("MCP tool labels", () => {

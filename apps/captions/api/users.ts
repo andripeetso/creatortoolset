@@ -354,15 +354,19 @@ export interface AiKey {
   at: number;
   last4: string;
   usedAt?: number;
+  /** made by an AI app's sign-in (api/oauth.ts), not by Install: a name it chose itself never touches Install's keys */
+  oauth?: true;
 }
 
 /** A new Full key for one AI app (`name` is what the page lists, e.g. "Claude Code"); shown once, stored hashed. */
-export function newAiKey(user: UserRecord, name: string): { id: string; key: string } {
+export function newAiKey(user: UserRecord, name: string, oauth = false): { id: string; key: string } {
   const key = `ctk_${randomBytes(24).toString("hex")}`;
   const id = randomBytes(6).toString("hex");
-  // a key of the same name that was never used is one whose command was not run (asked for twice): it goes
-  const kept = (user.aiKeys ?? []).filter((k) => k.name !== name.trim() || k.usedAt);
-  user.aiKeys = [...kept, { id, name: name.trim().slice(0, 60) || "AI app", hash: sha256(key), at: Date.now(), last4: key.slice(-4) }];
+  const same = (k: AiKey) => k.name === name.trim() && !!k.oauth === oauth;
+  // Install: a key of the same name that was never used is one whose command was not run (asked for twice), it goes.
+  // A sign-in: connecting the app again replaces its key, so no old one stays working out of sight.
+  const kept = (user.aiKeys ?? []).filter((k) => !same(k) || (!oauth && k.usedAt));
+  user.aiKeys = [...kept, { id, name: name.trim().slice(0, 60) || "AI app", hash: sha256(key), at: Date.now(), last4: key.slice(-4), ...(oauth ? { oauth: true as const } : {}) }];
   persist();
   return { id, key };
 }
