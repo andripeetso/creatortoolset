@@ -407,6 +407,32 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tint) 45%, transparent), 0 0 24px -8px color-mix(in srgb, var(--tint) 55%, transparent); }
 }
 
+/* Home's stop between Plan and Make (components/HomeProduction.tsx): In production, the scripts that wait on you
+   away from the app. One number, --stop, opens it: 0 shut, 1 open (the stop says which: data-open). Its width and its
+   fade follow the number, and so does the room it takes (120px). That room comes from the last stage: what stands
+   between the stop and that stage slides over and the last stage starts later, so Plan and Make are exactly as wide
+   with it as without. Only where the row has its full width (from 1192px of room); below that the count stays over
+   the arrow (.stop-count). */
+@property --stop {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+.stop-box { display: none; }
+.home-hub .stop-row:has(.stop-box[data-open]) { --stop: 1; }
+@container hub (min-width: 1192px) {
+  .home-hub .stop-row { transition: --stop 420ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .home-hub .stop-count { display: none; }
+  /* the link keeps its 80px in the row's sums (the margin gives back what the stop adds) and reaches over what follows */
+  .home-hub .stop-link { flex-direction: row; gap: 0; padding: 0; align-self: stretch; width: calc(5rem + var(--stop) * 120px); margin-right: calc(var(--stop) * -120px); }
+  .home-hub .stop-box { display: flex; align-items: center; align-self: stretch; overflow: hidden; width: calc(var(--stop) * 176px); opacity: var(--stop); }
+  .home-hub .stop-after { translate: calc(var(--stop) * 120px) 0; }
+  .home-hub .stop-last { margin-left: calc(var(--stop) * 120px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-hub .stop-row { transition: none; }
+}
+
 /* Home's welcome after setup (components/HomeIntro.tsx). .home-hub carries data-intro = the beat it is on:
    hello (the name) > pipeline (its line alone) > stages (Plan, Make, Distribute pop up, a line drawn between) >
    tools (each stage opens into its box, the tools pop in, then Extras) > connect > all.

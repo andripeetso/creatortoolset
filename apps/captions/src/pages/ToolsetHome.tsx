@@ -9,6 +9,7 @@ import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { editWaits, HomeActivity, useRunning, useTodoLists, type Chip } from "@/components/HomeActivity";
 import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/HomeIntro";
+import { plural, ProductionCount, ProductionStop } from "@/components/HomeProduction";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
@@ -203,6 +204,10 @@ export default function ToolsetHome() {
       nodes: [...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))],
     }))
     .filter((b) => b.nodes.length > 0);
+  // In production, the stop between Plan and Make (components/HomeProduction.tsx), sits on the arrow into Make. What
+  // comes after it moves over, and the last box gives the room (index.css .stop-box)
+  const make = showCounts ? boxes.findIndex((b) => b.g.id === "make") : -1;
+  const stopAt = make > 0 ? make : Infinity;
   const boxColumns = ["", "hub:grid-cols-1", "hub:grid-cols-[1fr_auto_1fr]", "hub:grid-cols-[1fr_auto_1fr_auto_1fr]"][boxes.length] ?? "";
   const extraTiles = known ? [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))] : [];
 
@@ -263,19 +268,23 @@ export default function ToolsetHome() {
         )}
 
         {/* the boxed groups (Plan, Make, Distribute) in a row with arrows between, then Extras: quieter, a centred label */}
-        <div className={`flex flex-col gap-1.5 hub:grid ${boxColumns} hub:gap-2`}>
+        <div className={`stop-row flex flex-col gap-1.5 hub:grid ${boxColumns} hub:gap-2`}>
           {boxes.map(({ g, nodes }, i) => (
             <Fragment key={g.id}>
               {i > 0 && (
-                <div style={{ "--i": i } as CSSProperties} className="intro-link relative flex items-center justify-center gap-2 self-center hub:w-20 hub:flex-col hub:gap-1 hub:px-2">
-                  {showCounts && i === 1 && <Between />}
+                <div
+                  style={{ "--i": i } as CSSProperties}
+                  className={`intro-link relative flex items-center justify-center gap-2 self-center hub:w-20 hub:flex-col hub:gap-1 hub:px-2 ${i === stopAt ? "stop-link" : i > stopAt ? "stop-after" : ""}`}
+                >
+                  {i === stopAt && <ProductionCount />}
                   <ArrowRight className="intro-arrow h-4 w-4 shrink-0 rotate-90 text-zinc-600 hub:rotate-0" />
+                  {i === stopAt && <ProductionStop shut={!!beat} />}
                   {beat && <i className="intro-line" />}
                 </div>
               )}
               <section
                 style={{ "--i": i } as CSSProperties}
-                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]?.moving) ? "home-busy" : ""} ${boxLook(g.id)}`}
+                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]?.moving) ? "home-busy" : ""} ${boxLook(g.id)} ${i < stopAt ? "" : i === boxes.length - 1 ? "stop-last" : "stop-after"}`}
               >
                 {/* the welcome only: the stage before it is a box (its number, name and what you do there), and the frame that opens into the box */}
                 {beat && (
@@ -391,30 +400,5 @@ function Badge({ n, means }: { n: number; means?: (n: number) => string }) {
     >
       {n > 99 ? "99+" : n}
     </span>
-  );
-}
-
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
-
-/**
- * Over the arrow into Make: what waits to enter it. Workshop sessions Ready (script done) or In Production (being
- * filmed), by the kind of their first piece ("4 reels / 3 carousels"). Nothing when there's none.
- */
-function Between() {
-  const rows = useSessionSummaries() ?? [];
-  const waiting = rows.filter((r) => r.status === "ready" || r.status === "production");
-  const reels = waiting.filter((r) => r.kinds[0] === "reel").length;
-  const carousels = waiting.filter((r) => r.kinds[0] === "carousel").length;
-  const other = waiting.length - reels - carousels;
-  const parts = [reels && plural(reels, "reel"), carousels && plural(carousels, "carousel"), other && `${other} other`].filter(Boolean) as string[];
-  if (!parts.length) return null;
-  return (
-    <Link
-      to="/workshop"
-      title="Workshop sessions Ready or In Production: scripts waiting to be filmed and made"
-      className="intro-late flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] transition-[filter] duration-200 hover:brightness-125 hub-narrow:flex-row hub-narrow:gap-1.5"
-    >
-      {parts.map((p) => <span key={p}>{p}</span>)}
-    </Link>
   );
 }
