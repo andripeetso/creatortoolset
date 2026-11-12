@@ -334,7 +334,7 @@ final class Shell: NSObject, ObservableObject {
     func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
         guard let server else { return nil }
         if on && !server.hasOwnerPassword {
-            guard let password, password.count >= 6 else { return "Use at least 6 characters." }
+            guard let password, password.count >= 10 else { return "Use at least 10 characters." }
             guard let current = server.ownerPasswords().last else { return "The Keychain did not give the server's secret." }
             // the Keychain first: a password the server took but the app lost would lock the window out
             guard server.saveOwnerPassword(password) else { return "The Keychain did not keep the password." }
