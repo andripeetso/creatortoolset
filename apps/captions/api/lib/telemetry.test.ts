@@ -54,7 +54,7 @@ describe("usage and crash reports", () => {
     expect(sent[1].body).toMatchObject({ opened: 0, tools: {} });
   });
 
-  it("a crash goes at once with the home folder hidden, and its repeats within the hour fold into the next count", () => {
+  it("a crash goes at once with its file paths taken out, and its repeats within the hour fold into the next count", () => {
     process.env.CT_CHANNEL = "release";
     const e = new Error(`no file ${homedir()}/Movies/a.mov`);
     t.reportCrash("server", e, 1_000);
@@ -62,7 +62,7 @@ describe("usage and crash reports", () => {
     t.reportCrash("server", e, 3_000);
     expect(sent).toHaveLength(1);
     expect(sent[0].url).toBe("https://ping.test/api/ping/crash");
-    expect(sent[0].body).toMatchObject({ where: "server", message: "no file ~/Movies/a.mov", count: 1 });
+    expect(sent[0].body).toMatchObject({ where: "server", message: "no file <path>", count: 1 });
     expect(String(sent[0].body.stack)).not.toContain(homedir());
     t.reportCrash("server", e, 3_700_000);
     expect(sent[1].body.count).toBe(3);
@@ -86,5 +86,19 @@ describe("usage and crash reports", () => {
     const member = `Bearer ${newApiKey(createUser("bo", "password1"), "full")}`;
     const r = await app.request("/api/telemetry", { method: "PUT", headers: { authorization: member, "content-type": "application/json" }, body: '{"on":false}' });
     expect(r.status).toBe(403);
+  });
+});
+
+describe("scrub", () => {
+  it("keeps the app's own code paths and takes out every other path, quoted ones with spaces too", () => {
+    const { scrub } = t;
+    const appDir = path.resolve(path.dirname(process.argv[1] ?? "."), "..");
+    expect(scrub(`at run (${appDir}/dist/boot.js:12:3)`)).toBe("at run (<app>/dist/boot.js:12:3)");
+    expect(scrub("ENOENT: no such file or directory, open '/Volumes/My Drive/Tiny Acrobat handstand.mov'")).toBe(
+      "ENOENT: no such file or directory, open '<path>'",
+    );
+    expect(scrub(`cannot read ${homedir()}/Movies/Tia.mov now`)).toBe("cannot read <path> now");
+    expect(scrub("GET /api/files/Tia.mov failed at http://127.0.0.1:3000/x")).toBe("GET <path> failed at http://127.0.0.1:3000/x");
+    expect(scrub("Expected a number")).toBe("Expected a number");
   });
 });

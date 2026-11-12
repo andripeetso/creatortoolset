@@ -88,7 +88,15 @@ export async function sendCheckin(): Promise<void> {
 
 /* ---- crashes ---- */
 
-const scrub = (s: string) => s.split(homedir()).join("~");
+// The app's own folder (dist/boot.js's parent) stays as <app>: its paths say where in the code an error happened. Any other
+// path is the person's (a video's file name can be a name) and goes, quoted ones first since they can hold spaces.
+const appDir = path.resolve(path.dirname(process.argv[1] ?? "."), "..");
+export const scrub = (s: string) =>
+  s
+    .split(appDir).join("<app>")
+    .replace(/(['"`])(?:~|\/|[A-Za-z]:\\)[^'"`]*\1/g, "$1<path>$1")
+    .replace(/(^|[\s(=:])(?:~|\/(?!\/))[^\s'"`(),]*/g, "$1<path>")
+    .split(homedir()).join("~");
 const lastSent = new Map<string, number>();
 const repeats = new Map<string, number>();
 let hourFrom = 0;
