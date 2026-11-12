@@ -311,6 +311,8 @@ function cadenceRequestId(): string {
 }
 
 export function enqueueTranscription(ids: string[]): void {
+  // the server is making this project's captions: a run here would be a second one, and its save would be refused
+  if (useStudio.getState().serverCaptioning) return;
   for (const id of ids) {
     if (!transcribeQueue.includes(id)) transcribeQueue.push(id);
   }
@@ -572,6 +574,11 @@ interface StudioState {
   serverRevision: number;
   /** A newer server revision exists; local work is preserved as a conflict. */
   serverConflict: boolean;
+  /**
+   * The server itself is making this project's captions (a video sent from the assistant's chat,
+   * api/captions-job.ts): nothing transcribes here meanwhile, and the captions come in when they are saved.
+   */
+  serverCaptioning: boolean;
   /**
    * A fresh import shows the project-setup dialog (name + how to caption)
    * while the upload runs in the background. Cleared on dismiss, on
@@ -1274,7 +1281,7 @@ async function transcribeClip(id: string): Promise<boolean> {
       console.log(
         `[cap-transcribe] cloud request pcmBytes=${pcm.byteLength} wavBytes~${44 + pcm.length * 2}`,
       );
-      words = await transcribeCloud(pcm, clip.name);
+      words = await transcribeCloud(pcm, clip.name, s.projectId ?? "");
       console.log(`[cap-transcribe] cloud returned words=${words.length}`);
     } else {
       // English-only whisper models reject an explicit language/task;
@@ -1477,6 +1484,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   serverProjectReady: false,
   serverRevision: 0,
   serverConflict: false,
+  serverCaptioning: false,
   setupPending: false,
   saveState: "idle",
 
@@ -1535,6 +1543,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       serverProjectReady: false,
       serverRevision: 0,
       serverConflict: false,
+      serverCaptioning: false,
       autoCadence: storedAutoCadence(),
       script: "",
       scriptFixes: {},
@@ -2982,6 +2991,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       serverProjectReady: false,
       serverRevision: 0,
       serverConflict: false,
+      serverCaptioning: false,
       autoCadence: storedAutoCadence(),
       script: "",
       scriptFixes: {},

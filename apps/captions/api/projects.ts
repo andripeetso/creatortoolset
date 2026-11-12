@@ -265,7 +265,10 @@ function probeAudioCodec(file: string): Promise<string> {
   });
 }
 
-/** Probe a video's pixel dimensions (0×0 when ffprobe fails). */
+/**
+ * Probe a video's size as it is shown (0×0 when ffprobe fails). A phone clip filmed upright is stored lying down
+ * with a quarter turn beside it: every player, the editing copy and a render show it turned, so that is its size.
+ */
 function probeDims(file: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
     const p = spawn(
@@ -276,9 +279,9 @@ function probeDims(file: string): Promise<{ width: number; height: number }> {
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height",
+        "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
         "-of",
-        "csv=p=0",
+        "default=noprint_wrappers=1",
         file,
         // a wedged file must never hang a project load — kill after 10s
       ],
@@ -287,8 +290,11 @@ function probeDims(file: string): Promise<{ width: number; height: number }> {
     let out = "";
     p.stdout.on("data", (d) => (out += d.toString()));
     p.on("close", () => {
-      const [w, h] = out.trim().split(",").map(Number);
-      resolve({ width: w || 0, height: h || 0 });
+      const n = (key: string) => Number(new RegExp(`^${key}=(-?[\\d.]+)`, "m").exec(out)?.[1]) || 0;
+      const [w, h] = [n("width"), n("height")];
+      // the turn is side data on today's ffprobe, a `rotate` tag on older ones
+      const turned = Math.abs(n("rotation") || n("TAG:rotate")) % 180 === 90;
+      resolve(turned ? { width: h, height: w } : { width: w, height: h });
     });
     p.on("error", () => resolve({ width: 0, height: 0 }));
   });
