@@ -127,7 +127,7 @@ struct RootView: View {
                 await workshop.load()
             }
             .onAppear(perform: place)
-            .onReceive(UploadEngine.shared.store.$items.map { $0.filter { $0.state == .failed }.count }.removeDuplicates()) {
+            .onReceive(UploadEngine.shared.store.$items.map { $0.filter { $0.state == .failed && $0.edit == nil }.count }.removeDuplicates()) {
                 failed = $0
             }
         }
