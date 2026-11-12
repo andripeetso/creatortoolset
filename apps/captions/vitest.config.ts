@@ -64,7 +64,7 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: "unit", include, exclude: [...configDefaults.exclude, ...ffmpegFiles] },
+        test: { name: "unit", include, exclude: [...configDefaults.exclude, ...ffmpegFiles, "editor-steps/adobe-enhance/**"] },   // its own config (its README)
       },
       {
         extends: true,

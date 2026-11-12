@@ -99,7 +99,9 @@ own key). AI with no provider and no own key fails with a message saying what to
 API-key path at all.
 
 **No scraping.** Social platforms come only from the official logins and the user's own Apify key, never from
-their web pages, logged in or not; no browser automation of other services. The one page fetch is Knowledge → Add a
+their web pages, logged in or not; no browser automation of other services. The one exception is a team plug-in the
+person downloads and switches on, which signs in with that person's own account: Adobe Enhance Speech
+(`apps/captions/editor-steps/adobe-enhance`). The one page fetch is Knowledge → Add a
 link (`webPageText` in `api/lib/workshop/source-files.ts`): the single public page the user pasted, no login, no
 crawling, inside addresses and social platforms refused.
 

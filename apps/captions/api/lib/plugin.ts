@@ -22,8 +22,9 @@ export interface ServerPlugin {
   // The name Community lists it under (the id when absent) and one short line on what it does.
   name?: string;
   about?: string;
-  // What it is, in a few words ("AI Editor step"), on a plug-in the team bundles with the app (editor-steps/<folder>):
-  // Community → Plug-ins shows it on the row. Read as text from plugin.ts like name and about, so write it right after them.
+  // The Home tool it adds to ("editor", "enhance": a HomeTile id, contracts/tools.ts), on a plug-in the team bundles with
+  // the app (editor-steps/<folder>): Community → Plug-ins lists it under that tool's name, and one that names no tool under
+  // Other. Read as text from plugin.ts like name and about, so write it right after them.
   kind?: string;
   // Environment variable names this plug-in reads. The generator warns about any that are not set.
   env?: string[];
