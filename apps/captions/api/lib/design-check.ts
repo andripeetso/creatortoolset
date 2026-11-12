@@ -20,6 +20,11 @@ const num = (v: unknown, lo: number, hi: number, or: number): number => (typeof 
 const color = (v: unknown, or: string): string => (typeof v === "string" && COLOR.test(v.trim()) ? v.trim().toLowerCase() : or);
 const oneOf = <T extends string>(v: unknown, all: readonly T[], or: T): T => (all.includes(v as T) ? (v as T) : or);
 const round = (n: number) => Math.round(n * 100) / 100;
+/** A name as one line of at most the limit's letters, or "" when there is none. */
+const named = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, DESIGN_LIMITS.layerName) : "");
+
+/** A span moved inside 0..page, and cut to the page when it is longer than it. */
+const inside = (at: number, size: number, page: number): [number, number] => (size >= page ? [0, page] : [Math.min(Math.max(at, 0), page - size), size]);
 
 /** Letters and digits only, lower case, one space between words: what "the same words" is compared on. */
 export const plainWords = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -64,6 +69,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     h: round(num(raw.h, 1, 2 * r.h, r.h / 4)),
     ...(typeof raw.rotate === "number" && raw.rotate ? { rotate: round(num(raw.rotate, -360, 360, 0)) } : {}),
     ...(typeof raw.opacity === "number" && raw.opacity < 1 ? { opacity: round(num(raw.opacity, 0, 1, 1)) } : {}),
+    ...(named(raw.name) ? { name: named(raw.name) } : {}),
+    ...(raw.hidden === true ? { hidden: true } : {}),
+    ...(raw.locked === true ? { locked: true } : {}),
   };
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
   if (raw.type === "text") {
@@ -74,9 +82,19 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       return null;
     }
     const outline = line(raw.outline, 60);
+    // an AI's words are on the page whole: a box that sticks out of it is moved in (a model often gives centred
+    // words their middle as x), since a word cut off at the page's edge is a word dropped. A turned box is left alone,
+    // and so is whatever the person places by hand.
+    let place = box;
+    if (own !== undefined && !box.rotate) {
+      const [x, w] = inside(box.x, box.w, r.w);
+      const [y, h] = inside(box.y, box.h, r.h);
+      if (x !== box.x || y !== box.y || w !== box.w || h !== box.h) say("words that stuck out of the page were moved onto it");
+      place = { ...box, x, y, w, h };
+    }
     return {
       type: "text",
-      ...box,
+      ...place,
       text,
       font: oneOf(raw.font, FONTS, DEFAULT_FONT),
       size: round(num(raw.size, 8, 600, 48)),
@@ -134,7 +152,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       ids.add(id);
       layers.push({ ...clean, id } as Layer);
     }
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, background: color(p.background, "#ffffff"), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), background: color(p.background, "#ffffff"), layers });
   }
   return { pages, notes };
 }

@@ -39,6 +39,13 @@ describe("drawing a design", () => {
     expect([local.x, local.y]).toEqual([50, 30]);
   });
 
+  it("lets a press through a hidden or a locked layer to what is under it", () => {
+    const page = (over: Partial<Layer>): DesignPage => ({ id: "p1", background: "#ffffff", layers: [box({ id: "under" }), box({ id: "over", ...over })] });
+    expect(layerAt(page({}), 150, 150)?.id).toBe("over");
+    expect(layerAt(page({ hidden: true }), 150, 150)?.id).toBe("under");
+    expect(layerAt(page({ locked: true }), 150, 150)?.id).toBe("under");
+  });
+
   it("names what a layer needs loaded: a picture's id, a drawing's markup as a picture address, nothing for words and shapes", () => {
     expect(sourceOf({ id: "i", type: "image", picture: "ab12cd34.jpg", fit: "cover", x: 0, y: 0, w: 1, h: 1 })).toBe("ab12cd34.jpg");
     expect(sourceOf(box())).toBeNull();

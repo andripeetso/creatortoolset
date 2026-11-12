@@ -112,7 +112,7 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
 export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded): void {
   ctx.fillStyle = page.background;
   ctx.fillRect(0, 0, w, h);
-  for (const l of page.layers) drawLayer(ctx, l, loaded);
+  for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded);
 }
 
 /** A point of the page in a layer's own box (its rotation taken out): inside when 0..w and 0..h. */
@@ -125,5 +125,5 @@ export function inLayer(l: Layer, px: number, py: number): { x: number; y: numbe
   return { x, y, inside: x >= 0 && x <= l.w && y >= 0 && y <= l.h };
 }
 
-/** The topmost layer under a point of the page, or null. */
-export const layerAt = (page: DesignPage, px: number, py: number): Layer | null => [...page.layers].reverse().find((l) => inLayer(l, px, py).inside) ?? null;
+/** The topmost layer under a point of the page that a press can pick (a hidden or locked one lets it through), or null. */
+export const layerAt = (page: DesignPage, px: number, py: number): Layer | null => [...page.layers].reverse().find((l) => !l.hidden && !l.locked && inLayer(l, px, py).inside) ?? null;

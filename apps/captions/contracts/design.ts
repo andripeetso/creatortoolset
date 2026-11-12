@@ -30,7 +30,7 @@ export type DesignFormat = (typeof DESIGN_FORMATS)[number]["id"];
 export type DesignKind = (typeof DESIGN_FORMATS)[number]["kind"];
 export const formatOf = (id: unknown) => DESIGN_FORMATS.find((f) => f.id === id) ?? null;
 
-export const DESIGN_LIMITS = { pages: 20, layers: 40, text: 600, svg: 20_000, name: 120, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
+export const DESIGN_LIMITS = { pages: 20, layers: 40, text: 600, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
@@ -42,6 +42,12 @@ interface Box {
   rotate?: number;
   /** 0 to 1; absent = 1 */
   opacity?: number;
+  /** what the layers list calls it; absent = what it is (a text's own words, "Rectangle", "Picture", "Drawing") */
+  name?: string;
+  /** kept in the design, but not drawn and not in the saved PNG */
+  hidden?: boolean;
+  /** drawn, but a press on the page goes through it: it is picked in the layers list only */
+  locked?: boolean;
 }
 
 export interface TextLayer extends Box {
@@ -91,6 +97,8 @@ export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer;
 
 export interface DesignPage {
   id: string;
+  /** what the canvas and the layers list call it; absent = "Page 3" by its place */
+  name?: string;
   /** "#rrggbb" */
   background: string;
   /** bottom first: a later layer is drawn over an earlier one */

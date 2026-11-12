@@ -88,6 +88,30 @@ describe("a drawing is shapes only", () => {
   });
 });
 
+describe("what the layers list keeps", () => {
+  it("a layer's name, hidden and locked and a page's name are saved; anything else in their place is not", () => {
+    const shape = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10 };
+    const { pages } = cleanPages([{ name: "  The  hook ", background: "#ffffff", layers: [{ ...shape, id: "a", name: " Red\n box ", hidden: true, locked: true }, { ...shape, id: "b", name: 7, hidden: "yes", locked: 1 }, { ...shape, id: "c", name: "x".repeat(200) }] }, { name: "", layers: [] }], { w: 100, h: 100, pictures: [] });
+    expect(pages[0]!.name).toBe("The hook");
+    expect(pages[0]!.layers[0]).toEqual({ ...shape, id: "a", name: "Red box", hidden: true, locked: true });
+    expect(pages[0]!.layers[1]).toEqual({ ...shape, id: "b" });
+    expect(pages[0]!.layers[2]!.name).toHaveLength(60);
+    expect("name" in pages[1]!).toBe(false);
+  });
+});
+
+describe("an AI's words on the page", () => {
+  it("a box of words that sticks out of the page is moved onto it, with a note; the person's own stay where they put them", () => {
+    const text = { type: "text", text: "Roll it", font: "Inter", size: 40, color: "#111111", align: "center", x: 540, y: -30, w: 1000, h: 200 };
+    const ai = cleanPages([{ layers: [text, { ...text, x: -5, y: 100, w: 2000 }, { ...text, x: 900, y: 100, rotate: 20 }] }], { w: 1080, h: 1350, pictures: [], words: ["Roll it"] });
+    expect(ai.pages[0]!.layers.map((l) => [l.x, l.y, l.w, l.h])).toEqual([[80, 0, 1000, 200], [0, 100, 1080, 200], [900, 100, 1000, 200]]);
+    expect(ai.notes).toEqual(["Page 1: words that stuck out of the page were moved onto it", "Page 1: words that stuck out of the page were moved onto it"]);
+    const own = cleanPages([{ layers: [text] }], { w: 1080, h: 1350, pictures: [] });
+    expect(own.pages[0]!.layers[0]).toMatchObject({ x: 540, y: -30, w: 1000 });
+    expect(own.notes).toEqual([]);
+  });
+});
+
 describe("the pages a design starts with", () => {
   it("a carousel: each slide's first part as its headline and the rest under it, picture tokens taken out, every word kept", () => {
     const slides = ["Roll the mat out\n\nOn a soft floor, with you next to it.\n\n![a mat](pic:abc12345)", "Try it today"];

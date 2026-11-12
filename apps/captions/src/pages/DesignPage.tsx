@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
-import { ArrowDown, ArrowUp, Circle, Copy, Download, ImagePlus, Loader2, Plus, Redo2, Sparkles, Square, Trash2, Type, Undo2 } from "lucide-react";
-import type { Design, DesignPage as Page, Layer } from "@contracts/design";
+import { Circle, Download, Hand, ImagePlus, Loader2, MousePointer2, Redo2, Sparkles, Square, Type, Undo2 } from "lucide-react";
+import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import type { AnimationStyle } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
-import { PageThumb, Stage } from "@/components/design/Stage";
+import { Inspector } from "@/components/design/Inspector";
+import { LayersPanel } from "@/components/design/LayersPanel";
+import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/components/ui/context-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
+import { alignLayers, boundsOf, distribute, fitView, freshIds, layerName, pageLeft, pageName, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
 import { addPicture, designWithAi, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
@@ -19,18 +22,40 @@ import { FONT_OPTIONS, fontWeightFor } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * The designer (/design/:id): a design's pages (contracts/design.ts) on a stage the person works on by hand, with the
- * panel for what is picked beside it. "Design with AI" has their AI design every page in the look they pick; what
- * comes back is layers like any others, so every part of it can be moved, resized, restyled or taken out. Each page is
- * saved as a PNG of exactly the design's size. Every change is a step ⌘Z takes back, and is saved a moment later.
+ * The designer (/design/:id): a canvas with every page of the design on it, the layers list on its left, the
+ * properties of what is picked on its right and the tools under it. "Design with AI" has the person's AI design every
+ * page in the look they pick; what comes back is layers like any others, so every part of it can be moved, resized,
+ * restyled or taken out. Each page is saved as a PNG of exactly the design's size. Every change is a step ⌘Z takes
+ * back, and is saved a moment later.
+ *
+ * Keys: V move, H hand, R rectangle, O ellipse, T text · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
+ * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
+ * lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const SELECT = "h-9 w-full rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm";
 const fileName = (name: string) => name.replace(/[^\p{L}\p{N} _-]+/gu, " ").trim().replace(/\s+/g, "-") || "design";
-const nextId = (page: Page) => {
-  for (let n = page.layers.length + 1; ; n++) if (!page.layers.some((l) => l.id === `l${n}`)) return `l${n}`;
-};
+/** The keys are someone else's: a field being typed in, or an open menu or popover. */
+const typingIn = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || !!t.closest('[role="menu"],[role="dialog"]'));
+
+const TOOLS: [Tool, string, string, typeof Hand][] = [
+  ["move", "Move", "V", MousePointer2],
+  ["hand", "Hand", "H", Hand],
+  ["rect", "Rectangle", "R", Square],
+  ["ellipse", "Ellipse", "O", Circle],
+  ["text", "Text", "T", Type],
+];
+const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyR: "rect", KeyO: "ellipse", KeyT: "text" };
+const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
+const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+const BAR = "border-[#e6e6e6] bg-white text-zinc-900 dark:border-[#444] dark:bg-[#2c2c2c] dark:text-white";
+
+/**
+ * What ⌘C took, for ⌘V. Kept here: a design's layers mean nothing to another program, which gets their names as
+ * text. `wrote`: the computer's clipboard took that text, so a later copy somewhere else is noticed and pasted instead.
+ * ponytail: where the browser keeps the clipboard shut, the layers copied last are pasted until the page is reloaded.
+ */
+let clip: { layers: Layer[]; text: string; wrote: boolean } | null = null;
 
 export default function DesignPage() {
   const { id = "" } = useParams();
@@ -38,8 +63,12 @@ export default function DesignPage() {
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLive] = useState<Page | null>(null);
   const [at, setAt] = useState(0);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [framed, setFramed] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [tool, setTool] = useState<Tool>("move");
+  const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
+  const [pointed, setPointed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<"saved" | "saving" | "unsaved">("saved");
   const [styles, setStyles] = useState<AnimationStyle[]>([]);
@@ -50,7 +79,7 @@ export default function DesignPage() {
   const [version, setVersion] = useState(0);
   const loaded = useRef<Loaded>(new Map()).current;
   const frame = useRef<HTMLDivElement>(null);
-  const [room, setRoom] = useState({ w: 800, h: 600 });
+  const [room, setRoom] = useState<{ w: number; h: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -81,8 +110,22 @@ export default function DesignPage() {
     return () => ro.disconnect();
   }, [opened]);
 
+  // opened on its first page, whole
+  const placed = useRef(false);
+  useEffect(() => {
+    if (placed.current || !design || !room) return;
+    placed.current = true;
+    setView(fitView({ x: 0, y: 0, w: design.width, h: design.height }, room));
+  }, [design, room]);
+
   const pages = useMemo(() => hist?.now ?? [], [hist]);
-  const page = live ?? pages[Math.min(at, pages.length - 1)];
+  const k = Math.max(0, Math.min(at, pages.length - 1));
+  /** The page the picked layers are on: as saved (what a change starts from), and as shown (mid-drag). */
+  const base = pages[k];
+  const shown = useMemo(() => (live ? pages.map((p) => (p.id === live.id ? live : p)) : pages), [pages, live]);
+  const page = shown[k];
+  const mine = base ? base.layers.filter((l) => selected.includes(l.id)) : [];
+  const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
 
   // every picture and drawing the pages show, loaded once each
   useEffect(() => {
@@ -112,72 +155,208 @@ export default function DesignPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hist?.now]);
 
-  const change = useCallback((fn: (pages: Page[]) => Page[]) => setHist((h) => (h ? histChange(h, fn) : h)), []);
+  const change = useCallback((fn: (pages: Page[]) => Page[]) => {
+    setLive(null);
+    setHist((h) => (h ? histChange(h, fn) : h));
+  }, []);
   const setPage = useCallback((next: Page) => change((all) => all.map((p) => (p.id === next.id ? next : p))), [change]);
-  const sel = page?.layers.find((l) => l.id === selected) ?? null;
-  const setLayer = (patch: Partial<Layer>) => page && sel && setPage({ ...page, layers: page.layers.map((l) => (l.id === sel.id ? ({ ...l, ...patch } as Layer) : l)) });
-  const addLayer = (l: Record<string, unknown>) => {
-    if (!page || !design) return;
-    const id = nextId(page);
-    setPage({ ...page, layers: [...page.layers, { id, x: Math.round(design.width * 0.2), y: Math.round(design.height * 0.4), w: Math.round(design.width * 0.6), h: Math.round(design.height * 0.2), ...l } as Layer] });
-    setSelected(id);
-  };
-  const removeLayer = () => page && sel && (setPage({ ...page, layers: page.layers.filter((l) => l.id !== sel.id) }), setSelected(null));
-  const order = (by: 1 | -1) => {
-    if (!page || !sel) return;
-    const k = page.layers.findIndex((l) => l.id === sel.id);
-    const to = k + by;
-    if (to < 0 || to >= page.layers.length) return;
-    const layers = [...page.layers];
-    [layers[k], layers[to]] = [layers[to]!, layers[k]!];
-    setPage({ ...page, layers });
-  };
-  const duplicate = () => {
-    if (!page || !sel) return;
-    const id = nextId(page);
-    setPage({ ...page, layers: [...page.layers, { ...sel, id, x: sel.x + 24, y: sel.y + 24 }] });
-    setSelected(id);
+  const pick = useCallback((to: number, ids: string[], frame = false) => {
+    setAt(to);
+    setSelected(ids);
+    setFramed(frame);
+    setError(null);
+  }, []);
+  const step = (back: boolean) => {
+    setLive(null);
+    setHist((h) => (h ? (back ? histUndo(h) : histRedo(h)) : h));
   };
 
-  // ⌘Z, ⇧⌘Z, ⌘D, Delete, the arrows (Shift: ten at a time), Escape
+  /** The saved page with every picked layer through `fn`. */
+  const through = (fn: (l: Layer) => Layer): Page | null => (base ? { ...base, layers: base.layers.map((l) => (selected.includes(l.id) ? fn(l) : l)) } : null);
+  const patch = (fn: (l: Layer) => Layer) => {
+    const next = through(fn);
+    if (next) setPage(next);
+  };
+  const arrange = (next: Layer[]) => base && setPage({ ...base, layers: base.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
+
+  /** New layers on a page, picked; null (and it says why) when the page is full. */
+  const put = (to: number, count: number, make: (ids: string[]) => Layer[]): string[] | null => {
+    const target = pages[to];
+    if (!target || !count) return null;
+    if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A page holds at most ${DESIGN_LIMITS.layers} layers`), null;
+    const ids = freshIds(target, count);
+    setPage({ ...target, layers: [...target.layers, ...make(ids)] });
+    pick(to, ids);
+    return ids;
+  };
+  const textLayer = (id: string, text: string, r: Rect): Layer => ({ id, type: "text", text, font: "Inter", size: Math.round((design?.width ?? 1080) * 0.06), color: "#111111", align: "left", ...r });
+
+  const addPage = (like?: Page) => {
+    if (!base) return;
+    if (pages.length >= DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} pages`);
+    const fresh: Page = { ...(like ?? { background: base.background, layers: [] }), id: `p${Date.now().toString(36)}` };
+    change((all) => [...all.slice(0, k + 1), fresh, ...all.slice(k + 1)]);
+    pick(k + 1, [], true);
+  };
+  const movePage = (from: number, to: number) => {
+    if (from === to) return;
+    change((all) => {
+      const next = [...all];
+      next.splice(to, 0, ...next.splice(from, 1));
+      return next;
+    });
+    pick(to, [], true);
+  };
+  const remove = () => {
+    if (mine.length && base) {
+      setPage({ ...base, layers: base.layers.filter((l) => !selected.includes(l.id)) });
+      setSelected([]);
+    } else if (framed && pages.length > 1) {
+      change((all) => all.filter((_, n) => n !== k));
+      pick(Math.max(0, k - 1), [], true);
+    }
+  };
+  // a copy lies on what it copies, picked: the next drag takes it away
+  const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framed && base ? addPage(base) : undefined);
+  const order = (front: boolean) => {
+    if (!base || !mine.length) return;
+    const rest = base.layers.filter((l) => !selected.includes(l.id));
+    setPage({ ...base, layers: front ? [...rest, ...mine] : [...mine, ...rest] });
+  };
+  const toggle = (flag: "hidden" | "locked") => {
+    const all = mine.every((l) => l[flag]);
+    patch((l) => ({ ...l, [flag]: all ? undefined : true }) as Layer);
+  };
+  const copy = () => {
+    if (!mine.length) return;
+    const taken: NonNullable<typeof clip> = { layers: mine, text: mine.map(layerName).join("\n"), wrote: false };
+    clip = taken;
+    try {
+      void navigator.clipboard?.writeText(taken.text).then(() => void (taken.wrote = true), () => {});
+    } catch {
+      // no clipboard here: the layers are kept all the same
+    }
+  };
+  /** The copied layers onto this page, where they were on theirs. A picture this design does not have stays behind. */
+  const paste = () => {
+    const layers = (clip?.layers ?? []).filter((l) => l.type !== "image" || design?.pictures.includes(l.picture));
+    put(k, layers.length, (ids) => layers.map((l, n) => ({ ...l, id: ids[n]! })));
+  };
+
+  const zoom = (to: "in" | "out" | "fit" | "selection" | number) => {
+    if (!design || !room) return;
+    const one = { x: pageLeft(k, design.width), y: 0, w: design.width, h: design.height };
+    if (to === "fit") return setView(fitView({ ...one, x: 0, w: pageLeft(pages.length - 1, design.width) + design.width }, room));
+    if (to === "selection") {
+      const b = mine.length ? boundsOf(mine) : null;
+      return setView(fitView(b ? { ...b, x: b.x + one.x } : one, room));
+    }
+    setView((v) => zoomAt(v, to === "in" ? v.z * 2 : to === "out" ? v.z / 2 : to, room.w / 2, room.h / 2));
+  };
+
+  const fromComputer = async (files: readonly File[]) => {
+    if (!design || !files.length) return;
+    setError(null);
+    try {
+      const made: { picture: string; w: number; h: number }[] = [];
+      for (const file of files) {
+        const picture = await addPicture(design.id, file);
+        setDesign((d) => (d ? { ...d, pictures: [...d.pictures, picture] } : d));
+        const size = await new Promise<{ w: number; h: number }>((done) => {
+          const img = new Image();
+          img.onload = () => done({ w: img.naturalWidth, h: img.naturalHeight });
+          img.onerror = () => done({ w: 1, h: 1 });
+          img.src = pictureUrl(design.id, picture);
+        });
+        // at most 60 % of the page's width, in the picture's own shape
+        const w = Math.round(Math.min(design.width * 0.6, size.w));
+        made.push({ picture, w, h: Math.round((w * size.h) / size.w) });
+      }
+      put(k, made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round((design.width - m.w) / 2), y: Math.round((design.height - m.h) / 2), w: m.w, h: m.h })));
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
+  const make = (to: number, r: Rect, dragged: boolean) => {
+    if (!design) return;
+    const words = tool === "text";
+    const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? design.width / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? design.width * 0.08 : 100)) };
+    const ids = put(to, 1, ([id]) => [words ? textLayer(id!, "Text", b) : { id: id!, type: "shape", shape: tool === "ellipse" ? "ellipse" : "rect", fill: "#d9d9d9", ...b }]);
+    setTool("move");
+    if (ids && words) setEditing(ids[0]!);
+  };
+
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (typingIn(e.target) || !base || !design) return;
       const mod = e.metaKey || e.ctrlKey;
-      const step = e.shiftKey ? 10 : 1;
-      const move: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
-      const by = move[e.key];
-      const z = mod && e.key.toLowerCase() === "z";
-      const d = mod && e.key.toLowerCase() === "d";
-      const del = !!sel && (e.key === "Delete" || e.key === "Backspace");
-      if (!z && !d && !del && !(sel && (by || e.key === "Escape"))) return;
+      const c = e.code;
+      const has = mine.length > 0;
+      const run = (fn: () => unknown) => (e.preventDefault(), void fn());
+      if (mod) {
+        if (c === "KeyZ") run(() => step(!e.shiftKey));
+        else if (c === "KeyD") run(duplicate);
+        else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
+        else if (c === "KeyC") copy(); // not stopped: words picked in a panel are still the browser's to copy
+        else if (c === "KeyX" && has) run(() => (copy(), remove()));
+        else if (e.shiftKey && c === "KeyH" && has) run(() => toggle("hidden"));
+        else if (e.shiftKey && c === "KeyL" && has) run(() => toggle("locked"));
+        return; // ⌘V is the page's paste event (below); everything else is the browser's
+      }
+      if (e.altKey) return void (has && ALIGN_KEYS[c] && run(() => arrange(alignLayers(mine, ALIGN_KEYS[c]!, { w: design.width, h: design.height }))));
+      if (e.shiftKey && c === "Digit1") return run(() => zoom("fit"));
+      if (e.shiftKey && c === "Digit2") return run(() => zoom("selection"));
+      if (e.shiftKey && c === "Digit0") return run(() => zoom(1));
+      if (e.key === "+" || e.key === "=") return run(() => zoom("in"));
+      if (e.key === "-") return run(() => zoom("out"));
+      if (!e.shiftKey && TOOL_KEYS[c]) return run(() => setTool(TOOL_KEYS[c]!));
+      if (e.key === "Escape") return run(() => (tool !== "move" ? setTool("move") : pick(k, [])));
+      if (e.key === "Delete" || e.key === "Backspace") return run(remove);
+      if (!has) return;
+      const by = ARROWS[e.key];
+      const far = e.shiftKey ? 10 : 1;
+      if (by) run(() => patch((l) => ({ ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
+      else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "text") run(() => setEditing(mine[0]!.id));
+      else if (c === "BracketRight") run(() => order(true));
+      else if (c === "BracketLeft") run(() => order(false));
+      // 1 to 9: 10 % to 90 %; 0: all the way
+      else if (!e.shiftKey && /^Digit\d$/.test(c)) run(() => patch((l) => ({ ...l, opacity: c === "Digit0" ? undefined : Number(c.slice(5)) / 10 })));
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (typingIn(e.target) || !design) return;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      const files = [...(e.clipboardData?.files ?? [])].filter((f) => /^image\/(jpeg|png|webp)$/.test(f.type));
+      if (clip && (!clip.wrote || text === clip.text)) paste();
+      else if (files.length) void fromComputer(files);
+      // words copied somewhere else become a text layer in the middle of the page
+      else if (text.trim()) put(k, 1, ([id]) => [textLayer(id!, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(design.width / 4), y: Math.round(design.height * 0.4), w: Math.round(design.width / 2), h: Math.round(design.height * 0.2) })]);
+      else return;
       e.preventDefault();
-      if (z) setHist((h) => (h ? (e.shiftKey ? histRedo(h) : histUndo(h)) : h));
-      else if (d) duplicate();
-      else if (del) removeLayer();
-      else if (by && sel) setLayer({ x: sel.x + by[0], y: sel.y + by[1] });
-      else setSelected(null);
     };
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", key);
+      document.removeEventListener("paste", onPaste);
+    };
   });
 
-  const scale = useMemo(() => (design ? Math.max(0.05, Math.min((room.w - 48) / design.width, (room.h - 48) / design.height, 1)) : 1), [design, room]);
-
-  const exportPngs = async () => {
+  const exportPngs = async (only?: number) => {
     if (!design) return;
     setError(null);
     try {
       const files: { name: string; data: Uint8Array }[] = [];
-      for (const [k, p] of pages.entries()) {
+      for (const [n, p] of pages.entries()) {
+        if (only !== undefined && n !== only) continue;
         const c = document.createElement("canvas");
         c.width = design.width;
         c.height = design.height;
         drawPage(c.getContext("2d")!, p, design.width, design.height, loaded);
         const blob = await new Promise<Blob | null>((done) => c.toBlob(done, "image/png"));
-        if (!blob) throw new Error(`Page ${k + 1} could not be saved as a picture`);
-        files.push({ name: `${fileName(design.name)}-${String(k + 1).padStart(2, "0")}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
+        if (!blob) throw new Error(`${pageName(p, n)} could not be saved as a picture`);
+        files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
       }
       if (files.length === 1) downloadBlob(files[0]!.name, new Blob([files[0]!.data as BlobPart], { type: "image/png" }));
       else downloadBlob(`${fileName(design.name)}.zip`, zipStored(files));
@@ -197,7 +376,7 @@ export default function DesignPage() {
       const out = await designWithAi(design.id, { look: look || null, notes });
       setDesign(out.design);
       change(() => out.design.pages);
-      setSelected(null);
+      pick(k, []);
       setSaid(out.notes);
     } catch (e) {
       setError(message(e));
@@ -206,29 +385,7 @@ export default function DesignPage() {
     }
   };
 
-  const fromComputer = async (files: FileList | null) => {
-    if (!design || !files?.length) return;
-    setError(null);
-    try {
-      for (const file of [...files]) {
-        const picture = await addPicture(design.id, file);
-        setDesign((d) => (d ? { ...d, pictures: [...d.pictures, picture] } : d));
-        const size = await new Promise<{ w: number; h: number }>((done) => {
-          const img = new Image();
-          img.onload = () => done({ w: img.naturalWidth, h: img.naturalHeight });
-          img.onerror = () => done({ w: 1, h: 1 });
-          img.src = pictureUrl(design.id, picture);
-        });
-        // at most 60 % of the page's width, in the picture's own shape
-        const w = Math.round(Math.min(design.width * 0.6, size.w));
-        addLayer({ type: "image", picture, fit: "cover", w, h: Math.round((w * size.h) / size.w) });
-      }
-    } catch (e) {
-      setError(message(e));
-    }
-  };
-
-  if (!design || !hist || !page) {
+  if (!design || !hist || !base || !page) {
     return (
       <div className="flex min-h-screen flex-col">
         <AppBar tool="Designer" />
@@ -238,18 +395,13 @@ export default function DesignPage() {
   }
 
   const back = design.from && "session" in design.from ? `/workshop/sessions/${design.from.session}` : undefined;
-  const num = (label: string, value: number, set: (n: number) => void, more: { min?: number; max?: number; step?: number } = {}) => (
-    <label className="flex flex-col gap-1 text-xs text-zinc-500">
+  const item = (label: string, keys: string, onSelect: () => void, disabled = false) => (
+    <ContextMenuItem disabled={disabled} onSelect={onSelect}>
       {label}
-      <Input type="number" value={Number.isFinite(value) ? value : 0} {...more} onChange={(e) => e.target.value !== "" && set(Number(e.target.value))} className="h-8 px-2" />
-    </label>
+      {keys && <ContextMenuShortcut>{keys}</ContextMenuShortcut>}
+    </ContextMenuItem>
   );
-  const colour = (label: string, value: string, set: (c: string) => void) => (
-    <label className="flex flex-col gap-1 text-xs text-zinc-500">
-      {label}
-      <input type="color" aria-label={label} value={/^#[0-9a-f]{6}$/i.test(value) ? value : "#000000"} onChange={(e) => set(e.target.value)} className="h-8 w-full cursor-pointer rounded-md border border-zinc-500/30 bg-transparent" />
-    </label>
-  );
+  const none = !mine.length;
 
   return (
     <div className="flex h-screen flex-col">
@@ -257,236 +409,127 @@ export default function DesignPage() {
         <span className="text-xs text-zinc-500" aria-live="polite">
           {saved === "unsaved" ? "Not saved yet" : saved === "saving" ? "Saving" : ""}
         </span>
-        <Button size="icon" variant="ghost" aria-label="Undo" disabled={!hist.past.length} onClick={() => setHist(histUndo(hist))}>
+        <Button size="icon" variant="ghost" aria-label="Undo" disabled={!hist.past.length} onClick={() => step(true)}>
           <Undo2 className="h-4 w-4" />
         </Button>
-        <Button size="icon" variant="ghost" aria-label="Redo" disabled={!hist.future.length} onClick={() => setHist(histRedo(hist))}>
+        <Button size="icon" variant="ghost" aria-label="Redo" disabled={!hist.future.length} onClick={() => step(false)}>
           <Redo2 className="h-4 w-4" />
         </Button>
         <Button size="sm" onClick={() => void exportPngs()}>
           <Download className="h-4 w-4" />
-          {pages.length === 1 ? "Save PNG" : `Save ${pages.length} PNGs`}
+          {pages.length === 1 ? "Export PNG" : `Export ${pages.length} PNGs`}
         </Button>
       </AppBar>
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
 
       <div className="flex min-h-0 flex-1">
-        <nav aria-label="Pages" className="flex w-32 shrink-0 flex-col gap-2 overflow-y-auto border-r border-zinc-500/20 p-3">
-          {pages.map((p, k) => (
-            <button
-              key={p.id}
-              type="button"
-              aria-label={`Page ${k + 1}`}
-              aria-current={k === at}
-              onClick={() => (setAt(k), setSelected(null), setEditing(null))}
-              className={cn("flex flex-col items-center gap-1 rounded-md p-1 text-xs text-zinc-500", k === at ? "bg-violet-500/15 text-violet-300 outline outline-1 outline-violet-500/50" : "hover:bg-zinc-500/10")}
-            >
-              <PageThumb page={k === at ? page : p} width={design.width} height={design.height} loaded={loaded} version={version} />
-              {k + 1}
-            </button>
-          ))}
-          <div className="mt-1 grid grid-cols-2 gap-1">
-            <Button size="icon" variant="outline" aria-label="Add a page" onClick={() => (change((all) => [...all.slice(0, at + 1), { id: `p${Date.now().toString(36)}`, background: page.background, layers: [] }, ...all.slice(at + 1)]), setAt(at + 1))}>
-              <Plus className="h-4 w-4" />
-            </Button>
-            <Button size="icon" variant="outline" aria-label="Copy this page" onClick={() => (change((all) => [...all.slice(0, at + 1), { ...page, id: `p${Date.now().toString(36)}` }, ...all.slice(at + 1)]), setAt(at + 1))}>
-              <Copy className="h-4 w-4" />
-            </Button>
-            <Button size="icon" variant="outline" aria-label="Move this page up" disabled={at === 0} onClick={() => (change((all) => all.map((p, k) => (k === at - 1 ? all[at]! : k === at ? all[at - 1]! : p))), setAt(at - 1))}>
-              <ArrowUp className="h-4 w-4" />
-            </Button>
-            <Button size="icon" variant="outline" aria-label="Move this page down" disabled={at >= pages.length - 1} onClick={() => (change((all) => all.map((p, k) => (k === at + 1 ? all[at]! : k === at ? all[at + 1]! : p))), setAt(at + 1))}>
-              <ArrowDown className="h-4 w-4" />
-            </Button>
-            <Button size="icon" variant="outline" aria-label="Delete this page" disabled={pages.length < 2} className="col-span-2 w-full" onClick={() => (change((all) => all.filter((_, k) => k !== at)), setAt(Math.max(0, at - 1)), setSelected(null))}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        </nav>
+        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addPage()} />
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div role="toolbar" aria-label="Add to the page" className="flex flex-wrap items-center gap-1.5 border-b border-zinc-500/20 px-3 py-2">
-            <Button size="sm" variant="outline" onClick={() => addLayer({ type: "text", text: "Your words", font: "Montserrat ExtraBold", size: Math.round(design.width * 0.07), color: "#111111", align: "left" })}>
-              <Type className="h-4 w-4" />
-              Text
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addLayer({ type: "shape", shape: "rect", fill: "#7c3aed", w: Math.round(design.width * 0.4), h: Math.round(design.width * 0.4) })}>
-              <Square className="h-4 w-4" />
-              Rectangle
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addLayer({ type: "shape", shape: "ellipse", fill: "#f59e0b", w: Math.round(design.width * 0.4), h: Math.round(design.width * 0.4) })}>
-              <Circle className="h-4 w-4" />
-              Ellipse
-            </Button>
-            <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Pictures from this computer" onChange={(e) => (void fromComputer(e.target.files), (e.target.value = ""))} />
-            <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
-              <ImagePlus className="h-4 w-4" />
-              Picture
-            </Button>
-            <span className="ml-auto text-xs text-zinc-500">
-              {design.width} × {design.height} px
-            </span>
-          </div>
-          <div ref={frame} className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-zinc-500/10">
+        <div ref={frame} className="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+          {room && (
             <Stage
-              page={page}
+              pages={shown}
+              at={k}
               width={design.width}
               height={design.height}
-              scale={scale}
+              room={room}
+              view={view}
+              onView={setView}
               loaded={loaded}
               version={version}
               selected={selected}
-              onSelect={setSelected}
+              framed={framed}
+              onPick={pick}
               onLive={setLive}
               onCommit={setPage}
+              tool={tool}
+              onMake={make}
               editing={editing}
               onEdit={setEditing}
+              pointed={pointed}
+              menu={
+                <ContextMenuContent className="w-56">
+                  {item("Copy", "⌘C", copy, none)}
+                  {item("Paste here", "⌘V", paste, !clip)}
+                  {item("Duplicate", "⌘D", duplicate, none && !framed)}
+                  <ContextMenuSeparator />
+                  {item("Bring to front", "]", () => order(true), none)}
+                  {item("Send to back", "[", () => order(false), none)}
+                  <ContextMenuSeparator />
+                  {item(mine.length && mine.every((l) => l.hidden) ? "Show" : "Hide", "⇧⌘H", () => toggle("hidden"), none)}
+                  {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
+                  <ContextMenuSeparator />
+                  {item("Delete", "⌫", remove, none && !(framed && pages.length > 1))}
+                </ContextMenuContent>
+              }
             />
-          </div>
-        </div>
+          )}
 
-        <aside aria-label="Design" className="flex w-72 shrink-0 flex-col gap-4 overflow-y-scroll border-l border-zinc-500/20 p-3">
-          <section aria-label="Design with AI" className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">Design with AI</h2>
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="design-look" className="text-xs text-zinc-500">
-                Look
-              </Label>
-              <select id="design-look" value={look} onChange={(e) => setLook(e.target.value)} className={SELECT}>
-                <option value="">The AI's own</option>
-                {styles.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <Textarea aria-label="What to ask for" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} maxLength={2000} placeholder="Big type, one bright colour, a drawing on the first page." />
-            <Button size="sm" disabled={busy} onClick={() => void aiDesign()}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {busy ? "Designing" : pages.length === 1 ? "Design this page" : `Design all ${pages.length} pages`}
-            </Button>
-            {said.length > 0 && (
-              <ul className="list-disc pl-4 text-xs text-zinc-500">
-                {said.map((n, k) => (
-                  <li key={k}>{n}</li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section aria-label="Page" className="flex flex-col gap-2 border-t border-zinc-500/20 pt-3">
-            <h2 className="text-sm font-semibold">Page {at + 1}</h2>
-            {colour("Background", page.background, (background) => setPage({ ...page, background }))}
-          </section>
-
-          {sel && (
-            <section aria-label="Picked layer" className="flex flex-col gap-2 border-t border-zinc-500/20 pt-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">{sel.type === "text" ? "Text" : sel.type === "image" ? "Picture" : sel.type === "shape" ? "Shape" : "Drawing"}</h2>
-                <div className="flex gap-1">
-                  <Button size="icon" variant="ghost" aria-label="Bring forward" onClick={() => order(1)}>
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" aria-label="Send back" onClick={() => order(-1)}>
-                    <ArrowDown className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" aria-label="Copy" onClick={duplicate}>
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" aria-label="Delete" onClick={removeLayer}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              {sel.type === "text" && (
-                <>
-                  <Textarea aria-label="Words" value={sel.text} rows={3} maxLength={600} onChange={(e) => setLayer({ text: e.target.value })} />
-                  <label className="flex flex-col gap-1 text-xs text-zinc-500">
-                    Font
-                    <select value={sel.font} onChange={(e) => setLayer({ font: e.target.value })} className={SELECT}>
-                      {FONT_OPTIONS.map((f) => (
-                        <option key={f.family} value={f.family}>
-                          {f.label}
+          <div role="toolbar" aria-label="Tools" className={cn("absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border p-1.5 shadow-lg", BAR)}>
+            {TOOLS.map(([t, label, keys, Icon]) => (
+              // the button lets the keys go again, so Space still drags the canvas after a click here
+              <button key={t} type="button" aria-label={label} aria-pressed={tool === t} title={`${label} (${keys})`} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md", tool === t ? "bg-[#0d99ff] text-white" : "hover:bg-zinc-500/15")}>
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
+            <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Pictures from this computer" onChange={(e) => (void fromComputer([...(e.target.files ?? [])]), (e.target.value = ""))} />
+            <button type="button" aria-label="Picture" title="Picture" onClick={(e) => (fileRef.current?.click(), e.currentTarget.blur())} className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-500/15">
+              <ImagePlus className="h-4 w-4" />
+            </button>
+            <span className="mx-1 h-5 w-px bg-[#e6e6e6] dark:bg-[#444]" />
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" aria-label="Design with AI" title="Design with AI" className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium hover:bg-zinc-500/15">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  {busy ? "Designing" : "Design with AI"}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent side="top" align="center" sideOffset={12} className={cn("w-72 p-3", BAR)}>
+                <section aria-label="Design with AI" className="flex flex-col gap-2 text-xs">
+                  <label className="flex flex-col gap-1 text-zinc-500 dark:text-[#b3b3b3]">
+                    Look
+                    <select value={look} onChange={(e) => setLook(e.target.value)} className="h-8 w-full rounded-[5px] bg-[#f5f5f5] px-2 text-zinc-900 outline-none dark:bg-[#383838] dark:text-white">
+                      <option value="">The AI's own</option>
+                      {styles.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
                         </option>
                       ))}
                     </select>
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {num("Size", sel.size, (size) => setLayer({ size }), { min: 8, max: 600 })}
-                    {num("Line height", sel.lineHeight ?? 1.15, (lineHeight) => setLayer({ lineHeight }), { min: 0.8, max: 3, step: 0.05 })}
-                    {colour("Colour", sel.color, (color) => setLayer({ color }))}
-                    <label className="flex flex-col gap-1 text-xs text-zinc-500">
-                      Align
-                      <select value={sel.align} onChange={(e) => setLayer({ align: e.target.value as "left" | "center" | "right" })} className={cn(SELECT, "h-8")}>
-                        <option value="left">Left</option>
-                        <option value="center">Centre</option>
-                        <option value="right">Right</option>
-                      </select>
-                    </label>
-                    <label className="flex flex-col gap-1 text-xs text-zinc-500">
-                      In its box
-                      <select value={sel.valign ?? "top"} onChange={(e) => setLayer({ valign: e.target.value as "top" | "middle" | "bottom" })} className={cn(SELECT, "h-8")}>
-                        <option value="top">Top</option>
-                        <option value="middle">Middle</option>
-                        <option value="bottom">Bottom</option>
-                      </select>
-                    </label>
-                    <label className="flex items-end gap-2 pb-1.5 text-xs text-zinc-500">
-                      <input type="checkbox" checked={!!sel.upper} onChange={(e) => setLayer({ upper: e.target.checked || undefined })} />
-                      Capitals
-                    </label>
-                    {num("Outline", sel.outline?.width ?? 0, (width) => setLayer({ outline: width > 0 ? { color: sel.outline?.color ?? "#000000", width } : undefined }), { min: 0, max: 60 })}
-                    {sel.outline && colour("Outline colour", sel.outline.color, (color) => setLayer({ outline: { ...sel.outline!, color } }))}
-                  </div>
-                </>
-              )}
-              {sel.type === "image" && (
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex flex-col gap-1 text-xs text-zinc-500">
-                    In its box
-                    <select value={sel.fit} onChange={(e) => setLayer({ fit: e.target.value as "cover" | "contain" })} className={cn(SELECT, "h-8")}>
-                      <option value="cover">Fill it</option>
-                      <option value="contain">Fit inside</option>
-                    </select>
-                  </label>
-                  {num("Round corners", sel.radius ?? 0, (radius) => setLayer({ radius: radius || undefined }), { min: 0, max: 2000 })}
-                </div>
-              )}
-              {sel.type === "shape" && (
-                <div className="grid grid-cols-2 gap-2">
-                  {colour("Fill", sel.fill, (fill) => setLayer({ fill }))}
-                  {sel.shape === "rect" && num("Round corners", sel.radius ?? 0, (radius) => setLayer({ radius: radius || undefined }), { min: 0, max: 2000 })}
-                  {num("Line", sel.stroke?.width ?? 0, (width) => setLayer({ stroke: width > 0 ? { color: sel.stroke?.color ?? "#000000", width } : undefined }), { min: 0, max: 200 })}
-                  {sel.stroke && colour("Line colour", sel.stroke.color, (color) => setLayer({ stroke: { ...sel.stroke!, color } }))}
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                {num("X", sel.x, (x) => setLayer({ x }))}
-                {num("Y", sel.y, (y) => setLayer({ y }))}
-                {num("Width", sel.w, (w) => setLayer({ w: Math.max(1, w) }), { min: 1 })}
-                {num("Height", sel.h, (h) => setLayer({ h: Math.max(1, h) }), { min: 1 })}
-                {num("Turn (°)", sel.rotate ?? 0, (rotate) => setLayer({ rotate: rotate || undefined }), { min: -360, max: 360 })}
-                {num("See-through (%)", Math.round((1 - (sel.opacity ?? 1)) * 100), (p) => setLayer({ opacity: p > 0 ? Math.max(0, 1 - p / 100) : undefined }), { min: 0, max: 100 })}
-              </div>
-            </section>
-          )}
+                  <Textarea aria-label="What to ask for" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} maxLength={2000} placeholder="Big type, one bright colour, a drawing on the first page." />
+                  <Button size="sm" disabled={busy} onClick={() => void aiDesign()}>
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {busy ? "Designing" : pages.length === 1 ? "Design this page" : `Design all ${pages.length} pages`}
+                  </Button>
+                  {said.length > 0 && (
+                    <ul className="list-disc pl-4 text-zinc-500 dark:text-[#b3b3b3]">
+                      {said.map((n, i) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
 
-          <section aria-label="Layers" className="flex flex-col gap-1 border-t border-zinc-500/20 pt-3">
-            <h2 className="text-sm font-semibold">Layers</h2>
-            {page.layers.length === 0 && <p className="text-xs text-zinc-500">Nothing on this page yet.</p>}
-            {[...page.layers].reverse().map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => setSelected(l.id)}
-                className={cn("truncate rounded-md px-2 py-1 text-left text-xs", l.id === selected ? "bg-violet-500/15 text-violet-300" : "text-zinc-400 hover:bg-zinc-500/10")}
-              >
-                {l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "shape" ? (l.shape === "ellipse" ? "Ellipse" : "Rectangle") : "Drawing"}
-              </button>
-            ))}
-          </section>
-        </aside>
+        <Inspector
+          design={design}
+          page={page}
+          at={k}
+          count={pages.length}
+          picked={picked}
+          onPreview={(fn) => setLive(fn ? through(fn) : null)}
+          onPatch={patch}
+          onPage={(next, mid) => (mid ? setLive(next) : setPage(next))}
+          onAlign={(how) => arrange(alignLayers(mine, how, { w: design.width, h: design.height }))}
+          onDistribute={(axis) => arrange(distribute(mine, axis))}
+          zoom={view.z}
+          onZoom={zoom}
+          onExport={(only) => void exportPngs(only)}
+        />
       </div>
     </div>
   );
