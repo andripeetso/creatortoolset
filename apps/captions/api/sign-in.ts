@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
-import { APP_CHALLENGE, getSessionUser, mintAppCode, setLoginCookie, type AuthVars } from "./auth";
+import { APP_CHALLENGE, getSessionUser, mintAppCode, passwordsOff, setLoginCookie, type AuthVars } from "./auth";
 import { writeFileSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { env, hostedMode } from "./lib/env";
@@ -207,7 +207,8 @@ signInStartApp.get("/providers", (c) => {
   const origin = originOf(c);
   const linked = (kind: Kind) => c.req.query("login") !== "1" || process.env.SIGN_UPS === "open" || listUsers().some((u) => u.identities?.some((i) => i.provider === kind));
   const on = (kind: Kind) => hostedMode() && !!signinVia(origin, kind) && linked(kind);
-  return c.json({ apple: on("apple"), google: on("google"), github: on("github") });
+  // `password`: whether the login screen offers the password form at all (passwordsOff)
+  return c.json({ apple: on("apple"), google: on("google"), github: on("github"), ...(c.req.query("login") === "1" ? { password: !passwordsOff() } : {}) });
 });
 
 signInStartApp.get("/login/:kind", (c, next) => {

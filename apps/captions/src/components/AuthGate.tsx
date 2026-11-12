@@ -41,7 +41,7 @@ export function isPublicReviewPath(pathname: string): boolean {
 }
 
 export type SignInProvider = "apple" | "google" | "github";
-export type SignInProviders = Record<SignInProvider, boolean>;
+export type SignInProviders = Record<SignInProvider, boolean> & { /** false: this server takes no passwords */ password?: boolean };
 const PROVIDER_NAME: Record<SignInProvider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
 
 /** The page this login screen stands in for, to come back to after the provider (an error from a try before is dropped). */
@@ -58,7 +58,7 @@ export function ProviderButtons({ providers }: { providers: SignInProviders }) {
   return (
     <>
       {(Object.keys(PROVIDER_NAME) as SignInProvider[])
-        .filter((p) => providers[p])
+        .filter((p) => providers[p] === true)
         .map((p) => (
           <a
             key={p}
@@ -185,7 +185,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
   if (publicShare) return <>{children}</>;
 
-  const anyProvider = !!providers && Object.values(providers).some(Boolean);
+  const anyProvider = !!providers && (["apple", "google", "github"] as const).some((p) => providers[p]);
+  const passwords = providers?.password !== false;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -241,14 +242,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       {providers && (
         <div className="flex w-72 flex-col gap-2">
           <ProviderButtons providers={providers} />
-          {anyProvider && !usePassword && (
+          {anyProvider && passwords && !usePassword && (
             <button type="button" onClick={() => setUsePassword(true)} className="py-1 text-xs text-zinc-500 hover:text-zinc-300">
               Use a password instead
             </button>
           )}
         </div>
       )}
-      {providers && (!anyProvider || usePassword) && (
+      {providers && passwords && (!anyProvider || usePassword) && (
       <form onSubmit={submit} className="flex w-72 flex-col gap-2">
         <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 focus-within:border-violet-500">
           <UserRound className="h-4 w-4 shrink-0 text-zinc-500" />
