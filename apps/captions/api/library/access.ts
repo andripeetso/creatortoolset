@@ -53,7 +53,7 @@ export function ensureLibrary(username: string): void {
 /**
  * "owner" when the library is the account's own (homeOf), else null: a library of another account, or one that does
  * not exist, so callers answer 404, never 403. An account with the Media Library switched off is null too: the
- * Workshop, the Video Cleaner and exports read the library through here, outside the /api/library tool gate (boot.ts).
+ * Workshop, exports and plug-ins read the library through here, outside the /api/library tool gate (boot.ts).
  */
 export function libraryRole(username: string, libraryId: string): "owner" | null {
   const account = findUser(username);

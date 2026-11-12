@@ -183,15 +183,6 @@
     "probe": "route"
   },
   {
-    "id": "clean.presets",
-    "method": "GET",
-    "path": "/api/clean/presets",
-    "probe": "list",
-    "shape": {
-      "type": "array"
-    }
-  },
-  {
     "id": "editor.list",
     "method": "GET",
     "path": "/api/editor",

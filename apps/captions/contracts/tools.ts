@@ -9,7 +9,7 @@ import type { CliId } from "./local-ai";
 export const TOOLS = [
   "instagram", "workshop",
   "enhance", "captions", "review", "media", "editor",
-  "clean", "stories",
+  "stories",
   "notes", "guides",
 ] as const;
 export type Tool = (typeof TOOLS)[number];
@@ -38,7 +38,6 @@ export const TOOL_NAMES: Record<Tool, string> = {
   review: "Review",
   media: "Media Library",
   editor: "AI Editor",
-  clean: "Video Cleaner",
   stories: "Story Splitter",
   notes: "Video Notes",
   guides: "Guide Builder",
@@ -53,7 +52,6 @@ export const TOOL_LINES: Record<Tool, string> = {
   review: "Share a cut with one link; comments on the frame.",
   media: "Your footage in one place, searchable.",
   editor: "Raw takes in, draft timelines out.",
-  clean: "Clean metadata and compare fingerprints before posting.",
   stories: "One video in, stories of about 20 s out.",
   notes: "A recording in: transcript, summary, chapters.",
   guides: "Turn recordings into guides and SOPs.",
@@ -65,7 +63,7 @@ export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "distribute" | "
   { id: "make", label: "Make", tools: ["media", "editor", "review"] },
   // Finals is a view of the library, not a Tool: Home draws it in this box (ToolsetHome)
   { id: "distribute", label: "Distribute", tools: [] },
-  { id: "tools", label: "Extras", tools: ["enhance", "captions", "clean", "stories", "notes", "guides"] },
+  { id: "tools", label: "Extras", tools: ["enhance", "captions", "stories", "notes", "guides"] },
 ];
 
 /** Always on for every account and never part of the "What will you make?" pick: the Plan and Make tools above. */
@@ -142,7 +140,7 @@ export interface Need {
 /**
  * Each tool's needs, from the code: the keyFor callers (api/transcribe.ts, enhance.ts, workshop.ts, instagram.ts,
  * library/transcribe.ts, library/embed.ts, ai-complete.ts), the Media Library's storage and the AI Editor's steps.
- * Review, Video Cleaner and Story Splitter need nothing. A transcripts row is also met by "deviceTranscripts": on the
+ * Review and Story Splitter need nothing. A transcripts row is also met by "deviceTranscripts": on the
  * person's own computer no key is needed.
  */
 // One way of saying every row (owner, 2026-11-11: "no standard… each has its own personality"): `what` is the thing to
@@ -178,7 +176,6 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
     { what: "A Media Library", anyOf: ["library"], form: "library" },
     { what: "An API key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
-  clean: [],
   stories: [],
   notes: [
     { what: "A Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },

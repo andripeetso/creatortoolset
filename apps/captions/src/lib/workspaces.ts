@@ -33,3 +33,9 @@ export const inviteUrl = (token: string) => `${window.location.origin}/join/${to
 
 /** An invite link's path: /join/<token>. */
 export const joinToken = (pathname: string): string | null => /^\/join\/([a-f0-9]{40})\/?$/.exec(pathname)?.[1] ?? null;
+
+/**
+ * A member's `off` list after one switch in the Tools dialog: `id` added or taken out, every other entry kept. The list
+ * also holds switches the dialog does not show (a plug-in's gate), and the server reads a missing entry as "switch it on".
+ */
+export const offAfterToggle = (off: readonly string[], id: string, on: boolean): string[] => [...off.filter((x) => x !== id), ...(on ? [] : [id])];

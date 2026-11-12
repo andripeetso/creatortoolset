@@ -16,7 +16,7 @@ const legacy = (username: string, extra: object) => ({
 });
 writeFileSync(
   path.join(process.env.DATA_DIR, "users.json"),
-  JSON.stringify({ users: [legacy("old", { off: ["library", "finals", "clean", "bogus"] }), legacy("plain", {})] }),
+  JSON.stringify({ users: [legacy("old", { off: ["library", "finals", "bogus"] }), legacy("plain", {})] }),
 );
 
 const { createUser, findUser } = await import("./users");
@@ -39,7 +39,7 @@ const setOff = (username: string, off: string[]) => void (findUser(username)!.of
 describe("app switches", () => {
   it("keeps only the switches that still exist, and drops the rest of old accounts", () => {
     // ids of removed apps are kept too: the reader cannot tell them from a plug-in gate that is not loaded this boot
-    expect(findUser("old")).toMatchObject({ role: "user", cloud: true, off: ["library", "finals", "clean", "bogus"] });
+    expect(findUser("old")).toMatchObject({ role: "user", cloud: true, off: ["library", "finals", "bogus"] });
     expect(findUser("plain")).toMatchObject({ role: "user", cloud: true, off: [] });
     expect(findUser("plain")).not.toHaveProperty("enhance");
   });
@@ -56,10 +56,8 @@ describe("app switches", () => {
 
   it("keeps an app switched off in users.json closed", async () => {
     const h = await login("u2");
-    setOff("u2", ["enhance", "clean", "instagram"]);
+    setOff("u2", ["enhance", "instagram"]);
     expect(await status("/api/enhance", h)).toBe(403);
-    const clean = await app.request("/api/clean/sources/from-captions", { method: "POST", headers: h });
-    expect(clean.status).toBe(403);
     // the Workshop reads the Analyzer's API, so one of the two keeps both open
     expect(await status("/api/instagram/availability", h)).toBe(200);
     setOff("u2", ["instagram", "workshop"]);
