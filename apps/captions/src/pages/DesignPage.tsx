@@ -187,17 +187,22 @@ function DesignPage({ id }: { id: string }) {
     // the pages alone: the design's other fields change when it is saved, and saving must not save again
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hist?.now]);
-  // leaving (another page of the app, the window closing) sends what that moment had not sent yet
+  // Leaving sends what that moment had not sent yet. Another page of the app: a save like any other (the app goes on
+  // running, so it finishes). The window closing: a save the browser carries on with after the page is gone, which
+  // it only does for a small one (64 KB); a bigger design is sent the plain way, and may not get there.
   useEffect(() => {
-    const flush = () => {
+    const flush = (closing: boolean) => {
       const pages = unsaved.current;
       unsaved.current = null;
-      if (pages) void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ pages }) }).catch(() => {});
+      if (!pages) return;
+      const body = JSON.stringify({ pages });
+      void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: closing && body.length < 60_000, headers: { "content-type": "application/json" }, body }).catch(() => {});
     };
-    window.addEventListener("pagehide", flush);
+    const closing = () => flush(true);
+    window.addEventListener("pagehide", closing);
     return () => {
-      window.removeEventListener("pagehide", flush);
-      flush();
+      window.removeEventListener("pagehide", closing);
+      flush(false);
     };
   }, [id]);
 
