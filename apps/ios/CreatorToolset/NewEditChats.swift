@@ -43,7 +43,8 @@ extension ChatList {
             let same = all.firstIndex { $0.id == row.id }
             switch state {
             case .editing, .stuck: if same != nil { continue }
-            case .ready: if opened.contains(row.id) { continue }
+            // a server that lists its edits has the Review video in the edit's own row already
+            case .ready: if opened.contains(row.id) || edit.editId.map({ id in all.contains { $0.id == path(.edit(id)) } }) == true { continue }
             case .starting, .uploading, .failed: break
             }
             if let same { all[same] = row } else { all.append(row) }

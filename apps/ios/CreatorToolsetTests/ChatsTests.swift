@@ -193,6 +193,8 @@ final class ChatsTests: XCTestCase {
         XCTAssertEqual(ready[0].route, .review("r9", version: 1))
         XCTAssertEqual(ready[0].keys, ["r9:v1"])
         XCTAssertEqual(ChatList.phone([(edit, .ready(path: "/review/r9?v=1"))], over: [review], opened: ["/review/r9"]), [review])
+        // a server with its own rows for edits: the edit's row has the video already, so the phone adds none
+        XCTAssertEqual(ChatList.phone([(edit, .ready(path: "/review/r9?v=1"))], over: [server], opened: []), [server])
         // a swipe removes it from the phone: it is neither dismissed nor deleted from Review
         XCTAssertFalse(ChatsModel.canDismiss(ready[0]))
         XCTAssertFalse(ChatsModel.canDelete(ready[0]))
