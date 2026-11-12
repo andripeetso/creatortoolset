@@ -33,8 +33,13 @@ export interface AssistantMessage {
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
-  /** Videos and recordings sent with a user message (api/assistant-files.ts), by name. */
-  files?: Array<{ id: string; name: string }>;
+  /** Videos and recordings sent with a user message (api/assistant-files.ts), by name; `uploading` until the file is in. */
+  files?: Array<{ id: string; name: string; uploading?: true }>;
+  /**
+   * A reply that hasn't started (status "thinking"): it waits for the message's videos to finish uploading ("videos",
+   * with how many), or for the reply before it to end ("reply"). `text` is the line to show: "Waiting for 2 videos".
+   */
+  wait?: { for: "videos" | "reply"; videos?: number; text: string };
   /** Folders dropped in the Mac app with a user message: their paths on the user's computer (nothing uploaded). */
   folders?: string[];
   /** The highlighted text a user message asked about. */
@@ -136,14 +141,17 @@ export interface AssistantTurnInput {
   text: string;
   images?: AssistantImage[];
   pasted?: AssistantPaste[];
-  /** Ids of videos or recordings uploaded first (POST /api/assistant/files, parts, complete). */
+  /**
+   * Ids of videos or recordings (POST /api/assistant/files). One may still be uploading: the message is saved at once and
+   * its reply waits (`wait`) until the last part is in, then runs. More messages while a reply waits or runs queue behind it.
+   */
   files?: string[];
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
   paths?: string[];
   context?: AssistantContext;
 }
 
-/** A video or recording dropped in the chat, uploaded before the message goes (api/assistant-files.ts; kept 7 days). */
+/** A video or recording dropped in the chat, uploaded in parts while the message goes (api/assistant-files.ts; kept 7 days). */
 export interface AssistantFile {
   id: string;
   name: string;
@@ -177,6 +185,9 @@ export interface AssistantView {
   /** Earlier conversations, newest first. */
   past: AssistantPast[];
   pending: AssistantPending | null;
+  /** This server takes a message whose videos are still uploading (POST /turn with their ids) and queues messages sent
+   *  while a reply runs. Absent on older servers: there a client posts only after its uploads are done. */
+  sendNow?: true;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. */
   navigate: string | null;
 }
