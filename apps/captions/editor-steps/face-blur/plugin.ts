@@ -420,7 +420,7 @@ export default definePlugin({
   id: "editor-face-blur",
   name: "Blur faces",
   about: "Blurs the faces you name in every edit (the people in the background, everyone but you), on this computer. About 1.4 GB of disk for each minute of video",
-  kind: "AI Editor step",
+  kind: "editor",
   editor: {
     steps: [
       {
