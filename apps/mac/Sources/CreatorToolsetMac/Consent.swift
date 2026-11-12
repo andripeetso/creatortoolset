@@ -48,7 +48,7 @@ enum ConsentWords {
     }
     static func askTrust(_ host: String) -> (String, String) {
         ("Let \(host) answer the assistant's questions?",
-         "Before the assistant runs a command or changes a file on this Mac, it asks. With this on, you answer in the assistant's chat on any device signed in to \(host). With it off, each question is asked here on this Mac.")
+         "Before the assistant runs a command or changes a file on this Mac, it asks. If you allow it, you answer in the assistant's chat on any device signed in to \(host). If not, each question is asked here on this Mac.")
     }
     static func ask(_ description: String, _ detail: String) -> (String, String) {
         ("The assistant wants to: \(description)", detail)
