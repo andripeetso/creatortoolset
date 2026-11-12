@@ -105,6 +105,8 @@ export const navigated = () => call<AssistantView>("/navigated", "POST");
 export const startOver = () => call<AssistantView>("", "DELETE");
 export const openPast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}/open`, "POST");
 export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}`, "DELETE");
+/** Settle a chat (done with it, kept) or bring it back; every device folds it the same way. */
+export const settleChat = (id: string, settled: boolean) => call<unknown>(`/chats/${encodeURIComponent(id)}/settle`, "POST", { settled });
 /** Allow or deny something the reply asked to do on the Mac. */
 /** Yes or No to a question the assistant put before deleting, publishing or sending something. */
 export const answerConfirm = (id: string, yes: boolean) => call<AssistantView>(`/confirms/${encodeURIComponent(id)}`, "POST", { yes });

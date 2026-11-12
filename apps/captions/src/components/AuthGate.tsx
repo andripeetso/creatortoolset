@@ -49,6 +49,22 @@ export type SignInProvider = "apple" | "google" | "github";
 export type SignInProviders = Record<SignInProvider, boolean> & { /** false: this server takes no passwords */ password?: boolean };
 const PROVIDER_NAME: Record<SignInProvider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
 
+/**
+ * An AI app connecting by sign-in (api/oauth.ts) sends the person here first, with its Allow page as ?next=: the
+ * app's name rides in its client id (base64url JSON, `n`), so the screen can say what the sign-in is for.
+ */
+export function connectingApp(search = typeof window === "undefined" ? "" : window.location.search): string | null {
+  const next = new URLSearchParams(search).get("next") ?? "";
+  if (!next.startsWith("/oauth/authorize?")) return null;
+  try {
+    const id = new URLSearchParams(next.slice(next.indexOf("?") + 1)).get("client_id") ?? "";
+    const n = (JSON.parse(atob(id.split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))) as { n?: unknown }).n;
+    return typeof n === "string" && n.trim() ? n.trim().slice(0, 60) : "your AI app";
+  } catch {
+    return "your AI app";
+  }
+}
+
 /** The page this login screen stands in for, to come back to after the provider (an error from a try before is dropped). */
 function backHere(): string {
   if (typeof window === "undefined") return "/";
@@ -240,7 +256,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <ToolsetLogo className="h-11 w-11" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
-          <p className="text-sm text-zinc-500">Sign in to your account</p>
+          <p className="text-sm text-zinc-500">{connectingApp() ? `Sign in to connect ${connectingApp()}` : "Sign in to your account"}</p>
         </div>
       </div>
       {error && <p className="w-72 text-xs text-red-400">{error}</p>}

@@ -121,6 +121,29 @@ describe("many chats", () => {
     expect((await app.request("/api/assistant/chats/nope", { headers: { cookie: p.cookie } })).status).toBe(404);
   });
 
+  it("settle: a chat folds away in both lists, a newer message brings it back, and so does un-settle", async () => {
+    const p = await person("sid");
+    const b = await p.make();
+    await p.sendTo(b, { text: "Settle me" });
+    await p.answer((await p.claim()).id, "Done here.");
+    await settled(p, b);
+    const settle = (on: unknown) => app.request(`/api/assistant/chats/${b}/settle`, { method: "POST", ...json({ settled: on }, { cookie: p.cookie }) });
+    expect((await settle("yes")).status).toBe(400);
+    expect((await app.request("/api/assistant/chats/nope/settle", { method: "POST", ...json({ settled: true }, { cookie: p.cookie }) })).status).toBe(404);
+    const r = (await (await settle(true)).json()) as { chats: Chat[] };
+    expect(r.chats.find((c) => c.id === b)?.settled).toBe(true);
+    expect((await p.view()).past.find((c) => c.id === b)?.settled).toBe(true);
+    // a new message in it: back among the others
+    await p.sendTo(b, { text: "One more thing" });
+    expect((await p.chats()).find((c) => c.id === b)?.settled).toBeUndefined();
+    await p.answer((await p.claim()).id, "Sure.");
+    await settled(p, b);
+    expect((await p.chats()).find((c) => c.id === b)?.settled).toBeUndefined();
+    await settle(true);
+    await settle(false);
+    expect((await p.chats()).find((c) => c.id === b)?.settled).toBeUndefined();
+  });
+
   it(`the cap: ${MAX_RUNNING} replies at once, the next waits in send order and starts when one ends; the list says which are working`, async () => {
     const p = await person("bo");
     const ids = [await p.make(), await p.make(), await p.make(), await p.make()];
