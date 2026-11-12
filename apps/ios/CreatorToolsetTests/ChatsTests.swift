@@ -1,7 +1,7 @@
 import XCTest
 @testable import CreatorToolset
 
-/// Chats without the AI Editor: Review videos, the assistant, the phone's New edits, what is told in a notification, and
+/// Chats and Edits without the AI Editor: Review videos, the assistant, the phone's New edits, what is told in a notification, and
 /// the server's change line. Fixtures from a scratch server's answers.
 @MainActor
 final class ChatsTests: XCTestCase {
@@ -45,6 +45,62 @@ final class ChatsTests: XCTestCase {
         XCTAssertEqual(ChatList.row(video).at, Date(timeIntervalSince1970: 5))
         video.newComments = 1
         XCTAssertEqual(ChatList.row(video).detail, "V2 · 1 new comment")
+    }
+
+    func testEditsOnAServerWithoutTheEditor() throws {
+        // the Review videos and the phone's New edits are on Edits; its badge counts the video that waits for review
+        let made = Date(timeIntervalSince1970: 3_000)
+        let edit = PhoneEdit(id: UUID(), server: "s", name: "Phone edit", clips: [], made: made)
+        let chat = ChatRow(id: "/?chat=c1", route: .chat("c1"), title: "Hooks", detail: "", status: .approval, at: made)
+        let rows = ChatList.arrange(rows: ChatList.phone([(edit, .failed("Not started"))], over: ChatList.merge(videos: try decode(Self.reviews), others: []),
+                                                         opened: []) + [chat])
+        XCTAssertEqual(rows.filter { !ChatList.onChats($0) }.map(\.title), ["V1A-1", "Phone edit", "V1A-2", "Hanging basics teaser v2"])
+        XCTAssertEqual(ChatList.waiting(rows, chats: false), 2)
+        XCTAssertEqual(ChatList.waiting(rows, chats: true), 1)
+    }
+
+    func testAReviewVideosPicture() throws {
+        // the newest version that is ready; one still being made, or whose file was deleted, gives no picture
+        let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","versions":[{"n":1,"status":"ready","createdAt":5000},{"n":2,"status":"processing","createdAt":6000},{"n":3,"status":"ready","removed":true,"createdAt":7000}]}"#.utf8))
+        XCTAssertEqual(video.picture, "/api/review/assets/r1/v/1/thumb?c=5000")
+        XCTAssertEqual(ChatList.row(video).picture, video.picture)
+        // a version with a field of another shape still counts, and still names the edit that made it
+        let odd: ReviewListItem = try decode(Data(#"{"id":"r2","name":"Cut","versions":[{"n":"one","status":7,"source":{"href":"/editor/e1"}}]}"#.utf8))
+        XCTAssertEqual(odd.versions, 1)
+        XCTAssertEqual(odd.source, "/editor/e1")
+        XCTAssertNil(odd.picture)
+    }
+
+    func testARouteOpensOnItsTab() {
+        func tab(_ path: String, from current: AppTab = .chats, hasEdits: Bool = true) -> AppTab? {
+            AppRoute.from(path: path).map { AppNavigator.tab(for: $0, from: current, hasEdits: hasEdits) }
+        }
+        // an edit and a Review video open on Edits, from a card, a link in a chat or a notification, whatever tab is in front
+        XCTAssertEqual(tab("/editor/e1"), .edits)
+        XCTAssertEqual(tab("/review/r9?v=2", from: .upload), .edits)
+        // the assistant's chats on Chats, even from Edits
+        XCTAssertEqual(tab("/?chat=c1", from: .edits), .chats)
+        XCTAssertEqual(tab("/assistant", from: .edits), .chats)
+        XCTAssertEqual(tab("/library", from: .edits), .finals)
+        // a script or a page stays on the tab it was opened from
+        XCTAssertEqual(tab("/workshop/sessions/s1", from: .edits), .edits)
+        XCTAssertEqual(tab("/workshop/sessions/s1", from: .chats), .chats)
+        XCTAssertEqual(tab("/settings", from: .more), .chats)
+        // each tab keeps its own screens
+        let nav = AppNavigator()
+        nav.open(href: "/review/r9?v=2")
+        XCTAssertEqual(nav.tab, .edits)
+        XCTAssertEqual(nav.edits, [.review("r9", version: 2)])
+        nav.open(href: "/?chat=c1")
+        XCTAssertEqual(nav.tab, .chats)
+        XCTAssertEqual(nav.chats, [.chat("c1")])
+        XCTAssertEqual(nav.edits, [.review("r9", version: 2)])
+        // an account without the Edits tab opens them on Chats
+        nav.hasEdits = false
+        nav.open(.edit("e1"))
+        XCTAssertEqual(nav.tab, .chats)
+        XCTAssertEqual(nav.chats, [.chat("c1"), .edit("e1")])
+        XCTAssertEqual(tab("/workshop/sessions/s1", from: .edits, hasEdits: false), .chats)
     }
 
     func testAFinishedRowSaysDoneUntilItIsOpened() {
@@ -206,7 +262,7 @@ final class ChatsTests: XCTestCase {
         XCTAssertEqual(stopped.id, "phone-edit:\(edit.id)")
         XCTAssertEqual(stopped.at, made)
         XCTAssertEqual(AppNotifications.notes([stopped]).map(\.body), ["Failed: Not started"])
-        XCTAssertTrue(ChatFilter.edits.has(stopped))
+        XCTAssertFalse(ChatList.onChats(stopped))   // on Edits
         XCTAssertEqual(ChatList.phone([(edit, .starting)], over: [], opened: []).map(\.detail), ["Starting…"])
 
         edit.editId = "e1"
@@ -263,9 +319,9 @@ final class ChatsTests: XCTestCase {
         let fresh = try assistant(#"{"id":"c-new","provider":"claude","messages":[],"past":[{"id":"c-old","title":"Monday numbers","at":1000000,"count":3}]}"#)
         XCTAssertEqual(ChatList.chats(fresh).map(\.route), [.chat("c-old")])
         XCTAssertTrue(ChatList.chats(nil).isEmpty)
-        // the Assistant chip finds every chat, and only chats
-        XCTAssertEqual(rows.filter(ChatFilter.assistant.has).count, 3)
-        XCTAssertFalse(ChatFilter.assistant.has(ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Edit", detail: "", status: .none, at: .distantPast)))
+        // every chat is on Chats, and only chats
+        XCTAssertEqual(rows.filter(ChatList.onChats).count, 3)
+        XCTAssertFalse(ChatList.onChats(ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Edit", detail: "", status: .none, at: .distantPast)))
         // the open chat sits among the others by its time; no row is pinned above them
         let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Edit", detail: "", status: .time(Date(timeIntervalSince1970: 4000)), at: Date(timeIntervalSince1970: 4000))
         XCTAssertEqual(ChatList.arrange(rows: [edit] + rows).map(\.id), ["/editor/e1", "/?chat=c-open", "/?chat=c-busy", "/?chat=c-old"])

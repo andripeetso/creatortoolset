@@ -69,8 +69,8 @@ struct AppearancePicker: View {
     }
 }
 
-/// The tabs: Chats (talking to the AI and what waits on the person), Upload, Finals, Scripts and More. A tab the
-/// account may not use is gone; each tab's badge counts what waits there.
+/// The tabs: Chats (the assistant's chats), Edits (the edits and the Review videos, as cards), Upload, Finals and More
+/// (Scripts is a tool there). A tab the account may not use is gone; each tab's badge counts what waits there.
 struct RootView: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var access = ToolsetAccess.shared
@@ -90,8 +90,14 @@ struct RootView: View {
             TabView(selection: $nav.tab) {
                 ChatsTab()
                     .tabItem { Label("Chats", systemImage: "bubble.left.and.text.bubble.right") }
-                    .badge(chats.waiting)
+                    .badge(ChatList.waiting(chats.rows, chats: true))
                     .tag(AppTab.chats)
+                if access.shows(.edits) {
+                    ChatsTab(edits: true)
+                        .tabItem { Label("Edits", systemImage: "film.stack") }
+                        .badge(ChatList.waiting(chats.rows, chats: false))
+                        .tag(AppTab.edits)
+                }
                 NavigationStack { UploadView() }
                     .tabItem { Label("Upload", systemImage: "arrow.up.circle") }
                     .badge(failed)
@@ -102,11 +108,6 @@ struct RootView: View {
                         .badge(workshop.sessions.filter(\.toPost).count)
                         .tag(AppTab.finals)
                 }
-                if access.shows(.scripts) {
-                    NavigationStack { ScriptsView() }
-                        .tabItem { Label("Scripts", systemImage: "doc.text") }
-                        .tag(AppTab.scripts)
-                }
                 NavigationStack { MoreView() }
                     .tabItem { Label("More", systemImage: "square.grid.2x2") }
                     .tag(AppTab.more)
@@ -115,12 +116,15 @@ struct RootView: View {
             .id(servers.currentId)
             // access taken away while its tab was open
             .onChange(of: access.me) { _, _ in
+                nav.hasEdits = access.shows(.edits)
                 if !access.shows(nav.tab) { nav.tab = .chats }
             }
             // what the shared parts know is per server: the last answer at once, then the server's
             .task(id: servers.currentId) {
                 access.load(for: servers.currentId)
+                nav.hasEdits = access.shows(.edits)
                 plugins.load(for: servers.currentId)
+                ChatsModel.shared.watch()   // whichever tab it opens on: the badges and notifications need the rows
                 StudioHooks.serverChanged()
                 await access.refresh()
                 // a Caption Studio video picked on this phone that hasn't all reached the server carries on
@@ -146,17 +150,18 @@ struct RootView: View {
     }
 }
 
-/// Chats, and whatever a row, a card or a notification opens on top of it.
+/// Chats or Edits (`edits`), each with its own screens: whatever a row, a card or a notification opens on top of it.
 struct ChatsTab: View {
+    var edits = false
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var nav = AppNavigator.shared
 
     var body: some View {
-        NavigationStack(path: $nav.chats) {
-            ChatsView()
+        NavigationStack(path: edits ? $nav.edits : $nav.chats) {
+            ChatsView(edits: edits)
                 .navigationDestination(for: AppRoute.self) { RouteView(route: $0) }
                 .overlay(alignment: .bottomTrailing) {
-                    if servers.current != nil, !servers.signedOut {
+                    if !edits, servers.current != nil, !servers.signedOut {
                         ComposeButton { nav.newChat() }
                             .padding(.trailing, 16)
                             .padding(.bottom, 12)

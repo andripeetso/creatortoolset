@@ -4,27 +4,30 @@ The phone side of Creator Toolset: talk to your AI, get footage into the Media L
 your scripts while you film. It talks to any Creator Toolset server: the one on your own computer, your own server,
 or a hosted one.
 
-Tabs (Finals and Scripts only for an account that has them; each tab's badge counts what waits there). The app
-follows the phone's light or dark look:
+Tabs: Chats · Edits · Upload · Finals · More (Edits and Finals only for an account that has them; each tab's badge
+counts what waits there). The app follows the phone's light or dark look:
 
-- **Chats** opens first: the assistant's chats, each video in Review and each New edit, one row each, with a badge
-  when it waits on you. Swipe a row to dismiss it, or to delete a Review video (it stays in Review's trash for 30
-  days). The round button starts a new chat with the assistant. **New edit** at the top: pick clips from Photos (in
+- **Chats** opens first: the assistant's chats, one row each, with a badge when one asks you something. The round
+  button starts a new chat. Replies are text only: a picture in a reply keeps its description, and the app never
+  loads an address a reply names.
+- **Edits**: each video in Review and each New edit as a card, with the picture of its newest cut, its step and a
+  badge when it waits on you; the ones that wait on top, then Working and Done. Swipe a card to dismiss it, or to
+  delete a Review video (it stays in Review's trash for 30 days). **New edit** at the top: pick clips from Photos (in
   the order picked), then Start; the clips go up by background transfers and the server starts the edit when the last
-  one is in, with the phone locked or the app closed. Its row shows how far it is and opens the edit or its Review
-  video; one that stopped offers Try again. The line that tells the phone what changed is closed while the app is in
-  the background. Replies are text only: a picture in a reply keeps its description, and the app never loads an
-  address a reply names.
+  one is in, with the phone locked or the app closed. Its card shows how far it is and opens the edit or its Review
+  video; one that stopped offers Try again. The tab is there for an account with the AI Editor or Review. An edit or
+  a Review video opens here, from a card, a link in a chat or a notification; each tab keeps its own screens. The
+  line that tells the phone what changed is closed while the app is in the background.
 - **Upload** is the camera roll. Pick clips and press Upload; they keep going with the phone locked. On a server whose
   Media Library belongs to a plug-in, the clips go there with the same sign-in. The Media Library sits beside the roll.
 - **Finals** shows what is ready to post and every finished piece: save it to Photos, copy its post description, split
   it into stories, send it to the team or mark it published.
-- **Scripts** opens a script to read while filming, with a record button that films with the script by the lens.
-- **More**: the tools the account has (Story Splitter cuts a video into stories on the phone; Caption Studio captions
+- **More**: the tools the account has (Scripts opens a script to read while filming, with a record button that films
+  with the script by the lens; Story Splitter cuts a video into stories on the phone; Caption Studio captions
   a video with the server's own layout and keeps the video on the phone until the server has it), and Settings: your
   computers, the account, notifications, appearance, Wi-Fi-only uploads and Photos access.
 
-On a server with a plug-in for the AI Editor, each AI Editor edit is a row in Chats and opens its own thread, and the
+On a server with a plug-in for the AI Editor, each AI Editor edit is a card on Edits and opens its own thread, and the
 phone registers for push (then it posts no notifications of its own, so nothing is told twice). Share → Creator
 Toolset links your own post to its Workshop session or saves a link to the Analyzer, using the sign-in the app shares
 through its keychain group.
@@ -78,12 +81,12 @@ TEST_RUNNER_CT_TEST_SERVER=http://127.0.0.1:43127 TEST_RUNNER_CT_TEST_PASSWORD=<
 
 Run the server with a scratch `DATA_DIR` for this: the test signs in as `admin` and adds files to its library.
 `TEST_RUNNER_CT_TEST_STUDIO=1` when that server has the studio plug-in.
-`-startTab <0-4>` or `-startTab chats|upload|finals|scripts|more` as a launch argument opens that tab (for simulator
+`-startTab <0-4>` or `-startTab chats|edits|upload|finals|more` as a launch argument opens that tab (for simulator
 screenshots); in a debug build `-localServer <address>` adds a server without sign-in, `-OpenPath /assistant` (or any
-page path) opens its screen on Chats, and
+page path) opens its screen on its tab, and
 `-signinDemo list|none|password|old|add|problem|partly|code|wrong|setup` shows the sign-in screen with a made-up account and asks no server anything
 (`-servers '<hex of a saved list's JSON>'` gives one launch a connected computer, so the tabs show).
-`-newEdit YES` opens New edit, and in a debug build `-newEditFiles <path>,<path>` picks those files.
+`-newEdit YES` opens New edit on Edits, and in a debug build `-newEditFiles <path>,<path>` picks those files.
 
 The server side of the contract is `apps/captions/api/ios-contract.test.ts` with
 `apps/captions/api/__fixtures__/ios-public-paths.json`: every path the app calls. Add a path there when the app

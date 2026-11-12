@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The app's tabs: it opens on Chats, where the work moves forward; then Upload, Finals, Scripts and More. Finals and
-/// Scripts only when the account may use them.
+/// The app's tabs: it opens on Chats, the assistant's chats; then Edits (the AI Editor's edits and the Review videos),
+/// Upload, Finals and More (Scripts is a tool there). Edits and Finals only when the account may use them.
 enum AppTab: String, Hashable, CaseIterable {
-    case chats, upload, finals, scripts, more
+    case chats, edits, upload, finals, more
 }
 
 /// Which tools the account may use on the server in use (Admin → Access on the computer: `off` lists the ones switched
@@ -45,15 +45,18 @@ final class ToolsetAccess: ObservableObject {
         return !(me.off ?? []).contains(key)
     }
 
-    /// Finals and Scripts need a known account that has the tool; the rest always show (they ask for the sign-in
-    /// themselves).
+    /// Edits and Finals need a known account that has the tool; the rest always show (they ask for the sign-in
+    /// themselves). Edits holds the edits and the Review videos: an account with neither has no Edits tab.
     nonisolated static func shows(_ tab: AppTab, me: Me?) -> Bool {
         switch tab {
         case .chats, .upload, .more: true
+        case .edits: me != nil && (allows("editor", me: me) || allows("review", me: me))
         case .finals: me != nil && allows("finals", me: me)
-        case .scripts: me != nil && allows("workshop", me: me)
         }
     }
+
+    /// Scripts, a tool in More: a known account with the Workshop.
+    nonisolated static func showsScripts(me: Me?) -> Bool { me != nil && allows("workshop", me: me) }
 
     /// What this server said last time, at once.
     func load(for serverId: String?) {

@@ -1,7 +1,7 @@
 import Photos
 import SwiftUI
 
-/// The last tab: the tools, each a tile with its icon, and under them the one row that opens Settings (tools and
+/// The last tab: the tools, each a tile with its icon (Scripts first, then the ones that work on a video from Photos), and under them the one row that opens Settings (tools and
 /// settings in one list read as the same kind of thing).
 struct MoreView: View {
     @ObservedObject private var access = ToolsetAccess.shared
@@ -15,6 +15,7 @@ struct MoreView: View {
             VStack(spacing: 24) {
                 LazyVGrid(columns: columns, spacing: 12) {
                     // the tools' tiles, each only when the account has it
+                    if ToolsetAccess.showsScripts(me: access.me) { ToolTile(title: "Scripts", systemImage: "doc.text") { ScriptsView() } }
                     if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
                     if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
                 }

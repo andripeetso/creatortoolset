@@ -66,11 +66,19 @@ final class CoreTests: XCTestCase {
         let helper = ToolsetAccess.Me(username: "kim", role: "user", off: ["finals", "media"])
         XCTAssertTrue(ToolsetAccess.shows(.finals, me: admin))
         XCTAssertFalse(ToolsetAccess.shows(.finals, me: helper))
-        XCTAssertTrue(ToolsetAccess.shows(.scripts, me: helper))
+        // Scripts, a tile in More, needs the Workshop; Edits needs the AI Editor or Review, and is gone with neither
+        XCTAssertTrue(ToolsetAccess.showsScripts(me: helper))
+        XCTAssertFalse(ToolsetAccess.showsScripts(me: ToolsetAccess.Me(username: "lee", role: "user", off: ["workshop"])))
+        XCTAssertTrue(ToolsetAccess.shows(.edits, me: helper))
+        XCTAssertTrue(ToolsetAccess.shows(.edits, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["review"])))
+        XCTAssertFalse(ToolsetAccess.shows(.edits, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["editor", "review"])))
+        XCTAssertTrue(ToolsetAccess.shows(.edits, me: ToolsetAccess.Me(username: "sam", role: "admin", off: ["editor", "review"])))
         XCTAssertFalse(ToolsetAccess.allows("media", me: helper))
         XCTAssertFalse(ToolsetAccess.allows(nil, me: helper))   // admins only
-        // before the account is known: no Finals or Scripts tab, and the tools ask for the sign-in themselves
+        // before the account is known: no Edits or Finals tab, no Scripts in More, and the tools ask for the sign-in themselves
+        XCTAssertFalse(ToolsetAccess.shows(.edits, me: nil))
         XCTAssertFalse(ToolsetAccess.shows(.finals, me: nil))
+        XCTAssertFalse(ToolsetAccess.showsScripts(me: nil))
         XCTAssertTrue(ToolsetAccess.shows(.upload, me: nil))
         XCTAssertTrue(ToolsetAccess.allows("stories", me: nil))
         // the server's own answer reads
