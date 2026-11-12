@@ -1,5 +1,5 @@
 import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
-import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../contracts/tools";
+import { applyNeedWays, isPluginGateId, isTool, TOOL_NAMES, type Have, type NeedWay, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
 import type { EditFlag, FootageTarget, Timeline } from "../../contracts/editor";
 import type { StepInfo } from "../../contracts/editor-steps";
@@ -103,6 +103,9 @@ export interface ServerPlugin {
   // Installers for pack items the core can't install itself (a design system for the AI Editor). Each kind is installed by
   // at most one plug-in; a pack's items of a kind with no installer are held on the account (api/lib/packs.ts).
   packItems?: PackItemInstaller[];
+  // Another way to meet a tool's required row on Home, in setup and in Settings → Tools ("Needs an API key or an Adobe
+  // sign-in"): `what` names it, `met` says whether this account has it. Read by api/setup.ts (pluginNeeds).
+  needs?: PluginNeed[];
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
 }
@@ -119,6 +122,46 @@ export interface PackItemInstaller {
   adminOnly?: boolean;
   install: (item: PackDesignSystem, origin: PackOrigin) => Promise<string>;
   remove: (name: string, pack: string) => Promise<boolean>;
+}
+
+/** A plug-in's way to meet a tool's required row (ServerPlugin.needs). A `met` that throws counts as not met. */
+export interface PluginNeed {
+  tool: Tool;
+  what: string;
+  met: (user: SessionUser) => boolean | Promise<boolean>;
+}
+
+const wayOf = (p: ServerPlugin, n: PluginNeed): NeedWay => ({ tool: n.tool, what: n.what, have: `plugin:${p.id}/${n.tool}` });
+
+/** The loaded plug-ins' ways, and the ones this account has (for its setup view, api/setup.ts). */
+export async function pluginNeeds(user: SessionUser): Promise<{ ways: NeedWay[]; have: Have[] }> {
+  const ways: NeedWay[] = [];
+  const have: Have[] = [];
+  for (const p of loaded) {
+    for (const n of p.needs ?? []) {
+      const way = wayOf(p, n);
+      ways.push(way);
+      try {
+        if ((await n.met(user)) === true) have.push(way.have);
+      } catch (e) {
+        console.warn(`[plugin] ${p.id} setup check failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+  return { ways, have };
+}
+
+/** Refuses a need whose tool is not a tool, with no `what`, or whose `met` is not a function. */
+function checkNeeds(plugins: ServerPlugin[]): void {
+  for (const plugin of plugins) {
+    if (plugin.needs === undefined) continue;
+    if (!Array.isArray(plugin.needs)) throw new Error(`plug-in ${plugin.id}: needs must be a list`);
+    for (const n of plugin.needs) {
+      if (!isTool(n?.tool)) throw new Error(`plug-in ${plugin.id}: needs: "${String(n?.tool)}" is not a tool`);
+      if (typeof n.what !== "string" || !n.what.trim()) throw new Error(`plug-in ${plugin.id}: needs: each one needs a what`);
+      if (typeof n.met !== "function") throw new Error(`plug-in ${plugin.id}: needs: met must be a function`);
+    }
+  }
 }
 
 /** One line of what a plug-in adds, as the Community window lists it: text, and a path to where it lives (when there is one). */
@@ -156,6 +199,7 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     if (p.library) adds.push({ text: "Media Library source", to: "/library" });
     if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });
     if (p.activity) adds.push({ text: "Rows in the Mac menu bar panel" });
+    for (const n of p.needs ?? []) adds.push({ text: `${TOOL_NAMES[n.tool]} setup: ${n.what.charAt(0).toLowerCase()}${n.what.slice(1)}`, to: "/settings/tools" });
     d.adds = adds;
     return d;
   });
@@ -536,7 +580,9 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
   checkProviders(plugins);
   checkUploadRelays(plugins);
   checkPackItems(plugins);
+  checkNeeds(plugins);
   loaded = plugins;
+  applyNeedWays(plugins.flatMap((p) => (p.needs ?? []).map((n) => wayOf(p, n))));
   registerConnectors(plugins);
   for (const plugin of plugins) {
     if (plugin.library) registerLibrarySlot(plugin.id, plugin.library);
@@ -586,6 +632,7 @@ export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlug
     checkProviders(all);
     checkUploadRelays(all);
     checkPackItems(all);
+    checkNeeds(all);
     checkReplaces(all);
     checkAnswers(all);
     checkLibrarySlots(all.flatMap((p) => (p.library ? [[p.id, p.library] as [string, LibrarySlot]] : [])));
