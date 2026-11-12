@@ -42,15 +42,9 @@ export function timecodeFrames(tc: string | undefined, fps: number): number {
 export function sourceOf(versionId: string, name: string, p: ProbeSummary): TimelineSource {
   const fps = p.fps || 30;
   const turned = p.rotation === 90 || p.rotation === 270;
-  return {
-    versionId,
-    name,
-    fps,
-    tc: timecodeFrames(p.timecode, fps),
-    dur: Math.round(p.duration * fps),
-    w: turned ? p.height : p.width,
-    h: turned ? p.width : p.height,
-  };
+  // a recording whose only picture is its cover art is sound only: a cover is not a picture to show
+  const [w, h] = p.cover ? [0, 0] : turned ? [p.height, p.width] : [p.width, p.height];
+  return { versionId, name, fps, tc: timecodeFrames(p.timecode, fps), dur: Math.round(p.duration * fps), w, h };
 }
 
 export const emptyTracks = (): Timeline["tracks"] => Object.fromEntries(TRACKS.map((t) => [t, { name: TRACK_NAMES[t], items: [] as Item[] }])) as Timeline["tracks"];
@@ -103,7 +97,8 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
       const len = Math.round(((e - s) * fps) / src.fps);
       if (len <= 0) continue;
       const link = `c${shot + 1}`;
-      tl.tracks.V1.items.push({ src: a.src, in: s, len, rec, link, ...framingOf(shot, src, W, H, i.punch, i.eyeline[a.src] ?? DEFAULT_EYELINE) });
+      // a take with no picture (a voice recording) has nothing to punch in on
+      tl.tracks.V1.items.push({ src: a.src, in: s, len, rec, link, ...(src.w ? framingOf(shot, src, W, H, i.punch, i.eyeline[a.src] ?? DEFAULT_EYELINE) : {}) });
       tl.tracks.A1.items.push({ src: a.src, in: s, len, rec, link });
       rec += len;
       shot++;

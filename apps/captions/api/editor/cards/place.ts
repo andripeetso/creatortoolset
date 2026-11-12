@@ -1,5 +1,5 @@
-import type { Timeline, TimelineSource } from "../../../contracts/editor";
-import { rulesAt } from "../broll";
+import type { Item, Timeline, TimelineSource } from "../../../contracts/editor";
+import { noPicture, rulesAt } from "../broll";
 
 /**
  * Where a card goes on the cut, in code: a full-frame cutaway on the B-roll track over the first shot of its line, by
@@ -47,6 +47,7 @@ export function placeCards(tl: Timeline, cards: CardClip[]): { timeline: Timelin
   for (const k of own) delete out.sources[k];
   let v2 = out.tracks.V2.items.filter((i) => !own.has(i.src));
   const min = rulesAt(out.fps).min;
+  const cover = noPicture(out);
   for (const c of cards) {
     const w = c.line ? cardWindow(out, c.line) : null;
     // the clip is as long as its room was when it was drawn: it ends on his cut, as a cutaway does, however long the room is now
@@ -57,10 +58,22 @@ export function placeCards(tl: Timeline, cards: CardClip[]): { timeline: Timelin
       continue;
     }
     const rec = w.rec + w.len - len;
-    v2 = v2.filter((i) => i.rec + i.len <= rec || i.rec >= rec + len);
+    // a cutaway under a card goes; in a cut with no picture the B-roll is the whole picture, so only the part under the card goes
+    v2 = cover ? v2.flatMap((i) => around(i, rec, rec + len, out)) : v2.filter((i) => i.rec + i.len <= rec || i.rec >= rec + len);
     out.sources[c.key] = c.source;
     v2.push({ src: c.key, in: 0, len, rec });
   }
   out.tracks.V2.items = v2.sort((a, b) => a.rec - b.rec);
   return { timeline: out, notes };
+}
+
+/** What is left of a B-roll shot once timeline frames `a`..`b` are taken out of it: the part before, the part after (from the clip's later frames). */
+function around(i: Item, a: number, b: number, tl: Timeline): Item[] {
+  const end = i.rec + i.len;
+  if (end <= a || i.rec >= b) return [i];
+  const fps = tl.sources[i.src]?.fps ?? tl.fps;
+  return [
+    ...(i.rec < a ? [{ ...i, len: a - i.rec }] : []),
+    ...(end > b ? [{ ...i, rec: b, len: end - b, in: i.in + Math.round(((b - i.rec) * fps) / tl.fps) }] : []),
+  ];
 }

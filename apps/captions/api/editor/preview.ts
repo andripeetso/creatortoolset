@@ -122,12 +122,14 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         const pic = c
           ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, { ...c, zoom: 1, tilt: 0 }) }
           : { file: files[v.src]!, at: v.in / vs.fps + off, filter: shotFilter(tl, v, grade) };
+        // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
+        const picture = c || vs.w > 0 ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
         // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
         await ffmpeg([
-          "-ss", pic.at.toFixed(6), "-i", pic.file,
+          ...picture,
           ...voice,
           "-map", "0:v:0", "-map", "1:a:0",
-          "-vf", pic.filter,
+          "-vf", c || vs.w > 0 ? pic.filter : "format=yuv420p",
           "-af", "aresample=48000,aformat=channel_layouts=stereo",
           "-frames:v", String(p.frames), "-t", secs(p.frames),
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",

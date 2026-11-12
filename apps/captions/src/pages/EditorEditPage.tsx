@@ -157,7 +157,7 @@ export default function EditorEditPage() {
                 {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
-                    {j.state === "needs_key" && (
+                    {j.state === "needs_key" && /Settings →/.test(j.error) && (
                       <>
                         {" "}
                         <Link to={settingFor(j.error)} className="underline">

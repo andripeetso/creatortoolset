@@ -46,7 +46,7 @@ export function toFcpxml(tl: Timeline, files: Record<string, string>): string {
     const format = `r${2 + 2 * k}`;
     const asset = `r${3 + 2 * k}`;
     ids.set(key, { asset, format });
-    res.push(`    <format id="${format}" frameDuration="${time(1, s.fps)}" width="${s.w}" height="${s.h}"/>`);
+    res.push(`    <format id="${format}" frameDuration="${time(1, s.fps)}" width="${s.w || tl.width}" height="${s.h || tl.height}"/>`);
     res.push(
       `    <asset id="${asset}" name="${esc(s.name)}" start="${time(s.tc, s.fps)}" duration="${time(s.dur, s.fps)}" hasVideo="${s.w ? 1 : 0}" hasAudio="1" format="${format}" audioSources="1" audioChannels="2" audioRate="48000">`,
       `      <media-rep kind="original-media" src="${esc(url(file))}"/>`,

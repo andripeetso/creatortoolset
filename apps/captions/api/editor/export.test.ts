@@ -95,6 +95,23 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
     matchGolden("two-cuts.fcpxml", toFcpxml(twoCuts(), files));
   });
 
+  it("a take with no picture (a voice recording) is a gap on the video track and a clip on the voice track; its B-roll stays", () => {
+    const tl = twoCuts();
+    tl.sources.ver_a = { ...tl.sources.ver_a!, w: 0, h: 0 };
+    tl.tracks.V1.items = [tl.tracks.V1.items[0]!];
+    tl.tracks.A1.items = [tl.tracks.A1.items[0]!];
+    tl.tracks.V2.items = [{ src: "ver_b", in: 0, len: 45, rec: 0 }];
+    const tracks = (toOtio(tl, files) as { tracks: { children: { name: string; children: { OTIO_SCHEMA: string }[] }[] } }).tracks.children;
+    const kinds = (name: string) => tracks.find((t) => t.name === name)!.children.map((c) => c.OTIO_SCHEMA);
+    expect(kinds("Speaker")).toEqual(["Gap.1"]);
+    expect(kinds("Voice")).toEqual(["Clip.2"]);
+    expect(kinds("B-roll")).toEqual(["Clip.2"]);
+    // FCPXML: a sound-only asset, with a frame size a reader accepts
+    const xml = toFcpxml(tl, files);
+    expect(xml).toContain('hasVideo="0"');
+    expect(xml).not.toContain('width="0"');
+  });
+
   it("links a local library's files into the edit's media folder under unique names; a watched file stays where it is", async () => {
     for (const v of ["ver_1", "ver_2"]) {
       const f = path.join(dir, `${v}.bin`);
