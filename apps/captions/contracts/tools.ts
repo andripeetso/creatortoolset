@@ -119,6 +119,8 @@ export interface NeedWay {
   tool: Tool;
   what: string;
   have: `plugin:${string}`;
+  /** the plug-in's Settings section that sets it up: the row's Set up shows it under the row's own form */
+  settings?: string;
 }
 
 /** The screen that sets a row up: API keys (its keys only), Apify, the Media Library, Providers, a project. */

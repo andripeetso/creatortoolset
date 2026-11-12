@@ -96,11 +96,11 @@ describe("needs: a plug-in's other way to set up a tool", () => {
 
   it("names the way in the tool's first required row, counts it when met, and leaves the shipped rows once it is gone", async () => {
     const shipped = JSON.stringify(TOOL_NEEDS);
-    mountPlugins(new Hono(), [definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: (u) => u.username === "in" }] })]);
+    mountPlugins(new Hono(), [definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: (u) => u.username === "in", settings: "tiny-way" }] })]);
     try {
       expect(TOOL_NEEDS.enhance[0]).toMatchObject({ what: "An API key or a Tiny sign-in", alsoMetBy: ["plugin:tiny-way/enhance"] });
       const yes = await pluginNeeds(user("in"));
-      expect(yes).toEqual({ ways: [{ tool: "enhance", what: "A Tiny sign-in", have: "plugin:tiny-way/enhance" }], have: ["plugin:tiny-way/enhance"] });
+      expect(yes).toEqual({ ways: [{ tool: "enhance", what: "A Tiny sign-in", have: "plugin:tiny-way/enhance", settings: "tiny-way" }], have: ["plugin:tiny-way/enhance"] });
       expect(readiness("enhance", yes.have).ready).toBe(true);
       const no = await pluginNeeds(user("out"));
       expect(no.have).toEqual([]);
@@ -132,7 +132,8 @@ describe("needs: a plug-in's other way to set up a tool", () => {
     expect(bad([{ tool: "enhance", what: " ", met: () => true }])).toContain("needs a what");
     expect(bad([{ tool: "enhance", what: "X" }])).toContain("met must be a function");
     expect(bad({})).toContain("must be a list");
-    expect(bad([{ tool: "enhance", what: "A Tiny sign-in", met: () => true }])).toBeNull();
+    expect(bad([{ tool: "enhance", what: "X", met: () => true, settings: 3 }])).toContain("Settings section");
+    expect(bad([{ tool: "enhance", what: "A Tiny sign-in", met: () => true, settings: "tiny-way" }])).toBeNull();
     const [d] = describeServerPlugins([definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: () => true }] })], true);
     expect(d!.adds).toContainEqual({ text: "Audio Enhancer setup: a Tiny sign-in", to: "/settings/tools" });
   });

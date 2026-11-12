@@ -129,9 +129,11 @@ export interface PluginNeed {
   tool: Tool;
   what: string;
   met: (user: SessionUser) => boolean | Promise<boolean>;
+  /** The id of the plug-in's own Settings section (web.tsx `settings`) where the person sets it up. */
+  settings?: string;
 }
 
-const wayOf = (p: ServerPlugin, n: PluginNeed): NeedWay => ({ tool: n.tool, what: n.what, have: `plugin:${p.id}/${n.tool}` });
+const wayOf = (p: ServerPlugin, n: PluginNeed): NeedWay => ({ tool: n.tool, what: n.what, have: `plugin:${p.id}/${n.tool}`, ...(n.settings ? { settings: n.settings } : {}) });
 
 /** The loaded plug-ins' ways, and the ones this account has (for its setup view, api/setup.ts). */
 export async function pluginNeeds(user: SessionUser): Promise<{ ways: NeedWay[]; have: Have[] }> {
@@ -160,6 +162,7 @@ function checkNeeds(plugins: ServerPlugin[]): void {
       if (!isTool(n?.tool)) throw new Error(`plug-in ${plugin.id}: needs: "${String(n?.tool)}" is not a tool`);
       if (typeof n.what !== "string" || !n.what.trim()) throw new Error(`plug-in ${plugin.id}: needs: each one needs a what`);
       if (typeof n.met !== "function") throw new Error(`plug-in ${plugin.id}: needs: met must be a function`);
+      if (n.settings !== undefined && typeof n.settings !== "string") throw new Error(`plug-in ${plugin.id}: needs: settings is a Settings section's id`);
     }
   }
 }
