@@ -254,6 +254,45 @@ describe.skipIf(rootReplaced)("Editing styles: an edit made with one", () => {
     expect((await json<Edit>(call("maker", "PATCH", `/api/editor/${withFolder.id}`, { style: named.id }))).brollCollectionId).toBe("col_c");
   });
 
+  it("the working size: kept on the style, copied onto an edit, taken off with the style; only the offered sizes", async () => {
+    await clear("maker");
+    for (const size of [{ w: 1920, h: 1080 }, { w: 1080 }, "1080x1920"]) expect((await newStyle("maker", { name: "Odd", size })).status, JSON.stringify(size)).toBe(400);
+    const hd = await made("maker", { name: "HD", size: { w: 1080, h: 1920, extra: 1 } });
+    expect(hd.size).toEqual({ w: 1080, h: 1920 });
+    expect((await styles("maker")).styles[0]!.size).toEqual({ w: 1080, h: 1920 });
+    expect((await made("maker", { name: "Plain" })).size).toBeUndefined(); // none said: the footage's own
+    const footage = await made("maker", { name: "Footage", size: null });
+    expect(footage.size).toBeNull();
+    const uhd = await json<EditingStyle>(call("maker", "PUT", `/api/editor/styles/${footage.id}`, { size: { w: 2160, h: 3840 } }));
+    expect(uhd.size).toEqual({ w: 2160, h: 3840 });
+
+    const e = await edit("maker", { style: hd.id });
+    expect(e.size).toEqual({ w: 1080, h: 1920 });
+    expect((await made("maker", { fromEdit: e.id, name: "From HD" })).size).toEqual({ w: 1080, h: 1920 });
+    const patch = (body: object) => json<Edit>(call("maker", "PATCH", `/api/editor/${e.id}`, body));
+    expect((await patch({ style: uhd.id })).size).toEqual({ w: 2160, h: 3840 });
+    // a style that names no size takes the other style's off; no style at all, no size key: cut as an edit always was
+    expect((await patch({ style: (await made("maker", { name: "No size" })).id })).size).toBeNull();
+    await patch({ style: hd.id });
+    const off = await patch({ style: null });
+    expect("size" in off).toBe(false);
+    expect("size" in (await edit("maker"))).toBe(false);
+  });
+
+  it("How do you like to work?: Not now and its button both answer it for good; the button's style is the one New edit opens on", async () => {
+    await clear("maker");
+    const file = path.join(dir, "editor-styles", "maker.json");
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), asked: undefined, last: undefined }));
+    expect(await styles("maker")).toEqual({ styles: [], last: null });
+    const mine = await made("maker", { name: "My way", first: true, versions: 2, size: { w: 1080, h: 1920 }, steps: [], brollCollectionId: null });
+    expect(await styles("maker")).toEqual({ styles: [mine], last: mine.id, asked: true });
+    await clear("maker");
+    expect(await styles("maker")).toEqual({ styles: [], last: null, asked: true }); // deleting it never asks again
+    expect((await styles("other")).asked).toBeUndefined();
+    expect((await call("other", "POST", "/api/editor/styles/asked")).status).toBe(200);
+    expect(await styles("other")).toEqual({ styles: [], last: null, asked: true });
+  });
+
   it("Save as style copies an edit's choices and nothing of what the video is; only its maker can", async () => {
     await clear("maker");
     const first = await made("maker", { name: "Fast and warm", notes: "Short lines. No intro.", pace: "natural", grade: "warm", brollCollectionId: "col_a", steps: [] });

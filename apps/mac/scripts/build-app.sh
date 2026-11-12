@@ -98,7 +98,7 @@ $url_types
   <key>LSUIElement</key><false/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>So you can talk to the assistant instead of typing, and your voice is in your screen recordings.</string>
-  <key>NSCameraUsageDescription</key><string>So your camera can be in your screen recordings.</string>
+  <key>NSCameraUsageDescription</key><string>So your camera can be in your screen recordings, and to record the screen of an iPhone or iPad on a cable.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST

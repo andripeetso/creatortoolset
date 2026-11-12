@@ -163,6 +163,10 @@ final class Shell: NSObject, ObservableObject {
                 Task { done(await self.account.status()) }
             } else if ask == "signout" {
                 Task { done(await self.account.signOut()) }
+            } else if ask.hasPrefix("unlink:") {
+                Task { done(await self.account.unlink(String(ask.dropFirst(7)))) }
+            } else if ask.hasPrefix("link:") {
+                self.account.signIn(String(ask.dropFirst(5)), link: true, done: done)
             } else {
                 self.account.signIn(ask, done: done)
             }

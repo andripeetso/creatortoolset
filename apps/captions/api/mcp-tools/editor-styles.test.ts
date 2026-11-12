@@ -124,15 +124,20 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     const t = await turn("Make me an editing style called Tiny fast. Cut it fast with no pauses, and keep the bloopers in. Three versions of 30 seconds, natural pace, strong punch-in.");
     // the notes as the AI sends them: other case and spacing than typed. What is kept is the person's wording
     const made = await tool(t.token, "editor_style_save", { name: "Tiny fast", notes: "cut it FAST   with no pauses, and keep the bloopers in", versions: 3, target_s: 30, pace: "natural", punch: 1.3 });
-    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny fast", versions: 3, target_s: 30, pace: "natural", punch: 1.3, has_notes: true, made: true, link: SHEET });
+    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny fast", versions: 3, target_s: 30, pace: "natural", punch: 1.3, size: "footage", has_notes: true, made: true, link: SHEET });
     const id = made.value.id as string;
     expect(await styleOf(id)).toMatchObject({ name: "Tiny fast", notes: "Cut it fast with no pauses, and keep the bloopers in", versions: 3, targetS: 30, pace: "natural", punch: 1.3 });
 
     // a change, by id or by name: only what is sent moves; a number is kept as the route keeps it
     expect((await tool(t.token, "editor_style_save", { id, versions: 9, pace: "tight" })).value).toMatchObject({ id, versions: 5, pace: "tight", target_s: 30 });
     expect((await tool(t.token, "editor_style_save", { id: "tiny FAST", name: "Tiny faster" })).value).toMatchObject({ id, name: "Tiny faster" });
+    // the working size: one of the offered ones, or the footage's own
+    expect((await tool(t.token, "editor_style_save", { id, size: "1080x1920" })).value).toMatchObject({ id, size: "1080x1920" });
+    expect((await styleOf(id)).size).toEqual({ w: 1080, h: 1920 });
+    expect((await tool(t.token, "editor_style_save", { id, size: "footage" })).value).toMatchObject({ id, size: "footage" });
+    expect((await styleOf(id)).size).toBeNull();
     expect((await styleOf(id)).notes).toBe("Cut it fast with no pauses, and keep the bloopers in");
-    expect(await tool(t.token, "editor_style_save", { id })).toMatchObject({ error: true, text: "Nothing to change: give name, versions, target_s, pace, punch or notes." });
+    expect(await tool(t.token, "editor_style_save", { id })).toMatchObject({ error: true, text: "Nothing to change: give name, versions, target_s, pace, punch, size or notes." });
     expect(await tool(t.token, "editor_style_save", { notes: "Cut it fast with no pauses" })).toMatchObject({ error: true, text: "Give the new style a name." });
     expect(await tool(t.token, "editor_style_save", { id: "nope", versions: 2 })).toMatchObject({ error: true, text: `No style has that id or name. The user's styles: Tiny faster (${id}).` });
     expect(await tool(t.token, "editor_style_save", { id, pace: "slow" })).toMatchObject({ error: true, text: "pace is one of tight, natural" });
@@ -149,8 +154,8 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     const listed = await tool(t.token, "editor_style_use");
     expect(listed.value).toEqual({
       styles: [
-        { id, name: "Tiny faster", versions: 5, target_s: 30, pace: "tight", punch: 1.3, has_notes: true },
-        { id: copied.id, name: "Like Tiny source", versions: 4, target_s: 20, pace: "tight", punch: 1.15, has_notes: false },
+        { id, name: "Tiny faster", versions: 5, target_s: 30, pace: "tight", punch: 1.3, size: "footage", has_notes: true },
+        { id: copied.id, name: "Like Tiny source", versions: 4, target_s: 20, pace: "tight", punch: 1.15, size: "footage", has_notes: false },
       ],
       link: SHEET,
     });

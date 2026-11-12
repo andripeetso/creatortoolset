@@ -12,7 +12,9 @@ import type { EditStepChoice } from "./editor-steps";
  *   DELETE /api/editor/styles/:id      → { ok: true }
  *   GET    /api/editor/styles/:id/finished            → FinishedEdit[] (newest first)
  *   DELETE /api/editor/styles/:id/finished/:editId    → { ok: true }; that edit is never kept for the style again
+ *   POST   /api/editor/styles/asked    New edit's "How do you like to work?" was answered: it is not shown again → { ok: true }
  * POST /api/editor and PATCH /api/editor/:id take `style`: a style's id, or null for none.
+ * A POST /api/editor/styles with `first: true` (that screen's button) also makes the style the one New edit opens on.
  */
 
 /** How many editing styles one account keeps. */
@@ -32,6 +34,20 @@ export const PUNCHES = [
   { value: 1.15, name: "Light" },
   { value: 1.3, name: "Strong" },
 ] as const;
+
+/**
+ * The working sizes a style can name: the frame the cut's sources are fitted into. None named = the footage's own size,
+ * as before styles had one. Vertical only: the OTIO export carries no frame size (Resolve makes the timeline at its
+ * project's), and only these two are what the sources' framing, the preview and both exports were checked at.
+ */
+export const WORKING_SIZES = [
+  { w: 1080, h: 1920, name: "1080×1920 (vertical HD)" },
+  { w: 2160, h: 3840, name: "2160×3840 (vertical 4K)" },
+] as const;
+export interface WorkingSize {
+  w: number;
+  h: number;
+}
 
 export interface EditingStyle {
   id: string;
@@ -53,6 +69,8 @@ export interface EditingStyle {
   steps: EditStepChoice[] | null;
   /** one of the person's own skills (contracts/skills.ts), by id, for the script step; absent or null = none */
   skill?: string | null;
+  /** the working size, one of WORKING_SIZES; absent or null = the footage's own */
+  size?: WorkingSize | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -64,6 +82,8 @@ export interface EditingStylesView {
   styles: EditingStyle[];
   /** the style the last new edit was made with, if it is still there */
   last: string | null;
+  /** New edit's "How do you like to work?" was answered (or put off with Not now) */
+  asked?: true;
 }
 
 /** The copy an edit keeps of the style it was made with: what later steps read (the notes: the script; the pace: the cut). */

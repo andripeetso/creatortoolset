@@ -56,7 +56,7 @@ final class RecorderTests: XCTestCase {
     }
 
     /// Float samples at half level, `channels` of them, each channel in its own buffer or all in one.
-    private func floatSound(rate: Double, channels: Int, interleaved: Bool) throws -> CMSampleBuffer {
+    private func floatSound(rate: Double, channels: Int, interleaved: Bool, at: CMTime = .zero) throws -> CMSampleBuffer {
         let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: AVAudioChannelCount(channels), interleaved: interleaved))
         let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512))
         pcm.frameLength = 512
@@ -64,7 +64,7 @@ final class RecorderTests: XCTestCase {
             let samples = UnsafeMutableBufferPointer<Float>(buffer)
             for i in samples.indices { samples[i] = 0.5 }
         }
-        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)), presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)), presentationTimeStamp: at, decodeTimeStamp: .invalid)
         var made: CMSampleBuffer?
         XCTAssertEqual(CMSampleBufferCreate(allocator: nil, dataBuffer: nil, dataReady: false, makeDataReadyCallback: nil, refcon: nil,
                                             formatDescription: format.formatDescription, sampleCount: 512, sampleTimingEntryCount: 1,
@@ -89,6 +89,114 @@ final class RecorderTests: XCTestCase {
             XCTAssertTrue(samples.allSatisfy { abs($0 - 0.5) < 0.0001 }, "\(rate) Hz, \(channels) ch: \(samples.prefix(4))")
             XCTAssertEqual(layout.leftOut, 0)
         }
+    }
+
+    /// A frame of one grey (`luma`, 16 black to 235 white), `width`×`height`, in the layout the recorder captures in,
+    /// at `at` on the host clock.
+    private func frame(width: Int, height: Int, at: CMTime, luma: Int32 = 128) throws -> CMSampleBuffer {
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                                           [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let image = try XCTUnwrap(pixels)
+        CVPixelBufferLockBaseAddress(image, [])
+        for plane in 0..<2 {
+            memset(CVPixelBufferGetBaseAddressOfPlane(image, plane), plane == 0 ? luma : 128, CVPixelBufferGetBytesPerRowOfPlane(image, plane) * CVPixelBufferGetHeightOfPlane(image, plane))
+        }
+        CVPixelBufferUnlockBaseAddress(image, [])
+        let format = try CMVideoFormatDescription(imageBuffer: image)
+        let timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30), presentationTimeStamp: at, decodeTimeStamp: .invalid)
+        return try CMSampleBuffer(imageBuffer: image, formatDescription: format, sampleTiming: timing)
+    }
+
+    /// What a device on a cable sends (Capture.take): pictures, its own sound and the Mac's microphone, each timed on
+    /// the host clock. The file has the picture and both sound tracks, the voice first, starts at the first picture
+    /// and has no pointer log, since a phone has no pointer.
+    func testADevicesPictureAndSoundAreWrittenAsOneRecording() async throws {
+        guard #available(macOS 15.0, *) else { throw XCTSkip("the recorder needs macOS 15") }
+        guard let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"] else {
+            throw XCTSkip("Set CT_SCRATCH_DIR to a folder on the external disk: this test writes a video there")
+        }
+        let folder = URL(fileURLWithPath: base).appendingPathComponent("device-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("screen.mp4")
+        // a phone held upright: taller than wide
+        let capture = try Capture(file: file, width: 320, height: 692, mic: true, system: true)
+        try capture.open()
+        let host = { CMClockGetTime(CMClockGetHostTimeClock()) }
+        let send = { (buffer: CMSampleBuffer, track: Capture.Track) in capture.queue.sync { capture.take(buffer, track) } }
+        // sound that comes before the first picture is not in the file
+        try send(floatSound(rate: 48_000, channels: 2, interleaved: true, at: host()), .sound)
+        let began = host()
+        for _ in 0..<45 {   // a second and a half, as it happens
+            let now = host()
+            try send(frame(width: 320, height: 692, at: now), .picture)
+            for part in 0..<3 {   // 512 samples every 11 ms: about real time at 48 kHz
+                let at = now + CMTime(value: CMTimeValue(part * 512), timescale: 48_000)
+                try send(floatSound(rate: 48_000, channels: 2, interleaved: true, at: at), .sound)
+                try send(floatSound(rate: 48_000, channels: 1, interleaved: true, at: at), .voice)
+            }
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        let events = try await capture.stop()
+        let lasted = (host() - began).seconds
+        XCTAssertEqual(events.audio, ["mic", "system"])
+        XCTAssertTrue(events.moves.isEmpty && events.clicks.isEmpty)
+        XCTAssertEqual([events.width, events.height], [320, 692])
+        let asset = AVURLAsset(url: file)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, lasted, accuracy: 0.25)
+        let video = try await asset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(video.count, 1)
+        let size = try await video[0].load(.naturalSize)
+        XCTAssertEqual([size.width, size.height], [320, 692])
+        let sound = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(sound.count, 2)
+        for track in sound {
+            let range = try await track.load(.timeRange)
+            XCTAssertGreaterThan(range.duration.seconds, 1.2)
+        }
+    }
+
+    /// A device turned on its side while it records sends its picture the other way round: it goes into the file
+    /// whole, in the middle, with black above and below, not stretched to the file's shape.
+    func testAPictureTurnedOnItsSideGoesInWholeNotStretched() async throws {
+        guard #available(macOS 15.0, *) else { throw XCTSkip("the recorder needs macOS 15") }
+        guard let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"] else {
+            throw XCTSkip("Set CT_SCRATCH_DIR to a folder on the external disk: this test writes a video there")
+        }
+        let folder = URL(fileURLWithPath: base).appendingPathComponent("device-turn-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("screen.mp4")
+        let capture = try Capture(file: file, width: 320, height: 692, mic: false, system: false)
+        try capture.open()
+        let host = { CMClockGetTime(CMClockGetHostTimeClock()) }
+        let began = host()
+        // upright for half a second, then on its side, all in white
+        for n in 0..<36 {
+            let turned = n >= 15
+            let picture = try frame(width: turned ? 692 : 320, height: turned ? 320 : 692, at: host(), luma: 235)
+            capture.queue.sync { capture.take(picture, .picture) }
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        _ = try await capture.stop()
+        let images = AVAssetImageGenerator(asset: AVURLAsset(url: file))
+        images.requestedTimeToleranceBefore = .zero
+        images.requestedTimeToleranceAfter = .zero
+        let brightness = { (image: CGImage, x: Int, y: Int) -> Int in
+            let rep = NSBitmapImageRep(cgImage: image)
+            let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+            return Int(((c?.redComponent ?? 0) + (c?.greenComponent ?? 0) + (c?.blueComponent ?? 0)) / 3 * 255)
+        }
+        let upright = try await images.image(at: CMTime(seconds: 0.2, preferredTimescale: 600)).image
+        let onItsSide = try await images.image(at: CMTime(seconds: (host() - began).seconds - 0.4, preferredTimescale: 600)).image
+        XCTAssertEqual([upright.width, upright.height, onItsSide.width, onItsSide.height], [320, 692, 320, 692])
+        XCTAssertGreaterThan(brightness(upright, 160, 20), 200)      // upright: white to the top
+        XCTAssertLessThan(brightness(onItsSide, 160, 20), 40)        // on its side: black above
+        XCTAssertLessThan(brightness(onItsSide, 160, 672), 40)       // and below
+        XCTAssertGreaterThan(brightness(onItsSide, 160, 346), 200)   // the picture in the middle
+        XCTAssertGreaterThan(brightness(onItsSide, 4, 346), 200)     // as wide as the file
     }
 
     func testPointerOnTheMainDisplay() {

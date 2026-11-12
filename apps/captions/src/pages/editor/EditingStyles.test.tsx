@@ -127,14 +127,15 @@ describe("Duplicate", () => {
 describe("The style sheet", () => {
   it("a new style: the grade, the folder and the steps are drawn when there is a choice, and an untouched grade and steps are not sent", async () => {
     await render([], "new");
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Grade", "B-roll folder", "What to blur", "How"]);
+    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Grade", "B-roll folder", "What to blur", "How"]);
+    expect(field<HTMLSelectElement>("style-size")!.value).toBe("1080x1920"); // a new style works in vertical HD
     expect(document.querySelector('[aria-label="Post-processing"]')).not.toBeNull();
     expect(field<HTMLSelectElement>("style-grade")!.value).toBe("none"); // the person's default grade is shown
     expect((document.querySelector('[role="switch"]') as HTMLElement).getAttribute("aria-checked")).toBe("true"); // and the steps in use
     await type("style-name", "Fast and warm");
     const made = await save();
     expect([made.method, made.url]).toEqual(["POST", "/api/editor/styles"]);
-    expect(made.body).toEqual({ name: "Fast and warm", notes: "", versions: 1, targetS: 0, pace: "tight", punch: 1.15, brollCollectionId: null });
+    expect(made.body).toEqual({ name: "Fast and warm", notes: "", versions: 1, targetS: 0, pace: "tight", punch: 1.15, size: { w: 1080, h: 1920 }, brollCollectionId: null });
   });
 
   it("what is changed here is sent: the grade, the folder, a step's value, a step switched off", async () => {
@@ -165,9 +166,19 @@ describe("The style sheet", () => {
   it("with one grade, no folder and no step in this app, none of the three is drawn or sent", async () => {
     has = { grades: false, folders: false, steps: false };
     await render([style], style);
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in"]);
+    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size"]);
     expect(document.querySelector('[aria-label="Post-processing"]')).toBeNull();
-    expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "targetS", "versions"]);
+    expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "size", "targetS", "versions"]);
+  });
+
+  it("the working size: a style with none shows From the footage and sends null; a size picked is sent as it is", async () => {
+    await render([style], style);
+    const sel = field<HTMLSelectElement>("style-size")!;
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["1080×1920 (vertical HD)", "2160×3840 (vertical 4K)", "From the footage"]);
+    expect(sel.value).toBe("footage");
+    expect((await save()).body.size).toBeNull();
+    await type("style-size", "2160x3840");
+    expect((await save()).body.size).toEqual({ w: 2160, h: 3840 });
   });
 });
 
