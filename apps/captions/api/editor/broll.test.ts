@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
 import { placeCards } from "./cards/place";
 import { emptyTracks, noPicture } from "./timeline";
-import { BROLL_NOTE, COVER_SHOT_FRAMES, coverWindows, freeStart, placeBroll, placeCover, rulesAt, windowsOf } from "./broll";
+import { BROLL_NOTE, COVER_SHOT_FRAMES, coverWindows, freeStart, placeBroll, placeCover, rulesAt, saidUnder, windowsOf } from "./broll";
 
 const src = (versionId: string, dur: number): TimelineSource => ({ versionId, name: versionId, fps: 30, tc: 0, dur, w: 1080, h: 1920 });
 
@@ -185,6 +185,25 @@ describe("a cut whose takes have no picture: the B-roll is the whole picture", (
     expect(new Set(timeline.tracks.V2.items.filter((i) => i.rec >= 120 && i.rec < 400).map((i) => i.src))).toContain("mat_clip");
     // no fit for the last line: the clip shown least
     expect(at(400)).toBe("other");
+  });
+
+  it("a shot is matched on the words said under it, not on its whole line: one long line gets a clip for each thing it says", () => {
+    // one line, 10 s: "mat" is said in its first 3 s, "ramp" from 6 s on (the voice starts 2 s into its recording)
+    const tl = spoken([[0, "Roll the mat out then the ramp goes down"]], 300);
+    tl.tracks.V1.items = [{ src: "voice", in: 60, len: 300, rec: 0, link: "c1" }];
+    const words = { voice: [{ w: "Roll", s: 2.1, e: 2.5 }, { w: "the", s: 2.6, e: 2.8 }, { w: "mat", s: 3, e: 3.6 }, { w: "out", s: 4, e: 4.4 }, { w: "then", s: 7, e: 7.4 }, { w: "ramp", s: 8.2, e: 8.9 }, { w: "down.", s: 11, e: 11.6 }] };
+    const said = saidUnder(tl, words);
+    expect(said(0, 90)).toBe("Roll the mat out");
+    expect(said(150, 150)).toBe("then ramp down.");
+    expect(said(90, 60)).toBe("");
+    const rank = (text: string) => [...(/mat/.test(text) ? ["mat_clip"] : []), ...(/ramp/.test(text) ? ["ramp_clip"] : [])];
+    const pool = [src("mat_clip", 2000), src("ramp_clip", 2000)];
+    const at = (t: Timeline, rec: number) => t.tracks.V2.items.find((i) => i.rec <= rec && rec < i.rec + i.len)!.src;
+    // by its line alone, every shot fits both clips the same way; by what is said under it, each gets its own
+    const fine = placeCover(tl, pool, rank, said).timeline;
+    expect(at(fine, 10)).toBe("mat_clip"); // the first of four shots: "Roll the mat out"
+    expect(at(fine, 200)).toBe("ramp_clip"); // the third: "then ramp"
+    expect(coveredTo(fine.tracks.V2.items)).toBe(300);
   });
 
   it("with less footage than the video is long, a moment is shown again and said so: still no black frame", () => {

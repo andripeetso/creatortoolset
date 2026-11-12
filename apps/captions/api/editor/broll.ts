@@ -1,7 +1,7 @@
 import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
 import { libraryDb } from "../library/db";
 import { savedQuery } from "../library/collections";
-import { NeedsKey } from "../library/transcribe";
+import { NeedsKey, wordsOf } from "../library/transcribe";
 import { buildAssetQuery, MAX_LIMIT, type CardRow } from "../library/query";
 import type { ProbeSummary } from "../library/media/probe";
 import { brollMinFrames } from "./qa";
@@ -160,9 +160,10 @@ export function coverWindows(tl: Timeline): CoverWindow[] {
  * names the clips that fit a shot's words, best first; a shot takes the best one with a moment still unused, else the
  * next clip in turn, and a clip shown less often goes before one shown more. No frame stays black: when every moment
  * is used, or no clip is as long as the shot, a moment is shown again (the note says how many) and a short clip is
- * followed by another.
+ * followed by another. `said` gives the words spoken from a timeline frame on (saidUnder); without it a shot is
+ * matched on its whole line.
  */
-export function placeCover(tl: Timeline, pool: TimelineSource[], rank: (text: string) => string[] = () => []): BrollResult {
+export function placeCover(tl: Timeline, pool: TimelineSource[], rank: (text: string) => string[] = () => [], said?: (rec: number, len: number) => string): BrollResult {
   const out = structuredClone(tl);
   const clips = pool.filter((s, k) => s.dur > 0 && s.w > 0 && pool.findIndex((o) => o.versionId === s.versionId) === k);
   if (!clips.length) {
@@ -183,7 +184,8 @@ export function placeCover(tl: Timeline, pool: TimelineSource[], rank: (text: st
   const queue = coverWindows(tl);
   for (let n = 0; n < queue.length; n++) {
     const w = queue[n]!;
-    const fits = rank(w.text).flatMap((id) => clips.filter((c) => c.versionId === id));
+    // matched on the words said under this shot when they are known (finer than its whole line), else on its line
+    const fits = rank(said?.(w.rec, w.len) || w.text).flatMap((id) => clips.filter((c) => c.versionId === id));
     const rest = clips.map((_, k) => clips[(turn + k) % clips.length]!).filter((c) => !fits.includes(c));
     // sort is stable: among clips shown equally often, the best fit (then the next in turn) stays first
     const order = [...fits].sort((a, b) => shown(a) - shown(b)).concat(rest.sort((a, b) => shown(a) - shown(b)));
@@ -207,6 +209,26 @@ export function placeCover(tl: Timeline, pool: TimelineSource[], rank: (text: st
   }
   out.tracks.V2.items = placed;
   return { timeline: out, notes: again ? [`${BROLL_NOTE}the folder has less footage than this video is long: ${again} ${again === 1 ? "shot shows" : "shots show"} a moment again`] : [] };
+}
+
+/**
+ * The words spoken under a stretch of the cut, from each take's own transcript: the voice pieces the stretch runs
+ * over, each read back to its seconds in the recording.
+ */
+export function saidUnder(tl: Timeline, words: Record<string, { w: string; s: number; e: number }[]>): (rec: number, len: number) => string {
+  return (rec, len) => {
+    const out: string[] = [];
+    for (const i of [...tl.tracks.V1.items].sort((a, b) => a.rec - b.rec)) {
+      const a = Math.max(rec, i.rec);
+      const b = Math.min(rec + len, i.rec + i.len);
+      const src = tl.sources[i.src];
+      if (b <= a || !src) continue;
+      const at = (frame: number) => i.in / src.fps + (frame - i.rec) / tl.fps;
+      // a word counts where its middle falls, so one on a cut is said once
+      for (const w of words[i.src] ?? []) if ((w.s + w.e) / 2 >= at(a) && (w.s + w.e) / 2 < at(b)) out.push(w.w);
+    }
+    return out.join(" ");
+  };
 }
 
 /** A clip's whole length in timeline frames. */
@@ -245,7 +267,7 @@ function sortedBroll(libraryId: string): CollectionRow[] {
   return (libraryDb().prepare(q.sql).all(...q.params) as unknown as CardRow[]).slice(0, MAX_LIMIT).map((r) => ({ id: r.version_id, title: r.title, probe: r.probe }));
 }
 
-const wordsOf = (text: string): string[] => [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])];
+const wordsIn = (text: string): string[] => [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])];
 
 /**
  * Ranks `rows` against a shot's words by their title, tags and description (the library's search text), best first.
@@ -256,11 +278,11 @@ const wordsOf = (text: string): string[] => [...new Set(text.toLowerCase().match
 export function rankByWords(rows: { id: string }[]): (text: string) => string[] {
   const d = libraryDb();
   const read = d.prepare("SELECT s.title || ' ' || s.tags || ' ' || s.description AS text FROM asset_versions v JOIN search_assets s ON s.asset_id = v.asset_id WHERE v.id = ?");
-  const clips = rows.map((r) => ({ id: r.id, words: new Set(wordsOf((read.get(r.id) as { text: string } | undefined)?.text ?? "")) }));
+  const clips = rows.map((r) => ({ id: r.id, words: new Set(wordsIn((read.get(r.id) as { text: string } | undefined)?.text ?? "")) }));
   const weight = (w: string) => Math.log(clips.length / clips.filter((c) => c.words.has(w)).length);
   return (text) =>
     clips
-      .map((c) => ({ id: c.id, score: wordsOf(text).reduce((n, w) => (c.words.has(w) ? n + weight(w) : n), 0) }))
+      .map((c) => ({ id: c.id, score: wordsIn(text).reduce((n, w) => (c.words.has(w) ? n + weight(w) : n), 0) }))
       .filter((c) => c.score > 0)
       .sort((x, y) => y.score - x.score)
       .map((c) => c.id);
@@ -282,7 +304,8 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   if (sourcesWorkspace(job.actor ?? "", rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("The B-roll collection is no longer yours to read");
   const pool = rows.flatMap((r) => (r.probe ? [sourceOf(r.id, r.title, JSON.parse(r.probe) as ProbeSummary)] : []));
   if (signal.aborted) return;
-  const { timeline, notes } = cover ? placeCover(draft.timeline, pool, rankByWords(rows)) : placeBroll(draft.timeline, pool);
+  const spoken = () => Object.fromEntries([...new Set(draft.timeline.tracks.V1.items.map((i) => i.src))].map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
+  const { timeline, notes } = cover ? placeCover(draft.timeline, pool, rankByWords(rows), saidUnder(draft.timeline, spoken())) : placeBroll(draft.timeline, pool);
   if (cover && !timeline.tracks.V2.items.length) throw new NeedsKey(NO_COVER_IN_FOLDER);
   await saveDraft(edit.id, variant, { timeline, notes: [...draft.notes.filter((n) => !n.startsWith(BROLL_NOTE)), ...notes] });
 }
