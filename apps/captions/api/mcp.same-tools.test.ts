@@ -32,7 +32,7 @@ const toolsOf = async (authorization: string) =>
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
-const ADDED = ["upload_file", "editor_style_save"];
+const ADDED = ["upload_file", "channel_posts", "editor_style_save"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
 const OPENED = ["use_file"];
 const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
@@ -68,9 +68,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
     expect(Buffer.byteLength(def.description)).toBe(131);
     // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the
-    // list: 534; upload_file adds 345 (its 182-byte description, path and size)
-    expect(bytes(dock) - bytes(main(dock))).toBe(879);
+    // list: 534; upload_file adds 345 (its 182-byte description, path and size); channel_posts 426 (the connected
+    // social accounts' numbers and posts, read again first when over an hour old; its 279-byte description, platform and refresh)
+    expect(bytes(dock) - bytes(main(dock))).toBe(1305);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(2096);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(2522);
   });
 });
