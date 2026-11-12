@@ -115,8 +115,10 @@ describe("what the file says", () => {
     expect(readTag(fuji(0x40))).toEqual({ other: "Fujifilm video mode 0x40" });
   });
   it("nothing either way otherwise", () => expect(readTag(Buffer.from("moov....udta"))).toBeNull());
-  it("reads code values as the file's range tag says, and untagged ProRes as limited", () => {
-    expect([rangeOf("pc", "hevc"), rangeOf("tv", "h264"), rangeOf("unknown", "prores"), rangeOf("unknown", "hevc")]).toEqual(["full", "limited", "limited", "full"]);
+  it("reads a camera file's codes as they are, whatever its range tag, and ProRes as video range", () => {
+    expect([rangeOf("hevc"), rangeOf("h264"), rangeOf("prores")]).toEqual(["full", "full", "limited"]);
+    // why: the papers' IRE columns are (code − 64) / 876 of the same codes the curves take as code / 1023
+    for (const [cv, ire] of [[95, 0.035], [420, 0.41], [128, 0.073], [433, 0.42]]) expect((cv! - 64) / 876).toBeCloseTo(ire!, 2);
   });
 });
 

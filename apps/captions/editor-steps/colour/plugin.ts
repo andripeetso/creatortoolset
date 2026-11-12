@@ -5,7 +5,7 @@ import { open, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegCommand } from "../../api/ffmpeg-runtime";
 import { definePlugin, type EditorStepInput } from "../../api/lib/plugin";
-import { ffmpegSlot, ffmpegTo } from "../../api/library/media/run";
+import { atomically, ffmpegSlot } from "../../api/library/media/run";
 import { parseProbe } from "../../api/library/media/probe";
 
 /**
@@ -114,14 +114,16 @@ export const gamutTo709 = (p: XY[]): Mat => {
 
 /**
  * The display transform, one channel: scene-linear (Rec.709 primaries) → a Rec.709 video signal. Negatives clipped,
- * values above KNEE rolled off smoothly towards 1 (identity below it, so 18% grey and skin are untouched), then the
- * BT.709 OETF. Grey lands at 0.409 (41%), as a broadcast camera puts it. ponytail: per channel, so very bright
- * saturated colours lean towards white; a luminance roll-off when that shows.
+ * values above KNEE rolled off towards 1 by a Reinhard shoulder, KNEE + (1 − KNEE) · u / (1 + u) with u = (x − KNEE) /
+ * (1 − KNEE) (the same slope at the knee, identity below it, so 18% grey and skin are untouched; highlights several
+ * stops over keep their steps and never clip), then the BT.709 OETF. Grey lands at 0.409 (41%), as a broadcast camera
+ * puts it. ponytail: per channel, so very bright saturated colours lean towards white; a luminance roll-off when that shows.
  */
 export const KNEE = 0.6;
 export function display(l: number): number {
   const x = Math.max(0, l);
-  const t = x <= KNEE ? x : KNEE + (1 - KNEE) * (1 - Math.exp(-(x - KNEE) / (1 - KNEE)));
+  const u = (x - KNEE) / (1 - KNEE);
+  const t = x <= KNEE ? x : KNEE + (1 - KNEE) * (u / (1 + u));
   return t < 0.018 ? 4.5 * t : 1.099 * t ** 0.45 - 0.099;
 }
 
@@ -198,12 +200,13 @@ export async function metaBoxes(file: string): Promise<Buffer> {
   }
 }
 
-/** One ffmpeg or ffprobe run in the server-wide limit, its stdout back. */
-function capture(cmd: string, args: string[]): Promise<Buffer> {
+/** One ffmpeg or ffprobe run in the server-wide limit, its stdout back; `signal` stops it (this process only). */
+function capture(cmd: string, args: string[], signal?: AbortSignal): Promise<Buffer> {
   return ffmpegSlot(
     () =>
       new Promise((resolve, reject) => {
         const p = spawn(cmd, args);
+        signal?.addEventListener("abort", () => p.kill(), { once: true });
         const out: Buffer[] = [];
         let err = "";
         p.stdout.on("data", (d: Buffer) => out.push(d));
@@ -261,11 +264,12 @@ const IMAGE = /\.(jpe?g|png|heic|heif|webp|gif|tiff?|dng)$/i;
 const sha1 = (s: string) => createHash("sha1").update(s).digest("hex");
 
 /**
- * The code values the curves take: a file tagged full range (Sony's S-Log3, as its FAQ says) is read as it is; one
- * tagged limited is expanded first. Untagged: ProRes is limited (the QuickTime convention, Canon's FAQ Q7), anything
- * else full (the makers record log full range: Sony Q4, Fujifilm, Canon Q6).
+ * The code values the curves take. The papers' codes are the file's own 10-bit codes (their IRE columns are
+ * (code − 64) / 876: Sony 95 → 3.5%, Panasonic 128 → 7.3%), so a camera file is read as it is, whatever its range tag
+ * says (a Sony S-Log3 clip's darkest pixels sit at 89–98, on its 0% code of 95). ProRes is the exception, a stated
+ * guess: QuickTime hands its YCbCr out as video range (Canon's FAQ Q7), so it is expanded first.
  */
-export const rangeOf = (tag: string, codec: string) => (tag === "pc" ? "full" : tag === "tv" ? "limited" : codec === "prores" ? "limited" : "full");
+export const rangeOf = (codec: string) => (codec === "prores" ? "limited" : "full");
 
 export async function convertColour({ files, timeline, values, workDir, signal, note }: EditorStepInput): Promise<Record<string, string>> {
   const choice = (values.profile ?? "auto") as Profile | "auto" | "off";
@@ -299,7 +303,7 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
     }
     if (!profile || signal.aborted) continue;
     const lut = cube(convert(profile));
-    const range = rangeOf(v.color_range, v.codec_name);
+    const range = rangeOf(v.codec_name);
     const matrix = v.color_space === "bt2020nc" || v.color_space === "bt2020c" ? "bt2020" : v.color_space === "bt709" ? "bt709" : profile === "applelog" ? "bt2020" : "bt709";
     const s = statSync(file);
     const key = sha1([VERSION, file, s.size, s.mtimeMs, profile, range, matrix, sha1(lut)].join("\n")).slice(0, 12);
@@ -321,9 +325,12 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
         "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709", // the output flags alone write no tags
       ].join(",");
       try {
-        await ffmpegTo(dest, [
-          "-i", file, "-map", "0:v:0", "-map", "0:a?", "-vf", vf, "-fps_mode", "passthrough", ...enc, "-c:a", "copy", "-map_metadata", "0", ...(p.timecode ? ["-timecode", p.timecode] : []), "-f", "mov",
-        ]);
+        await atomically(dest, (tmp) =>
+          capture(ffmpegCommand(), [
+            "-hide_banner", "-v", "error", "-nostdin", "-y", "-i", file, "-map", "0:v:0", "-map", "0:a?", "-vf", vf, "-fps_mode", "passthrough", ...enc,
+            "-c:a", "copy", "-map_metadata", "0", ...(p.timecode ? ["-timecode", p.timecode] : []), "-f", "mov", tmp,
+          ], signal),
+        );
       } catch (e) {
         if (signal.aborted) break;
         throw new Error(`Colour failed on ${name}: ${(e as Error).message}`);

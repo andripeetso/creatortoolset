@@ -9,7 +9,7 @@ grade (`api/editor/grade.ts`, applied at preview) sits on top of the converted c
 
 | The file says | Camera profile: Auto (default) | A named profile | Off |
 |---|---|---|---|
-| a log it knows (below) | converted with that log | converted with the file's log (the file wins) | left alone |
+| a log it knows (below) | converted with that log | converted with the file's log: the file wins over the named profile | left alone |
 | not log (Sony `rec709`, Fujifilm normal or HLG, an HLG or PQ tag) | left alone | left alone | left alone |
 | a log it doesn't convert (e.g. Sony S-Log3 with S-Gamut3) | left alone, named in the notes | the same | left alone |
 | nothing, and it looks flat | left alone, and the notes say: "Tiny-take looks flat (log?) but its camera profile isn't in the file: pick it under Colour in Settings → AI Editor" | converted with the named profile | left alone |
@@ -29,17 +29,20 @@ A 33-point `.cube` 3D LUT is made in code at run time (`cube`, `convert`), writt
 ffmpeg's `lut3d` (tetrahedral) on 16-bit RGB:
 
 1. **Code values.** The file's YCbCr goes to RGB with its own matrix: BT.709, or BT.2020 when the file says so. Apple
-   Log with no tag uses BT.2020, as its paper says. A file tagged full range is read as it is, and one tagged limited
-   range is expanded first. An untagged file is limited range if it is ProRes (the QuickTime convention, Canon FAQ Q7)
-   and full range otherwise (Sony FAQ Q4, Fujifilm FAQ, Canon FAQ Q6). The papers define their curves on the 10-bit code
-   value / 1023.
+   Log with no tag uses BT.2020, as its paper says. The papers define their curves on the 10-bit code value / 1023, and
+   those are the file's own codes: each paper's IRE column is (code − 64) / 876 of the same code (Sony 95 → 3.5%,
+   Panasonic 128 → 7.3%). So a camera file is read as it is, whatever its range tag says. Expanding a limited-tagged V-Log
+   file first would put its 0% black at 0.073 where the curve expects 0.125. The Sony S-Log3 clip's darkest pixels sit
+   at codes 89–98, on its 0% code of 95. ProRes is the one exception, and it is a guess: QuickTime hands ProRes YCbCr
+   out as video range (Canon FAQ Q7), so ProRes is expanded first.
 2. **The log curve to scene-linear reflection**, in each paper's own decoding formula (`PROFILES`).
 3. **The gamut to Rec.709 primaries**: the matrix is computed from the paper's primaries and the D65 white, which all
    of them share, so no white adaptation is needed (`toXyz`, `gamutTo709`, SMPTE RP 177).
 4. **The display transform** (`display`), per channel:
    - negatives are clipped;
-   - above 0.6 linear, a soft highlight roll-off: `0.6 + 0.4 · (1 − e^(−(x − 0.6) / 0.4))`, smooth at 0.6 and never
-     above 1 (identity below 0.6, so grey and skin are untouched);
+   - above 0.6 linear, a soft highlight roll-off (a Reinhard shoulder): `0.6 + 0.4 · u / (1 + u)` with
+     `u = (x − 0.6) / 0.4`. It has the same slope at 0.6 and never reaches 1. Below 0.6 it is the identity, so grey and
+     skin are untouched, and highlights several stops over keep their steps;
    - then the Rec.709 OETF: `1.099 · L^0.45 − 0.099`, or `4.5 · L` under 0.018.
 
    18% grey comes out at 0.409 (41%).
@@ -99,8 +102,11 @@ S-Log3 clip has no colour tags at all, and Fujifilm writes BT.709 tags on every 
 A camera-original Sony A7S III S-Log3 clip, 3840x2160 HEVC 4:2:2 10-bit, 468 frames at 23.976:
 - Auto found S-Log3 in its XML.
 - The copy has 468 frames, the same start timecode (10:29:02:04), the PCM sound, and BT.709 tags.
-- In the before/after frames, contrast and colour look normal and the white swan keeps its detail: under 1% of pixels
-  are above code 936 of 940.
+- In the before/after frames, contrast and colour look normal, and the greens, the dark water and the orange beak read
+  as they should.
+- The white swan keeps its shading. Its pixels spanned codes 571–753 in S-Log3 and span 789–922 after (940 is white).
+  No pixel reaches 936, and the brightest is 925.
+- The clip has no person in it, so skin was not checked.
 
 ## Not checked yet
 
@@ -108,6 +114,7 @@ A camera-original Sony A7S III S-Log3 clip, 3840x2160 HEVC 4:2:2 10-bit, 468 fra
 - the curves on real F-Log, F-Log2, Apple Log, V-Log or Canon Log files: they are checked only against the papers'
   tables
 - variable-frame-rate phone files: every frame is kept with its own time (`passthrough`)
+- the ProRes range rule, on a real ProRes log file
 
 ## Check it
 
