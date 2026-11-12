@@ -71,9 +71,11 @@ export function Inspector({
   /** The least depth a zoom is seen at (lib/screen-recording.ts zoomFloor, in tenths): above 1 where zooms fill the whole frame. */
   floor: number;
 }) {
+  // a recording of an iPhone or iPad has no pointer log: nothing of the pointer's is offered for it
+  const hasPointer = events.moves.length > 0 || events.clicks.length > 0;
   const tabs: { id: InspectorTab; label: string; icon: typeof ImageIcon }[] = [
     { id: "background", label: "Background", icon: ImageIcon },
-    { id: "pointer", label: "Pointer", icon: MousePointer2 },
+    ...(hasPointer ? [{ id: "pointer" as const, label: "Pointer", icon: MousePointer2 }] : []),
     { id: "zoom", label: "Zoom", icon: ZoomIn },
     ...(hasCamera ? [{ id: "camera" as const, label: "Camera", icon: Video }] : []),
   ];
@@ -258,17 +260,19 @@ function ZoomTab({
             <SliderRow label="Depth" value={depth(zoom)} min={least} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
           )}
           <AimPad look={look} zoom={zoom} player={player} onAim={(x, y) => setZoom({ x, y })} />
-          <PanelButton
-            onClick={() => {
-              const at = aim(player.time());
-              setZoom({ x: at.x, y: at.y });
-            }}
-            title="Look where the pointer is at the playhead"
-          >
-            <Crosshair /> Aim at the pointer
-          </PanelButton>
+          {(events.moves.length > 0 || events.clicks.length > 0) && (
+            <PanelButton
+              onClick={() => {
+                const at = aim(player.time());
+                setZoom({ x: at.x, y: at.y });
+              }}
+              title="Look where the pointer is at the playhead"
+            >
+              <Crosshair /> Aim at the pointer
+            </PanelButton>
+          )}
         </Group>
-        <EveryZoom look={look} change={change} />
+        <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
         <Group>
           {look.zooms.length > 1 && (
             <PanelButton onClick={() => change({ zooms: look.zooms.map((z) => ({ ...z, scale: zoom.scale })) })}>
@@ -309,7 +313,7 @@ function ZoomTab({
       </Group>
       {look.zooms.length > 0 && (
         <>
-          <EveryZoom look={look} change={change} />
+          <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
           <Group title="Zooms">
             <div className="space-y-1">
               {look.zooms.map((z, i) => (
@@ -338,13 +342,15 @@ function ZoomTab({
  * sits in. The window can only grow where the whole recording is shown; up to the padding only where the frame has
  * space beside the window (another shape than the recording's).
  */
-function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void }) {
+function EveryZoom({ look, change, clicks }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; clicks: boolean }) {
   const filled = look.fill && look.shape !== "source";
   const room = look.shape !== "source";
   const fit = look.zoomFit === "frame" ? "frame" : look.zoomFit === "space" && room ? "space" : "inside";
+  if (!clicks && filled) return null; // nothing here would change anything
   return (
     <Group title="Every zoom">
-      <SwitchRow label="Move to clicks outside the view" checked={look.follow} onChange={(follow) => change({ follow })} />
+      {/* only where there are clicks for the view to move to */}
+      {clicks && <SwitchRow label="Move to clicks outside the view" checked={look.follow} onChange={(follow) => change({ follow })} />}
       {!filled && (
         <div className="space-y-2">
           <p className="text-xs text-zinc-400">While zoomed, the window</p>
