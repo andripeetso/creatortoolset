@@ -86,17 +86,59 @@ struct CreatorToolsetMacApp: App {
 /// the app is in the background with no AI job on this Mac and no recording.
 final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
     static let shared = UpdateWhenIdle()
+    /// The quiet update found its idle moment itself: no question then.
+    private var quiet = false
 
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                  immediateInstallationBlock install: @escaping () -> Void) -> Bool {
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { timer in
-            MainActor.assumeIsolated {
-                guard let shell = AppDelegate.shell, !NSApp.isActive, shell.ai.running == 0, !shell.recorder.busy else { return }
-                timer.invalidate()
-                install()
-            }
+        whenIdle(every: 60, inBackground: true) { [weak self] in
+            self?.quiet = true
+            install()
         }
         return true
+    }
+
+    /// Every install and relaunch passes here once. Something the relaunch would
+    /// cut off: ask first. Update When Done waits for it; Update Now goes ahead.
+    func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+                 untilInvokingBlock install: @escaping () -> Void) -> Bool {
+        MainActor.assumeIsolated {
+            guard !quiet, let shell = AppDelegate.shell else { return false }
+            let cut = Self.wouldInterrupt(shell)
+            guard !cut.isEmpty else { return false }
+            let a = NSAlert()
+            a.messageText = "Updating now stops what's running"
+            a.informativeText = cut.map { "• \($0)" }.joined(separator: "\n")
+                + (shell.runsHere ? "\n\nAI Editor steps start again by themselves after the update." : "")
+            a.addButton(withTitle: "Update When Done")
+            a.addButton(withTitle: "Update Now")
+            NSApp.activate()
+            guard a.runModal() == .alertFirstButtonReturn else { return false }
+            whenIdle(every: 5, inBackground: false, install)
+            return true
+        }
+    }
+
+    /// One line per thing a relaunch cuts off. The server's own work only counts when it runs on this Mac.
+    @MainActor static func wouldInterrupt(_ shell: Shell) -> [String] {
+        var cut: [String] = []
+        if shell.recorder.busy && shell.recorder.phase != .toolbar { cut.append("Your screen recording") }
+        if shell.ai.running > 0 { cut.append("\(shell.ai.running) AI request\(shell.ai.running == 1 ? "" : "s") on this Mac") }
+        if shell.runsHere { cut += shell.rows.active.filter { $0.id != "mac" }.map { "\($0.title) (\($0.detail))" } }
+        return cut
+    }
+
+    /// Calls `go` once no AI job runs on this Mac and nothing records (and, for the quiet updates, the app is in the background).
+    private func whenIdle(every seconds: TimeInterval, inBackground: Bool, _ go: @escaping () -> Void) {
+        Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                guard let shell = AppDelegate.shell, !(inBackground && NSApp.isActive),
+                      shell.ai.running == 0, !shell.recorder.busy,
+                      inBackground || Self.wouldInterrupt(shell).isEmpty else { return }
+                timer.invalidate()
+                go()
+            }
+        }
     }
 }
 

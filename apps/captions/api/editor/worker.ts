@@ -48,6 +48,11 @@ export function stopEdit(editId: string): void {
   editStopped(editId);
 }
 
+/** The app is stopping (an update, Quit): this server's running steps go back in the queue at once, the try not counted. */
+export function releaseRunningSteps(now = Date.now()): void {
+  for (const id of running.keys()) defer(libraryDb(), id, 0, now, T);
+}
+
 /** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
 function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
   if (variant || job.kind !== "draft") for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
