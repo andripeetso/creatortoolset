@@ -65,6 +65,7 @@ import { clearLoadingMark, loadFolderPlugins, mountFolderPlugins, startFolderPlu
 import { announceWrites, syncApp } from "./lib/sync";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { mcpChallenge, oauthApp } from "./oauth";
+import { cardApp } from "./mcp-cards";
 import { activityApp } from "./activity";
 import { VISITOR, mayUse, touchActive, type Tool } from "./users";
 import { env, hostedMode } from "./lib/env";
@@ -266,6 +267,8 @@ app.route("/api/upload", uploadLinkApp);
 app.route("/api/connectors", connectorsCallbackApp);
 // an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access
 app.route("/", oauthApp);
+// a picture in a card an AI app shows (mcp-cards.ts): a signed link, since the card's frame has no sign-in
+app.route("/", cardApp);
 
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {

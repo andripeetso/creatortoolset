@@ -75,6 +75,12 @@ export async function canSee(viewer: LibraryViewer, asset: LibraryAssetRef): Pro
 }
 
 /** Whether a library source is registered (the built-in one included). Refs for an unknown source are not made. */
+/**
+ * A plug-in put a gate of its own on the built-in library (a second policy). Its pictures then go only to a signed-in
+ * browser, never out on a card's link (api/mcp-cards.ts): the plug-in's check may need what only a browser carries.
+ */
+export const libraryGatedByPlugin = (): boolean => (policies.get(LIBRARY_SOURCE)?.length ?? 0) > 1;
+
 export const hasLibrarySource = (id: string): boolean => sources.has(id);
 
 /** A registered source by id (the built-in one included), or undefined. */

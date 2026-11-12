@@ -24,6 +24,7 @@ import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
+import { cardFor, cardResource, cardResourceList, cardToolMeta, hasCard, thumbLinks } from "./mcp-cards";
 
 /**
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
@@ -1294,13 +1295,38 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
       const work = cards.map((w) => w(name, args ?? {}, result as Args)).find((c) => !!c) ?? workFor(name, args ?? {}, result as Args);
       if (work) noteWork(user.username, turn, work.card, work.only);
     }
-    return { content: Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }] };
+    const content: Content[] = Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }];
+    // an AI app outside the dock draws some answers as a card (mcp-cards.ts): its data rides beside the text, for the card alone
+    const card = !turn && !confirmed && !isJob(auth) && hasCard(name) ? cardFor(name, args ?? {}, answerOf(result, content), origin, thumbLinks(auth.get("authorization"), user.username, origin)) : null;
+    return card ? { content, _meta: { card } } : { content };
   } catch (e) {
     if (e instanceof Asked)
       return { content: [{ type: "text", text: `Asked the user: "${e.message}" Nothing has been changed. It is done when they press Yes on the card under your reply: say that you asked, end your reply and wait.` }] };
     return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true };
   }
 }
+
+/** A tool's answer as the object a card is made from: the result itself, or what its first text block holds (get_review answers in blocks). */
+function answerOf(result: unknown, content: Content[]): Args {
+  if (result && typeof result === "object" && !Array.isArray(result)) return result as Args;
+  try {
+    const first = content[0];
+    const parsed = first?.type === "text" ? (JSON.parse(first.text) as unknown) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Args) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Said to an AI app outside the dock, with the guide: the dock has no cards. */
+const CARDS_GUIDE = `Cards: a script (workshop_session and the tools that write one), footage (media_search), a Review video's
+comments (get_review) and an edit (editor_get, editor_create) show in the chat as a card, where the app can draw one.
+The card already shows the content and a button that opens it in Creator Toolset: do not repeat it line by line. Say
+what you did or found in a sentence or two, and what the user could do next.
+
+Here you are the writer: write and change scripts yourself with workshop_new_piece and workshop_edit_piece, so the user
+sees them saved at once. workshop_chat asks the Workshop's own writer, which needs a computer paired to the account:
+use it only when the user asks for that writer.`;
 
 /** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
 export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser, plugged: PluginTools = pluginToolsOf([])): Promise<Args | null> {
@@ -1311,9 +1337,11 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
     case "initialize":
       return ok({
         protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
-        capabilities: { tools: {} },
+        // the dock's assistant gets tools only; an AI app outside also reads the card's page (resources)
+        capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
-        instructions: [INSTRUCTIONS, mainSource() ? "" : FINALS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        // a plug-in's paragraph stays last: it speaks for this install
+        instructions: [INSTRUCTIONS, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
@@ -1325,8 +1353,18 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // dockOnly says who gets a tool; it is not part of the listing
       return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
           // the labels are for an AI app outside (it asks before a tool that can remove); the dock's list stays as it was
-          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name) },
+          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(hasCard(name) ? { _meta: cardToolMeta() } : {}) },
         ) });
+    }
+    // the card's page (mcp-cards.ts): one resource, read once by the AI app and kept
+    case "resources/list":
+      return ok({ resources: isJob(auth) ? [] : cardResourceList() });
+    case "resources/templates/list":
+      return ok({ resourceTemplates: [] });
+    case "resources/read": {
+      // any card name answers with the page as it is now: an app may still hold an older name from its last listing
+      if (!String(params.uri ?? "").startsWith("ui://creator-toolset/card")) return { jsonrpc: "2.0", id: msg.id, error: { code: -32002, message: "Resource not found" } };
+      return ok({ contents: [cardResource(origin)] });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));

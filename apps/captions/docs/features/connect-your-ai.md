@@ -31,6 +31,26 @@ Every tool says whether it only reads, adds something, or can remove or overwrit
 `destructiveHint`), and whether it reaches outside your account (`openWorldHint`: a pull from Instagram, a link for
 other people). A plug-in's tools count as ones that can remove, so the AI app asks you before it runs them.
 
+## Cards in the chat
+
+In an AI app that draws them (ChatGPT, Claude), some answers show as a card instead of text: a script
+(`workshop_session` and the tools that write one), footage (`media_search`), a Review video's comments (`get_review`)
+and an edit with its versions (`editor_get`, `editor_create`; it asks again by itself while the edit runs). A card
+follows the app's own colours and has one button that opens the thing in Creator Toolset.
+
+How things reach you from a chat:
+
+- **A link into the app** opens the session, video or edit on your server, behind your own sign-in.
+- **A share link** (`review_share`, `media_share`) is the public link for other people, the same the app makes.
+- **A picture in a card** comes over a signed link, because the card has no sign-in of its own. It is a thumbnail,
+  never the video or the original; it works for 6 hours and stops at once when you remove the app in Settings →
+  Headless access. A library that a plug-in guards with a check of its own sends no pictures to cards.
+
+The AI reads the same answer as text; the card's data goes to the card only.
+
+Code: `api/mcp-cards.ts` (which tools have a card, its data, the signed links), `api/mcp-card-view.ts` (the card's
+page: one self-contained file, MCP Apps over postMessage).
+
 ## Running your own server
 
 Sign-in for AI apps works on any server with accounts (`APP_SECRET` set) that the internet reaches over https.
