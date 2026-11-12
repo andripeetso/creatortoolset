@@ -60,7 +60,7 @@ enum Push {
         let sandbox = false
         #endif
         struct Answer: Decodable { var push: Bool? }
-        guard let data = try? await api.send(Studio.path("/push/register"), json: ["token": token, "sandbox": sandbox])
+        guard let data = try? await api.send(Studio.path("/push/register"), json: ["token": token, "sandbox": sandbox, "topic": Bundle.main.bundleIdentifier ?? ""])
         else { return }
         servers.insert(api.server.absoluteString)
         // still the server in use: it tells from now on, or the phone keeps looking itself
