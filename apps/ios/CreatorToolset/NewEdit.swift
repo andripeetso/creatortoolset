@@ -15,6 +15,8 @@ struct PhoneEdit: Codable, Identifiable, Hashable {
     var editId: String?
     /// Why Start did not get as far as the edit.
     var problem: String?
+    /// When Start was pressed (its place in Chats); nil for one made before this was kept.
+    var made: Date?
 }
 
 /// The edit as `GET /api/editor/:id` answers, only what the row needs.
@@ -351,7 +353,7 @@ struct NewEditView: View {
         let id = UUID()
         for clip in clips { engine.add(id: clip.id, filename: clip.name, size: clip.size, server: server, edit: id) }
         let name = "Phone edit, " + Date().formatted(date: .abbreviated, time: .shortened)
-        edits.add(PhoneEdit(id: id, server: server.id, name: name, clips: clips.map(\.id)))
+        edits.add(PhoneEdit(id: id, server: server.id, name: name, clips: clips.map(\.id), made: Date()))
         started = true
         dismiss()
         Task { await edits.start(id) }
