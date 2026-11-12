@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, EmptyRow, ErrorRow, InUse, ListRow, LoadingRow, saveFailed, Section } from "@/components/settings/ui";
 import { addEditStep, getEditSteps } from "@/lib/editor";
 import { switchPluginOn } from "@/lib/thisMac";
+import { webPlugins } from "@/plugins.gen";
 
 /**
- * Community → Plug-ins: the plug-ins the Creator Toolset team makes, each one a download. Today these are the AI
- * Editor's post-processing steps (contracts/editor-steps.ts). Download puts the plug-in's folder in the Mac app's
- * plug-ins folder and asks the Mac app to switch it on (its own alert; it then restarts its server and reloads this
- * window). A plug-in that is in adds its own settings (Settings → AI Editor). Only the Mac app on its own server can
- * take one in; elsewhere the list says where to get them.
+ * Community → Plug-ins: the plug-ins the Creator Toolset team makes, each one a download, with the kind its own plugin.ts
+ * says (the AI Editor's steps, an Audio Enhancer engine; contracts/editor-steps.ts). Download puts the plug-in's folder in
+ * the Mac app's plug-ins folder and asks the Mac app to switch it on (its own alert; it then restarts its server and
+ * reloads this window). A plug-in that is in has its own settings: a step's are in Settings → AI Editor, another's in its
+ * own Settings section. Only the Mac app on its own server can take one in; elsewhere the list says where to get them.
  */
 export function PluginsView({ q }: { q: string }) {
   const [view, setView] = useState<StepsView | null>(null);
@@ -51,18 +52,22 @@ function PluginRow({ row, canAdd }: { row: StepRow; canAdd: boolean }) {
       setBusy(false);
     }
   };
+  // a step's settings are Settings → AI Editor; another plug-in's, its own section (from its page half, read now)
+  const section = row.state === "on" ? "editor" : webPlugins.find((p) => p.id === row.id)?.settings?.find((x) => !x.adminTab)?.id;
   const actions =
-    row.state === "on" ? (
+    row.state === "on" || row.state === "loaded" ? (
       <>
         <InUse>Installed</InUse>
-        <Button asChild size="sm" variant="outline">
-          <Link to="/settings/editor">Settings</Link>
-        </Button>
+        {section && (
+          <Button asChild size="sm" variant="outline">
+            <Link to={`/settings/${section}`}>Settings</Link>
+          </Button>
+        )}
       </>
     ) : canAdd ? (
       <Button size="sm" disabled={busy} onClick={() => void download()}>
         {row.state === "add" ? "Download" : "Switch on"}
       </Button>
     ) : undefined;
-  return <ListRow title={row.title} subtitle={row.about} status="AI Editor step" actions={actions} />;
+  return <ListRow title={row.title} subtitle={row.about} status={row.kind ?? "AI Editor step"} actions={actions} />;
 }

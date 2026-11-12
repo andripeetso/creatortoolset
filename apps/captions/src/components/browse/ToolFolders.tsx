@@ -1,6 +1,9 @@
 import { Fragment } from "react";
 import { Link } from "react-router";
-import { ChevronRight, FolderInput } from "lucide-react";
+import { ChevronRight, FolderInput, Link2, Share2 } from "lucide-react";
+import type { ToolFolder } from "@contracts/folders";
+import { Button } from "@/components/ui/button";
+import { ContextMenuItem } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { ToolFoldersState } from "@/lib/folders";
 import { FolderCard, FolderRow } from "./Folder";
@@ -20,10 +23,11 @@ export function ToolFolderCards({ state, pictureOf }: { state: ToolFoldersState;
             .filter((src): src is string => !!src)
             .slice(0, 4)
             .map((src) => ({ src }))}
-          meta={state.countOf(f.id)}
+          meta={<FolderMeta state={state} f={f} />}
           drop={{ type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" }}
           onRename={() => void state.rename(f)}
           onDelete={() => void state.remove(f)}
+          menu={<ShareItems state={state} f={f} />}
         />
       ))}
     </>
@@ -39,13 +43,53 @@ export function ToolFolderRows({ state }: { state: ToolFoldersState }) {
           key={f.id}
           name={f.name}
           to={state.to(f.id)}
-          meta={state.countOf(f.id)}
+          meta={<FolderMeta state={state} f={f} />}
           drop={{ type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" }}
           onRename={() => void state.rename(f)}
           onDelete={() => void state.remove(f)}
+          menu={<ShareItems state={state} f={f} />}
         />
       ))}
     </>
+  );
+}
+
+/** Its count, and a link sign while it is shared. */
+function FolderMeta({ state, f }: { state: ToolFoldersState; f: ToolFolder }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {f.share && <Link2 className="h-3.5 w-3.5 text-violet-400" aria-label="Shared by link" />}
+      {state.countOf(f.id)}
+    </span>
+  );
+}
+
+/** A folder's right-click: share it by link, and turn the link off. */
+function ShareItems({ state, f }: { state: ToolFoldersState; f: ToolFolder }) {
+  if (!state.shareable) return null;
+  return (
+    <>
+      <ContextMenuItem onClick={() => void state.share(f)}>{f.share ? "Copy share link" : "Share…"}</ContextMenuItem>
+      {f.share && <ContextMenuItem onClick={() => void state.unshare(f)}>Stop sharing</ContextMenuItem>}
+    </>
+  );
+}
+
+/** Inside a folder that can be shared: Share (copies its link), and Stop sharing while it is. */
+export function FolderShareButton({ state }: { state: ToolFoldersState }) {
+  const f = state.trail.at(-1) as ToolFolder | undefined;
+  if (!state.shareable || !f) return null;
+  return (
+    <div className="flex items-center gap-1">
+      {f.share && (
+        <button type="button" onClick={() => void state.unshare(f)} className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+          Stop sharing
+        </button>
+      )}
+      <Button size="sm" onClick={() => void state.share(f)} className="h-8 bg-violet-600 text-white hover:bg-violet-500">
+        {f.share ? <Link2 /> : <Share2 />} {f.share ? "Copy link" : "Share folder"}
+      </Button>
+    </div>
   );
 }
 
