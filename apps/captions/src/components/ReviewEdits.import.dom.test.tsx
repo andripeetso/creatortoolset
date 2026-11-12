@@ -57,3 +57,26 @@ it("a version with an imported EDL draws the timeline editor with the file's cli
   expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Edit")).toBe(true);
   expect(host.textContent).not.toContain("Reframe");
 });
+
+it("a reviewer sees the same timeline with its comment pins, without the edit tools", async () => {
+  const view = importTimeline("Cut.edl", EDL, 25);
+  const api = { timeline: vi.fn(async () => view), media: () => "media:play", stem: () => "" };
+  const bridge = new ReviewSlotBridge();
+  const pin = { selected: null, pins: { "V1:0": 2 }, onSelect: vi.fn(), onPin: vi.fn() };
+  const ctx = {
+    version: { n: 1, fps: 25, timeline: true, status: "ready" },
+    api,
+    player: { video: () => null, seek: () => {}, pause: () => {} },
+    manage: false,
+    sent: [],
+    ...bridge.bind("tl"),
+  } as unknown as ReviewSlotContext;
+  await act(async () => root.render(<ReviewEdits {...ctx} pin={pin} />));
+  await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+
+  expect(host.textContent).toContain("Click a clip to comment on it");
+  expect(host.textContent).toContain("A.MP4");
+  expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Edit")).toBe(false);
+  // the first clip carries its two comments' count
+  expect([...host.querySelectorAll("*")].some((el) => el.children.length === 0 && el.textContent === "2")).toBe(true);
+});

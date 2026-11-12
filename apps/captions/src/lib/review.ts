@@ -117,12 +117,16 @@ export interface ReviewComment {
   refs?: ReviewRef[];
   /** Plug-in data sent with the comment, keyed by plug-in id (e.g. timeline edits). */
   plugins?: Record<string, unknown>;
+  /** The timeline clip it is about (a version with a timeline). */
+  anchor?: ReviewAnchor;
   resolved?: boolean;
   createdAt: number;
   editedAt?: number;
   mine: boolean;
 }
 
+/** A clip on the version's timeline, by its track and first frame. */
+export type ReviewAnchor = { track: string; rec: number; len: number; label: string };
 /** A reference on a comment; `video` = anything that moves, a GIF too. */
 export type ReviewRef = { id: string; name: string; mime: string; bytes: number; kind: "image" | "video" };
 /** boot.ts's body cap: one request, no chunking. */
@@ -435,6 +439,7 @@ export function reviewApi(base: string) {
       refs?: string[];
       /** Plug-in data (see ReviewComment.plugins); the server accepts it from managers only. */
       plugins?: Record<string, unknown>;
+      anchor?: ReviewAnchor;
     }) => call<ReviewComment>(`${base}/comments`, send("POST", body)),
     /** An image or video for the comment being written; send its id with it. */
     uploadRef: async (n: number, file: File) => {

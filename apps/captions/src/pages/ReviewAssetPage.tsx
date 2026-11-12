@@ -75,6 +75,7 @@ import {
   type Approval,
   type ReviewAsset,
   attachTimeline,
+  type ReviewAnchor,
   type ReviewComment,
   type ReviewRef,
   type ReviewView,
@@ -92,7 +93,7 @@ import { saveVoiceMix } from "@/lib/editor";
 import { ScreenRecordingEditor } from "@/components/ScreenRecordingEditor";
 import { reviewSource } from "@/lib/screen-source";
 import { reviewSlotsFor, reviewTimelineOf, type ReviewActionEntry } from "@/lib/plugin";
-import { ReviewActionButtons, ReviewPanelSlots, reviewSlotShown, type ReviewBaseContext, type ReviewBind } from "@/components/ReviewSlots";
+import { ReviewActionButtons, ReviewPanelSlots, type ReviewBaseContext, type ReviewBind } from "@/components/ReviewSlots";
 import ReviewEdits, { REVIEW_TIMELINE_ID } from "@/components/ReviewEdits";
 import { ReviewSlotBridge } from "@/lib/review-slots";
 import { mutedAt, usePlanFollow } from "@/lib/review-play";
@@ -265,6 +266,9 @@ function Review({
     setRangeIn(null);
     setRangeOut(null);
   };
+  // the timeline clip the comment being written is about (anyone who can comment picks it on the timeline)
+  const [anchor, setAnchor] = useState<ReviewAnchor | null>(null);
+  useEffect(() => setAnchor(null), [n]);
   // a range only runs forwards: while its
   // end follows the playhead, a playhead behind the start moves the start there
   if (rangeIn !== null && rangeOut === null && time < rangeIn) setRangeIn(time);
@@ -483,6 +487,29 @@ function Review({
         ? sel.drawing
         : [];
 
+  // how many comments sit on each timeline clip, and a click on a clip's count goes through them, newest first
+  const pinKey = (a: ReviewAnchor) => `${a.track}:${a.rec}`;
+  const pins = threads.reduce<Record<string, number>>((acc, c) => {
+    if (c.anchor) acc[pinKey(c.anchor)] = (acc[pinKey(c.anchor)] ?? 0) + 1;
+    return acc;
+  }, {});
+  const timelinePin = {
+    selected: anchor ? pinKey(anchor) : sel?.anchor ? pinKey(sel.anchor) : null,
+    pins,
+    onSelect: (item: { track: string; rec: number; len: number; label: string } | null) => {
+      setAnchor(item && { track: item.track, rec: item.rec, len: item.len, label: item.label });
+      if (item) composerBox.current?.focus();
+    },
+    onPin: (key: string) => {
+      const on = threads.filter((c) => c.anchor && pinKey(c.anchor) === key).sort((a, b) => b.createdAt - a.createdAt);
+      if (!on.length) return;
+      const c = on[(on.findIndex((x) => x.id === selected) + 1) % on.length]!;
+      setFilter((f) => (f === "done" && !c.resolved ? "all" : f === "open" && c.resolved ? "all" : f));
+      focusComment(c);
+      setFlash(c.id);
+    },
+  };
+
   const focusComment = (c: ReviewComment) => {
     setSelected(c.id);
     if (c.t !== undefined) {
@@ -538,8 +565,10 @@ function Review({
         ...(guest ? { author: name.trim() } : {}),
         ...(refIds.length ? { refs: refIds } : {}),
         ...(plugins ? { plugins } : {}),
+        ...(anchor ? { anchor } : {}),
       });
       patchComments((l) => [...l, c]);
+      setAnchor(null);
       setText("");
       setRefs([]);
       setDraft([]);
@@ -702,8 +731,10 @@ function Review({
         slotCtx={slotCtx}
         bind={bindSlot}
       />
-      {/* the timeline editor on a version with a timeline (managers), then the plug-ins' panels */}
-      {reviewSlotShown(slotCtx) && <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} />}
+      {/* the timeline on a version with a timeline (everyone; its edit tools are the managers'), then the plug-ins' panels */}
+      {version.status === "ready" && !version.removed && (
+        <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} />
+      )}
       <ReviewPanelSlots slots={slots.panels} ctx={slotCtx} bind={bindSlot} />
       {comparing && (
         <ReviewCompare
@@ -1045,6 +1076,12 @@ function Review({
               </div>
             )}
             {refFailed && <p className="mb-2 text-xs text-red-400">{refFailed.name}: {refFailed.error}</p>}
+            {anchor && (
+              <div className="mb-2 flex items-center gap-2 rounded-md border border-violet-700/60 bg-violet-950/30 px-2 py-1 text-xs text-violet-200">
+                <span className="min-w-0 flex-1 truncate">About {anchor.label} ({anchor.track})</span>
+                <button aria-label="Not about this clip" onClick={() => setAnchor(null)} className="rounded px-1 text-violet-300 hover:text-zinc-50">×</button>
+              </div>
+            )}
             <textarea
               ref={composerBox}
               value={text}
@@ -1913,6 +1950,11 @@ function Entry({
               {c.tEnd !== undefined && ` → ${timecode(c.tEnd, fps)}`}
               {c.drawing && <PenLine className="h-3 w-3" />}
             </button>
+          )}
+          {top && c.anchor && (
+            <span className="mr-1.5 inline-flex max-w-[12rem] truncate rounded bg-zinc-800 px-1.5 py-px text-xs text-zinc-300" title={`On the timeline: ${c.anchor.label} (${c.anchor.track})`}>
+              {c.anchor.label}
+            </span>
           )}
           {edit ? (
             <textarea

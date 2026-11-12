@@ -38,13 +38,22 @@ import {
 // filed), under the header. Moves, trims, cuts, removals, colour and a placeholder, with ⌘Z / ⇧⌘Z for its own edits.
 // They play on the player (the preview plan) and go into the comment box as chips; the next comment carries them
 // under REVIEW_TIMELINE_ID. What open comments already sent stays on the timeline until they are resolved (`sent`).
-// Only managers see it (the page checks, as for plug-in panels). The reframe window and full-quality colour need the
+// Everyone who can watch the version sees it and can pin a comment to a clip (`pin`, from the page); the edit tools
+// are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
 
 /** The id the editor's data goes under on a comment (`plugins[id]`); no plug-in may take it. */
 export const REVIEW_TIMELINE_ID = "timeline-edits";
 
-export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTimelineSlot }) {
+/** The page's comment pins: the clip the comment being written is about, how many comments sit on each clip. */
+export interface TimelinePins {
+  selected: string | null;
+  pins: Record<string, number>;
+  onSelect: (item: TimelineItem | null) => void;
+  onPin: (key: string) => void;
+}
+
+export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTimelineSlot; pin?: TimelinePins }) {
   const { version } = ctx;
   if (!version.timeline) return null;
   // a new version starts clean: the panel remounts per version
@@ -70,7 +79,7 @@ const toCard = (c: PlayCard, manage: boolean, clipSrc?: (clip: number) => string
   ...(manage && clipSrc && c.clip !== undefined ? { src: clipSrc(c.clip), at: c.at } : {}),
 });
 
-function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot }) {
+function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks, pin }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins }) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
@@ -253,7 +262,7 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       {grades.map((g, i) => <GradeFilter key={gradeId(i)} id={gradeId(i)} from={g.was} to={g.grade} />)}
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] text-zinc-500">Timeline edits: sent with your next comment</div>
+        <div className="text-[11px] text-zinc-500">{manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}</div>
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}
             title="Play your timeline edits and placeholders on this cut (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
@@ -325,23 +334,32 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
         time={time}
         onSeek={(t) => slots.current.player.seek(t)}
         edits={planEdits}
-        onLive={setLive}
         waves={waves}
         placeholders={[...sentHoles, ...(hole ? [hole] : [])]}
-        onEdit={applyEdits}
-        onPlaceholder={(p: Placeholder | null) => {
-          setHole(p);
-          slots.current.player.pause();
-        }}
-        onReframe={edit && hooks.camera && w && h ? reframe : undefined}
-        onColor={(item) => {
-          slots.current.player.pause();
-          setCrop(null);
-          const f = time * fps;
-          if (f < item.rec || f >= item.rec + item.len) slots.current.player.seek((item.rec + Math.min(item.len - 1, Math.floor(item.len / 2))) / fps);
-          setColour(item);
-        }}
-        history={{ back: hist.past.length, ahead: hist.future.length, undo, redo }}
+        selected={pin?.selected}
+        pins={pin?.pins}
+        onSelect={pin ? (item) => {
+          pin.onSelect(item ?? null);
+          if (item) slots.current.player.pause();
+        } : undefined}
+        onPin={pin?.onPin}
+        {...(manage ? {
+          onLive: setLive,
+          onEdit: applyEdits,
+          onPlaceholder: (p: Placeholder | null) => {
+            setHole(p);
+            slots.current.player.pause();
+          },
+          onReframe: edit && hooks.camera && w && h ? reframe : undefined,
+          onColor: (item: TimelineItem) => {
+            slots.current.player.pause();
+            setCrop(null);
+            const f = time * fps;
+            if (f < item.rec || f >= item.rec + item.len) slots.current.player.seek((item.rec + Math.min(item.len - 1, Math.floor(item.len / 2))) / fps);
+            setColour(item);
+          },
+          history: { back: hist.past.length, ahead: hist.future.length, undo, redo },
+        } : {})}
       />
     </div>
   );
