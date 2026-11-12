@@ -99,7 +99,7 @@ struct AssistantChatView: View {
                             row(message, at: index)
                         }
                         ForEach(outbox.shown) { queued in
-                            AssistantQueuedBubble(message: queued, inFlight: outbox.sending == queued.id, progress: outbox.progress) {
+                            AssistantQueuedBubble(message: queued, inFlight: outbox.sending == queued.id) {
                                 model.takeBack(queued.id)
                             } onRetry: {
                                 model.retry(queued.id)
@@ -144,8 +144,7 @@ struct AssistantChatView: View {
     @ViewBuilder private func row(_ message: AssistantMessage, at index: Int) -> some View {
         switch message.role {
         case "user":
-            AssistantUserMessage(message: message, uploading: outbox.carried,
-                                 held: index + 1 < messages.count && messages[index + 1].status == "thinking")
+            AssistantUserMessage(message: message)
         case "note":
             Text(message.text)
                 .font(.footnote)
@@ -206,7 +205,7 @@ struct AssistantChatView: View {
             // (owner, 2026-11-11: he could find no way to stop, typed "Stop", and it went as a message)
             ChatComposer(text: $draft.text, working: thinking != nil, sending: draft.reading, hasAttachment: draft.hasAttachment,
                          autofocus: autofocus,
-                         attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft, progress: outbox.progress)) : nil,
+                         attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft)) : nil,
                          onSend: sendDraft, onStop: { Task { await model.stop() } }) {
                 Menu {
                     Button { picking = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
@@ -323,8 +322,6 @@ private struct EarlierChats: View {
 /// What goes with the message, inside the box above the text: each can be taken off.
 struct AssistantAttachmentChips: View {
     @ObservedObject var draft: AssistantDraft
-    /// How far each video going up has got, by its id.
-    var progress: [String: Double] = [:]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -343,16 +340,16 @@ struct AssistantAttachmentChips: View {
                         takeOff("Remove \(picture.name)") { draft.remove(picture: picture.id) }
                     }
                 }
-                ForEach(draft.files) { file in video(file.name, up: nil) { draft.remove(file: file.id) } }
-                ForEach(draft.videos) { picked in video(picked.name, up: progress[picked.id] ?? 0) { draft.remove(video: picked.id) } }
+                ForEach(draft.files) { file in video(file.name) { draft.remove(file: file.id) } }
+                ForEach(draft.videos) { picked in video(picked.name) { draft.remove(video: picked.id) } }
             }
         }
     }
 
-    /// A video goes up from the moment it is picked: its name, and how far it is until it is up.
-    private func video(_ name: String, up: Double?, remove: @escaping () -> Void) -> some View {
+    /// A video in the box: its name. It goes up once the message is sent.
+    private func video(_ name: String, remove: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
-            if let up { UploadRing(up: up) } else { Image(systemName: "film").foregroundStyle(.secondary) }
+            Image(systemName: "film").foregroundStyle(.secondary)
             Text(name).font(.footnote.weight(.medium)).lineLimit(1).frame(maxWidth: 170, alignment: .leading)
             takeOff("Remove \(name)", remove)
         }

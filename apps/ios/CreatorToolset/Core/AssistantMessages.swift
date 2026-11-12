@@ -7,10 +7,6 @@ import SwiftUI
 /// What he wrote, with its pictures, files and the text he asked about.
 struct AssistantUserMessage: View {
     let message: AssistantMessage
-    /// How far this phone has got each video still going up, by its id.
-    var uploading: [String: Double] = [:]
-    /// Its reply still waits for its videos: one that was stopped shows them as plain names.
-    var held = true
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
@@ -42,13 +38,8 @@ struct AssistantUserMessage: View {
                     }
                 }
             }
-            ForEach(message.files ?? []) { file in
-                if file.uploading == true, held {
-                    AssistantVideoChip(name: file.name, up: uploading[file.id] ?? 0, known: uploading[file.id] != nil)
-                } else {
-                    chip(file.name, "film")
-                }
-            }
+            // owner, 2026-11-12: no upload progress in the chat, so nobody waits for it; the project shows it
+            ForEach(message.files ?? []) { chip($0.name, "film") }
             ForEach(message.pasted ?? [], id: \.self) { chip($0, "doc.text") }
             ForEach(message.folders ?? [], id: \.self) { chip(($0 as NSString).lastPathComponent, "folder") }
             if !message.text.isEmpty { UserBubble(text: message.text) }
@@ -354,15 +345,12 @@ struct AssistantConfirmCard: View {
     }
 }
 
-/// A message that has not gone yet, at the end of the feed: dimmed, each video with how far it has
-/// gone up, and "Queued" while it waits its turn, or "Not sent" with the reason. The cross takes it
-/// back into the message box.
+/// A message that has not gone yet, at the end of the feed: dimmed, its videos by name, and "Queued"
+/// while it waits its turn, or "Not sent" with the reason. The cross takes it back into the message box.
 struct AssistantQueuedBubble: View {
     let message: QueuedMessage
     /// On its way right now: drawn like a sent message.
     let inFlight: Bool
-    /// How far each video going up right now has got, by its id.
-    let progress: [String: Double]
     let onRemove: () -> Void
     let onRetry: () -> Void
 
@@ -376,7 +364,7 @@ struct AssistantQueuedBubble: View {
                         .padding(.leading, 48)
                 }
                 ForEach(message.files) { AssistantVideoChip(name: $0.name) }
-                ForEach(message.videos ?? []) { AssistantVideoChip(name: $0.name, up: progress[$0.id] ?? 0) }
+                ForEach(message.videos ?? []) { AssistantVideoChip(name: $0.name) }
                 if !message.text.isEmpty { UserBubble(text: message.text) }
             }
             .opacity(inFlight ? 1 : 0.6)
@@ -409,37 +397,14 @@ struct AssistantQueuedBubble: View {
     }
 }
 
-/// How far a video has gone up, as a small ring.
-struct UploadRing: View {
-    let up: Double
-
-    var body: some View {
-        Circle()
-            .trim(from: 0, to: max(0.03, up))
-            .stroke(Color("AccentColor"), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-            .rotationEffect(.degrees(-90))
-            .background(Circle().stroke(Color(.systemGray4), lineWidth: 2.5))
-            .frame(width: 14, height: 14)
-    }
-}
-
-/// A video of his message: up already, or how far it has gone up (`known` false: going up from somewhere else).
+/// A video of his message, by name.
 struct AssistantVideoChip: View {
     let name: String
-    var up: Double?
-    var known = true
 
     var body: some View {
         HStack(spacing: 6) {
-            if let up {
-                UploadRing(up: up)
-            } else {
-                Image(systemName: "film")
-            }
+            Image(systemName: "film")
             Text(name).lineLimit(1)
-            if let up, known {
-                Text("\(Int(up * 100)) %").monospacedDigit().foregroundStyle(.secondary)
-            }
         }
         .font(.footnote)
         .padding(.horizontal, 10)

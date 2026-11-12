@@ -50,8 +50,7 @@ struct QueuedMessage: Codable, Equatable, Identifiable {
 
 /// The messages that wait to go, oldest first, kept on disk so they survive the app closing, and the
 /// videos they carry, which go up from here one at a time. A message waits for its videos; the ones after
-/// it wait behind it. The videos in the message box go up from here too, after the messages', from the
-/// moment they are picked: a video keeps its upload when it leaves the box with its message.
+/// it wait behind it. A video in the message box goes nowhere: its upload starts when its message is sent.
 @MainActor
 final class AssistantOutbox: ObservableObject {
     /// What became of one try.
@@ -82,10 +81,6 @@ final class AssistantOutbox: ObservableObject {
     /// and takes messages while a reply is being written (its view says `sendNow`). Not known yet, or an
     /// older server: a message waits on the phone for its videos and for the reply before it.
     var serverWaits = false
-    /// The message box: its videos go up before they are sent.
-    // ponytail: the box is not saved, so a video in it when the app is closed is uploaded for nothing (the
-    // server drops it after 7 days); save the box with the queue if that turns out to matter
-    weak var box: AssistantDraft?
     private var file: URL?
     /// How the videos went up last: the same way takes them over when the app leaves the front.
     private var uploader: Uploader?
@@ -115,7 +110,7 @@ final class AssistantOutbox: ObservableObject {
     /// id is handed to iOS as it stands, oldest message first, and goes on up without the app.
     // ponytail: a video with no id yet, or still coming from Photos, is not handed over: it goes when the app is open again
     func leave() {
-        let videos = (items.filter { $0.failed == nil }.flatMap { $0.videos ?? [] } + (box?.videos ?? [])).filter { $0.file != nil }
+        let videos = items.filter { $0.failed == nil }.flatMap { $0.videos ?? [] }.filter { $0.file != nil }
         guard let uploader, !videos.isEmpty else { return }
         let moment = UIApplication.shared.beginBackgroundTask()
         Task {
@@ -262,7 +257,7 @@ final class AssistantOutbox: ObservableObject {
     /// up or failed: the first message in line may go now. No connection stops it until the next call.
     func upload(_ uploader: Uploader, moved: @escaping () -> Void) {
         self.uploader = uploader
-        // the video going up was taken off the box, or its message's reply has ended: it stops, the next starts
+        // the video going up was taken back, or its message's reply has ended: it stops, the next starts
         if let going, !holds(going) { stopUploading() }
         if beginning == nil, unbegun != nil {
             beginning = Task { [weak self] in
@@ -321,7 +316,7 @@ final class AssistantOutbox: ObservableObject {
     }
 
     /// What one call for a video came to; false when it stops for want of a connection. A video that
-    /// failed marks its message Not sent; one still in the box leaves it, and the box says why.
+    /// failed marks its message Not sent.
     private func went(_ result: Result<String, Error>, _ video: QueuedMessage.Video, done: (String) -> Void) -> Bool {
         switch result {
         case .success(let id):
@@ -331,8 +326,6 @@ final class AssistantOutbox: ObservableObject {
         case .failure(let error):
             if let message = holder(of: video.id) {
                 change(message) { $0.failed = error.localizedDescription }
-            } else {
-                box?.failed(video.id, error.localizedDescription)
             }
         }
         return true
@@ -343,26 +336,26 @@ final class AssistantOutbox: ObservableObject {
         items.first { $0.videos?.contains { $0.id == video } == true }?.id
     }
 
-    /// The video is still wanted: a message carries it, or it is in the box.
+    /// The video is still wanted: a message carries it.
     private func holds(_ video: String) -> Bool {
-        holder(of: video) != nil || box?.videos.contains { $0.id == video } == true
+        holder(of: video) != nil
     }
 
-    /// The first video still to get the server's id: of the messages that can still go, then of the box.
+    /// The first video still to get the server's id: of the messages that can still go.
     /// One Photos is still handing over has to wait for that.
     private var unbegun: QueuedMessage.Video? {
         for message in items where message.failed == nil {
             if let video = message.videos?.first(where: { $0.file == nil && $0.pending != true }) { return video }
         }
-        return box?.videos.first { $0.file == nil && $0.pending != true }
+        return nil
     }
 
-    /// The first video with the server's id still to go up: of the oldest message that can still go, then of the box.
+    /// The first video with the server's id still to go up: of the oldest message that can still go.
     private var nextVideo: QueuedMessage.Video? {
         for message in items where message.failed == nil {
             if let video = message.videos?.first(where: { $0.file != nil }) { return video }
         }
-        return box?.videos.first { $0.file != nil }
+        return nil
     }
 
     /// A server error, the video no further than at the last one: after a few in a row it counts as failed.
@@ -385,25 +378,19 @@ final class AssistantOutbox: ObservableObject {
 
     /// The server gave the upload its id: kept on disk at once (for a message), so a later try carries on from there.
     private func begun(_ video: String, as file: String) {
-        guard let message = holder(of: video) else {
-            box?.began(video, as: file)
-            return
-        }
+        guard let message = holder(of: video) else { return }
         change(message) { queued in
             if let index = queued.videos?.firstIndex(where: { $0.id == video }) { queued.videos?[index].file = file }
         }
     }
 
-    /// Up: the message (or the box) names it by the server's id, and its copy on the phone goes. A message
+    /// Up: the message names it by the server's id, and its copy on the phone goes. A message
     /// the server already took is done here once its last video is up.
     private func arrived(_ video: QueuedMessage.Video, as file: String) {
         progress[video.id] = nil
         reached[video.id] = nil
         stalls[video.id] = nil
-        guard let message = holder(of: video.id) else {
-            box?.arrived(video.id, as: file)
-            return
-        }
+        guard let message = holder(of: video.id) else { return }
         change(message) {
             $0.videos?.removeAll { $0.id == video.id }
             if $0.videos?.isEmpty == true { $0.videos = nil }

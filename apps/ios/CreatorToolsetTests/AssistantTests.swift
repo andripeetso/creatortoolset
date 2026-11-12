@@ -878,69 +878,57 @@ final class AssistantTests: XCTestCase {
 
     // MARK: A video goes up from the moment it is picked
 
-    func testAPickedVideoGoesUpBeforeItIsSentAndKeepsItsUploadWhenItIs() async {
+    func testAPickedVideoWaitsInTheBoxUntilSend() async {
+        // owner, 2026-11-12: a picked video must not upload from the message box; Send makes the message, then it goes up
         let stand = Stand()
-        let parts = Gate()
-        var sends = 0
+        var begun = 0
         let model = AssistantModel()
-        model.server = { stand.server(send: { _ in
-            sends += 1
-            await parts.pass()
-        }) }
-        await model.load()
-        // picked: it has the server's id and its parts are going, and nothing is sent
-        model.draft.pretend(pictures: [], videos: [up("Clip.mov", "c1")])
-        await until("it goes up from the box") { parts.waiting != nil }
-        XCTAssertEqual(model.draft.videos.map(\.file), ["f-c1"])
-        XCTAssertTrue(stand.turns.isEmpty)
-        // Send: the message goes at once with that id, and the upload is the same one
-        model.draft.text = "One with a clip"
-        model.send(model.draft.take()!)
-        await until("it went") { stand.turns.count == 1 && model.view?.messages.count == 2 }
-        XCTAssertEqual(stand.turns[0]["files"] as? [String], ["f-c1"])
-        XCTAssertEqual(model.view?.messages[1].wait?.text, "Waiting for a video to upload")
-        parts.open()
-        await until("the video is up") { model.outbox.items.isEmpty }
-        XCTAssertEqual(sends, 1)
-
-        // one that is up before he sends: the box names it by the server's id, and the reply waits for nothing
-        model.draft.pretend(pictures: [], videos: [up("Other.mov", "c2")])
-        await until("its parts go") { parts.waiting != nil }
-        parts.open()
-        await until("it is up in the box") { model.draft.files == [.init(id: "f-c2", name: "Other.mov")] }
-        XCTAssertTrue(model.draft.videos.isEmpty)
-        model.draft.text = "Two with a clip"
-        model.send(model.draft.take()!)
-        await until("it went") { stand.turns.count == 2 && model.view?.messages.count == 4 && model.outbox.items.isEmpty }
-        XCTAssertEqual(stand.turns[1]["files"] as? [String], ["f-c2"])
-        XCTAssertNil(model.view?.messages[2].files?.first?.uploading)
-        XCTAssertTrue(model.outbox.items.isEmpty)
-    }
-
-    func testAVideoTakenOffTheBoxStopsGoingUp() async {
-        let stand = Stand()
-        let first = Gate()
-        let second = Gate()
-        var cancelled = false
-        let model = AssistantModel()
-        model.server = { stand.server(send: { video in
-            guard video.copy == "c1" else { return await second.pass() }
-            await first.pass()
-            cancelled = Task.isCancelled
-            try Task.checkCancellation()
-        }) }
+        model.server = { stand.server(send: { _ in begun += 1 }) }
         await model.load()
         model.draft.pretend(pictures: [], videos: [up("Clip.mov", "c1"), up("Other.mov", "c2")])
-        await until("the first goes up") { first.waiting != nil }
-        model.draft.remove(video: model.draft.videos[0].id)
-        // the one after it goes up at once
-        await until("the next goes up") { second.waiting != nil }
-        first.open()
-        await until("its upload was stopped") { cancelled }
-        XCTAssertEqual(model.draft.videos.map(\.name), ["Other.mov"])
-        second.open()
-        await until("it is up") { model.draft.files.map(\.id) == ["f-c2"] }
-        XCTAssertTrue(stand.turns.isEmpty)
+        for _ in 0..<50 { await Task.yield() }
+        await model.outbox.settled()
+        XCTAssertEqual(model.draft.videos.map(\.file), [nil, nil])
+        XCTAssertEqual(begun, 0)
+        XCTAssertTrue(stand.missing.isEmpty)
+        // taken off before Send: nothing of it ever went
+        model.draft.remove(video: model.draft.videos[1].id)
+        // Send: the message goes, then its video goes up
+        model.draft.text = "One with a clip"
+        model.send(model.draft.take()!)
+        await until("it went and its video is up") { stand.turns.count == 1 && model.outbox.items.isEmpty }
+        XCTAssertEqual(stand.turns[0]["files"] as? [String], ["f-c1"])
+        XCTAssertEqual(begun, 1)
+    }
+
+    func testTheBoxIsThereAgainAfterTheAppClosed() async throws {
+        // owner, 2026-11-12: what is in the box persists when he leaves, closes the app and comes back
+        let queue = scratch()
+        let kept = up("Clip.mov", "test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: kept.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: kept.url)
+        defer { kept.discard() }
+        let stand = Stand()
+        func opened() async -> AssistantModel {
+            let model = AssistantModel()
+            model.server = { stand.server(queue: queue) }
+            await model.load()
+            return model
+        }
+        let before = await opened()
+        before.draft.text = "Make a reel"
+        before.draft.pretend(pictures: [], videos: [kept, .coming()])
+        try await Task.sleep(for: .milliseconds(600))
+        // the app closed: the words and the video are back, the one still coming from Photos never came
+        let after = await opened()
+        XCTAssertEqual(after.draft.text, "Make a reel")
+        XCTAssertEqual(after.draft.videos.map(\.name), ["Clip.mov"])
+        XCTAssertTrue(stand.missing.isEmpty)   // nothing of it went up meanwhile
+        // sent: nothing is kept of the box any more
+        _ = after.draft.take()
+        try await Task.sleep(for: .milliseconds(600))
+        let again = await opened()
+        XCTAssertTrue(again.draft.isEmpty)
     }
 
     func testSendDoesNotWaitForPhotosToHandAVideoOver() async throws {

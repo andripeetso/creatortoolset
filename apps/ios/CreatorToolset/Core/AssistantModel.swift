@@ -199,8 +199,6 @@ final class AssistantModel: ObservableObject {
     private var stopping: Set<String> = []
 
     init() {
-        // the box's videos go up from the moment they are picked
-        outbox.box = draft
         draft.changed = { [weak self] in self?.carryOn() }
         draft.handedOver = { [weak self] video, picked in
             self?.outbox.handed(video, picked)
@@ -230,6 +228,8 @@ final class AssistantModel: ObservableObject {
         #endif
         guard let server = server() else { return }
         outbox.open(server.queue)
+        // the box, beside the account's queue: there again after the app closed
+        draft.keep(at: server.queue.map { $0.deletingPathExtension().appendingPathExtension("box.json") })
         do {
             take(try await server.call("/api/assistant", "GET", nil))
         } catch {
@@ -263,6 +263,7 @@ final class AssistantModel: ObservableObject {
         reading?.cancel()
         reading = nil
         outbox.open(nil)
+        draft.keep(at: nil)
         view = nil
         error = nil
         offline = false
