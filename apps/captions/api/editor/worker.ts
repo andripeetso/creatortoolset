@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { DeviceJob } from "../../contracts/devices";
+import { CARDS_DRAW_KIND, type DeviceJob } from "../../contracts/devices";
 import { isOnline } from "../lib/devices";
 import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
@@ -7,6 +7,7 @@ import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeu
 import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
 import { Waiting } from "./analyze";
+import { scriptThrew } from "./cards/device";
 import { editStopped, runEnded } from "./ended";
 import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
 import { passesDone } from "./passes";
@@ -167,12 +168,14 @@ export function doneForDevice(device: string, id: number): boolean {
   return true;
 }
 
-/** The device could not run its step: retried after a backoff, or failed after MAX_ATTEMPTS. False when it does not hold the step. */
+/** The device could not run its step: retried after a backoff, or failed after MAX_ATTEMPTS (a card script that threw: at once). False when it does not hold the step. */
 export function failForDevice(device: string, id: number, why: string): boolean {
   const db = libraryDb();
   const job = heldBy(db, id, device);
   if (!job) return false;
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
+  // a card script that threw would throw again: no retry, the card step asks the AI to fix it (cards/step.ts)
+  if (job.kind === CARDS_DRAW_KIND && scriptThrew(why)) return fail(db, job, why.slice(0, 500)), true;
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
   moved(job);
   return true;

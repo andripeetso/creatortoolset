@@ -17,6 +17,12 @@ const CLIP_MAX = 40 * 1024 * 1024;
 const STILL_MAX = 5 * 1024 * 1024;
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
+/**
+ * Whether a draw failed because the script threw on a card: the Mac's sentence says so in its own words (CardJobs.swift
+ * `cardFailure`, "Card 2 of 4 has a script that failed (…)."). Drawn again, the same script throws the same way.
+ */
+export const scriptThrew = (why: string | null | undefined) => /\bCard \d+ of \d+ has a script that failed \(/.test(why ?? "");
+
 /** The cards-draw step this device holds, as its edit and version; null when it holds no such step. */
 function held(device: string, job: number): { editId: string; variant: string } | null {
   const row = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running' AND kind = ?").get(job, device, CARDS_DRAW_KIND) as

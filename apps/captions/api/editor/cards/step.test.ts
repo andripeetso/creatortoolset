@@ -40,9 +40,10 @@ const { localFiles, renderPreview } = await import("../preview");
 const { editDir, readDraft, readEdit, saveDraft, saveStep } = await import("../store");
 const { emptyTracks } = await import("../timeline");
 const { tick } = await import("../worker");
-const { CARD_TEXT_MAX, MAX_CALLS, MAX_CARDS, MAX_DRAWS, SCRIPT_MAX, readCards } = await import("./state");
+const { CARD_TEXT_MAX, ERROR_MAX, MAX_CALLS, MAX_CARDS, MAX_DRAWS, SCRIPT_MAX, readCards } = await import("./state");
 const { cardWindow, placeCards } = await import("./place");
-const { parsePlan, parseScript } = await import("./prompts");
+const { fixPrompt, parsePlan, parseScript } = await import("./prompts");
+const { scriptThrew } = await import("./device");
 const { clock, LOOK_PICTURES, MAKE_PICTURES, SHEET_MAX_BYTES, SHEET_MAX_SIDE } = await import("./step");
 
 const cookies: Record<string, string> = {};
@@ -69,7 +70,8 @@ interface Asked {
   keys: string[];
 }
 let asked: Asked[] = [];
-let answers: string[] = [];
+/** What the AI answers, in order; a function is called when its request arrives (a test stops the edit there). */
+let answers: (string | (() => Promise<string>))[] = [];
 beforeEach(() => {
   asked = [];
   answers = [];
@@ -83,8 +85,9 @@ beforeEach(() => {
       images: typeof content === "string" ? [] : content.filter((c) => c.type === "image").map((c) => c.source!.data),
       keys: Object.keys(body).sort(),
     });
-    const text = answers.shift();
-    if (text === undefined) throw new Error("The step asked the AI one time more than this test allows");
+    const next = answers.shift();
+    if (next === undefined) throw new Error("The step asked the AI one time more than this test allows");
+    const text = typeof next === "function" ? await next() : next;
     return new Response(JSON.stringify({ content: [{ type: "text", text }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
   });
 });
@@ -459,8 +462,8 @@ describe.skipIf(rootReplaced)("the card step", () => {
     expect(jobOf(e, "cards")).toMatchObject({ state: "queued" });
     expect((await drawOnMac({ colour: "blue" })).script).toBe(fixed);
     await step(); // the second draw is in: no second look
-    expect(asked).toHaveLength(MAX_CALLS);
-    expect(readCards(e, "v1")).toMatchObject({ calls: MAX_CALLS, draws: MAX_DRAWS, done: true });
+    expect(asked).toHaveLength(3);
+    expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 2, done: true });
     expect(await claim()).toEqual({ job: null });
     // the clips on the cut are the second draw's
     expect(readFileSync(path.join(editDir(e), "cards", "v1", "c1.mp4")).equals(readFileSync(path.join(dir, "card-blue-2.4.mp4")))).toBe(true);
@@ -478,6 +481,133 @@ describe.skipIf(rootReplaced)("the card step", () => {
     expect(cardsOnCut(e)).toHaveLength(2);
     expect(readFileSync(path.join(editDir(e), "cards", "v1", "c2.mp4")).equals(readFileSync(path.join(dir, "card-red-1.2.mp4")))).toBe(true);
     expect((await view(e)).cards!.v1!.note).toBe("Cards: the corrected cards were not drawn (Card 1 of 2 drew nothing.)");
+  });
+});
+
+describe.skipIf(rootReplaced)("a script that throws on the Mac", () => {
+  // the Mac's own words for it (CardJobs.swift cardFailure), as a real run had them
+  const THREW = "Card 1 of 2 has a script that failed (TypeError: null is not an object (evaluating 'canvas.getContext')). Card 2 of 2 has a script that failed (TypeError: null is not an object (evaluating 'canvas.getContext')).";
+  const BROKEN = `const canvas = document.querySelector("canvas");\nfunction kitFrame(t, card) { canvas.getContext("2d"); }`;
+  const FIXED = `function kitFrame(t, card) { const s = document.getElementById("stage"); s.style.background = "#00c"; s.textContent = card.text; }`;
+  /** The Mac draws the script and every card throws: it sends no card and fails the step in its words. */
+  const throws = () => drawOnMac({ fail: THREW, skip: ["c1", "c2"] });
+
+  it("is not drawn again: one fix call carries the Mac's words, the fix is drawn once, the cards go on, and the look comes after", async () => {
+    const e = await newEdit();
+    answers = [PLAN, BROKEN, FIXED, "OK"];
+    await toCards(e);
+    expect((await throws()).script).toBe(BROKEN);
+    // at once: no try again for a Mac to take, even with the queue's wait over
+    expect(jobOf(e, CARDS_DRAW_KIND)).toEqual({ kind: CARDS_DRAW_KIND, state: "failed", error: THREW });
+    expect(await claim()).toEqual({ job: null });
+
+    await step(); // the fix: words alone, the make call's stage and frame, the script and the Mac's sentence
+    expect(asked).toHaveLength(3);
+    const fix = asked[2]!;
+    expect(fix.images).toEqual([]);
+    expect(fix.keys).toEqual(["max_tokens", "messages", "model", "output_config", "system"]);
+    expect(fix.system).toContain("The script threw an error on the Mac that draws them");
+    expect(fix.system).toContain('the id "stage", a <div> (not a canvas');
+    expect(fix.system).toContain("Answer with the script only");
+    expect(fix.text).toContain("The look, in the author's own words:\nBig white words on deep red. Nothing bounces.");
+    expect(fix.text).toContain('c1 (2.4 s): "Tuck your chin" over the line "First, tuck your chin all the way."');
+    expect(fix.text.endsWith(`The script:\n${BROKEN}\n\nWhat the Mac said:\n${THREW}`)).toBe(true);
+    expect(`${fix.system}\n${fix.text}`).not.toContain("Instructions from packs");
+
+    expect((await drawOnMac({ colour: "blue" })).script).toBe(FIXED);
+    await step(); // the look, once, on the fixed cards
+    expect(asked).toHaveLength(4);
+    expect(asked[3]!.text).toContain("The first picture is the sheet");
+    expect(asked[3]!.text.endsWith(`The script:\n${FIXED}`)).toBe(true);
+    expect(jobOf(e, "cards")).toMatchObject({ state: "done" });
+    expect(jobOf(e, CARDS_DRAW_KIND)).toBeUndefined();
+    expect(jobOf(e, "post")).toMatchObject({ state: "queued" });
+    expect(cardsOnCut(e).map((i) => i.src)).toEqual(["card-c1", "card-c2"]);
+    expect(readFileSync(path.join(editDir(e), "cards", "v1", "c1.mp4")).equals(readFileSync(path.join(dir, "card-blue-2.4.mp4")))).toBe(true);
+    expect(readCards(e, "v1")).toMatchObject({ calls: 4, draws: 2, fixed: true, done: true });
+    expect(readCards(e, "v1")).not.toHaveProperty("note");
+    expect((await view(e)).cards!.v1!.cards).toHaveLength(2);
+    await call("maker", "POST", `/api/editor/${e}/stop`);
+  });
+
+  it("a fix that throws too: no cards, the Mac's words as the note, and no third draw", async () => {
+    const e = await newEdit();
+    answers = [PLAN, BROKEN, FIXED];
+    await toCards(e);
+    await throws();
+    await step();
+    expect((await throws()).script).toBe(FIXED);
+    expect(await claim()).toEqual({ job: null });
+    await step();
+    expect(asked).toHaveLength(3); // no look at a draw that failed, and no second fix
+    expect(await claim()).toEqual({ job: null });
+    expect(jobOf(e, CARDS_DRAW_KIND)).toBeUndefined();
+    expect(jobOf(e, "cards")).toMatchObject({ state: "done" });
+    expect(jobOf(e, "post")).toMatchObject({ state: "queued" });
+    expect((await view(e)).cards).toEqual({ v1: { cards: [], note: `Cards: the corrected cards were not drawn (${THREW})` } });
+    expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 2, done: true });
+    expect(cardsOnCut(e)).toEqual([]);
+    await call("maker", "POST", `/api/editor/${e}/stop`);
+  });
+
+  it("a fix that gives the same script back, or no script: nothing is drawn, and the version goes on with the Mac's words", async () => {
+    for (const reply of [BROKEN, "```js\n" + BROKEN + "\n```", "I can't see what is wrong."]) {
+      const e = await newEdit();
+      asked = [];
+      answers = [PLAN, BROKEN, reply];
+      await toCards(e);
+      await throws();
+      await step();
+      expect(asked, reply).toHaveLength(3);
+      expect(await claim()).toEqual({ job: null });
+      expect(jobOf(e, CARDS_DRAW_KIND)).toBeUndefined();
+      expect(jobOf(e, "post")).toMatchObject({ state: "queued" });
+      expect((await view(e)).cards).toEqual({ v1: { cards: [], note: `Cards: ${THREW}` } });
+      expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 1, done: true });
+      await call("maker", "POST", `/api/editor/${e}/stop`);
+    }
+  });
+
+  it("stopped while the fix is asked, then run again: no second fix call, the Mac's words as the note", async () => {
+    const e = await newEdit();
+    answers = [PLAN, BROKEN, async () => {
+      await call("maker", "POST", `/api/editor/${e}/stop`);
+      throw new Error("The request was stopped");
+    }];
+    await toCards(e);
+    await throws();
+    await step();
+    expect(asked).toHaveLength(3);
+    expect(jobOf(e, "cards")).toMatchObject({ state: "failed", error: "Stopped" });
+    expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 1, fixed: true, threw: THREW });
+    const cards = libraryDb().prepare("SELECT id FROM edit_jobs WHERE edit_id = ? AND kind = 'cards'").get(e) as { id: number };
+    expect((await call("maker", "POST", `/api/editor/${e}/jobs/${cards.id}/retry`)).status).toBe(200); // the edit page's Retry
+    only(e);
+    await step();
+    expect(asked).toHaveLength(3);
+    expect(await claim()).toEqual({ job: null });
+    expect((await view(e)).cards).toEqual({ v1: { cards: [], note: `Cards: ${THREW}` } });
+    await call("maker", "POST", `/api/editor/${e}/stop`);
+  });
+
+  it("at the cap: the plan, the make, one fix and one look call, and three draws, never more", async () => {
+    const e = await newEdit();
+    const better = `${FIXED}\n// bigger words`;
+    answers = [PLAN, BROKEN, FIXED, better];
+    await toCards(e);
+    await throws();
+    await step(); // the fix
+    await drawOnMac();
+    await step(); // the look corrects it
+    expect((await drawOnMac({ colour: "blue" })).script).toBe(better);
+    await step();
+    expect(asked).toHaveLength(MAX_CALLS);
+    expect(MAX_CALLS).toBe(4);
+    expect(readCards(e, "v1")).toMatchObject({ calls: MAX_CALLS, draws: MAX_DRAWS, done: true });
+    expect(MAX_DRAWS).toBe(3);
+    expect(await claim()).toEqual({ job: null });
+    expect(cardsOnCut(e)).toHaveLength(2);
+    await call("maker", "POST", `/api/editor/${e}/stop`);
   });
 });
 
@@ -737,6 +867,26 @@ describe.skipIf(rootReplaced)("the device contract", () => {
     await call("maker", "POST", `/api/editor/${id}/stop`);
     expect((await relay(mac.token, "POST", `${base}/c2`, cardForm(1.2), "")).status).toBe(404);
     expect(await json(relay(mac.token, "POST", `/job/${job!.id}/beat`, "{}"))).toEqual({ ok: false });
+  });
+});
+
+describe("what the Mac said", () => {
+  it("a script that threw is told by the Mac's own words (CardJobs.swift), and no other failure is", () => {
+    const swift = readFileSync(path.join(import.meta.dirname, "../../../../mac/Sources/CreatorToolsetMac/CardJobs.swift"), "utf8");
+    expect(swift).toContain('case KitRunnerError.badCard(let why): return "has a script that failed (\\(why.prefix(200)))."');
+    expect(swift).toContain('failed.append("\\(name) \\(cardFailure(error, limit: limit))")');
+    expect(scriptThrew("Card 2 of 4 has a script that failed (Error: no such font). Card 3 of 4 drew nothing.")).toBe(true);
+    for (const other of ["Card 2 of 2 took longer than 20 seconds to draw.", "Card 1 of 2 drew nothing.", "Card 1 of 2 made its page stop (it crashed, or took too much memory).", "Card 1 of 2 could not be made into a clip (writer).", "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect.", "device went quiet", "lease expired", "Stopped", "has a script that failed (no card named)", null]) {
+      expect(scriptThrew(other), String(other)).toBe(false);
+    }
+  });
+
+  it("the fix call carries 500 characters of the Mac's words at most", () => {
+    const f = { brief: "", width: 360, height: 640, fps: 30, cards: [] };
+    const words = `Card 1 of 1 has a script that failed (${"x".repeat(ERROR_MAX)}).`;
+    expect(ERROR_MAX).toBe(500);
+    expect(fixPrompt({ ...f, script: SCRIPT, error: words }).user.endsWith(`What the Mac said:\n${words.slice(0, ERROR_MAX)}`)).toBe(true);
+    expect(fixPrompt({ ...f, script: SCRIPT, error: words.slice(0, ERROR_MAX) }).user).toBe(fixPrompt({ ...f, script: SCRIPT, error: words }).user);
   });
 });
 

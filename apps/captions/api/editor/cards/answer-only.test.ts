@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, DRIVERS, type Driver } from "../../../contracts/providers";
 
-// What the three card calls (plan, make, look) carry when they leave the server, for every way an account's AI can
+// What the card calls (plan, make, look, and the fix of a script that threw) carry when they leave the server, for every way an account's AI can
 // answer: its own Anthropic key, a model it runs itself, and each kind of AI on a Mac of its own. The server decides four things about a call
 // and this file pins each of them: no web, no session to resume, none of the app's tools (no MCP server, no
 // permission questions), and no folder beyond the pictures the call itself carries.
@@ -41,7 +42,7 @@ const { pairDevice, devicesSaved } = await import("../../lib/devices");
 const { installPack } = await import("../../lib/packs");
 const { saveSettings } = await import("../../lib/providers");
 const { saveMyKey } = await import("../../my-keys");
-const { lookPrompt, makePrompt, parseLook, parseScript, planPrompt } = await import("./prompts");
+const { fixPrompt, lookPrompt, makePrompt, parseLook, parseScript, planPrompt } = await import("./prompts");
 const { answer, LOOK_PICTURES, MAKE_PICTURES, planPackText } = await import("./step");
 
 createUser("keyed", "password1", { role: "user" });
@@ -59,7 +60,7 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/* ---- the three calls, as the step makes them ---- */
+/* ---- the calls, as the step makes them ---- */
 
 const picture = { jpegBase64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64") };
 const frame = { brief: "Big white words on deep red.", width: 1080, height: 1920, fps: 30, cards: [{ id: "c1", text: "Tuck your chin", first: 2, last: 2, line: "First, tuck your chin.", seconds: 2.4 }] };
@@ -69,6 +70,7 @@ const CALLS = [
   { name: "make, in words alone (a style with no picture)", prompt: makePrompt({ ...frame, made: 0, inspirations: 0 }), images: [], parse: parseScript, reply: SCRIPT },
   { name: "make, with the style's pictures", prompt: makePrompt({ ...frame, made: 3, inspirations: 5 }), images: Array.from({ length: MAKE_PICTURES }, () => picture), parse: parseScript, reply: SCRIPT },
   { name: "look", prompt: lookPrompt({ ...frame, script: SCRIPT, columns: true, pictures: LOOK_PICTURES }), images: Array.from({ length: 1 + LOOK_PICTURES }, () => picture), parse: parseLook, reply: "OK" },
+  { name: "fix", prompt: fixPrompt({ ...frame, script: SCRIPT, error: "Card 1 of 1 has a script that failed (TypeError: stage.getContext is not a function)." }), images: [], parse: parseLook, reply: SCRIPT },
 ] as const;
 
 describe("on the account's own Anthropic key", () => {
@@ -185,21 +187,31 @@ describe("text other people wrote (an installed pack's card instructions)", () =
   });
 });
 
-describe("what the three questions are made of", () => {
-  it("installed packs' text reaches the plan alone: the make and the look call take no text but the app's and the person's", () => {
+describe("what the questions are made of", () => {
+  it("the plan, make and look questions are the ones origin/main asked before the fix call came, character for character", () => {
+    const [plan, make, withPictures, look] = CALLS;
+    const sent = [plan, make, withPictures, look].map((c) => c.prompt);
+    expect(createHash("sha256").update(JSON.stringify(sent)).digest("hex")).toBe("e86aa99ef4d37901bce25f1cf813002d00f4a8dd02909183f9cf593eba52d2da");
+  });
+
+  it("installed packs' text reaches the plan alone: the make, the look and the fix call take no text but the app's and the person's", () => {
     expect(makePrompt).toHaveLength(1);
     expect(lookPrompt).toHaveLength(1);
-    const [plan, , make, look] = CALLS;
+    expect(fixPrompt).toHaveLength(1);
+    const [plan, , make, look, fix] = CALLS;
     expect(plan.prompt.system).toContain("Instructions from packs the author installed.");
-    for (const c of [make, look]) expect(`${c.prompt.system}\n${c.prompt.user}`).not.toContain("packs");
+    for (const c of [make, look, fix]) expect(`${c.prompt.system}\n${c.prompt.user}`).not.toContain("packs");
   });
 
   it("each asks for an answer and nothing else, and says what a script has on the Mac that draws it", () => {
-    const [plan, , make, look] = CALLS;
+    const [plan, , make, look, fix] = CALLS;
     expect(plan.prompt.system).toContain("Answer with JSON only");
     expect(make.prompt.system).toContain("Answer with the script only");
     expect(look.prompt.system).toContain("answer with the two letters OK and nothing else");
-    for (const c of [make, look]) {
+    // the fix is the make call's own text about the stage, the frame and the answer, with the script and the Mac's words
+    expect(fix.prompt.system.endsWith(make.prompt.system.slice(make.prompt.system.indexOf("The script runs alone")))).toBe(true);
+    expect(fix.prompt.user).toBe(`${CALLS[1].prompt.user}\n\nThe script:\n${SCRIPT}\n\nWhat the Mac said:\nCard 1 of 1 has a script that failed (TypeError: stage.getContext is not a function).`);
+    for (const c of [make, look, fix]) {
       for (const said of ["kitFrame(t, card)", 'the id "stage", a <div> (not a canvas', "black, with white text", "no timers, no CSS transitions or animations", "Pictures only as data: addresses", "no WebGL, WebAssembly or audio", "within 20 seconds", "never empty at its first, middle or last frame"]) {
         expect(c.prompt.system).toContain(said);
       }

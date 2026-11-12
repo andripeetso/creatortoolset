@@ -21,10 +21,12 @@ export const MAX_CARDS = 6;
 export const CARD_TEXT_MAX = 60;
 /** The longest script taken from the AI, in characters. A longer answer is refused, never cut. */
 export const SCRIPT_MAX = 60_000;
-/** A version's cards are sent to be drawn at most this many times: the script as made, and once more when the look at the stills corrects it. */
-export const MAX_DRAWS = 2;
-/** AI calls a version's cards take at most: plan, make, look. */
-export const MAX_CALLS = 3;
+/** A version's cards are sent to be drawn at most this many times: the script as made, its fix when it threw on the Mac, and once more when the look at the stills corrects it. */
+export const MAX_DRAWS = 3;
+/** AI calls a version's cards take at most: plan, make, fix (only when the script threw), look. */
+export const MAX_CALLS = 4;
+/** The Mac's words about a script that threw, in characters, that the fix call carries at most. */
+export const ERROR_MAX = 500;
 /** Notes this step writes start with this. */
 export const CARDS_NOTE = "Cards: ";
 
@@ -60,6 +62,10 @@ export interface CardsState {
   askedAt?: number;
   /** the stills were looked at (or there was no reason to) */
   looked?: boolean;
+  /** the Mac's words when the script as made threw on it, until the fix is sent to be drawn */
+  threw?: string;
+  /** the fix was asked for (once a version) */
+  fixed?: boolean;
   /** the cards that have a clip */
   drawn: string[];
   /** the cards whose still the person put in the style's Made & liked */

@@ -21,7 +21,8 @@ import { previewSize } from "../preview";
 import { readDraft, readStep, saveDraft } from "../store";
 import { sourceOf } from "../timeline";
 import { cardWindow, placeCards, type CardClip } from "./place";
-import { lookPrompt, makePrompt, parseLook, parsePlan, parseScript, planPrompt, type FrameInput, type PlanLine } from "./prompts";
+import { scriptThrew } from "./device";
+import { fixPrompt, lookPrompt, makePrompt, parseLook, parsePlan, parseScript, planPrompt, type FrameInput, type PlanLine } from "./prompts";
 import { cardFile, cardsDir, cardsFolder, clearCards, MAX_CALLS, MAX_DRAWS, readCards, saveCards, scriptFile, STILLS, type CardsState, type PlannedCard } from "./state";
 
 /**
@@ -29,7 +30,9 @@ import { cardFile, cardsDir, cardsFolder, clearCards, MAX_CALLS, MAX_DRAWS, read
  * after the B-roll for such an edit and for no other). The person's AI plans a few cards from the lines (one text
  * call), writes one script that paints them from the style's brief and pictures (one call), a Mac of theirs draws
  * them (a `cards-draw` step, contracts/devices.ts), the AI looks at the stills once and may correct the script, which
- * is then drawn once more, and code lays the clips on the cut (place.ts).
+ * is then drawn once more, and code lays the clips on the cut (place.ts). A script that throws on the Mac is not drawn
+ * again as it is (worker.ts): the AI gets one call to fix it from the Mac's words, the fix is drawn once, and the look
+ * comes after that draw.
  *
  * The script is an AI's output. This file keeps it as text and hands it to the Mac; nothing here runs it.
  *
@@ -168,14 +171,14 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
   };
   /** An AI call may be made: at most MAX_CALLS for a version, counted before the call. */
   const spend = async () => st.calls < MAX_CALLS && !!(await save({ ...st, calls: st.calls + 1 }));
-  /** Asks a Mac to draw the script: a `cards-draw` step, tried again by the queue as any device step is (three attempts in all). */
+  /** Asks a Mac to draw the script: a `cards-draw` step, tried again by the queue as any device step is (three attempts in all), unless the script threw. */
   const ask = async (script: string) => {
     await mkdir(cardsDir(edit.id, variant), { recursive: true });
     await writeFile(scriptFile(edit.id, variant), script);
     await rm(path.join(cardsDir(edit.id, variant), "draw"), { recursive: true, force: true });
     withdraw(db, vid);
     enqueueJob(db, edit.workspaceId, vid, CARDS_DRAW_KIND, actor, true, "edit_jobs");
-    await save({ ...st, draws: st.draws + 1, askedAt: clock.now() });
+    await save({ ...st, draws: st.draws + 1, askedAt: clock.now(), threw: undefined });
     return new Waiting(WAKE_S);
   };
 
@@ -191,12 +194,14 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     // a first draw that did not finish keeps the cards that did arrive; a second one leaves the first draw's in place
     if (whole || st.draws === 1) await takeDraw(edit.id, variant, st.cards ?? []);
     const drawn = (st.cards ?? []).filter((c) => existsSync(cardFile(edit.id, variant, c.id)!)).map((c) => c.id);
+    // the script as made threw on the Mac: its words are kept for the fix below, which a Stop or an update does not lose
+    const threw = !whole && st.draws === 1 && scriptThrew(row?.error) ? row!.error! : undefined;
     withdraw(db, vid);
-    await save({ ...st, askedAt: undefined, drawn });
+    await save({ ...st, askedAt: undefined, drawn, threw });
     // the Mac's own words when it said why; else what the wait ran into
     const why = row?.error ? drawFailure(row.error) : !on ? NO_MAC : untaken ? "your Mac did not take the draw in 10 minutes" : out ? "the draw took over 20 minutes" : "the draw failed";
-    if (!whole) return end(st.draws > 1 ? `the corrected cards were not drawn (${why})` : why);
-    if (!drawn.length) return end("your Mac sent no card");
+    if (!whole && !threw) return end(st.draws > 1 ? `the corrected cards were not drawn (${why})` : why);
+    if (whole && !drawn.length) return end("your Mac sent no card");
   }
   if (!on) return end(NO_MAC);
   const style = findAnimation(actor, st.style);
@@ -223,6 +228,16 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
       if (!(await spend())) return end();
       const pictures = await stylePictures(actor, style, MAKE_PICTURES);
       throw await ask(await answer(actor, makePrompt({ ...frame, made: pictures.made, inspirations: pictures.inspirations }), pictures.images, parseScript, signal));
+    }
+    if (st.threw) {
+      // one fix a version, marked before the call: one asked and never drawn (a Stop, an update) is not asked again
+      if (st.fixed || !(await spend())) return end(st.threw);
+      await save({ ...st, fixed: true });
+      const script = await readFile(scriptFile(edit.id, variant), "utf8");
+      // in words alone, so a model the person runs themselves can answer it; an answer with no script in it is no fix
+      const fixed = await answer(actor, fixPrompt({ ...frame, script, error: st.threw }), [], parseLook, signal);
+      if (!fixed || fixed === script) return end(st.threw);
+      throw await ask(fixed);
     }
     const shown = frame.cards.filter((c) => st.drawn.includes(c.id));
     // the stills on one sheet. Stills that cannot be laid out are not looked at: the cards are drawn, and no call is made

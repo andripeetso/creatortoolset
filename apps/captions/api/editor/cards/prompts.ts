@@ -1,10 +1,11 @@
 import { parseJsonObject } from "../../lib/instagram/vision";
-import { CARD_TEXT_MAX, MAX_CARDS, SCRIPT_MAX, type PlannedCard } from "./state";
+import { CARD_TEXT_MAX, ERROR_MAX, MAX_CARDS, SCRIPT_MAX, type PlannedCard } from "./state";
 
 /**
- * The three questions the card step asks the person's AI, and how each answer is read. They are the task and the
- * answer's shape: the look comes only from the person's own brief and pictures. Each is asked to answer and nothing
- * else: a call carries no tool, no folder beyond its own pictures and no web (step.ts, answer-only.test.ts).
+ * The questions the card step asks the person's AI (plan, make, look, and a fix when a script threw), and how each
+ * answer is read. They are the task and the answer's shape: the look comes only from the person's own brief and
+ * pictures. Each is asked to answer and nothing else: a call carries no tool, no folder beyond its own pictures and no
+ * web (step.ts, answer-only.test.ts).
  */
 
 /** One line of the version, as spoken; `ok`: a card fits over it. */
@@ -48,7 +49,7 @@ export function parsePlan(text: string, lines: PlanLine[]): { line: number; text
   return out;
 }
 
-/** What a card's script is and what it has: the drawing page of the Mac app, said once for the make and the look call. */
+/** What a card's script is and what it has: the drawing page of the Mac app, said once for the make, the fix and the look call. */
 const stage = (w: number, h: number) => `The script runs alone in an empty web page. It must define one function, kitFrame(t, card), which paints the whole frame for time t (seconds from the card's start) into the element with the id "stage", a <div> (not a canvas: a canvas the script wants, it makes inside the stage). A picture of the stage is taken right after each call returns, so nothing may wait: no timers, no CSS transitions or animations, nothing still loading. Work every position, size and opacity out from t.
 
 The stage is ${w} by ${h} CSS pixels, black, with white text until the script says otherwise; what the script leaves unpainted is black in the video. The script has the DOM, CSS, SVG, a 2D canvas and the system's fonts. Pictures only as data: addresses written into the script. Nothing can be loaded by address, and there is no WebGL, WebAssembly or audio. One card's frames must all draw within 20 seconds.
@@ -78,6 +79,13 @@ export function makePrompt(i: FrameInput & { made: number; inspirations: number 
   ].filter(Boolean);
   const shown = pictures.length ? `\n\n${pictures.join(" ")} They show the look, not the words.` : "";
   return { system: `${MAKE}\n\n${stage(i.width, i.height)}\n\n${CODE_ONLY}`, user: `${look(i.brief)}${shown}\n\n${frame(i)}` };
+}
+
+const FIX = `You fix the drawing code for the animated cards of one short video. The script threw an error on the Mac that draws them, and a card it throws on is not drawn. You are given the script and the Mac's words about it: change what makes it throw, and keep its look.`;
+
+/** The fix of a script that threw on the Mac, in words alone: the make call's stage and frame, the script, and the Mac's words up to ERROR_MAX. */
+export function fixPrompt(i: FrameInput & { script: string; error: string }): { system: string; user: string } {
+  return { system: `${FIX}\n\n${stage(i.width, i.height)}\n\n${CODE_ONLY}`, user: `${look(i.brief)}\n\n${frame(i)}\n\nThe script:\n${i.script}\n\nWhat the Mac said:\n${i.error.slice(0, ERROR_MAX)}` };
 }
 
 /** The script out of an answer: a code fence around it is dropped. Throws when it is no card script or over the cap. */
