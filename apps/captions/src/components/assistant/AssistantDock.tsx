@@ -780,7 +780,7 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
   );
 }
 
-function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
+export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -842,7 +842,8 @@ function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessa
     return (
       <div className="space-y-1">
         <Steps steps={steps} working />
-        <Elapsed since={m.at} />
+        {/* a reply waiting for its videos or its turn isn't working yet: its wait line says what it waits for */}
+        {!m.wait && <Elapsed since={m.at} />}
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
