@@ -414,6 +414,7 @@ function stillFor(path: [number, number, number][], t: number): number {
  * How far a move of the view has come `s` seconds after it set off, 0–1: the way a weight on a damped spring gives
  * way to a pull. It sets off at once, covers nine tenths of the way in the first 0.6 s and lands softly; the last
  * hundredth and a half, which a spring would take for ever over, is spread over the move so that it is done at RAMP.
+ * A move given less time (`span`, a zoom too short for a whole way in and out) runs the same curve faster.
  * The spring is damped enough never to pass its mark (damping above 2·√(stiffness·mass) = 45.2), which `cameraAt`
  * relies on.
  */
@@ -427,7 +428,7 @@ const glide = (() => {
   const fast = mid + root;
   const pull = (s: number) => 1 - (fast * Math.exp(-slow * s) - slow * Math.exp(-fast * s)) / (fast - slow);
   const whole = pull(RAMP);
-  return (s: number) => (s <= 0 ? 0 : s >= RAMP ? 1 : pull(s) / whole);
+  return (s: number, span = RAMP) => (s <= 0 ? 0 : s >= span ? 1 : pull((s * RAMP) / span) / whole);
 })();
 
 const LEAD = 0.8; // the view sets off this long before the press it moves for: it is there when the press lands
@@ -435,7 +436,7 @@ const SHOWN = 0.1; // but not before the press before it has landed and been see
 const MARGIN = 0.1; // of the view: a press nearer its edge than this is not well inside it
 
 /** A view from the picture's `x`, `y` on (its middle), or the picture at rest. */
-type Stop = { t: number; depth: number; x: number; y: number; rest?: true };
+type Stop = { t: number; depth: number; x: number; y: number; rest?: true; span?: number };
 
 /**
  * Along one side, all 0–1 of the picture: a view `part` long aimed at `aim` (kept inside the picture) shows `v` well
@@ -469,12 +470,15 @@ function viewStops(look: ScreenLook, clicks: ScreenEvents["clicks"], g: Geometry
   const fixed = geometry(look, g.srcW, g.srcH, out.width, out.height, g.camera);
   const list: Stop[] = [];
   for (const z of look.zooms) {
-    // a zoom too short for a way in and a way out turns back half way
-    const leave = Math.max(z.end - RAMP, (z.start + z.end) / 2);
+    // a zoom too short for a whole way in and out goes in and out faster, turning back half way, and is at rest
+    // again at its end; it has no time to move on to anything inside it
+    const short = z.end - z.start < 2 * RAMP;
+    const span = short ? (z.end - z.start) / 2 : RAMP;
+    const leave = z.end - span;
     const part = reach(fixed, Math.max(z.scale, fixed.cover));
     let aim = { x: z.x, y: z.y };
-    list.push({ t: z.start, depth: z.scale, ...aim });
-    if (look.follow) {
+    list.push({ t: z.start, depth: z.scale, ...aim, span });
+    if (look.follow && !short) {
       const presses = clicks.filter((c) => c[0] >= z.start && c[0] <= leave && inPicture(c));
       let before = -Infinity;
       for (let i = 0; i < presses.length; i++) {
@@ -495,7 +499,7 @@ function viewStops(look: ScreenLook, clicks: ScreenEvents["clicks"], g: Geometry
         before = t;
       }
     }
-    list.push({ t: leave, depth: 1, x: 0.5, y: 0.5, rest: true });
+    list.push({ t: leave, depth: 1, x: 0.5, y: 0.5, rest: true, span });
   }
   list.sort((a, b) => a.t - b.t);
   stops.set(look.zooms, { key, clicks, stops: list });
@@ -525,7 +529,7 @@ function cameraAt(look: ScreenLook, path: [number, number, number][], t: number,
   while (i >= 0 && list[i].t > t) i--;
   for (; i >= 0 && later < 1; i--) {
     const stop = list[i];
-    const done = glide(t - stop.t);
+    const done = glide(t - stop.t, stop.span);
     const share = done - later;
     later = done;
     if (stop.rest) rest += share;

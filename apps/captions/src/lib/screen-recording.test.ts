@@ -220,6 +220,29 @@ describe("screen recording", () => {
     }
   });
 
+  it("is back at rest at the end of a zoom too short for a whole way in and out, also at the recording's end", () => {
+    for (const zoomFit of ["inside", "frame"] as const) {
+      for (const [start, end] of [[1, 1.6], [1, 2.5], [8.8, 10]]) {
+        const look = { ...defaultLook(one, 10), zoomFit, zooms: [{ start, end, x: 0.3, y: 0.6, scale: 3 }] };
+        const rest = drawnAt(look, one, 0, 0.5, 0.5);
+        expect(drawnAt(look, one, end, 0.5, 0.5)).toEqual(rest);
+        expect(drawnAt(look, one, (start + end) / 2, 0.5, 0.5).k).toBeGreaterThan(rest.k * 1.5); // and it did go in
+      }
+    }
+    // two short zooms back to back, the second with a press outside its aim: one smooth path, no jump
+    const ev: ScreenEvents = { ...one, clicks: [[3.4, 0.9, 0.1]] };
+    const look = { ...defaultLook(ev, 10), zoomFit: "inside" as const, zooms: [{ start: 2, end: 3, x: 0.2, y: 0.8, scale: 3 }, { start: 3, end: 4.2, x: 0.8, y: 0.2, scale: 3 }] };
+    let was = drawnAt(look, ev, 1.9, 0.5, 0.5);
+    const speeds = [0];
+    for (let t = 1.9 + 1 / 120; t < 4.4; t += 1 / 120) {
+      const now = drawnAt(look, ev, t, 0.5, 0.5);
+      expect(Number.isFinite(now.x) && Number.isFinite(now.y)).toBe(true);
+      speeds.push(Math.hypot(now.x - was.x, now.y - was.y) * 120);
+      was = now;
+    }
+    expect(drawnAt(look, ev, 4.2, 0.5, 0.5)).toEqual(drawnAt(look, ev, 0, 0.5, 0.5));
+  });
+
   it("holds a zoomed view still while the presses land in it and moves on for one that would not", () => {
     // the pointer wanders all over between the presses
     const wander: [number, number, number][] = Array.from({ length: 400 }, (_, i) => [i / 20, 0.5 + 0.45 * Math.sin(i / 7), 0.5 + 0.45 * Math.cos(i / 11)]);
