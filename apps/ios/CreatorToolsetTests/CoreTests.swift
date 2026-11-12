@@ -27,7 +27,7 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(api.url("//elsewhere.example.test/x"), URL(string: "https://studio.example.test/elsewhere.example.test/x"))
         XCTAssertEqual(api.url("http://studio.example.test/api/x"), server)   // the same name without its lock is another place
         // a reply's picture is never fetched at all: it stays text
-        XCTAssertFalse(String(MarkdownText.inline("Look ![shot](https://elsewhere.example.test/p.png?x=secret) here").characters).contains("elsewhere"))
+        XCTAssertFalse(MarkdownTests.words(Markdown.blocks("Look ![shot](https://elsewhere.example.test/p.png?x=secret) here")).contains("elsewhere"))
     }
 
     func testWhatIsKeptOnDiskIsKeptPerServerAndAccount() {
@@ -82,15 +82,6 @@ final class CoreTests: XCTestCase {
         let noMain = try JSONDecoder().decode(ServerPlugins.Sources.self, from: Data(#"{"sources":[]}"#.utf8))
         XCTAssertNil(ServerPlugins.known(list, sources: noMain).mainSource)
         XCTAssertEqual(Studio.path("/push/register"), "/api/x/\(Studio.plugin)/push/register")
-    }
-
-    func testAReplyIsSplitIntoParagraphsAndCode() {
-        let blocks = MarkdownText.blocks("Three things:\n- one\n- two\n\n```\nls -la\n```\nDone.")
-        XCTAssertEqual(blocks, [.text("Three things:\n- one\n- two"), .code("ls -la"), .text("Done.")])
-        XCTAssertEqual(String(MarkdownText.inline("- one\n## Next").characters), "•  one\nNext")
-        // a link to a page of the website keeps its path
-        let linked = MarkdownText.inline("Open [the cut](/review/r9?v=2).")
-        XCTAssertEqual(linked.runs.compactMap(\.link).first?.absoluteString, "/review/r9?v=2")
     }
 
     func testTimesReadShort() {

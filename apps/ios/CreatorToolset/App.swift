@@ -157,7 +157,7 @@ struct ChatsTab: View {
                 .navigationDestination(for: AppRoute.self) { RouteView(route: $0) }
                 .overlay(alignment: .bottomTrailing) {
                     if servers.current != nil, !servers.signedOut {
-                        ComposeButton { nav.compose() }
+                        ComposeButton { nav.newChat() }
                             .padding(.trailing, 16)
                             .padding(.bottom, 12)
                     }
@@ -179,6 +179,7 @@ struct RouteView: View {
     @ViewBuilder private var screen: some View {
         switch route {
         case .assistant: AssistantChatView()
+        case .chat(let id): AssistantChatRoute(id: id)
         case .edit(let id):
             if plugins.studio { EditThreadView(id: id) } else { PageView(path: "/editor/\(id)") }
         case .review(let id, let version): ReviewRouteView(id: id, version: version)
@@ -211,28 +212,21 @@ struct SignInAgainButton: View {
     }
 }
 
-/// New message to the assistant: the round button at the bottom of Chats.
+/// A new chat with the assistant: the round button at the bottom of Chats, in the app's colour.
 struct ComposeButton: View {
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "square.and.pencil")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 54, height: 54)
-                .chatSurface(cornerRadius: 27)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color("AccentColor"), in: Circle())
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Message the assistant")
-    }
-}
-
-extension AppNavigator {
-    /// Opens the assistant with the keyboard up.
-    func compose() {
-        composing = true
-        open(.assistant)
+        .accessibilityLabel("New chat")
     }
 }
 

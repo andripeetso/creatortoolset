@@ -224,6 +224,9 @@ final class ServerTests: XCTestCase {
     /// Try again: the old edit goes to the trash, the clips go again as new uploads (the library has them already, so
     /// they count as themselves), and a fresh edit starts with both.
     func testNewEditTryAgain() async throws {
+        // Chats in the app around the tests reads the edits too, and clears a started edit's copies on the phone: hold it
+        UserDefaults.standard.set("1", forKey: "ChatsSignedOut")
+        defer { UserDefaults.standard.removeObject(forKey: "ChatsSignedOut") }
         let cookie = try await signIn()
         let server = Server(url: origin, username: "admin")
         Servers.shared.add(server, cookie: cookie)
