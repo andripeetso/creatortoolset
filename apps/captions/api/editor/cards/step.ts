@@ -84,6 +84,17 @@ export async function answer<T>(actor: string, prompt: { system: string; user: s
   return completeWithFallback(prompt.system, prompt.user, signal, parse, { ...route, retries: 0 });
 }
 
+/**
+ * The installed packs' text for the cards (the `editor.cards` slot), for the plan call and no other. Every installed
+ * pack's on the account's own key or a model it runs itself, where a call can only answer. On a Mac only the app's own
+ * shipped packs': some kinds of AI there keep tools even for a call in words alone (answer-only.test.ts), and a call
+ * that meets a usage limit moves to another AI of the account, so text other people wrote does not go there.
+ */
+export async function planPackText(actor: string): Promise<string> {
+  const onMac = !!aiFor(whoFor(actor), "editor", LABEL).only?.includes("mac");
+  return packInstructions(actor, "editor.cards", null, { shippedOnly: onMac });
+}
+
 /** The style's pictures a call carries: the liked stills first, newest first, then the inspirations, `max` in all. */
 export async function stylePictures(actor: string, style: AnimationStyle, max: number): Promise<{ images: VisionImage[]; made: number; inspirations: number }> {
   const newest = (kind: "made" | "inspiration") => style.pictures.filter((p) => p.kind === kind).sort((a, b) => b.at - a.at);
@@ -197,7 +208,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
       const lines = linesOf(edit.id, variant, tl);
       if (!lines.some((l) => l.ok)) return end("no line of this cut has room for one");
       if (!(await spend())) return end();
-      const picked = await answer(actor, planPrompt({ lines, brief: style.brief, packText: await packInstructions(actor, "editor.cards", null) }), [], (t) => parsePlan(t, lines), signal);
+      const picked = await answer(actor, planPrompt({ lines, brief: style.brief, packText: await planPackText(actor) }), [], (t) => parsePlan(t, lines), signal);
       const { w, h } = previewSize(tl);
       const cards = picked.map((p, k) => {
         const l = lines[p.line - 1]!;

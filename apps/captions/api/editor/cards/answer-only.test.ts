@@ -38,10 +38,11 @@ const { createUser } = await import("../../users");
 const app = (await import("../../boot")).default;
 const { aiFor } = await import("../../ai-complete");
 const { pairDevice, devicesSaved } = await import("../../lib/devices");
+const { installPack } = await import("../../lib/packs");
 const { saveSettings } = await import("../../lib/providers");
 const { saveMyKey } = await import("../../my-keys");
 const { lookPrompt, makePrompt, parseLook, parseScript, planPrompt } = await import("./prompts");
-const { answer, LOOK_PICTURES, MAKE_PICTURES } = await import("./step");
+const { answer, LOOK_PICTURES, MAKE_PICTURES, planPackText } = await import("./step");
 
 createUser("keyed", "password1", { role: "user" });
 createUser("onmac", "password1", { role: "user" });
@@ -155,6 +156,31 @@ describe("on an AI of the account's own Mac", () => {
       } else expect(job.user).toBe(c.prompt.user);
       expect((await relay(`${job.id}/done`, { text: c.reply })).status).toBe(200);
       await asked;
+    }
+  });
+});
+
+describe("text other people wrote (an installed pack's card instructions)", () => {
+  // a pack from Community with words for the cards; the app's own basics pack, which every account starts with, has some too
+  const theirs = {
+    format: 1, id: "tiny-cards", name: "Tiny cards", version: "1.0.0", author: "tinyacrobatics", license: "CC0-1.0",
+    description: "Card instructions someone else wrote.", instructions: { "editor.cards": "Put a card on every question." },
+  } as unknown as Parameters<typeof installPack>[1];
+
+  it("reaches the plan call on the account's own key and on a model it runs itself, and on a Mac only the app's own shipped packs' does", async () => {
+    for (const user of ["keyed", "ownmodel", "onmac"]) await installPack(user, theirs, 0);
+    for (const user of ["keyed", "ownmodel"]) {
+      const text = await planPackText(user);
+      expect(text, user).toContain("Put a card on every question.");
+      expect(text, user).toContain("One idea per card"); // the app's own
+    }
+    // whichever kind of AI the Mac runs: a call that meets a usage limit moves to another of the account's
+    for (const driver of DRIVERS.map((d) => d.id)) {
+      await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: `${driver}_mine`, driver, name: driver, enabled: true, device: mac.device.id, ...(driver === "acp" ? { acp: { command: "tiny-agent", args: ["acp"] } } : {}) }] }, "onmac");
+      const text = await planPackText("onmac");
+      expect(text, driver).not.toContain("Put a card on every question.");
+      expect(text, driver).not.toContain("Tiny cards");
+      expect(text, driver).toContain("One idea per card");
     }
   });
 });
