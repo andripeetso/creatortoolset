@@ -53,8 +53,8 @@ import { confirmDialog } from "@/lib/dialogs";
  * engine; what they can't use is shown locked with why. Admins can add a second pass.
  */
 
-/** What refetches Enhance's availability: a key added, a computer or an AI coming online or going quiet. */
-const AVAILABILITY_LIVE = { topic: ["my-keys", "service-keys", "devices", "providers"], own: true };
+/** What refetches Enhance's availability: a key added, a computer or an AI coming online or going quiet, the setup (a plug-in engine signed in or held off). */
+const AVAILABILITY_LIVE = { topic: ["my-keys", "service-keys", "devices", "providers", "setup"], own: true };
 
 const ENGINE_KEY = "enhance.engine";
 const THEN_KEY = "enhance.then";

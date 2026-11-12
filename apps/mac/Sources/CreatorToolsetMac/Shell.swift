@@ -8,6 +8,8 @@ import WebKit
 
 @MainActor
 final class Shell: NSObject, ObservableObject {
+    /// Sign in with Google / Apple / GitHub to the site this window shows (SiteSignIn.swift).
+    private let siteSignIn = SiteSignIn()
     let webView: WKWebView
     @Published private(set) var base: URL
     @Published private(set) var unread = 0
@@ -862,6 +864,18 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         if url.isFileURL { return decisionHandler(.cancel) }
         // Embeds and players stay where the page put them.
         if action.targetFrame?.isMainFrame == false { return decisionHandler(.allow) }
+        // the login screen's Sign in with Google / Apple / GitHub: in the system's sheet, ending in this window (SiteSignIn.swift)
+        if let start = siteSignInStart(url, site: base) {
+            siteSignIn.window = { [weak self] in self?.webView.window }
+            siteSignIn.start(provider: start.provider, site: base, back: start.back,
+                             run: { [weak self] script in self?.webView.evaluateJavaScript(script) },
+                             show: { [weak self] back, error in
+                                 guard let self, var parts = URLComponents(url: URL(string: back, relativeTo: self.base)!.absoluteURL, resolvingAgainstBaseURL: false) else { return }
+                                 parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "error" } + [URLQueryItem(name: "error", value: error)]
+                                 if let to = parts.url, isSite(to, self.base) { self.webView.load(URLRequest(url: to)) }
+                             })
+            return decisionHandler(.cancel)
+        }
         let inside = ["about", "blob", "data", "javascript"].contains(url.scheme ?? "") || isSite(url, base)
         if inside {
             decisionHandler(.allow)
