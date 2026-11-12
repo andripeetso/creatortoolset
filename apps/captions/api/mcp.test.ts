@@ -506,6 +506,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 15277 -> 15445: the public AI Editor says what a run does by itself (each draft's preview is filed in Review), what
     // send_to_review is for (a draft that changed), and where each draft's preview is (editor_get)
     // 15445 -> 15465: finals_link_session says its piece id comes from finals_pieces
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15465);
+    // 15465 -> 15810: upload_file (the user's own AI on a computer the server isn't on sends a file there with curl)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15810);
   });
 });

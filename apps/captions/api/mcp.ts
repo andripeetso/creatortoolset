@@ -11,8 +11,9 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
-import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
+import { askConfirm, askFolder, askSend, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
+import { mimeOf, uploadLink } from "./assistant-files";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
@@ -29,7 +30,7 @@ import { rollCount, rollLine } from "./library/roll";
  * (boot.ts: the key is the account itself), sent as `Authorization: Bearer ctk_…` (claude.ai: the connector's
  * Request headers). Every tool calls the site's own routes with the caller's credentials, so each route's checks
  * stay the only checks. The assistant's job token (ctj_…, auth.ts) also gets here: it sees the same tools plus
- * ASSISTANT_DEFS, and only it may call those (isJob checks the header). A Full key sees TOOLS alone. The check is on
+ * ASSISTANT_DEFS, and only it may call those (isJob checks the header). A Full key sees TOOLS and use_file. The check is on
  * the header, not the account: a signed-in session that sends a ctj_ header can call them as its own account. That
  * is no wider than the account's own reach, since the tools only act for the account they run as.
  */
@@ -49,7 +50,9 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices", "ask_folder"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "notes_get", "offer_choices", "ask_folder"]);
+/** Assistant tools a Full key gets too: use_file takes a file its own AI sent with upload_file. */
+const KEY_TOO = new Set(["use_file"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** The most of a recording's words a tool hands the AI at once (about 15 minutes of speech). */
@@ -273,6 +276,11 @@ export const TOOLS = [
     name: "set_work_prefs",
     description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make; job = what they want to do first (or null).",
     inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] }, makes: { type: "array", items: { type: "string", enum: [...MAKES] } }, job: { type: ["string", "null"], enum: [...JOBS, null] } } },
+  },
+  {
+    name: "upload_file",
+    description: "Send a video or recording on your computer to this server when it runs elsewhere: path = the file there, size = its bytes. Run the answer's command, then use_file with its file id.",
+    inputSchema: { type: "object", properties: { path: str, size: { type: "integer" } }, required: ["path", "size"] },
   },
 ];
 
@@ -700,6 +708,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
         };
       }
+      // a file dropped in the Mac app, from the dock, on a server that isn't on that computer: the dock sends that one file
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      const name = a.path && turn && process.env.CT_LOCAL !== "1" ? await askSend(user, turn, `${origin}/api/mcp`, String(a.path), a.to as AssistantFileUse) : null;
+      if (name) return { sending: name, note: "It has to be on this server first, and the chat is sending it now: say so in one line and end your reply. The chat carries on with it once it is here." };
       if (a.to === "library") return toLibrary(a);
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
       // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
@@ -1019,6 +1031,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE");
     },
     get_work_prefs: async () => json("/api/work-prefs"),
+    upload_file: async (a) => {
+      const p = String(a.path ?? "");
+      if (!p.startsWith("/")) throw new ToolError("Give the file's full path on your computer, such as /Users/you/Movies/clip.mov.");
+      const name = p.split("/").pop()!;
+      const r = await json<{ id: string; partSize: number }>("/api/assistant/files", "POST", { name, mime: mimeOf(name), size: Number(a.size) });
+      const parts = Math.ceil(Number(a.size) / r.partSize);
+      const file = `'${p.replace(/'/g, "'\\''")}'`;
+      // ponytail: a POSIX shell (macOS, Linux); Windows needs its own command
+      const command = `for n in $(seq 1 ${parts}); do dd if=${file} bs=${r.partSize} skip=$((n-1)) count=1 2>/dev/null | curl -fsS -X PUT --data-binary @- ${origin}/api/upload/${uploadLink(user.username, r.id)}/$n >/dev/null || break; done`;
+      return { file: r.id, command, then: "When it ends, use_file with this file id. The link works for an hour." };
+    },
     set_work_prefs: async (a) => {
       const body = pick(a, ["talk", "check", "makes"]);
       if (a.editor !== undefined) body.editor = a.editor;
@@ -1119,6 +1142,7 @@ const STEPS: Record<string, string> = {
   save_setup: "Saving your setup",
   ask_secret: "Asking for a key",
   get_work_prefs: "Checking how you like to work",
+  upload_file: "Sending a file",
   set_work_prefs: "Saving how you like to work",
   workshop_projects: "Looking at your projects",
   workshop_sessions: "Looking through the Workshop",
@@ -1295,7 +1319,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       return ok({});
     case "tools/list": {
       const dock = isJob(auth);
-      const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : [])];
+      const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : ASSISTANT_DEFS.filter((d) => KEY_TOO.has(d.name)))];
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing

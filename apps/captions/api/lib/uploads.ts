@@ -91,11 +91,12 @@ export async function writeBody(c: Context, dest: string) {
   );
 }
 
-/** POST <dir>/parts/:partNumber — the caller has checked the id. */
+/** POST <dir>/parts/:partNumber — the caller has checked the id. `fromState`: the sizes come from the upload, not the headers. */
 export async function receivePart(
   c: Context,
   dir: string,
   user: { username: string; role: string },
+  fromState = false,
 ): Promise<Response> {
   const partNumber = Number(c.req.param("partNumber"));
   if (!Number.isSafeInteger(partNumber) || partNumber < 1 || partNumber > 10_000) {
@@ -106,8 +107,8 @@ export async function receivePart(
   if (state.owner !== user.username && user.role !== "admin") {
     return c.json({ error: "Not found" }, 404);
   }
-  const total = Number(c.req.header("upload-length"));
-  const partSize = Number(c.req.header("upload-part-size"));
+  const total = fromState ? state.total : Number(c.req.header("upload-length"));
+  const partSize = fromState ? state.partSize : Number(c.req.header("upload-part-size"));
   const contentLength = Number(c.req.header("content-length"));
   if (
     total !== state.total ||
