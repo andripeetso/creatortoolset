@@ -267,8 +267,8 @@ app.route("/api/upload", uploadLinkApp);
 app.route("/api/connectors", connectorsCallbackApp);
 // an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access
 app.route("/", oauthApp);
-// a picture in a card an AI app shows (mcp-cards.ts): a signed link, since the card's frame has no sign-in
-app.route("/", cardApp);
+// a picture or video in a card an AI app shows (mcp-cards.ts): a signed link, since the card's frame has no sign-in
+app.route("/", cardApp((path, init) => Promise.resolve(app.request(path, init))));
 
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {

@@ -24,7 +24,7 @@ import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
-import { cardFor, cardResource, cardResourceList, cardToolMeta, hasCard, thumbLinks } from "./mcp-cards";
+import { cardFor, cardResource, cardResourceList, cardToolMeta, hasCard, mediaLinks } from "./mcp-cards";
 
 /**
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
@@ -1298,7 +1298,7 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     const content: Content[] = Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }];
     // an AI app outside the dock draws some answers as a card (mcp-cards.ts): its data rides beside the text, for the card alone
     // (never for a plug-in's answer to a tool of the same name: its answer is its own shape)
-    const card = !turn && !confirmed && !plug && !isJob(auth) && hasCard(name) ? cardFor(name, args ?? {}, answerOf(result, content), origin, thumbLinks(auth.get("authorization"), user.username, origin)) : null;
+    const card = !turn && !confirmed && !plug && !isJob(auth) && hasCard(name) ? cardFor(name, args ?? {}, answerOf(result, content), origin, mediaLinks(auth.get("authorization"), user.username, origin)) : null;
     return card ? { content, _meta: { card } } : { content };
   } catch (e) {
     if (e instanceof Asked)
@@ -1320,10 +1320,11 @@ function answerOf(result: unknown, content: Content[]): Args {
 }
 
 /** Said to an AI app outside the dock, with the guide: the dock has no cards. */
-const CARDS_GUIDE = `Cards: a script (workshop_session and the tools that write one), footage (media_search), a Review video's
-comments (get_review) and an edit (editor_get, editor_create) show in the chat as a card, where the app can draw one.
-The card already shows the content and a button that opens it in Creator Toolset: do not repeat it line by line. Say
-what you did or found in a sentence or two, and what the user could do next.
+const CARDS_GUIDE = `Cards: a script (workshop_session and the tools that write one), footage (media_search), a Review video with its
+comments (get_review), an edit (editor_get, editor_create) and an account's posts (instagram_posts) show in the chat as
+a card, where the app can draw one. The card already shows the content, plays the video where it may, and has its own
+buttons (open it in Creator Toolset, resolve a comment): do not repeat it line by line. Say what you did or found in a
+sentence or two, and what the user could do next.
 
 Here you are the writer: write and change scripts yourself with workshop_new_piece and workshop_edit_piece, so the user
 sees them saved at once. workshop_chat asks the Workshop's own writer, which needs a computer paired to the account:
@@ -1354,7 +1355,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // dockOnly says who gets a tool; it is not part of the listing
       return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
           // the labels are for an AI app outside (it asks before a tool that can remove); the dock's list stays as it was
-          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(hasCard(name) && !plugged.handlers.has(name) ? { _meta: cardToolMeta() } : {}) },
+          dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(cardToolMeta(name) && !plugged.handlers.has(name) ? { _meta: cardToolMeta(name) } : {}) },
         ) });
     }
     // the card's page (mcp-cards.ts): one resource, read once by the AI app and kept

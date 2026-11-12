@@ -719,6 +719,10 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
   return null;
 }
 
+/** Whether the library made a playable copy of this version (its proxy). A card's video link is signed only for that copy, never for the original (api/mcp-cards.ts). */
+export const hasProxy = (versionId: string): boolean =>
+  !!(db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as { storage_key: string | null } | undefined)?.storage_key;
+
 /** A blob as a response: streamed with Range from local disk, or a 302 to a 15-minute signed URL on a bucket. */
 export async function serveBlob(c: Context, key: string, type: string, download?: string): Promise<Response> {
   try {

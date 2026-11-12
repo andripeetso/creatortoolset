@@ -33,20 +33,32 @@ other people). A plug-in's tools count as ones that can remove, so the AI app as
 
 ## Cards in the chat
 
-In an AI app that draws them (ChatGPT, Claude), some answers show as a card instead of text: a script
-(`workshop_session` and the tools that write one), footage (`media_search`), a Review video's comments (`get_review`)
-and an edit with its versions (`editor_get`, `editor_create`; it asks again by itself while the edit runs). A card
-follows the app's own colours and has one button that opens the thing in Creator Toolset.
+In an AI app that draws them (ChatGPT, Claude), some answers show as a card instead of text:
+
+- **A script** (`workshop_session` and the tools that write one): its lines, hooks and post description, and a
+  Find footage button that asks for clips to go with it.
+- **Footage** (`media_search`): the clips with their pictures; a clip plays in the card, and Start an edit goes on from
+  there.
+- **A Review video** (`get_review`): the video, each comment with its time (a press jumps the video there) and the
+  frame it points at, and a Resolve button on every open comment.
+- **An edit** (`editor_get`, `editor_create`): its versions and where each stands; it asks again by itself while the
+  edit runs, and a ready version opens in Review.
+- **An account's posts** (`instagram_posts`): each post with its plays, likes and comments.
+
+A card follows the app's own colours and has one button that opens the thing in Creator Toolset. A button that needs
+the AI app (Resolve, Refresh, a follow-up message) shows only where that app offers it.
 
 How things reach you from a chat:
 
 - **A link into the app** opens the session, video or edit on your server, behind your own sign-in.
 - **A share link** (`review_share`, `media_share`) is the public link for other people, the same the app makes.
-- **A picture in a card** comes over a signed link, because the card has no sign-in of its own. It is a thumbnail,
-  never the video or the original; it works for 6 hours and stops at once when you remove the app in Settings →
-  Headless access. A library that a plug-in guards with a check of its own sends no pictures to cards.
+- **A picture or a video in a card** comes over a signed link, because the card has no sign-in of its own. A library
+  clip gives its thumbnail and the playable copy the library made, never the camera original; a Review video gives
+  what its viewers watch. A link works for 6 hours and stops at once when you remove the app in Settings → Headless
+  access. On an install where a plug-in guards the library with a check of its own, nothing leaves on such a link.
 
-The AI reads the same answer as text; the card's data goes to the card only.
+The AI reads the same answer as text; the card's data goes to the card only. Everything a chat makes is saved in the
+account on your server (a session, an edit, a Review video): nothing lives only in the chat.
 
 Code: `api/mcp-cards.ts` (which tools have a card, its data, the signed links), `api/mcp-card-view.ts` (the card's
 page: one self-contained file, MCP Apps over postMessage).
