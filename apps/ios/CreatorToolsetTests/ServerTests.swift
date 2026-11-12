@@ -1,3 +1,4 @@
+import CryptoKit
 import WebKit
 import XCTest
 @testable import CreatorToolset
@@ -53,6 +54,93 @@ final class ServerTests: XCTestCase {
         }
     }
 
+    /// The sign-in code: switched on for `admin` through the API, then the password asks for it, a wrong code says so,
+    /// the next code and then a recovery code each sign in, a spent step goes back to the password, and the phone's
+    /// own sign-in to the server stays through all of it. Switched off again at the end (with a recovery code).
+    func testSignInCode() async throws {
+        guard let cookie = try await signIn() else { throw XCTSkip("a server without sign-in asks for no code") }
+        Servers.shared.add(Server(url: origin, username: "admin"), cookie: cookie)
+        struct Secret: Decodable { let secret: String }
+        struct On: Decodable { let recovery: [String] }
+        let made = try JSONDecoder().decode(Secret.self, from: try await API(server: origin, cookie: cookie).send("/api/auth/code/new"))
+        let key = Self.base32(made.secret)
+        let (data, response) = try await API.session.data(
+            for: API(server: origin, cookie: cookie).request("/api/auth/code/on", method: "POST", json: ["code": Self.totp(key)]))
+        let on = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(on.statusCode, 200, String(decoding: data, as: UTF8.self))
+        let recovery = try JSONDecoder().decode(On.self, from: data).recovery
+        let own = SignIn.cookie(from: on)
+        // switching the code on signs every other sign-in out: the phone keeps the one this answer gave
+        Servers.shared.add(Server(url: origin, username: "admin"), cookie: own)
+        addTeardownBlock { [origin] in
+            _ = try? await API(server: origin!, cookie: own).send("/api/auth/code/off", json: ["code": recovery[1]])
+        }
+
+        // the password now asks for the code, and the phone keeps its sign-in to the server
+        guard case .needsCode(let step) = try await SignIn.login(origin, username: "admin", password: password) else {
+            return XCTFail("the password didn't ask for the code")
+        }
+        XCTAssertFalse(Servers.shared.signedOut)
+        XCTAssertEqual(Keychain.get(origin.absoluteString), own)
+
+        // a wrong code says so and the step stays good; the next code signs in
+        let right = Self.totp(key, ahead: 1)
+        do {
+            _ = try await SignIn.code(origin, step: step, code: String(format: "%06d", (Int(right)! + 500_000) % 1_000_000))
+            XCTFail("a wrong code signed in")
+        } catch APIError.server(let status, let message) {
+            XCTAssertEqual(status, 401)
+            XCTAssertEqual(message, "Wrong code")
+        }
+        guard case .signedIn(let fresh, let name) = try await SignIn.code(origin, step: step, code: right) else {
+            return XCTFail("the code didn't sign in")
+        }
+        XCTAssertEqual(name, "admin")
+        XCTAssertNotNil(fresh)
+
+        // a recovery code in place of the six digits
+        guard case .needsCode(let again) = try await SignIn.login(origin, username: "admin", password: password),
+              case .signedIn = try await SignIn.code(origin, step: again, code: recovery[0]) else {
+            return XCTFail("the recovery code didn't sign in")
+        }
+
+        // a step the server no longer knows goes back to the password
+        do {
+            _ = try await SignIn.code(origin, step: step, code: right)
+            XCTFail("a spent step signed in")
+        } catch let expired as SignIn.StepExpired {
+            XCTAssertEqual(expired.localizedDescription, "That sign-in expired. Sign in again.")
+        }
+        XCTAssertFalse(Servers.shared.signedOut)
+        XCTAssertEqual(Keychain.get(origin.absoluteString), own)
+    }
+
+    /// An authenticator app's code, as the server counts it: HMAC-SHA1, 30-second steps, six digits; `ahead` steps on.
+    private static func totp(_ key: Data, ahead: UInt64 = 0) -> String {
+        let step = (UInt64(Date().timeIntervalSince1970) / 30 + ahead).bigEndian
+        let mac = Array(HMAC<Insecure.SHA1>.authenticationCode(for: withUnsafeBytes(of: step) { Data($0) }, using: SymmetricKey(data: key)))
+        let o = Int(mac[mac.count - 1] & 15)
+        let n = (UInt32(mac[o]) << 24 | UInt32(mac[o + 1]) << 16 | UInt32(mac[o + 2]) << 8 | UInt32(mac[o + 3])) & 0x7fff_ffff
+        return String(format: "%06d", n % 1_000_000)
+    }
+
+    private static func base32(_ text: String) -> Data {
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+        var out = Data()
+        var bits = 0
+        var value = 0
+        for ch in text {
+            guard let i = alphabet.firstIndex(of: ch) else { continue }
+            value = (value << 5 | i) & 0xffff
+            bits += 5
+            if bits >= 8 {
+                out.append(UInt8(value >> (bits - 8) & 0xff))
+                bits -= 8
+            }
+        }
+        return out
+    }
+
     func testUploadAndScreens() async throws {
         let cookie = try await signIn()
         let server = Server(url: origin, username: "admin")
@@ -78,7 +166,17 @@ final class ServerTests: XCTestCase {
 
         let _: [WorkshopSession] = try await api.get("/api/workshop/sessions")
         _ = try await api.finals()
-        let _: ChatView.Chat = try await api.get("/api/assistant")
+        let chat = try JSONSerialization.jsonObject(with: try await api.send("/api/assistant", method: "GET")) as? [String: Any]
+        XCTAssertNotNil(chat?["messages"])
+    }
+
+    /// What `ServerPlugins` reads from a live server. `CT_TEST_STUDIO=1` when that server has the studio plug-in.
+    func testWhatTheServerHas() async throws {
+        let api = API(server: origin, cookie: try await signIn())
+        let known = try await ServerPlugins.read(api)
+        let studio = ProcessInfo.processInfo.environment["CT_TEST_STUDIO"] == "1"
+        XCTAssertEqual(known.plugins.contains(Studio.plugin), studio, known.plugins.description)
+        if !studio { XCTAssertNil(known.mainSource) }
     }
 
     private func upload(_ bytes: Data, name: String, engine: UploadEngine, server: Server) async throws -> UploadItem {
@@ -158,6 +256,105 @@ final class ServerTests: XCTestCase {
         let cover = try XCTUnwrap(shown.cover)
         let coverData = try await api.data(api.request(cover))
         XCTAssertNotNil(UIImage(data: coverData), "the Finals cover does not decode")
+    }
+
+    /// New edit: two clips picked, Start. The edit is there with both uploads waiting before any byte goes; once both
+    /// are in, it has them as its sources and its first step (analyze) is queued, without the phone doing more.
+    func testNewEdit() async throws {
+        let cookie = try await signIn()
+        let server = Server(url: origin, username: "admin")
+        Servers.shared.add(server, cookie: cookie)
+        let api = try XCTUnwrap(Servers.shared.api)
+        let engine = UploadEngine.shared
+        let edits = PhoneEdits.shared
+
+        // two different clips (the library counts the same bytes once): the synthetic video, each with its own tail
+        let video = try Data(contentsOf: try XCTUnwrap(Bundle(for: Self.self).url(forResource: "tiny", withExtension: "mp4")))
+        let local = UUID()
+        var clips: [UUID] = []
+        for n in 1...2 {
+            let id = UUID()
+            try (video + Data(UUID().uuidString.utf8)).write(to: AppFiles.upload(id))
+            engine.add(id: id, filename: "tinyacrobatics-clip\(n).mp4", size: Int64(video.count + 36), server: server, edit: local)
+            clips.append(id)
+        }
+        edits.add(PhoneEdit(id: local, server: server.id, name: "Phone edit, Tiny Acrobatics", clips: clips))
+
+        var waiting: RemoteEdit?
+        await edits.start(local) {
+            waiting = try await api.get("/api/editor/\(edits.item(local)?.editId ?? "")")
+            // no byte has gone yet
+            XCTAssertTrue(clips.allSatisfy { engine.store.item($0)?.state == .picked })
+        }
+        let editId = try XCTUnwrap(edits.item(local)?.editId, edits.item(local)?.problem ?? "no edit")
+        XCTAssertEqual(waiting?.sources, [])
+        XCTAssertEqual(waiting?.uploads?.map(\.id), clips.map { engine.store.item($0)?.uploadId ?? "" }, "in the order picked")
+        XCTAssertEqual(waiting?.uploads?.compactMap(\.version), [])
+
+        var now: RemoteEdit?
+        for _ in 0..<180 {
+            now = try await api.get("/api/editor/\(editId)")
+            if now?.sources?.count == 2 { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertEqual(now?.sources?.count, 2, clips.map { engine.store.item($0)?.note ?? "" }.description)
+        XCTAssertNil(now?.uploads)
+        XCTAssertEqual(now?.jobs?.first?.kind, "analyze")
+
+        // the row follows: the copies on the phone are cleared, and it reads Editing (or the step's problem)
+        await edits.refresh()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(clips.allSatisfy { engine.store.item($0) == nil })
+        let row = edits.state(try XCTUnwrap(edits.item(local)))
+        XCTAssertTrue(row == .editing || { if case .stuck = row { return true } else { return false } }(), "\(row)")
+    }
+
+    /// Try again: the old edit goes to the trash, the clips go again as new uploads (the library has them already, so
+    /// they count as themselves), and a fresh edit starts with both.
+    func testNewEditTryAgain() async throws {
+        // Chats in the app around the tests reads the edits too, and clears a started edit's copies on the phone: hold it
+        UserDefaults.standard.set("1", forKey: "ChatsSignedOut")
+        defer { UserDefaults.standard.removeObject(forKey: "ChatsSignedOut") }
+        let cookie = try await signIn()
+        let server = Server(url: origin, username: "admin")
+        Servers.shared.add(server, cookie: cookie)
+        let api = try XCTUnwrap(Servers.shared.api)
+        let engine = UploadEngine.shared
+        let edits = PhoneEdits.shared
+        let video = try Data(contentsOf: try XCTUnwrap(Bundle(for: Self.self).url(forResource: "tiny", withExtension: "mp4")))
+        let local = UUID()
+        var clips: [UUID] = []
+        for n in 1...2 {
+            let id = UUID()
+            try (video + Data(UUID().uuidString.utf8)).write(to: AppFiles.upload(id))
+            engine.add(id: id, filename: "tinyacrobatics-again\(n).mp4", size: Int64(video.count + 36), server: server, edit: local)
+            clips.append(id)
+        }
+        edits.add(PhoneEdit(id: local, server: server.id, name: "Phone edit, Tiny Acrobatics again", clips: clips))
+        await edits.start(local)
+        let first = try XCTUnwrap(edits.item(local)?.editId, edits.item(local)?.problem ?? "no edit")
+        for _ in 0..<120 where !clips.allSatisfy({ engine.store.item($0)?.state == .done }) {
+            try await Task.sleep(for: .seconds(1))
+        }
+
+        await edits.retry(local)
+        let second = try XCTUnwrap(edits.item(local)?.editId, edits.item(local)?.problem ?? "no new edit")
+        XCTAssertNotEqual(second, first)
+        do {
+            let _: RemoteEdit = try await api.get("/api/editor/\(first)")
+            XCTFail("the old edit is still there")
+        } catch APIError.server(let status, _) {
+            XCTAssertEqual(status, 404)
+        }
+        var now: RemoteEdit?
+        for _ in 0..<120 {
+            now = try await api.get("/api/editor/\(second)")
+            if now?.sources?.count == 2 { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertEqual(now?.sources?.count, 2, clips.map { engine.store.item($0)?.note ?? "" }.description)
+        XCTAssertTrue(clips.allSatisfy { engine.store.item($0)?.duplicate == true })
+        edits.forget(local)
     }
 
     /// The web view ("Everything else") is signed in with the phone's cookie, on http as on https.

@@ -40,22 +40,22 @@ struct PrompterRecorder: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 18) {
-            Button { dismiss() } label: { Image(systemName: "xmark").font(.title3.weight(.semibold)) }
+        HStack(spacing: 4) {
+            Button { dismiss() } label: { Image(systemName: "xmark").font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
                 .accessibilityLabel("Close")
                 .disabled(camera.recording)
             Spacer()
-            Button { size = max(16, size - 2) } label: { Text("A−").font(.body.weight(.semibold)) }
+            Button { size = max(16, size - 2) } label: { Text("A").font(.system(size: 15, weight: .semibold)).frame(width: 44, height: 44) }
                 .accessibilityLabel("Smaller text")
-            Button { size = min(44, size + 2) } label: { Text("A+").font(.title3.weight(.semibold)) }
+            Button { size = min(44, size + 2) } label: { Text("A").font(.system(size: 24, weight: .semibold)).frame(width: 44, height: 44) }
                 .accessibilityLabel("Bigger text")
-            Button { camera.flip() } label: { Image(systemName: "arrow.triangle.2.circlepath.camera").font(.title3) }
+            Button { camera.flip() } label: { Image(systemName: "arrow.triangle.2.circlepath.camera").font(.title3).frame(width: 44, height: 44) }
                 .accessibilityLabel("Switch camera")
                 .disabled(camera.recording)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background(.black.opacity(0.7))
     }
 
@@ -69,29 +69,20 @@ struct PrompterRecorder: View {
                     .padding(.vertical, 6)
                     .background(.black.opacity(0.6), in: Capsule())
             }
-            HStack(spacing: 28) {
-                Button { playing.toggle() } label: {
-                    Image(systemName: playing ? "pause.fill" : "play.fill").font(.title2)
+            HStack {
+                RoundControl(label: playing ? "Pause scrolling" : "Scroll the script") { playing.toggle() } content: {
+                    Image(systemName: playing ? "pause.fill" : "play.fill")
                 }
-                .accessibilityLabel(playing ? "Pause scrolling" : "Scroll the script")
-                .frame(width: 56)
-                Button { camera.toggleRecording() } label: {
-                    ZStack {
-                        Circle().stroke(.white, lineWidth: 4).frame(width: 76, height: 76)
-                        RoundedRectangle(cornerRadius: camera.recording ? 8 : 31)
-                            .fill(.red)
-                            .frame(width: camera.recording ? 32 : 62, height: camera.recording ? 32 : 62)
-                    }
-                    .animation(.easeInOut(duration: 0.2), value: camera.recording)
-                }
-                .accessibilityLabel(camera.recording ? "Stop recording" : "Record")
-                .disabled(!camera.ready)
-                Slider(value: $speed, in: 5...80)
-                    .frame(width: 56)
-                    .accessibilityLabel("Scroll speed")
+                Spacer()
+                Button { camera.toggleRecording() } label: { RecordMark(recording: camera.recording) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(camera.recording ? "Stop recording" : "Record")
+                    .disabled(!camera.ready)
+                Spacer()
+                SpeedControl(speed: $speed)
             }
             .foregroundStyle(.white)
-            .tint(.white)
+            .padding(.horizontal, 40)
         }
         .padding(.bottom, 24)
     }

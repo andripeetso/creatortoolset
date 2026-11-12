@@ -44,21 +44,80 @@ extension API {
     }
 }
 
-/// The iPhone's own player: scrubbing, full screen, Picture in Picture, AirPlay, sound with the ring switch on silent.
-struct NativePlayer: UIViewControllerRepresentable {
+/// The iPhone's own player (the one Photos uses): scrubbing, ±10 s, speed, full screen, Picture in Picture, AirPlay,
+/// sound with the ring switch on silent. Its controls stay hidden until a tap, so a big play button shows until it
+/// first plays. `overlay` rides on the video, full screen too (captions drawn over a video); it never takes touches.
+struct NativePlayer<Overlay: View>: View {
     let player: AVPlayer
+    let overlay: Overlay
+    @State private var started = false
+
+    init(player: AVPlayer, @ViewBuilder overlay: () -> Overlay) {
+        self.player = player
+        self.overlay = overlay()
+    }
+
+    var body: some View {
+        PlayerController(player: player, overlay: overlay)
+            .overlay {
+                if !started {
+                    Button { player.play() } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.white)
+                            .frame(width: 68, height: 68)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("Play")
+                }
+            }
+            .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+                if status != .paused { started = true }
+            }
+            .id(ObjectIdentifier(player))   // another video starts with its button again
+    }
+}
+
+extension NativePlayer where Overlay == EmptyView {
+    init(player: AVPlayer) { self.init(player: player) { EmptyView() } }
+}
+
+private struct PlayerController<Overlay: View>: UIViewControllerRepresentable {
+    let player: AVPlayer
+    let overlay: Overlay
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         // playback, not the default ambient: the silent switch mutes ambient sound
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         let controller = AVPlayerViewController()
         controller.player = player
+        controller.videoGravity = .resizeAspect
         controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = true
+        if Overlay.self != EmptyView.self, let content = controller.contentOverlayView {
+            let host = UIHostingController(rootView: overlay)
+            host.safeAreaRegions = []
+            host.view.backgroundColor = .clear
+            host.view.isUserInteractionEnabled = false
+            host.view.frame = content.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            content.addSubview(host.view)
+            context.coordinator.host = host
+        }
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         if controller.player !== player { controller.player = player }
+        context.coordinator.host?.rootView = overlay
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var host: UIHostingController<Overlay>?
     }
 }
 
@@ -82,7 +141,7 @@ struct WebAppView: UIViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         view.allowsBackForwardNavigationGestures = true
         view.isOpaque = false
-        view.backgroundColor = .black
+        view.backgroundColor = .systemBackground
         let url = api.url(path)
         guard let c = api.webCookie else {
             view.load(URLRequest(url: url))
