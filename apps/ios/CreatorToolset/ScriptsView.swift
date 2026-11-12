@@ -3,25 +3,29 @@ import UIKit
 
 /// Scripts to film: the sessions that are ready or in production, newest first.
 struct ScriptsView: View {
-    @StateObject private var model = WorkshopModel()
+    @ObservedObject private var model = WorkshopModel.shared
 
     var body: some View {
         List {
-            if let error = model.error { Problem(text: error) }
+            if model.needsSignIn {
+                SignInAgainButton { await model.load(force: true) }.listRowSeparator(.hidden)
+            } else if let error = model.error {
+                Problem(text: error)
+            }
             ForEach(model.sessions.filter(\.toFilm)) { session in
                 NavigationLink(value: session) { SessionRow(session: session) }
             }
         }
         .overlay {
-            if model.loading {
+            if model.loading && model.sessions.isEmpty {
                 ProgressView()
-            } else if !model.sessions.contains(where: \.toFilm) && model.error == nil {
+            } else if !model.sessions.contains(where: \.toFilm) && model.error == nil && !model.needsSignIn {
                 ContentUnavailableView("Nothing to film", systemImage: "doc.text")
             }
         }
-        .navigationTitle("To film")
+        .navigationTitle("Scripts")
         .task { await model.load() }
-        .refreshable { await model.load() }
+        .refreshable { await model.load(force: true) }
         .navigationDestination(for: WorkshopSession.self) { ScriptReaderView(session: $0) }
     }
 }
@@ -29,13 +33,14 @@ struct ScriptsView: View {
 /// One session in a list: its kind letter, title, project and status.
 struct SessionRow: View {
     let session: WorkshopSession
+    var dimmed = false
 
     var body: some View {
         HStack(spacing: 12) {
             Text(session.letter)
                 .font(.headline.monospaced())
                 .frame(width: 36, height: 36)
-                .background(Color.accentColor.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+                .background(Color("AccentColor").opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title).font(.body.weight(.medium)).lineLimit(2)
                 Text([session.projectName, session.status.label].compactMap { $0 }.joined(separator: " · "))
@@ -44,49 +49,59 @@ struct SessionRow: View {
                     .lineLimit(1)
             }
         }
+        .opacity(dimmed ? 0.5 : 1)
     }
 }
 
-/// The script, read big: hooks first (numbered), then each block. It scrolls on its own when played, the screen
-/// stays awake while it is open, and the big button films with the script on screen.
+/// The script, read big: hooks first (numbered), then each block as a
+/// paragraph (carousel slides numbered). Under it three controls, like a camera:
+/// the slow scroll, the big record button (the camera with the script by the lens),
+/// and the scroll's speed. The screen stays awake while it is open.
 struct ScriptReaderView: View {
     let session: WorkshopSession
     @AppStorage("scriptTextSize") private var textSize = 26.0
-    @AppStorage("scriptSpeed") private var speed = 25.0
+    @AppStorage("scriptSpeed") private var speed = ScrollSpeed.base
     @State private var docs: [WorkshopDoc]?
     @State private var error: String?
+    @State private var needsSignIn = false
     @State private var playing = false
     @State private var recorder = false
+    @State private var sizing = false
 
     var body: some View {
         VStack(spacing: 0) {
-            if let caption {
-                DisclosureGroup("Post description") {
-                    Text(caption).font(.callout).textSelection(.enabled)
+            if let description {
+                DisclosureGroup {
+                    Text(description).font(.callout).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                } label: {
+                    Text("Post description").font(.footnote).foregroundStyle(.secondary)
                 }
-                .padding(.horizontal)
+                .tint(Color.secondary)
+                .padding(.horizontal, 20)
                 .padding(.vertical, 6)
             }
-            if let docs {
-                if docs.allSatisfy({ $0.blocks.isEmpty && ($0.hooks ?? []).isEmpty }) {
-                    ContentUnavailableView("No script yet", systemImage: "doc.text")
-                } else {
-                    ScriptText(docs: docs, size: CGFloat(textSize), playing: playing, speed: CGFloat(speed)) {
-                        playing = false
-                    }
-                }
-            } else if let error {
-                Problem(text: error).padding()
-                Spacer()
-            } else {
-                ProgressView().frame(maxHeight: .infinity)
-            }
+            script
             controls
         }
         .navigationTitle(session.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Aa") { sizing = true }
+                    .accessibilityLabel("Text size")
+                    .popover(isPresented: $sizing) {
+                        TextSizeControl(size: $textSize).presentationCompactAdaptation(.popover)
+                    }
+            }
+        }
+        .task {
+            await load()
+            // a debug build opens the text size without taps: -TextSize YES
+            if debugArg("TextSize") != nil { sizing = true }
+        }
         .fullScreenCover(isPresented: $recorder) {
             PrompterRecorder(docs: docs ?? [], size: $textSize, speed: $speed)
         }
@@ -97,50 +112,162 @@ struct ScriptReaderView: View {
         }
     }
 
-    private var caption: String? {
+    private var description: String? {
         docs?.compactMap { $0.caption?.text }.first.map(scriptText).flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    private var controls: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 18) {
-                Button { textSize = max(16, textSize - 2) } label: { Text("A−").font(.body.weight(.semibold)) }
-                    .accessibilityLabel("Smaller text")
-                Button { textSize = min(44, textSize + 2) } label: { Text("A+").font(.title3.weight(.semibold)) }
-                    .accessibilityLabel("Bigger text")
-                Button { playing.toggle() } label: {
-                    Image(systemName: playing ? "pause.circle.fill" : "play.circle.fill").font(.title)
+    private var hasScript: Bool {
+        docs?.contains { !$0.blocks.isEmpty || !($0.hooks ?? []).isEmpty } == true
+    }
+
+    @ViewBuilder private var script: some View {
+        if let docs {
+            if hasScript {
+                ScriptText(docs: docs, size: CGFloat(textSize), playing: playing, speed: CGFloat(speed)) {
+                    playing = false
                 }
-                .accessibilityLabel(playing ? "Pause scrolling" : "Scroll the script")
-                Slider(value: $speed, in: 5...80).accessibilityLabel("Scroll speed")
+            } else {
+                ContentUnavailableView("No script yet", systemImage: "doc.text")
             }
-            .buttonStyle(.borderless)
+        } else if needsSignIn {
+            SignInAgainButton { await load() }.padding().frame(maxHeight: .infinity)
+        } else if let error {
+            Problem(text: error).padding()
+            Spacer()
+        } else {
+            ProgressView().frame(maxHeight: .infinity)
+        }
+    }
+
+    private var controls: some View {
+        HStack {
+            RoundControl(label: playing ? "Pause scrolling" : "Scroll the script") { playing.toggle() } content: {
+                Image(systemName: playing ? "pause.fill" : "play.fill")
+            }
+            Spacer()
             Button {
                 playing = false
                 recorder = true
             } label: {
-                Label("Film with the script", systemImage: "record.circle").frame(maxWidth: .infinity)
+                RecordMark(ring: .primary)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .controlSize(.large)
-            .disabled(docs?.isEmpty ?? true)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Film with the script on screen")
+            .disabled(!hasScript)
+            .opacity(hasScript ? 1 : 0.4)
+            Spacer()
+            SpeedControl(speed: $speed)
         }
-        .padding()
+        .padding(.horizontal, 40)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
         .background(.bar)
     }
 
     private func load() async {
-        guard let api = Servers.shared.api else { return }
+        guard let api = API.current else {
+            needsSignIn = true
+            return
+        }
         do {
             docs = try await api.sessionDocs(session.id)
+            error = nil
+            needsSignIn = false
         } catch {
-            self.error = error.localizedDescription
+            needsSignIn = error.needsToolsetSignIn
+            self.error = needsSignIn ? nil : error.localizedDescription
         }
     }
 }
 
-/// The script's text view: a UITextView is already a scroll view, so the slow scroll is its own offset moved at 30 Hz.
+/// The slow scroll's speed as he reads it: 0.5×, 1×, 1.5×, 2×. It is kept in points per second
+/// (1× is 25, as it always was), so the reader and the camera share one setting.
+enum ScrollSpeed {
+    static let base = 25.0
+    static let steps = [0.5, 1, 1.5, 2]
+
+    /// "1×", "1.5×".
+    static func label(_ points: Double) -> String {
+        let times = (points / base * 10).rounded() / 10
+        return (times == times.rounded() ? String(Int(times)) : String(times)) + "×"
+    }
+
+    /// The next step up from this speed; after the fastest, the slowest again.
+    static func next(after points: Double) -> Double {
+        (steps.first { $0 * base > points + 0.01 } ?? steps[0]) * base
+    }
+}
+
+/// A round control beside the record button, in the reader and in the camera.
+struct RoundControl<Content: View>: View {
+    let label: String
+    let action: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .font(.headline)
+                .frame(width: 56, height: 56)
+                .background(.thinMaterial, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+/// Shows the scroll's speed; a tap moves it one step on.
+struct SpeedControl: View {
+    @Binding var speed: Double
+
+    var body: some View {
+        RoundControl(label: "Scroll speed, \(ScrollSpeed.label(speed))") { speed = ScrollSpeed.next(after: speed) } content: {
+            Text(ScrollSpeed.label(speed)).font(.subheadline.weight(.semibold)).monospacedDigit()
+        }
+    }
+}
+
+/// The record button: a ring around a red disc, a red square while it records. The ring is white
+/// over the camera, and the colour of the text on the script's own page (dark on a light page).
+struct RecordMark: View {
+    var recording = false
+    var ring: Color = .white
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(ring, lineWidth: 4).frame(width: 78, height: 78)
+            RoundedRectangle(cornerRadius: recording ? 8 : 30)
+                .fill(.red)
+                .frame(width: recording ? 32 : 60, height: recording ? 32 : 60)
+        }
+        .animation(.easeInOut(duration: 0.2), value: recording)
+    }
+}
+
+/// Smaller and bigger text for the script.
+struct TextSizeControl: View {
+    @Binding var size: Double
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { size = max(16, size - 2) } label: {
+                Text("A").font(.system(size: 15, weight: .semibold)).frame(width: 64, height: 48).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Smaller text")
+            Divider().frame(height: 24)
+            Button { size = min(44, size + 2) } label: {
+                Text("A").font(.system(size: 24, weight: .semibold)).frame(width: 64, height: 48).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Bigger text")
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+    }
+}
+
+/// The script's text view: a UITextView is already a scroll view, so the
+/// slow scroll is its own offset moved at 30 Hz.
 struct ScriptText: UIViewRepresentable {
     let docs: [WorkshopDoc]
     let size: CGFloat
@@ -243,9 +370,20 @@ struct ScriptText: UIViewRepresentable {
     }
 }
 
-/// A session opened by its id (a card or a link). Until it has its own screen: its page.
+/// A session opened by its id (a card in a chat, a link): its script.
 struct SessionRouteView: View {
     let id: String
+    @ObservedObject private var model = WorkshopModel.shared
 
-    var body: some View { PageView(path: "/workshop/sessions/\(id)") }
+    var body: some View {
+        if let session = model.sessions.first(where: { $0.id == id }) {
+            ScriptReaderView(session: session)
+        } else if model.needsSignIn {
+            SignInAgainButton { await model.load(force: true) }.padding()
+        } else if let error = model.error {
+            Problem(text: error).padding()
+        } else {
+            ProgressView().task { await model.load(force: true) }
+        }
+    }
 }

@@ -123,6 +123,8 @@ struct RootView: View {
                 plugins.load(for: servers.currentId)
                 StudioHooks.serverChanged()
                 await access.refresh()
+                // a Caption Studio video picked on this phone that hasn't all reached the server carries on
+                CaptionEditor.resumeKept()
                 await plugins.refresh()
                 await workshop.load()
             }
