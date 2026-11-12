@@ -14,9 +14,9 @@ struct MoreView: View {
         ScrollView {
             VStack(spacing: 24) {
                 LazyVGrid(columns: columns, spacing: 12) {
-                    // The tools' tiles, each only when the account has it (lane 4 brings the screens):
-                    // if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
-                    // if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
+                    // the tools' tiles, each only when the account has it
+                    if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
+                    if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
                 }
                 Button {
                     settingsOpen = true
