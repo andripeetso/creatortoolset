@@ -1270,7 +1270,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       }
       // Tagged sources first, then the open one, then the most recently pulled ones.
       views.sort((a, b) => Number(!!b.tagged) - Number(!!a.tagged) || Number(!!b.open) - Number(!!a.open) || b.at - a.at);
-      const packText = [await packInstructions(user.username, "workshop.write", project?.id ?? null), skillLines(skills, "folder")].filter(Boolean).join("\n\n");
+      // on the Mac the turn has tools (it reads its folder, and may search the web): the app's own packs only there
+      const packText = [await packInstructions(user.username, "workshop.write", project?.id ?? null, { shippedOnly: onMac(user, session.ai) }), skillLines(skills, "folder")].filter(Boolean).join("\n\n");
       const prompt = buildTurnPrompt({
         project: project ?? undefined,
         account: account ?? undefined,

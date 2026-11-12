@@ -72,7 +72,7 @@ A pack's instructions are added to one prompt, named by its slot:
 
 | Slot | Where |
 |---|---|
-| `workshop.write` | Content Workshop: writing and editing pieces |
+| `workshop.write` | Content Workshop: writing and editing pieces. Not the chat turn on the Mac, which reads its folder and may search the web: only the app's own shipped packs go there |
 | `workshop.review` | Content Workshop: the follower read and the fact check |
 | `analyzer.ideas` | Content Analyzer: ideas and tags from posts |
 | `captions.lines` | Caption Studio: where captions break into lines |
