@@ -6,7 +6,7 @@ import { writeFileSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { env, hostedMode } from "./lib/env";
 import { escHtml, plainPage } from "./lib/plain-page";
-import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, refreshPicture, type SignInProvider } from "./users";
+import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, listUsers, refreshPicture, type SignInProvider } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
@@ -142,7 +142,12 @@ export function signinUrl(kind: Kind, redirect: string, state: string): string |
 }
 
 /** `app`: an app started this site sign-in (`app=1`); the value is its challenge, kept for the code it ends with. */
-type Mode = { type: "site"; app?: string } | { type: "link"; username: string };
+/** `back`: the page the person was on when they pressed sign in (a path on this server), where a browser sign-in ends. */
+type Mode = { type: "site"; app?: string; back?: string } | { type: "link"; username: string };
+
+/** A path on this server to go back to after a sign-in, or undefined: one that starts with a single "/", never another site. */
+export const backPath = (v: string | undefined): string | undefined =>
+  v && /^\/(?![/\\])[^\s]{0,500}$/.test(v) && !v.startsWith("/api/") ? v : undefined;
 /** Where an app's sign-in ends: the link the app registers, with ?code= or ?error=. */
 const APP_LINK = "creatortoolset://signin";
 /**
@@ -194,10 +199,14 @@ const sweep = () => {
 /** Starts a sign-in for a site account (`for=site`) or links one to the signed-in account (`for=link`); others go on. */
 export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 
-/** Which sign-in buttons the site's login screen shows: the providers this server has keys for (none off hosted). */
+/**
+ * Which sign-in buttons show: the providers this server has keys for (none off hosted). `?login=1` (the login screen):
+ * only the ones an account here has linked, since on a server that takes people by invitation any other can only fail.
+ */
 signInStartApp.get("/providers", (c) => {
   const origin = originOf(c);
-  const on = (kind: Kind) => hostedMode() && !!signinVia(origin, kind);
+  const linked = (kind: Kind) => c.req.query("login") !== "1" || process.env.SIGN_UPS === "open" || listUsers().some((u) => u.identities?.some((i) => i.provider === kind));
+  const on = (kind: Kind) => hostedMode() && !!signinVia(origin, kind) && linked(kind);
   return c.json({ apple: on("apple"), google: on("google"), github: on("github") });
 });
 
@@ -218,7 +227,10 @@ signInStartApp.get("/login/:kind", (c, next) => {
       const challenge = c.req.query("challenge") ?? "";
       if (!APP_CHALLENGE.test(challenge)) return c.json({ error: "The app's sign-in challenge is missing" }, 400);
       mode = { type: "site", app: challenge };
-    } else mode = { type: "site" };
+    } else {
+      const back = backPath(c.req.query("next"));
+      mode = back ? { type: "site", back } : { type: "site" };
+    }
   } else return next();
   const origin = originOf(c);
   const redirect = `${origin}/api/auth/${kind}/callback`;
@@ -398,7 +410,7 @@ function finish(c: Context, mode: Mode, who: Who, withCookie: boolean) {
   if (mode.app) return c.redirect(`${APP_LINK}?code=${mintAppCode(user, mode.app)}`);
   setLoginCookie(c, user);
   bumpUsage(user.username, { logins: 1 });
-  return c.redirect("/");
+  return c.redirect(mode.type === "site" && mode.back ? mode.back : "/");
 }
 
 /**

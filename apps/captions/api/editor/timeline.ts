@@ -65,6 +65,8 @@ export interface BuildInput {
   punch: number;
   eyeline: Record<string, number>;
   cut?: CutSettings;
+  /** the edit's working size (its style's); none = the first line's source's own size */
+  size?: { w: number; h: number } | null;
 }
 
 /** Builds one version's timeline; the notes say what each line's cut removed or could not find. */
@@ -74,8 +76,8 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
   const first = byN.get(i.plan.lines[0]?.take.first ?? -1);
   const lead = first ? i.sources[first.src] : undefined;
   const fps = lead?.fps || 30;
-  const W = lead?.w || 1080;
-  const H = lead?.h || 1920;
+  const W = i.size?.w || lead?.w || 1080;
+  const H = i.size?.h || lead?.h || 1920;
   const tl: Timeline = { name: i.name, fps, width: W, height: H, sources: {}, tracks: emptyTracks(), markers: [] };
   const notes: string[] = [];
   let rec = 0;
@@ -162,6 +164,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     punch: edit.framing.punch,
     eyeline: edit.eyeline ?? {},
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
+    size: edit.size,
   });
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
   await saveDraft(edit.id, version.name, { timeline, notes });

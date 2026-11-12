@@ -70,8 +70,19 @@ export interface UserRecord {
   displayName?: string;
   /** The name typed at sign-in once the person changed it. `username` stays the id that files are filed under, so a new sign-in name moves nothing. */
   login?: string;
+  /** The sign-in code (Settings → Account, lib/sign-in-code.ts): asked after the password on every other browser and device. */
+  code?: SignInCode;
+  /** Signed into the cookie with the password hash once set: a new one signs every other browser out. Never set = the cookie as before. */
+  session?: string;
   createdAt: number;
   usage: UserUsage;
+}
+
+/** The authenticator app's secret (hex), the recovery codes' sha256, and the last 30-second step that signed in. */
+export interface SignInCode {
+  secret: string;
+  recovery: string[];
+  lastStep: number;
 }
 
 /**
@@ -278,11 +289,23 @@ export function createUser(
   return user;
 }
 
+/** A password a person sets or changes (accounts made by code keep createUser's floor; existing passwords keep working). */
+export const PASSWORD_MIN = 10;
+export const passwordProblem = (password: string) => (password.length < PASSWORD_MIN ? `Password must be at least ${PASSWORD_MIN} characters` : null);
+
 export function setPassword(user: UserRecord, password: string): void {
-  if (password.length < 6)
-    throw new Error("Password must be at least 6 characters");
+  const problem = passwordProblem(password);
+  if (problem) throw new Error(problem);
   user.salt = randomBytes(16).toString("hex");
   user.hash = hashPassword(password, user.salt); // also rotates auth cookies
+  persist();
+}
+
+/** The sign-in code on (`code`) or off (null). `signOut`: a new session stamp, so every other browser signs in again. */
+export function setSignInCode(user: UserRecord, code: SignInCode | null, signOut = false): void {
+  if (code) user.code = code;
+  else delete user.code;
+  if (signOut) user.session = randomBytes(16).toString("hex");
   persist();
 }
 

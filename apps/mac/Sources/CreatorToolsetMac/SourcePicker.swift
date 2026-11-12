@@ -258,7 +258,7 @@ private final class PickerSession {
 
     func mouseDown(in view: PickerView, at p: CGPoint) {
         switch kind {
-        case .display:
+        case .display, .device:
             break
         case .window:
             // a click on a window records it; a click on empty desktop does nothing (the picked one waits for Start)
@@ -320,6 +320,8 @@ private final class PickerSession {
         case .area:
             guard let v = activeView, let sel = selection, PickerGeometry.isUsable(sel) else { return }
             start(.area(v.displayID, PickerGeometry.flipped(sel, height: v.bounds.height)))
+        case .device:
+            break
         }
     }
 
@@ -522,6 +524,8 @@ private final class PickerView: NSView {
                 button.isHidden = !PickerGeometry.isUsable(sel)
                 center = CGPoint(x: sel.midX, y: sel.midY)
             }
+        case .device:
+            break   // a device is not picked on the screen
         }
         card.isHidden = center == nil
         if let c = center {
@@ -572,6 +576,8 @@ private final class PickerView: NSView {
                 box.lineWidth = 1
                 box.stroke()
             }
+        case .device:
+            break
         }
     }
 

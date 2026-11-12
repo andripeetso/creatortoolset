@@ -1,27 +1,40 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { SKILL_LIMITS, checkSkill, oneLine, type Skill } from "../../contracts/skills";
+import { PACK_LIMITS, PACK_SLOTS, isPackSkillSlot, skillNameKey, type InstalledPack, type PackSkillSlot } from "../../contracts/packs";
+import { SKILL_LIMITS, checkSkill, everyProject, isSkillPlace, oneLine, pickedByStyle, placeLabel, placeOf, type SharedSkill, type Skill, type SkillPlace } from "../../contracts/skills";
+import type { ProviderOpts } from "../ai-complete";
 import { env } from "./env";
+import { pluginSkills } from "./plugin";
 import { slug } from "./workshop/folder";
 import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import { readUserMarker } from "./workshop/workspace";
 
 /**
- * A person's own skills (contracts/skills.ts): text they typed, pasted or dropped in Settings → Skills, kept per account.
+ * Skills (contracts/skills.ts), each for one place. A person's own are kept per account; the ones from installed
+ * Community packs live on the pack's installed record (api/lib/packs.ts), and a plug-in's in the plug-in
+ * (api/lib/plugin.ts pluginSkills). This file keeps the own ones and each account's switches for the others:
  *
- *   $DATA_DIR/skills/<username>.json   {skills: Skill[]}   (0600)
+ *   $DATA_DIR/skills/<username>.json   {skills: Skill[], switched?: {<shared id>: on}}   (0600)
  *
- * What reaches an AI job is fixed in size and cut here again, whatever the file holds: at most SKILL_LIMITS.perTurn
- * skills, one line each (name and when to use it) in the prompt, and each body only where the AI opens it (a file in a
- * Workshop turn's folder, the assistant's skill_read). An account with no skills gets no line, no file and no tool:
- * every function here answers empty for it, and none of them throws.
+ * Where each place's skills go:
+ * - assistant: the person's own only, a line each in the prompt and skill_read for a body (dockSkills).
+ * - workshop.write: the person's own only, a file each in the turn's folder and a line each (skillsFor).
+ * - workshop.review, analyzer.ideas, captions.lines: own and shared ones switched on, as text beside the slot's pack
+ *   instructions (slotSkills, read by packInstructions).
+ * - editor.script: only the one an edit's editing style names (skillText).
+ * What reaches a job is fixed in size and cut here again, whatever the files hold: at most SKILL_LIMITS.perTurn skills,
+ * an own body at SKILL_LIMITS.body and a shared one at PACK_LIMITS.skillChars. An account with no skills gets no line,
+ * no file and no tool: every function here answers empty for it, and none of them throws.
  *
+ * A skill saved before places has none and is the assistant's (placeOf), as it was; it no longer goes to the Workshop.
  * Skills are written only through api/skills.ts, by the person at their own screen. No AI job writes one.
  */
 
 const USER = /^[a-zA-Z0-9._-]{1,64}$/;
 const fileOf = (username: string) => path.join(env.dataDir, "skills", `${username}.json`);
+/** Switches kept for shared skills: the newest ones (a removed pack leaves its switches behind). */
+const SWITCHES_KEPT = 200;
 
 /** A refusal in words for the person ("8 skills can be on in one project."). */
 export class SkillError extends Error {}
@@ -31,28 +44,39 @@ const isSkill = (s: unknown): s is Skill => {
   return !!x && typeof x.id === "string" && typeof x.name === "string" && typeof x.when === "string" && typeof x.body === "string" && typeof x.on === "boolean";
 };
 
-/** The account's skills in the order they were added. Empty for an account with none, or a file nobody can read. */
-export async function listSkills(username: string): Promise<Skill[]> {
-  if (!USER.test(username)) return [];
+interface State {
+  skills: Skill[];
+  switched: Record<string, boolean>;
+}
+
+async function readState(username: string): Promise<State> {
+  if (!USER.test(username)) return { skills: [], switched: {} };
   try {
-    const state = JSON.parse(await readFile(fileOf(username), "utf-8")) as { skills?: unknown };
-    return Array.isArray(state.skills) ? state.skills.filter(isSkill) : [];
+    const state = JSON.parse(await readFile(fileOf(username), "utf-8")) as { skills?: unknown; switched?: unknown };
+    const switched = state.switched && typeof state.switched === "object" && !Array.isArray(state.switched) ? Object.fromEntries(Object.entries(state.switched).filter(([, v]) => typeof v === "boolean")) : {};
+    return { skills: Array.isArray(state.skills) ? state.skills.filter(isSkill) : [], switched };
   } catch {
-    return [];
+    return { skills: [], switched: {} };
   }
+}
+
+/** The account's own skills in the order they were added. Empty for an account with none, or a file nobody can read. */
+export async function listSkills(username: string): Promise<Skill[]> {
+  return (await readState(username)).skills;
 }
 
 // one writer per person: add, change and remove read-modify-write the same file
 const locks = new Map<string, Promise<unknown>>();
-function change<T>(username: string, fn: (skills: Skill[]) => T): Promise<T> {
+function change<T>(username: string, fn: (state: State) => T): Promise<T> {
   if (!USER.test(username)) return Promise.reject(new SkillError("Sign in to keep skills."));
   const run = async () => {
-    const skills = await listSkills(username);
-    const out = fn(skills);
+    const state = await readState(username);
+    const out = fn(state);
     const file = fileOf(username);
     await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
     const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-    await writeFile(tmp, JSON.stringify({ skills }), { mode: 0o600 });
+    const switched = Object.entries(state.switched).slice(-SWITCHES_KEPT);
+    await writeFile(tmp, JSON.stringify({ skills: state.skills, ...(switched.length ? { switched: Object.fromEntries(switched) } : {}) }), { mode: 0o600 });
     await rename(tmp, file);
     return out;
   };
@@ -66,20 +90,21 @@ function change<T>(username: string, fn: (skills: Skill[]) => T): Promise<T> {
 /** Is the skill in use for a job in this project? One ticked for some projects is in none of the others. */
 export const skillOn = (s: Skill, projectId?: string | null): boolean => s.on && (!s.projectIds?.length || (!!projectId && s.projectIds.includes(projectId)));
 
-/** Whether more skills would be on for some project than one turn takes. */
-function tooManyOn(skills: Skill[]): boolean {
-  const on = skills.filter((s) => s.on);
+/** Whether more skills of one place would be on for some project than one job takes. */
+function tooManyOn(skills: Skill[], place: SkillPlace): boolean {
+  if (pickedByStyle(place)) return false;
+  const on = skills.filter((s) => s.on && placeOf(s) === place);
   const perProject = new Map<string, number>();
   for (const s of on) for (const p of s.projectIds ?? []) perProject.set(p, (perProject.get(p) ?? 0) + 1);
   return on.filter((s) => !s.projectIds?.length).length + Math.max(0, ...perProject.values()) > SKILL_LIMITS.perTurn;
 }
-const TOO_MANY = `${SKILL_LIMITS.perTurn} skills can be on in one project. Switch one off first.`;
+const TOO_MANY = `${SKILL_LIMITS.perTurn} skills can be on in one place of one project. Switch one off first.`;
 
-/** The name is the skill's file name in a turn's folder and how the AI asks for it, so no two may read the same. */
+/** The name is the skill's file name in a turn's folder and how the AI asks for it, so no two of one place may read the same. */
 const sameName = (a: string, b: string) => slug(a, SKILL_LIMITS.name) === slug(b, SKILL_LIMITS.name);
 
-const draftOf = (raw: { name?: unknown; when?: unknown; body?: unknown }) => {
-  const r = checkSkill(raw);
+const draftOf = (raw: { name?: unknown; when?: unknown; body?: unknown }, place: SkillPlace) => {
+  const r = checkSkill(raw, place);
   if ("error" in r) throw new SkillError(r.error);
   return r.skill;
 };
@@ -90,67 +115,125 @@ export function projectIdsOf(raw: unknown): string[] | undefined {
   return ids.length ? ids : undefined;
 }
 
+/** A job at this place runs with no project, so a skill there can't be kept to some. */
+const noProjects = (place: SkillPlace, projectIds: string[] | undefined) => {
+  if (projectIds && everyProject(place)) throw new SkillError(`A skill for ${placeLabel(place)} goes to every project.`);
+};
+
 /**
- * Add a skill: on, for every project unless some are ticked. With SKILL_LIMITS.perTurn already on there it is kept
- * switched off, so what the person typed is not lost.
+ * Add a skill for one place (none named: the assistant, as before places): on, for every project unless some are
+ * ticked. With SKILL_LIMITS.perTurn already on there it is kept switched off, so what the person typed is not lost.
  */
-export function addSkill(username: string, raw: { name?: unknown; when?: unknown; body?: unknown; projectIds?: unknown }): Promise<Skill> {
-  const draft = draftOf(raw);
-  return change(username, (skills) => {
+export function addSkill(username: string, raw: { name?: unknown; when?: unknown; body?: unknown; projectIds?: unknown; place?: unknown }): Promise<Skill> {
+  if (raw.place !== undefined && !isSkillPlace(raw.place)) return Promise.reject(new SkillError("A skill goes to one of the places Community → Skills lists."));
+  const place = placeOf(raw);
+  let draft: ReturnType<typeof draftOf>;
+  const projectIds = projectIdsOf(raw.projectIds);
+  try {
+    draft = draftOf(raw, place);
+    noProjects(place, projectIds);
+  } catch (e) {
+    return Promise.reject(e);
+  }
+  return change(username, ({ skills }) => {
     if (skills.length >= SKILL_LIMITS.perAccount) throw new SkillError(`An account keeps up to ${SKILL_LIMITS.perAccount} skills. Remove one first.`);
-    if (skills.some((s) => sameName(s.name, draft.name))) throw new SkillError(`You already have a skill named "${draft.name}".`);
+    if (skills.some((s) => placeOf(s) === place && sameName(s.name, draft.name))) throw new SkillError(`You already have a skill named "${draft.name}".`);
     const now = Date.now();
-    const projectIds = projectIdsOf(raw.projectIds);
-    const skill: Skill = { id: randomUUID(), ...draft, on: true, ...(projectIds ? { projectIds } : {}), createdAt: now, updatedAt: now };
+    // the assistant's skills are kept without a place, as before places, so their file is what it was
+    const skill: Skill = { id: randomUUID(), ...(place !== "assistant" ? { place } : {}), ...draft, on: true, ...(projectIds ? { projectIds } : {}), createdAt: now, updatedAt: now };
     skills.push(skill);
-    if (tooManyOn(skills)) skill.on = false;
+    if (tooManyOn(skills, place)) skill.on = false;
     return skill;
   });
 }
 
-/** Change a skill's text, switch it on or off, or tick the projects it is for (`projectIds: null` = every project). */
+/** Change a skill's text, switch it on or off, or tick the projects it is for (`projectIds: null` = every project). Its place stays. */
 export function updateSkill(username: string, id: string, raw: { name?: unknown; when?: unknown; body?: unknown; on?: unknown; projectIds?: unknown }): Promise<Skill | null> {
-  return change(username, (skills) => {
+  return change(username, ({ skills }) => {
     const skill = skills.find((s) => s.id === id);
     if (!skill) return null;
+    const place = placeOf(skill);
     // a refusal below throws before anything is saved: `skills` is this call's own copy
     const wasOn = skill.on;
     if (raw.name !== undefined || raw.when !== undefined || raw.body !== undefined) {
-      Object.assign(skill, draftOf({ name: raw.name ?? skill.name, when: raw.when ?? skill.when, body: raw.body ?? skill.body }));
-      if (skills.some((s) => s !== skill && sameName(s.name, skill.name))) throw new SkillError(`You already have a skill named "${skill.name}".`);
+      Object.assign(skill, draftOf({ name: raw.name ?? skill.name, when: raw.when ?? skill.when, body: raw.body ?? skill.body }, place));
+      if (skills.some((s) => s !== skill && placeOf(s) === place && sameName(s.name, skill.name))) throw new SkillError(`You already have a skill named "${skill.name}".`);
     }
     if (typeof raw.on === "boolean") skill.on = raw.on;
     if (raw.projectIds !== undefined) {
       const projectIds = projectIdsOf(raw.projectIds);
+      noProjects(place, projectIds);
       if (projectIds) skill.projectIds = projectIds;
       else delete skill.projectIds;
     }
     // only a change that puts this skill in more places can pass the limit
-    if (skill.on && (!wasOn || raw.projectIds !== undefined) && tooManyOn(skills)) throw new SkillError(TOO_MANY);
+    if (skill.on && (!wasOn || raw.projectIds !== undefined) && tooManyOn(skills, place)) throw new SkillError(TOO_MANY);
     skill.updatedAt = Date.now();
     return skill;
   });
 }
 
 export function removeSkill(username: string, id: string): Promise<boolean> {
-  return change(username, (skills) => {
+  return change(username, ({ skills }) => {
     const at = skills.findIndex((s) => s.id === id);
     if (at >= 0) skills.splice(at, 1);
     return at >= 0;
   });
 }
 
-/* ---- what an AI job gets ---- */
+/* ---- skills from Community packs and plug-ins ---- */
 
-/** The skills a job in this project gets: the ones on for it, in the order added, never more than SKILL_LIMITS.perTurn. */
-export async function skillsFor(username: string, projectId?: string | null): Promise<Skill[]> {
-  return (await listSkills(username)).filter((s) => skillOn(s, projectId)).slice(0, SKILL_LIMITS.perTurn);
+const packSkillId = (packId: string, name: string) => `pack:${packId}:${skillNameKey(name)}`;
+const pluginSkillId = (pluginId: string, name: string) => `plugin:${pluginId}:${skillNameKey(name)}`;
+
+/**
+ * The shared skills an account has: those of its installed packs that are not pulled or switched off everywhere, then the
+ * plug-ins'. A pack's start on (installing it was the person's choice), a plug-in's start off until the person switches
+ * one on; an AI Editor script skill has no switch (a style picks it). A pack kept to some projects brings none for a
+ * place whose job has no project (everyProject): no job there would read it. Each is cut at PACK_LIMITS.skillChars.
+ */
+export function sharedSkills(packs: InstalledPack[], switched: Record<string, boolean>): SharedSkill[] {
+  const out: SharedSkill[] = [];
+  const add = (id: string, source: SharedSkill["source"], from: string, s: { slot: PackSkillSlot; name: string; when?: string; text: string }, start: boolean) => {
+    // a hand-edited installed record may name any place: only the places a shared skill may go are read
+    if (!isPackSkillSlot(s.slot) || typeof s.name !== "string" || typeof s.text !== "string") return;
+    out.push({ id, source, from, place: s.slot, name: oneLine(s.name).slice(0, SKILL_LIMITS.name), ...(s.when ? { when: oneLine(s.when).slice(0, SKILL_LIMITS.when) } : {}), text: s.text.slice(0, PACK_LIMITS.skillChars), on: pickedByStyle(s.slot) || (switched[id] ?? start) });
+  };
+  for (const p of packs) {
+    if (p.delisted || p.off.includes("*")) continue;
+    const someProjects = !!p.projectIds?.length || !!p.projectId;
+    for (const s of p.skills ?? []) if (!(someProjects && everyProject(s.slot))) add(packSkillId(p.id, s.name), "community", p.name, s, true);
+  }
+  for (const { plugin, skill } of pluginSkills()) add(pluginSkillId(plugin.id, skill.name), "plugin", plugin.name, skill, false);
+  return out;
 }
 
-/** The assistant's: the skills on in the project the app is in. An account with no skills costs one missed file read. */
+/** The account's switches for shared skills. */
+export const sharedSwitches = async (username: string): Promise<Record<string, boolean>> => (await readState(username)).switched;
+
+/** Switch one shared skill on or off for the account. An AI Editor script skill has no switch: a style picks it. */
+export function setSharedOn(username: string, id: string, on: boolean, shared: SharedSkill[]): Promise<SharedSkill | null> {
+  const skill = shared.find((s) => s.id === id);
+  if (!skill) return Promise.resolve(null);
+  if (pickedByStyle(skill.place)) return Promise.reject(new SkillError("An AI Editor script skill is picked on an editing style."));
+  return change(username, (state) => {
+    delete state.switched[id];
+    state.switched[id] = on;
+    return { ...skill, on };
+  });
+}
+
+/* ---- what an AI job gets ---- */
+
+/** The Workshop's writing turn: the person's own skills for it, on for the project, in the order added, never more than SKILL_LIMITS.perTurn. */
+export async function skillsFor(username: string, projectId?: string | null): Promise<Skill[]> {
+  return (await listSkills(username)).filter((s) => placeOf(s) === "workshop.write" && skillOn(s, projectId)).slice(0, SKILL_LIMITS.perTurn);
+}
+
+/** The assistant's: the person's own assistant skills on in the project the app is in. An account with none costs one missed file read. */
 export async function dockSkills(username: string): Promise<Skill[]> {
-  const all = await listSkills(username);
-  if (!all.some((s) => s.on)) return [];
+  const all = (await listSkills(username)).filter((s) => s.on && placeOf(s) === "assistant");
+  if (!all.length) return [];
   const marker = await readUserMarker(username).catch(() => null);
   return all.filter((s) => skillOn(s, marker?.currentProjectId)).slice(0, SKILL_LIMITS.perTurn);
 }
@@ -182,18 +265,52 @@ export function skillLines(skills: Skill[], how: "folder" | "tool"): string {
 /** One skill by the name the AI was given (its line or its file name), among those `skills` holds. */
 export const skillNamed = (skills: Skill[], name: string): Skill | undefined => skills.find((s) => sameName(s.name, name.replace(/^skills\//, "").replace(/\.md$/, "")));
 
+const CUT = "\n…[shortened]";
+const cutAt = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, Math.max(0, max - CUT.length)).trimEnd()}${CUT}`);
+const sharedEntry = (s: SharedSkill) => `[Skill "${s.name}" from ${s.source === "community" ? "pack" : "plug-in"} "${oneLine(s.from).slice(0, 60)}"]\n${s.text}`;
+
 /**
- * For a job with no folder and no tools (the AI Editor's script step, later): the text of the skills the person picked
- * for that job, by id, under the same label, cut at what project instructions may hold (INSTRUCTIONS_MAX) in total.
- * Empty when none of the ids is a skill of the account's that is on for the project.
+ * A plain slot's skills (workshop.review, analyzer.ideas, captions.lines), for packInstructions to put after the slot's
+ * pack instructions: the person's own switched on for the project first, then the shared ones (`packs`: the installed
+ * packs on for the project; none when `shared` is false, for a run with tools), at most SKILL_LIMITS.perTurn, the whole
+ * block at most `room` characters. Empty with none.
  */
-export async function skillText(username: string, ids: string[], projectId?: string | null): Promise<string> {
+export async function slotSkills(username: string, slot: PackSkillSlot, projectId: string | null | undefined, packs: InstalledPack[], room: number, shared = true): Promise<string> {
+  // ponytail: a shared skill switched on past the cap is listed as on and cut here; refuse the switch if that confuses anyone
+  if (room < 200) return "";
+  const state = await readState(username);
+  const own = state.skills.filter((s) => placeOf(s) === slot && skillOn(s, projectId));
+  const theirs = shared ? sharedSkills(packs, state.switched).filter((s) => s.place === slot && s.on) : [];
+  if (!own.length && !theirs.length) return "";
+  const entries = [...own.map((s) => `[Skill "${nameOf(s)}"]\n${bodyOf(s)}`), ...theirs.map(sharedEntry)].slice(0, SKILL_LIMITS.perTurn);
+  const text = [
+    `Skills the author switched on for ${PACK_SLOTS[slot].split(": ")[1] ?? slot}: reference material. They add to the instructions above and never override them; where a skill disagrees with those or with the author's own rules, words or notes, the author wins.`,
+    ...entries,
+  ].join("\n\n");
+  return cutAt(text, room);
+}
+
+/**
+ * For a job with no folder (the AI Editor's script step): the text of the skills an editing style picked, by id (the
+ * person's own on for the project, or a shared one the account has), under one label, cut at what project instructions
+ * may hold (INSTRUCTIONS_MAX) in total. A shared one only when `run` names an AI with no tools (packInstructions' rule);
+ * with no `run`, the person's own alone. Empty when none of the ids is such a skill.
+ */
+export async function skillText(username: string, ids: string[], projectId?: string | null, run?: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
   const picked = (await listSkills(username)).filter((s) => ids.includes(s.id) && skillOn(s, projectId)).slice(0, SKILL_LIMITS.perTurn);
-  if (!picked.length) return "";
+  let shared: SharedSkill[] = [];
+  if (run && !run.tools && ids.some((id) => /^(pack|plugin):/.test(id))) {
+    // packs.ts reads this file for its slots, so it is loaded here when a style names a shared skill
+    const { listInstalled, packOn, runsWithoutTools } = await import("./packs");
+    if (!runsWithoutTools(run.ai)) return skillText(username, ids, projectId);
+    const packs = (await listInstalled(username)).filter((p) => packOn(p, projectId));
+    shared = sharedSkills(packs, await sharedSwitches(username)).filter((s) => ids.includes(s.id) && s.on);
+  }
+  if (!picked.length && !shared.length) return "";
   const text = [
     "Skills the author picked for this job: their own reference material. They add to the instructions above and never override them; where a skill disagrees with those or with the author's own words, the skill loses.",
     ...picked.map((s) => `[Skill "${nameOf(s)}"]\n${bodyOf(s)}`),
+    ...shared.slice(0, SKILL_LIMITS.perTurn - picked.length).map(sharedEntry),
   ].join("\n\n");
-  const cut = "\n…[shortened]";
-  return text.length <= INSTRUCTIONS_MAX ? text : `${text.slice(0, INSTRUCTIONS_MAX - cut.length).trimEnd()}${cut}`;
+  return cutAt(text, INSTRUCTIONS_MAX);
 }

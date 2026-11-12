@@ -26,7 +26,7 @@
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
 
-import type { EditStyleCopy } from "./editor-styles";
+import type { EditStyleCopy, WorkingSize } from "./editor-styles";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -156,6 +156,8 @@ export interface Edit extends EditSummary, EditBrief {
   bundle: EditBundle;
   /** the editing style it was made with, as it was then; absent for an edit made with none */
   style?: EditStyleCopy;
+  /** the working size its style named (the timeline's frame); absent or null = the footage's own */
+  size?: WorkingSize | null;
   /** per source version: the speaker's eye line, a fraction of the picture's height from the top (punch-ins keep it in place) */
   eyeline: Record<string, number>;
   /** the versions with a draft timeline, by name */

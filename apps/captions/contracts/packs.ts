@@ -23,6 +23,29 @@ export const PACK_SLOTS = {
 export type PackSlot = keyof typeof PACK_SLOTS;
 export const isPackSlot = (s: string): s is PackSlot => Object.hasOwn(PACK_SLOTS, s);
 
+/**
+ * Where a skill from a pack or a plug-in may go: a job that reads text and has no tools on anyone's computer. Never the
+ * assistant, and never the Workshop's writing turn (an agent with a folder on the person's Mac): only a person's own
+ * skills go there (contracts/skills.ts). editor.cards is read by nothing yet. editor.script: only for an edit whose
+ * editing style names the skill.
+ */
+export const PACK_SKILL_SLOTS = ["workshop.review", "analyzer.ideas", "captions.lines", "editor.script"] as const satisfies readonly PackSlot[];
+export type PackSkillSlot = (typeof PACK_SKILL_SLOTS)[number];
+export const isPackSkillSlot = (s: unknown): s is PackSkillSlot => (PACK_SKILL_SLOTS as readonly unknown[]).includes(s);
+
+/** A skill a pack or a plug-in carries: named reference text for one place. Read as data, never run. */
+export interface PackSkill {
+  slot: PackSkillSlot;
+  name: string;
+  /** One line on what it is for, shown to the person. */
+  when?: string;
+  text: string;
+}
+
+/** How a skill is told apart from the others of its pack or plug-in (and how an editing style names it). */
+export const skillNameKey = (name: string): string =>
+  name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "untitled";
+
 export type PackFrameworkRole = "narrative" | "persuasion" | "argument";
 
 export interface PackFramework {
@@ -167,6 +190,7 @@ export interface Pack extends PackManifest, PackEditorItems {
   format: 1;
   home?: PackHome;
   instructions?: Partial<Record<PackSlot, string>>;
+  skills?: PackSkill[];
   frameworks?: PackFramework[];
   captionStyles?: PackCaptionStyle[];
   designSystems?: PackDesignSystem[];
@@ -190,6 +214,8 @@ export interface InstalledPack extends PackManifest, PackEditorItems {
   /** Projects that switched the pack's instructions off. */
   off: string[];
   instructions: Partial<Record<PackSlot, string>>;
+  /** The pack's skills, switched on and off with it (and one by one in Community → Skills). */
+  skills?: PackSkill[];
   /** The pack's Home layout, kept so Use on Home can apply it (never applied by install or update). */
   home?: PackHome;
   /** What install copied into the account, so update and remove find it again. */
@@ -211,6 +237,9 @@ export interface PackOrigin {
 export const PACK_LIMITS = {
   bytes: 1_000_000,
   instructionChars: 2_000,
+  /** Skills in one pack, and characters in one (a person's own may be longer: contracts/skills.ts). */
+  skills: 8,
+  skillChars: 4_000,
   frameworks: 60,
   steps: 12,
   captionStyles: 40,
@@ -279,12 +308,36 @@ function eachItem<T>(raw: Record<string, unknown>, key: string, problems: string
 }
 
 /** Problems in one piece of instruction text; empty = fine. */
-export function instructionProblems(text: string): string[] {
+export function instructionProblems(text: string, max: number = PACK_LIMITS.instructionChars): string[] {
   const out: string[] = [];
-  if (text.length > PACK_LIMITS.instructionChars) out.push(`longer than ${PACK_LIMITS.instructionChars} characters`);
+  if (text.length > max) out.push(`longer than ${max.toLocaleString("en-US")} characters`);
   if (LINK.test(text)) out.push("has a link or web address");
   if (TAKEOVER.some((re) => re.test(text))) out.push("tries to change the AI's own instructions or asks for secrets");
   return out;
+}
+
+const ONE_LINE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+/**
+ * One skill from a pack or a plug-in, as it is kept, or what is wrong with it. The same checks as instructions (no link,
+ * no takeover wording) on its name, its line and its text, and a place that is never the assistant.
+ */
+export function checkPackSkill(raw: unknown, at: string): { skill: PackSkill } | { problems: string[] } {
+  if (!isObj(raw)) return { problems: [`${at}: an object`] };
+  const problems: string[] = [];
+  const slot = raw.slot;
+  if (slot === "assistant") problems.push(`${at}.slot: a shared skill never goes to the assistant`);
+  else if (slot === "workshop.write") problems.push(`${at}.slot: a shared skill never goes to the Content Workshop's writing (only your own skills go there)`);
+  else if (!isPackSkillSlot(slot)) problems.push(`${at}.slot: one of ${PACK_SKILL_SLOTS.join(", ")}`);
+  const name = str(raw.name, 60);
+  if (!name || ONE_LINE.test(name)) problems.push(`${at}.name: required, one line of up to 60 characters`);
+  const when = opt(raw.when, 160);
+  if (when === null || (when && ONE_LINE.test(when))) problems.push(`${at}.when: one line of up to 160 characters`);
+  const text = typeof raw.text === "string" ? raw.text.replace(/\r\n?/g, "\n").trim() : "";
+  if (!text) problems.push(`${at}.text: required`);
+  for (const t of [name, when, text]) for (const p of t ? instructionProblems(t, PACK_LIMITS.skillChars) : []) problems.push(`${at}: ${p}`);
+  if (problems.length) return { problems: [...new Set(problems)] };
+  return { skill: { slot: slot as PackSkillSlot, name: name!, ...(when ? { when } : {}), text } };
 }
 
 export interface PackCheck {
@@ -331,6 +384,18 @@ export function checkPack(raw: unknown): PackCheck {
         for (const p of instructionProblems(text)) problems.push(`instructions.${slot}: ${p}`);
         instructions[slot] = text.trim();
       }
+  }
+
+  const skills: PackSkill[] = [];
+  if (raw.skills !== undefined) {
+    if (!Array.isArray(raw.skills) || raw.skills.length > PACK_LIMITS.skills) problems.push(`"skills": a list of up to ${PACK_LIMITS.skills}`);
+    else
+      raw.skills.forEach((s, i) => {
+        const r = checkPackSkill(s, `skills[${i}]`);
+        if ("problems" in r) return problems.push(...r.problems);
+        if (skills.some((x) => skillNameKey(x.name) === skillNameKey(r.skill.name))) return problems.push(`skills[${i}].name: another skill in this pack has that name`);
+        skills.push(r.skill);
+      });
   }
 
   const frameworks: PackFramework[] = [];
@@ -511,7 +576,7 @@ export function checkPack(raw: unknown): PackCheck {
     }
   }
 
-  if (!Object.keys(instructions).length && !frameworks.length && !captionStyles.length && !designSystems.length && !home
+  if (!Object.keys(instructions).length && !skills.length && !frameworks.length && !captionStyles.length && !designSystems.length && !home
     && !grades.length && !voiceMixes.length && !sfxSets.length && !resolve.length)
     problems.push("Empty: a pack needs instructions, frameworks, caption styles, a Home layout, design systems or editor items");
 
@@ -521,6 +586,7 @@ export function checkPack(raw: unknown): PackCheck {
     ...(niche ? { niche } : {}), ...(homepage ? { homepage } : {}),
     ...(permissions.length ? { permissions } : {}),
     ...(Object.keys(instructions).length ? { instructions } : {}),
+    ...(skills.length ? { skills } : {}),
     ...(frameworks.length ? { frameworks } : {}),
     ...(captionStyles.length ? { captionStyles } : {}),
     ...(home ? { home } : {}),

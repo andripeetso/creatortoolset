@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { BarChart3, Compass, LayoutGrid, Layers, Package, PenLine, Puzzle, Scissors, Search, Type, X, type LucideIcon } from "lucide-react";
+import { BarChart3, BookOpenText, Compass, LayoutGrid, Layers, Package, PenLine, Puzzle, Scissors, Search, Type, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -11,6 +11,7 @@ import { ExploreView, KindView } from "@/components/community/CatalogViews";
 import { InstalledView } from "@/components/community/PacksInstalled";
 import { PluginsView } from "@/components/community/PluginsCatalog";
 import { PackDetailView } from "@/components/community/PackDetailView";
+import { SkillsView } from "@/components/community/SkillsView";
 import { useCommunityData } from "@/components/community/useCommunityData";
 import { useAuth, useMe } from "@/lib/auth";
 import { mergePluginInfo } from "@/lib/plugin";
@@ -25,7 +26,7 @@ const KIND_ICONS: Record<KindId, LucideIcon> = {
   home: LayoutGrid,
 };
 const KINDS = Object.keys(PACK_KINDS) as KindId[];
-const SECTIONS = ["explore", ...KINDS, "plugins", "installed"];
+const SECTIONS = ["explore", ...KINDS, "plugins", "installed", "skills"];
 
 // The sidebar item of Settings (SettingsPage.tsx itemCls), so the two windows read as one family.
 const itemCls = (on: boolean) =>
@@ -52,7 +53,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const plugins = mergePluginInfo(webPlugins, data.serverPlugins, { me, hosted });
   const waiting = data.updates.length;
   const title =
-    section === "pack" ? "Pack" : section === "installed" ? "Installed" : section === "plugins" ? "Plug-ins" : section === "explore" ? "Explore" : PACK_KINDS[section as KindId];
+    section === "pack" ? "Pack" : section === "installed" ? "Installed" : section === "plugins" ? "Plug-ins" : section === "skills" ? "Skills" : section === "explore" ? "Explore" : PACK_KINDS[section as KindId];
   const nav = (id: string, label: string, Icon: LucideIcon, count?: number, dot = false) => {
     const on = section === id;
     return (
@@ -70,6 +71,8 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
       <PackDetailView id={sub ?? ""} installed={installed.find((p) => p.id === sub)} reload={data.reload} />
     ) : section === "plugins" ? (
       <PluginsView q={q} />
+    ) : section === "skills" ? (
+      <SkillsView />
     ) : section === "installed" ? (
       <InstalledView plugins={plugins} folderPlugins={data.folderPlugins} installed={data.installed} updates={data.updates} reload={data.reload} error={data.error} />
     ) : catalogWaiting ? (
@@ -139,6 +142,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
               {nav("plugins", "Plug-ins", Puzzle)}
               <span className="hidden px-2.5 pb-1 pt-4 text-xs font-medium text-sidebar-foreground/60 md:block">You</span>
               {nav("installed", "Installed", Package, data.installed ? installed.length + plugins.length : undefined, waiting > 0)}
+              {nav("skills", "Skills", BookOpenText)}
             </nav>
           </div>
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-scroll">

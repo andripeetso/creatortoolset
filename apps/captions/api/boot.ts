@@ -19,14 +19,14 @@ import { libraryApp } from "./library/routes";
 import { collectionApp } from "./library/collections";
 import { searchApp } from "./library/search";
 import { publicShareApp, shareApp } from "./library/shares";
-import { startLibraryWorker } from "./library/worker";
+import { releaseRunningJobs, startLibraryWorker } from "./library/worker";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
 import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
-import { startEditorWorker } from "./editor/worker";
+import { releaseRunningSteps, startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
@@ -240,6 +240,9 @@ app.get("/api/health", (c) =>
 if (process.env.CT_EXIT_WITH_PARENT === "1") {
   exitWithParent(process.stdin, () => {
     clearLoadingMark();
+    // an update or Quit stops us mid-step: those steps run again as soon as we're back, the try not counted
+    releaseRunningSteps();
+    releaseRunningJobs();
     process.exit(0);
   });
 }

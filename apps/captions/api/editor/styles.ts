@@ -15,6 +15,7 @@ import {
   type EditingStylesView,
   type EditStyleCopy,
   type Pace,
+  WORKING_SIZES,
 } from "../../contracts/editor-styles";
 import { env } from "../lib/env";
 import { pluginEditorSteps } from "../lib/plugin";
@@ -34,6 +35,8 @@ const fileOf = (username: string) => path.join(env.dataDir, "editor-styles", `${
 
 export interface Saved {
   last?: string;
+  /** New edit's "How do you like to work?" was answered */
+  asked?: true;
   editing: EditingStyle[];
   /** the person's animation styles (animation-styles.ts) */
   animation?: AnimationStyle[];
@@ -65,8 +68,14 @@ export function change<T>(username: string, fn: (f: Saved) => T): T {
 
 export function stylesView(username: string): EditingStylesView {
   const f = read(username);
-  return { styles: f.editing, last: f.editing.some((s) => s.id === f.last) ? f.last! : null };
+  return { styles: f.editing, last: f.editing.some((s) => s.id === f.last) ? f.last! : null, ...(f.asked ? { asked: true as const } : {}) };
 }
+
+/** "How do you like to work?" is not shown again (its Not now). */
+export const markAsked = (username: string): void =>
+  change(username, (f) => {
+    f.asked = true;
+  });
 
 export const findStyle = (username: string, id: string): EditingStyle | null => read(username).editing.find((s) => s.id === id) ?? null;
 
@@ -173,26 +182,37 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     if (body.skill !== null && (!short(body.skill, 100) || !body.skill)) return "skill is a skill's id, or null";
     out.skill = body.skill as string | null;
   }
+  if (body.size !== undefined) {
+    const z = body.size as { w?: unknown; h?: unknown } | null;
+    const known = z && WORKING_SIZES.find((s) => s.w === z.w && s.h === z.h);
+    if (z !== null && !known) return `size is null (the footage's own) or one of ${WORKING_SIZES.map((s) => `${s.w}x${s.h}`).join(", ")}`;
+    out.size = known ? { w: known.w, h: known.h } : null;
+  }
   return out;
 }
 
 /**
  * A new style from the fields sent, or from an edit of the person's own (`from`): its choices are copied (versions,
- * target length, pace, punch-in, grade, B-roll folder, steps, and the notes of the style it was made with), never its
- * brief, script or footage. A string is why it was refused.
+ * target length, pace, punch-in, grade, B-roll folder, steps, working size, and the notes of the style it was made
+ * with), never its brief, script or footage. `first`: New edit's "How do you like to work?" made it, so it is the one
+ * New edit opens on and that screen is not shown again. A string is why it was refused.
  */
-export function createStyle(username: string, body: Record<string, unknown>, from?: EditMeta): EditingStyle | string {
+export function createStyle(username: string, body: Record<string, unknown>, from?: EditMeta, first = false): EditingStyle | string {
   const given = clean(username, body);
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const base = from
-    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}) }
+    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, size: from.size ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}) }
     : PLAIN;
   const now = Date.now();
   const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
   return change(username, (f) => {
     if (f.editing.length >= MAX_EDITING_STYLES) return `You have ${MAX_EDITING_STYLES} editing styles, the most an account keeps. Delete one first.`;
     f.editing.push(style);
+    if (first) {
+      f.last = style.id;
+      f.asked = true;
+    }
     return style;
   });
 }

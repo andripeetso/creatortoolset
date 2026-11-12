@@ -6,11 +6,14 @@
 // is its own file on the same clock (Camera.swift). Nothing renders and nothing uploads at Stop: the recording is a
 // folder on this Mac (LocalProject.swift) and a small preview (RecordingPreview.swift) offers Edit, Save, Copy and
 // Share. Needs macOS 15 (the microphone comes through the same capture stream, so voice and picture share one clock).
+// An iPhone or iPad on a cable is recorded into the same files from a capture session (Phone.swift): its screen, its
+// sound where the Mac's would be, no pointer log.
 import AVFoundation
 import Combine
 import AppKit
 import ScreenCaptureKit
 import SwiftUI
+import VideoToolbox
 
 /// What Review reads beside the video (api/review.ts, PUT …/screen/events): seconds from the first frame,
 /// positions as 0–1 of the recorded source (top left 0,0; outside 0–1 = the pointer was outside it).
@@ -88,27 +91,39 @@ private func withCodes(_ error: Error) -> String {
 }
 
 enum RecorderError: LocalizedError {
-    case noDisplay, nothingRecorded, write(String)
+    case noDisplay, nothingRecorded, write(String), noDevice, deviceGone, deviceSilent
 
     var errorDescription: String? {
         switch self {
         case .noDisplay: return "Couldn't find the display to record."
         case .nothingRecorded: return "Nothing was recorded."
         case .write(let why): return "Couldn't save the recording: \(why)"
+        case .noDevice: return "The device is no longer connected."
+        case .deviceGone: return "The device stopped sending its screen."
+        case .deviceSilent: return "The device isn't sending its screen. Unlock it and try again."
         }
     }
 }
 
-/// One recording: the capture stream into an MP4, and the pointer log. Every mutable field is touched only on `queue`
-/// (the stream's sample queue), so no locks.
+/// One recording: the capture stream (or a device's capture session) into an MP4, and the pointer log. Every mutable
+/// field is touched only on `queue` (the sample queue of both), so no locks.
 @available(macOS 15.0, *)
-final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideoDataOutputSampleBufferDelegate,
+                     AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     let queue = DispatchQueue(label: "com.creatortoolset.recorder")
     private let writer: AVAssetWriter
     private let video: AVAssetWriterInput
     private let mic: AVAssetWriterInput?
     private let system: AVAssetWriterInput?
     private var stream: SCStream?
+    /// A device on a cable, in place of the stream: its session, the outputs this recording added to it, the
+    /// microphone's input and what is watched for the device going away.
+    private var phone: PhoneSession?
+    private let phonePicture = AVCaptureVideoDataOutput()
+    private let phoneSound = AVCaptureAudioDataOutput()
+    private let phoneVoice = AVCaptureAudioDataOutput()
+    private var phoneMic: AVCaptureDeviceInput?
+    private var phoneWatch: [NSObjectProtocol] = []
     /// Host time of the first frame plus every pause so far: a buffer's time in the file is its host time minus this.
     private var offset: CMTime?
     private var pausedAt: CMTime?
@@ -118,6 +133,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     /// Each sound track is written in one layout, whatever layout its buffers come in (SoundLayout).
     private var micLayout = SoundLayout()
     private var systemLayout = SoundLayout()
+    /// Puts a picture of another size than the file's into it whole (`fitted`).
+    private var fitter: VTPixelTransferSession?
+    private var fitPool: CVPixelBufferPool?
     private(set) var events: ScreenEvents
     /// The stream stopped by itself (display gone, permission taken away): called once, on `queue`.
     var onStop: ((Error) -> Void)?
@@ -142,14 +160,87 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
         if let system { writer.add(system); system.expectsMediaDataInRealTime = true; events.audio.append("system") }
     }
 
-    func start(filter: SCContentFilter, config: SCStreamConfiguration) async throws {
+    /// Opens the file for writing: the first thing either kind of recording does.
+    func open() throws {
         guard writer.startWriting() else { throw RecorderError.write(writer.error?.localizedDescription ?? "the writer refused") }
+    }
+
+    func start(filter: SCContentFilter, config: SCStreamConfiguration) async throws {
+        try open()
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         if config.capturesAudio { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
         if config.captureMicrophone { try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue) }
         self.stream = stream
         try await stream.startCapture()
+    }
+
+    /// Records a device on a cable from its running session: its screen, its sound when `sound` (the track the Mac's
+    /// sound has in a screen recording), and the Mac's microphone as the voice. Each output is tied to its own port by
+    /// hand: a session left to connect them itself has two sound sources to choose from.
+    func start(phone: PhoneSession, mic: AVCaptureDevice?, sound: Bool) throws {
+        try open()
+        let session = phone.session
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        func tie(_ output: AVCaptureOutput, to port: AVCaptureInput.Port?) throws {
+            guard let port else { throw RecorderError.noDevice }
+            session.addOutputWithNoConnections(output)
+            let link = AVCaptureConnection(inputPorts: [port], output: output)
+            guard session.canAddConnection(link) else { throw RecorderError.noDevice }
+            session.addConnection(link)
+        }
+        // the same pixel layout the screen is captured in, where the device can be read that way
+        let wanted = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        if phonePicture.availableVideoPixelFormatTypes.contains(wanted) {
+            phonePicture.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: wanted]
+        }
+        try tie(phonePicture, to: phone.input.ports.first { $0.mediaType == .video })
+        phonePicture.setSampleBufferDelegate(self, queue: queue)
+        if system != nil, sound, let port = phone.input.ports.first(where: { $0.mediaType == .audio }) {
+            try tie(phoneSound, to: port)
+            phoneSound.setSampleBufferDelegate(self, queue: queue)
+        }
+        if self.mic != nil, let mic {
+            let input = try AVCaptureDeviceInput(device: mic)
+            guard session.canAddInput(input) else { throw RecorderError.write("the microphone could not be opened") }
+            session.addInputWithNoConnections(input)
+            phoneMic = input
+            try tie(phoneVoice, to: input.ports.first { $0.mediaType == .audio })
+            phoneVoice.setSampleBufferDelegate(self, queue: queue)
+        }
+        self.phone = phone
+        // unplugged, switched off, or the session gave up: the recording stops by itself and keeps what it has
+        let gone: (Notification) -> Void = { [weak self] note in
+            if let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error { AppLog.write("device session: \(withCodes(error))") }
+            self?.queue.async { self?.fail(RecorderError.deviceGone) }
+        }
+        phoneWatch = [
+            NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil, using: gone),
+            NotificationCenter.default.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: phone.device, queue: nil, using: gone),
+        ]
+        phone.start()   // it is running already when the panel before the recording showed it
+    }
+
+    /// No more buffers from the device: this recording's outputs and the microphone leave its session, which stops.
+    /// Not on `queue`: taking an output away waits for its last buffer to be handed over there.
+    private func leavePhone() {
+        guard let phone else { return }
+        self.phone = nil
+        phoneWatch.forEach(NotificationCenter.default.removeObserver)
+        phoneWatch = []
+        phonePicture.setSampleBufferDelegate(nil, queue: nil)
+        phoneSound.setSampleBufferDelegate(nil, queue: nil)
+        phoneVoice.setSampleBufferDelegate(nil, queue: nil)
+        let session = phone.session
+        session.beginConfiguration()
+        for output in [phonePicture, phoneSound, phoneVoice] as [AVCaptureOutput] where session.outputs.contains(output) {
+            session.removeOutput(output)
+        }
+        if let phoneMic { session.removeInput(phoneMic) }
+        session.commitConfiguration()
+        phoneMic = nil
+        phone.stop()
     }
 
     func pause() {
@@ -169,6 +260,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     func stop() async throws -> ScreenEvents {
         let now = hostNow()
         try? await stream?.stopCapture()
+        leavePhone()
         return try await withCheckedThrowingContinuation { done in
             queue.async {
                 // a stream that failed midway (display gone, permission taken) still keeps what it wrote
@@ -199,6 +291,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
 
     func cancel() {
         Task { try? await stream?.stopCapture() }
+        leavePhone()
         queue.async {
             if self.failed == nil { self.failed = RecorderError.nothingRecorded }   // later buffers are dropped
             self.writer.cancelWriting()
@@ -220,22 +313,74 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard buffer.isValid, pausedAt == nil, failed == nil else { return }
         switch type {
         case .screen:
             // only frames with a picture (a still screen sends "idle" ones without)
-            guard let info = (CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first,
+            guard buffer.isValid,
+                  let info = (CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first,
                   let raw = info[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
-            if offset == nil {
-                offset = buffer.presentationTimeStamp
-                writer.startSession(atSourceTime: .zero)
-                onFirstFrame?(buffer.presentationTimeStamp)
-            }
-            append(buffer, to: video)
-        case .microphone: if let mic, let plain = micLayout.take(buffer) { append(plain, to: mic) }
-        case .audio: if let system, let plain = systemLayout.take(buffer) { append(plain, to: system) }
+            take(buffer, .picture)
+        case .microphone: take(buffer, .voice)
+        case .audio: take(buffer, .sound)
         @unknown default: break
         }
+    }
+
+    /// A device's buffers. Its session stamps them by its own clock (the host clock itself for most devices); the
+    /// pause, the camera and the file all go by the host clock, so they are put on it first.
+    func captureOutput(_ output: AVCaptureOutput, didOutput buffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        let track: Track = output === phonePicture ? .picture : output === phoneVoice ? .voice : .sound
+        let host = CMClockGetHostTimeClock()
+        guard let clock = phone?.session.synchronizationClock, !CFEqual(clock, host) else { return take(buffer, track) }
+        guard var timing = try? buffer.sampleTimingInfos(), !timing.isEmpty else { return }
+        for i in timing.indices {
+            timing[i].presentationTimeStamp = CMSyncConvertTime(timing[i].presentationTimeStamp, from: clock, to: host)
+            if timing[i].decodeTimeStamp.isValid { timing[i].decodeTimeStamp = CMSyncConvertTime(timing[i].decodeTimeStamp, from: clock, to: host) }
+        }
+        if let moved = try? CMSampleBuffer(copying: buffer, withNewTiming: timing) { take(moved, track) }
+    }
+
+    /// What a buffer is: the picture, the voice (the first sound track) or the sound of what is recorded (the second).
+    enum Track { case picture, voice, sound }
+
+    /// One buffer of the recording, timed on the host clock, from the stream or from a device. The first picture is
+    /// the file's time 0; anything before it is dropped. On `queue`.
+    func take(_ buffer: CMSampleBuffer, _ track: Track) {
+        guard buffer.isValid, pausedAt == nil, failed == nil else { return }
+        switch track {
+        case .picture:
+            guard let picture = fitted(buffer) else { return }
+            if offset == nil {
+                offset = picture.presentationTimeStamp
+                writer.startSession(atSourceTime: .zero)
+                onFirstFrame?(picture.presentationTimeStamp)
+            }
+            append(picture, to: video)
+        case .voice: if let mic, let plain = micLayout.take(buffer) { append(plain, to: mic) }
+        case .sound: if let system, let plain = systemLayout.take(buffer) { append(plain, to: system) }
+        }
+    }
+
+    /// `buffer` in the file's size. A device turned on its side sends its picture the other way round, and the
+    /// encoder would stretch it to the file's shape: it is put in the middle instead, whole, with black beside it. A
+    /// picture of the file's size (every frame of a screen recording) is the buffer itself. nil when it cannot be made.
+    private func fitted(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
+        guard let image = buffer.imageBuffer else { return nil }
+        if CVPixelBufferGetWidth(image) == events.width, CVPixelBufferGetHeight(image) == events.height { return buffer }
+        if fitter == nil {
+            VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &fitter)
+            if let fitter { VTSessionSetProperty(fitter, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Letterbox) }
+            let attributes: [CFString: Any] = [kCVPixelBufferWidthKey: events.width, kCVPixelBufferHeightKey: events.height,
+                                               kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                                               kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary]
+            CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &fitPool)
+        }
+        var made: CVPixelBuffer?
+        guard let fitter, let fitPool, CVPixelBufferPoolCreatePixelBuffer(nil, fitPool, &made) == kCVReturnSuccess, let made,
+              VTPixelTransferSessionTransferImage(fitter, from: image, to: made) == noErr,
+              let format = try? CMVideoFormatDescription(imageBuffer: made),
+              let timing = try? buffer.sampleTimingInfos().first else { return nil }
+        return try? CMSampleBuffer(imageBuffer: made, formatDescription: format, sampleTiming: timing)
     }
 
     /// The buffer at its time in the file: dropped before the first frame, when out of order (a buffer caught during a
@@ -362,19 +507,27 @@ final class Recorder: ObservableObject {
         phase = .toolbar
         RecordToolbar.show(on: screen, setup: setup,
                            onPick: { [weak self] kind in self?.pick(kind) },
+                           onDevice: { [weak self] id in self?.pickDevice(id) },
                            onClose: { [weak self] in self?.closeToolbar() },
                            onFolder: { [weak self] in self?.pickFolder() },
                            onShowFolder: { [weak self] in self?.showFolder() })
         cameraPreview(on: screen)
+        // the bubble follows the camera choice only: any other change of the toolbar leaves the open camera alone
         cameraWatch = setup.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { if self?.phase == .toolbar { self?.cameraPreview(on: screen) } }
+            DispatchQueue.main.async {
+                guard let self, self.phase == .toolbar, self.setup.cameraID != self.previewing else { return }
+                self.cameraPreview(on: screen)
+            }
         }
     }
 
     private var cameraWatch: AnyCancellable?
+    /// The camera choice the bubble shows ("none" for none).
+    private var previewing: String?
 
     /// The camera bubble follows the toolbar's camera choice while it is open.
     private func cameraPreview(on screen: NSScreen) {
+        previewing = setup.cameraID
         guard let device = setup.cameraDevice else { return CameraPreview.close() }
         Task {
             if await CameraDevices.requestAccess(), self.phase == .toolbar { CameraPreview.show(device: device, on: screen) }
@@ -383,19 +536,50 @@ final class Recorder: ObservableObject {
 
     private func closeToolbar() {
         SourcePicker.close()
+        PhonePreview.close()
         RecordToolbar.close()
         CameraPreview.close()
         cameraWatch = nil
+        previewing = nil
         if phase == .toolbar { phase = .idle }
     }
 
     func pick(_ kind: SourceKind) {
-        guard phase == .toolbar else { return }
+        guard phase == .toolbar, kind != .device else { return }
+        PhonePreview.close()
         SourcePicker.pick(kind, onStart: { [weak self] source in
             guard let self, #available(macOS 15.0, *) else { return }
             Task { await self.begin(source) }
         }, onCancel: {})
     }
+
+    /// Device → an iPhone or iPad: its picture in a panel with Start. macOS hands its screen over as a camera, so
+    /// the camera permission is asked for here the first time.
+    func pickDevice(_ id: String) {
+        guard phase == .toolbar else { return }
+        SourcePicker.close()
+        Task {
+            guard await CameraDevices.requestAccess() else {
+                return alert("Allow the camera to record an iPhone or iPad",
+                             "macOS hands a connected device's screen over as a camera. Turn Creator Toolset on in System Settings → Privacy & Security → Camera.")
+            }
+            guard phase == .toolbar else { return }
+            guard let device = PhoneDevices.device(id) else { return alert("Couldn't open the device", RecorderError.noDevice.localizedDescription) }
+            do {
+                let phone = try PhoneSession(device: device)
+                PhonePreview.show(phone, on: RecordToolbar.window?.screen ?? screenUnderPointer()) { [weak self] in
+                    guard let self, #available(macOS 15.0, *) else { return }
+                    Task { await self.begin(.device(id)) }
+                }
+            } catch {
+                AppLog.write("device not opened: \(withCodes(error))")
+                alert("Couldn't open \(device.localizedName)", "\(error.localizedDescription)\n\nUnlock it, and press Trust on it if it asks.")
+            }
+        }
+    }
+
+    /// A device's session between Start and the recording (the count-in), so that giving up stops it.
+    private var phone: PhoneSession?
 
     // MARK: recording
 
@@ -413,6 +597,8 @@ final class Recorder: ObservableObject {
             cameraDevice = nil
         }
         SourcePicker.close()
+        // the device's panel goes, its session stays: the device keeps sending through the count-in
+        if case .device(let id) = source { phone = PhonePreview.handOver(id) }
         RecordToolbar.close()   // stops the level meter before the stream opens the same microphone
         cameraWatch = nil
         var micDevice = setup.micDevice
@@ -434,49 +620,17 @@ final class Recorder: ObservableObject {
         }
         var made: (capture: Capture?, project: LocalProject?) = (nil, nil)
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            // our own floating windows stay out of the picture; the app's main window can still be recorded
-            let ours = Set(ownWindows().map { CGWindowID($0.windowNumber) })
-            let hidden = content.windows.filter { ours.contains($0.windowID) }
-            var windowScale: CGFloat?
-            let filter: SCContentFilter
-            let rect: CGRect            // the recorded part in global points, top left origin
-            let config = SCStreamConfiguration()
-            switch source {
-            case .display(let id):
-                guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
-                filter = SCContentFilter(display: display, excludingWindows: hidden)
-                rect = CGDisplayBounds(id)
-            case .window(let id, _):
-                guard let window = content.windows.first(where: { $0.windowID == id }) else { throw RecorderError.noDisplay }
-                filter = SCContentFilter(desktopIndependentWindow: window)
-                // ponytail: the window's place at the start; a window moved while recording shifts the drawn pointer
-                rect = window.frame
-                let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
-                let center = NSPoint(x: rect.midX, y: mainHeight - rect.midY)
-                windowScale = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }?.backingScaleFactor
-            case .area(let id, let area):
-                guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
-                filter = SCContentFilter(display: display, excludingWindows: hidden)
-                config.sourceRect = area
-                let bounds = CGDisplayBounds(id)
-                rect = area.offsetBy(dx: bounds.minX, dy: bounds.minY)
+            // a device on a cable is recorded from its session; anything on the Mac's screen from the capture stream
+            let feed = source.isDevice ? nil : try await screenFeed(source, on: screen, mic: micDevice)
+            let device = source.isDevice ? phone : nil
+            if source.isDevice, device == nil { throw RecorderError.noDevice }
+            // the file is the size of the device's picture, which is known once it sends (Start can come before that)
+            var sending: (width: Int, height: Int)?
+            if let device {
+                sending = await device.pixelsOnceSending(within: 5)
+                if sending == nil { throw RecorderError.deviceSilent }
             }
-            let size = captureSize(points: rect.size, scale: windowScale ?? screen.backingScaleFactor)
-            config.width = size.width
-            config.height = size.height
-            config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-            config.showsCursor = false
-            config.queueDepth = 8
-            config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-            config.colorSpaceName = CGColorSpace.sRGB
-            config.capturesAudio = setup.systemAudio
-            // "Mac sound" is everything the Mac plays, this app's too: a recording of the app itself has its sound
-            config.excludesCurrentProcessAudio = false
-            config.sampleRate = 48_000
-            config.channelCount = 2
-            config.captureMicrophone = micDevice != nil
-            if let micDevice, !setup.micID.isEmpty { config.microphoneCaptureDeviceID = micDevice.uniqueID }
+            guard let size = feed?.size ?? sending else { throw RecorderError.noDevice }
 
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let project = try LocalProject.create(in: folder, at: Date())
@@ -497,22 +651,26 @@ final class Recorder: ObservableObject {
                     AppLog.write("recording without the camera: \(error.localizedDescription)")   // the screen still records
                 }
             }
-            try await capture.start(filter: filter, config: config)
+            if let feed { try await capture.start(filter: feed.filter, config: feed.config) }
+            else if let device { try capture.start(phone: device, mic: micDevice, sound: setup.systemAudio) }
             guard stillWanted() else { throw CancellationError() }
             self.capture = capture
             self.project = project
-            watchPointer(capture, rect: rect)
+            phone = nil   // the recording has its session now, and stops it
+            if let feed { watchPointer(capture, rect: feed.rect) }   // a device has no pointer
             saver = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
                 capture.eventsSoFar { events in try? project.writeEvents(JSONEncoder().encode(events)) }
             }
             banked = 0
             runFrom = Date()
             phase = .recording
-            AppLog.write("recording \(size.width)×\(size.height), mic \(micDevice != nil), Mac sound \(setup.systemAudio), camera \(cameraDevice != nil)")
+            AppLog.write("recording \(source.isDevice ? "a device, " : "")\(size.width)×\(size.height), mic \(micDevice != nil), \(source.isDevice ? "its" : "Mac") sound \(setup.systemAudio), camera \(cameraDevice != nil)")
         } catch {
             made.capture?.cancel()
             camera?.cancel()
             camera = nil
+            phone?.stop()
+            phone = nil
             try? made.project.map { try FileManager.default.removeItem(at: $0.folder) }   // nothing worth keeping yet
             if error is CancellationError { return }
             CameraPreview.close()
@@ -521,6 +679,59 @@ final class Recorder: ObservableObject {
             // without the permission, the failure is the permission flow's to show (check() asks or alerts once)
             if ScreenPermission.check() { alert("Couldn't start recording", error.localizedDescription) }
         }
+    }
+
+    /// What the capture stream records, and how, for a display, a window or an area: `rect` is the recorded part in
+    /// global points (top left origin), `size` its pixels in the file.
+    @available(macOS 15.0, *)
+    private func screenFeed(_ source: RecordSource, on screen: NSScreen, mic micDevice: AVCaptureDevice?) async throws
+        -> (filter: SCContentFilter, config: SCStreamConfiguration, rect: CGRect, size: (width: Int, height: Int)) {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        // our own floating windows stay out of the picture; the app's main window can still be recorded
+        let ours = Set(ownWindows().map { CGWindowID($0.windowNumber) })
+        let hidden = content.windows.filter { ours.contains($0.windowID) }
+        var windowScale: CGFloat?
+        let filter: SCContentFilter
+        let rect: CGRect
+        let config = SCStreamConfiguration()
+        switch source {
+        case .display(let id):
+            guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
+            filter = SCContentFilter(display: display, excludingWindows: hidden)
+            rect = CGDisplayBounds(id)
+        case .window(let id, _):
+            guard let window = content.windows.first(where: { $0.windowID == id }) else { throw RecorderError.noDisplay }
+            filter = SCContentFilter(desktopIndependentWindow: window)
+            // ponytail: the window's place at the start; a window moved while recording shifts the drawn pointer
+            rect = window.frame
+            let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+            let center = NSPoint(x: rect.midX, y: mainHeight - rect.midY)
+            windowScale = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }?.backingScaleFactor
+        case .area(let id, let area):
+            guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
+            filter = SCContentFilter(display: display, excludingWindows: hidden)
+            config.sourceRect = area
+            let bounds = CGDisplayBounds(id)
+            rect = area.offsetBy(dx: bounds.minX, dy: bounds.minY)
+        case .device:
+            throw RecorderError.noDisplay   // not on the Mac's screen: begin() records it from its session
+        }
+        let size = captureSize(points: rect.size, scale: windowScale ?? screen.backingScaleFactor)
+        config.width = size.width
+        config.height = size.height
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.showsCursor = false
+        config.queueDepth = 8
+        config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        config.colorSpaceName = CGColorSpace.sRGB
+        config.capturesAudio = setup.systemAudio
+        // "Mac sound" is everything the Mac plays, this app's too: a recording of the app itself has its sound
+        config.excludesCurrentProcessAudio = false
+        config.sampleRate = 48_000
+        config.channelCount = 2
+        config.captureMicrophone = micDevice != nil
+        if let micDevice, !setup.micID.isEmpty { config.microphoneCaptureDeviceID = micDevice.uniqueID }
+        return (filter, config, rect, size)
     }
 
     /// The start in progress; `finish()` clears it, so a start interrupted by Stop or Throw away gives up.
@@ -764,8 +975,11 @@ final class Recorder: ObservableObject {
         camera = nil
         project = nil
         recorded = nil
+        phone?.stop()   // a start given up during the count-in
+        phone = nil
         phase = .idle
         CameraPreview.close()
+        PhonePreview.close()
         closeBar()
     }
 
@@ -779,6 +993,7 @@ final class Recorder: ObservableObject {
         switch source {
         case .display(let d), .area(let d, _): id = d
         case .window: return appKitRect(of: source).flatMap(screen(holding:))
+        case .device: return nil
         }
         return NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == id }
     }
@@ -792,7 +1007,7 @@ final class Recorder: ObservableObject {
     private func appKitRect(of source: RecordSource) -> CGRect? {
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
         switch source {
-        case .display: return nil
+        case .display, .device: return nil
         case .window(_, let frame): return PickerGeometry.topLeftFrame(frame, mainHeight: mainHeight)   // its own inverse
         case .area(let id, let area):
             let bounds = CGDisplayBounds(id)
@@ -802,7 +1017,7 @@ final class Recorder: ObservableObject {
 
     /// The app's floating windows: never in the picture.
     private func ownWindows() -> [NSWindow] {
-        ([panel, CountIn.window, RecordToolbar.window, CameraPreview.window, RecordingPreview.window] as [NSWindow?]).compactMap { $0 }
+        ([panel, CountIn.window, RecordToolbar.window, CameraPreview.window, PhonePreview.window, RecordingPreview.window] as [NSWindow?]).compactMap { $0 }
             + SourcePicker.windows
     }
 

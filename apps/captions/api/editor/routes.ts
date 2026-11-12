@@ -16,7 +16,7 @@ import { forgetFinished, finishedOf, removeFinished } from "./finished";
 import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
 import { animationApp } from "./animation-styles";
 import { cardsApp } from "./cards/routes";
-import { createStyle, deleteStyle, findStyle, stylesView, updateStyle } from "./styles";
+import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
 /**
@@ -121,8 +121,14 @@ editorApp.post("/styles", async (c) => {
   if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
   const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
   if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
-  const made = createStyle(user, b, from ?? undefined);
+  const made = createStyle(user, b, from ?? undefined, b.first === true);
   return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
+});
+
+/** New edit's "How do you like to work?" put off (Not now): it is not shown again. */
+editorApp.post("/styles/asked", (c) => {
+  markAsked(c.get("user").username);
+  return c.json({ ok: true });
 });
 
 /** Changes the fields sent. `addNotes` adds a line under the notes the style has (one it already holds is not added twice). */
@@ -185,7 +191,10 @@ editorApp.patch("/:id", async (c) => {
   delete patch.framing; // set per source in a later step
   // a flag the patch leaves out keeps its state
   const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
-  if (b.style === null) delete e.style;
+  if (b.style === null) {
+    delete e.style;
+    delete e.size; // an edit with no style is cut at the footage's size, as before
+  }
   // whose words the name and the brief are now: an AI's tool's, or the person's own (finished.ts keeps only theirs)
   const byTool = byToolAfter(r.e.byTool, patch, viaTool(c)).byTool;
   if (byTool) e.byTool = byTool;

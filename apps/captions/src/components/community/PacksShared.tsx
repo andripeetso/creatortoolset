@@ -7,12 +7,18 @@ type Contents = Parameters<typeof packContents>[0];
 /** The full list of what a pack adds: instruction text per slot (with its label), frameworks and caption styles. */
 export function ContentsView({ pack }: { pack: Contents }) {
   const c = packContents(pack);
-  if (!c.slots.length && !c.frameworks.length && !c.captionStyles.length && !c.home) return <p className="text-xs text-muted-foreground">Nothing this app uses.</p>;
+  if (!c.slots.length && !c.skills.length && !c.frameworks.length && !c.captionStyles.length && !c.home) return <p className="text-xs text-muted-foreground">Nothing this app uses.</p>;
   return (
     <div className="space-y-3 text-sm">
       {c.slots.map((s) => (
         <div key={s.slot}>
           <div className="text-xs font-medium text-foreground">Instructions: {s.label}</div>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/60 p-2 font-sans text-xs text-muted-foreground">{s.text}</pre>
+        </div>
+      ))}
+      {c.skills.map((s) => (
+        <div key={s.name}>
+          <div className="text-xs font-medium text-foreground">Skill for {s.label}: {s.name}</div>
           <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/60 p-2 font-sans text-xs text-muted-foreground">{s.text}</pre>
         </div>
       ))}
@@ -96,6 +102,7 @@ export function ContentsSummary({ pack }: { pack: Contents }) {
   const c = packContents(pack);
   const parts = [
     c.slots.length ? `instructions for ${c.slots.length} ${c.slots.length === 1 ? "place" : "places"}` : "",
+    c.skills.length ? `${c.skills.length} ${c.skills.length === 1 ? "skill" : "skills"}` : "",
     c.frameworks.length ? `${c.frameworks.length} ${c.frameworks.length === 1 ? "framework" : "frameworks"}` : "",
     c.captionStyles.length ? `${c.captionStyles.length} caption ${c.captionStyles.length === 1 ? "style" : "styles"}` : "",
     c.home ? "a Home layout" : "",

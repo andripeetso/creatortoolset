@@ -101,6 +101,41 @@ describe("AI Editor timeline", () => {
     expect(a!.in + a!.len).toBeGreaterThanOrEqual(Math.round(1.1 * 25));
   });
 
+  it("a working size of 1080x1920 from 4K vertical footage: the same cut and framing, its sources fitted into the smaller frame", async () => {
+    const { shotFilter } = await import("./preview");
+    const { toOtio } = await import("./otio");
+    const { toFcpxml } = await import("./fcpxml");
+    const uhd = { ...probe, width: 3840, height: 2160 };
+    const sources: Record<string, TimelineSource> = { ver_a: sourceOf("ver_a", "Take A", { ...uhd, fps: 25 }), ver_b: sourceOf("ver_b", "Take B", { ...uhd, fps: 25 }) };
+    const build = (size?: { w: number; h: number } | null) =>
+      buildTimeline({ name: "Tiny v1", plan: plans[0]!, lines, sentences, sources, words: { ver_a: words, ver_b: words }, energy: { ver_a: energy, ver_b: energy }, punch: 1.3, eyeline: { ver_b: 0.3 }, size }).timeline;
+    const own = build(null);
+    const hd = build({ w: 1080, h: 1920 });
+    expect([own.width, own.height, hd.width, hd.height]).toEqual([2160, 3840, 1080, 1920]);
+    expect(build()).toEqual(own); // no size given: the footage's, as before
+    // the same source frames in the same places; the tilt is in timeline pixels, so half as many
+    expect(hd.sources).toEqual(own.sources);
+    expect(hd.markers).toEqual(own.markers);
+    expect(hd.tracks.A1).toEqual(own.tracks.A1);
+    expect(hd.tracks.V1.items.map(({ tilt, ...i }) => i)).toEqual(own.tracks.V1.items.map(({ tilt, ...i }) => i));
+    const tilts = hd.tracks.V1.items.map((i) => i.tilt ?? 0);
+    expect(tilts.some((t) => t !== 0)).toBe(true);
+    tilts.forEach((t, k) => expect(t).toBeCloseTo((own.tracks.V1.items[k]!.tilt ?? 0) / 2, 1));
+    // the preview of both is 1080x1920 and frames each shot alike: the 4K source scaled down into the frame
+    hd.tracks.V1.items.forEach((item, k) => expect(shotFilter(hd, item)).toBe(shotFilter(own, own.tracks.V1.items[k]!)));
+    expect(shotFilter(hd, hd.tracks.V1.items[0]!)).toMatch(/^scale=1080:1920,.*pad=1080:1920:/);
+    // the exports: FCPXML's sequence is 1080x1920, each clip at its own 2160x3840; OTIO names no frame size, and its
+    // framing is a fraction of the fitted picture, so the same numbers
+    const files = { ver_a: "/media/a.mov", ver_b: "/media/b.mov" };
+    expect(toFcpxml(hd, files)).toContain(`<format id="r1" frameDuration="1/25s" width="1080" height="1920"/>`);
+    expect(toFcpxml(hd, files)).toContain(`width="2160" height="3840"`);
+    const params = (o: object) => [...JSON.stringify(o).matchAll(/"Parameter ID":"(transformation\w+)","Parameter Value":([-\d.e]+)/g)].map((m) => [m[1], Number(m[2])] as const);
+    const [p1, p2] = [params(toOtio(hd, files)), params(toOtio(own, files))];
+    expect(p1.length).toBeGreaterThan(0);
+    expect(p1.map((x) => x[0])).toEqual(p2.map((x) => x[0]));
+    p1.forEach(([, v], k) => expect(v).toBeCloseTo(p2[k]![1], 4));
+  });
+
   it("the whole-edit draft queues one per version and drops drafts of versions no longer planned; each saves its timeline", async () => {
     const e = (await createEdit("mem-a", { sources: ["ver_a", "ver_b"], versions: 2 }))!;
     await saveStep(e.id, "analysis", { sentences, notes: [] });

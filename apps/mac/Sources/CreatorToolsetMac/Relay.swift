@@ -188,10 +188,14 @@ final class RelayRunner {
     private var cannotDraw = false
     private let onStatus: (AIStatus) -> Void
     private let onRevoked: () -> Void
+    /// What this server may make this Mac do past the app's defaults (Consent.swift).
+    private let consent: Consent
 
     init(base: URL, token: String, work: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+         prompt: @escaping ConsentPrompt = { _, _, _, _ in false },
          onStatus: @escaping (AIStatus) -> Void, onRevoked: @escaping () -> Void) {
         api = DeviceAPI(base: base, token: token)
+        consent = Consent(host: [base.host, base.port.map(String.init)].compactMap { $0 }.joined(separator: ":"), prompt: prompt)
         self.home = home
         self.work = work
         self.onStatus = onStatus
@@ -368,6 +372,8 @@ final class RelayRunner {
                 return obj["text"] as? String
             }
             let opts = try requestOptions(req, root: home)
+            // a program, its arguments or a settings folder the server names: this Mac's own yes, asked once
+            try consent.check(launchNeeds(req, opts))
             if req.asks {   // the assistant works in a folder of its own on this Mac, one per server
                 let folder = assistantFolder(host: [api.base.host, api.base.port.map(String.init)].compactMap { $0 }.joined(separator: "-"), home: home)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -381,6 +387,11 @@ final class RelayRunner {
             }, step: { [self] label in
                 _ = try? api.call("POST", "\(base)/step", ["label": String(label.prefix(300))])
             }, ask: { [self] question in
+                // answered on this Mac unless this Mac let the server's chat answer them (asked once per server)
+                if !consent.chatAnswers() {
+                    _ = try? api.call("POST", "\(base)/step", ["label": "Waiting for your answer on the Mac"])
+                    return consent.askHere(question.description, question.detail)
+                }
                 // a permission question, shown in the chat until the user answers; 404 = the site no longer waits
                 guard let reply = try? api.call("POST", "\(base)/ask", [
                     "ask_id": question.id, "tool": question.tool, "description": String(question.description.prefix(300)),

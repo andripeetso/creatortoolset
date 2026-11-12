@@ -7,7 +7,7 @@ import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
-import type { EditStyleCopy } from "../../contracts/editor-styles";
+import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
 import { cardsView } from "./cards/state";
 import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
@@ -41,6 +41,8 @@ export interface EditMeta extends EditBrief {
   steps?: EditStepChoice[];
   /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
   style?: EditStyleCopy;
+  /** the working size its style named (timeline.ts); absent or null = the footage's own */
+  size?: WorkingSize | null;
   /** which of the name and the brief came through an AI's tool, not from the person at their own screen (routes.ts): finished.ts keeps neither */
   byTool?: ("name" | "brief")[];
   trashedAt?: number;
@@ -332,6 +334,8 @@ export async function styleFields(username: string, ws: string, id: string, on?:
     brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
     bundle: { ...(on?.bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
     ...(s.steps ? { steps: s.steps } : {}),
+    // always set, so a style that names none takes another style's size off an edit
+    size: s.size ?? null,
     style: styleCopy(s),
   };
 }

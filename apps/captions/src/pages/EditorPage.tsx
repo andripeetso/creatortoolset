@@ -27,6 +27,7 @@ import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
 import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
+import { FirstWay } from "./editor/FirstWay";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -225,16 +226,18 @@ export default function EditorPage() {
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
       </main>
-      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} />
+      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} onStyles={styleList.refresh} />
     </div>
   );
 }
 
 /**
  * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder), then the brief.
- * `styles`: the person's editing styles. With none there is no Style select and the edit is made as it always was.
+ * `styles`: the person's editing styles. With none there is no Style select and the edit is made as it always was; with
+ * none and "How do you like to work?" not answered yet, the sheet asks that first (FirstWay), and `onStyles` reads the
+ * styles again once it is answered.
  */
-export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string }; styles?: EditingStylesView | null }) {
+export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string }; styles?: EditingStylesView | null; onStyles?: () => Promise<unknown> }) {
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [libId, setLibId] = useState("");
@@ -386,6 +389,9 @@ export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
+        {styles && !styles.styles.length && !styles.asked && onStyles ? (
+          <FirstWay onDone={onStyles} />
+        ) : (
         <form
           className="flex flex-col gap-4 p-4 pt-12"
           onSubmit={(e) => {
@@ -563,6 +569,7 @@ export function NewEditSheet({ open, onClose, start, styles }: { open: boolean; 
             Create and run
           </Button>
         </form>
+        )}
       </SheetContent>
     </Sheet>
   );

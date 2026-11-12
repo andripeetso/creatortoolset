@@ -11,7 +11,7 @@ import { duplicateStyle, EditingStyles, type OpenStyle } from "./EditingStyles";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let has: { grades: boolean; folders: boolean; steps: boolean; skills?: object[]; finished?: object[] };
+let has: { grades: boolean; folders: boolean; steps: boolean; skills?: object[]; shared?: object[]; finished?: object[] };
 let sent: { method: string; url: string; body: Record<string, unknown> }[];
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -42,7 +42,7 @@ beforeEach(() => {
     if (url === "/api/library") return reply({ libraries: [{ id: "lib_1", name: "Tiny Acrobatics" }] });
     if (url.includes("/collections")) return reply({ collections: has.folders ? [{ id: "col_1", name: "B-roll", parentId: null, kind: "manual", createdBy: "me" }] : [] });
     if (url === "/api/edit-steps") return reply({ steps: has.steps ? [blur] : [], canAdd: false });
-    if (url === "/api/skills") return reply({ skills: has.skills ?? [] });
+    if (url === "/api/skills") return reply({ skills: has.skills ?? [], shared: has.shared ?? [] });
     if (url.endsWith("/finished")) return reply(has.finished ?? []);
     return reply({});
   });
@@ -127,14 +127,15 @@ describe("Duplicate", () => {
 describe("The style sheet", () => {
   it("a new style: the grade, the folder and the steps are drawn when there is a choice, and an untouched grade and steps are not sent", async () => {
     await render([], "new");
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Grade", "B-roll folder", "What to blur", "How"]);
+    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Grade", "B-roll folder", "What to blur", "How"]);
+    expect(field<HTMLSelectElement>("style-size")!.value).toBe("1080x1920"); // a new style works in vertical HD
     expect(document.querySelector('[aria-label="Post-processing"]')).not.toBeNull();
     expect(field<HTMLSelectElement>("style-grade")!.value).toBe("none"); // the person's default grade is shown
     expect((document.querySelector('[role="switch"]') as HTMLElement).getAttribute("aria-checked")).toBe("true"); // and the steps in use
     await type("style-name", "Fast and warm");
     const made = await save();
     expect([made.method, made.url]).toEqual(["POST", "/api/editor/styles"]);
-    expect(made.body).toEqual({ name: "Fast and warm", notes: "", versions: 1, targetS: 0, pace: "tight", punch: 1.15, brollCollectionId: null });
+    expect(made.body).toEqual({ name: "Fast and warm", notes: "", versions: 1, targetS: 0, pace: "tight", punch: 1.15, size: { w: 1080, h: 1920 }, brollCollectionId: null });
   });
 
   it("what is changed here is sent: the grade, the folder, a step's value, a step switched off", async () => {
@@ -165,9 +166,19 @@ describe("The style sheet", () => {
   it("with one grade, no folder and no step in this app, none of the three is drawn or sent", async () => {
     has = { grades: false, folders: false, steps: false };
     await render([style], style);
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in"]);
+    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size"]);
     expect(document.querySelector('[aria-label="Post-processing"]')).toBeNull();
-    expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "targetS", "versions"]);
+    expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "size", "targetS", "versions"]);
+  });
+
+  it("the working size: a style with none shows From the footage and sends null; a size picked is sent as it is", async () => {
+    await render([style], style);
+    const sel = field<HTMLSelectElement>("style-size")!;
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["1080×1920 (vertical HD)", "2160×3840 (vertical 4K)", "From the footage"]);
+    expect(sel.value).toBe("footage");
+    expect((await save()).body.size).toBeNull();
+    await type("style-size", "2160x3840");
+    expect((await save()).body.size).toEqual({ w: 2160, h: 3840 });
   });
 });
 
@@ -175,30 +186,48 @@ describe("The style sheet: a skill, and the edits finished with the style", () =
   const skill = (id: string, name: string, extra: object = {}) => ({ id, name, when: "When it fits.", body: "Text.", on: true, createdAt: 0, updatedAt: 0, ...extra });
   const section = () => document.querySelector('[aria-label="Finished with this style"]');
 
-  it("the Skill select lists the skills an edit would get (on, for every project); the one picked is sent, None sends null", async () => {
-    has.skills = [skill("sk_hooks", "Hooks"), skill("sk_off", "Switched off", { on: false }), skill("sk_project", "One project only", { projectIds: ["p1"] }), skill("sk_ends", "Endings")];
+  const script = { place: "editor.script", when: "" };
+  it("the Skill select lists the AI Editor script skills, the person's own and the ones from Community and plug-ins; the one picked is sent, None sends null", async () => {
+    has.skills = [skill("sk_hooks", "Hooks", script), skill("sk_dock", "For the assistant"), skill("sk_lines", "Caption lines", { place: "captions.lines" }), skill("sk_ends", "Endings", script)];
+    has.shared = [
+      { id: "pack:tiny-hooks:openers", source: "community", from: "Tiny Hooks", place: "editor.script", name: "Openers", text: "Text.", on: true },
+      { id: "plugin:tiny-studio:lines", source: "plugin", from: "Tiny Studio", place: "captions.lines", name: "Short lines", text: "Text.", on: true },
+    ];
     const named = { ...style, skill: "sk_ends" };
     await render([named], named);
     expect(labels()).toContain("Skill");
     const sel = field<HTMLSelectElement>("style-skill")!;
-    expect([...sel.options].map((o) => o.textContent)).toEqual(["None", "Hooks", "Endings"]);
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["None", "Hooks", "Endings", "Openers"]);
     expect(sel.value).toBe("sk_ends");
+    await type("style-skill", "pack:tiny-hooks:openers");
+    expect((await save()).body.skill).toBe("pack:tiny-hooks:openers");
     await type("style-skill", "sk_hooks");
     expect((await save()).body.skill).toBe("sk_hooks");
     await type("style-skill", "");
     expect((await save()).body.skill).toBeNull();
   });
 
-  it("with no skill that would reach an edit there is no Skill select, and the style's skill is left as it is", async () => {
-    has.skills = [skill("sk_off", "Switched off", { on: false })];
+  it("with no AI Editor script skill there is no Skill select, and the style's skill is left as it is", async () => {
+    has.skills = [skill("sk_dock", "For the assistant"), skill("sk_off", "Switched off", { ...script, on: false })];
     const named = { ...style, skill: "sk_off" };
     await render([named], named);
     expect(labels()).not.toContain("Skill");
     expect("skill" in (await save()).body).toBe(false);
   });
 
+  it("a style that names a skill from before skills had a place (now the assistant's) shows it with None, so it can be taken off", async () => {
+    has.skills = [skill("sk_old", "Old hooks"), skill("sk_dock", "For the assistant")];
+    const named = { ...style, skill: "sk_old" };
+    await render([named], named);
+    const sel = field<HTMLSelectElement>("style-skill")!;
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["None", "Old hooks"]);
+    expect(sel.value).toBe("sk_old");
+    await type("style-skill", "");
+    expect((await save()).body.skill).toBeNull();
+  });
+
   it("a style that names a skill switched off for now keeps it through a Save that does not touch the select", async () => {
-    has.skills = [skill("sk_hooks", "Hooks"), skill("sk_off", "Switched off", { on: false })];
+    has.skills = [skill("sk_hooks", "Hooks", script), skill("sk_off", "Switched off", { ...script, on: false })];
     const named = { ...style, skill: "sk_off" };
     await render([named], named);
     expect(field<HTMLSelectElement>("style-skill")!.value).toBe(""); // shown as None: an edit made now would get none

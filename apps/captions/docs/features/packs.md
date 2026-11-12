@@ -69,8 +69,8 @@ A pack can carry items the AI editor uses. All are data only (level 0):
 ## Instructions and slots
 
 A pack's instructions are added to one prompt, named by its slot. A pack someone else wrote only reaches an AI that can't
-act on your computer: your AI key, a local model, or Claude, Codex, Gemini, Grok, Muse Code or OpenCode on your Mac
-(their tools are off for these jobs). Cursor, Antigravity, Pi, a local ACP command, and the Workshop's chat and fact
+act on your computer: your AI key, a local model, or Claude, Codex, Grok or OpenCode on your Mac (for these jobs they
+can only answer). Gemini, Muse Code, Cursor, Antigravity, Pi, a local ACP command, and the Workshop's chat and fact
 check on your Mac get only the app's own packs.
 
 | Slot | Where |
@@ -85,7 +85,12 @@ They go after the app's own prompt and before the person's own rules and notes, 
 Where they disagree, the person wins. Each slot takes up to 2,000 characters. Safety checks and access are never
 slots, and a pack can't give the AI a tool, a key or a permission.
 
-The checks refuse instruction text with links, or text that tries to replace the app's instructions or asks for
+A pack can also carry up to 8 `skills`, each `{ "slot", "name", "when"?, "text" }` with up to 4,000 characters of
+text, for `workshop.review`, `analyzer.ideas`, `captions.lines` or `editor.script`. Never the assistant and never
+`workshop.write`: those take only the person's own skills. Each shows in Community → Skills under its place with its
+own switch; an `editor.script` skill reaches an edit only when the edit's editing style names it.
+
+The checks refuse instruction and skill text with links, or text that tries to replace the app's instructions or asks for
 keys and passwords. Nobody reviews a pack file: install packs only from people you trust. Packs in the community
 catalog were reviewed before they were listed.
 

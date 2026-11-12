@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -572,7 +572,6 @@ export function AssistantDock() {
           <button
             type="button"
             className={headBtn}
-            disabled={thinking}
             onClick={() => {
               stopSpeaking();
               setShowPast(false);
@@ -609,7 +608,6 @@ export function AssistantDock() {
         {view && showPast && (
           <PastList
             view={view}
-            busy={thinking}
             onOpen={(id) =>
               void openPast(id).then((r) => {
                 if (!r.ok) return setError(r.error);
@@ -972,7 +970,7 @@ const ago = (at: number) => {
 };
 
 /** Earlier chats, newest first: open one to read it or carry on; the bin deletes it for good. */
-function PastList({ view, busy, onOpen, onDelete }: { view: AssistantView; busy: boolean; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+function PastList({ view, onOpen, onDelete }: { view: AssistantView; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
   return (
     <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
       <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
@@ -982,12 +980,12 @@ function PastList({ view, busy, onOpen, onDelete }: { view: AssistantView; busy:
           <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">
             <button
               type="button"
-              disabled={busy}
               onClick={() => onOpen(p.id)}
-              className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-2 text-left disabled:opacity-50"
-              title={busy ? "Wait for the reply first" : "Open this chat"}
+              className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-2 text-left"
+              title="Open this chat"
             >
               <span className="min-w-0 flex-1 truncate">{p.title}</span>
+              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-label="Still answering" />}
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{ago(p.at)}</span>
             </button>
             <button
