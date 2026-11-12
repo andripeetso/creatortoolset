@@ -53,9 +53,14 @@ describe("Settings → AI Editor's steps", () => {
 
   it("reads the plug-ins that come with the app from their folders, without running them, each with its own kind", () => {
     expect(bundledPlugins()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer", kind: "editor" });
+    // its Community line: what it does, and that it uses the person's own Adobe account
+    expect(bundledPlugins()).toContainEqual({
+      folder: "adobe-enhance", pluginId: "adobe-enhance", title: "Adobe Enhance Speech", about: "Adobe's Enhance Speech in the Audio Enhancer, with your own Adobe account.", kind: "enhance",
+    });
     // every folder names the tool it adds to (a team plug-in added later too); the steps name the AI Editor
     expect(bundledPlugins().filter((b) => !b.kind)).toEqual([]);
     expect(Object.fromEntries(bundledPlugins().map((b) => [b.folder, b.kind]))).toMatchObject({
+      "adobe-enhance": "enhance",
       colour: "editor",
       "face-blur": "editor",
       "face-refine": "editor",
