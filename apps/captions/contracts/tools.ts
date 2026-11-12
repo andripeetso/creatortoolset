@@ -134,7 +134,8 @@ export interface Need {
  * person's own computer no key is needed.
  */
 // One way of saying every row (owner, 2026-11-11: "no standard… each has its own personality"): `what` is the thing to
-// add, as Settings names it ("An Apify key", "An AI provider"); an optional row adds what it gives after a colon. Home,
+// add, as Settings names it ("An Apify key", "An AI provider"; "An API key" where more than one key does: owner, 11-11);
+// an optional row adds what it gives after a colon. Home,
 // Settings → Tools and the tool's checklist all say a missing row the same way: needsLine, "Needs an Apify key".
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
@@ -148,7 +149,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
     { what: "An AI provider", anyOf: ["ownAi"], form: "ai" },
     { what: "A Perplexity key: accuracy checks and deep research", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
   ],
-  enhance: [{ what: "An ElevenLabs or NVIDIA key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
+  enhance: [{ what: "An API key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
   captions: [
     { what: "A Deepgram key: faster transcripts", anyOf: ["DEEPGRAM_API_KEY"], form: "keys", optional: true },
     { what: "An AI provider: Match cadence", anyOf: ["ai"], form: "ai", optional: true },
@@ -156,14 +157,14 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   review: [],
   media: [
     { what: "A Media Library", anyOf: ["library"], form: "library" },
-    { what: "A Deepgram or OpenAI key: transcripts", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
+    { what: "An API key: transcripts", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
     { what: "An OpenAI key: search by meaning", anyOf: ["OPENAI_API_KEY"], form: "keys", optional: true },
     { what: "An AI provider: descriptions", anyOf: ["ai"], form: "ai", optional: true },
   ],
   editor: [
     { what: "An AI provider", anyOf: ["ai"], form: "ai" },
     { what: "A Media Library", anyOf: ["library"], form: "library" },
-    { what: "A Deepgram or OpenAI key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
+    { what: "An API key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
   clean: [],
   stories: [],
