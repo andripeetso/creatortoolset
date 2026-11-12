@@ -36,12 +36,13 @@ function aisOf(view: ProvidersView | null): Array<{ value: string; label: string
     .filter((i) => i.enabled)
     .flatMap((inst) => {
       const models = modelsOf(view, inst);
-      const { effort } = effectiveSelection(active.settings, inst, models);
-      return models.map((model) => ({ value: `${inst.id}\n${model}`, label: `${inst.name} · ${modelName(model)}`, ai: { instance: inst.id, model, effort } }));
+      const own = effectiveSelection(active.settings, inst, models);
+      // an AI with no model list (an ACP agent, say) is one row, with its own model
+      return (models.length ? models : [own.model]).map((model) => ({ value: `${inst.id}\n${model}`, label: model ? `${inst.name} · ${modelName(model)}` : inst.name, ai: { instance: inst.id, model, effort: own.effort } }));
     });
 }
 
-const aiName = (ai: { name: string; model: string; effort: Selection["effort"] }) => `${ai.name} · ${modelName(ai.model)} · ${effortLabel(ai.effort)}`;
+const aiName = (ai: { name: string; model: string; effort: Selection["effort"] }) => [ai.name, ai.model && modelName(ai.model), effortLabel(ai.effort)].filter(Boolean).join(" · ");
 
 function ComparePage() {
   const { sessionId = "" } = useParams();
@@ -101,15 +102,17 @@ function ComparePage() {
             <div className="grid gap-4 md:grid-cols-2">
               {cmp.sides.map((s) => (
                 <section key={s.label} className={`flex min-w-0 flex-col rounded-xl border bg-card/40 ${cmp.picked === s.label ? "border-foreground/40" : "border-border/60"}`}>
-                  <header className="flex items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
+                  <header className={`flex items-center justify-between gap-2 px-4 py-2.5 ${cmp.picked ? "" : "border-b border-border/50"}`}>
                     <span className="text-sm font-semibold">{s.label}</span>
                     {s.ai && <span className="truncate text-xs text-muted-foreground">{aiName(s.ai)}{cmp.picked === s.label ? " · picked" : ""}</span>}
                   </header>
-                  <div className="min-h-40 px-4 py-3">
-                    {s.status === "writing" && <p className="text-sm text-muted-foreground">Writing…</p>}
-                    {s.error && <p className="text-sm text-destructive">{s.error}</p>}
-                    {s.markdown && <MarkdownBody source={s.markdown} media={false} />}
-                  </div>
+                  {(s.status === "writing" || s.error || s.markdown) && (
+                    <div className="min-h-40 px-4 py-3">
+                      {s.status === "writing" && <p className="text-sm text-muted-foreground">Writing…</p>}
+                      {s.error && <p className="text-sm text-destructive">{s.error}</p>}
+                      {s.markdown && <MarkdownBody source={s.markdown} media={false} />}
+                    </div>
+                  )}
                   {!cmp.picked && (
                     <footer className="border-t border-border/50 px-4 py-2.5">
                       <Button size="sm" onClick={() => void pick(s.label)} disabled={busy || writing || s.status !== "ready"}>
@@ -154,7 +157,7 @@ function CompareSettings() {
           data.rows.map((r) => (
             <ListRow
               key={`${r.name}\n${r.model}`}
-              title={`${r.name} · ${modelName(r.model)}`}
+              title={[r.name, r.model && modelName(r.model)].filter(Boolean).join(" · ")}
               subtitle={DRAFT_KINDS.filter((k) => r.counts[k.id]).map((k) => `${draftKindLabel(k.id)} ${r.counts[k.id]}`).join(" · ")}
             />
           ))
