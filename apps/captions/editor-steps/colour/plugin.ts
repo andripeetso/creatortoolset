@@ -329,7 +329,7 @@ export async function convertColour({ files, timeline, values, workDir, signal, 
           capture(ffmpegCommand(), [
             "-hide_banner", "-v", "error", "-nostdin", "-y", "-i", file, "-map", "0:v:0", "-map", "0:a?", "-vf", vf, "-fps_mode", "passthrough", ...enc,
             "-c:a", "copy", "-map_metadata", "0", ...(p.timecode ? ["-timecode", p.timecode] : []), "-f", "mov", tmp,
-          ], signal),
+          ], signal).then(() => {}),
         );
       } catch (e) {
         if (signal.aborted) break;
