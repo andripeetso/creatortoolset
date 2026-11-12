@@ -12,6 +12,7 @@ import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
 import { cleanPages, coverPage, plainPages, slideWords } from "./lib/design-check";
+import { pagePictures } from "./lib/design-picture";
 import { env } from "./lib/env";
 import { parseJsonObject } from "./lib/instagram/vision";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
@@ -32,6 +33,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PICTURE = /^[a-z0-9]{8}\.(jpg|png|webp)$/;
 const TYPE: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 const LABEL = "Designer";
+/** How many pages an AI is shown at once. */
+const LOOK_PAGES = 6;
 /** The look's pictures a design call carries, as the cards' make call does: the ones made and liked first. */
 const LOOK_PICTURES = 8;
 
@@ -239,7 +242,7 @@ async function forAi(user: AuthVars["user"], d: Design) {
       .slice(0, 12)
       .map((s) => ({ name: s.name, brief: s.brief.trim().slice(0, 600) })),
     pages: pages.map((p, k) => ({ page: k + 1, ...(words ? { words: words[k] } : {}), background: p.background, layers: p.layers })),
-    how: `${DESIGN_LAYERS}\n\n${words ? `${AUTHORS_WORDS} Each page's own are its "words"; to change them, change the piece's slide first.` : "Write only words the user asked for or agreed to. A page numbered one past the last is added."}\n\nTo change pages, give them as [{"page":1,"background":"#rrggbb","layers":[…]}]: each page given is replaced whole, the others stay.`,
+    how: `${DESIGN_LAYERS}\n\n${words ? `${AUTHORS_WORDS} Each page's own are its "words"; to change them, change the piece's slide first.` : "Write only words the user asked for or agreed to. A page numbered one past the last is added."}\n\nTo change pages, give them as [{"page":1,"background":"#rrggbb","layers":[…]}]: each page given is replaced whole, the others stay. After a read or a write you are shown the pages as they are drawn, and told when words do not fit their box (nothing said: they fit). Look, and fix what does not sit right.`,
   };
 }
 
@@ -379,6 +382,15 @@ designsApp.post("/:id/design", (c) => answer(c, async () => designPages(c.get("u
 // an AI that designs the pages itself: what it reads, and what it writes
 designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c))));
 designsApp.post("/:id/pages", (c) => answer(c, async () => writeForAi(c.get("user"), await mine(c), (await body(c)).pages)));
+// what it made, to look at: the pages numbered in ?pages=1,2 (else the first ones) as small pictures, with the words that do not fit
+designsApp.get("/:id/look", (c) =>
+  answer(c, async () => {
+    const d = await mine(c);
+    const { pages } = await pagesForAi(c.get("user"), d);
+    const asked = (c.req.query("pages") ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= pages.length);
+    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.map((_, k) => k + 1))].slice(0, LOOK_PAGES), picturesOf(d.owner, d.id));
+  }),
+);
 
 designsApp.post("/:id/pictures", (c) =>
   answer(c, async () => {

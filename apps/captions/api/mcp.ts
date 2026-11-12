@@ -1295,7 +1295,13 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
       const work = cards.map((w) => w(name, args ?? {}, result as Args)).find((c) => !!c) ?? workFor(name, args ?? {}, result as Args);
       if (work) noteWork(user.username, turn, work.card, work.only);
     }
-    const content: Content[] = Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }];
+    // a tool's pictures for the AI to look at (`_images`: a line saying what each is, and its JPEG): after its answer, each as a picture
+    const { _images: images, ...said } = (result && typeof result === "object" && !Array.isArray(result) ? result : {}) as Args & { _images?: Array<{ text: string; jpeg: string }> };
+    const content: Content[] = Array.isArray(result)
+      ? (result as Content[])
+      : Array.isArray(images)
+        ? [{ type: "text", text: JSON.stringify(said, null, 1) }, ...images.flatMap((i): Content[] => [{ type: "text", text: i.text }, { type: "image", mimeType: "image/jpeg", data: i.jpeg }])]
+        : [{ type: "text", text: JSON.stringify(result, null, 1) }];
     // an AI app outside the dock draws some answers as a card (mcp-cards.ts): its data rides beside the text, for the card alone
     // (never for a plug-in's answer to a tool of the same name: its answer is its own shape)
     const card = !turn && !confirmed && !plug && !isJob(auth) && hasCard(name) ? cardFor(name, args ?? {}, answerOf(result, content), origin, mediaLinks(auth.get("authorization"), user.username, origin)) : null;

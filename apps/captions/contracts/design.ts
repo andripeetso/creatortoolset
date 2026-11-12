@@ -14,6 +14,7 @@
  *   POST   /api/designs/:id/design      { look?: string | null, notes?: string } → DesignAnswer (the AI designs the pages)
  *   GET    /api/designs/:id/pages       → what an AI designs from: the size, fonts, pictures, looks' briefs, each page with its words, how layers are written
  *   POST   /api/designs/:id/pages       { pages: [{ page, background?, layers }] } → DesignAnswer (an AI's pages: each one named is replaced, checked as above)
+ *   GET    /api/designs/:id/look        ?pages=1,2 → { pictures: [{ page, jpeg (base64), spills }], why? }: the pages as small pictures, for the AI to look at
  *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP)
  *   GET    /api/designs/:id/pictures/:pid
  * A picture layer names a picture in the design's own folder by its id, never an address: a video's frame and anything
@@ -138,6 +139,17 @@ export interface Design extends Omit<DesignSummary, "pages"> {
  * as its words. `format` must be one of that kind's (a piece: a carousel format; a video: cover or thumbnail).
  */
 export type NewDesign = { format: DesignFormat; name?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string } | { blank: true; pages?: number });
+
+/** What the server's drawing browser is given to draw one page as a small picture (api/lib/design-picture.ts, src/lib/design/picture.ts). */
+export interface PictureSpec {
+  width: number;
+  height: number;
+  page: DesignPage;
+  /** each picture the page shows, by its id, as a data address (the server made each small first) */
+  pictures: Record<string, string>;
+  /** picture pixels a design pixel */
+  scale: number;
+}
 
 /** The AI's design, checked: the design as saved, and what was left out of the answer and why. */
 export interface DesignAnswer {

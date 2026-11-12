@@ -14,7 +14,8 @@ interface RendererWindow {
   };
 }
 
-function rendererUrl(): string {
+/** The app's own render page (render.html): the captions' frames, and a design's pages (api/lib/design-picture.ts). */
+export function rendererUrl(): string {
   // dev = the vite server's live render.html. PM2 sets PM2_USAGE for its
   // children, so a server started without NODE_ENV=production is still
   // treated as production (this used to send exports to a dead dev URL)

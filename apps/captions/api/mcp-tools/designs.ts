@@ -1,5 +1,5 @@
 import { DESIGN_FORMATS, type Design, type DesignAnswer, type DesignSummary } from "../../contracts/design";
-import { type Args, str, ToolError, type ToolModule } from "./types";
+import { type Args, str, ToolError, type ToolContext, type ToolModule } from "./types";
 
 // The designer's tools: start (or find) a design, read its pages, write layers onto them. The AI that calls them
 // designs the pages itself. What it writes goes through POST /api/designs/:id/pages, which checks it as the designer's
@@ -8,6 +8,20 @@ import { type Args, str, ToolError, type ToolModule } from "./types";
 // with ⌘Z.
 
 type ForAi = Args & { id: string; name: string; pages: Args[] };
+type Look = { pictures: Array<{ page: number; jpeg: string; spills: string[] }>; why?: string };
+
+/**
+ * The pages as they are drawn, for the answer of a read or a write: each as a picture the AI is shown (`_images`,
+ * api/mcp.ts), and the words that do not fit their box. Where no picture can be made, the answer says so.
+ */
+async function seen(ctx: ToolContext, at: string, pages: number[]): Promise<Args> {
+  const look = await ctx.json<Look>(`${at}/look?pages=${pages.join(",")}`).catch((): Look => ({ pictures: [], why: "No pictures of the pages could be made" }));
+  const spills = look.pictures.flatMap((p) => p.spills.map((s) => `Page ${p.page}: ${s}`));
+  return {
+    ...(spills.length ? { does_not_fit: spills } : {}),
+    ...(look.pictures.length ? { _images: look.pictures.map((p) => ({ text: `Page ${p.page} as it is drawn:`, jpeg: p.jpeg })) } : { no_pictures: look.why ?? "No pictures of the pages could be made" }),
+  };
+}
 
 const enc = (v: unknown) => encodeURIComponent(String(v));
 const about = (origin: string, d: { id: string; name: string; width: number; height: number }, pages: number) => ({ id: d.id, name: d.name, link: `${origin}/design/${d.id}`, size: `${d.width} × ${d.height}`, pages });
@@ -45,9 +59,13 @@ export const designTools: ToolModule = {
     design_layers: async (a, ctx) => {
       if (!a.id) throw new ToolError("Give the design's id: design_make starts one, or finds a piece's.");
       const at = `/api/designs/${enc(a.id)}`;
-      if (a.pages === undefined) return ctx.json<ForAi>(`${at}/pages`);
+      if (a.pages === undefined) {
+        const read = await ctx.json<ForAi>(`${at}/pages`);
+        return { ...read, ...(await seen(ctx, at, read.pages.map((_, k) => k + 1))) };
+      }
       const { design, notes } = await ctx.json<DesignAnswer>(`${at}/pages`, "POST", { pages: a.pages });
-      return { ...about(ctx.origin, design, design.pages.length), ...(notes.length ? { left_out: notes } : {}) };
+      const wrote = (Array.isArray(a.pages) ? a.pages : []).map((p) => Number((p as Args | null)?.page)).filter((n) => Number.isInteger(n) && n >= 1);
+      return { ...about(ctx.origin, design, design.pages.length), ...(notes.length ? { left_out: notes } : {}), ...(await seen(ctx, at, wrote)) };
     },
   },
   steps: { design_make: "Starting the design", design_layers: "Working on the design" },

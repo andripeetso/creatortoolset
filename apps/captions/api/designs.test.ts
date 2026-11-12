@@ -291,6 +291,15 @@ describe("designs: an AI that writes the layers itself", () => {
     }
   });
 
+  it("a look at the pages: with no browser to draw them, no pictures and a line saying why; another account's is not found", async () => {
+    const d = await fromPiece();
+    const look = await call<{ pictures: unknown[]; why?: string }>("GET", `/api/designs/${d.id}/look?pages=2,1,2,99`);
+    expect(look.status).toBe(200);
+    expect(look.body.pictures).toEqual([]);
+    expect(look.body.why).toContain("No pictures of the pages");
+    expect((await call("GET", `/api/designs/${d.id}/look`, undefined, "robin")).status).toBe(404);
+  });
+
   it("a cover's words are what the chat asks for: none are held, and the person's looks come as their own briefs", async () => {
     const style = createAnimation("jordan", { name: "Paper cut", brief: "Torn paper edges, one loud colour." });
     if (typeof style === "string") throw new Error(style);

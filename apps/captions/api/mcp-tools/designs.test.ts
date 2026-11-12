@@ -21,7 +21,7 @@ const nicoKey = `Bearer ${newApiKey(nico, "full")}`;
 /** What design_make and a design_layers write answer. */
 type Made = { id: string; name: string; link: string; size: string; pages: number; existed?: true; left_out?: string[] };
 /** What design_layers answers for a read. */
-type Read = { how: string; fonts: string[]; pages: Array<{ page: number; words: string; background: string; layers: Array<{ type: string; text?: string }> }> };
+type Read = { how: string; fonts: string[]; no_pictures?: string; pages: Array<{ page: number; words: string; background: string; layers: Array<{ type: string; text?: string }> }> };
 
 /** One tool call through POST /api/mcp, as an AI key from outside the app makes it. */
 const tool = async <T = Made>(authorization: string, name: string, args: Record<string, unknown> = {}) => {
@@ -66,6 +66,9 @@ describe("the designer's tools", () => {
     const read = (await tool<Read>(anaKey, "design_layers", { id: made.out.id })).out;
     expect(read.pages.map((p) => [p.page, p.words])).toEqual([[1, slides[0]], [2, slides[1]]]);
     expect(read.how).toContain('{"type":"drawing"');
+    // a test has no browser to draw the pages with: the answer says so, in place of the pictures
+    expect(read.no_pictures).toContain("No pictures of the pages");
+    expect(read).not.toHaveProperty("_images");
     expect(read.fonts).toContain("Bebas Neue");
 
     const text = { type: "text", font: "Bebas Neue", size: 150, color: "#111111", align: "left", x: 90, y: 500, w: 900, h: 400 };

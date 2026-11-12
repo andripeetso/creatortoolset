@@ -1,6 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { CaptionRenderSurface } from "@/components/CaptionRenderSurface";
+import { pagePicture } from "@/lib/design/picture";
 import type { CaptionRenderSpec } from "@/lib/types";
 import "./index.css";
 
@@ -12,6 +13,8 @@ interface CaptionRendererApi {
 declare global {
   interface Window {
     captionRenderer: CaptionRendererApi;
+    /** A design's page as a small picture, for the AI that designed it (api/lib/design-picture.ts). */
+    designRenderer: { draw: typeof pagePicture };
   }
 }
 
@@ -61,6 +64,8 @@ async function nextPaint(): Promise<void> {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
   );
 }
+
+window.designRenderer = { draw: pagePicture };
 
 window.captionRenderer = {
   async setSpec(next) {
