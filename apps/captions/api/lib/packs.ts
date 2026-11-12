@@ -108,7 +108,7 @@ export async function ensureDefaults(username: string, ids = DEFAULT_PACKS): Pro
       if (state.packs.some((p) => p.id === id)) continue;
       const { installed } = await installInto(state, username, o.pack, o.level, { adopt: ADOPT_ONLY.has(id) });
       installed.default = true;
-      if (!on && Object.keys(installed.instructions).length) installed.off = ["*"];
+      if (!on && (Object.keys(installed.instructions).length || installed.skills?.length)) installed.off = ["*"];
     }
     state.defaultsSeen = [...done];
     await saveState(username, state);

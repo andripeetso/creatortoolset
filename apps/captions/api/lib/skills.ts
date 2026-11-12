@@ -189,7 +189,8 @@ const pluginSkillId = (pluginId: string, name: string) => `plugin:${pluginId}:${
 /**
  * The shared skills an account has: those of its installed packs that are not pulled or switched off everywhere, then the
  * plug-ins'. A pack's start on (installing it was the person's choice), a plug-in's start off until the person switches
- * one on; an AI Editor script skill has no switch (a style picks it). Each is cut at PACK_LIMITS.skillChars.
+ * one on; an AI Editor script skill has no switch (a style picks it). A pack kept to some projects brings none for a
+ * place whose job has no project (everyProject): no job there would read it. Each is cut at PACK_LIMITS.skillChars.
  */
 export function sharedSkills(packs: InstalledPack[], switched: Record<string, boolean>): SharedSkill[] {
   const out: SharedSkill[] = [];
@@ -198,7 +199,11 @@ export function sharedSkills(packs: InstalledPack[], switched: Record<string, bo
     if (!isPackSkillSlot(s.slot) || typeof s.name !== "string" || typeof s.text !== "string") return;
     out.push({ id, source, from, place: s.slot, name: oneLine(s.name).slice(0, SKILL_LIMITS.name), ...(s.when ? { when: oneLine(s.when).slice(0, SKILL_LIMITS.when) } : {}), text: s.text.slice(0, PACK_LIMITS.skillChars), on: pickedByStyle(s.slot) || (switched[id] ?? start) });
   };
-  for (const p of packs) if (!p.delisted && !p.off.includes("*")) for (const s of p.skills ?? []) add(packSkillId(p.id, s.name), "community", p.name, s, true);
+  for (const p of packs) {
+    if (p.delisted || p.off.includes("*")) continue;
+    const someProjects = !!p.projectIds?.length || !!p.projectId;
+    for (const s of p.skills ?? []) if (!(someProjects && everyProject(s.slot))) add(packSkillId(p.id, s.name), "community", p.name, s, true);
+  }
   for (const { plugin, skill } of pluginSkills()) add(pluginSkillId(plugin.id, skill.name), "plugin", plugin.name, skill, false);
   return out;
 }

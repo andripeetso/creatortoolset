@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -127,6 +127,32 @@ describe("skills from a Community pack", () => {
     expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"], null, KEY)).toBe("");
     await call("/api/packs/tiny-hooks", "PATCH", { on: true });
     expect(await captionSplit()).toContain("CAPTION-SKILL");
+  });
+
+  it("an installed record changed by hand still puts no more than eight skills of 4,000 characters into a job", async () => {
+    await clear();
+    expect((await install({ skills: [{ slot: "captions.lines", name: "Seed", text: "Seed." }] })).status).toBe(201);
+    const file = path.join(dataDir, "packs", "installed", "ana.json");
+    const state = JSON.parse(readFileSync(file, "utf8")) as { packs: Array<{ id: string; skills?: unknown[] }> };
+    const hand = async (length: number) => {
+      state.packs.find((p) => p.id === "tiny-hooks")!.skills = Array.from({ length: 12 }, (_, i) => ({ slot: "captions.lines", name: `Hand ${i}`, text: `${i}`.padEnd(length, "h") }));
+      writeFileSync(file, JSON.stringify(state));
+      const got = await packInstructions("ana", "captions.lines", null, KEY);
+      return { got, entries: got.split(/\n\n(?=\[Skill ")/).slice(1) };
+    };
+    expect((await hand(10)).entries).toHaveLength(8);
+    const long = await hand(9_000);
+    expect(long.got.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX);
+    for (const e of long.entries) expect(e.length).toBeLessThanOrEqual(PACK_LIMITS.skillChars + 120);
+  });
+
+  it("a pack kept to some projects brings no skill for a job that has no project (the caption lines, the script step)", async () => {
+    await clear();
+    const r = await call<{ installed: { id: string } }>("/api/packs/install", "POST", { pack: { ...PACK, skills: SKILLS }, projectIds: ["p1"] });
+    expect(r.status).toBe(201);
+    expect((await mine()).shared.filter((s) => s.source === "community").map((s) => s.place)).toEqual(["workshop.review"]);
+    expect(await packInstructions("ana", "workshop.review", "p1", KEY)).toContain("REVIEW-SKILL");
+    expect(await packInstructions("ana", "workshop.review", "p2", KEY)).toBe("");
   });
 
   it("a pack skill for the assistant, the Workshop's writing or a place nothing reads is refused at install, and so are too many or too long", async () => {
