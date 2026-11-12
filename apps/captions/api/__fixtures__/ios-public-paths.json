@@ -5,6 +5,7 @@
   { "id": "auth.link", "method": "GET", "path": "/api/auth/link/:code", "probe": "route" },
   { "id": "auth.app", "method": "POST", "path": "/api/auth/app", "probe": "route" },
   { "id": "auth.ticket", "method": "POST", "path": "/api/auth/ticket", "probe": "route" },
+  { "id": "auth.code", "method": "POST", "path": "/api/auth/code", "probe": "route" },
   { "id": "library.list", "method": "GET", "path": "/api/library", "probe": "list", "shape": { "type": "object", "keys": ["libraries"] } },
   { "id": "plugins.list", "method": "GET", "path": "/api/plugins", "probe": "list", "shape": { "type": "object", "keys": ["plugins"] } },
   { "id": "library.sources", "method": "GET", "path": "/api/library/:id/sources", "probe": "route" },

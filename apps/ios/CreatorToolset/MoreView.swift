@@ -180,6 +180,10 @@ struct AddServerView: View {
     @State private var problem: String?
     /// The computer added to the account whose own password is asked.
     @State private var asked: Computer?
+    /// After a right password: the server that asks for the sign-in code, and its step (nil: set the code up first).
+    @State private var codeAsk: (origin: URL, step: String?)?
+    @State private var code = ""
+    @State private var recovery = false
     @FocusState private var typing: Field?
     @State private var scanning = false
     @State private var busy = false
@@ -251,7 +255,44 @@ struct AddServerView: View {
             } footer: {
                 Text("On the computer: Settings → Computers → Add your phone.")
             }
-            if needsPassword != nil || asked != nil {
+            if let codeAsk {
+                Section(asked?.name ?? "Sign-in code") {
+                    if codeAsk.step == nil {
+                        Text("This server asks for a code from an authenticator app. Set it up on its website first, then sign in here.")
+                        Link("Open the sign-in page", destination: API(server: codeAsk.origin, cookie: nil).url("/login"))
+                    } else {
+                        // above the field: the keyboard comes up over what is below it
+                        HStack {
+                            Text(recovery ? "A recovery code you saved" : "From your authenticator app")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(recovery ? "6-digit code" : "Recovery code") {
+                                recovery.toggle()
+                                code = ""
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .font(.subheadline)
+                        // here, not at the foot of the form, which the keyboard covers
+                        if let error { Problem(text: error) }
+                        if recovery {
+                            TextField("Recovery code", text: $code)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($typing, equals: .code)
+                                .submitLabel(.go)
+                                .onSubmit { if !blocked { Task { await connect() } } }
+                        } else {
+                            // no return key on the number pad: six digits sign in, typed or filled in from Passwords
+                            TextField("6-digit code", text: $code)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .focused($typing, equals: .code)
+                                .onChange(of: code) { if code.count == 6, !blocked { Task { await connect() } } }
+                        }
+                    }
+                }
+            } else if needsPassword != nil || asked != nil {
                 Section(asked?.name ?? "Sign in") {
                     if asked == nil {
                         TextField("Username", text: $username)
@@ -270,7 +311,7 @@ struct AddServerView: View {
                         .onSubmit { if !blocked { Task { await connect() } } }
                 }
             }
-            if let error { Problem(text: error) }
+            if let error, codeAsk?.step == nil { Problem(text: error) }
             Button(needsPassword == nil && asked == nil ? "Connect" : "Sign in") { Task { await connect() } }
                 .disabled(blocked)
         }
@@ -282,12 +323,14 @@ struct AddServerView: View {
         .onChange(of: address) {
             // typing an address leaves the computer that was picked; the password fields stay while the address is the one that asked
             asked = nil
+            codeAsk = nil
             if SignIn.parse(address) != needsPassword { needsPassword = nil }
         }
         .onChange(of: account.profile == nil) { _, signedOut in
             if signedOut {
                 computers = nil
                 asked = nil
+                codeAsk = nil
             }
         }
         .refreshable { if account.profile != nil { await run { try await load() } } }
@@ -300,6 +343,13 @@ struct AddServerView: View {
             #if DEBUG
             if Account.demo == "password", let computer = computers?.first(where: { $0.addedId != nil }) { ask(computer) }
             if Account.demo == "old", let computer = computers?.first { usePassword(computer) }
+            if ["code", "wrong", "setup"].contains(Account.demo), let computer = computers?.first(where: { $0.addedId != nil }) {
+                ask(computer)
+                password = "demo"
+                codeAsk = (computer.url, Account.demo == "setup" ? nil : "demo")
+                if Account.demo == "wrong" { error = "Wrong code" }
+                typing = .code
+            }
             #endif
         }
         .sheet(isPresented: $scanning) {
@@ -308,6 +358,7 @@ struct AddServerView: View {
                 // the code is what connects now, whatever was being asked before
                 asked = nil
                 needsPassword = nil
+                codeAsk = nil
                 address = text
                 Task { await connect() }
             }
@@ -316,11 +367,12 @@ struct AddServerView: View {
     }
 
     /// One job at a time with the account; what goes wrong is said in one line under it.
-    private enum Field { case username, password }
+    private enum Field { case username, password, code }
 
     /// Nothing to send yet: a job is running, or what the form asks for is not filled in.
     private var blocked: Bool {
-        busy || (asked != nil ? password.isEmpty
+        busy || (codeAsk?.step != nil ? code.isEmpty
+                 : asked != nil ? password.isEmpty
                  : address.isEmpty || (needsPassword != nil && (username.isEmpty || password.isEmpty)))
     }
 
@@ -357,18 +409,18 @@ struct AddServerView: View {
         }
         if computer.addedId != nil { return ask(computer) }
         switch try await account.signIn(to: computer) {
-        case .signedIn(let cookie, let name):
-            servers.add(Server(url: computer.url, username: name), cookie: cookie)
-            dismiss()
         case .needsPassword:
             usePassword(computer)
         case nil:
             break
+        case let outcome?:
+            handle(outcome, from: computer.url)
         }
     }
 
     private func ask(_ computer: Computer) {
         needsPassword = nil
+        codeAsk = nil
         password = ""
         error = nil
         asked = computer
@@ -380,6 +432,7 @@ struct AddServerView: View {
     private func usePassword(_ computer: Computer) {
         address = computer.name
         needsPassword = SignIn.parse(address)
+        codeAsk = nil
         error = nil
         typing = .username
     }
@@ -393,10 +446,11 @@ struct AddServerView: View {
         busy = true
         defer { busy = false }
         do {
+            if let codeAsk, let step = codeAsk.step {
+                return handle(try await SignIn.code(codeAsk.origin, step: step, code: code), from: codeAsk.origin, label: asked?.name)
+            }
             if let asked {
-                guard case .signedIn(let cookie, let name) = try await account.signIn(to: asked, password: password) else { return }
-                servers.add(Server(url: asked.url, username: name, label: asked.name), cookie: cookie)
-                return dismiss()
+                return handle(try await account.signIn(to: asked, password: password), from: asked.url, label: asked.name)
             }
             guard let target = SignIn.parse(address) else { return error = "That isn't an address" }
             let outcome = if let waiting = needsPassword {
@@ -404,16 +458,34 @@ struct AddServerView: View {
             } else {
                 try await SignIn.connect(target)
             }
-            switch outcome {
-            case .needsPassword:
-                needsPassword = target
-                error = nil
-            case .signedIn(let cookie, let name):
-                servers.add(Server(url: target.origin, username: name), cookie: cookie)
-                dismiss()
-            }
+            handle(outcome, from: target.origin)
+        } catch let expired as SignIn.StepExpired {
+            // back to the password, which is still filled in
+            codeAsk = nil
+            error = expired.localizedDescription
         } catch {
+            // a wrong code keeps the field, empty for the next one
+            if codeAsk?.step != nil { code = "" }
             self.error = error.localizedDescription
+        }
+    }
+
+    /// What a sign-in answered: the computer is on this phone, or the password or the sign-in code is asked next.
+    private func handle(_ outcome: SignIn.Outcome, from origin: URL, label: String? = nil) {
+        error = nil
+        switch outcome {
+        case .signedIn(let cookie, let name):
+            servers.add(Server(url: origin, username: name, label: label), cookie: cookie)
+            dismiss()
+        case .needsPassword:
+            needsPassword = SignIn.Target(origin: origin, linkPath: nil)
+        case .needsCode(let step):
+            codeAsk = (origin, step)
+            code = ""
+            recovery = false
+            typing = .code
+        case .setUpCode:
+            codeAsk = (origin, nil)
         }
     }
 }

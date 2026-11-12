@@ -1,3 +1,4 @@
+import CryptoKit
 import WebKit
 import XCTest
 @testable import CreatorToolset
@@ -51,6 +52,91 @@ final class ServerTests: XCTestCase {
             XCTAssertEqual(status, 410)
             XCTAssertTrue(message.contains("expired"), message)
         }
+    }
+
+    /// The sign-in code: switched on for `admin` through the API, then the password asks for it, a wrong code says so,
+    /// the next code and then a recovery code each sign in, a spent step goes back to the password, and the phone's
+    /// own sign-in to the server stays through all of it. Switched off again at the end (with a recovery code).
+    func testSignInCode() async throws {
+        guard let cookie = try await signIn() else { throw XCTSkip("a server without sign-in asks for no code") }
+        Servers.shared.add(Server(url: origin, username: "admin"), cookie: cookie)
+        struct Secret: Decodable { let secret: String }
+        struct On: Decodable { let recovery: [String] }
+        let made = try JSONDecoder().decode(Secret.self, from: try await API(server: origin, cookie: cookie).send("/api/auth/code/new"))
+        let key = Self.base32(made.secret)
+        let (data, response) = try await API.session.data(
+            for: API(server: origin, cookie: cookie).request("/api/auth/code/on", method: "POST", json: ["code": Self.totp(key)]))
+        let on = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(on.statusCode, 200, String(decoding: data, as: UTF8.self))
+        let recovery = try JSONDecoder().decode(On.self, from: data).recovery
+        let own = SignIn.cookie(from: on)
+        addTeardownBlock { [origin] in
+            _ = try? await API(server: origin!, cookie: own).send("/api/auth/code/off", json: ["code": recovery[1]])
+        }
+
+        // the password now asks for the code, and the phone keeps its sign-in to the server
+        guard case .needsCode(let step) = try await SignIn.login(origin, username: "admin", password: password) else {
+            return XCTFail("the password didn't ask for the code")
+        }
+        XCTAssertFalse(Servers.shared.signedOut)
+        XCTAssertEqual(Keychain.get(origin.absoluteString), cookie)
+
+        // a wrong code says so and the step stays good; the next code signs in
+        let right = Self.totp(key, ahead: 1)
+        do {
+            _ = try await SignIn.code(origin, step: step, code: String(format: "%06d", (Int(right)! + 500_000) % 1_000_000))
+            XCTFail("a wrong code signed in")
+        } catch APIError.server(let status, let message) {
+            XCTAssertEqual(status, 401)
+            XCTAssertEqual(message, "Wrong code")
+        }
+        guard case .signedIn(let fresh, let name) = try await SignIn.code(origin, step: step, code: right) else {
+            return XCTFail("the code didn't sign in")
+        }
+        XCTAssertEqual(name, "admin")
+        XCTAssertNotNil(fresh)
+
+        // a recovery code in place of the six digits
+        guard case .needsCode(let again) = try await SignIn.login(origin, username: "admin", password: password),
+              case .signedIn = try await SignIn.code(origin, step: again, code: recovery[0]) else {
+            return XCTFail("the recovery code didn't sign in")
+        }
+
+        // a step the server no longer knows goes back to the password
+        do {
+            _ = try await SignIn.code(origin, step: step, code: right)
+            XCTFail("a spent step signed in")
+        } catch let expired as SignIn.StepExpired {
+            XCTAssertEqual(expired.localizedDescription, "That sign-in expired. Sign in again.")
+        }
+        XCTAssertFalse(Servers.shared.signedOut)
+        XCTAssertEqual(Keychain.get(origin.absoluteString), cookie)
+    }
+
+    /// An authenticator app's code, as the server counts it: HMAC-SHA1, 30-second steps, six digits; `ahead` steps on.
+    private static func totp(_ key: Data, ahead: UInt64 = 0) -> String {
+        let step = (UInt64(Date().timeIntervalSince1970) / 30 + ahead).bigEndian
+        let mac = Array(HMAC<Insecure.SHA1>.authenticationCode(for: withUnsafeBytes(of: step) { Data($0) }, using: SymmetricKey(data: key)))
+        let o = Int(mac[mac.count - 1] & 15)
+        let n = (UInt32(mac[o]) << 24 | UInt32(mac[o + 1]) << 16 | UInt32(mac[o + 2]) << 8 | UInt32(mac[o + 3])) & 0x7fff_ffff
+        return String(format: "%06d", n % 1_000_000)
+    }
+
+    private static func base32(_ text: String) -> Data {
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+        var out = Data()
+        var bits = 0
+        var value = 0
+        for ch in text {
+            guard let i = alphabet.firstIndex(of: ch) else { continue }
+            value = (value << 5 | i) & 0xffff
+            bits += 5
+            if bits >= 8 {
+                out.append(UInt8(value >> (bits - 8) & 0xff))
+                bits -= 8
+            }
+        }
+        return out
     }
 
     func testUploadAndScreens() async throws {
