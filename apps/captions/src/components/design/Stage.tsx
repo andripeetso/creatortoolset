@@ -94,14 +94,18 @@ export function Stage({
     drag(e, (p, shift) => {
       let dx = p.x - from.x;
       let dy = p.y - from.y;
-      if (shift) Math.abs(dx) > Math.abs(dy) ? (dy = 0) : (dx = 0);
+      if (shift && Math.abs(dx) > Math.abs(dy)) dy = 0;
+      else if (shift) dx = 0;
       let x = l.x + dx;
       let y = l.y + dy;
       const near = SNAP / scale;
       const g: { x?: number; y?: number } = {};
       // its left edge, middle and right edge against the page's; the same down the page
-      for (const [mine, theirs] of [[x, 0], [x + l.w / 2, width / 2], [x + l.w, width]] as const) if (g.x === undefined && Math.abs(mine - theirs) < near) (x += theirs - mine), (g.x = theirs);
-      for (const [mine, theirs] of [[y, 0], [y + l.h / 2, height / 2], [y + l.h, height]] as const) if (g.y === undefined && Math.abs(mine - theirs) < near) (y += theirs - mine), (g.y = theirs);
+      const catchOn = (from: number, size: number, page: number): number | undefined => [0, page / 2, page].find((line, k) => Math.abs(from + (size * k) / 2 - line) < near);
+      g.x = catchOn(x, l.w, width);
+      g.y = catchOn(y, l.h, height);
+      if (g.x !== undefined) x = g.x - (l.w * [0, width / 2, width].indexOf(g.x)) / 2;
+      if (g.y !== undefined) y = g.y - (l.h * [0, height / 2, height].indexOf(g.y)) / 2;
       setGuides(g);
       return { ...l, x: Math.round(x), y: Math.round(y) };
     });
@@ -116,15 +120,17 @@ export function Stage({
       let { x, y, w, h: hh } = l;
       if (h.includes("e")) w = Math.max(MIN, l.w + dx);
       if (h.includes("s")) hh = Math.max(MIN, l.h + dy);
-      if (h.includes("w")) (w = Math.max(MIN, l.w - dx)), (x = l.x + l.w - w);
-      if (h.includes("n")) (hh = Math.max(MIN, l.h - dy)), (y = l.y + l.h - hh);
+      if (h.includes("w")) w = Math.max(MIN, l.w - dx);
+      if (h.includes("n")) hh = Math.max(MIN, l.h - dy);
       if (shift && h.length === 2) {
         // a corner with Shift keeps the shape: the side that moved more leads
         const k = Math.max(w / l.w, hh / l.h);
-        (w = l.w * k), (hh = l.h * k);
-        if (h.includes("w")) x = l.x + l.w - w;
-        if (h.includes("n")) y = l.y + l.h - hh;
+        w = l.w * k;
+        hh = l.h * k;
       }
+      // a west or north handle moves that edge: the opposite edge stays where it was
+      if (h.includes("w")) x = l.x + l.w - w;
+      if (h.includes("n")) y = l.y + l.h - hh;
       return { ...l, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(hh) };
     });
   };

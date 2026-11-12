@@ -70,6 +70,7 @@ export default function DesignPage() {
     void Promise.all(FONT_OPTIONS.map((f) => document.fonts.load(`${fontWeightFor(f.family)} 48px "${f.family}"`))).then(() => setVersion((v) => v + 1), () => {});
   }, []);
 
+  const opened = design !== null;
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
@@ -78,9 +79,9 @@ export default function DesignPage() {
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [design !== null]);
+  }, [opened]);
 
-  const pages = hist?.now ?? [];
+  const pages = useMemo(() => hist?.now ?? [], [hist]);
   const page = live ?? pages[Math.min(at, pages.length - 1)];
 
   // every picture and drawing the pages show, loaded once each
@@ -107,6 +108,8 @@ export default function DesignPage() {
       saveDesign(design.id, { pages: hist.now }).then(() => setSaved("saved"), (e) => (setSaved("unsaved"), setError(message(e))));
     }, 700);
     return () => clearTimeout(t);
+    // the pages alone: the design's other fields change when it is saved, and saving must not save again
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hist?.now]);
 
   const change = useCallback((fn: (pages: Page[]) => Page[]) => setHist((h) => (h ? histChange(h, fn) : h)), []);
@@ -142,15 +145,19 @@ export default function DesignPage() {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key.toLowerCase() === "z") return e.preventDefault(), setHist((h) => (h ? (e.shiftKey ? histRedo(h) : histUndo(h)) : h));
-      if (mod && e.key.toLowerCase() === "d") return e.preventDefault(), duplicate();
-      if (!sel) return;
-      if (e.key === "Delete" || e.key === "Backspace") return e.preventDefault(), removeLayer();
-      if (e.key === "Escape") return setSelected(null);
       const step = e.shiftKey ? 10 : 1;
       const move: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
       const by = move[e.key];
-      if (by) e.preventDefault(), setLayer({ x: sel.x + by[0], y: sel.y + by[1] });
+      const z = mod && e.key.toLowerCase() === "z";
+      const d = mod && e.key.toLowerCase() === "d";
+      const del = !!sel && (e.key === "Delete" || e.key === "Backspace");
+      if (!z && !d && !del && !(sel && (by || e.key === "Escape"))) return;
+      e.preventDefault();
+      if (z) setHist((h) => (h ? (e.shiftKey ? histRedo(h) : histUndo(h)) : h));
+      else if (d) duplicate();
+      else if (del) removeLayer();
+      else if (by && sel) setLayer({ x: sel.x + by[0], y: sel.y + by[1] });
+      else setSelected(null);
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
