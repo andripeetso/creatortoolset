@@ -31,8 +31,10 @@ const toolsOf = async (authorization: string) =>
   ((await (await app.request("/api/mcp", json({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { authorization }))).json()) as { result: { tools: Tool[] } }).result.tools;
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
-/** The one tool every account gets since: the list is main's with this in it and nothing else moved. */
-const ADDED = ["editor_style_save"];
+/** The tools every account gets since: the list is main's with these in it and nothing else moved. */
+const ADDED = ["upload_file", "editor_style_save"];
+/** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
+const OPENED = ["use_file"];
 const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
 
 // a plug-in adds its own tools and guide: the golden is the app's own, with none loaded
@@ -46,25 +48,29 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     await app.request(`/api/devices/relay/${job.id}/done`, json({ text: "Done." }, { authorization: `Bearer ${mac.token}` }));
 
     const main = (list: Tool[]) => list.filter((t) => !ADDED.includes(t.name));
-    if (process.env.UPDATE_GOLDEN) writeFileSync(file, `${JSON.stringify({ system: job.system, user: job.user, dock: main(dock), outside: main(outside).map((t) => t.name) } satisfies Golden, null, 1)}\n`);
+    const mainOutside = (list: Tool[]) => main(list).filter((t) => !OPENED.includes(t.name));
+    if (process.env.UPDATE_GOLDEN) writeFileSync(file, `${JSON.stringify({ system: job.system, user: job.user, dock: main(dock), outside: mainOutside(outside).map((t) => t.name) } satisfies Golden, null, 1)}\n`);
     const golden = JSON.parse(readFileSync(file, "utf8")) as Golden;
 
     expect(job.system).toBe(golden.system);
     expect(job.user).toBe(golden.user);
     // every tool main lists, in main's order, each definition character for character
     expect(JSON.stringify(main(dock))).toBe(JSON.stringify(golden.dock));
-    expect(JSON.stringify(main(outside))).toBe(JSON.stringify(golden.outside.map((name) => golden.dock.find((t) => t.name === name))));
+    expect(JSON.stringify(mainOutside(outside))).toBe(JSON.stringify(golden.outside.map((name) => golden.dock.find((t) => t.name === name))));
     if (process.env.UPDATE_GOLDEN) return;
 
-    // what is new: one tool, the same definition for both callers
+    // what is new: these tools, the same definitions for both callers
     expect(dock.filter((t) => ADDED.includes(t.name)).map((t) => t.name)).toEqual(ADDED);
     expect(outside.filter((t) => ADDED.includes(t.name))).toEqual(dock.filter((t) => ADDED.includes(t.name)));
+    expect(outside.filter((t) => OPENED.includes(t.name))).toEqual(dock.filter((t) => OPENED.includes(t.name)));
     // what every turn of every person now carries: say so in the commit when a number moves
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
     expect(Buffer.byteLength(def.description)).toBe(131);
-    // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the list
-    expect(bytes(dock) - bytes(main(dock))).toBe(534);
-    expect(bytes(outside) - bytes(main(outside))).toBe(534);
+    // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the
+    // list: 534; upload_file adds 345 (its 182-byte description, path and size)
+    expect(bytes(dock) - bytes(main(dock))).toBe(879);
+    // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(2096);
   });
 });

@@ -41,6 +41,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
+import { uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
@@ -257,6 +258,8 @@ if (hostedMode()) {
 }
 // plug-ins' public routes (plugins/<id>/plugin.ts publicRoutes): before the account gate, each checks its own access
 mountPublicRoutes(app, serverPlugins);
+// a file the user's own AI sends with curl (MCP upload_file): the link in the path is its only credential
+app.route("/api/upload", uploadLinkApp);
 // a social sign-in's way back may land in the computer's browser, without the session: its state names the account
 app.route("/api/connectors", connectorsCallbackApp);
 

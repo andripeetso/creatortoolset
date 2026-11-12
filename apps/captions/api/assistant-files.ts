@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
@@ -130,6 +130,48 @@ export async function uploadOf(user: string, id: string): Promise<{ file: Assist
   return { name: state.name, at: (await stat(parts).catch(() => null))?.mtimeMs ?? 0 };
 }
 
+/** Where one of this account's files is: in (joined now when its last part is), uploading (when its last part landed), else 404. */
+assistantFilesApp.get("/:id", async (c) => {
+  const user = c.get("user").username;
+  const id = c.req.param("id");
+  let f = await uploadOf(user, id);
+  if (f && !("file" in f) && (await allPartsIn(user, id))) {
+    const done = await finishUpload(user, id);
+    if (!("error" in done)) f = { file: done };
+  }
+  if (!f) return c.json({ error: "Not found" }, 404);
+  return c.json("file" in f ? { state: "in", ...f.file } : { state: "uploading", name: f.name, at: f.at });
+});
+
+/* ---- an upload by link: the user's own AI on a computer the server isn't on (MCP upload_file) sends a file with curl ---- */
+
+const LINK_MS = 3600_000;
+const links = new Map<string, { user: string; id: string; expires: number }>();
+
+/** A link for one upload of this account's, good for an hour after its last part. */
+export function uploadLink(user: string, id: string): string {
+  const now = Date.now();
+  for (const [k, v] of links) if (v.expires <= now) links.delete(k);
+  const token = `ctu_${randomBytes(24).toString("hex")}`;
+  links.set(token, { user, id, expires: now + LINK_MS });
+  return token;
+}
+
+/**
+ * PUT /api/upload/:token/:n, before the account gate: the link is the only credential, for one upload's parts. The
+ * sizes come from the upload itself; a part's length is checked before its body is read. The last part joins the file.
+ */
+export const uploadLinkApp = new Hono();
+uploadLinkApp.put("/:token/:partNumber", async (c) => {
+  const link = links.get(c.req.param("token"));
+  if (!link || link.expires <= Date.now()) return c.json({ error: "This upload link has expired: ask for a new one" }, 404);
+  const r = await receivePart(c, path.join(dirOf(link.user, link.id), "parts"), { username: link.user, role: "user" }, true);
+  if (r.status !== 200) return r;
+  link.expires = Date.now() + LINK_MS;
+  if (await allPartsIn(link.user, link.id)) await finishUpload(link.user, link.id);
+  return r;
+});
+
 assistantFilesApp.post("/:id/complete", async (c) => {
   const r = await finishUpload(c.get("user").username, c.req.param("id"));
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
@@ -141,30 +183,35 @@ const MIME: Record<string, string> = {
   mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", aac: "audio/aac", ogg: "audio/ogg",
 };
 
+/** A video or recording's type by its name's extension (video/mp4 when unknown). */
+export const mimeOf = (name: string) => MIME[path.extname(name).slice(1).toLowerCase()] ?? "video/mp4";
+
 /**
  * A file on this computer by its path, taken like a dropped one: only when the server runs on the user's own Mac
  * (CT_LOCAL=1), so the assistant can point at footage where it lies and nothing is uploaded. A hard link on the same
  * disk; a file on another drive is copied once.
  */
-export async function fileFromPath(user: string, p: string): Promise<AssistantFile> {
+export async function fileFromPath(user: string, p: string, size?: number): Promise<AssistantFile> {
   if (process.env.CT_LOCAL !== "1") throw new Error("This server isn't on your computer: drop the file in the chat so it uploads.");
   if (!path.isAbsolute(p)) throw new Error("Give the file's full path, such as /Users/you/Movies/clip.mov.");
   const st = await stat(p).catch(() => null);
   if (!st?.isFile() || !st.size) throw new Error(`There's no file at ${p}.`);
+  // a page on another computer that names a path here: the same size, or it is another file
+  if (size !== undefined && st.size !== size) throw new Error(`The file at ${p} isn't the one dropped.`);
   const name = path.basename(p);
   // ponytail: footage by its extension only; probe the streams if something else ever passes for a video
   if (!isMedia("", name)) throw new Error(`${name} isn't a video or a recording.`);
   const id = randomUUID();
   await linkOrCopy(p, fileOf(user, id));
-  const meta: AssistantFile = { id, name, mime: MIME[path.extname(name).slice(1).toLowerCase()] ?? "video/mp4", size: st.size };
+  const meta: AssistantFile = { id, name, mime: mimeOf(name), size: st.size };
   await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
   return meta;
 }
 
 assistantFilesApp.post("/path", async (c) => {
-  const b = (await c.req.json().catch(() => null)) as { path?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { path?: unknown; size?: unknown } | null;
   try {
-    return c.json(await fileFromPath(c.get("user").username, typeof b?.path === "string" ? b.path : ""));
+    return c.json(await fileFromPath(c.get("user").username, typeof b?.path === "string" ? b.path : "", typeof b?.size === "number" ? b.size : undefined));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
   }

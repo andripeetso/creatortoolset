@@ -6,6 +6,7 @@ import { cachedUsage, clearAccountCache } from "@/lib/local-cache";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { canRecordScreen } from "@/lib/mac-record";
+import { useWorkPrefs } from "@/lib/setup";
 import { Card, Row, Section, saveFailed } from "./ui";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
@@ -61,8 +62,25 @@ function Working() {
             />
           }
         />
+        <AskFit />
       </Card>
     </Section>
+  );
+}
+
+/** The assistant asks when dropped footage doesn't seem to fit the open project (work-prefs askFit; its "Don't ask again" turns it off). */
+function AskFit() {
+  const prefs = useWorkPrefs((s) => s.prefs);
+  useEffect(() => {
+    if (!prefs) void useWorkPrefs.getState().load();
+  }, [prefs]);
+  if (!prefs) return null;
+  return (
+    <Row
+      id="ask-fit"
+      title="Ask when dropped footage doesn't fit the open project"
+      control={<Switch checked={prefs.askFit !== false} aria-label="Ask when dropped footage doesn't fit the open project" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
+    />
   );
 }
 

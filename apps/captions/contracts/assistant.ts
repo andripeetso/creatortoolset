@@ -33,8 +33,12 @@ export interface AssistantMessage {
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
-  /** Videos and recordings sent with a user message (api/assistant-files.ts), by name; `uploading` until the file is in. */
-  files?: Array<{ id: string; name: string; uploading?: true }>;
+  /**
+   * Videos and recordings sent with a user message (api/assistant-files.ts), by name; `uploading` until the file is in.
+   * `path`: where it is on the user's computer (dropped in the Mac app): its reply never waits for it. `lost`: its upload
+   * stopped before it was in.
+   */
+  files?: Array<{ id: string; name: string; uploading?: true; path?: string; lost?: true }>;
   /**
    * A reply that hasn't started (status "thinking"): it waits for the message's videos to finish uploading ("videos",
    * with how many), or for the reply before it to end ("reply"). `text` is the line to show: "Waiting for 2 videos".
@@ -144,8 +148,10 @@ export interface AssistantTurnInput {
   /**
    * Ids of videos or recordings (POST /api/assistant/files). One may still be uploading: the message is saved at once and
    * its reply waits (`wait`) until the last part is in, then runs. More messages while a reply waits or runs queue behind it.
+   * { id, path } (a file dropped in the Mac app, with where it is on that computer): the reply starts at once and is told
+   * the file is still arriving.
    */
-  files?: string[];
+  files?: Array<string | { id: string; path: string }>;
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
   paths?: string[];
   context?: AssistantContext;

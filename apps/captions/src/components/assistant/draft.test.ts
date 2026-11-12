@@ -23,13 +23,25 @@ describe("droppedFiles", () => {
 
   it("keeps plain files as the drop gave them", async () => {
     const f = new File(["x"], "a.mov");
-    expect(await droppedFiles(drop([file("a.mov")], [f]))).toEqual({ files: [f], folder: false, folders: [] });
+    expect(await droppedFiles(drop([file("a.mov")], [f]))).toEqual({ files: [f], folder: false, folders: [], paths: new Map() });
+  });
+
+  it("in the Mac app a loose file carries its path, matched by a name only one dropped item has", async () => {
+    const [a, b] = [new File(["x"], "walkthru-1.mp4"), new File(["x"], "take.mov")];
+    const got = await droppedFiles(drop([file("walkthru-1.mp4"), file("take.mov")], [a, b]), async () => [
+      { path: "/Users/you/Movies/walkthru-1.mp4", folder: false },
+      { path: "/Users/you/A/take.mov", folder: false },
+      { path: "/Users/you/B/take.mov", folder: false },
+    ]);
+    expect(got.paths.get(a)).toBe("/Users/you/Movies/walkthru-1.mp4");
+    expect(got.paths.has(b)).toBe(false);
   });
 
   it("in the Mac app a folder comes as its path and is not read; the loose files beside it still are", async () => {
-    const got = await droppedFiles(drop([dir("Shoot", [file("clip.mov")]), file("notes.mov")]), async () => ["/Users/you/Movies/Shoot"]);
+    const got = await droppedFiles(drop([dir("Shoot", [file("clip.mov")]), file("notes.mov")]), async () => [{ path: "/Users/you/Movies/Shoot", folder: true }, { path: "/Users/you/Movies/notes.mov", folder: false }]);
     expect(got).toMatchObject({ folder: false, folders: ["/Users/you/Movies/Shoot"] });
     expect(got.files.map((f) => f.name)).toEqual(["notes.mov"]);
+    expect([...got.paths.values()]).toEqual(["/Users/you/Movies/notes.mov"]);
   });
 });
 

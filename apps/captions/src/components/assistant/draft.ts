@@ -16,16 +16,30 @@ export const MAX_FOLDERS = 5;
 
 /**
  * A drop's files, with each dropped folder opened (and its folders) into the files inside it. In the Mac app a folder
- * comes as its path instead (folderPaths, nothing uploads); a browser never sees one, so there its files upload like
- * files dropped one by one. The entries are taken before the first await: the drop's list is gone after the event.
+ * comes as its path instead (`dropped` gives the drop's Finder items, nothing uploads), and each loose file has its path
+ * too (`paths`); a browser sees neither, so there a folder's files upload like files dropped one by one. The entries are
+ * taken before the first await: the drop's list is gone after the event.
  */
 export async function droppedFiles(
   dt: DataTransfer,
-  folderPaths?: () => Promise<string[] | undefined>,
-): Promise<{ files: File[]; folder: boolean; folders: string[] }> {
+  dropped?: () => Promise<Array<{ path: string; folder: boolean }> | undefined>,
+): Promise<{ files: File[]; folder: boolean; folders: string[]; paths: Map<File, string> }> {
   const entries = Array.from(dt.items, (it) => it.webkitGetAsEntry?.() ?? null);
-  if (!entries.some((e) => e?.isDirectory)) return { files: Array.from(dt.files), folder: false, folders: [] };
-  const folders = (await folderPaths?.()) ?? [];
+  const top = Array.from(dt.files);
+  const items = (await dropped?.()) ?? [];
+  const folders = items.filter((x) => x.folder).map((x) => x.path);
+  // a loose file's path, by its name: only when one dropped item has it (two of the same name upload as they are);
+  // one form of accented letters on both sides
+  const paths = new Map<File, string>();
+  const nfc = (n: string) => n.normalize("NFC");
+  const pathOf = (f: File) => {
+    const same = items.filter((x) => !x.folder && nfc(x.path.split("/").pop() ?? "") === nfc(f.name));
+    if (same.length === 1) paths.set(f, same[0]!.path);
+  };
+  if (!entries.some((e) => e?.isDirectory)) {
+    top.forEach(pathOf);
+    return { files: top, folder: false, folders: [], paths };
+  }
   const walk = async (e: FileSystemEntry): Promise<File[]> => {
     if (e.isFile) return [await new Promise<File>((ok, no) => (e as FileSystemFileEntry).file(ok, no))];
     const reader = (e as FileSystemDirectoryEntry).createReader();
@@ -39,15 +53,20 @@ export async function droppedFiles(
   };
   // with the folders' paths, only the loose files beside them are read
   const read = entries.filter((e): e is FileSystemEntry => !!e && !(folders.length && e.isDirectory));
-  const all = (await Promise.all(read.map(walk))).flat();
-  return { files: all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })), folder: !folders.length, folders };
+  const all = (await Promise.all(read.map(async (e) => {
+    const got = await walk(e);
+    if (e.isFile) got.forEach(pathOf);
+    return got;
+  }))).flat();
+  return { files: all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })), folder: !folders.length, folders, paths };
 }
 
 /**
  * A video or recording in the box: it uploads as soon as it's added. `id` comes once the upload is made, and the message
- * may go from then on (the server waits for the rest, api/assistant.ts); `done` once it's all in.
+ * may go from then on (the server waits for the rest, api/assistant.ts); `done` once it's all in. `path`: where it is on
+ * this Mac (dropped in the Mac app): its reply starts without waiting, and a server on this Mac takes it without an upload.
  */
-export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; done?: boolean; error?: string };
+export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; done?: boolean; error?: string; path?: string };
 /** What's in the box: the words, pictures, long pastes (sent as files beside the words) and videos. */
 export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[]; folders: string[] };
 export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [], folders: [] };

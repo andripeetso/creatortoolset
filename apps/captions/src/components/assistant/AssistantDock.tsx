@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
 import { chunkedUpload } from "@/lib/uploads";
-import { chooseFolderOnMac, droppedFoldersOnMac, thisMacBridge } from "@/lib/thisMac";
+import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
@@ -53,7 +53,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; folders?: string[]; quote?: string };
+type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string; path?: string }>; folders?: string[]; quote?: string };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -234,7 +234,8 @@ export function AssistantDock() {
       text: it.text,
       ...(it.images?.length ? { images: it.images } : {}),
       ...(it.pasted?.length ? { pasted: it.pasted } : {}),
-      ...(it.files?.length ? { files: it.files.map((f) => f.id) } : {}),
+      // a file with its path on this Mac: the reply starts without waiting for the upload
+      ...(it.files?.length ? { files: it.files.map((f) => (f.path ? { id: f.id, path: f.path } : f.id)) } : {}),
       ...(it.folders?.length ? { paths: it.folders } : {}),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
     });
@@ -280,7 +281,7 @@ export function AssistantDock() {
     });
   }, []);
   const addFiles = useCallback(
-    async (files: File[], folder = false) => {
+    async (files: File[], folder = false, paths?: Map<File, string>) => {
       const pics = files.filter(isPicture);
       let media = files.filter((f) => !isPicture(f) && isMediaFile(f));
       // a folder's other files (a camera's sidecars, notes) are passed over without a word
@@ -297,7 +298,18 @@ export function AssistantDock() {
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
         const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
-        setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
+        const where = paths?.get(f);
+        setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0, ...(where ? { path: where } : {}) }] }));
+        // a server on this Mac takes it where it is, nothing uploaded; one elsewhere says no and it uploads
+        const here = where
+          ? await fetch("/api/assistant/files/path", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: where, size: f.size }) })
+              .then((r) => (r.ok ? (r.json() as Promise<{ id: string }>) : null))
+              .catch(() => null)
+          : null;
+        if (here) {
+          patch({ id: here.id, pct: 100, done: true });
+          continue;
+        }
         const ctl = new AbortController();
         chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }), (id) => {
           uploads.current.set(id, ctl);
@@ -366,7 +378,7 @@ export function AssistantDock() {
       text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
-      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id, done: true }))],
+      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id, done: true, ...(f.path ? { path: f.path } : {}) }))],
       folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
     }));
     if (it.quote) setQuote(it.quote);
@@ -376,7 +388,7 @@ export function AssistantDock() {
     const it: Queued = {
       id: `${Date.now()}-${queue.length}`,
       ...d,
-      ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name })) } : {}),
+      ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name, ...(f.path ? { path: f.path } : {}) })) } : {}),
       ...(folders.length ? { folders } : {}),
       ...(quote ? { quote } : {}),
     };
@@ -392,10 +404,11 @@ export function AssistantDock() {
   /** A notice's chip: its words go out as a message. */
   const chipSend = (text: string) => submit({ ...EMPTY_DRAFT, text });
   const stop = () => {
-    // Stop on a reply that waits for its videos: those videos stop uploading too (nothing will use them)
+    // the reply Stop ends (the one being written, else the first that waits, as the server picks): its message's videos
+    // stop uploading too (nothing will use them)
     const msgs = view?.messages ?? [];
-    const w = [...msgs].reverse().findIndex((m) => m.role === "assistant" && m.status === "thinking" && m.wait?.for === "videos");
-    const i = w < 0 ? -1 : msgs.length - 1 - w;
+    const thinking = msgs.filter((m) => m.role === "assistant" && m.status === "thinking");
+    const i = msgs.indexOf((thinking.find((m) => !m.wait) ?? thinking[0])!);
     for (const f of i > 0 ? (msgs[i - 1]!.files ?? []) : []) uploads.current.get(f.id)?.abort();
     void stopTurn().then((r) => r.ok && setView(r.data));
   };
@@ -520,10 +533,10 @@ export function AssistantDock() {
         setDropping(false);
         if (!connectedNow || !e.dataTransfer.files.length) return;
         e.preventDefault();
-        droppedFiles(e.dataTransfer, droppedFoldersOnMac).then(
+        droppedFiles(e.dataTransfer, droppedOnMac).then(
           (d) => {
             if (d.folders.length) setDraft((cur) => ({ ...cur, folders: [...new Set([...cur.folders, ...d.folders])].slice(0, MAX_FOLDERS) }));
-            if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder);
+            if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder, d.paths);
           },
           (err) => setError(err instanceof Error ? err.message : String(err)),
         );
@@ -820,6 +833,7 @@ export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: Assista
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{f.name}</span>
                 {f.uploading && <span className="shrink-0 text-muted-foreground">Uploading</span>}
+                {f.lost && <span className="shrink-0 text-muted-foreground">Didn't arrive</span>}
               </span>
             ))}
             {m.folders?.map((p) => (
