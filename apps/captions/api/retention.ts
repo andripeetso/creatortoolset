@@ -10,6 +10,7 @@ import { adminCount, findUser } from "./users";
  * included), Review videos and their folders, Audio Enhancer sessions, Video Notes and guides are deleted for good once
  * they haven't changed for 14 days (plain `user`) or 28 days (team). Admins keep theirs. Deleting an account deletes
  * everything it owned right away, and anything still owned by an account that no longer exists goes on the next sweep.
+ * Video Notes (clips) are shared links: they stay until their account is deleted.
  * Exports expire on their own after EXPORTS_KEEP_HOURS (api/exports.ts).
  */
 export const KEEP_DAYS = { user: 14, team: 28 } as const;
@@ -43,11 +44,12 @@ async function purgeMetaDirs(root: string, expired: Expired): Promise<void> {
   }
 }
 
-async function purge(expired: Expired): Promise<void> {
+// clipsExpired: a clip is a shared link, so the age sweep keeps it and only a gone account takes it.
+async function purge(expired: Expired, clipsExpired: Expired = expired): Promise<void> {
   for (const step of [
     () => purgeExpiredProjects(expired),
     () => purgeExpiredReview(expired),
-    () => purgeMetaDirs(path.join(env.dataDir, "clips"), expired),
+    () => purgeMetaDirs(path.join(env.dataDir, "clips"), clipsExpired),
     () => purgeMetaDirs(path.join(env.dataDir, "documents"), expired),
     () => purgeMetaDirs(path.join(env.dataDir, "enhance"), expired),
   ]) {
@@ -61,7 +63,7 @@ export const deleteUserContent = (username: string) => purge((owner) => owner ==
 export async function sweepUserContent(): Promise<void> {
   // users.json unread = every owner would look deleted
   if (adminCount() === 0) return;
-  await purge(retentionRule());
+  await purge(retentionRule(), (owner) => !!owner && !findUser(owner));
 }
 
 // production only: dev servers share ~/.caption-studio with test data

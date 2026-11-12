@@ -346,6 +346,7 @@ export default definePlugin({
   id: "editor-colour",
   name: "Colour",
   about: "Turns log footage (S-Log3, F-Log, Apple Log and more) into normal video, on this computer. About 1.4 GB of disk for each minute of video",
+  kind: "AI Editor step",
   editor: {
     steps: [
       {

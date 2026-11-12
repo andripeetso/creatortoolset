@@ -243,6 +243,9 @@ export interface EditorStepInput {
   say(text: string): void;
 }
 
+/** The ids of the loaded plug-ins (compiled in and from the plug-ins folder). */
+export const loadedPluginIds = (): string[] => loaded.map((p) => p.id);
+
 /** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */
 export function pluginEditorSteps(): (EditorStep & { pluginId: string })[] {
   return loaded

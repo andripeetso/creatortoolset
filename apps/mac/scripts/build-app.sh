@@ -166,7 +166,7 @@ mkdir -p "$src_out/scripts"
 # no step on, one with it on). Empty is fine: the list below is read so that bash 3.2 with set -u takes an empty one.
 HELD_STEPS=""
 held=(); for s in $HELD_STEPS; do held+=(--exclude "/$s"); done
-for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the AI Editor's steps, put in on Turn on
+for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the team's plug-ins (the AI Editor's steps and others), put in on Download
   more=(); [ "$d" = editor-steps ] && more=(${held[@]+"${held[@]}"})
   rsync -a --exclude '*.test.*' --exclude '*.spec.*' --exclude '*.gen.ts' --exclude 'node_modules' ${more[@]+"${more[@]}"} "$captions/$d/" "$src_out/$d/"
 done

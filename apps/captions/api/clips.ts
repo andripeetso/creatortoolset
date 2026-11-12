@@ -846,14 +846,9 @@ async function streamFile(
     "Last-Modified": new Date(st.mtimeMs).toUTCString(),
     ETag: `"${size}-${Math.floor(st.mtimeMs)}"`,
   };
-  const slice = (start: number, end: number): Promise<Buffer> =>
-    new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      createReadStream(p, { start, end })
-        .on("data", (d) => chunks.push(d as Buffer))
-        .on("end", () => resolve(Buffer.concat(chunks)))
-        .on("error", reject);
-    });
+  // Streamed from disk: buffering a whole range per viewer ran the server out of memory (2026-11-12).
+  const body = (start: number, end: number) =>
+    Readable.toWeb(createReadStream(p, { start, end })) as unknown as ReadableStream;
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
     const start = m?.[1] ? parseInt(m[1], 10) : 0;
@@ -864,8 +859,7 @@ async function streamFile(
         headers: { "Content-Range": `bytes */${size}` },
       });
     }
-    const body = await slice(start, end);
-    return new Response(new Uint8Array(body), {
+    return new Response(body(start, end), {
       status: 206,
       headers: {
         ...base,
@@ -874,8 +868,7 @@ async function streamFile(
       },
     });
   }
-  const body = await slice(0, size - 1);
-  return new Response(new Uint8Array(body), {
+  return new Response(body(0, size - 1), {
     headers: { ...base, "Content-Length": String(size) },
   });
 }

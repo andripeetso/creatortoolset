@@ -156,7 +156,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     if (!connected && !failed) return;
     if (failed) saveFailed(failed);
     else {
-      toast(`${connected} account(s) connected: reading their numbers now`);
+      toast(`${connected === "1" ? "Account" : `${connected} accounts`} connected. Reading the numbers now.`);
       watch();
     }
     setParams((p) => (p.delete("connected"), p.delete("error"), p), { replace: true });
