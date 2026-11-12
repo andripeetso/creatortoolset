@@ -118,6 +118,11 @@ async function itemsOf(kind: KeptKind, u: Who, stores: Stores): Promise<Item[]> 
         ...sources.filter(({ m }) => isMine(m.owner, u)).map(({ id: f }) => ({ id: f.slice(0, -5), paths: [path.join(root, f), path.join(root, `${f.slice(0, -5)}.txt`), path.join(root, f.slice(0, -5))] })),
       ];
     }
+    case "designs": {
+      // one folder an account (api/designs.ts): a design is <id>.json with its pictures in <id>/
+      const root = at("designs", u.username);
+      return (await readdir(root).catch(() => [] as string[])).filter((f) => f.endsWith(".json")).map((f) => ({ id: f.slice(0, -5), paths: [path.join(root, f), path.join(root, f.slice(0, -5))] }));
+    }
     case "library": {
       // the libraries of the account's own workspace, kept on this server's disk (a bucket's bytes are added in measure)
       const { libraryDb } = await import("./library/db");

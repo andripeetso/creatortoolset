@@ -9,6 +9,7 @@ server, so every tool shares a sign-in and a data folder. Each tool has its own 
 | `/enhance` | Audio Enhancer | `api/enhance.ts` |
 | `/review` | Review | `api/review.ts` |
 | `/stories` | Story Splitter | `api/stories.ts` |
+| `/design` | Designer | `api/designs.ts` (the check on every value: `api/lib/design-check.ts`) |
 | `/video-notes` | Video Notes | `api/clips.ts` |
 | `/guides` | Guide Builder | `api/documents.ts` |
 | `/analyzer` | Content Analyzer | `api/instagram.ts` |

@@ -142,7 +142,7 @@ export interface UploadRelayView {
  * same file in the Media Library) counts once, in the first.
  */
 export const KEPT_KINDS = [
-  "captions", "review", "notes", "guides", "enhance", "editor", "analyzer", "workshop",
+  "captions", "review", "notes", "guides", "enhance", "editor", "analyzer", "workshop", "designs",
   "captions-trash", "review-trash", "library", "chat-pictures", "exports", "chat-videos",
 ] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];

@@ -201,6 +201,10 @@ export function Stage({
   const pageUnder = (p: Point) => pages.findIndex((_, k) => p.x >= pageLeft(k, width) && p.x <= pageLeft(k, width) + width && p.y >= 0 && p.y <= height);
   const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - pageLeft(k, width), p.y) : null);
 
+  // a drag under way when the canvas goes away ends there, with its listeners
+  const dragging = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragging.current?.(), []);
+
   /** Follows the pointer until it lifts. Nothing moves before the pointer has: a click is not a drag. */
   const drag = (e: React.PointerEvent, move: (ev: PointerEvent) => void, up: (moved: boolean) => void = () => {}) => {
     e.preventDefault();
@@ -215,10 +219,15 @@ export function Stage({
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      dragging.current = null;
       up(moved);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    // the pointer taken away (a system gesture, the window losing it) ends the drag where it was
+    window.addEventListener("pointercancel", onUp);
+    dragging.current = onUp;
   };
   const withLayers = (p: DesignPage, next: readonly Layer[]): DesignPage => ({ ...p, layers: p.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
 
@@ -232,7 +241,9 @@ export function Stage({
   const move = (e: React.PointerEvent, k: number, ids: string[], hit: string) => {
     const p = pages[k]!;
     const from = world(e);
-    const moving = p.layers.filter((l) => ids.includes(l.id));
+    // a layer locked while it was picked stays where it is
+    const moving = p.layers.filter((l) => ids.includes(l.id) && !l.locked);
+    if (!moving.length) return;
     // Alt drags a copy and leaves the layer where it was (not past what a page can hold)
     const copies = e.altKey && p.layers.length + moving.length <= DESIGN_LIMITS.layers ? freshIds(p, moving.length) : null;
     const b0 = boundsOf(moving);

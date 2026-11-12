@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import {
-  AudioLines, Captions, CheckCircle2, Circle, Clapperboard, FileText, Library, MessageSquareText, NotebookPen, ScanSearch, Scissors, Video,
+  AudioLines, Captions, CheckCircle2, Circle, Clapperboard, FileText, Library, MessageSquareText, NotebookPen, PenTool, ScanSearch, Scissors, Video,
   type LucideIcon,
 } from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
@@ -138,7 +138,7 @@ export function ToolNeeds({ tool, have, missingOnly, title = true, welcome }: { 
 /** Each tool's icon, the same as on Home. */
 export const TOOL_ICONS: Record<Tool, LucideIcon> = {
   instagram: ScanSearch, workshop: NotebookPen, enhance: AudioLines, captions: Captions, review: MessageSquareText, media: Library,
-  editor: Clapperboard, stories: Scissors, notes: Video, guides: FileText,
+  editor: Clapperboard, stories: Scissors, design: PenTool, notes: Video, guides: FileText,
 };
 
 /**

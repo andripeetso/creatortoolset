@@ -210,6 +210,8 @@ export const TOOL_GATES: [string, Tool[]][] = [
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
   ["/api/workshop", ["instagram", "workshop"]],
+  // the Designer's designs, and with them its two AI tools (they call these routes as the account)
+  ["/api/designs", ["design"]],
 ];
 
 let environmentId = "";

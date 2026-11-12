@@ -69,6 +69,7 @@ project you're in.
 | Distribute | **Finals** | Your finished reels, carousels and other pieces: the versions of each, the winner, and where it was posted. |
 | Extras | **Audio Enhancer** | Clean up the sound of a recording, with a before-and-after player. |
 | Extras | **Story Splitter** | Cut a video into stories of about 20 seconds, on its own cuts, pauses and beats, and download them as one zip. |
+| Extras | **Designer** | Carousels, covers and thumbnails as pages of layers: your AI designs them (text, shapes, pictures, its own drawings), you move, resize, retype and restyle anything on a canvas, and save each page as a PNG. Start from a Workshop carousel, a video's frame, or blank pages. |
 | Extras | **Video Notes** | Screen and camera recordings. Each one gets a transcript (through your cloud transcription key when you have one; without a key the Mac app makes it on your Mac, and a server makes none) and, with an AI connected, a title, a summary and chapters. |
 | Extras | **Guide Builder** | Put recordings in order, have AI draft a step-by-step page, and publish it as an unlisted link. |
 | Extras | **Screen Recorder** | In the Mac app, on macOS 15 or newer: record your screen, a window or an area, with your camera and voice. Make a version that zooms where you clicked, and send it to Review, Video Notes or the Guide Builder; or one with no background, saved as a video with a transparent background to lay over other video. |

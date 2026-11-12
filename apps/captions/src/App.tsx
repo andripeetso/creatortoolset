@@ -21,6 +21,7 @@ import ReviewSharedProjectPage from "./pages/ReviewSharedProjectPage";
 import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
 import DesignPage from "./pages/DesignPage";
+import DesignsPage from "./pages/DesignsPage";
 import LibraryPage from "./pages/LibraryPage";
 import FinalsPage from "./pages/FinalsPage";
 import FinalsPiecePage from "./pages/FinalsPiece";
@@ -393,7 +394,8 @@ export default function App() {
           <Route path="/finals/:pieceId" element={<AppRoute tool="media"><FinalsPiecePage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />
           {/* a design belongs to the piece or the video it was made from: opened from there, with no tile of its own */}
-          <Route path="/design/:id" element={<DesignPage />} />
+          <Route path="/design" element={<AppRoute tool="design"><DesignsPage /></AppRoute>} />
+          <Route path="/design/:id" element={<AppRoute tool="design"><DesignPage /></AppRoute>} />
           <Route path="/editor" element={<AppRoute tool="editor"><EditorScreen /></AppRoute>} />
           <Route path="/editor/:id" element={<AppRoute tool="editor"><EditorEditScreen /></AppRoute>} />
           <Route path="/rp/:ptoken/:assetId" element={<ReviewAssetPage />} />

@@ -188,7 +188,7 @@ export function toolForPath(p: string): Tool | null {
   const first = p.split("/")[1] ?? "";
   const by: Record<string, Tool> = {
     instagram: "instagram", analyzer: "instagram", workshop: "workshop", enhance: "enhance", captions: "captions", review: "review",
-    library: "media", editor: "editor", stories: "stories", clips: "notes", "video-notes": "notes", documents: "guides", guides: "guides",
+    library: "media", editor: "editor", stories: "stories", design: "design", clips: "notes", "video-notes": "notes", documents: "guides", guides: "guides",
   };
   return by[first] ?? null;
 }
@@ -425,7 +425,7 @@ export const MAKE_NAMES: Record<Make, string> = {
  * The one extra each answer switches on, and only when it clearly fits. Story Splitter is never
  * switched on by an answer (it stays off until picked), and an answer with no fit adds nothing.
  */
-const MAKE_EXTRA: Partial<Record<Make, Tool>> = { reel: "captions", podcast: "enhance", course: "guides", recording: "notes" };
+const MAKE_EXTRA: Partial<Record<Make, Tool>> = { reel: "captions", carousel: "design", podcast: "enhance", course: "guides", recording: "notes" };
 
 /**
  * The tools "What do you make?" ticks, in `mine`'s order: the default tools (always on, DEFAULT_TOOLS) plus the extra

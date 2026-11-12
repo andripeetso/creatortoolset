@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import { canUse, useMe } from "@/lib/auth";
 import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Palette, Scissors, Trash2 } from "lucide-react";
 import { createDesign } from "@/lib/designs";
 import type { AssetCard, LibrarySummary, Piece, PieceItem } from "@contracts/library";
@@ -647,6 +648,7 @@ async function loadPieceView(pieceId: string): Promise<PieceView> {
 export default function FinalsPiecePage() {
   const { pieceId = "" } = useParams();
   const navigate = useNavigate();
+  const me = useMe();
   // the saved copy paints at once; the change stream's library topic reads it again (lib/local-cache)
   const view = useCachedLoad<PieceView>(`/api/library/finals-piece/${pieceId}`, () => loadPieceView(pieceId));
   const found = view.data ? view.data.found : undefined;
@@ -672,7 +674,7 @@ export default function FinalsPiecePage() {
         {found === null && <p className="py-16 text-center text-sm text-zinc-500">No such piece in Finals.</p>}
         {library && piece && (
           <PieceEditor
-            onDesign={(design) => navigate(`/design/${design}`)}
+            onDesign={canUse(me, "design") ? (design) => navigate(`/design/${design}`) : undefined}
             key={piece.id}
             libraryId={library.id}
             piece={piece}

@@ -7,7 +7,7 @@
  *
  * Contract (api/designs.ts, mounted at /api/designs):
  *   GET    /api/designs?session=&doc=   → DesignSummary[] (mine; narrowed to one Workshop piece when both are given)
- *   POST   /api/designs                 NewDesign → Design
+ *   POST   /api/designs                 NewDesign → Design (a piece's slides, a video's frame, or blank pages)
  *   GET    /api/designs/:id             → Design
  *   PUT    /api/designs/:id             { name?, pages?, look? } → Design (what the person changed by hand)
  *   DELETE /api/designs/:id
@@ -32,7 +32,7 @@ export type DesignFormat = (typeof DESIGN_FORMATS)[number]["id"];
 export type DesignKind = (typeof DESIGN_FORMATS)[number]["kind"];
 export const formatOf = (id: unknown) => DESIGN_FORMATS.find((f) => f.id === id) ?? null;
 
-export const DESIGN_LIMITS = { pages: 20, layers: 40, text: 600, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
+export const DESIGN_LIMITS = { pages: 20, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
@@ -137,7 +137,7 @@ export interface Design extends Omit<DesignSummary, "pages"> {
  * From a video: `version` (a library version) and `t` (seconds): that frame is copied in as the picture, with `title`
  * as its words. `format` must be one of that kind's (a piece: a carousel format; a video: cover or thumbnail).
  */
-export type NewDesign = { format: DesignFormat; name?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string });
+export type NewDesign = { format: DesignFormat; name?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string } | { blank: true; pages?: number });
 
 /** The AI's design, checked: the design as saved, and what was left out of the answer and why. */
 export interface DesignAnswer {

@@ -49,6 +49,22 @@ async function purgeMetaDirs(root: string, expired: Expired): Promise<void> {
   }
 }
 
+/** `designs/<owner>/<id>.json` with its pictures in `<id>/` (api/designs.ts): the folder's name is the owner. */
+async function purgeDesigns(expired: Expired): Promise<void> {
+  const root = path.join(env.dataDir, "designs");
+  for (const owner of await readdir(root).catch(() => [] as string[])) {
+    for (const name of await readdir(path.join(root, owner)).catch(() => [] as string[])) {
+      if (!name.endsWith(".json")) continue;
+      const file = path.join(root, owner, name);
+      const at =
+        (await readFile(file, "utf-8").then((s) => (JSON.parse(s) as { updatedAt?: number }).updatedAt, () => undefined)) ?? (await stat(file).then((s) => s.mtimeMs, () => null));
+      if (at == null || !expired(owner, at)) continue;
+      await rm(file, { force: true });
+      await rm(file.slice(0, -5), { recursive: true, force: true });
+    }
+  }
+}
+
 // clipsExpired: a clip is a shared link, so the age sweep keeps it and only a gone account takes it.
 async function purge(expired: Expired, clipsExpired: Expired = expired): Promise<void> {
   for (const step of [
@@ -57,6 +73,7 @@ async function purge(expired: Expired, clipsExpired: Expired = expired): Promise
     () => purgeMetaDirs(path.join(env.dataDir, "clips"), clipsExpired),
     () => purgeMetaDirs(path.join(env.dataDir, "documents"), expired),
     () => purgeMetaDirs(path.join(env.dataDir, "enhance"), expired),
+    () => purgeDesigns(expired),
   ]) {
     await step().catch((e) => console.error("[retention]", e));
   }

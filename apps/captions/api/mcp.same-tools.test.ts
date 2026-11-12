@@ -72,11 +72,11 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the
     // list: 534; upload_file adds 345 (its 182-byte description, path and size); channel_posts 426 (the connected
     // social accounts' numbers and posts, read again first when over an hour old; its 279-byte description, platform and refresh)
-    // design_make and design_layers add 1039 (the designer's two tools: start or find a design, read its pages and write
-    // layers onto them; their 315- and 245-byte descriptions, six fields and two). How layers are written is not in
+    // design_make and design_layers add 1129 (the designer's two tools: start or find a design, read its pages and write
+    // layers onto them; their 353- and 245-byte descriptions, eight fields and two). How layers are written is not in
     // them: design_layers hands it over when a design is read, so it costs nothing on a turn that designs nothing
-    expect(bytes(dock) - bytes(main(dock))).toBe(2344);
+    expect(bytes(dock) - bytes(main(dock))).toBe(2434);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(3561);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(3651);
   });
 });

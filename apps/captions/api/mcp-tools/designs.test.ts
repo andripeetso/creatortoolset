@@ -102,6 +102,16 @@ describe("the designer's tools", () => {
     expect((await tool(nicoKey, "design_make", { version: "ver_t", t: 1 })).error).toBe(true);
   });
 
+  it("blank pages to design from nothing, and a page added by writing one past the last", async () => {
+    const made = await tool(anaKey, "design_make", { format: "square", name: "Launch post" });
+    expect(made.out).toMatchObject({ name: "Launch post", size: "1080 × 1080", pages: 1 });
+    const circle = { type: "shape", shape: "ellipse", fill: "#ff5500", x: 240, y: 240, w: 600, h: 600 };
+    const wrote = await tool(anaKey, "design_layers", { id: made.out.id, pages: [{ page: 1, background: "#111111", layers: [circle] }, { page: 2, layers: [circle, { type: "text", text: "New words", font: "Anton", size: 120, color: "#111111", align: "center", x: 90, y: 400, w: 900, h: 300 }] }] });
+    expect(wrote.out).toMatchObject({ pages: 2 });
+    expect(wrote.out).not.toHaveProperty("left_out");
+    expect((await tool<Read>(anaKey, "design_layers", { id: made.out.id })).out.pages.map((p) => p.layers.length)).toEqual([1, 2]);
+  });
+
   it("says in words what it cannot do, and another account's design is not found", async () => {
     expect((await tool(anaKey, "design_make", {})).text).toContain("Say what to design");
     expect((await tool(anaKey, "design_layers", {})).text).toContain("Give the design's id");

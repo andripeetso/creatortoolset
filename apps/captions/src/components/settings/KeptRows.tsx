@@ -25,6 +25,7 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   editor: ["AI Editor edits", "edit", "edits"],
   analyzer: ["Analyzer posts", "post", "posts"],
   workshop: ["Workshop sessions and sources", "item", "items"],
+  designs: ["Designs", "design", "designs"],
   "captions-trash": ["Deleted Caption Studio projects", "project", "projects"],
   "review-trash": ["Deleted Review videos", "video", "videos"],
   library: ["Media Library", "item", "items"],

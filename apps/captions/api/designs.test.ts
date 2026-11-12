@@ -305,3 +305,55 @@ describe("designs: an AI that writes the layers itself", () => {
     expect(out.notes).toEqual(["Page 1: a picture that is not in this design: left out"]);
   });
 });
+
+describe("designs: blank pages, and what the first round of review found", () => {
+  it("starts blank pages in any size; an AI adds a page one past the last, and no further", async () => {
+    const { status, body: d } = await call<Design>("POST", "/api/designs", { format: "square", blank: true, name: "Launch post", pages: 2 });
+    expect(status).toBe(200);
+    expect(d).toMatchObject({ name: "Launch post", kind: "carousel", width: 1080, height: 1080 });
+    expect(d.pages).toEqual([{ id: "p1", background: "#ffffff", layers: [] }, { id: "p2", background: "#ffffff", layers: [] }]);
+    expect(d).not.toHaveProperty("from");
+    expect((await call<Design>("POST", "/api/designs", { format: "thumbnail", blank: true })).body).toMatchObject({ name: "Untitled design", kind: "thumbnail", pages: [{ layers: [] }] });
+    expect((await call<Design>("POST", "/api/designs", { format: "cover", blank: true, pages: 500 })).body.pages).toHaveLength(20);
+    const shape = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100 };
+    const out = (await call<DesignAnswer>("POST", `/api/designs/${d.id}/pages`, { pages: [{ page: 3, background: "#000000", layers: [shape] }, { page: 4, layers: [shape] }, { page: 9, layers: [shape] }] })).body;
+    expect(out.design.pages.map((p) => [p.background, p.layers.length])).toEqual([["#ffffff", 0], ["#ffffff", 0], ["#000000", 1], ["#ffffff", 1]]);
+    expect(new Set(out.design.pages.map((p) => p.id)).size).toBe(4);
+    expect(out.notes).toEqual(["There is no page 9: this design has 4"]);
+  });
+
+  it("Design with AI keeps a page the person added beyond the piece's slides, and never brings a deleted design back", async () => {
+    const d = await fromPiece();
+    const added = { id: "extra", background: "#222222", layers: [{ id: "l1", type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100 }] };
+    await call("PUT", `/api/designs/${d.id}`, { pages: [...d.pages, added] });
+    const answer = slides.map((s) => ({ background: "#101010", layers: [{ type: "text", text: s.replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim(), font: "Anton", size: 60, color: "#ffffff", align: "left", x: 90, y: 90, w: 900, h: 1100 }] }));
+    aiAnswers(answer);
+    const { body } = await call<DesignAnswer>("POST", `/api/designs/${d.id}/design`, {});
+    expect(body.design.pages).toHaveLength(4);
+    expect(body.design.pages[3]).toEqual(added);
+    expect(body.design.pages.slice(0, 3).every((p) => p.background === "#101010")).toBe(true);
+
+    // deleted while the AI is still answering: the answer has nowhere to go
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "Designer" } });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, _u, _c, parse) => {
+      await call("DELETE", `/api/designs/${d.id}`);
+      return parse(JSON.stringify({ pages: answer }));
+    });
+    expect((await call("POST", `/api/designs/${d.id}/design`, {})).status).toBe(404);
+    expect((await call("GET", `/api/designs/${d.id}`)).status).toBe(404);
+  });
+
+  it("two saves of one design at once leave a design that reads; a deleted account's designs go with it", async () => {
+    as = "robin";
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true }, "robin")).body;
+    const page = (fill: string) => ({ pages: [{ id: "p1", background: "#ffffff", layers: Array.from({ length: 40 }, (_, n) => ({ id: `l${n + 1}`, type: "shape", shape: "rect", fill, x: n, y: n, w: 100, h: 100 })) }] });
+    await Promise.all(Array.from({ length: 12 }, (_, n) => call("PUT", `/api/designs/${d.id}`, n % 2 ? page("#ff0000") : { pages: [{ id: "p1", background: "#000000", layers: [] }] }, "robin")));
+    const kept = await call<Design>("GET", `/api/designs/${d.id}`, undefined, "robin");
+    expect(kept.status).toBe(200);
+    expect([0, 40]).toContain(kept.body.pages[0]!.layers.length);
+    const { deleteUserContent } = await import("./retention");
+    await deleteUserContent("robin");
+    expect((await call<DesignSummary[]>("GET", "/api/designs", undefined, "robin")).body).toEqual([]);
+    expect((await call<DesignSummary[]>("GET", "/api/designs")).body.length).toBeGreaterThan(0);
+  });
+});

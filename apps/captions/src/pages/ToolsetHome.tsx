@@ -42,6 +42,7 @@ const PAGE: Record<Key, { to: string; phoneTo?: string; desc: string }> = {
   enhance: { to: "/enhance", desc: "Studio sound for any recording: denoise, de-echo, level." },
   captions: { to: "/captions?view=projects", phoneTo: "/m/captions", desc: "Transcribe, caption and export: burned-in videos or alpha overlays." },
   stories: { to: "/stories", desc: "One video in, stories of about 20 s out: cut on the edit's cuts, pauses and beats. ZIP download." },
+  design: { to: "/design", desc: "Carousels, covers and thumbnails in layers: your AI designs them, you move, resize and retype anything, and save the PNGs." },
   notes: { to: "/clips", desc: "Drop in a recording: transcript, summary, chapters, takeaways." },
   guides: { to: "/documents", desc: "Turn recordings into SOPs, walkthroughs and guides you can publish." },
   // the Mac app's recorder (apps/mac Recorder.swift); Review and Video Notes start it too

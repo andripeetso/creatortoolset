@@ -9,7 +9,7 @@ import type { CliId } from "./local-ai";
 export const TOOLS = [
   "instagram", "workshop",
   "enhance", "captions", "review", "media", "editor",
-  "stories",
+  "stories", "design",
   "notes", "guides",
 ] as const;
 export type Tool = (typeof TOOLS)[number];
@@ -39,6 +39,7 @@ export const TOOL_NAMES: Record<Tool, string> = {
   media: "Media Library",
   editor: "AI Editor",
   stories: "Story Splitter",
+  design: "Designer",
   notes: "Video Notes",
   guides: "Guide Builder",
 };
@@ -53,6 +54,7 @@ export const TOOL_LINES: Record<Tool, string> = {
   media: "Your footage in one place, searchable.",
   editor: "Raw takes in, draft timelines out.",
   stories: "One video in, stories of about 20 s out.",
+  design: "Carousels, covers and thumbnails, designed in layers you can edit.",
   notes: "A recording in: transcript, summary, chapters.",
   guides: "Turn recordings into guides and SOPs.",
 };
@@ -63,7 +65,7 @@ export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "distribute" | "
   { id: "make", label: "Make", tools: ["media", "editor", "review"] },
   // Finals is a view of the library, not a Tool: Home draws it in this box (ToolsetHome)
   { id: "distribute", label: "Distribute", tools: [] },
-  { id: "tools", label: "Extras", tools: ["enhance", "captions", "stories", "notes", "guides"] },
+  { id: "tools", label: "Extras", tools: ["enhance", "captions", "design", "stories", "notes", "guides"] },
 ];
 
 /** Always on for every account and never part of the "What will you make?" pick: the Plan and Make tools above. */
@@ -177,6 +179,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
     { what: "An API key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
   stories: [],
+  design: [{ what: "An AI provider: designs the pages", anyOf: ["ai"], form: "ai", optional: true }],
   notes: [
     { what: "A Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
     { what: "An AI provider", anyOf: ["ai"], form: "ai" },

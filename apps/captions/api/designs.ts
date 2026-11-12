@@ -51,8 +51,10 @@ async function read(owner: string, id: string): Promise<Design | null> {
 async function save(d: Design): Promise<Design> {
   await mkdir(dirOf(d.owner), { recursive: true });
   const file = fileOf(d.owner, d.id);
-  await writeFile(`${file}.tmp`, JSON.stringify(d));
-  await rename(`${file}.tmp`, file);
+  // a file of its own for each save: two at once (a save by hand and an AI's) never write into each other
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tmp, JSON.stringify(d));
+  await rename(tmp, file);
   return d;
 }
 
@@ -94,7 +96,7 @@ export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from 
 - {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"upper":false,"outline":{"color":"#rrggbb","width":8}}: the words wrap inside w; size is the letter height in pixels.
 - {"type":"shape","shape":"rect|ellipse","fill":"#rrggbb","radius":0,"stroke":{"color":"#rrggbb","width":4}}
 - {"type":"image","picture":"<id>","fit":"cover|contain","radius":0}: only a picture listed under "Pictures".
-- {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes and paths only: no text, no image, no link, no script, no style element.`;
+- {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.`;
 const AUTHORS_WORDS = "The words on each page are the author's. Place every word of a page on that page, as written: you choose where the words go, how big they are and how they are split across text layers, and you never add, drop or change one.";
 
 export const DESIGN_SYSTEM = `You design pictures for a creator: carousel slides, video covers and thumbnails. Your design is data, not a picture: pages of layers that the app draws exactly as you give them, and that the person then moves, resizes and restyles by hand.
@@ -159,7 +161,10 @@ async function ask<T>(actor: string, prompt: { system: string; user: string }, i
 
 /** The person's AI designs the pages: the words stay the author's, the look is the picked style's brief and pictures. */
 export async function designPages(user: AuthVars["user"], d: Design, body: { look?: unknown; notes?: unknown }): Promise<DesignAnswer> {
-  const words = "session" in (d.from ?? {}) ? (await slidesOf(user, (d.from as { session: string }).session, (d.from as { doc: string }).doc)).slides : d.pages.map((p) => p.layers.flatMap((l) => (l.type === "text" ? [l.text] : [])).join("\n") || d.name);
+  // every page of the design, with the words it may place: a piece's slides as they are now, else what the page
+  // says (or the design's name). A page the person added beyond the slides is one of them, and stays
+  const mine = await pagesForAi(user, d);
+  const words = mine.words ?? mine.pages.map((p) => saidOn(p) || d.name);
   const lookId = typeof body.look === "string" ? body.look : body.look === null ? "" : (d.look ?? "");
   const style = lookId ? findAnimation(d.owner, lookId) : null;
   if (lookId && !style) throw new DesignError("That style is gone: pick another", 404);
@@ -183,14 +188,17 @@ export async function designPages(user: AuthVars["user"], d: Design, body: { loo
   // a page the answer has beyond the pages asked for is not looked at
   const made = cleanPages(raw.slice(0, words.length), { w: d.width, h: d.height, pictures: d.pictures, words });
   // a page for each page of words: one the answer left out, or left empty, stays as it was
-  const pages: DesignPage[] = words.map((_, k) => {
+  const pages: DesignPage[] = mine.pages.map((was, k) => {
     const now = made.pages[k];
-    if (now?.layers.length) return { ...now, id: d.pages[k]?.id ?? now.id };
+    if (now?.layers.length) return { ...now, id: was.id, ...(was.name ? { name: was.name } : {}) };
     made.notes.push(`Page ${k + 1}: nothing in the answer could be drawn, so it is as it was`);
-    return d.pages[k] ?? { id: `p${k + 1}`, background: "#ffffff", layers: [] };
+    return was;
   });
   if (!made.pages.some((p) => p.layers.length)) throw new DesignError(`The AI's design had nothing that could be drawn${made.notes.length ? ` (${made.notes.slice(0, 2).join("; ")})` : ""}`, 502);
-  const design = await save({ ...d, pages, ...(style ? { look: style.id } : { look: undefined }), updatedAt: Date.now() });
+  // onto the design as it is now: the AI can take a minute, and a design deleted meanwhile stays deleted
+  const still = await read(d.owner, d.id);
+  if (!still) throw new DesignError("Not found", 404);
+  const design = await save({ ...still, pages, ...(style ? { look: style.id } : { look: undefined }), updatedAt: Date.now() });
   return { design, notes: made.notes };
 }
 
@@ -231,7 +239,7 @@ async function forAi(user: AuthVars["user"], d: Design) {
       .slice(0, 12)
       .map((s) => ({ name: s.name, brief: s.brief.trim().slice(0, 600) })),
     pages: pages.map((p, k) => ({ page: k + 1, ...(words ? { words: words[k] } : {}), background: p.background, layers: p.layers })),
-    how: `${DESIGN_LAYERS}\n\n${words ? `${AUTHORS_WORDS} Each page's own are its "words"; to change them, change the piece's slide first.` : "Write only words the user asked for or agreed to."}\n\nTo change pages, give them as [{"page":1,"background":"#rrggbb","layers":[…]}]: each page given is replaced whole, the others stay.`,
+    how: `${DESIGN_LAYERS}\n\n${words ? `${AUTHORS_WORDS} Each page's own are its "words"; to change them, change the piece's slide first.` : "Write only words the user asked for or agreed to. A page numbered one past the last is added."}\n\nTo change pages, give them as [{"page":1,"background":"#rrggbb","layers":[…]}]: each page given is replaced whole, the others stay.`,
   };
 }
 
@@ -244,9 +252,10 @@ async function writeForAi(user: AuthVars["user"], d: Design, given: unknown): Pr
   let drawn = 0;
   for (const raw of given.slice(0, DESIGN_LIMITS.pages) as Array<Record<string, unknown> | null>) {
     const n = Number.isInteger(raw?.page) ? (raw!.page as number) : 0;
-    const was = pages[n - 1];
+    // a page one past the last is a new page, where the pages are not a piece's slides and there is room
+    const was = next[n - 1] ?? (!words && n === next.length + 1 && n <= DESIGN_LIMITS.pages ? { id: `p${Date.now().toString(36)}${n}`, background: "#ffffff", layers: [] } : undefined);
     if (!was) {
-      notes.push(`There is no page ${String(raw?.page)}: this design has ${pages.length}`);
+      notes.push(`There is no page ${String(raw?.page)}: this design has ${next.length}`);
       continue;
     }
     const made = cleanPages([raw], { w: d.width, h: d.height, pictures: d.pictures, ...(words ? { words: [words[n - 1] ?? ""] } : {}) });
@@ -330,7 +339,12 @@ designsApp.post("/", (c) =>
       d.name = named || (title.trim() || row.title).slice(0, DESIGN_LIMITS.name);
       d.from = { version: b.version, t: b.t };
       d.pages = [coverPage(await addPicture(d, frame, "jpg"), title, d.width, d.height)];
-    } else throw new DesignError("Say what the design is of: a carousel piece (session and doc) or a video's moment (version and t)");
+    } else if (b.blank === true) {
+      // a design of its own: empty pages to draw on
+      const count = Number.isInteger(b.pages) ? Math.min(DESIGN_LIMITS.pages, Math.max(1, b.pages as number)) : 1;
+      d.name = named || d.name;
+      d.pages = Array.from({ length: count }, (_, k) => ({ id: `p${k + 1}`, background: "#ffffff", layers: [] }));
+    } else throw new DesignError("Say what the design is of: a carousel piece (session and doc), a video's moment (version and t), or blank: true");
     return save(d);
   }),
 );

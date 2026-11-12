@@ -30,7 +30,7 @@ describe("Home tiles", () => {
       ["Distribute", ["Story Splitter", "Finals"]],
     ]);
     expect(other.map((t) => t.name)).toEqual([
-      "Media Library", "Audio Enhancer", "Caption Studio", "Video Notes", "Screen Recorder", "Guide Builder",
+      "Media Library", "Audio Enhancer", "Caption Studio", "Designer", "Video Notes", "Screen Recorder", "Guide Builder",
     ]);
   });
 

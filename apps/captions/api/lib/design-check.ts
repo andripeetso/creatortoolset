@@ -31,18 +31,77 @@ export const plainWords = (text: string): string => text.toLowerCase().replace(/
 /** A slide's text as words alone: its picture tokens taken out. */
 export const slideWords = (text: string): string => text.replace(PICTURE_TOKEN, " ").replace(/[ \t]+\n/g, "\n").trim();
 
+/** What a drawing may be made of: shapes, groups, gradients, clip paths and masks. Nothing that holds words, a picture, a link, a style sheet or a script. */
+const SVG_ELEMENTS = new Set(["svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "defs", "linearGradient", "radialGradient", "stop", "clipPath", "mask"]);
+const SVG_ATTRS = new Set(
+  "id d x y x1 y1 x2 y2 cx cy r rx ry fx fy width height points viewBox fill stroke stroke-width stroke-linecap stroke-linejoin stroke-dasharray stroke-dashoffset stroke-miterlimit stroke-opacity fill-opacity fill-rule clip-rule opacity transform gradientUnits gradientTransform spreadMethod offset stop-color stop-opacity clip-path mask clipPathUnits maskUnits maskContentUnits preserveAspectRatio vector-effect paint-order".split(
+    " ",
+  ),
+);
+/** A number, a colour, a path, a transform or a keyword: letters, digits and the few signs those are written with. No address, no escape, nothing to decode. */
+const SVG_VALUE = /^[\w\s#.,()%+-]*$/;
+/** The one reference a value may hold: to something inside the same drawing. */
+const SVG_REF = /^url\(#[\w-]+\)$/;
+const SVG_REFS = new Set(["fill", "stroke", "clip-path", "mask"]);
+const SVG_TAG = /<(\/?)([A-Za-z][\w:-]*)((?:\s+[\w:-]+\s*=\s*(?:"[^"<>]*"|'[^'<>]*'))*)\s*(\/?)>|([^<]+)/y;
+const SVG_ATTR = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+const SVG_MAX = { elements: 1500, depth: 24 } as const;
+
 /**
- * A drawing's markup, or null when it holds anything but shapes: a script, a handler, a link, an address, text, a
- * picture, a style sheet, an animation, a document type. It is drawn as a picture, where none of those would run, and
- * refused here all the same so that a saved design holds nothing a later reader might treat otherwise.
+ * A drawing's markup, written again from the parts of it that are known to be shapes, or null when it is not a
+ * drawing. Only the elements and attributes named above are kept, each value only when it can be nothing but a
+ * number, a colour, a path or a keyword; an attribute that is anything else (a handler, a link, a class) is left out,
+ * and a style attribute's own declarations are kept the same way. An element that is not a shape, words between the
+ * shapes, a reference to anything outside the drawing, or markup that cannot be read part by part refuses the whole
+ * drawing. What comes out is built here, so nothing passes by being written in a way the check did not think of.
  */
 export function safeSvg(svg: unknown): string | null {
-  if (typeof svg !== "string") return null;
-  const s = svg.trim();
-  if (s.length > DESIGN_LIMITS.svg || !/^<svg[\s>]/i.test(s) || !/<\/svg>\s*$/i.test(s) || !/\sviewBox\s*=/.test(s)) return null;
-  if (/<\s*(script|foreignObject|image|a|text|tspan|style|use|iframe|animate\w*|set|link|meta)[\s/>]/i.test(s)) return null;
-  if (/<!|\son\w+\s*=|href\s*=|javascript:|data:|url\(\s*(?!["']?#)/i.test(s)) return null;
-  return /\sxmlns\s*=/.test(s) ? s : s.replace(/^<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  if (typeof svg !== "string" || svg.length > DESIGN_LIMITS.svg) return null;
+  // a comment and the XML line on top say nothing that is drawn
+  const s = svg.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*<\?xml[^>]*\?>/, "").trim();
+  const open: string[] = [];
+  let out = "";
+  let at = 0;
+  let count = 0;
+  let done = false;
+  while (at < s.length) {
+    SVG_TAG.lastIndex = at;
+    const m = SVG_TAG.exec(s);
+    if (!m) return null;
+    at = SVG_TAG.lastIndex;
+    if (m[5] !== undefined) {
+      if (m[5].trim()) return null;
+      continue;
+    }
+    const name = m[2]!;
+    if (!SVG_ELEMENTS.has(name) || done) return null;
+    if (m[1]) {
+      if (m[3] || m[4] || open.pop() !== name) return null;
+      out += `</${name}>`;
+      done = !open.length;
+      continue;
+    }
+    // one drawing: the root is the only svg
+    if ((name === "svg") !== (open.length === 0)) return null;
+    if (++count > SVG_MAX.elements || open.length >= SVG_MAX.depth) return null;
+    const kept = new Map<string, string>();
+    const keep = (key: string, raw: string): boolean => {
+      const value = raw.trim();
+      if (/url\s*\(/i.test(value) && !(SVG_REF.test(value) && SVG_REFS.has(key))) return false;
+      if (SVG_ATTRS.has(key) && !kept.has(key) && SVG_VALUE.test(value)) kept.set(key, value);
+      return true;
+    };
+    for (const a of m[3]!.matchAll(SVG_ATTR)) {
+      const raw = a[2] ?? a[3] ?? "";
+      const parts = a[1] === "style" ? raw.split(";").map((d) => [d.slice(0, d.indexOf(":")).trim(), d.slice(d.indexOf(":") + 1)] as const) : [[a[1]!, raw] as const];
+      for (const [key, value] of parts) if (!keep(key, value)) return null;
+    }
+    if (name === "svg" && !/^[\d\s.,+-]+$/.test(kept.get("viewBox") ?? "")) return null;
+    out += `<${name}${name === "svg" ? ' xmlns="http://www.w3.org/2000/svg"' : ""}${[...kept].map(([k, v]) => ` ${k}="${v}"`).join("")}${m[4] ? "/" : ""}>`;
+    if (m[4]) done = !open.length;
+    else open.push(name);
+  }
+  return done && !open.length ? out : null;
 }
 
 export interface PageRules {
@@ -77,7 +136,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
   if (raw.type === "text") {
     const text = typeof raw.text === "string" ? raw.text.replace(/\r\n/g, "\n").trim().slice(0, DESIGN_LIMITS.text) : "";
     if (!text) return null;
-    if (own !== undefined && !plainWords(own).includes(plainWords(text))) {
+    // its words are a run of the page's own words, whole words: not a part of one, not letters out of two
+    if (own !== undefined && !` ${plainWords(own)} `.includes(` ${plainWords(text)} `)) {
       say(`“${text.replace(/\s+/g, " ").slice(0, 60)}” is not in its own words: left out`);
       return null;
     }
@@ -140,7 +200,11 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
   const notes: string[] = [];
   const pages: DesignPage[] = [];
   for (const [k, p] of (Array.isArray(raw) ? raw : []).slice(0, DESIGN_LIMITS.pages).entries()) {
-    if (!obj(p)) continue;
+    if (!obj(p)) {
+      // an AI's answer keeps a page's place: what comes after it stays with its own words
+      if (r.words) pages.push({ id: `p${k + 1}`, background: "#ffffff", layers: [] });
+      continue;
+    }
     const ids = new Set<string>();
     const layers: Layer[] = [];
     for (const l of (Array.isArray(p.layers) ? p.layers : []).slice(0, DESIGN_LIMITS.layers)) {

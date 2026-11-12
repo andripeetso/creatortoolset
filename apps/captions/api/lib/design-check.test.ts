@@ -53,7 +53,7 @@ describe("a design's pages, checked", () => {
   });
 
   it("holds a design to its limits: pages, layers, the length of a text", () => {
-    const many = cleanPages(Array.from({ length: 30 }, () => ({ layers: Array.from({ length: 60 }, () => text({ text: "x".repeat(900) })) })), rules).pages;
+    const many = cleanPages(Array.from({ length: 30 }, () => ({ layers: Array.from({ length: 60 }, () => text({ text: "x".repeat(DESIGN_LIMITS.text + 300) })) })), rules).pages;
     expect(many).toHaveLength(DESIGN_LIMITS.pages);
     expect(many[0]!.layers).toHaveLength(DESIGN_LIMITS.layers);
     expect(many[0]!.layers[0]).toMatchObject({ text: "x".repeat(DESIGN_LIMITS.text) });
@@ -66,11 +66,33 @@ describe("a drawing is shapes only", () => {
   it("takes shapes and paths, and names its own kind when the markup did not", () => {
     expect(safeSvg(ok)).toBe(ok.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"'));
     expect(safeSvg(`  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="url(#g)"/></svg> `)).toContain('fill="url(#g)"');
+    // a gradient, a clip, a comment and the XML line on top: what an illustration is usually written with
+    const drawn = safeSvg(`<?xml version="1.0"?>\n<svg viewBox="0 0 10 10">\n  <!-- the sun -->\n  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fc0"/><stop offset="1" stop-color="rgb(255, 120, 0)"/></linearGradient></defs>\n  <g transform="rotate(10 5 5)"><circle cx="5" cy="5" r="4" fill="url(#g)" stroke-linecap="round"/></g>\n</svg>`);
+    expect(drawn).toBe('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fc0"/><stop offset="1" stop-color="rgb(255, 120, 0)"/></linearGradient></defs><g transform="rotate(10 5 5)"><circle cx="5" cy="5" r="4" fill="url(#g)" stroke-linecap="round"/></g></svg>');
+  });
+  it("is written again from its shapes: what is not a shape's own attribute is left out, and a style attribute's declarations are kept as attributes", () => {
+    expect(safeSvg('<svg viewBox="0 0 1 1" onload="x()" class="a" data-x="1"><rect width="1" height="1" style="fill:#f00; stroke: #000;behavior:url(#x)" href="#a" xlink:href="#b"/></svg>')).toBeNull();
+    expect(safeSvg('<svg viewBox="0 0 1 1" onload="x()" class="a" data-x="1"><rect width="1" height="1" style="fill:#f00; stroke: #000;cursor:pointer" href="#a" xlink:href="#b" fill="&#35;00f"/></svg>')).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#f00" stroke="#000"/></svg>',
+    );
   });
   it("refuses anything that could run, load or say something: scripts, handlers, links, pictures, text, styles, animations, addresses", () => {
     for (const bad of [
       '<svg viewBox="0 0 1 1"><script>1</script></svg>',
-      '<svg viewBox="0 0 1 1" onload="x()"><rect/></svg>',
+      // written so a check by pattern would miss it: a prefix, an entity, an escape, a second document, text, a data block
+      '<svg viewBox="0 0 1 1"><x:style xmlns:x="http://www.w3.org/2000/svg">@import "https://example.com/a.css";</x:style></svg>',
+      '<svg viewBox="0 0 1 1"><x:foreignObject xmlns:x="http://www.w3.org/2000/svg"><embed src="file:///etc/passwd"/></x:foreignObject></svg>',
+      '<svg viewBox="0 0 1 1"><rect fill="&#117;rl(https://example.com/a.svg#x)"/><feImage href="https://example.com/a.png"/></svg>',
+      '<svg viewBox="0 0 1 1"><rect style="fill:u\\72l(https://example.com/a.svg#x)"/><filter id="f"><feImage/></filter></svg>',
+      '<svg viewBox="0 0 1 1"><rect style="fill: URL( https://example.com/a.svg#x )"/></svg>',
+      '<svg viewBox="0 0 1 1"><rect/></svg><svg viewBox="0 0 1 1"><rect/></svg>',
+      '<svg viewBox="0 0 1 1"><svg viewBox="0 0 1 1"><rect/></svg></svg>',
+      '<svg viewBox="0 0 1 1"><![CDATA[<script>1</script>]]><rect/></svg>',
+      '<svg viewBox="0 0 1 1">hello<rect/></svg>',
+      '<svg viewBox="0 0 1 1"><rect></svg>',
+      '<svg viewBox="0 0 1 1"><rect width=1/></svg>',
+      '<svg viewBox="javascript:1"><rect/></svg>',
+      `<svg viewBox="0 0 1 1">${"<g>".repeat(30)}${"</g>".repeat(30)}</svg>`,
       '<svg viewBox="0 0 1 1"><a href="https://example.com"><rect/></a></svg>',
       '<svg viewBox="0 0 1 1"><image href="https://example.com/a.png"/></svg>',
       '<svg viewBox="0 0 1 1"><text>Buy now</text></svg>',
@@ -109,6 +131,14 @@ describe("an AI's words on the page", () => {
     // words of the page it left off are named; a word said twice on the page covers the slide's one only once
     const half = cleanPages([{ layers: [{ ...text, x: 40, y: 40, text: "Roll" }, { ...text, x: 40, y: 400, text: "Roll" }] }], { w: 1080, h: 1350, pictures: [], words: ["Roll it out, roll it back"] });
     expect(half.notes).toEqual(["Page 1: these words of it are not on the page: it out it back"]);
+    // its words are whole words of the page, in a run: a part of a word, or the end of one and the start of the next, are not
+    const parts = cleanPages([{ layers: [{ ...text, x: 40, y: 40, text: "ol" }, { ...text, x: 40, y: 400, text: "it ou" }, { ...text, x: 40, y: 800, text: "it out, roll" }] }], { w: 1080, h: 1350, pictures: [], words: ["Roll it out, roll it back"] });
+    expect(parts.pages[0]!.layers.map((l) => l.type === "text" && l.text)).toEqual(["it out, roll"]);
+    expect(parts.notes.slice(0, 2)).toEqual(["Page 1: “ol” is not in its own words: left out", "Page 1: “it ou” is not in its own words: left out"]);
+    // a page of an AI's answer that is no page keeps its place, so the next one is checked against its own words
+    const gap = cleanPages([null, { layers: [{ ...text, x: 40, y: 40, text: "Second" }] }], { w: 1080, h: 1350, pictures: [], words: ["First", "Second"] });
+    expect(gap.pages.map((p) => p.layers.length)).toEqual([0, 1]);
+    expect(gap.notes).toEqual([]);
     const own = cleanPages([{ layers: [text] }], { w: 1080, h: 1350, pictures: [] });
     expect(own.pages[0]!.layers[0]).toMatchObject({ x: 540, y: -30, w: 1000 });
     expect(own.notes).toEqual([]);

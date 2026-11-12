@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { Circle, Download, Hand, ImagePlus, Loader2, MousePointer2, Redo2, Sparkles, Square, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import type { AnimationStyle } from "@contracts/editor-styles";
@@ -59,8 +59,13 @@ const BAR = "border-[#e6e6e6] bg-white text-zinc-50 dark:border-[#444] dark:bg-[
  */
 let clip: { layers: Layer[]; text: string; wrote: boolean } | null = null;
 
-export default function DesignPage() {
+/** One designer a design: another design's address starts it afresh (what is picked, the view, the steps to undo). */
+export default function DesignRoute() {
   const { id = "" } = useParams();
+  return <DesignPage key={id} id={id} />;
+}
+
+function DesignPage({ id }: { id: string }) {
   const [design, setDesign] = useState<Design | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLive] = useState<Page | null>(null);
@@ -87,6 +92,7 @@ export default function DesignPage() {
   useEffect(() => {
     getDesign(id).then(
       (d) => {
+        server.current = { pages: d.pages, at: d.updatedAt };
         setDesign(d);
         setHist(freshHist(d.pages));
         setLook(d.look ?? "");
@@ -138,24 +144,62 @@ export default function DesignPage() {
       const img = new Image();
       loaded.set(src, img);
       img.onload = () => setVersion((v) => v + 1);
+      img.onerror = () => setError("A picture on a page could not be loaded");
       img.src = l.type === "image" ? pictureUrl(design.id, src) : drawingUrl(src);
     }
   }, [pages, design, loaded]);
 
+  /**
+   * What the server has of this design, as far as this window knows: the pages as they were last read from it or
+   * sent to it (the very objects, so a page changed here since is one that is not among them), and when it was last
+   * changed there.
+   */
+  const server = useRef<{ pages: Page[]; at: number }>({ pages: [], at: 0 });
+  /** The pages not sent yet. */
+  const unsaved = useRef<Page[] | null>(null);
+  const send = useCallback(
+    (pages: Page[]) => {
+      unsaved.current = null;
+      setSaved("saving");
+      return saveDesign(id, { pages }).then(
+        (d) => {
+          server.current = { pages, at: d.updatedAt };
+          setSaved(unsaved.current ? "unsaved" : "saved");
+        },
+        (e) => {
+          unsaved.current ??= pages;
+          setSaved("unsaved");
+          setError(message(e));
+        },
+      );
+    },
+    [id],
+  );
   // saved a moment after the last change
   const first = useRef(true);
   useEffect(() => {
     if (!design || !hist) return;
     if (first.current) return void (first.current = false);
+    unsaved.current = hist.now;
     setSaved("unsaved");
-    const t = setTimeout(() => {
-      setSaved("saving");
-      saveDesign(design.id, { pages: hist.now }).then(() => setSaved("saved"), (e) => (setSaved("unsaved"), setError(message(e))));
-    }, 700);
+    const t = setTimeout(() => void send(hist.now), 700);
     return () => clearTimeout(t);
     // the pages alone: the design's other fields change when it is saved, and saving must not save again
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hist?.now]);
+  // leaving (another page of the app, the window closing) sends what that moment had not sent yet
+  useEffect(() => {
+    const flush = () => {
+      const pages = unsaved.current;
+      unsaved.current = null;
+      if (pages) void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ pages }) }).catch(() => {});
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [id]);
 
   // the pages as of the last drawing, for what finishes later (an upload)
   const latest = useRef(pages);
@@ -186,17 +230,26 @@ export default function DesignPage() {
   };
 
   // A change made somewhere else (the assistant designing the pages, another window) is shown at once, as a step ⌘Z
-  // takes back. This window's own saves are not told back to it (lib/sync.ts). What comes from the server is not
-  // saved again; what was changed here in the moment before is the step behind it.
+  // takes back. This window's own saves are not told back to it (lib/sync.ts), and a notice about another design, or
+  // an answer that comes late, changes nothing (the design is no newer than what this window knows). A page changed
+  // here and not sent yet stays as it is here, and is then sent: the hand that was on it is never thrown away. Every
+  // other page is the server's, and what came from the server is not saved back.
   useEffect(
     () =>
       onTopic("designs", () => {
         getDesign(id).then(
           (d) => {
+            if (d.updatedAt <= server.current.at) return;
+            const known = server.current.pages;
+            const mine = latest.current.filter((p) => !known.includes(p));
+            const merged = [...d.pages.map((p) => mine.find((m) => m.id === p.id) ?? p), ...mine.filter((m) => !d.pages.some((p) => p.id === m.id))];
+            const same = JSON.stringify(merged) === JSON.stringify(latest.current);
+            // the pages this window holds that are the server's: the server's own when they go on the canvas, else the ones here
+            server.current = { pages: same ? latest.current.filter((p) => !mine.includes(p)) : d.pages, at: d.updatedAt };
             setDesign(d);
-            if (JSON.stringify(d.pages) === JSON.stringify(latest.current)) return;
-            first.current = true;
-            change(() => d.pages);
+            if (same) return;
+            if (!mine.length) first.current = true;
+            change(() => merged);
           },
           () => {},
         );
@@ -385,6 +438,17 @@ export default function DesignPage() {
       const files: { name: string; data: Uint8Array }[] = [];
       for (const [n, p] of pages.entries()) {
         if (only !== undefined && n !== only) continue;
+        // every picture and drawing of the page is there first: a page is never saved with a grey box where one goes
+        for (const l of p.layers) {
+          const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
+          if (!img || (img.complete && img.naturalWidth)) continue;
+          const gone = new Error(`A picture on ${pageName(p, n)} could not be loaded: nothing was exported`);
+          if (img.complete) throw gone;
+          await new Promise<void>((ok, fail) => {
+            img.addEventListener("load", () => ok(), { once: true });
+            img.addEventListener("error", () => fail(gone), { once: true });
+          });
+        }
         const c = document.createElement("canvas");
         c.width = design.width;
         c.height = design.height;
@@ -407,8 +471,11 @@ export default function DesignPage() {
     setSaid([]);
     try {
       // what is on the pages now goes first, so the AI starts from the words as they are
-      await saveDesign(design.id, { pages: hist.now });
+      await send(hist.now);
       const out = await designWithAi(design.id, { look: look || null, notes });
+      // what the AI made is on the server already: shown as one step, and not saved back
+      server.current = { pages: out.design.pages, at: out.design.updatedAt };
+      first.current = true;
       setDesign(out.design);
       change(() => out.design.pages);
       pick(k, []);
@@ -429,7 +496,7 @@ export default function DesignPage() {
     );
   }
 
-  const back = design.from && "session" in design.from ? `/workshop/sessions/${design.from.session}` : undefined;
+  const piece = design.from && "session" in design.from ? `/workshop/sessions/${design.from.session}` : null;
   const item = (label: string, keys: string, onSelect: () => void, disabled = false) => (
     <ContextMenuItem disabled={disabled} onSelect={onSelect}>
       {label}
@@ -440,7 +507,12 @@ export default function DesignPage() {
 
   return (
     <div className="flex h-screen flex-col">
-      <AppBar tool="Designer" to={back} trail={<span className="truncate font-normal text-zinc-500">{design.name}</span>}>
+      <AppBar tool="Designer" to="/design" trail={<span className="truncate font-normal text-zinc-500">{design.name}</span>}>
+        {piece && (
+          <Button size="sm" variant="ghost" asChild>
+            <Link to={piece}>Its Workshop piece</Link>
+          </Button>
+        )}
         <span className="text-xs text-zinc-500" aria-live="polite">
           {saved === "unsaved" ? "Not saved yet" : saved === "saving" ? "Saving" : ""}
         </span>

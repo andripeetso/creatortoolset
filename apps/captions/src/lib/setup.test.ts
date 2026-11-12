@@ -207,7 +207,8 @@ it("an answer switches on only the extra that clearly fits it", () => {
   expect(toolsFor(["recording"], TOOLS)).toContain("notes");
   expect(toolsFor(["course"], TOOLS)).toContain("guides");
   expect(toolsFor(["podcast"], TOOLS)).not.toContain("captions");
-  expect(toolsFor(["youtube", "carousel", "ad"], TOOLS)).toEqual(toolsFor([], TOOLS)); // no extra fits
+  expect(toolsFor(["carousel"], TOOLS)).toContain("design");
+  expect(toolsFor(["youtube", "ad"], TOOLS)).toEqual(toolsFor([], TOOLS)); // no extra fits
 });
 
 it("Story Splitter is never switched on by an answer", () => {

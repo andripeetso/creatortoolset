@@ -8,6 +8,7 @@ import {
   Star,
   MessageSquareText,
   NotebookPen,
+  PenTool,
   ScanSearch,
   ScreenShare,
   Scissors,
@@ -114,6 +115,13 @@ const BUILTIN_OTHER: Tool[] = [
     name: "Caption Studio",
     desc: "Transcribe, caption and export: burned-in videos or alpha overlays.",
     can: (me) => canUse(me, "captions"),
+  },
+  {
+    to: "/design",
+    icon: PenTool,
+    name: "Designer",
+    desc: "Carousels, covers and thumbnails in layers: your AI designs them, you edit anything and save the PNGs.",
+    can: (me) => canUse(me, "design"),
   },
   {
     to: "/clips",

@@ -1224,7 +1224,7 @@ export default function WorkshopSessionPage() {
                             preview={docPreview}
                             onPreview={() => setDocPreview((p) => !p)}
                             onVisualize={() => setVisualize(true)}
-                            onDesign={() => void openDesign()}
+                            onDesign={canUse(me, "design") ? () => void openDesign() : undefined}
                             notMine={notMine}
                             onNotMine={toggleNotMine}
                             changes={showChanges}

@@ -17,8 +17,8 @@ export const designTools: ToolModule = {
     {
       name: "design_make",
       description:
-        "Start a design the user edits by hand in the designer: a Workshop carousel piece's slides as pages (session, and doc: the piece's id; a piece that has a design gets that one back), or a cover or thumbnail from a library video's frame (version: the video's version id, t in seconds, title). design_layers designs it.",
-      inputSchema: { type: "object", properties: { session: str, doc: str, version: str, t: { type: "number" }, title: str, format: { type: "string", enum: DESIGN_FORMATS.map((f) => f.id) } } },
+        "Start a design the user edits by hand in the designer: a Workshop carousel piece's slides as pages (session, and doc: the piece's id; a piece that has a design gets that one back), or a cover or thumbnail from a library video's frame (version: the video's version id, t in seconds, title), or blank pages (format, name, pages). design_layers designs it.",
+      inputSchema: { type: "object", properties: { session: str, doc: str, version: str, t: { type: "number" }, title: str, format: { type: "string", enum: DESIGN_FORMATS.map((f) => f.id) }, name: str, pages: { type: "integer" } } },
     },
     {
       name: "design_layers",
@@ -29,13 +29,17 @@ export const designTools: ToolModule = {
   handlers: {
     design_make: async (a, ctx) => {
       const piece = !!a.session && !!a.doc;
-      if (!piece && !a.version) throw new ToolError("Say what to design: a carousel piece (session and doc), or a library video's frame (version, and t in seconds).");
+      if (!piece && !a.version && !a.format) throw new ToolError("Say what to design: a carousel piece (session and doc), a library video's frame (version, and t in seconds), or blank pages (format, and a name).");
       if (piece) {
         // the piece's own design, with whatever the person has done on it by hand: never a second one
         const had = (await ctx.json<DesignSummary[]>(`/api/designs?session=${enc(a.session)}&doc=${enc(a.doc)}`))[0];
         if (had) return { ...about(ctx.origin, had, had.pages), existed: true };
       }
-      const d = await ctx.json<Design>("/api/designs", "POST", piece ? { format: a.format ?? "portrait", session: a.session, doc: a.doc } : { format: a.format ?? "cover", version: a.version, t: Number(a.t) || 0, title: a.title });
+      const d = await ctx.json<Design>(
+        "/api/designs",
+        "POST",
+        piece ? { format: a.format ?? "portrait", session: a.session, doc: a.doc } : a.version ? { format: a.format ?? "cover", version: a.version, t: Number(a.t) || 0, title: a.title } : { format: a.format, blank: true, name: a.name, pages: a.pages },
+      );
       return about(ctx.origin, d, d.pages.length);
     },
     design_layers: async (a, ctx) => {
