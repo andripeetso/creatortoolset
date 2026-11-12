@@ -217,3 +217,28 @@ export async function unlinkComputer(d: LinkDeps, accountId: string, computerId:
     | undefined;
   if (row) await removeComputer(d, row);
 }
+
+/** The account id whose token may read connectStats: the hosted site mints it with the shared secret; no real account has a colon. */
+export const STATS_ACCOUNT = ':stats';
+
+/**
+ * Counts for the owner's board on the hosted site (owner, 2026-11-12: "how many people connected"): computers linked,
+ * the accounts they belong to, how many have a tunnel now, and links per day for 30 days (newest first). Counts only:
+ * no names, hostnames or account ids. Times here are in seconds.
+ */
+export function connectStats(db: DatabaseSync, now: number) {
+  const n = (sql: string, ...args: number[]) => Number((db.prepare(sql).get(...args) as { n: number }).n);
+  const day = (s: number) => new Date(s * 1000).toISOString().slice(0, 10);
+  const since = now - 30 * 86_400;
+  const perDay = new Map<string, number>();
+  for (const r of db.prepare('SELECT created_at FROM computers WHERE created_at >= ?').all(since) as { created_at: number }[])
+    perDay.set(day(r.created_at), (perDay.get(day(r.created_at)) ?? 0) + 1);
+  const linkedDaily = Array.from({ length: 30 }, (_, i) => day(now - i * 86_400)).map((d) => ({ day: d, linked: perDay.get(d) ?? 0 }));
+  return {
+    computers: n('SELECT COUNT(*) AS n FROM computers'),
+    accounts: n('SELECT COUNT(DISTINCT account_id) AS n FROM computers'),
+    up: n("SELECT COUNT(*) AS n FROM computers WHERE released_at IS NULL AND tunnel_id != ''"),
+    linked30: n('SELECT COUNT(*) AS n FROM computers WHERE created_at >= ?', since),
+    linkedDaily,
+  };
+}

@@ -142,6 +142,7 @@ export function ThisComputer({ version }: { version?: string }) {
     <Section title="This computer">
       <Card>
         {version && <Row id="app-version" title="Version" status={`Creator Toolset ${version}`} />}
+        <Reports />
         <Row
           id="saved-lists"
           title="Cache"
@@ -155,5 +156,41 @@ export function ThisComputer({ version }: { version?: string }) {
         />
       </Card>
     </Section>
+  );
+}
+
+/**
+ * The downloaded app's anonymous usage and crash reports (api/lib/telemetry.ts). Shown only in a build that sends them,
+ * to the admin; saves at once.
+ */
+function Reports() {
+  const admin = useAuth((s) => s.me?.role === "admin");
+  const [state, setState] = useState<{ available: boolean; on: boolean } | null>(null);
+  useEffect(() => {
+    if (!admin) return;
+    fetch("/api/telemetry")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setState)
+      .catch(() => {});
+  }, [admin]);
+  if (!admin || !state?.available) return null;
+  const toggle = async (on: boolean) => {
+    setState({ ...state, on });
+    try {
+      const r = await fetch("/api/telemetry", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
+      if (!r.ok) throw new Error(String(r.status));
+      setState(await r.json());
+    } catch {
+      setState({ ...state, on: !on });
+      saveFailed("The switch did not save. Try again.");
+    }
+  };
+  return (
+    <Row
+      id="usage-reports"
+      title="Send anonymous usage and crash reports"
+      description="Which pages you open, which AIs are set up, and error messages, under a random id. Never your name, files or content."
+      control={<Switch checked={state.on} aria-label="Send anonymous usage and crash reports" onCheckedChange={(on) => void toggle(on)} />}
+    />
   );
 }

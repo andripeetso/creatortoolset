@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
@@ -33,6 +34,7 @@ import { skillsApp } from "./skills";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
+import { reportCrash, startTelemetry, telemetryApp } from "./lib/telemetry";
 import { transcribeApp } from "./transcribe";
 import { authApp, getApiKeyUser, getSessionUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
 import { adminApp } from "./admin";
@@ -435,6 +437,8 @@ if (process.env.NODE_ENV !== "test") {
   startTrashPurge();
   startWatchFolders();
   startPlugins(serverPlugins, startFolderPlugin);
+  // the downloaded app's anonymous check-ins and crash reports (lib/telemetry.ts; off in Settings → General)
+  startTelemetry();
   // assistant messages that waited for their videos when the server stopped
   resumeFromDisk();
   // dropped files: the 7-day ones, and uploads nobody finished (no part for an hour)
@@ -444,6 +448,7 @@ if (process.env.NODE_ENV !== "test") {
 app.route("/api/stories", storiesApp);
 app.route("/api/folders", foldersApp);
 app.route("/api/account-profile", accountProfileApp);
+app.route("/api/telemetry", telemetryApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 mountPlugins(app, serverPlugins);
 mountPluginsList(app);
@@ -461,6 +466,13 @@ if (hostedMode()) {
   app.route("/api/auth", inviteApp);
 }
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
+// Hono's own answer for an error no route caught, plus a crash report (lib/telemetry.ts)
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
+  console.error(err);
+  reportCrash("server", err);
+  return c.text("Internal Server Error", 500);
+});
 
 export default app;
 

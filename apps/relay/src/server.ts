@@ -4,7 +4,7 @@ import type { KeyObject } from 'node:crypto';
 import type { Cloudflare } from './cloudflare.ts';
 import { HttpError } from './errors.ts';
 import { DEVICE_GRANT, decideDevice, pollDeviceGrant, startDeviceGrant } from './device.ts';
-import { createChallenge, linkComputer, listComputers, renewTunnel, ticketFor, unlinkComputer, type LinkDeps } from './link.ts';
+import { connectStats, createChallenge, linkComputer, listComputers, renewTunnel, STATS_ACCOUNT, ticketFor, unlinkComputer, type LinkDeps } from './link.ts';
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
@@ -106,6 +106,10 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
         computers.push({ id: r.id, name: r.name, hostname: r.hostname, status: status ?? 'gone', created_at: r.created_at });
       }
       return json(200, { computers });
+    }
+    if (req.method === 'GET' && path === '/v1/stats') {
+      if (accountOf(d, req) !== STATS_ACCOUNT) throw new HttpError(403, 'forbidden');
+      return json(200, connectStats(d.db, d.now()));
     }
     const m = /^\/v1\/computers\/([0-9a-f]{32})(\/ticket|\/tunnel)?$/.exec(path);
     if (m && req.method === 'POST' && m[2] === '/ticket') {

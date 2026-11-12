@@ -2,6 +2,7 @@
 import "@/lib/undo";
 import { CornerNav } from "@/components/CornerNav";
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, type Location } from "react-router";
+import { useTelemetry } from "@/lib/telemetry";
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from "react";
 import ToolsetHome from "./pages/ToolsetHome";
 import Home from "./pages/Home";
@@ -274,6 +275,7 @@ export default function App() {
   const look = useAppearance();
   useRootTint(look.projectTint, look.ownColour);
   const location = useLocation();
+  useTelemetry(location.pathname);
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never
   // pressed Done but has projects gets no setup window, and lost its assistant with the old check
   const setupUp = useSetupShown((s) => s.shown);

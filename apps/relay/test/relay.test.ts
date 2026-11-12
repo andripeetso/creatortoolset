@@ -504,3 +504,19 @@ test('cloudflare: a deleted tunnel (Cloudflare still answers it, with deleted_at
   assert.equal(await cf({ id: 'x', status: 'down', deleted_at: '2026-11-12T15:25:17Z' }).tunnelStatus('x'), null);
   assert.equal(await cf({ id: 'x', status: 'down', deleted_at: null }).tunnelStatus('x'), 'down');
 });
+
+// --- stats for the owner's board ---
+
+test('stats: counts only, and only for the :stats token', async () => {
+  await linkOne(acct('acct-1'), 'One');
+  await linkOne(acct('acct-1'), 'Two');
+  await linkOne(acct('acct-2'), 'Three');
+  assert.equal((await api('GET', '/v1/stats', { token: acct('acct-1') })).status, 403);
+  assert.equal((await api('GET', '/v1/stats')).status, 401);
+  const r = await api('GET', '/v1/stats', { token: acct(':stats') });
+  assert.equal(r.status, 200);
+  assert.deepEqual({ ...r.json, linkedDaily: undefined }, { computers: 3, accounts: 2, up: 3, linked30: 3, linkedDaily: undefined });
+  assert.equal(r.json.linkedDaily.length, 30);
+  assert.equal(r.json.linkedDaily[0].linked, 3);
+  assert.ok(!r.text.includes('One') && !r.text.includes('acct-1'));
+});
