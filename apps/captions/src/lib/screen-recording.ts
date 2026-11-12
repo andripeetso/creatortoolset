@@ -735,6 +735,82 @@ function roundRect(ctx: CanvasRenderingContext2D, r: Rect, radius: number) {
   ctx.roundRect(r.x, r.y, r.w, r.h, radius);
 }
 
+const shadows = new Map<string, { image: HTMLCanvasElement; reach: number; cell: number } | null>();
+
+/**
+ * The soft shadow under the window `r`. A blurred shadow the size of the window costs the Mac's web view most of a
+ * screen refresh, every frame: a preview with it repainted 26 to 31 times a second during a zoom's move, 50 to 60
+ * without. So the shadow is made once, small (a square just large enough for four corners), and laid out from that:
+ * the four corners as they are, the sides stretched between them. It looks the same, since a side's shadow is the
+ * same all along it. A window's corner radius changes while it grows with a zoom; a new small one is made then.
+ * Where no canvas can be made beside this one (tests), it is drawn the slow way.
+ */
+function drawShadow(ctx: CanvasRenderingContext2D, r: Rect, exact: number, blur: number, drop: number, amount: number) {
+  const radius = Math.round(exact); // a shadow blurred this much shows no half pixel of its corner, and fewer are made
+  const reach = Math.ceil(blur * 2 + drop); // how far outside the window the shadow goes
+  // a corner, and as much straight side again as the shadow reaches: a side cut from there is as dark as a long one
+  const cell = reach * 2 + radius;
+  // on whole pixels, so that the nine parts meet without a seam
+  const x = Math.round(r.x);
+  const y = Math.round(r.y);
+  const w = Math.round(r.x + r.w) - x;
+  const h = Math.round(r.y + r.h) - y;
+  const key = `${radius}|${blur.toFixed(1)}|${drop.toFixed(1)}|${amount}`;
+  let made = shadows.get(key);
+  if (made === undefined) {
+    if (shadows.size >= 6) shadows.clear();
+    const image = typeof document === "undefined" ? null : document.createElement("canvas");
+    const own = image?.getContext("2d");
+    if (image && own) {
+      image.width = image.height = cell * 2;
+      own.shadowColor = `rgba(0,0,0,${amount})`;
+      own.shadowBlur = blur;
+      own.shadowOffsetY = drop;
+      own.fillStyle = "#000";
+      own.beginPath();
+      own.roundRect(reach, reach, (cell - reach) * 2, (cell - reach) * 2, radius);
+      own.fill();
+      made = { image, reach, cell };
+    } else made = null;
+    shadows.set(key, made);
+  }
+  const inner = cell - reach; // how far a corner part goes into the window
+  if (!made || w < inner * 2 || h < inner * 2) {
+    ctx.save();
+    ctx.shadowColor = `rgba(0,0,0,${amount})`;
+    ctx.shadowBlur = blur;
+    ctx.shadowOffsetY = drop;
+    ctx.fillStyle = "#000";
+    roundRect(ctx, r, radius);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  const { image } = made;
+  const left = x - reach;
+  const top = y - reach;
+  const right = x + w + reach - cell;
+  const bottom = y + h + reach - cell;
+  const midW = w - inner * 2;
+  const midH = h - inner * 2;
+  ctx.drawImage(image, 0, 0, cell, cell, left, top, cell, cell);
+  ctx.drawImage(image, cell, 0, cell, cell, right, top, cell, cell);
+  ctx.drawImage(image, 0, cell, cell, cell, left, bottom, cell, cell);
+  ctx.drawImage(image, cell, cell, cell, cell, right, bottom, cell, cell);
+  if (midW > 0) {
+    ctx.drawImage(image, cell - 1, 0, 2, cell, left + cell, top, midW, cell);
+    ctx.drawImage(image, cell - 1, cell, 2, cell, left + cell, bottom, midW, cell);
+  }
+  if (midH > 0) {
+    ctx.drawImage(image, 0, cell - 1, cell, 2, left, top + cell, cell, midH);
+    ctx.drawImage(image, cell, cell - 1, cell, 2, right, top + cell, cell, midH);
+  }
+  if (midW > 0 && midH > 0) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(left + cell, top + cell, midW, midH);
+  }
+}
+
 /**
  * The camera in a rect: the centred crop that fills it (aspect fill), clipped to a rounded rect (a radius of half the
  * side makes a circle), optionally mirrored, with a soft shadow and a thin light border.
@@ -829,16 +905,9 @@ export function drawFrame(
   const { box, src, window, corners } = layout(look, path, t, srcW, srcH, outW, outH, cam, clicks);
   const radius = look.radius * short * corners;
   const shadow = shadowOf(look);
-  if (shadow > 0 && look.padding > 0) {
-    ctx.save();
-    ctx.shadowColor = `rgba(0,0,0,${shadow})`;
-    ctx.shadowBlur = short * 0.04;
-    ctx.shadowOffsetY = short * 0.012;
-    ctx.fillStyle = "#000";
-    roundRect(ctx, window, radius);
-    ctx.fill();
-    ctx.restore();
-  }
+  // a window that covers the frame has its shadow outside it
+  const covers = window.x <= 0 && window.y <= 0 && window.x + window.w >= outW && window.y + window.h >= outH;
+  if (shadow > 0 && look.padding > 0 && !covers) drawShadow(ctx, window, radius, short * 0.04, short * 0.012, shadow);
   ctx.save();
   roundRect(ctx, window, radius);
   ctx.clip();
