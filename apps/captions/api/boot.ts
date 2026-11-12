@@ -501,4 +501,7 @@ if (env.isProduction) {
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
+  // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
+  // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
+  if (process.env.pm_id !== undefined) process.once("SIGINT", () => server.close(() => process.exit(0)));
 }
