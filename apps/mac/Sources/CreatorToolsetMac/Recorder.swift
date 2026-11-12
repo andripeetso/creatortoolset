@@ -512,15 +512,22 @@ final class Recorder: ObservableObject {
                            onFolder: { [weak self] in self?.pickFolder() },
                            onShowFolder: { [weak self] in self?.showFolder() })
         cameraPreview(on: screen)
+        // the bubble follows the camera choice only: any other change of the toolbar leaves the open camera alone
         cameraWatch = setup.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { if self?.phase == .toolbar { self?.cameraPreview(on: screen) } }
+            DispatchQueue.main.async {
+                guard let self, self.phase == .toolbar, self.setup.cameraID != self.previewing else { return }
+                self.cameraPreview(on: screen)
+            }
         }
     }
 
     private var cameraWatch: AnyCancellable?
+    /// The camera choice the bubble shows ("none" for none).
+    private var previewing: String?
 
     /// The camera bubble follows the toolbar's camera choice while it is open.
     private func cameraPreview(on screen: NSScreen) {
+        previewing = setup.cameraID
         guard let device = setup.cameraDevice else { return CameraPreview.close() }
         Task {
             if await CameraDevices.requestAccess(), self.phase == .toolbar { CameraPreview.show(device: device, on: screen) }
@@ -533,6 +540,7 @@ final class Recorder: ObservableObject {
         RecordToolbar.close()
         CameraPreview.close()
         cameraWatch = nil
+        previewing = nil
         if phase == .toolbar { phase = .idle }
     }
 

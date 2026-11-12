@@ -199,6 +199,25 @@ final class RecorderTests: XCTestCase {
         XCTAssertGreaterThan(brightness(onItsSide, 4, 346), 200)     // as wide as the file
     }
 
+    /// The microphone's level changes 20 times a second while the toolbar is open; the toolbar's choices are not told
+    /// each time (the camera bubble follows them, and reopened the camera on every one).
+    @MainActor func testTheMicrophonesLevelIsNotAChangeOfTheToolbarsChoices() {
+        let setup = RecordSetup()
+        var told = 0
+        let watch = setup.objectWillChange.sink { told += 1 }
+        for n in 0..<20 { setup.level.value = Float(n) / 20 }
+        withExtendedLifetime(watch) { XCTAssertEqual(told, 0) }
+    }
+
+    /// An update waits until the person is away from the Mac, not just away from this app.
+    func testAnUpdateWaitsUntilNobodyIsAtTheMac() {
+        XCTAssertTrue(updateMayInstall(appActive: false, aiJobs: 0, recording: false, secondsSinceInput: 301))
+        XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 0, recording: false, secondsSinceInput: 60))   // working in another app
+        XCTAssertFalse(updateMayInstall(appActive: true, aiJobs: 0, recording: false, secondsSinceInput: 900))
+        XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 1, recording: false, secondsSinceInput: 900))
+        XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 0, recording: true, secondsSinceInput: 900))
+    }
+
     func testPointerOnTheMainDisplay() {
         // main display 1512×982 points: bottom-left origin in, top-left 0–1 out
         let main = CGRect(x: 0, y: 0, width: 1512, height: 982)
