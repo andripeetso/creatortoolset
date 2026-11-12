@@ -225,6 +225,8 @@ interface TurnInput {
   paths: string[];
   /** Videos dropped in the Mac app: their paths, read where they are (nothing uploads). */
   local: string[];
+  /** Where its pictures and pastes go in the Mac's assistant folder, which every reply shares: "" or "place-<n>/" (placeOf). */
+  dir?: string;
   context?: AssistantContext;
   /** One more line for the AI: the fit question, or what the reply carries on with. */
   note?: string;
@@ -287,14 +289,14 @@ function parseTurn(raw: unknown): TurnInput {
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
-const attachedName = (name: string, i: number, ext: string) => `attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
-const pastedName = (name: string, i: number) => `pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
+const attachedName = (name: string, i: number, ext: string, dir = "") => `${dir}attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
+const pastedName = (name: string, i: number, dir = "") => `${dir}pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
 
 /** The newest message's files for the Mac (the relay writes "base64:" entries as bytes), or undefined with none. */
 function filesFor(input: TurnInput): Record<string, string> | undefined {
   const files: Record<string, string> = {};
-  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type])] = `base64:${im.data}`));
-  input.pasted.forEach((p, i) => (files[pastedName(p.name, i)] = p.text));
+  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)] = `base64:${im.data}`));
+  input.pasted.forEach((p, i) => (files[pastedName(p.name, i, input.dir)] = p.text));
   return Object.keys(files).length ? files : undefined;
 }
 
@@ -579,7 +581,9 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
 
 /** The user's answer to one of their own replies' approvals, in whatever chat; null when there is no such approval. */
 export function answerApproval(username: string, id: string, allow: boolean): AssistantApproval | null {
-  for (const m of everyChat(load(username)).flat()) {
+  const all = everyChat(load(username)).flat();
+  // the Mac's ask ids are Claude's own tool-call ids: a waiting one first, should one ever repeat
+  for (const m of [...all.filter((x) => x.approvals?.some((a) => a.id === id && a.status === "waiting")), ...all]) {
     const a = m.approvals?.find((x) => x.id === id);
     if (!a) continue;
     if (expireApprovals(m) || a.status === "waiting") {
@@ -706,12 +710,12 @@ const marks = (m: AssistantMessage) =>
 function newestFacts(input: TurnInput): string[] {
   const out: string[] = [];
   const n = input.images.length;
-  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
+  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const p of input.local) out.push(`The user dropped a video from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
   if (input.note) out.push(input.note);
-  for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
+  for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i, input.dir)}.`);
   const c = input.context;
   if (c) {
     out.push(`The user is on ${c.path}${c.title ? ` (page title: ${c.title})` : ""}.${c.visible ? ` On screen: ${c.visible}` : ""}`);
@@ -821,6 +825,20 @@ const runsOf = (username: string) => running.get(username) ?? running.set(userna
 /** Replies sent from the Mac app (their page context said so) while they are written: their open panel can choose a folder (askFolder). */
 const fromMac = new Set<string>();
 
+/**
+ * Each reply being written has a place 0..MAX_RUNNING-1 of its own: the Mac writes every reply's pictures and pastes in
+ * one assistant folder, so two at once would write over each other's "pasted/01-…". Place 0 keeps the plain paths, and
+ * the folder holds at most MAX_RUNNING sets, each overwritten by the next reply in that place.
+ */
+const places = new Map<string, number>();
+function placeOf(username: string, reply: string): string {
+  const used = new Set([...runsOf(username).keys()].map((id) => places.get(id)));
+  let n = 0;
+  while (used.has(n)) n++;
+  places.set(reply, n);
+  return n ? `place-${n}/` : "";
+}
+
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
 async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
   const stop = new AbortController();
@@ -853,6 +871,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     sayLater(username, replyId);
     runsOf(username).delete(replyId);
     fromMac.delete(replyId);
+    places.delete(replyId);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
@@ -1054,7 +1073,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
     return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
   });
   const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
-  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], local: asked.localFiles ?? [], context: h.context, note: sent ?? h.fit };
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
   void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
   return true;

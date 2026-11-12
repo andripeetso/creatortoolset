@@ -30,7 +30,7 @@ async function person(name: string) {
   const login = await app.request("/api/auth/login", { method: "POST", ...json({ username: name, password: "password1" }) });
   const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
   const device = { authorization: `Bearer ${mac.token}` };
-  type Job = { id: string; user: string };
+  type Job = { id: string; user: string; files?: Record<string, string>; mcp: { token: string } };
   const get = async <T>(url: string) => (await (await app.request(url, { headers: { cookie } })).json()) as T;
   return {
     cookie,
@@ -67,8 +67,14 @@ async function settled(p: Person, chat: string) {
   return v;
 }
 
+/** One MCP tool call under a reply's job token. */
+async function tool(token: string, name: string, args: Record<string, unknown>) {
+  const r = await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }, { authorization: `Bearer ${token}` }) });
+  return ((await r.json()) as { result: { isError?: boolean } }).result;
+}
+
 /** Jobs claimed now, by the words in their prompt (claim order says nothing). */
-const byText = (jobs: Array<{ id: string; user: string }>, words: string) => jobs.find((j) => j.user.includes(words))!;
+const byText = <J extends { user: string }>(jobs: J[], words: string) => jobs.find((j) => j.user.includes(words))!;
 
 const heard: Attention[] = [];
 onAttention((a) => void heard.push(a));
@@ -217,5 +223,63 @@ describe("many chats", () => {
     const last = await third;
     for (const j of [...two, last]) await p.answer(j.id, "Ok.");
     expect([...two, last].map((j) => others.find((id) => j.user.includes(id))).sort()).toEqual([...others].sort());
+  });
+
+  it("two replies at once each get their own place for pastes on the Mac: the second's paths don't overwrite the first's", async () => {
+    const p = await person("gil");
+    const b = await p.make();
+    await p.send({ text: "Open one", pasted: [{ name: "Notes", text: "first notes" }] });
+    await p.sendTo(b, { text: "Other one", pasted: [{ name: "Notes", text: "second notes" }] });
+    const jobs = [await p.claim(), await p.claim()];
+    const one = byText(jobs, "Open one");
+    const two = byText(jobs, "Other one");
+    expect(one.files).toEqual({ "pasted/01-notes.txt": "first notes" });
+    expect(two.files).toEqual({ "place-1/pasted/01-notes.txt": "second notes" });
+    expect(two.user).toContain("in place-1/pasted/01-notes.txt");
+    await p.answer(one.id, "Read.");
+    await settled(p, (await p.view()).id);
+    // the free place 0 goes to the next reply
+    await p.send({ text: "Open two", pasted: [{ name: "Notes", text: "third" }] });
+    const three = await p.claim();
+    expect(three.files).toEqual({ "pasted/01-notes.txt": "third" });
+    await p.answer(three.id, "Ok.");
+    await p.answer(two.id, "Ok.");
+  });
+
+  it("a key asked for in a chat that isn't open: that chat's view has the box and the list says it asks; the saved note goes there", async () => {
+    const p = await person("hu");
+    const b = await p.make();
+    await p.sendTo(b, { text: "Set up captions" });
+    const job = await p.claim();
+    expect((await tool(job.mcp.token, "ask_secret", { env: "DEEPGRAM_API_KEY", why: "for captions" })).isError).toBeFalsy();
+    expect((await p.chat(b)).pending).toMatchObject({ env: "DEEPGRAM_API_KEY" });
+    expect((await p.chats()).find((c) => c.id === b)!.asks).toBe(true);
+    const other = await p.make();
+    expect((await p.chat(other)).pending).toBeNull();
+    expect((await app.request("/api/my-keys/DEEPGRAM_API_KEY", { method: "PUT", ...json({ value: "dg_tinyacrobatics1234" }, { cookie: p.cookie }) })).status).toBe(200);
+    expect((await app.request("/api/assistant/saved", { method: "POST", ...json({ env: "DEEPGRAM_API_KEY" }, { cookie: p.cookie }) })).status).toBe(200);
+    expect((await p.chat(b)).messages.some((m) => m.role === "note" && m.text.endsWith("(…1234)"))).toBe(true);
+    expect((await p.view()).messages).toEqual([]);
+    expect((await p.chats()).find((c) => c.id === b)!.asks).toBeUndefined();
+    await p.answer(job.id, "Saved.");
+  });
+
+  it("the change notice names the chat a reply streams in", async () => {
+    const p = await person("ivo");
+    const b = await p.make();
+    const events = await app.request("/api/sync/events", { headers: { cookie: p.cookie } });
+    const reader = events.body!.getReader();
+    await p.sendTo(b, { text: "Stream please" });
+    const job = await p.claim();
+    await p.answer(job.id, "Done.");
+    let seen = "";
+    const decoder = new TextDecoder();
+    for (let i = 0; i < 20 && !seen.includes(`"chat":"${b}"`); i++) {
+      const got = await Promise.race([reader.read(), tick(200).then(() => null)]);
+      if (got && !got.done) seen += decoder.decode(got.value);
+    }
+    await reader.cancel();
+    expect(seen).toContain(`"topic":"assistant"`);
+    expect(seen).toContain(`"chat":"${b}"`);
   });
 });
