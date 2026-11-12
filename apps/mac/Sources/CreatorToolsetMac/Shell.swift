@@ -152,6 +152,10 @@ final class Shell: NSObject, ObservableObject {
             }
         }
         account.window = { [weak self] in self?.webView.window }
+        view.onPublishPack = { [weak self] text, done in
+            guard let self else { return done(["state": "off"]) }
+            self.account.publish(text, done: done)
+        }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }
