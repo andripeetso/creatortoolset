@@ -18,6 +18,7 @@ final class FakeSite: @unchecked Sendable {
     private var got: [Request] = []
     private var accepted = 0
     private var reply: (Request) -> (Int, String) = { _ in (200, "{}") }
+    private var raw: (Request) -> Data? = { _ in nil }
 
     init() {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -51,6 +52,11 @@ final class FakeSite: @unchecked Sendable {
     var answer: (Request) -> (Int, String) {
         get { lock.lock(); defer { lock.unlock() }; return reply }
         set { lock.lock(); reply = newValue; lock.unlock() }
+    }
+    /// A body that is not text (a picture) for the requests it gives one for, sent in place of `answer`'s, with its status.
+    var bytes: (Request) -> Data? {
+        get { lock.lock(); defer { lock.unlock() }; return raw }
+        set { lock.lock(); raw = newValue; lock.unlock() }
     }
     func forget() { lock.lock(); got = []; accepted = 0; lock.unlock() }
 
@@ -88,9 +94,11 @@ final class FakeSite: @unchecked Sendable {
         lock.lock()
         got.append(request)
         let respond = reply
+        let picture = raw
         lock.unlock()
         let (status, json) = respond(request)
-        let out = Data("HTTP/1.1 \(status) -\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(json.utf8.count)\r\nConnection: close\r\n\r\n\(json)".utf8)
+        let answered = picture(request) ?? Data(json.utf8)
+        let out = Data("HTTP/1.1 \(status) -\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(answered.count)\r\nConnection: close\r\n\r\n".utf8) + answered
         out.withUnsafeBytes { _ = send(c, $0.baseAddress, out.count, 0) }
     }
 }

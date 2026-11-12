@@ -29,6 +29,15 @@ export const RESOLVE_KIND = "resolve";
  */
 export const CARDS_DRAW_KIND = "cards-draw";
 
+/**
+ * The kind that cuts a still picture out of its background on a Mac (api/lib/cutouts.ts; the Mac app's Cutout.swift). Not an
+ * edit step: a person's call queues it (the cut-out plug-in), and a Mac lists, is hinted and claims it on the road above.
+ *   GET  cutout/:id                             → the picture (PNG, JPEG or HEIC)
+ *   POST cutout/:id        multipart `cutout`: the PNG, its background see-through → DeviceEnded
+ *   POST cutout/:id/fail   { error }            → DeviceEnded
+ */
+export const CUTOUT_KIND = "cutout";
+
 /** What a cards-draw step asks a Mac to draw: one script for every card of a version, and each card's length and content. */
 export interface CardsDraw {
   /** the picture's size in pixels (even numbers) and its frames a second */

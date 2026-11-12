@@ -181,8 +181,16 @@ interface Req {
 }
 
 const reqs = new Map<string, Req>();
-/** the polls waiting for a request, each for its device */
-let waiters: Array<{ device: string; fn: (r: Req) => void }> = [];
+/** the polls waiting for a request, each for its device; `step` asks again whether the hint is due (a poll that listed editor kinds) */
+let waiters: Array<{ device: string; fn: (r: Req | "hint") => void; step?: () => Promise<boolean> }> = [];
+
+/** A step a device may claim was queued (a cut-out, lib/cutouts.ts): each held poll that listed editor kinds is asked again and answered with the hint when it is due. */
+export async function wakeEditorPolls(): Promise<void> {
+  for (const w of [...waiters]) if (w.step && (await w.step()) && waiters.includes(w)) {
+    waiters = waiters.filter((x) => x !== w);
+    w.fn("hint");
+  }
+}
 
 /** how long a request waits for the Mac before its caller falls back; longer while the Mac is on but every slot runs */
 const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000 };
@@ -342,10 +350,11 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const queued = next(device);
     if (queued) return c.json(packFor(claim(queued), keeps));
     if (step) return c.json(EDITOR_HINT);
-    const got = await new Promise<Req | null>((resolve) => {
+    const got = await new Promise<Req | "hint" | null>((resolve) => {
       const w = {
         device,
-        fn: (r: Req) => {
+        ...("editor" in b && editorWaits ? { step: () => editorWaits(device, b.editor) } : {}),
+        fn: (r: Req | "hint") => {
           clearTimeout(timer);
           resolve(r);
         },
@@ -356,7 +365,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
       }, 25_000);
       waiters.push(w);
     });
-    return got ? c.json(packFor(got, keeps)) : c.body(null, 204);
+    return got === "hint" ? c.json(EDITOR_HINT) : got ? c.json(packFor(got, keeps)) : c.body(null, 204);
   });
 
   /** A big file of one of this device's requests, by its hash (the relay asks once and keeps it). */

@@ -181,8 +181,8 @@ final class RelayRunner {
     /// site refused (any 4xx).
     static let quietAfterNothing: TimeInterval = 25
     static let quietAfterRefusal: TimeInterval = 3600
-    /// under `lock`: the uptime before which no editor kind is listed, whether a card step is being drawn (one at a
-    /// time), and whether this Mac found it can't shut a card's script in (it then lists none, for good)
+    /// under `lock`: the uptime before which no editor kind is listed, whether a step is running (one at a time, a card
+    /// step or a cut-out), and whether this Mac found it can't shut a card's script in (it then lists only the cut-out, for good)
     private var quietUntil: TimeInterval = 0
     private var drawing = false
     private var cannotDraw = false
@@ -270,7 +270,7 @@ final class RelayRunner {
             }
             if reply.status == 200, Self.editorWaits(reply.data) {
                 if listed?.isEmpty == false, let step = claimStep() {
-                    DispatchQueue.global(qos: .utility).async { [self] in drawCards(step) }   // drawCards() releases the slot
+                    DispatchQueue.global(qos: .utility).async { [self] in runSteps(step) }   // runSteps() releases the slot
                     continue
                 }
                 slots.signal()
@@ -290,14 +290,16 @@ final class RelayRunner {
 
     /// The editor step kinds this Mac would take a step of right now, for the long poll's `editor` field. Nil leaves
     /// the field out: the site then keeps what it knows of this Mac and sends no hint. That is so while cards are being
-    /// drawn (one step at a time) and for a while after a hint that led to no step. A Mac that can't shut a card's
-    /// script in lists none, so the site stops counting on it.
+    /// drawn or a picture cut out (one step at a time) and for a while after a hint that led to no step. A Mac that
+    /// can't shut a card's script in lists only the cut-out, so the site stops counting on it for cards.
     func editorKinds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> [String]? {
         lock.lock()
         defer { lock.unlock() }
-        if cannotDraw { return [] }
-        return drawing || now < quietUntil ? nil : [cardsKind]
+        return drawing || now < quietUntil ? nil : takes
     }
+
+    /// The kinds this Mac takes, under `lock`: a cut-out on any Mac, cards on one that can shut a card's script in.
+    private var takes: [String] { cannotDraw ? [cutoutKind] : [cardsKind, cutoutKind] }
 
     /// The long poll's body: big files come as hashes, and the editor kinds this Mac would take now, if any are to be said.
     func waitBody(listing kinds: [String]?) -> [String: Any] {
@@ -315,9 +317,12 @@ final class RelayRunner {
     /// there is none after all, this Mac lists no kind for a while (`quietAfterNothing`), and nothing shows in the menu
     /// or the log.
     func claimStep(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> EditorJob? {
-        let reply = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": [cardsKind]], tries: 1, timeout: 10)
+        lock.lock()
+        let kinds = takes
+        lock.unlock()
+        let reply = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": kinds], tries: 1, timeout: 10)
         if let reply, reply.status == 200, let step = EditorJob(claim: reply.data) {
-            if step.kind == cardsKind {
+            if kinds.contains(step.kind) {
                 lock.lock()
                 drawing = true
                 lock.unlock()
@@ -333,19 +338,25 @@ final class RelayRunner {
         return nil
     }
 
-    /// One card step, from reading the cards to done or fail (CardJobs.swift), and then every further step the site
-    /// says waits on its answer to that done or fail (an edit queues one step a version). It holds a slot as an AI
-    /// request does, so it never runs beside four of them. A card that fails is the edit's news, told to the site; the
-    /// menu's last AI error is left alone.
-    func drawCards(_ first: EditorJob) {
+    /// One step, a card step (CardJobs.swift) or a cut-out (Cutout.swift), from reading it to done or fail, and then every
+    /// further step the site says waits on its answer to that done or fail (an edit queues one step a version). It holds
+    /// a slot as an AI request does, so it never runs beside four of them. A step that fails is the edit's or the
+    /// caller's news, told to the site; the menu's last AI error is left alone, and only cards show as Drawing cards.
+    func runSteps(_ first: EditorJob) {
         defer { slots.signal() }
-        publish { $0.drawing = true }
         var cannot = false
+        var shown = false
         var next: EditorJob? = first
         while let step = next {
-            let (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
+            let end: CardJob.End, more: Bool
+            if step.kind == cutoutKind {
+                (end, more) = CutoutJob(api: api, id: step.id).run()
+            } else {
+                if !shown { shown = true; publish { $0.drawing = true } }
+                (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                                       stopped: { [weak self] in self?.isStopped ?? true }).run()
-            if case .failed(let why) = end { AppLog.write("cards: step \(step.id) failed: \(why)") }
+            }
+            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : "cards"): step \(step.id) failed: \(why)") }
             if case .cannot = end { cannot = true }
             // without that word from the site the next step is seen on a later poll (the one in flight listed no kind)
             next = more && !cannot && !isStopped ? claimStep() : nil
@@ -355,7 +366,7 @@ final class RelayRunner {
         // this Mac can't shut a card's script in: from now on its polls say it draws none, so another Mac gets the step
         if cannot { cannotDraw = true }
         lock.unlock()
-        publish { $0.drawing = false }
+        if shown { publish { $0.drawing = false } }
     }
 
     /// the Mac relay run(): one request, answered through the four routes.

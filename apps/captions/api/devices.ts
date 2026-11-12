@@ -2,12 +2,13 @@ import { Hono, type Context } from "hono";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Balance, type Device } from "../contracts/providers";
-import { parseKinds, RESOLVE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, parseKinds, RESOLVE_KIND, type DeviceClaim } from "../contracts/devices";
 import type { AuthVars } from "./auth";
 import { claimableBy } from "./editor/engine";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { mayClaim, type WorkerSeen } from "./lib/balance";
+import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { env } from "./lib/env";
 import { relayRoutes } from "./lib/mac-claude";
 import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, moveProviders, pairDevice, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
@@ -24,6 +25,7 @@ import { storageApp } from "./devices-storage";
  *   POST /api/devices/relay/editor/claim {kinds}                 the device declares its editor step kinds and takes one (contracts/devices.ts)
  *   POST /api/devices/relay/editor/job/:id/beat | /done | /fail  the device's step, same token
  *   GET /api/devices/relay/editor/job/:id/cards, POST …/cards/:cardId   a cards-draw step: what to draw, and each card drawn
+ *   GET /api/devices/relay/cutout/:id, POST …/cutout/:id | …/cutout/:id/fail   a cut-out (lib/cutouts.ts): the picture, its PNG or why not
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
  *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits: contracts/devices.ts)
  *       the Mac app's side, Authorization: Bearer ctd_… (boot.ts checks it before the cookie gate); the same bodies
@@ -51,14 +53,15 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const kinds = parseKinds(b?.kinds);
   if (!kinds) return c.json({ error: "kinds: a list of step kinds" }, 400);
-  return c.json({ job: claimForDevice(d, await declared(d, kinds)) } satisfies DeviceClaim);
+  const k = await declared(d, kinds);
+  return c.json({ job: claimCutout(d, k) ?? claimForDevice(d, k) } satisfies DeviceClaim);
 });
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
 async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing
   // the Resolve bridge is switched on by a pack with Resolve items (the owner's Resolve plug-in or a downloaded one)
   const granted = kinds.includes(RESOLVE_KIND) && (await resolveGranted(d.owner));
-  const claimable = claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted);
+  const claimable = [...claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted), ...kinds.filter((k) => k === CUTOUT_KIND)];
   setDeviceKinds(d.id, claimable);
   return balancedKinds(d, claimable);
 }
@@ -70,10 +73,12 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
 async function editorWaits(device: string, listed: unknown): Promise<boolean> {
   const d = deviceOf(device);
   const kinds = parseKinds(listed);
-  return !!d && !!kinds && waitsForDevice(d.owner, await declared(d, kinds));
+  return !!d && !!kinds && waits(d.owner, await declared(d, kinds));
 }
+/** Whether a step of one of these kinds waits for this account: an edit's (editor/worker.ts) or a cut-out (lib/cutouts.ts). */
+const waits = (owner: string, kinds: string[]) => waitsForDevice(owner, kinds) || (kinds.includes(CUTOUT_KIND) && cutoutWaits(owner));
 /** The answer to done and fail: `editor: true` when another step this device could claim waits, so it claims at once. */
-const ended = async (d: Device, ok: boolean) => ({ ok, ...(ok && waitsForDevice(d.owner, await balancedKinds(d, d.kinds ?? [])) ? { editor: true } : {}) });
+const ended = async (d: Device, ok: boolean) => ({ ok, ...(ok && waits(d.owner, await balancedKinds(d, d.kinds ?? [])) ? { editor: true } : {}) });
 devicesApp.post("/relay/editor/job/:id/beat", (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
@@ -104,6 +109,27 @@ devicesApp.post("/relay/editor/job/:id/cards/:cardId", async (c) => {
   const form = await c.req.parseBody({ all: true }).catch(() => ({}) as Record<string, unknown>);
   const wrong = await saveCard(d.id, jobId(c), c.req.param("cardId"), form.clip, form.still);
   return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json({ ok: true });
+});
+
+// a cut-out (contracts/devices.ts CUTOUT_KIND): the picture, and the PNG the Mac made of it or why it could not
+devicesApp.get("/relay/cutout/:id", (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const cut = heldCutout(d.id, jobId(c));
+  return cut ? c.body(new Uint8Array(cut.picture), 200, { "content-type": cut.mime }) : c.json({ error: "Not found" }, 404);
+});
+devicesApp.post("/relay/cutout/:id", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  const wrong = cutoutSent(d.id, jobId(c), form.cutout instanceof File ? Buffer.from(await form.cutout.arrayBuffer()) : null);
+  return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json(await ended(d, true));
+});
+devicesApp.post("/relay/cutout/:id/fail", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  return c.json(await ended(d, cutoutFailed(d.id, jobId(c), typeof b?.error === "string" && b.error ? b.error : "Your Mac could not cut the picture out.")));
 });
 
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
