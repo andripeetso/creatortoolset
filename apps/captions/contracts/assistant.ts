@@ -161,6 +161,11 @@ export interface AssistantTurnInput {
    * its reply waits (`wait`) until the last part is in, then runs. More messages while a reply waits or runs queue behind it.
    */
   files?: string[];
+  /**
+   * The client keeps uploading this message's videos after its reply ends (`videosLater` on the view): the reply starts at
+   * once, is told which videos are still on their way, and the tools that take them wait for them.
+   */
+  later?: true;
   /** Videos dropped in the Mac app: their absolute paths on the user's computer, read where they are (nothing uploads). */
   localFiles?: string[];
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
@@ -225,6 +230,8 @@ export interface AssistantView {
   /** This server takes a message whose videos are still uploading (POST /turn with their ids) and queues messages sent
    *  while a reply runs. Absent on older servers: there a client posts only after its uploads are done. */
   sendNow?: true;
+  /** A turn sent with `later` starts at once, without waiting for its videos. Absent on older servers: the reply waits. */
+  videosLater?: true;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. One per account, from any chat. */
   navigate: string | null;
   /** This server has the many-chats routes (GET /chats, /chats/:id, its /turn) and writes replies in different chats at

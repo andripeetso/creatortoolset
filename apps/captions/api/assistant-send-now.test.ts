@@ -14,7 +14,7 @@ const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
 const { resumeFromDisk, routeOf, runInChat, WAIT_MS } = await import("./assistant");
-const { ORPHAN_MS, sweep } = await import("./assistant-files");
+const { ARRIVAL, ORPHAN_MS, sweep } = await import("./assistant-files");
 const { onAttention } = await import("./lib/attention");
 type View = import("../contracts/assistant").AssistantView;
 type Attention = import("./lib/attention").Attention;
@@ -209,6 +209,43 @@ describe("a message sent while its video uploads", () => {
     vi.useRealTimers();
     expect(last).toMatchObject({ status: "error", text: `"Lost.mp4" didn't arrive, so this message wasn't answered: add it again and send the message again.` });
     expect(heard).toMatchObject([{ username: "yul", kind: "failed", reply: last.id, title: "Here" }]);
+  });
+});
+
+describe("a message sent with later: the phone keeps uploading after the reply", () => {
+  it("starts at once, tells the AI the videos are on their way, use_file waits for one, and the message stops saying uploading once it is in", async () => {
+    const p = await person("lea");
+    const [a, b] = [await p.upload("Story 1.mov"), await p.upload("Story 2.mov")];
+    expect((await p.view()).videosLater).toBe(true);
+    const r = await p.send({ text: "Edit this story", files: [a.id, b.id], later: true });
+    expect(r.status).toBe(202);
+    expect(((await r.json()) as View).messages.at(-1)!.wait).toBeUndefined();
+    const got = await p.claim();
+    expect(got.user).toContain(`still uploading from their phone: "Story 1.mov", file id ${a.id}`);
+    expect(got.user).toContain(`file id ${b.id}`);
+    // a tool that takes the file waits for it: briefly here, then says to call again
+    ARRIVAL.ms = 300;
+    const early = await tool(got.mcp.token, "use_file", { file: a.id, to: "review" });
+    expect(early).toMatchObject({ error: true });
+    expect(early.text).toContain("still uploading");
+    ARRIVAL.ms = 5000;
+    const waiting = tool(got.mcp.token, "use_file", { file: a.id, to: "review" });
+    await tick(100);
+    await a.part();
+    expect((await waiting).error).toBe(false);
+    // the reply ends while one video is still on its way: nothing is lost, and it lands later
+    await p.answer(got.id, "Started the edit.");
+    expect((await settled(p)).messages.at(-2)!.files).toEqual([{ id: a.id, name: "Story 1.mov" }, { id: b.id, name: "Story 2.mov", uploading: true }]);
+    await b.part();
+    await tick();
+    expect((await p.view()).messages.at(-2)!.files).toEqual([{ id: a.id, name: "Story 1.mov" }, { id: b.id, name: "Story 2.mov" }]);
+  });
+
+  it("takes up to 50 videos in one message", async () => {
+    const p = await person("max");
+    const ids = await Promise.all(Array.from({ length: 50 }, async (_, i) => (await p.upload(`Clip ${i}.mov`)).id));
+    expect((await p.send({ text: "All of them", files: ids, later: true })).status).toBe(202);
+    expect((await p.send({ text: "Too many", files: [...ids, ids[0]] })).status).toBe(400);
   });
 });
 

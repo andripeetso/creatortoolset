@@ -610,6 +610,10 @@ final class AssistantTests: XCTestCase {
         let body = AssistantModel.body(QueuedMessage(text: "Caption this", files: [.init(id: "f2", name: "Pier.mov")],
                                                      videos: [.init(name: "Beach.mov", copy: "c1", file: "f1")]))
         XCTAssertEqual(body["files"] as? [String], ["f2", "f1"])
+        // its videos go on up after the reply: a server that knows it starts the reply at once
+        XCTAssertEqual(body["later"] as? Bool, true)
+        XCTAssertNil(AssistantModel.body(QueuedMessage(text: "Done", files: [.init(id: "f2", name: "Pier.mov")]))["later"])
+        XCTAssertFalse(older.videosLater)
     }
 
     // MARK: The model against a server that waits (the stand-in answers as the test server did: SEND-NOW.md)

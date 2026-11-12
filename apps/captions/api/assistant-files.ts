@@ -103,16 +103,23 @@ assistantFilesApp.get("/:id/parts", (c) => {
   return partsStatus(c, path.join(dirOf(c.get("user").username, id), "parts"), c.get("user"));
 });
 
-assistantFilesApp.post("/:id/parts/:partNumber", (c) => {
+assistantFilesApp.post("/:id/parts/:partNumber", async (c) => {
   const id = c.req.param("id");
   if (!UUID.test(id)) return c.json({ error: "Invalid part" }, 400);
-  return receivePart(c, path.join(dirOf(c.get("user").username, id), "parts"), c.get("user"));
+  const user = c.get("user").username;
+  const r = await receivePart(c, path.join(dirOf(user, id), "parts"), c.get("user"));
+  // the last part joins the file: a phone locked before it can say /complete still gets its video in
+  if (r.status === 200 && (await allPartsIn(user, id))) void finishUpload(user, id);
+  return r;
 });
 
 /**
  * The upload of one dropped file joined into its file, once: /complete and a turn waiting on the file (assistant.ts, after
  * its last part lands) both come here, and a second caller gets the same promise. An error carries the answer's status.
  */
+/** Told once a dropped file is whole: assistant.ts marks the messages that carry it, a plug-in starts what waited for it. */
+export const onFileIn: Array<(user: string, file: AssistantFile) => void> = [];
+
 const finishing = new Map<string, Promise<AssistantFile | { error: string; status: 400 | 409 }>>();
 export function finishUpload(user: string, id: string): Promise<AssistantFile | { error: string; status: 400 | 409 }> {
   const key = `${user}/${id}`;
@@ -132,6 +139,13 @@ export function finishUpload(user: string, id: string): Promise<AssistantFile | 
     const meta: AssistantFile = { id, name: state.name, mime: state.mime, size: state.total };
     await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
     await rm(parts, { recursive: true, force: true });
+    for (const f of onFileIn) {
+      try {
+        f(user, meta);
+      } catch (e) {
+        console.error("[assistant-files] a file-in hook:", e);
+      }
+    }
     return meta;
   })().finally(() => finishing.delete(key));
   finishing.set(key, p);
@@ -232,6 +246,21 @@ assistantFilesApp.post("/path", async (c) => {
 
 export const USE_NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio", library: "Media Library" };
 
+/** How long use_file waits for a video still uploading before it says to call again (a test shortens it). */
+export const ARRIVAL = { ms: 50_000 };
+
+/** A dropped file still on its way: waited for a while (ARRIVAL), then said to be still uploading, or gone. */
+async function arrival(user: string, id: string): Promise<AssistantFile> {
+  const end = Date.now() + ARRIVAL.ms;
+  for (;;) {
+    const up = await uploadOf(user, id);
+    if (!up) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
+    if ("file" in up) return up.file;
+    if (Date.now() >= end) throw new Error(`"${up.name}" is still uploading from the phone: call use_file with it again in a minute (nothing is lost).`);
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 /**
  * Hand a dropped file to a tool; answers what it became and its page. versionOf (Review only): the id of a Review
  * video of this account's own, which gets the file as its next version instead of a new video being made.
@@ -243,8 +272,7 @@ export async function useFile(
   name?: string,
   versionOf?: string,
 ): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean }> {
-  const meta = await readFileMeta(user.username, id);
-  if (!meta) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
+  const meta = (await readFileMeta(user.username, id)) ?? (await arrival(user.username, id));
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${USE_NAMES[to]} isn't switched on for this account.`);
   if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
   const file = fileOf(user.username, id);

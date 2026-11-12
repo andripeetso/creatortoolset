@@ -17,7 +17,7 @@ import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import { allPartsIn, assistantFilesApp, finishUpload, removeFile, setWaitedFor, uploadOf, USE_NAMES } from "./assistant-files";
+import { allPartsIn, assistantFilesApp, finishUpload, onFileIn, removeFile, setWaitedFor, uploadOf, USE_NAMES } from "./assistant-files";
 import { needsAttention, type Attention } from "./lib/attention";
 import { currentProject, memoryBlock } from "./lib/memory";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
@@ -33,15 +33,11 @@ import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile,
  */
 
 export const assistantApp = new Hono<{ Variables: AuthVars }>();
-// a part or a complete for a file a waiting turn needs: the turn starts once its last file is in. The last part joins the
-// file here, so a phone that is locked before it can say /complete still gets its answer
-assistantApp.use("/files/:id/*", async (c, next) => {
+// a file in: the turn waiting for it has started by the time /complete answers (the last part joins it, onFileIn below)
+assistantApp.use("/files/:id/complete", async (c, next) => {
   await next();
   const user = c.get("user")?.username;
-  const id = c.req.param("id");
-  if (c.req.method !== "POST" || c.res.status !== 200 || !user || !Object.values(load(user).held ?? {}).some((h) => h.files.includes(id))) return;
-  if (c.req.path.endsWith("/complete")) await pump(user);
-  else if (await allPartsIn(user, id)) void finishUpload(user, id).then(() => pump(user));
+  if (c.req.method === "POST" && c.res.status === 200 && user) await pump(user);
 });
 assistantApp.route("/files", assistantFilesApp);
 
@@ -137,6 +133,8 @@ interface Held {
   fit?: string;
   /** A reply that carries on once a file on the user's computer is on this server (askSend): the tool it goes to. */
   send?: AssistantFileUse;
+  /** Starts without waiting for its videos (the turn's `later`): the client keeps uploading them after it ends. */
+  later?: true;
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
@@ -181,7 +179,8 @@ const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PASTES = 5;
 const MAX_PASTED = 200_000;
-const MAX_FILES = 5;
+// a shoot's worth of clips; the AI Editor takes up to 50 chat videos in one edit
+const MAX_FILES = 50;
 const MAX_PATHS = 5;
 const CONTEXT_CAPS = { path: 300, title: 200, selection: 4000, visible: 2000 } as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -230,6 +229,10 @@ interface TurnInput {
   context?: AssistantContext;
   /** One more line for the AI: the fit question, or what the reply carries on with. */
   note?: string;
+  /** The client keeps uploading after the reply ends: the reply starts without waiting for its videos. */
+  later?: true;
+  /** Its videos still on their way when the reply starts. */
+  uploading?: Array<{ id: string; name: string }>;
 }
 
 const nameOf = (v: unknown, fallback: string) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, 80) : fallback);
@@ -285,7 +288,7 @@ function parseTurn(raw: unknown): TurnInput {
         ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
-  return { text, images, pasted, fileIds, files: [], paths, local, context };
+  return { text, images, pasted, fileIds, files: [], paths, local, context, ...(b.later === true ? { later: true as const } : {}) };
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
@@ -660,6 +663,7 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
     navigate: conv.navigate ?? null,
     sendNow: true,
+    videosLater: true,
     chats: true,
   };
 }
@@ -712,6 +716,8 @@ function newestFacts(input: TurnInput): string[] {
   const n = input.images.length;
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
+  for (const f of input.uploading ?? [])
+    out.push(`The user attached a video still uploading from their phone: "${f.name}", file id ${f.id}. Go on with it now (start the edit or whatever they asked): the tools that take the file id wait for it, and an edit starts by itself once it is in. Never wait for it or ask them to.`);
   for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const p of input.local) out.push(`The user dropped a video from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
   if (input.note) out.push(input.note);
@@ -937,7 +943,27 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
 }
 
 // the uploads a waiting turn names stay through the orphan sweep: WAIT_MS ends that turn instead
-setWaitedFor((username) => new Set(Object.values(load(username).held ?? {}).flatMap((h) => h.files)));
+setWaitedFor((username) => {
+  const conv = load(username);
+  const uploading = everyChat(conv).flat().flatMap((m) => (m.files ?? []).filter((f) => f.uploading).map((f) => f.id));
+  return new Set([...Object.values(conv.held ?? {}).flatMap((h) => h.files), ...uploading]);
+});
+
+// a dropped file is whole: the messages that carry it stop saying it uploads, and a turn waiting for it may start
+onFileIn.push((username, file) => {
+  let changed = false;
+  for (const m of everyChat(load(username)).flat())
+    for (const f of m.files ?? [])
+      if (f.id === file.id && f.uploading) {
+        delete f.uploading;
+        changed = true;
+      }
+  if (changed) {
+    save(username);
+    tell(username);
+  }
+  void pump(username);
+});
 
 const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
 const wakes = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1012,8 +1038,8 @@ async function pumpOnce(username: string): Promise<void> {
       delete f.uploading;
       changed = true;
     }
-    // a send waits for the dock to start its upload first
-    const missing = h.send && !h.files.length ? [""] : h.files.filter((id) => !inNow(id));
+    // a send waits for the dock to start its upload first; a `later` turn starts while its videos go on uploading
+    const missing = h.send && !h.files.length ? [""] : h.later ? [] : h.files.filter((id) => !inNow(id));
     // a scheduled run being written in its own chat goes first there too
     const runningBefore = list.slice(0, i).some((x) => x.status === "thinking" && !held[x.id]);
     let wait: AssistantMessage["wait"];
@@ -1043,7 +1069,7 @@ async function pumpOnce(username: string): Promise<void> {
       continue;
     }
     // one that can't start ends there, and the next may start in its place
-    if (startHeld(username, conv, list, i, h, h.files.map((id) => inNow(id)!))) busy++;
+    if (startHeld(username, conv, list, i, h, h.files.flatMap((id) => inNow(id) ?? []))) busy++;
     changed = true;
   }
   if (changed) {
@@ -1073,7 +1099,8 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
     return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
   });
   const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
-  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
+  const uploading = (asked.files ?? []).filter((f) => f.uploading).map(({ id, name }) => ({ id, name }));
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
   void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
   return true;
@@ -1295,6 +1322,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     admin: u.role === "admin",
     at: now,
     ...(fit ? { fit } : {}),
+    ...(input.later ? { later: true as const } : {}),
   };
   save(u.username);
   await pump(u.username);

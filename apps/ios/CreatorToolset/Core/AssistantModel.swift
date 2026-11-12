@@ -17,8 +17,11 @@ struct AssistantView: Decodable, Equatable {
     /// The server takes a message whose videos are still going up, and messages while a reply is being
     /// written: it holds each reply until its turn. An older server sends nothing.
     var sendNow: Bool
+    /// The reply starts at once and the videos go on up after it ends (a message sent with `later`). An older
+    /// server sends nothing: it holds the reply until they are in, and a reply that ended (stopped) needs them no more.
+    var videosLater: Bool
 
-    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow }
+    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow, videosLater }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -29,6 +32,7 @@ struct AssistantView: Decodable, Equatable {
         past = (try? c.decode([AssistantPast].self, forKey: .past)) ?? []
         navigate = try? c.decodeIfPresent(String.self, forKey: .navigate)
         sendNow = (try? c.decode(Bool.self, forKey: .sendNow)) ?? false
+        videosLater = (try? c.decode(Bool.self, forKey: .videosLater)) ?? false
     }
 
     var connected: Bool { provider != "none" }
@@ -378,7 +382,7 @@ final class AssistantModel: ObservableObject {
             guard let reply = message.reply else { continue }
             if message.failed != nil {
                 Task { await stop(reply: reply, of: message.id) }
-            } else if let held = view.messages.first(where: { $0.id == reply }), held.status != "thinking" {
+            } else if !view.videosLater, let held = view.messages.first(where: { $0.id == reply }), held.status != "thinking" {
                 outbox.drop(message.id)
             }
         }
@@ -456,6 +460,8 @@ final class AssistantModel: ObservableObject {
         // a video still going up is named by the id the server gave it
         let files = message.files.map(\.id) + (message.videos ?? []).compactMap(\.file)
         if !files.isEmpty { body["files"] = files }
+        // its videos keep going up after the reply ends: a server that knows this starts the reply at once
+        if message.videos?.isEmpty == false { body["later"] = true }
         return body
     }
 

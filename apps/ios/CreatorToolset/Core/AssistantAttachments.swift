@@ -141,16 +141,19 @@ enum AssistantUpload {
         }
         let base = "/api/assistant/files/\(started.id)"
         // ponytail: one part at a time in front; three at once, as Caption Studio sends, if phone videos upload too slowly
+        // iOS sends the parts it was handed in any order: how far it is counts every part the server has
+        var done = have.reduce(0) { $0 + partLength($1, total: total, partSize: started.partSize) }
         for n in 1...max(1, partCount(total: total, partSize: started.partSize)) where !have.contains(n) {
             try Task.checkCancellation()
             // a debug build can go slowly, to watch a message wait for its video: -AssistantSlowParts <seconds>
             if let pause = debugArg("AssistantSlowParts").flatMap(Double.init) { try await Task.sleep(for: .seconds(pause)) }
-            let before = (n - 1) * started.partSize
+            let before = done
             progress(Double(before) / Double(total))
             do {
                 try await sendPart(.init(upload: started.id, number: n), of: handle, total: total, partSize: started.partSize, api: api) { sent in
                     progress(Double(before + Int(sent)) / Double(total))
                 }
+                done += partLength(n, total: total, partSize: started.partSize)
             } catch let failure as ToolsetAPI.Failure where failure.status == 409 {
                 break   // the server holds no such upload any more: joined already (complete says so), or gone
             }
@@ -288,7 +291,8 @@ extension QueuedMessage.Video {
 @MainActor
 final class AssistantDraft: ObservableObject {
     static let maxPictures = 6
-    static let maxVideos = 5
+    // a shoot's worth of clips: the AI Editor takes up to 50 chat videos in one edit
+    static let maxVideos = 50
 
     @Published var text = ""
     @Published private(set) var pictures: [QueuedMessage.Picture] = []
