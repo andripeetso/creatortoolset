@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, DRIVERS, type Driver } from "../../../contracts/providers";
 
 // What the three card calls (plan, make, look) carry when they leave the server, for every way an account's AI can
-// answer: its own Anthropic key, and each kind of AI on a Mac of its own. The server decides four things about a call
+// answer: its own Anthropic key, a model it runs itself, and each kind of AI on a Mac of its own. The server decides four things about a call
 // and this file pins each of them: no web, no session to resume, none of the app's tools (no MCP server, no
 // permission questions), and no folder beyond the pictures the call itself carries.
 //
@@ -45,6 +45,10 @@ const { answer, LOOK_PICTURES, MAKE_PICTURES } = await import("./step");
 
 createUser("keyed", "password1", { role: "user" });
 createUser("onmac", "password1", { role: "user" });
+// an install's own admin with a model it runs itself (Settings → API keys → Local model), and no Anthropic key
+createUser("ownmodel", "password1", { role: "admin" });
+mkdirSync(path.join(dir, "local-model"), { recursive: true });
+writeFileSync(path.join(dir, "local-model", "ownmodel.json"), JSON.stringify({ url: "http://127.0.0.1:9", model: "tiny-model" }));
 saveMyKey("keyed", "ANTHROPIC_API_KEY", "test-key-of-the-account");
 const mac = pairDevice("onmac", "Studio Mac");
 
@@ -93,6 +97,35 @@ describe("on the account's own Anthropic key", () => {
     const blocks = content as { type: string; text?: string }[];
     expect(blocks.map((b) => b.type)).toEqual([...c.images.map(() => "image"), "text"]);
     expect(blocks.at(-1)!.text).toBe(c.prompt.user);
+  });
+});
+
+describe("on a model the person runs themselves", () => {
+  let sent: { url: string; body: Record<string, unknown> }[] = [];
+  beforeEach(() => {
+    sent = [];
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      sent.push({ url: String(url), body: JSON.parse(init!.body as string) as Record<string, unknown> });
+      // the question asked first (does the request fit?): this stand-in has no such route; then the answer
+      if (String(url).endsWith("/api/chat")) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+      return new Response(JSON.stringify({ content: [{ type: "text", text: CALLS.find((c) => sent.at(-1)!.body.system === c.prompt.system)!.reply }], usage: {} }), { status: 200 });
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(CALLS.filter((c) => !c.images.length))("$name: the question goes to their address alone, with no tool to call", async (c) => {
+    expect(aiFor("ownmodel", "editor", "x").only).toEqual(["localModel"]);
+    await answer("ownmodel", c.prompt, [], c.parse as (t: string) => unknown);
+    expect(sent.map((x) => x.url)).toEqual(["http://127.0.0.1:9/api/chat", "http://127.0.0.1:9/v1/messages"]);
+    // does it fit, then the request: both are the system and user text and nothing a model could call
+    expect(Object.keys(sent[0]!.body).sort()).toEqual(["messages", "model", "options", "stream", "think", "truncate"]);
+    expect(Object.keys(sent[1]!.body).sort()).toEqual(["max_tokens", "messages", "model", "system", "thinking"]);
+    expect(sent[1]!.body).toMatchObject({ model: "tiny-model", system: c.prompt.system, messages: [{ role: "user", content: c.prompt.user }] });
+  });
+
+  it.each(CALLS.filter((c) => c.images.length))("$name: a call with pictures is never sent to that address, and with no key of the account's it is not sent at all", async (c) => {
+    await expect(answer("ownmodel", c.prompt, [...c.images], c.parse as (t: string) => unknown)).rejects.toThrow("A local model answers text only");
+    expect(sent).toEqual([]);
   });
 });
 

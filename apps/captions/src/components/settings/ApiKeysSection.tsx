@@ -1,9 +1,11 @@
 import { MY_KEYS, type MyKeyEnv, type MyKeyGroup, type MyKeyView } from "@contracts/service-keys";
 import { removeApify, saveApify, type ApifyStatus } from "@/lib/instagram";
+import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useSetup } from "@/lib/setup";
 import { Card, ErrorRow, LoadingRow, Section } from "./ui";
 import { KeyRow } from "./KeyRow";
+import { LocalModelRow } from "./LocalModelRow";
 import { saveMyKey, useMyKeys } from "./MyKeysSection";
 import type { ApiKeyRowId } from "./search";
 
@@ -56,12 +58,14 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
 /**
  * Settings → API keys: every key the person can paste, in sections by what it is for. Each service appears once. A key
  * that is not set shows only its button. A key the server provides says so, and the person can use a key of their own
- * instead (their own key wins, api/my-keys.ts keyFor). Anthropic is listed only when the account has no AI of its own.
+ * instead (their own key wins, api/my-keys.ts keyFor). Anthropic is listed only when the account has no AI of its own;
+ * so is the Local model row under it, which only an install's own admin gets (a hosted server refuses its routes).
  */
 export function ApiKeysSection() {
   const { data: keys, error, refresh } = useMyKeys();
   // no AI of its own yet: the Anthropic key is what the tools use. Until the setup is known, it stays hidden.
   const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
+  const localModel = useAuth((s) => !s.hosted && s.me?.role === "admin");
   const reload = () => refresh().catch(() => {});
 
   if (!keys)
@@ -98,6 +102,7 @@ export function ApiKeysSection() {
           <Card>
             {g.id === "research" && <ApifyKeyRow />}
             {rows(g.id)}
+            {g.id === "ai" && localModel && <LocalModelRow ownAi={ownAi} />}
           </Card>
         </Section>
       ))}
