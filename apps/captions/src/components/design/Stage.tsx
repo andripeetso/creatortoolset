@@ -367,11 +367,6 @@ export function Stage({
     const p = world(e);
     const k = pageUnder(p);
     const hit = hitAt(k, p);
-    if (e.button === 2) {
-      // the menu is for what is picked: a right press on something else picks that first
-      if (hit && !(k === at && selected.includes(hit.id))) onPick(k, [hit.id]);
-      return;
-    }
     if (e.button !== 0) return;
     if (tool !== "move") return make(e, k >= 0 ? k : at);
     if (!hit) return marquee(e, k);
@@ -414,6 +409,14 @@ export function Stage({
           onPointerDown={down}
           onPointerMove={over}
           onPointerLeave={() => setHover(null)}
+          // the menu is for what is picked: a right press on something else picks that first. On the menu's own
+          // event, since that is what opens it (a Ctrl-click on a Mac too)
+          onContextMenu={(e) => {
+            const p = world(e);
+            const k = pageUnder(p);
+            const hit = hitAt(k, p);
+            if (hit && !(k === at && selected.includes(hit.id))) onPick(k, [hit.id]);
+          }}
           // nothing scrolls the canvas but its own view
           onScroll={(e) => e.currentTarget.scrollTo(0, 0)}
           onDoubleClick={(e) => {
