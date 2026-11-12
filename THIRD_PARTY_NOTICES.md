@@ -89,6 +89,10 @@ copy each one's licence next to the files they install.
   - Face refinement: `face_landmarker.task` (BlazeFace short range, Face Mesh V2 and Blendshape V2) and
     `selfie_multiclass_256x256.tflite` (Multiclass Segmentation).
   - Blur faces: `blaze_face_short_range.tflite` (BlazeFace short range).
+- The AI Editor's eye line (`apps/captions/api/editor/eyeline.ts`): on the person's own computer, the first analyze
+  downloads the YuNet face detector `face_detection_yunet_2023mar.onnx` (232 KB) from the OpenCV Zoo copy on Hugging
+  Face (`opencv/face_detection_yunet`, revision and SHA-256 pinned in that file) into the app's data folder
+  (`models/opencv/face_detection_yunet/`). MIT, Copyright (c) 2020 Shiqi Yu (the `LICENSE` in that repository).
 
 ## Mac app
 
