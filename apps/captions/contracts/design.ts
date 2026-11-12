@@ -45,6 +45,8 @@ interface Box {
   rotate?: number;
   /** 0 to 1; absent = 1 */
   opacity?: number;
+  /** a soft shadow under the layer: its colour ("#rrggbb"), how strong (0 to 1), its blur and how far it falls, in pixels */
+  shadow?: { color: string; opacity: number; blur: number; x: number; y: number };
   /** what the layers list calls it; absent = what it is (a text's own words, "Rectangle", "Picture", "Drawing") */
   name?: string;
   /** kept in the design, but not drawn and not in the saved PNG */
@@ -56,7 +58,7 @@ interface Box {
 export interface TextLayer extends Box {
   type: "text";
   text: string;
-  /** one of the app's font families (src/lib/types.ts FONT_OPTIONS) */
+  /** one of the designer's font families (src/lib/design/fonts.ts DESIGN_FONTS) */
   font: string;
   /** letter height in pixels */
   size: number;

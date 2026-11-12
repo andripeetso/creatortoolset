@@ -1,6 +1,6 @@
 import { DESIGN_LIMITS, type DesignPage, type Layer } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
-import { FONT_OPTIONS } from "../../src/lib/types";
+import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 
 /**
@@ -10,7 +10,7 @@ import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
  * Nothing here runs anything: a drawing is SVG shapes only (safeSvg).
  */
 
-const FONTS = FONT_OPTIONS.map((f) => f.family);
+const FONTS = DESIGN_FONTS.map((f) => f.family);
 export const DEFAULT_FONT = "Inter";
 const COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const ID = /^[a-z0-9-]{1,24}$/;
@@ -18,6 +18,8 @@ const ID = /^[a-z0-9-]{1,24}$/;
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const num = (v: unknown, lo: number, hi: number, or: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : or);
 const color = (v: unknown, or: string): string => (typeof v === "string" && COLOR.test(v.trim()) ? v.trim().toLowerCase() : or);
+/** A colour as "#rrggbb": three digits written out, a see-through part dropped. */
+const sixDigits = (c: string): string => (c.length === 4 ? `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}` : c.slice(0, 7));
 const oneOf = <T extends string>(v: unknown, all: readonly T[], or: T): T => (all.includes(v as T) ? (v as T) : or);
 const round = (n: number) => Math.round(n * 100) / 100;
 /** A name as one line of at most the limit's letters, or "" when there is none. */
@@ -128,6 +130,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     h: round(num(raw.h, 1, 2 * r.h, r.h / 4)),
     ...(typeof raw.rotate === "number" && raw.rotate ? { rotate: round(num(raw.rotate, -360, 360, 0)) } : {}),
     ...(typeof raw.opacity === "number" && raw.opacity < 1 ? { opacity: round(num(raw.opacity, 0, 1, 1)) } : {}),
+    ...(obj(raw.shadow)
+      ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
+      : {}),
     ...(named(raw.name) ? { name: named(raw.name) } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),
     ...(raw.locked === true ? { locked: true } : {}),

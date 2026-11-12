@@ -1,5 +1,5 @@
 import type { DesignPage, Layer, TextLayer } from "@contracts/design";
-import { fontWeightFor } from "@/lib/types";
+import { designWeight } from "./fonts";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
@@ -7,7 +7,7 @@ import { fontWeightFor } from "@/lib/types";
  */
 
 /** The CSS font of a text layer at its size (each bundled family is one weight: src/lib/types.ts). */
-export const fontOf = (l: Pick<TextLayer, "font" | "size">, scale = 1): string => `${fontWeightFor(l.font)} ${l.size * scale}px "${l.font}"`;
+export const fontOf = (l: Pick<TextLayer, "font" | "size">, scale = 1): string => `${designWeight(l.font)} ${l.size * scale}px "${l.font}"`;
 export const lineHeightOf = (l: Pick<TextLayer, "size" | "lineHeight">): number => l.size * (l.lineHeight ?? 1.15);
 export const shownText = (l: Pick<TextLayer, "text" | "upper">): string => (l.upper ? l.text.toUpperCase() : l.text);
 
@@ -72,12 +72,37 @@ function drawText(ctx: Ctx, l: TextLayer) {
   });
 }
 
+/** How far off the canvas a layer is drawn to throw its shadow alone back onto it, in canvas pixels. */
+const FAR = 30_000;
+
 function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
   ctx.save();
   ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
   if (l.rotate) ctx.rotate((l.rotate * Math.PI) / 180);
   ctx.translate(-l.w / 2, -l.h / 2);
   ctx.globalAlpha = l.opacity ?? 1;
+  if (l.shadow) {
+    // The shadow alone, first: the layer is drawn far off the canvas with its shadow thrown back to where it falls,
+    // so the shadow never shows through the layer's own see-through parts. A canvas's shadow is in the canvas's own
+    // pixels whatever the drawing is scaled or turned by, so its blur and offset are scaled here by hand.
+    const t = ctx.getTransform();
+    const k = Math.hypot(t.a, t.b);
+    const c = l.shadow.color;
+    ctx.save();
+    ctx.setTransform(t.a, t.b, t.c, t.d, t.e - FAR, t.f);
+    ctx.shadowColor = `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${l.shadow.opacity})`;
+    ctx.shadowBlur = l.shadow.blur * k;
+    ctx.shadowOffsetX = l.shadow.x * k + FAR;
+    ctx.shadowOffsetY = l.shadow.y * k;
+    paintLayer(ctx, l, loaded, true);
+    ctx.restore();
+  }
+  paintLayer(ctx, l, loaded, false);
+  ctx.restore();
+}
+
+/** A layer in its own box. `cast`: only what throws its shadow (a picture's whole box, not the picture cut to its corners). */
+function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
   if (l.type === "text") drawText(ctx, l);
   else if (l.type === "shape") {
     if (l.shape === "ellipse") {
@@ -96,6 +121,10 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
     if (pic && pic.width && pic.height) {
       if (l.type === "image") {
         roundedRect(ctx, 0, 0, l.w, l.h, l.radius ?? 0);
+        if (cast) {
+          ctx.fillStyle = "#000000";
+          return void ctx.fill();
+        }
         ctx.clip();
         const k = l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height);
         ctx.drawImage(pic, (l.w - pic.width * k) / 2, (l.h - pic.height * k) / 2, pic.width * k, pic.height * k);
@@ -106,7 +135,6 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
       ctx.fillRect(0, 0, l.w, l.h);
     }
   }
-  ctx.restore();
 }
 
 export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded): void {

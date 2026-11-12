@@ -19,7 +19,7 @@ import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit
 import { listAnimationStyles } from "@/lib/editor";
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
-import { FONT_OPTIONS, fontWeightFor } from "@/lib/types";
+import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -104,7 +104,7 @@ function DesignPage({ id }: { id: string }) {
 
   // the app's fonts, before the first page is drawn with them
   useEffect(() => {
-    void Promise.all(FONT_OPTIONS.map((f) => document.fonts.load(`${fontWeightFor(f.family)} 48px "${f.family}"`))).then(() => setVersion((v) => v + 1), () => {});
+    void Promise.all(DESIGN_FONTS.map((f) => document.fonts.load(`${designWeight(f.family)} 48px "${f.family}"`))).then(() => setVersion((v) => v + 1), () => {});
   }, []);
 
   const opened = design !== null;

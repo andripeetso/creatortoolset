@@ -25,7 +25,7 @@ import type { Design, DesignPage, Layer } from "@contracts/design";
 import { DESIGN_FORMATS } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { boundsOf, pageName, resizeAll, type Align } from "@/lib/design/hands";
-import { FONT_OPTIONS } from "@/lib/types";
+import { DESIGN_FONTS } from "@/lib/design/fonts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -156,6 +156,9 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
     {children}
   </button>
 );
+
+/** The shadow a press on + gives. */
+const SHADOW = { color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8 };
 
 const ALIGNS: [Align, string, typeof AlignLeft][] = [
   ["left", "Align left", AlignStartVertical],
@@ -362,7 +365,7 @@ export function Inspector({
                 <option value="" disabled hidden>
                   Mixed
                 </option>
-                {FONT_OPTIONS.map((f) => (
+                {DESIGN_FONTS.map((f) => (
                   <option key={f.family} value={f.family}>
                     {f.label}
                   </option>
@@ -401,6 +404,37 @@ export function Inspector({
               </div>
             </Section>
           )}
+          <Section
+            title="Effects"
+            action={
+              picked.some((l) => l.shadow) ? (
+                <Tap label="Remove the shadow" onClick={() => onPatch((l) => ({ ...l, shadow: undefined }))}>
+                  <Minus className="h-3.5 w-3.5" />
+                </Tap>
+              ) : (
+                <Tap label="Add a shadow" onClick={() => onPatch((l) => ({ ...l, shadow: SHADOW }))}>
+                  <Plus className="h-3.5 w-3.5" />
+                </Tap>
+              )
+            }
+          >
+            {picked.some((l) => l.shadow) && (
+              <>
+                <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                  {colour("Shadow", same((l) => l.shadow?.color), (c) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), color: c } }))}
+                  {num("%", "Shadow strength in percent", (() => {
+                    const o = same((l) => l.shadow?.opacity);
+                    return o === null ? null : Math.round(o * 100);
+                  })(), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), opacity: n / 100 } }), { min: 0, max: 100 })}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {num("X", "Shadow X", same((l) => l.shadow?.x), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), x: n } }), { min: -1000, max: 1000 })}
+                  {num("Y", "Shadow Y", same((l) => l.shadow?.y), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), y: n } }), { min: -1000, max: 1000 })}
+                  {num("◌", "Shadow blur", same((l) => l.shadow?.blur), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), blur: n } }), { min: 0, max: 400 })}
+                </div>
+              </>
+            )}
+          </Section>
           {every((l) => l.type === "image") && (
             <Section title="Picture">
               <select aria-label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined)) ?? ""} onChange={(e) => (onPatch((l) => (l.type === "image" ? { ...l, fit: e.target.value as "cover" | "contain" } : l)), e.currentTarget.blur())} className={cn(FIELD, "w-full outline-none")}>

@@ -30,6 +30,10 @@ const fontFiles: [family: string, file: string, weight: number][] = [
   ["Oswald SemiBold", "Oswald-SemiBold.ttf", 600],
   ["Oswald", "Oswald-Bold.ttf", 700],
   ["Poppins", "Poppins-Bold.ttf", 700],
+  // the Designer's own (src/lib/design/fonts.ts)
+  ["Poppins Regular", "Poppins-Regular.ttf", 400],
+  ["DM Serif Display", "DMSerifDisplay-Regular.ttf", 400],
+  ["Caveat", "Caveat-Variable.ttf", 700],
 ];
 
 // render.html is opened from dist/public via file://. These relative URLs

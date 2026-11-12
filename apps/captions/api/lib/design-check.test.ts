@@ -110,6 +110,19 @@ describe("a drawing is shapes only", () => {
   });
 });
 
+describe("the designer's own fonts and a layer's shadow", () => {
+  it("keeps a font that is the designer's alone, and holds a shadow to what can be drawn", () => {
+    const { pages } = cleanPages(
+      [{ layers: [text({ font: "DM Serif Display", shadow: { color: "#ABC", opacity: 7, blur: -3, x: 99999, y: "low" } }), text({ font: "Caveat", shadow: { color: "#11223344" } }), text({ font: "Poppins Regular", shadow: "soft" })] }],
+      rules,
+    );
+    expect(pages[0]!.layers.map((l) => l.type === "text" && l.font)).toEqual(["DM Serif Display", "Caveat", "Poppins Regular"]);
+    expect(pages[0]!.layers[0]!.shadow).toEqual({ color: "#aabbcc", opacity: 1, blur: 0, x: 1000, y: 8 });
+    expect(pages[0]!.layers[1]!.shadow).toEqual({ color: "#112233", opacity: 0.35, blur: 24, x: 0, y: 8 });
+    expect(pages[0]!.layers[2]).not.toHaveProperty("shadow");
+  });
+});
+
 describe("what the layers list keeps", () => {
   it("a layer's name, hidden and locked and a page's name are saved; anything else in their place is not", () => {
     const shape = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10 };

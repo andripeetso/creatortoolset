@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { DESIGN_LIMITS, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
-import { FONT_OPTIONS } from "../src/lib/types";
+import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import { aiFor, completeWithFallback } from "./ai-complete";
 import { completeVisionWithFallback, type VisionImage } from "./ai-vision";
 import type { AuthVars } from "./auth";
@@ -95,7 +95,7 @@ async function slidesOf(user: AuthVars["user"], session: string, doc: string): P
 /* ---- the AI's call ---- */
 
 /** How layers are written: part of the design call, and what an AI that asks for a design's pages is told (GET /:id/pages). */
-export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from the page's top left corner, and may have "rotate" (degrees about its middle) and "opacity" (0 to 1). Layers are drawn in order, a later one over an earlier one. The kinds:
+export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from the page's top left corner, and may have "rotate" (degrees about its middle), "opacity" (0 to 1) and "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}). Layers are drawn in order, a later one over an earlier one. The kinds:
 - {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"upper":false,"outline":{"color":"#rrggbb","width":8}}: the words wrap inside w; size is the letter height in pixels.
 - {"type":"shape","shape":"rect|ellipse","fill":"#rrggbb","radius":0,"stroke":{"color":"#rrggbb","width":4}}
 - {"type":"image","picture":"<id>","fit":"cover|contain","radius":0}: only a picture listed under "Pictures".
@@ -137,7 +137,7 @@ export function designPrompt(a: DesignAsk): { system: string; user: string } {
     system: DESIGN_SYSTEM,
     user: [
       `${what}. Each page is ${a.w} × ${a.h} pixels.`,
-      `Fonts: ${FONT_OPTIONS.map((f) => JSON.stringify(f.family)).join(", ")}`,
+      `Fonts: ${DESIGN_FONTS.map((f) => JSON.stringify(f.family)).join(", ")}`,
       look,
       ...(a.notes?.trim() ? [`Notes from the author:\n${a.notes.trim()}`] : []),
       `Pictures:\n${a.pictures.length ? a.pictures.map((p) => `${p.id} = ${p.what}`).join("\n") : "(none)"}`,
@@ -234,7 +234,7 @@ async function forAi(user: AuthVars["user"], d: Design) {
     kind: d.kind,
     width: d.width,
     height: d.height,
-    fonts: FONT_OPTIONS.map((f) => f.family),
+    fonts: DESIGN_FONTS.map((f) => f.family),
     pictures: d.pictures.map((id) => ({ id, what: "version" in (d.from ?? {}) && id === d.pictures[0] ? "the video's own frame" : "a picture the author added" })),
     // a look is its pictures first, and those are not sent here: its name and brief are what words can carry
     looks: animationStyles(d.owner)
