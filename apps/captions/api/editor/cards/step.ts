@@ -169,8 +169,8 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     withdraw(db, vid);
     return save({ ...st, askedAt: undefined, note: why, done: st.calls > 0 });
   };
-  /** An AI call may be made: at most MAX_CALLS for a version, counted before the call. */
-  const spend = async () => st.calls < MAX_CALLS && !!(await save({ ...st, calls: st.calls + 1 }));
+  /** An AI call may be made: at most MAX_CALLS for a version, the last of them only after a fix, counted before the call. */
+  const spend = async () => st.calls < MAX_CALLS - (st.fixed ? 0 : 1) && !!(await save({ ...st, calls: st.calls + 1 }));
   /** Asks a Mac to draw the script: a `cards-draw` step, tried again by the queue as any device step is (three attempts in all), unless the script threw. */
   const ask = async (script: string) => {
     await mkdir(cardsDir(edit.id, variant), { recursive: true });
@@ -191,8 +191,9 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     const untaken = row?.state === "queued" && waited > UNTAKEN_MS;
     if (out && on && !untaken && waited <= DRAW_MS) throw new Waiting(WAKE_S);
     const whole = row?.state === "done";
-    // a first draw that did not finish keeps the cards that did arrive; a second one leaves the first draw's in place
-    if (whole || st.draws === 1) await takeDraw(edit.id, variant, st.cards ?? []);
+    // a draw before the look (the script as made, or its fix) that did not finish keeps the cards that did arrive; a
+    // corrected one leaves the cards that were looked at in place
+    if (whole || !st.looked) await takeDraw(edit.id, variant, st.cards ?? []);
     const drawn = (st.cards ?? []).filter((c) => existsSync(cardFile(edit.id, variant, c.id)!)).map((c) => c.id);
     // the script as made threw on the Mac: its words are kept for the fix below, which a Stop or an update does not lose
     const threw = !whole && st.draws === 1 && scriptThrew(row?.error) ? row!.error! : undefined;
@@ -200,7 +201,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     await save({ ...st, askedAt: undefined, drawn, threw });
     // the Mac's own words when it said why; else what the wait ran into
     const why = row?.error ? drawFailure(row.error) : !on ? NO_MAC : untaken ? "your Mac did not take the draw in 10 minutes" : out ? "the draw took over 20 minutes" : "the draw failed";
-    if (!whole && !threw) return end(st.draws > 1 ? `the corrected cards were not drawn (${why})` : why);
+    if (!whole && !threw) return end(st.looked ? `the corrected cards were not drawn (${why})` : why);
     if (whole && !drawn.length) return end("your Mac sent no card");
   }
   if (!on) return end(NO_MAC);

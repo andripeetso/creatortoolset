@@ -23,7 +23,7 @@ export const CARD_TEXT_MAX = 60;
 export const SCRIPT_MAX = 60_000;
 /** A version's cards are sent to be drawn at most this many times: the script as made, its fix when it threw on the Mac, and once more when the look at the stills corrects it. */
 export const MAX_DRAWS = 3;
-/** AI calls a version's cards take at most: plan, make, fix (only when the script threw), look. */
+/** AI calls a version's cards take at most: plan, make, fix, look. The fourth only for a version whose script threw and was fixed. */
 export const MAX_CALLS = 4;
 /** The Mac's words about a script that threw, in characters, that the fix call carries at most. */
 export const ERROR_MAX = 500;

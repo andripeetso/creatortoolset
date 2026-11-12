@@ -544,9 +544,26 @@ describe.skipIf(rootReplaced)("a script that throws on the Mac", () => {
     expect(jobOf(e, CARDS_DRAW_KIND)).toBeUndefined();
     expect(jobOf(e, "cards")).toMatchObject({ state: "done" });
     expect(jobOf(e, "post")).toMatchObject({ state: "queued" });
-    expect((await view(e)).cards).toEqual({ v1: { cards: [], note: `Cards: the corrected cards were not drawn (${THREW})` } });
+    expect((await view(e)).cards).toEqual({ v1: { cards: [], note: `Cards: ${THREW}` } });
     expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 2, done: true });
     expect(cardsOnCut(e)).toEqual([]);
+    await call("maker", "POST", `/api/editor/${e}/stop`);
+  });
+
+  it("a fix whose draw fails for another reason is tried again as any draw is, and keeps the cards it sent", async () => {
+    const e = await newEdit();
+    answers = [PLAN, BROKEN, FIXED];
+    await toCards(e);
+    await throws();
+    await step();
+    for (let attempt = 1; attempt <= 3; attempt++) await drawOnMac({ fail: "Card 2 of 2 took longer than 20 seconds to draw.", skip: ["c2"], colour: "blue" });
+    expect(jobOf(e, CARDS_DRAW_KIND)).toMatchObject({ state: "failed" });
+    await step();
+    expect(asked).toHaveLength(3); // a draw that failed is not looked at
+    expect(cardsOnCut(e).map((i) => i.src)).toEqual(["card-c1"]);
+    expect(readFileSync(path.join(editDir(e), "cards", "v1", "c1.mp4")).equals(readFileSync(path.join(dir, "card-blue-2.4.mp4")))).toBe(true);
+    expect((await view(e)).cards).toEqual({ v1: { cards: [{ id: "c1", text: "Tuck your chin", liked: false }], note: "Cards: Card 2 of 2 took longer than 20 seconds to draw." } });
+    expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 2, done: true });
     await call("maker", "POST", `/api/editor/${e}/stop`);
   });
 
@@ -587,6 +604,27 @@ describe.skipIf(rootReplaced)("a script that throws on the Mac", () => {
     expect(asked).toHaveLength(3);
     expect(await claim()).toEqual({ job: null });
     expect((await view(e)).cards).toEqual({ v1: { cards: [], note: `Cards: ${THREW}` } });
+    await call("maker", "POST", `/api/editor/${e}/stop`);
+  });
+
+  it("the fourth call is a fixed version's alone: one stopped during its make call and run again keeps today's three", async () => {
+    const e = await newEdit();
+    answers = [PLAN, async () => {
+      await call("maker", "POST", `/api/editor/${e}/stop`);
+      throw new Error("The request was stopped");
+    }];
+    await toCards(e);
+    const cards = libraryDb().prepare("SELECT id FROM edit_jobs WHERE edit_id = ? AND kind = 'cards'").get(e) as { id: number };
+    await call("maker", "POST", `/api/editor/${e}/jobs/${cards.id}/retry`);
+    answers = [SCRIPT];
+    only(e);
+    await step(); // the make, again
+    await drawOnMac();
+    await step(); // no call is left for the look, as before
+    expect(asked).toHaveLength(3);
+    expect(readCards(e, "v1")).toMatchObject({ calls: 3, draws: 1, done: true });
+    expect(readCards(e, "v1")).not.toHaveProperty("note");
+    expect(cardsOnCut(e)).toHaveLength(2);
     await call("maker", "POST", `/api/editor/${e}/stop`);
   });
 

@@ -5,7 +5,8 @@
  *   POST editor/claim          DeviceClaimBody → DeviceClaim      declare kinds, take one step (or job: null)
  *   POST editor/job/:id/beat                    → { ok: boolean } keep a step's lease while it runs (every 15 s or so)
  *   POST editor/job/:id/done                    → DeviceEnded     the step finished
- *   POST editor/job/:id/fail   { error }        → DeviceEnded     the step failed (retried later, or failed after 3 tries)
+ *   POST editor/job/:id/fail   { error }        → DeviceEnded     the step failed (retried later, or failed after 3 tries; a
+ *                                                                 cards-draw whose script threw fails at once, api/editor/worker.ts)
  * A device never asks for a step on a clock. Its long poll for AI requests (POST wait) lists the kinds it would claim
  * right now, `{ blobs, editor: string[] }`: they are kept as the kinds it declares (an empty list: none), and when a
  * claim made now would be handed a step the poll is answered at once with EDITOR_HINT, after any AI request. The device
