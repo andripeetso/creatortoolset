@@ -15,7 +15,7 @@ import { useSessionSummaries } from "@/lib/workshop-summary";
 import { accentFor, accentTones, currentProject, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
-import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
+import { needsLine, onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
 import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -117,13 +117,14 @@ export default function ToolsetHome() {
     return <Navigate to={{ pathname: "/", search: location.search }} replace />;
   }
 
-  /** What a tile still needs, from the account's setup (none when nothing): one entry per missing thing. */
-  const statusOf = (k: Key): string[] => {
-    if (!view || !canUseKey(me, k)) return [];
+  /** What a tile still needs, from the account's setup, in one line ("Needs an Apify key"); null when nothing. */
+  const statusOf = (k: Key): string | null => {
+    if (!view || !canUseKey(me, k)) return null;
     // the recorder needs nothing Review doesn't; Finals is a view of the Media Library
     const tool = k === "record" ? "review" : k === "finals" ? "media" : k;
-    if (view.tools && !view.tools.includes(tool)) return [];
-    return readiness(tool, view.have).missing.map((n) => n.what);
+    if (view.tools && !view.tools.includes(tool)) return null;
+    const missing = readiness(tool, view.have).missing;
+    return missing.length ? needsLine(missing) : null;
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome);
@@ -148,7 +149,7 @@ export default function ToolsetHome() {
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running chip={running[dest]} /> : null}
-          {ok && missing.length > 0 && <NeedsSetup what={missing} />}
+          {ok && missing && <NeedsSetup what={missing} />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
       </>
@@ -327,28 +328,24 @@ export default function ToolsetHome() {
 
 /**
  * A tool that needs setup: a small amber dot on its icon, nothing for one that is ready (owner, 2026-11-09). Hovering the
- * dot says so and lists what is missing (owner, 2026-11-10); opening the tool brings up its checklist (FirstOpen). The
+ * dot says what is missing in one line, the same words every screen uses (owner, 2026-11-10 and 11-11: "one specific
+ * concrete statement"); opening the tool brings up its checklist (FirstOpen). The
  * dot's empty `title` keeps the tile's own description from showing under the tooltip; the ring around it is only a
  * larger place to point at.
  */
-function NeedsSetup({ what }: { what: string[] }) {
+function NeedsSetup({ what }: { what: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
           role="img"
-          aria-label={`Not set up yet. Needs: ${what.join(", ")}`}
+          aria-label={what}
           title=""
           className="intro-late absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-400 before:absolute before:-inset-2 before:content-['']"
         />
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="max-w-64 text-left">
-        <p className="font-medium">Not set up yet</p>
-        <ul className="mt-0.5">
-          {what.map((w) => (
-            <li key={w}>{w}</li>
-          ))}
-        </ul>
+        {what}
       </TooltipContent>
     </Tooltip>
   );
