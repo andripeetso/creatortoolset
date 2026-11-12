@@ -17,7 +17,7 @@ import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import { allPartsIn, assistantFilesApp, finishUpload, removeFile, uploadOf, USE_NAMES } from "./assistant-files";
+import { allPartsIn, assistantFilesApp, finishUpload, removeFile, setWaitedFor, uploadOf, USE_NAMES } from "./assistant-files";
 import { needsAttention, type Attention } from "./lib/attention";
 import { currentProject, memoryBlock } from "./lib/memory";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
@@ -864,6 +864,9 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
   tell(username);
   if (how !== "stopped") attend(username, m.id, "failed", text);
 }
+
+// the uploads a waiting turn names stay through the orphan sweep: WAIT_MS ends that turn instead
+setWaitedFor((username) => new Set(Object.values(load(username).held ?? {}).flatMap((h) => h.files)));
 
 const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
 const wakes = new Map<string, ReturnType<typeof setTimeout>>();

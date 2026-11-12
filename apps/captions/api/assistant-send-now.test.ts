@@ -575,19 +575,28 @@ describe("an upload's X and Stop delete the server copy; nobody's upload stays",
     expect(st).toBe(404);
   });
 
-  it("the sweep removes an upload with no part for an hour, and keeps a fresh one and a finished one", async () => {
+  it("the sweep removes an upload with no part for an hour, and keeps a fresh one, a finished one and one a waiting message names", async () => {
     const p = await person("wyn");
-    const [old, fresh, done] = [await p.upload("Old.mp4"), await p.upload("Fresh.mp4"), await p.upload("Done.mp4")];
+    const [old, fresh, done, phone] = [await p.upload("Old.mp4"), await p.upload("Fresh.mp4"), await p.upload("Done.mp4"), await p.upload("Pocket.mov")];
     await done.part();
     await done.complete();
+    // a phone put away mid-upload: its message waits for the video
+    await p.send({ text: "Caption this", files: [phone.id] });
     const dir = (id: string) => path.join(process.env.DATA_DIR!, "assistant", "files", "wyn", id);
     const ago = new Date(Date.now() - ORPHAN_MS - 60_000);
-    utimesSync(path.join(dir(old.id), "parts"), ago, ago);
+    for (const id of [old.id, phone.id]) utimesSync(path.join(dir(id), "parts"), ago, ago);
     utimesSync(dir(done.id), ago, ago);
     await sweep("wyn");
     expect(existsSync(dir(old.id))).toBe(false);
     expect(existsSync(dir(fresh.id))).toBe(true);
     expect(existsSync(dir(done.id))).toBe(true);
+    expect(existsSync(dir(phone.id))).toBe(true);
+    // the phone comes back: its last part lands and the message is answered
+    const job = p.claim();
+    expect((await phone.part()).status).toBe(200);
+    const got = await job;
+    expect(got.user).toContain(`file id ${phone.id}`);
+    await p.answer(got.id, "Captioned.");
   });
 });
 

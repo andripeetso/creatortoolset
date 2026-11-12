@@ -49,11 +49,19 @@ export async function readFileMeta(user: string, id: string): Promise<AssistantF
   }
 }
 
-/** This account's files older than 7 days go, and uploads with no part for an hour (each new upload sweeps its own account; sweepAll every hour). */
+/** The uploads a waiting message names (assistant.ts registers it: this file can't import that one). */
+let waitedFor: (user: string) => Set<string> = () => new Set();
+export const setWaitedFor = (f: (user: string) => Set<string>): void => void (waitedFor = f);
+
+/**
+ * This account's files older than 7 days go, and uploads with no part for an hour, unless a waiting message names one: its
+ * own clock ends that message (a phone put away mid-upload keeps it). Each new upload sweeps its own account; sweepAll every hour.
+ */
 export async function sweep(user: string): Promise<void> {
+  const waited = waitedFor(user);
   for (const id of await readdir(rootOf(user)).catch(() => [] as string[])) {
     const st = await stat(dirOf(user, id)).catch(() => null);
-    const parts = await stat(path.join(dirOf(user, id), "parts")).catch(() => null);
+    const parts = waited.has(id) ? null : await stat(path.join(dirOf(user, id), "parts")).catch(() => null);
     if ((st && Date.now() - st.mtimeMs > KEEP_MS) || (parts && Date.now() - parts.mtimeMs > ORPHAN_MS)) await rm(dirOf(user, id), { recursive: true, force: true });
   }
 }
