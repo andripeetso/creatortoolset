@@ -1,7 +1,7 @@
 import XCTest
 @testable import CreatorToolset
 
-/// The studio plug-in's AI Editor (its rows in Chats, an edit's thread), push and Share → Creator Toolset, from what
+/// The studio plug-in's AI Editor (its cards on Edits, an edit's thread), push and Share → Creator Toolset, from what
 /// the studio's test server really answered (`fixtures/` of the chat-first build, trimmed of the footage's own words
 /// and takes, and of a video's share link).
 final class NativeToolsTests: XCTestCase {
@@ -193,12 +193,42 @@ final class NativeToolsTests: XCTestCase {
         // changes he asked for: no word at the edge, and not under Done although its script is ready to post
         XCTAssertEqual(rows[3].detail, "Changes requested on V1A-2")
         XCTAssertFalse(rows[3].status.waitsOnYou)
-        XCTAssertEqual(rows[4].detail, "Script")
+        XCTAssertEqual(rows[4].detail, "Script 50%")
         XCTAssertEqual(rows[4].status, .working(since: Date(timeIntervalSince1970: 1_794_417_383.365)))
         // the two cuts in Review belong to their edits' rows; the video uploaded by hand has its own, approved
         XCTAssertEqual(rows[5].route, .review("ca5463a2-36d1-46dc-9f41-3ae5c54a4d2f", version: nil))
         XCTAssertEqual(rows.filter(\.status.waitsOnYou).count, 3)
-        XCTAssertEqual(ChatFilter.allCases.map { chip in rows.filter(chip.has).count }, [6, 5, 1, 0])
+        // every one of them is on Edits
+        XCTAssertFalse(rows.contains(where: ChatList.onChats))
+    }
+
+    func testEachCardShowsItsNewestCut() throws {
+        let rows = try chats()
+        func picture(_ title: String) -> String? { rows.first { $0.title == title }?.picture }
+        // an edit shows the cut it filed in Review; the newest version that is ready, by the address Review's own screen uses
+        XCTAssertEqual(picture("Tummy time: 3 mistakes"), "/api/review/assets/ef173602-861d-44e0-8529-894f2a06243e/v/1/thumb?c=1794417379392")
+        XCTAssertEqual(picture("Sleep routine reel"), "/api/review/assets/9f3d4416-935a-4045-9880-cfc5e24614c4/v/2/thumb?c=1794417381761")
+        XCTAssertEqual(picture("Hanging basics teaser v2"), "/api/review/assets/ca5463a2-36d1-46dc-9f41-3ae5c54a4d2f/v/2/thumb?c=1794417378215")
+        // nothing in Review yet: the quiet film tile
+        XCTAssertNil(picture("Rolling cues"))
+    }
+
+    func testChatsHoldTheAssistantsChatsAndEditsTheRest() throws {
+        // the assistant asks for an approval in the open chat; an earlier chat is done
+        let view = try JSONDecoder().decode(AssistantView.self, from: Data(#"""
+        {"id":"c-open","provider":"claude","messages":[
+          {"id":"m1","role":"user","text":"Clear out the old renders","at":3000000},
+          {"id":"m2","role":"assistant","text":"Deleting them needs your OK:","at":3000500,"status":"done",
+           "approvals":[{"id":"a1","tool":"Bash","summary":"Delete three renders","detail":"rm","at":3000500,"status":"waiting"}]}],
+         "past":[{"id":"c-old","title":"Monday numbers","at":1000000,"count":3}]}
+        """#.utf8))
+        let edits = EditorChats.rows(edits: try decode(Self.edits), todo: try decode(Self.todo))
+        let rows = ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: edits) + ChatList.chats(view))
+        XCTAssertEqual(rows.filter(ChatList.onChats).map(\.route), [.chat("c-open"), .chat("c-old")])
+        XCTAssertEqual(rows.filter { !ChatList.onChats($0) }.count, 6)
+        // Chats' badge: the chat that asks; Edits' badge: the go, the failed job, the look sheet
+        XCTAssertEqual(ChatList.waiting(rows, chats: true), 1)
+        XCTAssertEqual(ChatList.waiting(rows, chats: false), 3)
     }
 
     func testAnOlderServerThatDoesNotSayWhichJobIsHeld() throws {

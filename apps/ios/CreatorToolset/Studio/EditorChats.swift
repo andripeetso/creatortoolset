@@ -1,7 +1,7 @@
 import Combine
 import SwiftUI
 
-// The studio plug-in's AI Editor in Chats: one row per edit, saying what it waits for. The heavy work
+// The studio plug-in's AI Editor on Edits: one card per edit, saying what it waits for. The heavy work
 // runs on the Mac; the phone reads the server's list and its to-do (`/api/editor`, `/api/editor/todo`).
 // Only on a server with the plug-in, for an admin (`EditorChats.on`).
 
@@ -74,6 +74,8 @@ struct EditorTodo: Decodable {
         var at: Double
         /// true = a held pass. Absent on a look sheet, and on every row of an older server.
         var hold: Bool?
+        /// 0 to 1, while it runs.
+        var progress: Double?
 
         var job: String { key.split(separator: ":").last.map(String.init) ?? "" }
     }
@@ -220,7 +222,8 @@ enum EditorChats {
             if let video = review.first { return row("\(video.name) is in Review", .review) }
             if let job = failed.first { return row(job.error ?? "\(EditorWords.doing(job.kind)) failed", .failed, error: true) }
             if let job = todo.running.first(where: { $0.edit == edit.id }) {
-                return row(EditorWords.short(job.kind), .working(since: date(ms: job.at)), shelf: .working)
+                let done = Int((job.progress ?? 0) * 100)
+                return row(EditorWords.short(job.kind) + (done > 0 ? " \(done)%" : ""), .working(since: date(ms: job.at)), shelf: .working)
             }
             if let job = todo.queued.first(where: { $0.edit == edit.id }) {
                 return row(EditorWords.short(job.kind), .working(since: nil), shelf: .working)

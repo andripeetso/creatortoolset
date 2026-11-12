@@ -2,7 +2,8 @@ import Combine
 import SwiftUI
 import UIKit
 
-/// One row of Chats: a conversation or a piece of work that talks back.
+/// One row of Chats (an assistant's chat) or of Edits (an edit, a Review video): a conversation or a piece
+/// of work that talks back.
 struct ChatRow: Identifiable, Hashable {
     /// The page of the website it opens ("/editor/<id>", "/review/<id>"): one row per thing.
     let id: String
@@ -22,6 +23,8 @@ struct ChatRow: Identifiable, Hashable {
     var finished: Date?
     /// A New edit made on this phone (`PhoneEdit.id`): the phone keeps its row, and a swipe removes it.
     var phoneEdit: UUID?
+    /// The picture of its newest cut in Review, when it has one.
+    var picture: String?
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
@@ -39,12 +42,30 @@ struct ReviewListItem: Decodable {
     var at: Double
     /// The page of what made it, when something did (an edit made its cut).
     var source: String?
+    /// The picture of its newest version that is ready.
+    var picture: String?
 
     private enum Keys: String, CodingKey { case id, name, approval, versions, newComments, updatedAt, createdAt }
     private struct Approval: Decodable { var status: String? }
+    /// Each field on its own: one odd value costs the picture, never the versions or what made them.
     private struct Version: Decodable {
+        var n: Int?
+        var status: String?
+        var removed: Bool?
+        var createdAt: Double?
         var source: Source?
         struct Source: Decodable { var href: String? }
+
+        private enum Keys: String, CodingKey { case n, status, removed, createdAt, source }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            n = try? c.decode(Int.self, forKey: .n)
+            status = try? c.decode(String.self, forKey: .status)
+            removed = try? c.decode(Bool.self, forKey: .removed)
+            createdAt = try? c.decode(Double.self, forKey: .createdAt)
+            source = try? c.decode(Source.self, forKey: .source)
+        }
     }
 
     init(from decoder: Decoder) throws {
@@ -55,31 +76,12 @@ struct ReviewListItem: Decodable {
         let all = (try? c.decode([Version].self, forKey: .versions)) ?? []
         versions = all.count
         source = all.last?.source?.href
+        // the same address Review's own screen asks (`ReviewAsset.media`)
+        if let ready = all.last(where: { $0.status == "ready" && $0.removed != true }), let n = ready.n {
+            picture = "/api/review/assets/\(id)/v/\(n)/thumb?c=\(Int(ready.createdAt ?? 0))"
+        }
         newComments = (try? c.decode(Int.self, forKey: .newComments)) ?? 0
         at = (try? c.decode(Double.self, forKey: .updatedAt)) ?? (try? c.decode(Double.self, forKey: .createdAt)) ?? 0
-    }
-}
-
-/// The chips under the search field.
-enum ChatFilter: String, CaseIterable, Identifiable {
-    case all, edits, review, assistant
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: "All"
-        case .edits: "Edits"
-        case .review: "Review"
-        case .assistant: "Assistant"
-        }
-    }
-
-    func has(_ row: ChatRow) -> Bool {
-        switch (self, row.route) {
-        case (.all, _), (.edits, .edit), (.review, .review): true
-        case (.assistant, let route): route.isAssistant
-        default: false
-        }
     }
 }
 
@@ -127,8 +129,16 @@ func orNothing<T>(_ nothing: T, _ read: () async throws -> T) async throws -> T 
     }
 }
 
-/// What Chats shows, worked out from what the server said: which rows, in which order.
+/// What Chats and Edits show, worked out from what the server said: which rows, in which order.
 enum ChatList {
+    /// The tab a row is on: the assistant's chats on Chats, everything else (edits, Review videos) on Edits.
+    static func onChats(_ row: ChatRow) -> Bool { row.route.isAssistant }
+
+    /// A tab's badge: its rows that wait on the person.
+    static func waiting(_ rows: [ChatRow], chats: Bool) -> Int {
+        rows.filter { onChats($0) == chats && $0.status.waitsOnYou }.count
+    }
+
     /// The page of the website a route stands for, and so its row's id.
     static func path(_ route: AppRoute) -> String {
         switch route {
@@ -198,18 +208,23 @@ enum ChatList {
         return ChatRow(id: path(.review(video.id, version: nil)), route: .review(video.id, version: nil), title: video.name,
                        detail: words.joined(separator: " · "), status: waits ? .review : .time(when), at: when,
                        shelf: video.status == "approved" || (video.status == "none" && video.newComments == 0) ? .done : .active,
-                       keys: waits ? ["\(video.id):v\(video.versions)"] : [])
+                       keys: waits ? ["\(video.id):v\(video.versions)"] : [], picture: video.picture)
     }
 
     /// The rows that are not the assistant's. A Review video made by something that has its own
-    /// row (an edit's cut) is that row's business and gets none.
+    /// row (an edit's cut) is that row's business and gets none: the row shows its newest picture.
     static func merge(videos: [ReviewListItem], others: [ChatRow]) -> [ChatRow] {
         let have = Set(others.map(\.id))
-        let loose = videos.filter { video in
-            guard let made = video.source.flatMap(AppRoute.from(path:)) else { return true }
-            return !have.contains(path(made))
+        func maker(_ video: ReviewListItem) -> String? {
+            video.source.flatMap(AppRoute.from(path:)).map(path).flatMap { have.contains($0) ? $0 : nil }
         }
-        return others + loose.map(row)
+        let newest = videos.filter { $0.picture != nil }.sorted { $0.at > $1.at }
+        let rows = others.map { row in
+            var row = row
+            row.picture = newest.first { maker($0) == row.id }?.picture ?? row.picture
+            return row
+        }
+        return rows + videos.filter { maker($0) == nil }.map(row)
     }
 
     /// A row he dismissed steps back under Done and says nothing, until something about it changes
@@ -247,23 +262,23 @@ enum ChatList {
     }
 }
 
-/// The rows of Chats and how many of them wait on the person (the tab's badge).
+/// The rows of Chats and of Edits, in one list: the badges, the notifications and the phone's last copy read it.
 @MainActor
 final class ChatsModel: ObservableObject {
     static let shared = ChatsModel()
 
-    /// In the order of the screen (`ChatList.arrange`).
+    /// In the order of the screen (`ChatList.arrange`); each tab shows its own (`ChatList.onChats`).
     @Published private(set) var rows: [ChatRow] = []
     @Published private(set) var link = Link.ok
     @Published private(set) var offline = false
-    /// Something a part of the app says is off, shown above the list ("MacBook is offline").
+    /// The server has answered once since launch: an empty list is then really empty.
+    @Published private(set) var loaded = false
+    /// Something a part of the app says is off, shown above the edits ("MacBook is offline").
     @Published var notice: String?
     /// How many things of the last read this version of the app could not read (the server is
     /// newer than the app, or sends something unexpected). Counted while a read runs, shown after it.
     var unreadable = 0
     @Published private(set) var couldNotRead = 0
-
-    var waiting: Int { rows.filter(\.status.waitsOnYou).count }
 
     /// Whether this phone is signed in to a computer, and whether that sign-in still holds.
     enum Link { case ok, none, expired }
@@ -295,8 +310,6 @@ final class ChatsModel: ObservableObject {
     private var watchingKey: String?
     private var observing = false
     private var soon: Task<Void, Never>?
-    /// The screens open on Chats, as last seen: one that is left was looked at until then.
-    private var open: [AppRoute] = []
     private var bag = Set<AnyCancellable>()
 
     private init() {
@@ -316,16 +329,18 @@ final class ChatsModel: ObservableObject {
                 self?.rebuild()
             }
         }.store(in: &bag)
-        // a screen pushed on Chats is its row opened, and so is one he comes back from:
+        // a screen pushed on Chats or Edits is its row opened, and so is one he comes back from:
         // what finished while he watched is not news
-        AppNavigator.shared.$chats.sink { [weak self] routes in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let seen = self.open.filter { !routes.contains($0) } + [routes.last].compactMap { $0 }
-                self.open = routes
-                for route in seen { self.markOpened(ChatList.path(route)) }
-            }
-        }.store(in: &bag)
+        for stack in [AppNavigator.shared.$chats, AppNavigator.shared.$edits] {
+            var open: [AppRoute] = []   // the screens open on that tab, as last seen
+            stack.sink { [weak self] routes in
+                MainActor.assumeIsolated {
+                    let seen = open.filter { !routes.contains($0) } + [routes.last].compactMap { $0 }
+                    open = routes
+                    for route in seen { self?.markOpened(ChatList.path(route)) }
+                }
+            }.store(in: &bag)
+        }
         // the phone's New edits: their rows move with every Start, answer and clip that lands (not with each byte)
         PhoneEdits.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
             MainActor.assumeIsolated { self?.rebuild() }
@@ -425,6 +440,7 @@ final class ChatsModel: ObservableObject {
                 others = fresh
                 offline = false
                 link = .ok
+                loaded = true
                 loadedAt = Date()
                 rebuild()
                 DiskCache.write("chats-\(api.cacheKey)", ChatList.merge(videos: seen, others: fresh).map(SavedRow.init))
@@ -523,6 +539,7 @@ private struct SavedRow: Codable {
     var shelf: String
     var keys: [String]
     var finished: Double?
+    var picture: String?
 
     init(_ row: ChatRow) {
         id = row.id
@@ -533,6 +550,7 @@ private struct SavedRow: Codable {
         shelf = row.shelf.rawValue
         keys = row.keys
         finished = row.finished?.timeIntervalSince1970
+        picture = row.picture
         switch row.status {
         case .yourGo: status = "yourGo"
         case .approval: status = "approval"
@@ -562,15 +580,17 @@ private struct SavedRow: Codable {
         }
         return ChatRow(id: id, route: route, title: title, detail: detail, detailIsError: error, status: status,
                        at: Date(timeIntervalSince1970: at), shelf: ChatRow.Shelf(rawValue: shelf) ?? .active, keys: keys,
-                       finished: finished.map(Date.init(timeIntervalSince1970:)))
+                       finished: finished.map(Date.init(timeIntervalSince1970:)), picture: picture)
     }
 }
 
-/// The first screen: every chat and every piece of work, the ones that wait on top.
+/// Chats (the assistant's chats, one row each) or Edits (`edits`: every AI Editor edit and Review video,
+/// as cards), the ones that wait on top.
 struct ChatsView: View {
+    var edits = false
     @ObservedObject private var model = ChatsModel.shared
+    @ObservedObject private var access = ToolsetAccess.shared
     @State private var query = ""
-    @State private var filter = debugArg("ChatsFilter").flatMap(ChatFilter.init(rawValue:)) ?? .all
     @AppStorage("chats.working.open") private var workingOpen = true
     @AppStorage("chats.done.open") private var doneOpen = false
     @State private var doneShown = 10
@@ -592,7 +612,7 @@ struct ChatsView: View {
                 list
             }
         }
-        .navigationTitle("Creator Toolset")
+        .navigationTitle(edits ? "Edits" : "Chats")
         .task { model.watch() }
         .sheet(isPresented: $signingIn, onDismiss: {
             Task {
@@ -604,71 +624,28 @@ struct ChatsView: View {
         }
     }
 
+    private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// This tab's rows that match the search.
     private var shown: [ChatRow] {
         let words = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let picked = filters.contains(filter) ? filter : .all
         return model.rows.filter { row in
-            picked.has(row) && (words.isEmpty || row.title.lowercased().contains(words) || row.detail.lowercased().contains(words))
+            ChatList.onChats(row) != edits
+                && (words.isEmpty || row.title.lowercased().contains(words) || row.detail.lowercased().contains(words))
         }
-    }
-
-    /// A chip that would show nothing is left out.
-    private var filters: [ChatFilter] {
-        ChatFilter.allCases.filter { chip in chip == .all || model.rows.contains(where: chip.has) }
     }
 
     private var list: some View {
         let rows = shown
-        let working = rows.filter { $0.shelf == .working }
-        let done = rows.filter { $0.shelf == .done }
-        let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
         return List {
-            if model.link == .expired || model.offline || model.notice != nil || model.couldNotRead > 0 || filters.count > 2 { header }
-            ForEach(rows.filter { $0.shelf == .active }) { row in
-                opens(row) {
-                    ChatListRow(title: row.title, detail: row.detail, detailIsError: row.detailIsError, status: row.status) {
-                        RowTile(route: row.route)
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    if let id = row.phoneEdit {
-                        // off the phone's list; the edit stays on the server
-                        Button("Remove", systemImage: "trash") { PhoneEdits.shared.forget(id) }.tint(.red)
-                    }
-                    if ChatsModel.canDismiss(row) {
-                        Button("Dismiss", systemImage: "checkmark") { Task { await model.dismiss([row]) } }.tint(.gray)
-                    }
-                    if ChatsModel.canDelete(row) {
-                        Button("Delete", systemImage: "trash") { deleting = row }.tint(.red)
-                    }
-                }
-            }
-            if !working.isEmpty {
-                ShelfHeader(title: "Working", count: working.count, open: $workingOpen)
-                if workingOpen || searching {
-                    ForEach(working) { row in
-                        opens(row) { SlimRow(row: row) }.slimListRow()
-                    }
-                }
-            }
-            if !done.isEmpty {
-                ShelfHeader(title: "Done", count: done.count, open: $doneOpen)
-                if doneOpen || searching {
-                    ForEach(done.prefix(doneShown)) { row in
-                        opens(row) { SlimRow(row: row) }.slimListRow()
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                if ChatsModel.canDelete(row) {
-                                    Button("Delete", systemImage: "trash") { deleting = row }.tint(.red)
-                                }
-                            }
-                    }
-                    if done.count > doneShown {
-                        Button("Show more") { doneShown += 20 }
-                            .font(.footnote.weight(.medium))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .slimListRow()
-                    }
+            if model.link == .expired || model.offline || (edits && (model.notice != nil || model.couldNotRead > 0)) { header }
+            if edits {
+                work(rows)
+            } else {
+                // one kind of thing, one flat list: a chat that asks on top, then the newest
+                ForEach(rows) { row in
+                    opens(row) { ChatListRow(title: row.title, detail: row.detail, status: row.status) }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 }
             }
         }
@@ -676,13 +653,20 @@ struct ChatsView: View {
         .environment(\.defaultMinListRowHeight, 36)
         .searchable(text: $query, prompt: "Search")
         .refreshable { await model.load() }
+        .overlay {
+            if edits, model.loaded, rows.isEmpty, !searching {
+                Text("No edits yet.").foregroundStyle(.secondary)
+            }
+        }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("New edit") { newEdit = true }
+            if edits, access.allows("editor") {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("New edit") { newEdit = true }
+                }
             }
             // everything that waits for his review, in one go
             let reviews = rows.filter { $0.shelf == .active && $0.status == .review }
-            if reviews.count > 1 {
+            if edits, reviews.count > 1 {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Dismiss all \(reviews.count) reviews", systemImage: "checkmark") { askDismissAll = true }
@@ -710,43 +694,76 @@ struct ChatsView: View {
         } message: { row in
             Text(row.detail)
         }
-        .sheet(isPresented: $newEdit) { NewEditView() }
-        // the round New-message button and the tab bar sit over the end of the list
-        .contentMargins(.bottom, 84, for: .scrollContent)
+        .sheet(isPresented: edits ? $newEdit : .constant(false)) { NewEditView() }
+        // on Chats the round New chat button sits over the end of the list
+        .contentMargins(.bottom, edits ? 16 : 84, for: .scrollContent)
     }
 
-    /// What is off, when something is, and the chips.
+    /// The edits and videos in play as cards, then the Working and Done shelves.
+    @ViewBuilder private func work(_ rows: [ChatRow]) -> some View {
+        let working = rows.filter { $0.shelf == .working }
+        let done = rows.filter { $0.shelf == .done }
+        ForEach(rows.filter { $0.shelf == .active }) { row in
+            card(row)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    if let id = row.phoneEdit {
+                        // off the phone's list; the edit stays on the server
+                        Button("Remove", systemImage: "trash") { PhoneEdits.shared.forget(id) }.tint(.red)
+                    }
+                    if ChatsModel.canDismiss(row) {
+                        Button("Dismiss", systemImage: "checkmark") { Task { await model.dismiss([row]) } }.tint(.gray)
+                    }
+                    if ChatsModel.canDelete(row) {
+                        Button("Delete", systemImage: "trash") { deleting = row }.tint(.red)
+                    }
+                }
+        }
+        if !working.isEmpty {
+            ShelfHeader(title: "Working", count: working.count, open: $workingOpen)
+            if workingOpen || searching {
+                ForEach(working, content: card)
+            }
+        }
+        if !done.isEmpty {
+            ShelfHeader(title: "Done", count: done.count, open: $doneOpen)
+            if doneOpen || searching {
+                ForEach(done.prefix(doneShown)) { row in
+                    card(row)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if ChatsModel.canDelete(row) {
+                                Button("Delete", systemImage: "trash") { deleting = row }.tint(.red)
+                            }
+                        }
+                }
+                if done.count > doneShown {
+                    Button("Show more") { doneShown += 20 }
+                        .font(.footnote.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .slimListRow()
+                }
+            }
+        }
+    }
+
+    private func card(_ row: ChatRow) -> some View {
+        opens(row) { WorkCard(row: row) }
+            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+    }
+
+    /// What is off, when something is.
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             if model.link == .expired {
                 Button("Sign in again") { signingIn = true }.font(.subheadline.weight(.semibold)).frame(minHeight: 44)
             } else if model.offline {
                 QuietNotice(text: "No connection")
-            } else if let notice = model.notice {
+            } else if edits, let notice = model.notice {
                 QuietNotice(text: notice)
             }
-            if model.couldNotRead > 0 {
+            if edits, model.couldNotRead > 0 {
                 QuietNotice(text: "Some things could not be read. Update the app.")
-            }
-            if filters.count > 2 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(filters) { chip in
-                            let on = chip == (filters.contains(filter) ? filter : .all)
-                            Button { filter = chip } label: {
-                                Text(chip.title)
-                                    .font(.subheadline.weight(on ? .semibold : .regular))
-                                    .foregroundStyle(on ? Color(.systemBackground) : Color.primary)
-                                    .padding(.horizontal, 14)
-                                    .frame(height: 32)
-                                    .background(on ? Color.primary : Color(.secondarySystemBackground), in: Capsule())
-                                    .frame(minHeight: 44)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
             }
         }
         .listRowSeparator(.hidden)
@@ -773,26 +790,41 @@ struct ChatsView: View {
     }
 }
 
-/// The small square in front of a row: the assistant's in the app's colour, the others quiet.
-private struct RowTile: View {
-    let route: AppRoute
+/// An edit or a Review video as a card: the picture of its newest cut (a quiet film tile until it has one),
+/// its name, where it is, and the badge.
+private struct WorkCard: View {
+    let row: ChatRow
 
     var body: some View {
-        let assistant = route.isAssistant
-        Image(systemName: symbol)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(assistant ? Color.white : Color.secondary)
-            .frame(width: 34, height: 34)
-            .background(assistant ? Color("AccentColor") : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
-    }
-
-    private var symbol: String {
-        switch route {
-        case .assistant, .chat: "sparkles"
-        case .edit: "film"
-        case .review: "play.rectangle"
-        default: "doc.text"
+        HStack(spacing: 12) {
+            Group {
+                if let picture = row.picture {
+                    ToolsetImage(path: picture, maxPixels: 240)
+                } else {
+                    Image(systemName: "film")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(.tertiarySystemFill))
+                }
+            }
+            .frame(width: 54, height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.title).font(.body.weight(.semibold)).lineLimit(2)
+                if !row.detail.isEmpty {
+                    Text(row.detail)
+                        .font(.footnote)
+                        .foregroundStyle(row.detailIsError ? Color.red : Color.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            RowBadge(status: row.status)
         }
+        .padding(10)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .contentShape(RoundedRectangle(cornerRadius: 18))
     }
 }
 
@@ -819,38 +851,6 @@ private struct ShelfHeader: View {
         .slimListRow()
         .accessibilityLabel("\(title), \(count)")
         .accessibilityValue(open ? "Open" : "Closed")
-    }
-}
-
-/// A row of a shelf: one line. Working: a dashed ring, the name, the job and how long it has run.
-/// Done: the name and how long ago.
-private struct SlimRow: View {
-    let row: ChatRow
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: row.shelf == .working ? "circle.dashed" : "checkmark.circle")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(row.shelf == .working ? Color.cyan : Color.secondary)
-            Text(row.title).font(.subheadline).lineLimit(1)
-            Spacer(minLength: 8)
-            Group {
-                if case .working(let since) = row.status {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text([row.detail, since.map { runningFor(context.date.timeIntervalSince($0)) } ?? "queued"]
-                            .filter { !$0.isEmpty }.joined(separator: " · "))
-                    }
-                } else {
-                    Text(shortAgo(row.at))
-                }
-            }
-            .font(.footnote.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .layoutPriority(1)
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
     }
 }
 

@@ -53,7 +53,7 @@ enum AppRoute: Hashable {
     }
 }
 
-/// Where the app is: the tab, and what is open on top of Chats. One object, so a card in a
+/// Where the app is: the tab, and what is open on top of Chats and of Edits. One object, so a card in a
 /// chat, a notification or a launch argument all open a screen the same way.
 @MainActor
 final class AppNavigator: ObservableObject {
@@ -61,17 +61,36 @@ final class AppNavigator: ObservableObject {
 
     @Published var tab: AppTab = AppNavigator.startTab
     /// The screens pushed on Chats, first to last.
-    @Published var chats: [AppRoute] = AppNavigator.startRoutes
+    @Published var chats: [AppRoute] = []
+    /// The screens pushed on Edits, first to last.
+    @Published var edits: [AppRoute] = []
+    /// The account has the Edits tab (RootView says): without it an edit or a video opens on Chats.
+    var hasEdits = true
     /// The assistant was opened to write: its box takes the keyboard once, then this is cleared.
     var composing = false
 
-    func open(_ route: AppRoute) {
+    init() {
+        if let route = debugArg("OpenPath").flatMap(AppRoute.from(path:)) { open(route) }
+    }
+
+    /// The tab a screen opens on: an edit or a Review video on Edits, the assistant's chats on Chats, Finals on
+    /// its own tab; a script or a page on the tab in front (Chats when that one has no screens of its own).
+    nonisolated static func tab(for route: AppRoute, from current: AppTab, hasEdits: Bool) -> AppTab {
+        let edits: AppTab = hasEdits ? .edits : .chats
         switch route {
-        case .finals:
-            tab = .finals
-        default:
-            tab = .chats
-            if chats.last != route { chats.append(route) }
+        case .finals: return .finals
+        case .edit, .review: return edits
+        case .assistant, .chat: return .chats
+        case .session, .page: return current == .edits ? edits : .chats
+        }
+    }
+
+    func open(_ route: AppRoute) {
+        tab = Self.tab(for: route, from: tab, hasEdits: hasEdits)
+        switch tab {
+        case .chats: if chats.last != route { chats.append(route) }
+        case .edits: if edits.last != route { edits.append(route) }
+        default: break
         }
     }
 
@@ -109,16 +128,12 @@ final class AppNavigator: ObservableObject {
         }
     }
 
-    /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 2` or `-startTab finals`
-    /// (also `-StartTab`), `-OpenPath /review/<id>?v=2`, `-OpenPath /assistant`.
+    /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 1` or `-startTab edits`
+    /// (also `-StartTab`), `-OpenPath /review/<id>?v=2` (on its own tab), `-OpenPath /assistant`. `-newEdit YES` opens
+    /// on Edits, where New edit then opens.
     private static var startTab: AppTab {
         let raw = UserDefaults.standard.string(forKey: "startTab") ?? debugArg("StartTab")
-        return raw.flatMap { AppTab(rawValue: $0) ?? Int($0).flatMap { AppTab.allCases.indices.contains($0) ? AppTab.allCases[$0] : nil } } ?? .chats
-    }
-
-    /// `-newEdit YES` opens the assistant, where New edit then opens.
-    private static var startRoutes: [AppRoute] {
-        debugArg("OpenPath").flatMap(AppRoute.from(path:)).map { [$0] }
-            ?? (UserDefaults.standard.bool(forKey: "newEdit") ? [.assistant] : [])
+        return raw.flatMap { AppTab(rawValue: $0) ?? Int($0).flatMap { AppTab.allCases.indices.contains($0) ? AppTab.allCases[$0] : nil } }
+            ?? (UserDefaults.standard.bool(forKey: "newEdit") ? .edits : .chats)
     }
 }
