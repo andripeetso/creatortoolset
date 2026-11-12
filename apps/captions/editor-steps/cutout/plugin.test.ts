@@ -15,6 +15,7 @@ const app = (await import("../../api/boot")).default;
 const { pairDevice } = await import("../../api/lib/devices");
 const { saveSettings } = await import("../../api/lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
+const { handle, pluginToolsOf } = await import("../../api/mcp");
 
 // ana's Mac app takes cut-outs, ben's is older than that, cleo has none
 const ana = createUser("ana", "password1");
@@ -78,25 +79,29 @@ async function reply(user: string, mac: { token: string }, body: object, text: s
 }
 
 describe("the cut-out plug-in", () => {
-  it("adds its one tool to main's list, in the dock and on an outside AI key, and nothing to the prompt", async () => {
-    const golden = JSON.parse(readFileSync(path.join(import.meta.dirname, "../../api/golden/assistant-no-style.json"), "utf8")) as { system: string; user: string; dock: Tool[]; outside: string[] };
+  it("adds its one tool to the list, in the dock and on an outside AI key, and nothing to the prompt", async () => {
+    const golden = JSON.parse(readFileSync(path.join(import.meta.dirname, "../../api/golden/assistant-no-style.json"), "utf8")) as { system: string; user: string };
     const r = await reply("ana", anaMac, {}, "What can you do?");
-    const dock = r.rpc("tools/list", {}).then((x) => x.tools!);
-    const outside = ((await (await app.request("/api/mcp", json({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { authorization: anaKey }))).json()) as { result: { tools: Tool[] } }).result.tools;
-    const ours = ["editor_style_save", "picture_cutout"];
-    const main = (list: Tool[]) => list.filter((t) => !ours.includes(t.name));
+    // the list as the server sends it (the plug-in in), and the same call answered with no plug-in
+    const call = (p: string, init?: RequestInit) => Promise.resolve(app.request(p, init));
+    const bare = async (authorization: string) =>
+      ((await handle(call, new Headers({ authorization }), { jsonrpc: "2.0", id: 1, method: "tools/list" }, "http://127.0.0.1", ana, pluginToolsOf([]))) as { result: { tools: Tool[] } }).result.tools;
+    const listed = async (authorization: string) => ((await (await app.request("/api/mcp", json({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { authorization }))).json()) as { result: { tools: Tool[] } }).result.tools;
+    const job = `Bearer ${r.job.mcp.token}`;
+    const [dock, dockBare, outside, outsideBare] = await Promise.all([listed(job), bare(job), listed(anaKey), bare(anaKey)]);
+    await r.end();
+    // the prompt is main's character for character: the plug-in brings no guide
     expect(r.job.system).toBe(golden.system);
     expect(r.job.user).toBe(golden.user);
-    expect(JSON.stringify(main(await dock))).toBe(JSON.stringify(golden.dock));
-    expect(JSON.stringify(main(outside))).toBe(JSON.stringify(golden.outside.map((name) => golden.dock.find((t) => t.name === name))));
-    // main lists editor_style_save since the golden was written; the plug-in adds only its own, last, the same for both
-    expect((await dock).filter((t) => ours.includes(t.name)).map((t) => t.name)).toEqual(ours);
-    const def = (await dock).at(-1)!;
+    // every other tool as it is without the plug-in, and the plug-in's one last, the same for both callers
+    expect(JSON.stringify(dock.slice(0, -1))).toBe(JSON.stringify(dockBare));
+    expect(JSON.stringify(outside.slice(0, -1))).toBe(JSON.stringify(outsideBare));
+    const def = dock.at(-1)!;
+    expect(def.name).toBe("picture_cutout");
     expect(outside.at(-1)).toEqual(def);
     // what every turn now carries with the plug-in on: the definition, and the comma before it
     expect(Buffer.byteLength(def.description)).toBe(176);
-    expect(Buffer.byteLength(JSON.stringify(def)) + 1).toBe(319);
-    await r.end();
+    expect(Buffer.byteLength(JSON.stringify(dock)) - Buffer.byteLength(JSON.stringify(dockBare))).toBe(319);
   });
 
   it("cuts out a picture of the chat on the person's own Mac, told on the poll it holds, and only its owner reads the result", async () => {
