@@ -91,7 +91,7 @@ final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
                  immediateInstallationBlock install: @escaping () -> Void) -> Bool {
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { timer in
             MainActor.assumeIsolated {
-                guard let shell = AppDelegate.shell, !NSApp.isActive, shell.ai.running == 0, !shell.recorder.busy else { return }
+                guard let shell = AppDelegate.shell, !NSApp.isActive, shell.ai.running == 0, !shell.ai.drawing, !shell.recorder.busy else { return }
                 timer.invalidate()
                 install()
             }

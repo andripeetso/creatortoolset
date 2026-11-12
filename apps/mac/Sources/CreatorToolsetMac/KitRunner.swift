@@ -1,46 +1,140 @@
-// Spike: draws one design-system motion kit (a level 1 pack's drawing code) for one card, on this Mac. The kit runs in a
-// WKWebView with no network (the page's Content-Security-Policy is default-src 'none'), no storage that outlives the
-// render, and no way to leave its own page (no links, redirects, forms or new windows). The kit is a script that
-// defines `kitFrame(t, card)`; it paints into `#stage`, a box the size of the card, for time t in seconds. Each frame
-// comes back as a PNG of exactly width × height pixels. The server never runs a kit: the editor's card step asks the
-// device that claims it, and that device calls this.
+// Draws one card of an edit on this Mac. The drawing code is a script someone's AI wrote, so it is never trusted. The
+// script defines `kitFrame(t, card)`; it paints into `#stage`, a box the size of the card on a black page (white text
+// until it says otherwise), for time t in seconds. The server never runs such a script: the editor's card step asks the Mac that claims it (CardJobs.swift),
+// and that Mac calls this. What shuts the script in, each measured against a listener on this Mac
+// (KitSandboxTests.swift):
+//   - the page's Content-Security-Policy is default-src 'none': no fetch, socket, image, font, frame or worker from anywhere;
+//   - the script's page is a sandboxed frame (scripts only) of a page with that policy, so the engine itself refuses
+//     its navigations, forms and new windows before the app is even asked, and it can't touch the page above it;
+//   - the web view refuses every navigation but that page and that frame, has none of the app's pages, handlers or
+//     cookies, and keeps nothing (a data store of its own that is gone with the card);
+//   - Lockdown Mode for the page: no WebRTC (which the policy does not govern), WebAssembly, WebGL or Web Audio;
+//   - WebKit's link preconnect is switched off (a link click with target=_blank, or <link rel=preconnect>, otherwise
+//     opens a connection whatever the policy says). WebKit has no public switch for it, so this is a private call,
+//     and a Mac where it is missing draws no card. WebKit's source has the switch, and the click's preconnect behind
+//     it, in the versions macOS 14.0 and 15.0 shipped with (read, not run: the tests ran on macOS 26);
+//   - whatever else asks for a name outside this Mac is handed to a proxy address where nothing listens (measured
+//     for a name; an address is expected to go the same way, and trying one would be real traffic);
+//   - one time limit for the whole card, and the page's process is ended with the card (a loop that never returns
+//     otherwise keeps a processor busy until the app quits, and WebKit's own kill does not stop it).
 import AppKit
+import Network
 import WebKit
 
-/// One card to draw: the kit's script, the size in points, the length, the frame rate and the card's content.
-struct KitCard {
+/// One card to draw: the script, the size in points, the length, the frame rate and the card's content (JSON values,
+/// handed to the script as `card`).
+struct KitCard: @unchecked Sendable {
     let kit: String
     let width: Int
     let height: Int
     let seconds: Double
-    let fps: Int
-    let content: [String: String]
+    let fps: Double
+    let content: [String: Any]
 
     /// seconds × fps frames, at t = 0, 1/fps, 2/fps, …
-    var frameCount: Int { max(1, Int((seconds * Double(fps)).rounded())) }
+    var frameCount: Int { max(1, Int((seconds * fps).rounded())) }
 }
 
 enum KitRunnerError: Error, Equatable {
+    /// The card can't be drawn as asked, or its script threw: the words say which.
     case badCard(String)
     case loadFailed(String)
     case snapshotFailed
+    /// The card's time ran out (a script that loops, or one too slow for this Mac).
+    case timedOut
+    /// The page's own process ended while it drew (it crashed, or macOS stopped it for the memory it took).
+    case ended
+    /// The first, middle and last frame are all the empty stage.
+    case blank
+    /// This Mac's WebKit lacks something the script is shut in with, so nothing is drawn: the words say what.
+    case unsafe(String)
+}
+
+/// The private WebKit calls a card's page stands on, by name, and the features it switches off. All were read in
+/// WebKit's source as it shipped with macOS 14.0 and 15.0, and run on macOS 26. Each is looked for before it is used,
+/// and a Mac that lacks one draws no card and says which; a test names one that is not there to see that.
+struct KitCalls {
+    /// +[WKPreferences _features]: WebKit's own list of features (since macOS 13.3)
+    var features = "_features"
+    /// -[WKPreferences _setEnabled:forFeature:] and -[WKPreferences _isEnabledForFeature:] (since macOS 10.12)
+    var setEnabled = "_setEnabled:forFeature:"
+    var isEnabled = "_isEnabledForFeature:"
+    /// -[_WKFeature key]: a feature's name in that list (since macOS 13.3)
+    var featureKey = "key"
+    /// -[WKWebView _webProcessIdentifier]: the page's own process (older than any macOS the app runs on)
+    var processIdentifier = "_webProcessIdentifier"
+    /// the features that must be in the list and end up off, and those switched off where this macOS has them
+    /// (DNS prefetch has had two names: WebKit's source for macOS 14 and 15 has it as DNSPrefetchingEnabled, off by default)
+    var needed: Set<String> = ["LinkPreconnect"]
+    var wanted: Set<String> = ["LinkDNSPrefetchEnabled", "DNSPrefetchingEnabled"]
+}
+
+/// What shuts a card's script in besides its page's own policy and frame. Every card is drawn behind all of them; a
+/// test takes them away to show that what a script tries does get out without them.
+struct KitWalls: OptionSet {
+    let rawValue: Int
+    /// the web view refuses every navigation but the page it was given and the one frame in it
+    static let stay = KitWalls(rawValue: 1)
+    /// Lockdown Mode for the page
+    static let lockdown = KitWalls(rawValue: 2)
+    /// WebKit's link preconnect switched off
+    static let noPreconnect = KitWalls(rawValue: 4)
+    /// a proxy address where nothing listens, for whatever else is bound outside this Mac
+    static let deadProxy = KitWalls(rawValue: 8)
+    static let all: KitWalls = [.stay, .lockdown, .noPreconnect, .deadProxy]
 }
 
 enum KitRunner {
-    /// The page the kit runs in. The kit is inline script; nothing else may load (no fetch, images from the network,
-    /// frames, workers or fonts).
+    /// The most time one card may take, from loading its page to its last frame.
+    static let cardLimit: TimeInterval = 20
+    /// Nothing loads but the page's own inline script and style, and `data:` images.
+    static let policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"
+    /// The dead proxy's port on this Mac: 1, where nothing listens.
+    static let deadPort: UInt16 = 1
+    /// The private WebKit calls a card's page uses (a test changes a name to one that is not there).
+    @MainActor static var calls = KitCalls()
+    /// Whether a page behind the walls was asked, on this Mac, if the two walls that could fail to take without
+    /// saying so did take. Asked once, before the first card (a test sets it back to see that `draw` asks).
+    @MainActor static var checked = false
+
+    /// Loads a card's page with no card's script in it and asks the page's own engine two things: is WebRTC gone
+    /// (Lockdown Mode took), and does it no longer know `preconnect` as a link type (the switch took: that answer and
+    /// the preconnect of a clicked link read the same setting in WebKit's source). Throws unless both are so, and then
+    /// no card is drawn. No network and no waiting: the page is only asked.
+    @MainActor
+    static func probe(walls: KitWalls = .all) async throws {
+        let page = try KitWebView(width: 16, height: 16, walls: walls)
+        let late = DispatchWorkItem { MainActor.assumeIsolated { page.stop(.timedOut) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + cardLimit, execute: late)
+        defer {
+            late.cancel()
+            page.end()
+        }
+        try await page.load(try self.page(for: KitCard(kit: "", width: 16, height: 16, seconds: 1, fps: 1, content: [:])))
+        let said = try await page.run("typeof RTCPeerConnection + ' ' + document.createElement('link').relList.supports('preconnect')")
+        guard said.hasPrefix("undefined ") else {
+            throw KitRunnerError.unsafe("Lockdown Mode did not take on a card's page (WebRTC is still there)")
+        }
+        guard said == "undefined false" else {
+            throw KitRunnerError.unsafe("link preconnect is still on in a card's page")
+        }
+    }
+
+    /// The kit's own page: the stage, the card's content and the kit as inline script.
     static func html(for card: KitCard) throws -> String {
         guard card.width > 0, card.height > 0, card.seconds > 0, card.fps > 0 else {
             throw KitRunnerError.badCard("size, length and frame rate must be above zero")
         }
+        guard JSONSerialization.isValidJSONObject(card.content) else { throw KitRunnerError.badCard("the card's content is not JSON") }
+        // JSONSerialization writes "/" as "\/", so the content can't close its script element
         let content = String(decoding: try JSONSerialization.data(withJSONObject: card.content, options: [.sortedKeys]), as: UTF8.self)
-        // Escaping keeps the page well-formed; the CSP is what holds the kit.
+        // Escaping keeps the page well-formed; the policy and the frame are what hold the kit.
         let kit = card.kit.replacingOccurrences(of: "</script", with: "<\\/script", options: .caseInsensitive)
         return """
         <!doctype html>
         <html><head><meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">
-        <style>html,body{margin:0;padding:0;overflow:hidden;background:transparent}#stage{position:relative;width:\(card.width)px;height:\(card.height)px;overflow:hidden}</style>
+        <meta http-equiv="Content-Security-Policy" content="\(policy)">
+        <style>html,body{margin:0;padding:0;overflow:hidden;background:#000;color:#fff}#stage{position:relative;width:\(card.width)px;height:\(card.height)px;overflow:hidden}</style>
         </head><body><div id="stage"></div>
         <script>const card = \(content);</script>
         <script>
@@ -50,89 +144,227 @@ enum KitRunner {
         """
     }
 
-    /// Draws every frame of the card in order and returns each one as PNG data, exactly width × height pixels.
-    @MainActor
-    static func frames(_ card: KitCard) async throws -> [Data] {
-        // ponytail: no timeout, so a kit that never returns hangs its render; add a watchdog when the card step calls this.
-        let page = KitWebView(width: card.width, height: card.height)
-        try await page.load(try html(for: card))
-        var out: [Data] = []
-        for i in 0..<card.frameCount {
-            let t = Double(i) / Double(card.fps)
-            let status = try await page.webView.evaluateJavaScript(
-                "(function () { try { kitFrame(\(t), card); return 'ok'; } catch (e) { return 'error: ' + e; } })()"
-            ) as? String
-            guard status == "ok" else { throw KitRunnerError.badCard(status ?? "the kit returned nothing") }
-            out.append(try png(of: try await page.snapshot(), width: card.width, height: card.height))
-        }
-        return out
+    /// What the web view loads: nothing but the kit's page in a sandboxed frame. A frame's own navigations are checked
+    /// against the policy of the page around it, inside the engine; the top page's are not.
+    static func page(for card: KitCard) throws -> String {
+        let kit = try html(for: card).replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
+        return """
+        <!doctype html>
+        <html><head><meta charset="utf-8">
+        <meta http-equiv="Content-Security-Policy" content="\(policy)">
+        <style>html,body{margin:0;padding:0;overflow:hidden;background:#000}iframe{display:block;border:0;width:\(card.width)px;height:\(card.height)px}</style>
+        </head><body><iframe sandbox="allow-scripts" srcdoc="\(kit)"></iframe></body></html>
+        """
     }
 
-    /// Re-draws the snapshot into a bitmap of exactly width × height pixels, whatever the screen's scale is.
-    private static func png(of image: NSImage, width: Int, height: Int) throws -> Data {
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
-            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ), let context = NSGraphicsContext(bitmapImageRep: rep) else { throw KitRunnerError.snapshotFailed }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
-        NSGraphicsContext.restoreGraphicsState()
-        guard let data = rep.representation(using: .png, properties: [:]) else { throw KitRunnerError.snapshotFailed }
-        return data
+    /// Draws every frame of the card in order and hands each to `frame` with its number. `limit` is for the whole
+    /// card: loading the page (the script's own top level runs then), every call into the script and every picture.
+    /// Past it the card fails with `timedOut`.
+    @MainActor
+    static func draw(_ card: KitCard, limit: TimeInterval = cardLimit, frame: @MainActor (Int, CGImage) async throws -> Void) async throws {
+        if !checked {
+            try await probe()
+            checked = true
+        }
+        try await draw(card, on: try KitWebView(width: card.width, height: card.height), limit: limit, frame: frame)
+    }
+
+    /// The same on a web view the caller made (the tests look at its process afterwards).
+    @MainActor
+    static func draw(_ card: KitCard, on page: KitWebView, limit: TimeInterval, frame: @MainActor (Int, CGImage) async throws -> Void) async throws {
+        let late = DispatchWorkItem { MainActor.assumeIsolated { page.stop(.timedOut) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit, execute: late)
+        defer {
+            late.cancel()
+            page.end()
+        }
+        try await page.load(try self.page(for: card))
+        for i in 0..<card.frameCount {
+            try await page.paint(at: Double(i) / card.fps)
+            try await frame(i, try await page.picture())
+        }
     }
 }
 
-/// A web view for one kit: a non-persistent data store, and navigation only to the page it was given.
+/// A web view for one kit.
 @MainActor
-private final class KitWebView: NSObject, WKNavigationDelegate {
+final class KitWebView: NSObject, WKNavigationDelegate {
     let webView: WKWebView
-    private var loading: CheckedContinuation<Void, Error>?
+    private let walls: KitWalls
+    /// the page's own first navigation was let through
+    private var began = false
+    /// the frame the kit runs in, once the page has made it
+    private var frame: WKFrameInfo?
+    /// ends the step now waiting (a load, a call into the script, a picture) with an error
+    private var fail: ((Error) -> Void)?
+    private var loaded: (() -> Void)?
+    /// set once the card's time is up or its page is gone: no further step starts
+    private var over: KitRunnerError?
 
-    init(width: Int, height: Int) {
+    /// the name of the call that gives the page's process (KitCalls)
+    private let processCall: String
+
+    /// `walls` and `proxyPort` are for the tests: every card is drawn with the defaults.
+    init(width: Int, height: Int, walls: KitWalls = .all, proxyPort: UInt16 = KitRunner.deadPort) throws {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let calls = KitRunner.calls
+        if walls.contains(.lockdown) {
+            config.defaultWebpagePreferences.isLockdownModeEnabled = true
+            guard config.defaultWebpagePreferences.isLockdownModeEnabled else {
+                throw KitRunnerError.unsafe("Lockdown Mode could not be switched on for a card's page")
+            }
+        }
+        if walls.contains(.noPreconnect) { _ = try Self.switchOff(calls, in: config.preferences) }
+        if walls.contains(.deadProxy), let port = NWEndpoint.Port(rawValue: proxyPort) {
+            config.websiteDataStore.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: port))]
+        }
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height), configuration: config)
+        self.walls = walls
+        processCall = calls.processIdentifier
         super.init()
+        guard webView.responds(to: NSSelectorFromString(processCall)) else {
+            throw KitRunnerError.unsafe("this macOS gives no way to end a card's page (\(processCall))")
+        }
         webView.navigationDelegate = self
     }
 
+    /// Switches the features `calls` names off for this page's preferences (they are this page's alone) and returns
+    /// the ones now off. Private WebKit calls: WebKit has no public switch for link preconnect. Each call is looked for
+    /// first, and the needed features must end up off, or this throws saying what is missing and no card is drawn.
+    static func switchOff(_ calls: KitCalls, in preferences: WKPreferences) throws -> Set<String> {
+        let list = NSSelectorFromString(calls.features), set = NSSelectorFromString(calls.setEnabled)
+        let get = NSSelectorFromString(calls.isEnabled), key = NSSelectorFromString(calls.featureKey)
+        guard WKPreferences.responds(to: list), let features = WKPreferences.perform(list)?.takeUnretainedValue() as? [NSObject] else {
+            throw KitRunnerError.unsafe("this macOS has no list of WebKit's features (\(calls.features))")
+        }
+        guard preferences.responds(to: set) else { throw KitRunnerError.unsafe("this macOS can't switch a WebKit feature off (\(calls.setEnabled))") }
+        guard preferences.responds(to: get) else { throw KitRunnerError.unsafe("this macOS can't tell whether a WebKit feature is off (\(calls.isEnabled))") }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        typealias Getter = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
+        let setter = unsafeBitCast(preferences.method(for: set), to: Setter.self)
+        let getter = unsafeBitCast(preferences.method(for: get), to: Getter.self)
+        var off: Set<String> = []
+        for feature in features where feature.responds(to: key) {
+            guard let name = feature.value(forKey: calls.featureKey) as? String, calls.needed.contains(name) || calls.wanted.contains(name) else { continue }
+            setter(preferences, set, false, feature)
+            if !getter(preferences, get, feature) { off.insert(name) }
+        }
+        guard off.isSuperset(of: calls.needed) else {
+            throw KitRunnerError.unsafe("this macOS has no switch for link preconnect (\(calls.needed.sorted().joined(separator: ", ")))")
+        }
+        return off
+    }
+
+    /// The page's own process, 0 when it has none (a private WebKit call: nothing public names it).
+    var processID: pid_t {
+        (webView.value(forKey: processCall) as? NSNumber)?.int32Value ?? 0
+    }
+
+    /// Whether `pid` is a WebKit page process, by the program it runs.
+    static func isPageProcess(_ pid: pid_t) -> Bool {
+        var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        return pid > 0 && proc_pidpath(pid, &path, UInt32(path.count)) > 0 && String(cString: path).contains("com.apple.WebKit.WebContent")
+    }
+
+    /// Ends the page's process. Each card's page has a process and a data store of its own, so nothing else lives in it.
+    func end() {
+        let pid = processID
+        if Self.isPageProcess(pid) { kill(pid, SIGKILL) }
+    }
+
+    /// Ends the card: the step now waiting fails with `why`, and so does every later one.
+    func stop(_ why: KitRunnerError) {
+        if over == nil { over = why }
+        fail?(why)
+    }
+
+    /// One step of the page. Its own answer or `stop`, whichever is first, is the result; the other is ignored.
+    private func step<T>(_ start: (@escaping (Result<T, Error>) -> Void) -> Void) async throws -> T {
+        if let over { throw over }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            var open = true
+            let finish = { [weak self] (result: Result<T, Error>) in
+                guard open else { return }
+                open = false
+                self?.fail = nil
+                continuation.resume(with: result)
+            }
+            fail = { finish(.failure($0)) }
+            start(finish)
+        }
+    }
+
     func load(_ html: String) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            loading = continuation
+        try await step { (finish: @escaping (Result<Void, Error>) -> Void) in
+            loaded = { finish(.success(())) }
             webView.loadHTMLString(html, baseURL: nil)
         }
     }
 
-    func snapshot() async throws -> NSImage {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<NSImage, Error>) in
-            webView.takeSnapshot(with: nil) { image, error in
-                if let image { continuation.resume(returning: image) } else { continuation.resume(throwing: error ?? KitRunnerError.snapshotFailed) }
+    /// Runs script where the kit is and returns what it answers, as text. Behind the walls that is only ever the frame.
+    func run(_ script: String) async throws -> String {
+        if walls.contains(.stay), frame == nil { throw KitRunnerError.loadFailed("the page made no frame for the script") }
+        return try await step { finish in
+            webView.evaluateJavaScript(script, in: frame, in: .page) { result in
+                finish(result.map { $0 as? String ?? "" })
             }
         }
     }
 
+    /// Calls the kit for time `t`. A kit that throws, or that defines no kitFrame, is a bad card with the script's own words.
+    func paint(at t: Double) async throws {
+        let said: String
+        do {
+            said = try await run("(function () { try { kitFrame(\(t), card); return 'ok'; } catch (e) { return 'error: ' + e; } })()")
+        } catch let error as KitRunnerError {
+            throw error
+        } catch {
+            throw KitRunnerError.badCard(error.localizedDescription)
+        }
+        guard said == "ok" else { throw KitRunnerError.badCard(said.hasPrefix("error: ") ? String(said.dropFirst(7)) : "the script answered nothing") }
+    }
+
+    func picture() async throws -> CGImage {
+        let image: NSImage = try await step { finish in
+            webView.takeSnapshot(with: nil) { image, error in
+                if let image { finish(.success(image)) } else { finish(.failure(error ?? KitRunnerError.snapshotFailed)) }
+            }
+        }
+        guard let picture = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw KitRunnerError.snapshotFailed }
+        return picture
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(action.request.url?.absoluteString == "about:blank" ? .allow : .cancel)
+        guard walls.contains(.stay) else { return decisionHandler(.allow) }
+        let url = action.request.url?.absoluteString
+        if !began, url == "about:blank", action.targetFrame?.isMainFrame == true {
+            began = true
+            return decisionHandler(.allow)
+        }
+        if frame == nil, url == "about:srcdoc", let target = action.targetFrame, !target.isMainFrame {
+            frame = target
+            return decisionHandler(.allow)
+        }
+        decisionHandler(.cancel)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        loading?.resume()
-        loading = nil
+        loaded?()
+        loaded = nil
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        fail(error)
+        fail?(KitRunnerError.loadFailed(error.localizedDescription))
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        fail(error)
+        fail?(KitRunnerError.loadFailed(error.localizedDescription))
     }
 
-    private func fail(_ error: Error) {
-        loading?.resume(throwing: KitRunnerError.loadFailed(error.localizedDescription))
-        loading = nil
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        stop(.ended)
     }
 }

@@ -63,14 +63,16 @@ func panelLimitLine(lastError: String?, rows: [ActivityRow]) -> String? {
     rows.contains { $0.reason != nil } ? nil : lastError.flatMap(plainLimitLine)
 }
 
-/// Active (replies being written, plug-in work, this Mac's AI) and For you (new replies, plug-in items waiting), in that order.
-func activityRows(sessions: [SessionRow], aiRunning: Int, plugin: [PluginRow] = []) -> (active: [ActivityRow], forYou: [ActivityRow]) {
+/// Active (replies being written, plug-in work, this Mac's AI and the cards it draws) and For you (new replies, plug-in
+/// items waiting), in that order.
+func activityRows(sessions: [SessionRow], aiRunning: Int, plugin: [PluginRow] = [], drawing: Bool = false) -> (active: [ActivityRow], forYou: [ActivityRow]) {
     var active = sessions.filter(\.working).map {
         ActivityRow(id: "s:\($0.id)", title: $0.title, detail: "Workshop", state: .working, href: "/workshop/sessions/\($0.id)")
     }
     active += plugin.filter { $0.state == "working" }.map(\.row)
-    if aiRunning > 0 {
-        active.append(ActivityRow(id: "mac", title: "This Mac", detail: "\(aiRunning) AI request\(aiRunning == 1 ? "" : "s")",
+    if aiRunning > 0 || drawing {
+        let doing = [aiRunning > 0 ? "\(aiRunning) AI request\(aiRunning == 1 ? "" : "s")" : nil, drawing ? "Drawing cards" : nil]
+        active.append(ActivityRow(id: "mac", title: "This Mac", detail: doing.compactMap { $0 }.joined(separator: " · "),
                                   state: .working, href: nil))
     }
     var forYou = sessions.filter { $0.ready && !$0.working }.map {
