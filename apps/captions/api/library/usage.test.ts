@@ -66,7 +66,8 @@ describe("library storage choice", () => {
     expect(r.status).toBe(200);
     const text = await r.text();
     expect(JSON.parse(text)).toMatchObject({ kind: "s3", mode: "own", bucket: "tiny-acrobatics", endpoint: "https://s3.example.com", keysSet: true, storedBytes: 0 });
-    expect(s3.log).toEqual(["PutObjectCommand", "DeleteObjectCommand"]);
+    expect(s3.log).toEqual(["HeadBucketCommand", "GetBucketCorsCommand", "PutBucketCorsCommand", "PutObjectCommand", "DeleteObjectCommand"]);
+    expect(s3.cors.get("tiny-acrobatics")).toMatchObject({ CORSRules: [{ AllowedMethods: ["GET", "HEAD", "PUT"], ExposeHeaders: ["ETag"] }] });
     expect(s3.objects.size).toBe(0);
     const again = await (await call("owner-a", "GET", "/api/library/lib_a/usage")).text();
     const list = await (await call("owner-a", "GET", "/api/library")).text();
@@ -159,6 +160,78 @@ describe("library storage choice", () => {
     writeFileSync(f, "local");
     await blobs.put("libraries/lib_b/v/ver_l/thumb.jpg", f);
     expect(stored("lib_b")).toBe(0);
+  });
+
+  it("an own bucket that doesn't exist yet is made; a bucket with CORS rules keeps them", async () => {
+    s3.onlyBuckets("tiny-acrobatics", "tiny-server");
+    s3.log.length = 0;
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_new', 'owner-a', 'N', 'local', 3)").run();
+    expect((await call("owner-a", "PUT", "/api/library/lib_new/storage", { ...own, bucket: "tiny-new-bucket" })).status).toBe(200);
+    expect(s3.log.slice(0, 2)).toEqual(["HeadBucketCommand", "CreateBucketCommand"]);
+    s3.log.length = 0;
+    expect((await call("owner-a", "PUT", "/api/library/lib_new/storage", { ...own, bucket: "tiny-new-bucket" })).status).toBe(200);
+    expect(s3.log).toEqual(["HeadBucketCommand", "GetBucketCorsCommand", "PutObjectCommand", "DeleteObjectCommand"]);
+  });
+
+  it("Bunny: one account key makes a storage zone and a signed pull zone; the account key is never kept", async () => {
+    const calls: string[] = [];
+    let pullFails = false;
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url.replace(/ct-[0-9a-f]+/, "ct-x")}`);
+      if (url === "https://api.bunny.net/storagezone") return Response.json({ Id: 7, Password: "tiny-zone-password", StorageHostname: "ny.storage.bunnycdn.com" }, { status: 201 });
+      if (url === "https://api.bunny.net/pullzone") {
+        if (pullFails) return Response.json({ Message: "The name is taken" }, { status: 400 });
+        const name = (JSON.parse(String(init!.body)) as { Name: string }).Name;
+        return Response.json({ Id: 9, ZoneSecurityKey: "tiny-token-key", Hostnames: [{ Value: `${name}.b-cdn.net`, IsSystemHostname: true }] }, { status: 201 });
+      }
+      return new Response(null, { status: method === "PUT" ? 201 : 200 }); // the zone takes and deletes the test file
+    });
+    try {
+      const db = libraryDb();
+      db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_bn', 'owner-a', 'Bn', 'local', 4)").run();
+      expect((await call("owner-a", "PUT", "/api/library/lib_bn/storage", { kind: "bunny" })).status).toBe(400); // no key
+
+      const r = await call("owner-a", "PUT", "/api/library/lib_bn/storage", { kind: "bunny", apiKey: "tiny-account-api-key", region: "NY" });
+      const text = await r.text();
+      expect(r.status, text).toBe(200);
+      expect(JSON.parse(text)).toMatchObject({ kind: "bunny", zone: expect.stringMatching(/^ct-[0-9a-f]{12}$/), keysSet: true, storedBytes: 0 });
+      expect(calls).toEqual([
+        "POST https://api.bunny.net/storagezone",
+        "POST https://api.bunny.net/pullzone",
+        "PUT https://ny.storage.bunnycdn.com/ct-x/libraries/lib_bn/check",
+        "DELETE https://ny.storage.bunnycdn.com/ct-x/libraries/lib_bn/check",
+      ]);
+      const saved = (db.prepare("SELECT storage_config AS c FROM libraries WHERE id = 'lib_bn'").get() as { c: string }).c;
+      expect(JSON.parse(saved)).toMatchObject({ accessKey: "tiny-zone-password", region: "ny", tokenKey: "tiny-token-key", cdnHost: expect.stringMatching(/\.b-cdn\.net$/) });
+      for (const body of [text, saved]) expect(body).not.toContain("tiny-account-api-key");
+      for (const body of [text, await (await call("owner-a", "GET", "/api/library/lib_bn/usage")).text()]) expect(body).not.toContain("tiny-zone-password");
+
+      // saving again with no key keeps the zone; once it holds files it can't move
+      calls.length = 0;
+      expect((await call("owner-a", "PUT", "/api/library/lib_bn/storage", { kind: "bunny" })).status).toBe(200);
+      expect(calls).toEqual([]);
+      db.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('as_bn', 'lib_bn', 'video', 'Roll', 'owner-a', 0)").run();
+      db.prepare(
+        "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_bn', 'as_bn', 1, 'k', 1, 'x', 'ready', 'owner-a', 0)",
+      ).run();
+      expect((await call("owner-a", "PUT", "/api/library/lib_bn/storage", { kind: "local" })).status).toBe(409);
+      expect((await call("owner-a", "PUT", "/api/library/lib_bn/storage", own)).status).toBe(409);
+      expect((await call("owner-a", "PUT", "/api/library/lib_bn/storage", { kind: "bunny", apiKey: "tiny-account-api-key" })).status).toBe(409);
+
+      // a pull zone Bunny refuses: the new storage zone is deleted again and the library stays as it was
+      db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_bf', 'owner-a', 'Bf', 'local', 5)").run();
+      pullFails = true;
+      calls.length = 0;
+      const bad = await call("owner-a", "PUT", "/api/library/lib_bf/storage", { kind: "bunny", apiKey: "tiny-account-api-key" });
+      expect(bad.status).toBe(400);
+      expect(((await bad.json()) as { error: string }).error).toContain("The name is taken");
+      expect(calls).toEqual(["POST https://api.bunny.net/storagezone", "POST https://api.bunny.net/pullzone", "DELETE https://api.bunny.net/storagezone/7"]);
+      expect(db.prepare("SELECT storage_kind AS k FROM libraries WHERE id = 'lib_bf'").get()).toEqual({ k: "local" });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("a bucket library refuses watch folders that leave files in place, and the other way round", async () => {
