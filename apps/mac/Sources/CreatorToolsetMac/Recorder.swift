@@ -131,7 +131,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideoD
     private var lastMove = -1.0
     private var failed: Error?
     /// Each sound track is written in one layout, whatever layout its buffers come in (SoundLayout).
-    private var micLayout = SoundLayout()
+    private var micLayout = SoundLayout(mono: true)
     private var systemLayout = SoundLayout()
     /// Puts a picture of another size than the file's into it whole (`fitted`).
     private var fitter: VTPixelTransferSession?
@@ -149,9 +149,12 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideoD
         video = AVAssetWriterInput(mediaType: .video, outputSettings: recorderVideoSettings(
             width: width, height: height, bitRate: max(6_000_000, width * height * 60 / 25), frameRate: 60))
         video.expectsMediaDataInRealTime = true
-        let aac: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000]
-        mic = withMic ? AVAssetWriterInput(mediaType: .audio, outputSettings: aac) : nil
-        system = withSystem ? AVAssetWriterInput(mediaType: .audio, outputSettings: aac) : nil
+        // the voice in one channel (it plays in both ears), the sound of the Mac or the device in two
+        let aac = { (channels: Int, bitRate: Int) -> [String: Any] in
+            [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: channels, AVEncoderBitRateKey: bitRate]
+        }
+        mic = withMic ? AVAssetWriterInput(mediaType: .audio, outputSettings: aac(1, 128_000)) : nil
+        system = withSystem ? AVAssetWriterInput(mediaType: .audio, outputSettings: aac(2, 192_000)) : nil
         events = ScreenEvents(width: width, height: height)
         super.init()
         writer.add(video)
