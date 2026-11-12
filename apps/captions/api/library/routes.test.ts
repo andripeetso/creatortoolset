@@ -8,6 +8,8 @@ import { freeBytes } from "../lib/uploads";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-uploads-"));
 process.env.DATA_DIR = dir;
+// the reserve has its own tests below; the test disk may be a small one others fill meanwhile (a /tmp in memory)
+process.env.LIBRARY_DISK_RESERVE_GB = "0";
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 
@@ -133,7 +135,7 @@ describe("library uploads", () => {
       expect(res.status).toBe(507);
       expect(await read(res)).toMatchObject({ code: "disk_reserve" });
     } finally {
-      delete process.env.LIBRARY_DISK_RESERVE_GB;
+      process.env.LIBRARY_DISK_RESERVE_GB = "0";
     }
   });
 
@@ -146,7 +148,7 @@ describe("library uploads", () => {
       expect((await create("owner-a", GB)).status).toBe(201);
       expect((await create("owner-a", GB)).status).toBe(507);
     } finally {
-      delete process.env.LIBRARY_DISK_RESERVE_GB;
+      process.env.LIBRARY_DISK_RESERVE_GB = "0";
     }
   });
 
