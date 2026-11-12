@@ -91,7 +91,7 @@ describe("switching it on (Settings → Account)", () => {
   });
 
   it("a QR's secret, confirmed by one code; recovery codes once; every other browser is signed out", async () => {
-    expect(await (await req("GET", "/api/auth/code", { address: LAN, cookie: lanCookie })).json()).toEqual({ on: false, left: 0, required: false, mac: false });
+    expect(await (await req("GET", "/api/auth/code", { address: LAN, cookie: lanCookie })).json()).toEqual({ on: false, required: false, mac: false });
     const made = await req("POST", "/api/auth/code/new", { address: LAN, cookie: lanCookie, body: {} });
     expect(made.status).toBe(200);
     ({ secret } = (await made.json()) as { secret: string; uri: string });
@@ -119,7 +119,7 @@ describe("switching it on (Settings → Account)", () => {
       await (await req("GET", "/api/auth/check", { address: LAN, cookie: lanCookie })).text(),
     ].join("\n");
     for (const s of [secret, user.code!.secret, ...recovery, ...user.code!.recovery]) expect(answers).not.toContain(s);
-    expect(JSON.parse(answers.split("\n")[0]!)).toEqual({ on: true, left: 10, required: false, mac: false });
+    expect(JSON.parse(answers.split("\n")[0]!)).toEqual({ on: true, required: false, mac: false });
   });
 });
 
@@ -161,7 +161,7 @@ describe("signing in with the code on", () => {
     later(5 * 60_000 + 1000);
     const res = await req("POST", "/api/auth/code", { address: LAN, body: { step, code: codeNow(secret) } });
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "That sign-in expired. Sign in again." });
+    expect(await res.json()).toEqual({ error: "That sign-in expired. Sign in again.", code: "STEP_EXPIRED" });
   });
 
   it("a recovery code works in the code's place, once", async () => {

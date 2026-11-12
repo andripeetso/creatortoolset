@@ -83,11 +83,13 @@ const STATIC_ROWS = [
   { section: "admin", id: "admin-accounts", title: "Accounts", keywords: ["account", "users", "password", "create", "apps"] },
   { section: "admin", id: "admin-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow"] },
   { section: "admin", id: "admin-projects", title: "Projects", keywords: ["projects", "server", "newest"] },
+  { section: "admin", id: "admin-sign-in-code", title: "Ask everyone for a sign-in code", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "lock", "unlock"] },
   { section: "admin", id: "server-keys", title: "Server keys", keywords: ["env", "server", "api key", "secret", "fallback"] },
   // Account: the person's own profile and sign-in
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
+  { section: "account", id: "sign-in-code", title: "Sign-in code", description: "Ask for a code from an authenticator app when you sign in with your password", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "recovery codes", "otp"], needs: "sign-in" },
   { section: "account", id: "photo", title: "Photo", description: "From your Google or GitHub sign-in", keywords: ["picture", "avatar", "image", "profile photo"] },
   { section: "account", id: "sign-in-with", title: "Connected accounts", keywords: ["google", "apple", "github", "link", "unlink", "sign in", "connect"], needs: "sign-in" },
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },

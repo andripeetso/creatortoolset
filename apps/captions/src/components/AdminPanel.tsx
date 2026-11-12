@@ -6,7 +6,9 @@ import { confirmDialog } from "@/lib/dialogs";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, saveFailed } from "@/components/settings/ui";
+import { Switch } from "@/components/ui/switch";
+import { useCodeState } from "@/components/SignInCode";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, saveFailed } from "@/components/settings/ui";
 import { fmtAgo, lastActiveText, msg } from "@/components/settings/helpers";
 
 /**
@@ -26,6 +28,9 @@ interface AdminUser {
   off: Tool[];
   createdAt: number;
   usage: { logins: number; lastActiveAt: number };
+  /** Has the sign-in code on; is held by the lock on wrong tries (api/admin.ts). */
+  code?: boolean;
+  locked?: boolean;
   projects: number;
   instagramPosts?: number;
   storageBytes: number;
@@ -109,6 +114,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
   };
   const changeRole = (u: AdminUser, role: Role) => attempt(call(`/api/admin/users/${u.username}`, { method: "PATCH", body: JSON.stringify({ role }) }));
   const removeAccount = (u: AdminUser) => attempt(call(`/api/admin/users/${u.username}`, { method: "DELETE" }));
+  const patch = (u: AdminUser, change: object) => attempt(call(`/api/admin/users/${u.username}`, { method: "PATCH", body: JSON.stringify(change) }));
   const removeProject = async (p: AdminProject) => {
     const ok = await confirmDialog({
       title: `Delete project "${p.name}"?`,
@@ -148,6 +154,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
               const admin = u.role === "admin";
               const parts = [
                 ROLE_NAME[u.role],
+                u.locked ? "Locked" : null,
                 lastActiveText(u.usage.lastActiveAt),
                 u.projects ? `${u.projects} projects` : null,
                 fmtBytes(u.storageBytes) !== "—" ? fmtBytes(u.storageBytes) : null,
@@ -169,6 +176,8 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                         label={`More for ${u.username}`}
                         items={[
                           { label: "Reset password…", onSelect: () => setResetFor(u) },
+                          ...(u.locked ? [{ label: "Lift the lock", onSelect: () => patch(u, { unlock: true }) }] : []),
+                          ...(u.code ? [{ label: "Switch off sign-in code", confirm: { title: `Switch off ${u.username}'s sign-in code?`, ok: "Switch off" }, onSelect: () => patch(u, { code: false }) }] : []),
                           admin
                             ? { label: "Remove admin", confirm: { title: `Remove ${u.username} as admin?`, ok: "Remove admin" }, onSelect: () => changeRole(u, "team") }
                             : { label: "Make admin", confirm: { title: `Make ${u.username} an admin?`, body: "Admins see every project and manage accounts.", ok: "Make admin" }, onSelect: () => changeRole(u, "admin") },
@@ -195,6 +204,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
             })}
           </Card>
         </Section>
+        <AskEveryone />
         <CreateAccount open={creating} onOpenChange={setCreating} onCreated={() => void refresh()} />
         <ResetPassword user={resetFor} onClose={() => setResetFor(null)} call={call} />
       </>
@@ -294,14 +304,39 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
   );
 }
 
-/** Makes an account: a username and a password of at least six characters (api/admin.ts POST /users). */
+/** Every password sign-in on this server asks for a sign-in code (PUT /api/admin/sign-in-code). */
+function AskEveryone() {
+  const state = useCodeState();
+  if (!state.data) return null;
+  const change = async (on: boolean) => {
+    if (on && !(await confirmDialog({ title: "Ask everyone for a sign-in code?", body: "Everyone without one is signed out and sets one up at their next sign-in.", ok: "Ask everyone" }))) return;
+    const res = await fetch("/api/admin/sign-in-code", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ required: on }) }).catch(() => null);
+    const d = ((await res?.json().catch(() => ({}))) ?? {}) as { error?: string; required?: boolean };
+    if (!res?.ok) return saveFailed(d.error || "It didn't save. Try again.");
+    state.set((v) => v && { ...v, required: !!d.required });
+  };
+  return (
+    <Section title="Sign-in">
+      <Card>
+        <Row
+          id="admin-sign-in-code"
+          title="Ask everyone for a sign-in code"
+          description="Every password sign-in on this server asks for a code from an authenticator app"
+          control={<Switch checked={state.data.required} aria-label="Ask everyone for a sign-in code" onCheckedChange={(on) => void change(on)} />}
+        />
+      </Card>
+    </Section>
+  );
+}
+
+/** Makes an account: a username and a password of at least ten characters (api/admin.ts POST /users). */
 function CreateAccount({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async () => {
-    if (password.length < 6) return setError("The password needs at least 6 characters.");
+    if (password.length < 10) return setError("The password needs at least 10 characters.");
     setBusy(true);
     setError(null);
     try {
@@ -320,7 +355,7 @@ function CreateAccount({ open, onOpenChange, onCreated }: { open: boolean; onOpe
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} title="Create account" submitLabel="Create account" busy={busy} error={error} onSubmit={submit}>
       <Input aria-label="Username" placeholder="Username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} required />
-      <Input aria-label="Password" placeholder="Password (6+ characters)" type="text" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      <Input aria-label="Password" placeholder="Password (10+ characters)" type="text" value={password} onChange={(e) => setPassword(e.target.value)} required />
     </FormDialog>
   );
 }
@@ -333,7 +368,7 @@ function ResetPassword({ user, onClose, call }: { user: AdminUser | null; onClos
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!user) return;
-    if (password.length < 6) return setError("The password needs at least 6 characters.");
+    if (password.length < 10) return setError("The password needs at least 10 characters.");
     setBusy(true);
     setError(null);
     try {
@@ -348,7 +383,7 @@ function ResetPassword({ user, onClose, call }: { user: AdminUser | null; onClos
   };
   return (
     <FormDialog open={user !== null} onOpenChange={(o) => !o && onClose()} title={`New password for ${user?.username ?? ""}`} submitLabel="Set password" busy={busy} error={error} onSubmit={() => submit()}>
-      <Input aria-label="New password" type="text" placeholder="New password (6+ characters)" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      <Input aria-label="New password" type="text" placeholder="New password (10+ characters)" value={password} onChange={(e) => setPassword(e.target.value)} required />
     </FormDialog>
   );
 }

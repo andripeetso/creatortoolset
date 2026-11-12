@@ -530,7 +530,7 @@ authApp.post("/code", async (c) => {
   const hit = stepFor(b.step);
   const user = hit && findUser(hit.username);
   c.header("Cache-Control", "no-store");
-  if (!user || stamp(user) !== hit.stamp) return c.json({ error: "That sign-in expired. Sign in again." }, 401);
+  if (!user || stamp(user) !== hit.stamp) return c.json({ error: "That sign-in expired. Sign in again.", code: "STEP_EXPIRED" }, 401);
   if (waitFor(user.username)) return locked(c, user.username);
   const made = hit.setup && !user.code ? confirmSecret(user.username, text(b.code)) : null;
   const next = made?.code ?? (!hit.setup && user.code ? checkCode(user.code, text(b.code)) : null);
@@ -546,11 +546,11 @@ authApp.post("/code", async (c) => {
   return c.json({ ok: true, user: withLogins(sessionOf(user)), ...(made ? { recovery: made.recovery } : {}) });
 });
 
-/** Settings → Account: whether the code is on, the recovery codes left, whether this server asks everyone, and whether this is this Mac's own window. */
+/** Settings → Account: whether the code is on, whether this server asks everyone, and whether this is this Mac's own window. */
 authApp.get("/code", (c) => {
   const user = accountHere(c);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
-  return c.json({ on: !!user.code, left: user.code?.recovery.length ?? 0, required: codeRequired(), mac: fromThisMac(c) });
+  return c.json({ on: !!user.code, required: codeRequired(), mac: fromThisMac(c) });
 });
 
 /**
