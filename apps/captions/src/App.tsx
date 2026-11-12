@@ -6,7 +6,6 @@ import { lazy, Suspense, useEffect, useRef, type ReactNode } from "react";
 import ToolsetHome from "./pages/ToolsetHome";
 import Home from "./pages/Home";
 import EnhancePage from "./pages/EnhancePage";
-import CleanPage from "./pages/CleanPage";
 import ClipsPage from "./pages/ClipsPage";
 import DocumentsPage from "./pages/DocumentsPage";
 import InstagramPage from "./pages/InstagramPage";
@@ -233,7 +232,6 @@ function WorkspaceSync() {
  *  browser is idle, loads the route code that is lazy so no tool waits for its chunk. */
 function WarmCaches() {
   const signedIn = useAuth((s) => s.me?.username ?? null);
-  const cleanOn = useAuth((s) => canUse(s.me, "clean"));
   const project = useWorkspace((s) => s.currentProjectId);
   useEffect(() => {
     if (!signedIn) return;
@@ -248,10 +246,6 @@ function WarmCaches() {
       if (!live) return;
       void import("./pages/SettingsPage");
       void import("./pages/CommunityPage");
-      if (cleanOn) {
-        void import("./pages/CleanClipEditor");
-        void import("./pages/CleanGuideContent");
-      }
       if (isPhoneHub()) {
         void import("./pages/mobile/MobileCaptionPage");
         void import("./pages/mobile/MobileInstagramPage");
@@ -262,7 +256,7 @@ function WarmCaches() {
       live = false;
       window.clearTimeout(fill);
     };
-  }, [signedIn, cleanOn, project]);
+  }, [signedIn, project]);
   return null;
 }
 
@@ -361,7 +355,6 @@ export default function App() {
           />
           <Route path="/enhance" element={<AppRoute tool="enhance"><EnhancePage /></AppRoute>} />
           <Route path="/enhance/:sessionId" element={<AppRoute tool="enhance"><EnhancePage /></AppRoute>} />
-          <Route path="/clean" element={<AppRoute tool="clean"><CleanPage /></AppRoute>} />
           <Route path="/record" element={<RecordRoute />} />
           <Route path="/record/:id" element={<ScreenProjectPage />} />
           <Route path="/clips" element={<ClipsRoute />} />

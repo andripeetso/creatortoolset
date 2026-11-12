@@ -117,9 +117,9 @@ describe("checkPack", () => {
   it("takes a Home layout as a list of the app's own tiles and nothing else", () => {
     const alone = { format: 1, id: "podcast-home", name: "Podcast Home", version: "1.0.0", author: "Tiny Acrobatics", license: "CC0-1.0", description: "Home for podcasts." };
     // only tiles this app has are kept, in Home's order; anything else in there is dropped, never passed on
-    const r = checkPack({ ...alone, home: { hidden: ["stories", "clean", "/settings", "not-a-tool", "clean"], to: "/x", order: ["a"] } });
+    const r = checkPack({ ...alone, home: { hidden: ["notes", "stories", "/settings", "not-a-tool", "notes"], to: "/x", order: ["a"] } });
     expect(r).toMatchObject({ ok: true, level: 0 });
-    expect(r.pack!.home).toEqual({ hidden: ["clean", "stories"] });
+    expect(r.pack!.home).toEqual({ hidden: ["stories", "notes"] });
     for (const bad of ["clean", { hidden: "clean" }, { hidden: [{ to: "/x" }] }, {}]) expect(checkPack({ ...alone, home: bad }).problems.join(" ")).toMatch(/"home"/);
   });
 

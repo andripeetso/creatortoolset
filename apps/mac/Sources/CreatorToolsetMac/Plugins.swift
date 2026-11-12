@@ -342,8 +342,8 @@ let pluginChangesTooOftenNote = "It changed five times in five minutes, so its c
 
 /// Taking a change up restarts the server, which ends whatever it is doing. So it waits while the menu bar's Active
 /// list has a row (a Workshop reply being written, a plug-in's own work, an AI request on this Mac), while the
-/// recorder is open, and while the server runs another program (ffmpeg for an export, a cleaning or an enhance, a
-/// plug-in being built). Not seen: an upload in flight, and work inside the server that starts no program.
+/// recorder is open, and while the server runs another program (ffmpeg for an export or an enhance, a plug-in
+/// being built). Not seen: an upload in flight, and work inside the server that starts no program.
 func serverBusyHere(active: Int, recording: Bool, runsPrograms: Bool) -> Bool {
     active > 0 || recording || runsPrograms
 }

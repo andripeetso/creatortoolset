@@ -52,7 +52,7 @@ describe("pHash", () => {
     expect(Math.max(...a.map((h, i) => phashDistance(h, b[i]!)))).toBeLessThanOrEqual(6);
   });
 
-  it("without the Cleaner's PDQ tool the fingerprint is the pHashes alone", async () => {
+  it("without the PDQ tool the fingerprint is the pHashes alone", async () => {
     process.env.FINGERPRINT_BIN_DIR = path.join(dir, "no-tools");
     try {
       const f = await fingerprint(clip, 3, dir);

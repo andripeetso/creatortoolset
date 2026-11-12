@@ -291,7 +291,7 @@ Back up first (step 9). To go back, check out the previous commit and run the sa
 ## 12. Limits and what is not in the kit
 
 - The Docker image is for x86_64 Linux only.
-- The native video fingerprint tools (Video Cleaner's PDQ, TMK and SSCD) are not built into the image.
-  See `docs/video-fingerprints.md` in `apps/captions`.
+- The native video fingerprint tools (PDQ and TMK) are not built into the image. The Media Library's duplicate check
+  works without them; `scripts/install-fingerprint-runtime.sh` in `apps/captions` builds them.
 - There is no database server to run. The account and settings are files under the data volume.
 - Keep the server patched (`apt upgrade`, Docker updates), and keep SSH on keys only.

@@ -20,7 +20,6 @@ describe("setup's What do you want to do first?", () => {
     expect([...html.matchAll(/role="radio"/g)]).toHaveLength(5);
     expect(html).not.toContain('aria-checked="true"');
     for (const name of ["Find ideas in posts I like", "Write scripts and posts", "Edit my videos", "Add captions to a video", "Just look around"]) expect(html).toContain(name);
-    expect(html).not.toContain("Video Cleaner");
   });
 
   it("under a picked job: one row for each thing it still needs, each with its one button", () => {

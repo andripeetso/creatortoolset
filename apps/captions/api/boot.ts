@@ -5,7 +5,6 @@ import { appRouter } from "./router";
 import { createContext } from "./context";
 import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
-import { cleanApp } from "./clean";
 import { clipsApp } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp } from "./enhance";
@@ -41,6 +40,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
+import { sweepAll, uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
@@ -133,7 +133,6 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/projects") ||
     c.req.path.startsWith("/api/transcribe") ||
     c.req.path.startsWith("/api/enhance") ||
-    c.req.path.startsWith("/api/clean") ||
     c.req.path.startsWith("/api/clips") ||
     c.req.path.startsWith("/api/review/uploads") ||
     c.req.path.startsWith("/api/uploads/relay") ||
@@ -197,7 +196,6 @@ const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
 // their APIs serve each other (Review and Guides play Video Notes).
 export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/enhance", ["enhance"]],
-  ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
   ["/api/edit-steps", ["editor"]],
@@ -257,6 +255,8 @@ if (hostedMode()) {
 }
 // plug-ins' public routes (plugins/<id>/plugin.ts publicRoutes): before the account gate, each checks its own access
 mountPublicRoutes(app, serverPlugins);
+// a file the user's own AI sends with curl (MCP upload_file): the link in the path is its only credential
+app.route("/api/upload", uploadLinkApp);
 // a social sign-in's way back may land in the computer's browser, without the session: its state names the account
 app.route("/api/connectors", connectorsCallbackApp);
 
@@ -391,7 +391,6 @@ app.route("/api/skills", skillsApp);
 app.route("/api/pack-catalog", packCatalogApp);
 app.route("/api/projects", projectsApp);
 app.route("/api/enhance", enhanceApp);
-app.route("/api/clean", cleanApp);
 app.route("/api", clipAgentApp);
 app.route("/api/clips", clipsApp);
 app.route("/api/documents", documentsApp);
@@ -435,6 +434,9 @@ if (process.env.NODE_ENV !== "test") {
   startPlugins(serverPlugins, startFolderPlugin);
   // assistant messages that waited for their videos when the server stopped
   resumeFromDisk();
+  // dropped files: the 7-day ones, and uploads nobody finished (no part for an hour)
+  void sweepAll();
+  setInterval(() => void sweepAll(), 3600_000).unref();
 }
 app.route("/api/stories", storiesApp);
 app.route("/api/folders", foldersApp);

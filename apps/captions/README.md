@@ -8,7 +8,6 @@ server, so every tool shares a sign-in and a data folder. Each tool has its own 
 | `/captions` | Caption Studio | `api/projects.ts`, `api/exports.ts`, `api/transcribe.ts`, `api/caption-layout.ts` |
 | `/enhance` | Audio Enhancer | `api/enhance.ts` |
 | `/review` | Review | `api/review.ts` |
-| `/clean` | Video Cleaner | `api/clean.ts` (guide: `docs/video-cleaner/README.md`) |
 | `/stories` | Story Splitter | `api/stories.ts` |
 | `/video-notes` | Video Notes | `api/clips.ts` |
 | `/guides` | Guide Builder | `api/documents.ts` |
