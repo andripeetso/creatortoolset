@@ -5,7 +5,10 @@ import UIKit
 /// The server names things by their page on the website ("/review/<id>?v=2"); the phone opens
 /// its own screen for the ones it has, and the page itself for the rest.
 enum AppRoute: Hashable {
+    /// The assistant's open chat.
     case assistant
+    /// One of the assistant's chats by its id: the open one, or an earlier one that is opened first.
+    case chat(String)
     /// An AI Editor edit: its thread.
     case edit(String)
     /// A Review video, on a version when one is named.
@@ -33,9 +36,19 @@ enum AppRoute: Hashable {
         case "library", "finals":
             return .finals
         case "assistant":
-            return .assistant
+            return query("chat").map(AppRoute.chat) ?? .assistant
+        case nil where query("chat") != nil:
+            return .chat(query("chat")!)   // "/?chat=<id>": a notification about a reply in that chat
         default:
             return .page(raw)
+        }
+    }
+
+    /// The assistant's open chat or one of its chats.
+    var isAssistant: Bool {
+        switch self {
+        case .assistant, .chat: true
+        default: false
         }
     }
 }
@@ -59,6 +72,29 @@ final class AppNavigator: ObservableObject {
         default:
             tab = .chats
             if chats.last != route { chats.append(route) }
+        }
+    }
+
+    /// The round button on Chats: a new chat with the assistant, keyboard up. An open chat with nothing in it yet is
+    /// that new chat already. A message still on this phone (not sent yet, or not sent at all) belongs to the chat it
+    /// was written in: then the open chat is shown and says why there is no new one yet.
+    func newChat() {
+        Task {
+            let assistant = AssistantModel.shared
+            if assistant.view == nil { await assistant.load() }
+            if let view = assistant.view, !view.messages.isEmpty {
+                if !assistant.outbox.items.isEmpty {
+                    assistant.error = "A message here hasn't gone yet. A new chat can start once it has."
+                } else {
+                    await assistant.newChat()
+                    // an older server refuses while a reply is being written
+                    if assistant.view?.messages.isEmpty == false, assistant.view?.thinking != nil {
+                        assistant.error = "A reply is still being written here. A new chat can start once it's done."
+                    }
+                }
+            }
+            composing = assistant.view?.messages.isEmpty ?? true
+            open(.assistant)
         }
     }
 

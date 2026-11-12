@@ -241,7 +241,7 @@ struct AssistantChatView: View {
 
     /// A page the assistant opened for the person: go there once, and tell the server it was opened.
     private func follow(_ path: String?) {
-        guard let path, !path.isEmpty, nav.tab == .chats, nav.chats.last == .assistant else { return }
+        guard let path, !path.isEmpty, nav.tab == .chats, nav.chats.last?.isAssistant == true else { return }
         Task { await model.navigated() }
         if let route = Self.opensByItself(path) { nav.open(route) }
     }

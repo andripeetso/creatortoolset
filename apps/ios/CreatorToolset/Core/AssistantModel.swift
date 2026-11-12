@@ -125,6 +125,8 @@ struct AssistantPast: Decodable, Equatable, Identifiable {
     var title: String
     var at: Double
     var count: Int
+    /// A reply is still being written in it, or waits there (a newer server lets a new chat start meanwhile).
+    var working: Bool?
 }
 
 /// The one assistant conversation of the signed-in account, shared by the chat screen and the

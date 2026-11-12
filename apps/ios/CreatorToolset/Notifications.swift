@@ -46,7 +46,7 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
     /// The rows that wait on him as things to tell. The assistant's own questions are left out:
     /// they last ten minutes, and a look in the background comes later than that.
     nonisolated static func notes(_ rows: [ChatRow]) -> [Note] {
-        rows.filter { $0.status.waitsOnYou && $0.route != .assistant }.map { row in
+        rows.filter { $0.status.waitsOnYou && !$0.route.isAssistant }.map { row in
             let body: String
             switch row.status {
             case .review: body = "Needs your review"

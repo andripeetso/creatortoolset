@@ -33,13 +33,13 @@ final class ChatsTests: XCTestCase {
 
     func testReviewRowsWithoutTheEditor() throws {
         // a server with no AI Editor rows: every Review video is its own row
-        let rows = ChatList.arrange(assistant: ChatList.assistant(nil), rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
-        XCTAssertEqual(rows.map(\.title), ["Assistant", "V1A-1", "V1A-2", "Hanging basics teaser v2"])
-        XCTAssertEqual(rows[1].status, .review)
-        XCTAssertEqual(rows[1].detail, "V1")
-        XCTAssertEqual(rows[2].detail, "Changes requested")
-        XCTAssertFalse(rows[2].status.waitsOnYou)
-        XCTAssertEqual(rows[3].shelf, .done)
+        let rows = ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
+        XCTAssertEqual(rows.map(\.title), ["V1A-1", "V1A-2", "Hanging basics teaser v2"])
+        XCTAssertEqual(rows[0].status, .review)
+        XCTAssertEqual(rows[0].detail, "V1")
+        XCTAssertEqual(rows[1].detail, "Changes requested")
+        XCTAssertFalse(rows[1].status.waitsOnYou)
+        XCTAssertEqual(rows[2].shelf, .done)
         var video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1},{"n":2}],"newComments":2,"createdAt":5000}"#.utf8))
         XCTAssertEqual(ChatList.row(video).detail, "V2 · 2 new comments")
         XCTAssertEqual(ChatList.row(video).at, Date(timeIntervalSince1970: 5))
@@ -51,7 +51,7 @@ final class ChatsTests: XCTestCase {
         let ended = Date(timeIntervalSince1970: 2000)
         let row = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Edit", detail: "2 cuts", status: .time(ended), at: ended, finished: ended)
         func status(opened: [String: Date] = [:], since: Date) -> RowStatus {
-            ChatList.arrange(assistant: ChatList.assistant(nil), rows: [row], opened: opened, since: since)[1].status
+            ChatList.arrange(rows: [row], opened: opened, since: since)[0].status
         }
         XCTAssertEqual(status(since: Date(timeIntervalSince1970: 1000)), .done)
         // finished before this phone ever showed Chats: not news
@@ -124,14 +124,14 @@ final class ChatsTests: XCTestCase {
     }
 
     func testWhatIsNewToTell() throws {
-        let rows = ChatList.arrange(assistant: ChatList.assistant(nil), rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
+        let rows = ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
         let first = AppNotifications.fresh(rows, shown: [])
         XCTAssertEqual(first.notes, [AppNotifications.Note(key: "ef173602-861d-44e0-8529-894f2a06243e:v1", title: "V1A-1",
                                                            body: "Needs your review", path: "/review/ef173602-861d-44e0-8529-894f2a06243e")])
         // told once
         XCTAssertTrue(AppNotifications.fresh(rows, shown: first.shown).notes.isEmpty)
         // it left the list and came back: news again
-        let gone = AppNotifications.fresh(Array(rows.prefix(1)), shown: first.shown)
+        let gone = AppNotifications.fresh([], shown: first.shown)
         XCTAssertEqual(AppNotifications.fresh(rows, shown: gone.shown).notes.map(\.title), ["V1A-1"])
         let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
         XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])
@@ -199,5 +199,60 @@ final class ChatsTests: XCTestCase {
         // a New edit saved before its start time was kept still reads
         let old = try decode(Data(#"[{"id":"\#(UUID())","server":"s","name":"Old","clips":[]}]"#.utf8), as: [PhoneEdit].self)
         XCTAssertNil(old[0].made)
+    }
+
+    private func assistant(_ json: String) throws -> AssistantView {
+        try JSONDecoder().decode(AssistantView.self, from: Data(json.utf8))
+    }
+
+    func testEachAssistantChatIsItsOwnRow() throws {
+        let view = try assistant(#"""
+        {"id":"c-open","provider":"claude","messages":[
+          {"id":"m1","role":"user","text":"Write three hooks\nfor   the Rolling cues reel","at":3000000},
+          {"id":"m2","role":"assistant","text":"Here are three:\n- one","at":3000500,"status":"done"}],
+         "past":[{"id":"c-old","title":"Monday numbers","at":1000000,"count":3},
+                 {"id":"c-busy","title":"Caption these clips","at":2000000,"count":2,"working":true}]}
+        """#)
+        let rows = ChatList.chats(view)
+        XCTAssertEqual(rows.map(\.title), ["Write three hooks for the Rolling cues reel", "Monday numbers", "Caption these clips"])
+        XCTAssertEqual(rows.map(\.route), [.chat("c-open"), .chat("c-old"), .chat("c-busy")])
+        XCTAssertEqual(rows.map(\.shelf), [.active, .done, .working])
+        XCTAssertEqual(rows[0].detail, "Here are three:")
+        // the row's id is the path a notification about that chat carries
+        XCTAssertEqual(rows.map(\.id), ["/?chat=c-open", "/?chat=c-old", "/?chat=c-busy"])
+        XCTAssertEqual(rows.map { AppRoute.from(path: $0.id) }, rows.map(\.route))
+        // a new chat with nothing in it has no row; no conversation read yet, no rows
+        let fresh = try assistant(#"{"id":"c-new","provider":"claude","messages":[],"past":[{"id":"c-old","title":"Monday numbers","at":1000000,"count":3}]}"#)
+        XCTAssertEqual(ChatList.chats(fresh).map(\.route), [.chat("c-old")])
+        XCTAssertTrue(ChatList.chats(nil).isEmpty)
+        // the Assistant chip finds every chat, and only chats
+        XCTAssertEqual(rows.filter(ChatFilter.assistant.has).count, 3)
+        XCTAssertFalse(ChatFilter.assistant.has(ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Edit", detail: "", status: .none, at: .distantPast)))
+        // the open chat sits among the others by its time; no row is pinned above them
+        let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Edit", detail: "", status: .time(Date(timeIntervalSince1970: 4000)), at: Date(timeIntervalSince1970: 4000))
+        XCTAssertEqual(ChatList.arrange(rows: [edit] + rows).map(\.id), ["/editor/e1", "/?chat=c-open", "/?chat=c-busy", "/?chat=c-old"])
+    }
+
+    func testAChatNameIsItsFirstMessageAsTheServerWritesIt() throws {
+        let long = String(repeating: "word ", count: 30)
+        let view = try assistant(#"{"id":"c","messages":[{"id":"m","role":"user","text":"\#(long)","at":1}]}"#)
+        XCTAssertEqual(ChatList.title(view.messages).count, 70)
+        XCTAssertTrue(ChatList.title(view.messages).hasSuffix("…"))
+        XCTAssertEqual(ChatList.title([]), "Conversation")
+        // a reply being written: the open chat goes under Working with its clock
+        let busy = try assistant(#"{"id":"c","messages":[{"id":"m","role":"user","text":"Hi","at":1000},{"id":"r","role":"assistant","text":"","at":2000,"status":"thinking"}]}"#)
+        XCTAssertEqual(ChatList.chats(busy).first?.shelf, .working)
+    }
+
+    func testAChatOpensFromItsLinkOrItsNotification() {
+        XCTAssertEqual(AppRoute.from(path: "/?chat=c9"), .chat("c9"))
+        XCTAssertEqual(AppRoute.from(path: "/assistant?chat=c9"), .chat("c9"))
+        XCTAssertEqual(AppRoute.from(path: "/assistant"), .assistant)
+        XCTAssertTrue(AppRoute.chat("c9").isAssistant)
+        XCTAssertTrue(AppRoute.assistant.isAssistant)
+        XCTAssertFalse(AppRoute.edit("e1").isAssistant)
+        // the assistant's chats tell no notes of their own from Chats: the server pushes about its replies
+        let asks = ChatRow(id: "/?chat=c9", route: .chat("c9"), title: "Clean up", detail: "", status: .approval, at: .distantPast)
+        XCTAssertTrue(AppNotifications.notes([asks]).isEmpty)
     }
 }

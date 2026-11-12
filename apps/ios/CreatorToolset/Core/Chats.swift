@@ -76,7 +76,8 @@ enum ChatFilter: String, CaseIterable, Identifiable {
 
     func has(_ row: ChatRow) -> Bool {
         switch (self, row.route) {
-        case (.all, _), (.edits, .edit), (.review, .review), (.assistant, .assistant): true
+        case (.all, _), (.edits, .edit), (.review, .review): true
+        case (.assistant, let route): route.isAssistant
         default: false
         }
     }
@@ -132,6 +133,7 @@ enum ChatList {
     static func path(_ route: AppRoute) -> String {
         switch route {
         case .assistant: "/assistant"
+        case .chat(let id): "/?chat=\(id)"
         case .edit(let id): "/editor/\(id)"
         case .review(let id, _): "/review/\(id)"
         case .session(let id): "/workshop/sessions/\(id)"
@@ -140,9 +142,31 @@ enum ChatList {
         }
     }
 
-    /// The assistant's row: its last words, and whether it asks for something or is writing.
-    static func assistant(_ view: AssistantView?) -> ChatRow {
-        let messages = view?.messages ?? []
+    /// The assistant's chats, a row each, like any other conversation: the open one in play (its last words, and
+    /// whether it asks for something or is writing), the earlier ones under Done, or under Working while a reply
+    /// still runs there. An open chat with nothing in it has no row: the round button is the way to a new one.
+    static func chats(_ view: AssistantView?) -> [ChatRow] {
+        guard let view else { return [] }
+        let open = view.messages.isEmpty ? [] : [chat(view)]
+        return open + view.past.map { past in
+            let route = AppRoute.chat(past.id)
+            let at = date(ms: past.at)
+            let working = past.working == true
+            return ChatRow(id: path(route), route: route, title: past.title, detail: "",
+                           status: working ? .working(since: at) : .time(at), at: at, shelf: working ? .working : .done)
+        }
+    }
+
+    /// A chat's name, as the server gives an earlier one: its first message, on one line, 70 characters at most.
+    static func title(_ messages: [AssistantMessage]) -> String {
+        let first = (messages.first { $0.role == "user" }?.text ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let words = first.isEmpty ? "Conversation" : first
+        return words.count > 70 ? String(words.prefix(69)) + "…" : words
+    }
+
+    /// The open chat's row: its last words, and whether it asks for something or is writing.
+    static func chat(_ view: AssistantView) -> ChatRow {
+        let messages = view.messages
         let last = messages.last { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let line = last?.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let status: RowStatus
@@ -150,16 +174,19 @@ enum ChatList {
         if messages.contains(where: { $0.approvals?.contains { $0.status == "waiting" } == true
             || $0.confirms?.contains { $0.status == "waiting" } == true }) {
             status = .approval
-        } else if let thinking = view?.thinking {
+        } else if let thinking = view.thinking {
             status = .working(since: date(ms: thinking.at))
         } else if let newest = messages.last {
             status = .time(date(ms: newest.at))
         } else {
             status = .none
         }
-        return ChatRow(id: path(.assistant), route: .assistant, title: "Assistant",
+        let route = AppRoute.chat(view.id)
+        var working = false
+        if case .working = status { working = true }
+        return ChatRow(id: path(route), route: route, title: title(messages),
                        detail: Markdown.plain(line), status: status,
-                       at: messages.last.map { date(ms: $0.at) } ?? .distantPast)
+                       at: messages.last.map { date(ms: $0.at) } ?? .distantPast, shelf: working ? .working : .active)
     }
 
     /// A Review video's row: Review while it waits for the person, under Done once approved.
@@ -199,11 +226,11 @@ enum ChatList {
         }
     }
 
-    /// Top to bottom: the assistant, the rows that wait on the person (newest first), the rest by
-    /// newest activity, then the Working shelf and the Done shelf.
+    /// Top to bottom: the rows that wait on the person (newest first), the rest by newest activity,
+    /// then the Working shelf and the Done shelf. The assistant's chats are rows like the others.
     /// A finished row says Done until it is opened (`opened`: when each row was last opened;
     /// `since`: when this phone first showed Chats, so old work is not news).
-    static func arrange(assistant: ChatRow, rows: [ChatRow], opened: [String: Date] = [:], since: Date = .distantPast) -> [ChatRow] {
+    static func arrange(rows: [ChatRow], opened: [String: Date] = [:], since: Date = .distantPast) -> [ChatRow] {
         let marked = rows.map { row -> ChatRow in
             guard row.shelf == .active, case .time = row.status, let finished = row.finished,
                   finished > (opened[row.id] ?? since) else { return row }
@@ -213,8 +240,7 @@ enum ChatList {
         }
         func newest(_ a: ChatRow, _ b: ChatRow) -> Bool { a.at != b.at ? a.at > b.at : a.id < b.id }
         let active = marked.filter { $0.shelf == .active }
-        return [assistant]
-            + active.filter(\.status.waitsOnYou).sorted(by: newest)
+        return active.filter(\.status.waitsOnYou).sorted(by: newest)
             + active.filter { !$0.status.waitsOnYou }.sorted(by: newest)
             + marked.filter { $0.shelf == .working }.sorted(by: newest)
             + marked.filter { $0.shelf == .done }.sorted(by: newest)
@@ -226,7 +252,7 @@ enum ChatList {
 final class ChatsModel: ObservableObject {
     static let shared = ChatsModel()
 
-    /// In the order of the screen (`ChatList.arrange`), the assistant's row first.
+    /// In the order of the screen (`ChatList.arrange`).
     @Published private(set) var rows: [ChatRow] = []
     @Published private(set) var link = Link.ok
     @Published private(set) var offline = false
@@ -430,17 +456,16 @@ final class ChatsModel: ObservableObject {
 
     private func rebuild() {
         let fresh = link == .none ? [] : ChatList.arrange(
-            assistant: ChatList.assistant(assistant),
             rows: ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
-                                                 opened: Set(opened.keys)), dismissed: dismissed),
+                                                 opened: Set(opened.keys)), dismissed: dismissed) + ChatList.chats(assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
         if fresh != rows { rows = fresh }
     }
 
     // MARK: Dismiss and delete
 
-    /// Which rows a swipe can dismiss: everything in play but the assistant.
-    nonisolated static func canDismiss(_ row: ChatRow) -> Bool { row.route != .assistant && row.shelf == .active && row.phoneEdit == nil }
+    /// Which rows a swipe can dismiss: everything in play but the assistant's chats.
+    nonisolated static func canDismiss(_ row: ChatRow) -> Bool { !row.route.isAssistant && row.shelf == .active && row.phoneEdit == nil }
 
     /// Only a Review video can be deleted from here: it goes to Review's trash and can be brought back.
     nonisolated static func canDelete(_ row: ChatRow) -> Bool {
@@ -753,7 +778,7 @@ private struct RowTile: View {
     let route: AppRoute
 
     var body: some View {
-        let assistant = route == .assistant
+        let assistant = route.isAssistant
         Image(systemName: symbol)
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(assistant ? Color.white : Color.secondary)
@@ -763,7 +788,7 @@ private struct RowTile: View {
 
     private var symbol: String {
         switch route {
-        case .assistant: "sparkles"
+        case .assistant, .chat: "sparkles"
         case .edit: "film"
         case .review: "play.rectangle"
         default: "doc.text"
