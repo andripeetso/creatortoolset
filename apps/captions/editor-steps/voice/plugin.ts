@@ -42,7 +42,7 @@ export default definePlugin({
   id: "editor-voice",
   name: "Voice",
   about: "Cleans and levels the voice in every edit, on this computer",
-  kind: "AI Editor step",
+  kind: "editor",
   editor: {
     steps: [
       {

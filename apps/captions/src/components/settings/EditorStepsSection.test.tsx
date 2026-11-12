@@ -22,8 +22,8 @@ describe("Settings → AI Editor", () => {
   it("shows the loaded steps only", async () => {
     const steps = [
       { id: "blur", title: "Blur faces", about: "", state: "on", use: true, values: {} },
-      { id: "tiny-enhance", title: "Tiny Enhance", about: "", kind: "Audio Enhancer engine", state: "loaded", folder: "tiny-enhance", use: false, values: {} },
-      { id: "editor-voice", title: "Voice", about: "", kind: "AI Editor step", state: "add", folder: "voice", use: false, values: {} },
+      { id: "tiny-enhance", title: "Tiny Enhance", about: "", kind: "enhance", state: "loaded", folder: "tiny-enhance", use: false, values: {} },
+      { id: "editor-voice", title: "Voice", about: "", kind: "editor", state: "add", folder: "voice", use: false, values: {} },
     ];
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ steps, canAdd: true }), { status: 200 }));
     host = document.createElement("div");

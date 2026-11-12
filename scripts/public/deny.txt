@@ -3,9 +3,9 @@
 #   ~/.config/creator-toolset/public-deny.local.txt        (CT_PUBLIC_DENY_LOCAL overrides the path)
 #   ~/.config/creator-toolset/public-deny-files.local.txt  (CT_PUBLIC_DENY_FILES_LOCAL overrides the path)
 192\.168\.[0-9]+\.[0-9]+
-# Adobe Podcast (browser automation of a third-party site) is never in the public app; the XMP metadata standard is fine
-[Aa]dobe ?(Podcast|Enhance)|"adobe"|engine=adobe|Figma/Adobe
-podcast\.adobe
+# Adobe Enhance Speech is a team plug-in in apps/captions/editor-steps/adobe-enhance since 2026-11-11, by the owner's word ("Yes, that's why I asked to build Adobe.")
+# Not naming a product a pattern came from ("like Figma/Adobe")
+Figma/Adobe
 # Instagram's private web endpoints (session or anonymous cookies) are never read by the public app: official logins and the user's own Apify key only
 instagram\.com/api/v1|[Xx]-IG-App-ID|INSTAGRAM_COOKIE
 # Apple's system typeface (the San Francisco family) cannot be redistributed; the public app uses its own fonts (see the font files under public/)

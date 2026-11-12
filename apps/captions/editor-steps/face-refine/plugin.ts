@@ -159,7 +159,7 @@ export default definePlugin({
   id: "editor-face-refine",
   name: "Face refinement",
   about: "Evens out the speaker's skin and lifts dark circles in every edit, on this computer. About 1.4 GB of disk for each minute of video",
-  kind: "AI Editor step",
+  kind: "editor",
   editor: {
     steps: [
       {
