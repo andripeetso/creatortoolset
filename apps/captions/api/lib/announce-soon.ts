@@ -7,21 +7,22 @@ import { announce } from "./sync";
  */
 const open = new Map<string, { again: boolean }>();
 
-export function announceSoon(owner: string | null | undefined, topic: string, ms = 1000): void {
+export function announceSoon(owner: string | null | undefined, topic: string, ms = 1000, chat?: string): void {
   if (!owner) return;
-  const k = `${owner}\n${topic}`;
+  // one burst per chat: two assistant chats streaming at once never swallow each other's notices
+  const k = `${owner}\n${topic}\n${chat ?? ""}`;
   const held = open.get(k);
   if (held) {
     held.again = true;
     return;
   }
-  announce(owner, topic);
+  announce(owner, topic, null, chat);
   const state = { again: false };
   open.set(k, state);
   const tick = () => {
     if (!state.again) return void open.delete(k);
     state.again = false;
-    announce(owner, topic);
+    announce(owner, topic, null, chat);
     setTimeout(tick, ms).unref?.();
   };
   setTimeout(tick, ms).unref?.();
