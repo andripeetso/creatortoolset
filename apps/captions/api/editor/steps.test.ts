@@ -53,7 +53,9 @@ describe("Settings → AI Editor's steps", () => {
 
   it("reads the plug-ins that come with the app from their folders, without running them, each with its own kind", () => {
     expect(bundledPlugins()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer", kind: "AI Editor step" });
-    expect(Object.fromEntries(bundledPlugins().map((b) => [b.folder, b.kind]))).toEqual({
+    // every folder says its kind (a team plug-in added later too); the steps say they are steps
+    expect(bundledPlugins().filter((b) => !b.kind)).toEqual([]);
+    expect(Object.fromEntries(bundledPlugins().map((b) => [b.folder, b.kind]))).toMatchObject({
       colour: "AI Editor step",
       "face-blur": "AI Editor step",
       "face-refine": "AI Editor step",
