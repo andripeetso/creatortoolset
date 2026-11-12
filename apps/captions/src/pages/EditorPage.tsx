@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
+import { Picture } from "@/components/Picture";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
 import { useToolFolders } from "@/lib/folders";
@@ -208,7 +209,10 @@ export default function EditorPage() {
                 <Link to={`/editor/${e.id}`} {...folders.drag(e.id)} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
                   <div className="flex shrink-0 -space-x-3">
                     {e.sources.slice(0, 3).map((v) => (
-                      <img key={v} src={thumb(v)} alt="" className="h-10 w-16 rounded-md border border-zinc-500/30 bg-zinc-800 object-cover" />
+                      // a take with no picture (a voice recording) has no thumbnail: the box stays, with no broken-image icon
+                      <span key={v} className="h-10 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-500/30 bg-zinc-800">
+                        <Picture src={thumb(v)} alt="" className="h-full w-full object-cover" />
+                      </span>
                     ))}
                   </div>
                   <div className="min-w-0 flex-1">

@@ -28,7 +28,7 @@ async function login(username: string) {
 }
 const call = (user: string, method: string, url: string, body?: unknown) =>
   app.request(url, { method, headers: { cookie: cookies[user]!, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-const read = async <T = any>(r: Response | Promise<Response>): Promise<{ status: number; body: T }> => {
+const read = async <T = { error: string }>(r: Response | Promise<Response>): Promise<{ status: number; body: T }> => {
   const res = await r;
   return { status: res.status, body: (await res.json()) as T };
 };
