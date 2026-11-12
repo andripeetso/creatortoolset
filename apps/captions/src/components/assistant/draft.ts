@@ -43,16 +43,19 @@ export async function droppedFiles(
   return { files: all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })), folder: !folders.length, folders };
 }
 
-/** A video or recording in the box: it uploads as soon as it's added (id once it's in, api/assistant-files.ts). */
-export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; error?: string };
+/**
+ * A video or recording in the box: it uploads as soon as it's added. `id` comes once the upload is made, and the message
+ * may go from then on (the server waits for the rest, api/assistant.ts); `done` once it's all in.
+ */
+export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; done?: boolean; error?: string };
 /** What's in the box: the words, pictures, long pastes (sent as files beside the words) and videos. */
 export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[]; folders: string[] };
 export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [], folders: [] };
 export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length && !d.folders.length;
 /** A folder's last name, for its chip. */
 export const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
-/** Still uploading, or one failed: the message can't go yet. */
-export const filesPending = (d: Draft) => d.files.some((f) => !f.id);
+/** An upload not made yet, or one failed: the message can't go yet (one still uploading can). */
+export const filesPending = (d: Draft) => d.files.some((f) => !f.id || f.error);
 
 /** A video or a recording's sound (by type, or by name when the type is missing). */
 export const isMediaFile = (f: File) => /^(video|audio)\//.test(f.type) || /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg)$/i.test(f.name);
