@@ -52,14 +52,19 @@ describe("Settings → AI Editor's steps", () => {
   });
 
   it("reads the plug-ins that come with the app from their folders, without running them, each with its own kind", () => {
-    expect(bundledPlugins()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer", kind: "AI Editor step" });
-    // every folder says its kind (a team plug-in added later too); the steps say they are steps
+    expect(bundledPlugins()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer", kind: "editor" });
+    // its Community line: what it does, and that it uses the person's own Adobe account
+    expect(bundledPlugins()).toContainEqual({
+      folder: "adobe-enhance", pluginId: "adobe-enhance", title: "Adobe Enhance Speech", about: "Adobe's Enhance Speech in the Audio Enhancer, with your own Adobe account.", kind: "enhance",
+    });
+    // every folder names the tool it adds to (a team plug-in added later too); the steps name the AI Editor
     expect(bundledPlugins().filter((b) => !b.kind)).toEqual([]);
     expect(Object.fromEntries(bundledPlugins().map((b) => [b.folder, b.kind]))).toMatchObject({
-      colour: "AI Editor step",
-      "face-blur": "AI Editor step",
-      "face-refine": "AI Editor step",
-      voice: "AI Editor step",
+      "adobe-enhance": "enhance",
+      colour: "editor",
+      "face-blur": "editor",
+      "face-refine": "editor",
+      voice: "editor",
     });
   });
 
@@ -69,12 +74,12 @@ describe("Settings → AI Editor's steps", () => {
     const team = path.join(appFolder, "team");
     const plugin = (folder: string, text: string) => (mkdirSync(path.join(team, folder), { recursive: true }), writeFileSync(path.join(team, folder, "plugin.ts"), text));
     plugin("tiny-step", `export default definePlugin({ id: "tiny-step", name: "Tiny step", about: "A step.", editor: { steps: [{ id: "s", options: [{ id: "o", kind: "choice" }] }] } });`);
-    plugin("tiny-enhance", `export default definePlugin({\n  id: "tiny-enhance",\n  name: "Tiny Enhance",\n  about: "Cleans voices.",\n  kind: "Audio Enhancer engine",\n  routes,\n});`);
+    plugin("tiny-enhance", `export default definePlugin({\n  id: "tiny-enhance",\n  name: "Tiny Enhance",\n  about: "Cleans voices.",\n  kind: "enhance",\n  routes,\n});`);
     Object.assign(process.env, { CT_LOCAL: "1", CT_APP_FOLDER: appFolder, CT_EDITOR_STEPS: team });
     try {
       const view = async () => (await (await app.request("/")).json()) as StepsView;
       const row = async (id: string) => (await view()).steps.find((r) => r.id === id);
-      expect(await row("tiny-enhance")).toMatchObject({ title: "Tiny Enhance", about: "Cleans voices.", kind: "Audio Enhancer engine", state: "add", folder: "tiny-enhance" });
+      expect(await row("tiny-enhance")).toMatchObject({ title: "Tiny Enhance", about: "Cleans voices.", kind: "enhance", state: "add", folder: "tiny-enhance" });
       expect(await row("tiny-step")).toMatchObject({ kind: "", state: "add" });
       // Download: the folder goes into the plug-ins folder, the same road as a step's
       expect((await app.request("/add/tiny-enhance", { method: "POST" })).status).toBe(200);

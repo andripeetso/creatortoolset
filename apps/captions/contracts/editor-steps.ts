@@ -3,7 +3,7 @@
  * faces). Each step makes copies of the source files it changes, and the preview and the exported timeline play those
  * copies. Settings → AI Editor lists the steps that are loaded. The plug-ins the team makes come with the app as folders
  * (apps/captions/editor-steps/<folder>: the steps, and others such as an Audio Enhancer engine); Community → Plug-ins lists
- * them too, each with the kind its plugin.ts says, and the person downloads one there.
+ * them too, each under the Home tool its plugin.ts names (`kind`), and the person downloads one there.
  *
  *   GET  /api/edit-steps                → StepsView
  *   PUT  /api/edit-steps/:id            { use?: boolean, values?: Record<string, string> } → StepsView
@@ -41,7 +41,7 @@ export interface StepRow extends StepInfo {
   state: "add" | "off" | "on" | "loaded";
   /** its folder name in the plug-ins folder (add, off and loaded), for the Mac app's switch */
   folder?: string;
-  /** what it is, as its plugin.ts says (add, off and loaded): Community shows it on the row */
+  /** the Home tool it adds to, as its plugin.ts says (add, off and loaded; a HomeTile id, contracts/tools.ts): Community's heading */
   kind?: string;
   /** new edits use it (only a step that is on) */
   use: boolean;

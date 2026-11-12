@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C70000000000000000000079 /* ShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C70000000000000000000071 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		C70000000000000000000031 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -14,20 +18,51 @@
 			remoteGlobalIDString = C70000000000000000000010;
 			remoteInfo = CreatorToolset;
 		};
+		C7000000000000000000007B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C70000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C70000000000000000000070;
+			remoteInfo = ShareExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C70000000000000000000078 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C70000000000000000000079 /* ShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		C70000000000000000000011 /* CreatorToolset.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CreatorToolset.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C70000000000000000000021 /* CreatorToolsetTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CreatorToolsetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C70000000000000000000071 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		C70000000000000000000015 /* Exceptions for "CreatorToolset" folder in "CreatorToolset" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CreatorToolset.entitlements,
 				Info.plist,
 			);
 			target = C70000000000000000000010 /* CreatorToolset */;
+		};
+		C70000000000000000000075 /* Exceptions for "ShareExtension" folder in "ShareExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				ShareExtension.entitlements,
+			);
+			target = C70000000000000000000070 /* ShareExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -43,6 +78,19 @@
 		C70000000000000000000024 /* CreatorToolsetTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = CreatorToolsetTests;
+			sourceTree = "<group>";
+		};
+		C70000000000000000000074 /* ShareExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C70000000000000000000075 /* Exceptions for "ShareExtension" folder in "ShareExtension" target */,
+			);
+			path = ShareExtension;
+			sourceTree = "<group>";
+		};
+		C70000000000000000000077 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -62,6 +110,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C70000000000000000000073 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -70,6 +125,8 @@
 			children = (
 				C70000000000000000000014 /* CreatorToolset */,
 				C70000000000000000000024 /* CreatorToolsetTests */,
+				C70000000000000000000077 /* Shared */,
+				C70000000000000000000074 /* ShareExtension */,
 				C70000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -79,6 +136,7 @@
 			children = (
 				C70000000000000000000011 /* CreatorToolset.app */,
 				C70000000000000000000021 /* CreatorToolsetTests.xctest */,
+				C70000000000000000000071 /* ShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -93,13 +151,16 @@
 				C70000000000000000000012 /* Sources */,
 				C70000000000000000000013 /* Frameworks */,
 				C70000000000000000000016 /* Resources */,
+				C70000000000000000000078 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C7000000000000000000007A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C70000000000000000000014 /* CreatorToolset */,
+				C70000000000000000000077 /* Shared */,
 			);
 			name = CreatorToolset;
 			packageProductDependencies = (
@@ -131,6 +192,29 @@
 			productReference = C70000000000000000000021 /* CreatorToolsetTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		C70000000000000000000070 /* ShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C70000000000000000000080 /* Build configuration list for PBXNativeTarget "ShareExtension" */;
+			buildPhases = (
+				C70000000000000000000072 /* Sources */,
+				C70000000000000000000073 /* Frameworks */,
+				C70000000000000000000076 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				C70000000000000000000074 /* ShareExtension */,
+				C70000000000000000000077 /* Shared */,
+			);
+			name = ShareExtension;
+			packageProductDependencies = (
+			);
+			productName = ShareExtension;
+			productReference = C70000000000000000000071 /* ShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -147,6 +231,9 @@
 					C70000000000000000000020 = {
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = C70000000000000000000010;
+					};
+					C70000000000000000000070 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -166,6 +253,7 @@
 			targets = (
 				C70000000000000000000010 /* CreatorToolset */,
 				C70000000000000000000020 /* CreatorToolsetTests */,
+				C70000000000000000000070 /* ShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -179,6 +267,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		C70000000000000000000026 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C70000000000000000000076 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -202,6 +297,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C70000000000000000000072 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -209,6 +311,11 @@
 			isa = PBXTargetDependency;
 			target = C70000000000000000000010 /* CreatorToolset */;
 			targetProxy = C70000000000000000000031 /* PBXContainerItemProxy */;
+		};
+		C7000000000000000000007A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C70000000000000000000070 /* ShareExtension */;
+			targetProxy = C7000000000000000000007B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -263,6 +370,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = CreatorToolset/CreatorToolset.entitlements;
 				
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -276,6 +385,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Creator Toolset connects to the Creator Toolset server on your computer.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Creator Toolset records sound with the videos you film.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Creator Toolset saves the takes you film into your Photos.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Creator Toolset shows your videos and photos so you can pick what to upload, and marks the ones already in your Media Library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -297,6 +407,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = CreatorToolset/CreatorToolset.entitlements;
 				
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -309,6 +421,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Creator Toolset connects to the Creator Toolset server on your computer.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Creator Toolset records sound with the videos you film.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Creator Toolset saves the takes you film into your Photos.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Creator Toolset shows your videos and photos so you can pick what to upload, and marks the ones already in your Media Library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -360,6 +473,58 @@
 			};
 			name = Release;
 		};
+		C70000000000000000000081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Creator Toolset";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.creatortoolset.ios.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C70000000000000000000082 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Creator Toolset";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.creatortoolset.ios.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -386,6 +551,15 @@
 			buildConfigurations = (
 				C70000000000000000000061 /* Debug */,
 				C70000000000000000000062 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C70000000000000000000080 /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C70000000000000000000081 /* Debug */,
+				C70000000000000000000082 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

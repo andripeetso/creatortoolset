@@ -1,16 +1,6 @@
 import Foundation
 import Security
-
-/// A Creator Toolset server this phone talks to: the one on the person's own computer, their own server, or a hosted
-/// one. The sign-in cookie (`cap_auth`) is kept in the Keychain, never in the list.
-struct Server: Codable, Identifiable, Hashable {
-    let url: URL
-    var username: String?
-    /// The computer's own name, for one reached through the account (its address is a row of letters and digits).
-    var label: String?
-    var id: String { url.absoluteString }
-    var name: String { label ?? (url.host(percentEncoded: false) ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") }
-}
+import WebKit
 
 /// The servers added on this phone and the one in use. Every screen reads `current`.
 @MainActor
@@ -22,8 +12,11 @@ final class Servers: ObservableObject {
     /// Set when the server answered 401: the cookie is gone, so the person signs in again.
     @Published private(set) var signedOut = false
 
-    private let listKey = "servers"
-    private let currentKey = "currentServer"
+    /// Where the list and the server in use are saved (`API.current` reads them too).
+    nonisolated static let listKey = "servers"
+    nonisolated static let currentKey = "currentServer"
+    private var listKey: String { Self.listKey }
+    private var currentKey: String { Self.currentKey }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: listKey),
@@ -31,12 +24,20 @@ final class Servers: ObservableObject {
             list = saved
         }
         currentId = UserDefaults.standard.string(forKey: currentKey) ?? list.first?.id
+        #if DEBUG
+        // a server without sign-in on this Mac, for the simulator: -localServer http://localhost:43190
+        if let raw = debugArg("localServer"), let target = SignIn.parse(raw) {
+            add(Server(url: target.origin, username: "local"), cookie: nil)
+        }
+        #endif
+        // a phone that added its servers before the Share extension existed
+        if !list.isEmpty, SavedServers.read() == nil { SavedServers(list: list, currentId: currentId).write() }
     }
 
     var current: Server? { list.first { $0.id == currentId } }
 
     /// The client for the server in use, or nil before one is added.
-    var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id)) } }
+    var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id), username: $0.username) } }
 
     func add(_ server: Server, cookie: String?) {
         list = Self.adding(server, to: list)
@@ -58,15 +59,25 @@ final class Servers: ObservableObject {
         save()
     }
 
+    /// A removed server stops sending this phone anything (its push is forgotten with the sign-in still in hand),
+    /// and removing the last one forgets what the in-app web pages kept.
     func remove(_ id: String) {
+        if let server = list.first(where: { $0.id == id }) {
+            let api = API(server: server.url, cookie: Keychain.get(id), username: server.username)
+            Task { await StudioHooks.removing(api) }
+        }
         list.removeAll { $0.id == id }
         Keychain.set(id, nil)
         if currentId == id { currentId = list.first?.id }
         save()
+        if list.isEmpty {
+            WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+        }
     }
 
-    func sessionExpired() {
-        guard let id = currentId else { return }
+    /// The server in use turned `refused` away. A sign-in made since (a request still on its way with the old one) stays.
+    func sessionExpired(_ refused: String?) {
+        guard let id = currentId, Keychain.get(id) == refused else { return }
         Keychain.set(id, nil)
         signedOut = true
     }
@@ -74,43 +85,35 @@ final class Servers: ObservableObject {
     private func save() {
         UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: listKey)
         UserDefaults.standard.set(currentId, forKey: currentKey)
-    }
-}
-
-/// One generic-password item per server, readable after the first unlock (background uploads need it).
-enum Keychain {
-    private static func query(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "creator-toolset.server",
-         kSecAttrAccount as String: account]
-    }
-
-    static func get(_ account: String) -> String? {
-        var q = query(account)
-        q[kSecReturnData as String] = true
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func set(_ account: String, _ value: String?) {
-        SecItemDelete(query(account) as CFDictionary)
-        guard let value else { return }
-        var q = query(account)
-        q[kSecValueData as String] = Data(value.utf8)
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(q as CFDictionary, nil)
+        SavedServers(list: list, currentId: currentId).write()
     }
 }
 
 enum APIError: LocalizedError, Equatable {
     case signedOut
     case server(Int, String)
+    /// No answer: no connection, or the server is down.
+    case offline
+
+    /// The HTTP status: 401 signed out, 0 no answer.
+    var status: Int {
+        switch self {
+        case .signedOut: return 401
+        case .server(let status, _): return status
+        case .offline: return 0
+        }
+    }
+
+    var message: String { errorDescription ?? "" }
+
+    /// The shape shared phone code throws (`ToolsetAPI.Failure(status:message:)`).
+    init(status: Int, message: String) { self = .server(status, message) }
 
     var errorDescription: String? {
         switch self {
         case .signedOut: return "Signed out. Sign in again in More → Computers."
         case .server(_, let message): return message
+        case .offline: return "No connection to the server"
         }
     }
 }
@@ -120,6 +123,8 @@ enum APIError: LocalizedError, Equatable {
 struct API {
     let server: URL
     let cookie: String?
+    /// Who is signed in, for what is kept on disk per account (`cacheKey`).
+    var username: String? = nil
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -129,8 +134,13 @@ struct API {
         return URLSession(configuration: config)
     }()
 
+    /// A path on this server. Only this server is ever asked: another site's address (in something the server passed
+    /// on, a picture's or a video's) becomes this server's front door, so neither the request nor the sign-in that
+    /// rides on it goes anywhere else.
     func url(_ path: String) -> URL {
-        URL(string: path.hasPrefix("/") ? String(path.dropFirst()) : path, relativeTo: server)!.absoluteURL
+        guard let made = URL(string: path.hasPrefix("/") ? String(path.dropFirst()) : path, relativeTo: server)?.absoluteURL,
+              made.scheme == server.scheme, made.host() == server.host(), made.port == server.port else { return server }
+        return made
     }
 
     var headers: [String: String] { cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? [:] }
@@ -151,16 +161,23 @@ struct API {
         try await data(request(path, method: method, json: json))
     }
 
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        try JSONDecoder().decode(T.self, from: try await data(request(path)))
+    func get<T: Decodable>(_ path: String, decoder: JSONDecoder = JSONDecoder()) async throws -> T {
+        try decoder.decode(T.self, from: try await data(request(path)))
     }
 
-    func data(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await Self.session.data(for: request)
+    /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled.
+    func data(_ request: URLRequest, session: URLSession = API.session) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code != .cancelled {
+            throw APIError.offline
+        }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
             // only the server in use: an upload to another server failing must not sign this one out
-            await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired() } }
+            await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired(cookie) } }
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else { throw APIError.server(status, Self.message(data, status: status)) }
@@ -188,6 +205,15 @@ enum SignIn {
     enum Outcome: Equatable {
         case signedIn(cookie: String?, username: String)
         case needsPassword
+        /// The password was right and the account asks for its sign-in code next: `code(_:step:code:)` with this step.
+        case needsCode(step: String)
+        /// The server asks every account for a sign-in code and this one has none yet: it is set up on the website.
+        case setUpCode
+    }
+
+    /// The code step's five minutes are up: the password is asked again. Says so in the server's words.
+    struct StepExpired: LocalizedError, Equatable {
+        let errorDescription: String?
     }
 
     /// What was typed, pasted or scanned. No scheme: http for a local address (an IP, `localhost`, `.local`), else https.
@@ -244,6 +270,12 @@ enum SignIn {
         try await post(origin, "/api/auth/ticket", ["ticket": ticket, "password": password])
     }
 
+    /// The six digits from the authenticator app, or a recovery code, after a password that asked for one. A wrong
+    /// code throws the server's words and the step stays good; an expired step throws `StepExpired`.
+    static func code(_ origin: URL, step: String, code: String) async throws -> Outcome {
+        try await post(origin, "/api/auth/code", ["step": step, "code": code])
+    }
+
     /// A server from before sign-in by the account answers 404 here; a newer one refuses the empty code with 400.
     static func takesAppSignIn(_ origin: URL) async throws -> Bool {
         var request = API(server: origin, cookie: nil).request("/api/auth/app", method: "POST", json: [String: String]())
@@ -258,12 +290,30 @@ enum SignIn {
         request.httpShouldHandleCookies = false
         let (data, response) = try await API.session.data(for: request)
         let http = response as? HTTPURLResponse
-        guard let http, http.statusCode == 200 else {
-            throw APIError.server(http?.statusCode ?? 0, API.message(data, status: http?.statusCode ?? 0))
-        }
+        guard let http, http.statusCode == 200 else { return try refusal(http?.statusCode ?? 0, data) }
         // a server without sign-in answers ok with no cookie
         let cookie = cookie(from: http)
         return .signedIn(cookie: cookie, username: try await Self.username(origin, cookie: cookie))
+    }
+
+    /// A sign-in route's answer other than 200. A 401 with a `code` is a step of the sign-in, never a session that
+    /// ended: the sign-in code comes next, or is set up on the website first, or (expired) the password is asked again.
+    /// Anything else is thrown in the server's own words ("Wrong code", too many tries).
+    static func refusal(_ status: Int, _ data: Data) throws -> Outcome {
+        struct Body: Decodable {
+            let code: String?
+            let step: String?
+        }
+        let body = try? JSONDecoder().decode(Body.self, from: data)
+        if status == 401 {
+            switch body?.code {
+            case "CODE_NEEDED": if let step = body?.step { return .needsCode(step: step) }
+            case "CODE_SETUP": return .setUpCode
+            case "STEP_EXPIRED": throw StepExpired(errorDescription: API.message(data, status: status))
+            default: break
+            }
+        }
+        throw APIError.server(status, API.message(data, status: status))
     }
 
     struct Check: Decodable {
@@ -273,8 +323,12 @@ enum SignIn {
         let user: User?
     }
 
+    /// On the plain session: no answer stays a `URLError`, which the account's sign-in names with the server's address.
     static func authCheck(_ origin: URL, cookie: String?) async throws -> Check {
-        try await API(server: origin, cookie: cookie).get("/api/auth/check")
+        let (data, response) = try await API.session.data(for: API(server: origin, cookie: cookie).request("/api/auth/check"))
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw APIError.server(status, API.message(data, status: status)) }
+        return try JSONDecoder().decode(Check.self, from: data)
     }
 
     private static func username(_ origin: URL, cookie: String?) async throws -> String {

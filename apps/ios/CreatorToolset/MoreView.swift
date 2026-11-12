@@ -1,14 +1,85 @@
-import AVKit
+import Photos
 import SwiftUI
 
+/// The last tab: the tools, each a tile with its icon, and under them the one row that opens Settings (tools and
+/// settings in one list read as the same kind of thing).
 struct MoreView: View {
+    @ObservedObject private var access = ToolsetAccess.shared
+    /// A debug build opens Settings without a tap: -MoreOpen settings.
+    @State private var settingsOpen = debugArg("MoreOpen") == "settings"
+
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    // the tools' tiles, each only when the account has it
+                    if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
+                    if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
+                }
+                Button {
+                    settingsOpen = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28)
+                        Text("Settings").foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 52)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+        }
+        .navigationTitle("More")
+        .navigationDestination(isPresented: $settingsOpen) { SettingsView() }
+    }
+}
+
+/// A tool as a tile: its icon, big, and its name. A tap opens it.
+struct ToolTile<Destination: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder var destination: () -> Destination
+
+    var body: some View {
+        NavigationLink {
+            destination()
+        } label: {
+            VStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(Color("AccentColor"))
+                    .frame(height: 40)
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, minHeight: 124)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Settings, on a screen of their own: the computers this phone is signed in to, the account, notifications, how the
+/// app looks, uploads, Photos access, and which build this is.
+struct SettingsView: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var account = Account.shared
+    @ObservedObject private var library = PhotoLibrary.shared
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("wifiOnly") private var wifiOnly = false
     @State private var adding = false
 
     var body: some View {
-        List {
+        Form {
             Section("Computers") {
                 ForEach(servers.list) { server in
                     Button { servers.use(server.id) } label: {
@@ -35,25 +106,60 @@ struct MoreView: View {
             if let profile = account.profile {
                 Section("Account") { AccountRow(profile: profile) { account.signOut() } }
             }
-            if let api = servers.api {
-                Section {
-                    NavigationLink("Media Library") { LibraryView() }
-                    NavigationLink("Everything else") {
-                        WebAppView(api: api).ignoresSafeArea(edges: .bottom).navigationBarTitleDisplayMode(.inline)
+            Section("Notifications") { NotificationsRow() }
+            Section("Appearance") { AppearancePicker() }
+            Section("Uploads") {
+                Toggle("Only upload on Wi-Fi", isOn: $wifiOnly)
+            }
+            Section("Photos") {
+                LabeledContent("Access", value: accessText)
+                if library.access == .limited {
+                    Button("Choose more clips…") { presentLimitedPicker() }
+                }
+                if library.access == .denied || library.access == .restricted || library.access == .limited {
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                     }
                 }
             }
             Section {
-                Toggle("Upload on Wi-Fi only", isOn: $wifiOnly)
+                LabeledContent("Version", value: Self.version)
             }
         }
-        .navigationTitle("More")
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         #if DEBUG
         .onAppear { if Account.demo == "add" { adding = true } }
         #endif
         .sheet(isPresented: $adding) {
             NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) }
         }
+        // back from the iPhone's own Settings: what was changed there shows here
+        .onChange(of: scenePhase) { _, phase in if phase == .active { library.refreshAccess() } }
+    }
+
+    /// "1.0 (12)": the version and the build, as TestFlight names them.
+    static var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? ""
+        let build = info["CFBundleVersion"] as? String ?? ""
+        return build.isEmpty ? version : "\(version) (\(build))"
+    }
+
+    private var accessText: String {
+        switch library.access {
+        case .authorized: "All photos"
+        case .limited: "Selected photos"
+        case .denied, .restricted: "None"
+        default: "Not asked yet"
+        }
+    }
+
+    private func presentLimitedPicker() {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let root = scene.keyWindow?.rootViewController else { return }
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: root)
     }
 }
 
@@ -74,6 +180,10 @@ struct AddServerView: View {
     @State private var problem: String?
     /// The computer added to the account whose own password is asked.
     @State private var asked: Computer?
+    /// After a right password: the server that asks for the sign-in code, and its step (nil: set the code up first).
+    @State private var codeAsk: (origin: URL, step: String?)?
+    @State private var code = ""
+    @State private var recovery = false
     @FocusState private var typing: Field?
     @State private var scanning = false
     @State private var busy = false
@@ -145,7 +255,44 @@ struct AddServerView: View {
             } footer: {
                 Text("On the computer: Settings → Computers → Add your phone.")
             }
-            if needsPassword != nil || asked != nil {
+            if let codeAsk {
+                Section(asked?.name ?? "Sign-in code") {
+                    if codeAsk.step == nil {
+                        Text("This server asks for a code from an authenticator app. Set it up on its website first, then sign in here.")
+                        Link("Open the sign-in page", destination: API(server: codeAsk.origin, cookie: nil).url("/login"))
+                    } else {
+                        // above the field: the keyboard comes up over what is below it
+                        HStack {
+                            Text(recovery ? "A recovery code you saved" : "From your authenticator app")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(recovery ? "6-digit code" : "Recovery code") {
+                                recovery.toggle()
+                                code = ""
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .font(.subheadline)
+                        // here, not at the foot of the form, which the keyboard covers
+                        if let error { Problem(text: error) }
+                        if recovery {
+                            TextField("Recovery code", text: $code)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($typing, equals: .code)
+                                .submitLabel(.go)
+                                .onSubmit { if !blocked { Task { await connect() } } }
+                        } else {
+                            // no return key on the number pad: six digits sign in, typed or filled in from Passwords
+                            TextField("6-digit code", text: $code)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .focused($typing, equals: .code)
+                                .onChange(of: code) { if code.count == 6, !blocked { Task { await connect() } } }
+                        }
+                    }
+                }
+            } else if needsPassword != nil || asked != nil {
                 Section(asked?.name ?? "Sign in") {
                     if asked == nil {
                         TextField("Username", text: $username)
@@ -164,7 +311,7 @@ struct AddServerView: View {
                         .onSubmit { if !blocked { Task { await connect() } } }
                 }
             }
-            if let error { Problem(text: error) }
+            if let error, codeAsk?.step == nil { Problem(text: error) }
             Button(needsPassword == nil && asked == nil ? "Connect" : "Sign in") { Task { await connect() } }
                 .disabled(blocked)
         }
@@ -176,12 +323,14 @@ struct AddServerView: View {
         .onChange(of: address) {
             // typing an address leaves the computer that was picked; the password fields stay while the address is the one that asked
             asked = nil
+            codeAsk = nil
             if SignIn.parse(address) != needsPassword { needsPassword = nil }
         }
         .onChange(of: account.profile == nil) { _, signedOut in
             if signedOut {
                 computers = nil
                 asked = nil
+                codeAsk = nil
             }
         }
         .refreshable { if account.profile != nil { await run { try await load() } } }
@@ -194,6 +343,13 @@ struct AddServerView: View {
             #if DEBUG
             if Account.demo == "password", let computer = computers?.first(where: { $0.addedId != nil }) { ask(computer) }
             if Account.demo == "old", let computer = computers?.first { usePassword(computer) }
+            if ["code", "wrong", "setup"].contains(Account.demo), let computer = computers?.first(where: { $0.addedId != nil }) {
+                ask(computer)
+                password = "demo"
+                codeAsk = (computer.url, Account.demo == "setup" ? nil : "demo")
+                if Account.demo == "wrong" { error = "Wrong code" }
+                typing = .code
+            }
             #endif
         }
         .sheet(isPresented: $scanning) {
@@ -202,6 +358,7 @@ struct AddServerView: View {
                 // the code is what connects now, whatever was being asked before
                 asked = nil
                 needsPassword = nil
+                codeAsk = nil
                 address = text
                 Task { await connect() }
             }
@@ -210,11 +367,12 @@ struct AddServerView: View {
     }
 
     /// One job at a time with the account; what goes wrong is said in one line under it.
-    private enum Field { case username, password }
+    private enum Field { case username, password, code }
 
     /// Nothing to send yet: a job is running, or what the form asks for is not filled in.
     private var blocked: Bool {
-        busy || (asked != nil ? password.isEmpty
+        busy || (codeAsk?.step != nil ? code.isEmpty
+                 : asked != nil ? password.isEmpty
                  : address.isEmpty || (needsPassword != nil && (username.isEmpty || password.isEmpty)))
     }
 
@@ -251,18 +409,18 @@ struct AddServerView: View {
         }
         if computer.addedId != nil { return ask(computer) }
         switch try await account.signIn(to: computer) {
-        case .signedIn(let cookie, let name):
-            servers.add(Server(url: computer.url, username: name), cookie: cookie)
-            dismiss()
         case .needsPassword:
             usePassword(computer)
         case nil:
             break
+        case let outcome?:
+            handle(outcome, from: computer.url)
         }
     }
 
     private func ask(_ computer: Computer) {
         needsPassword = nil
+        codeAsk = nil
         password = ""
         error = nil
         asked = computer
@@ -274,6 +432,7 @@ struct AddServerView: View {
     private func usePassword(_ computer: Computer) {
         address = computer.name
         needsPassword = SignIn.parse(address)
+        codeAsk = nil
         error = nil
         typing = .username
     }
@@ -287,10 +446,11 @@ struct AddServerView: View {
         busy = true
         defer { busy = false }
         do {
+            if let codeAsk, let step = codeAsk.step {
+                return handle(try await SignIn.code(codeAsk.origin, step: step, code: code), from: codeAsk.origin, label: asked?.name)
+            }
             if let asked {
-                guard case .signedIn(let cookie, let name) = try await account.signIn(to: asked, password: password) else { return }
-                servers.add(Server(url: asked.url, username: name, label: asked.name), cookie: cookie)
-                return dismiss()
+                return handle(try await account.signIn(to: asked, password: password), from: asked.url, label: asked.name)
             }
             guard let target = SignIn.parse(address) else { return error = "That isn't an address" }
             let outcome = if let waiting = needsPassword {
@@ -298,120 +458,34 @@ struct AddServerView: View {
             } else {
                 try await SignIn.connect(target)
             }
-            switch outcome {
-            case .needsPassword:
-                needsPassword = target
-                error = nil
-            case .signedIn(let cookie, let name):
-                servers.add(Server(url: target.origin, username: name), cookie: cookie)
-                dismiss()
-            }
+            handle(outcome, from: target.origin)
+        } catch let expired as SignIn.StepExpired {
+            // back to the password, which is still filled in
+            codeAsk = nil
+            error = expired.localizedDescription
         } catch {
+            // a wrong code keeps the field, empty for the next one
+            if codeAsk?.step != nil { code = "" }
             self.error = error.localizedDescription
         }
     }
-}
 
-struct Asset: Decodable, Identifiable, Hashable {
-    let id: String
-    let kind: String
-    let title: String
-    let versionId: String
-    let thumbUrl: String?
-    let state: String
-}
-
-/// The Media Library, newest first, 60 at a time.
-struct LibraryView: View {
-    @EnvironmentObject private var servers: Servers
-    @State private var library: LibrarySummary?
-    @State private var assets: [Asset] = []
-    @State private var next: String?
-    @State private var loaded = false
-    @State private var error: String?
-    @State private var open: Asset?
-
-    private let columns = [GridItem(.adaptive(minimum: 104), spacing: 2)]
-
-    var body: some View {
-        ScrollView {
-            if let error { Problem(text: error).padding() }
-            LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(assets) { asset in
-                    Button { open = asset } label: {
-                        RemoteImage(path: asset.thumbUrl ?? "")
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay(alignment: .bottomTrailing) {
-                                if asset.state == "processing" {
-                                    ProgressView().padding(4)
-                                } else if asset.kind == "video" {
-                                    Image(systemName: "play.fill").font(.caption).padding(4).shadow(radius: 2)
-                                }
-                            }
-                    }
-                    .onAppear { if asset == assets.last, next != nil { Task { await load(more: true) } } }
-                }
-            }
+    /// What a sign-in answered: the computer is on this phone, or the password or the sign-in code is asked next.
+    private func handle(_ outcome: SignIn.Outcome, from origin: URL, label: String? = nil) {
+        error = nil
+        switch outcome {
+        case .signedIn(let cookie, let name):
+            servers.add(Server(url: origin, username: name, label: label), cookie: cookie)
+            dismiss()
+        case .needsPassword:
+            needsPassword = SignIn.Target(origin: origin, linkPath: nil)
+        case .needsCode(let step):
+            codeAsk = (origin, step)
+            code = ""
+            recovery = false
+            typing = .code
+        case .setUpCode:
+            codeAsk = (origin, nil)
         }
-        .overlay {
-            if !loaded {
-                ProgressView()
-            } else if assets.isEmpty && error == nil {
-                ContentUnavailableView("Nothing here yet", systemImage: "photo.on.rectangle",
-                                       description: Text("Upload clips and they show here."))
-            }
-        }
-        .navigationTitle(library?.name ?? "Media Library")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await load(more: false) }
-        .refreshable { await load(more: false) }
-        .sheet(item: $open) { AssetView(asset: $0) }
-    }
-
-    private struct Page: Decodable {
-        let items: [Asset]
-        let next: String?
-    }
-
-    private func load(more: Bool) async {
-        guard let api = servers.api else { return }
-        defer { loaded = true }
-        do {
-            if library == nil { library = try await api.firstLibrary() }
-            guard let library else { return }
-            var path = "/api/library/\(library.id)/assets?limit=60"
-            if more, let next { path += "&cursor=\(next.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? next)" }
-            let page: Page = try await api.get(path)
-            assets = more ? assets + page.items : page.items
-            next = page.next
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-private struct AssetView: View {
-    let asset: Asset
-    @EnvironmentObject private var servers: Servers
-    @State private var player: AVPlayer?
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if asset.kind == "video" || asset.kind == "audio", let player {
-                    NativePlayer(player: player)
-                } else {
-                    RemoteImage(path: "/api/library/media/\(asset.versionId)/source").scaledToFit()
-                }
-            }
-            .navigationTitle(asset.title)
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .onAppear {
-            player = servers.api?.player("/api/library/media/\(asset.versionId)/play")
-            player?.play()
-        }
-        .onDisappear { player?.pause() }
     }
 }
