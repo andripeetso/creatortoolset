@@ -70,7 +70,6 @@ copy each one's licence next to the files they install.
 - Video fingerprints (`scripts/install-fingerprint-runtime.sh`): Meta's ThreatExchange PDQ and TMK reference
   code, BSD licence (`THREATEXCHANGE-LICENSE`). PDQ includes CImg, dual-licensed CeCILL-C or CeCILL 2.1
   (`CIMG-NOTICE`).
-- SSCD copy detection model (`scripts/install-sscd-runtime.mjs`): MIT (`scripts/sscd-LICENSE.txt`).
 - The AI Editor's face steps, Face refinement and Blur faces (`apps/captions/editor-steps/face-refine`, `face-blur`),
   install one shared Python runtime on the computer the first time one of them runs, into the app's data folder
   (`runtime/mediapipe-<hash>/`, the list in `apps/captions/api/editor/mediapipe-requirements.ts`), never before the
@@ -106,6 +105,6 @@ copy each one's licence next to the files they install.
     the build's library versions are on that page (`versions.txt`). If you hand out an app you built, make that
     source available with it, as for the Docker image above.
   - `onnxruntime-node` (MIT) and `playwright-chromium` with `playwright-core` (Apache-2.0), and their npm
-    dependencies; the fingerprint tools and, when built with it, the SSCD model listed below.
+    dependencies; the fingerprint tools listed above.
   - The plug-in builder's packages, `esbuild`, `tailwindcss`, `tailwindcss-animate` and `postcss` (all MIT), with
     their npm dependencies, each with its licence file in `node_modules`.

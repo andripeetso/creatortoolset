@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -91,5 +91,48 @@ describe("folders in the tools with none of their own", () => {
   it("many changes at once all land", async () => {
     await Promise.all(Array.from({ length: 20 }, (_, i) => send(ana, "POST", "/api/folders/stories", { name: `F${i}` })));
     expect((await list(ana, "stories")).folders).toHaveLength(20);
+  });
+
+  it("a shared Video Notes folder opens with its link and no account: that folder and the ones inside, its owner's clips only", async () => {
+    const clip = (id: string, owner: string) => {
+      mkdirSync(path.join(process.env.DATA_DIR!, "clips", id), { recursive: true });
+      writeFileSync(path.join(process.env.DATA_DIR!, "clips", id, "meta.json"), JSON.stringify({ id, name: `Clip ${id}`, owner, duration: 12, bytes: 1, mime: "video/mp4", status: "done", progress: 1, createdAt: 1, updatedAt: 1 }));
+    };
+    clip("share-a1", "ana");
+    clip("share-a2", "ana");
+    clip("share-b1", "ben");
+    const make = async (name: string, parentId?: string) => (await (await send(ana, "POST", "/api/folders/notes", { name, parentId })).json()) as Folders["folders"][number];
+    const shared = await make("Client");
+    const inner = await make("Round 2", shared.id);
+    const outside = await make("Private");
+    // ben's clip id put in ana's folder must not show: only the folder owner's clips are listed
+    await send(ana, "PUT", "/api/folders/notes/items", { ids: ["share-a1", "share-b1"], folderId: shared.id });
+    await send(ana, "PUT", "/api/folders/notes/items", { ids: ["share-a2"], folderId: outside.id });
+
+    const anon = (url: string) => app.request(url);
+    const on = (await (await send(ana, "POST", `/api/folders/notes/${shared.id}/share`)).json()) as { share: string };
+    expect(on.share).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    // sharing again keeps the same link
+    expect(((await (await send(ana, "POST", `/api/folders/notes/${shared.id}/share`)).json()) as { share: string }).share).toBe(on.share);
+
+    const view = await anon(`/api/clips/f/${on.share}`);
+    expect(view.status).toBe(200);
+    expect(await view.json()).toEqual({
+      name: "Client",
+      trail: [{ id: shared.id, name: "Client" }],
+      folders: [{ id: inner.id, name: "Round 2", count: 0, pictures: [] }],
+      items: [{ id: "share-a1", name: "Clip share-a1", duration: 12, createdAt: 1, hasThumb: false }],
+    });
+    expect((await anon(`/api/clips/f/${on.share}?f=${inner.id}`)).status).toBe(200);
+    // a folder outside the shared one is not reachable through its link
+    expect((await anon(`/api/clips/f/${on.share}?f=${outside.id}`)).status).toBe(404);
+    // only Video Notes folders can be shared
+    const story = (await (await send(ana, "POST", "/api/folders/stories", { name: "S" })).json()) as Folders["folders"][number];
+    expect((await send(ana, "POST", `/api/folders/stories/${story.id}/share`)).status).toBe(404);
+    // turned off: the link is dead; another person can't turn it on
+    expect((await send(ben, "POST", `/api/folders/notes/${shared.id}/share`)).status).toBe(404);
+    expect((await send(ana, "DELETE", `/api/folders/notes/${shared.id}/share`)).status).toBe(200);
+    expect((await anon(`/api/clips/f/${on.share}`)).status).toBe(404);
+    expect((await anon("/api/clips/f/AAAAAAAAAAAAAAAAAAAAAA")).status).toBe(404);
   });
 });

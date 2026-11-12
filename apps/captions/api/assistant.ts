@@ -17,10 +17,11 @@ import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import { allPartsIn, assistantFilesApp, finishUpload, uploadOf } from "./assistant-files";
+import { allPartsIn, assistantFilesApp, finishUpload, removeFile, setWaitedFor, uploadOf, USE_NAMES } from "./assistant-files";
 import { needsAttention, type Attention } from "./lib/attention";
-import { memoryBlock } from "./lib/memory";
-import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
+import { currentProject, memoryBlock } from "./lib/memory";
+import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
+import type { AssistantApproval, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
  * The in-app assistant (the dock, src/components/assistant): one conversation per account in
@@ -131,6 +132,10 @@ interface Held {
   url: string;
   admin: boolean;
   at: number;
+  /** The line that asks whether dropped footage fits the open project (askFit), as it was when the message was sent. */
+  fit?: string;
+  /** A reply that carries on once a file on the user's computer is on this server (askSend): the tool it goes to. */
+  send?: AssistantFileUse;
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
@@ -217,7 +222,11 @@ interface TurnInput {
   files: AssistantFile[];
   /** Folders dropped in the Mac app: absolute paths, only told to the AI (its tools read them on that computer). */
   paths: string[];
+  /** Videos dropped in the Mac app: their paths, read where they are (nothing uploads). */
+  local: string[];
   context?: AssistantContext;
+  /** One more line for the AI: the fit question, or what the reply carries on with. */
+  note?: string;
 }
 
 const nameOf = (v: unknown, fallback: string) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, 80) : fallback);
@@ -257,7 +266,10 @@ function parseTurn(raw: unknown): TurnInput {
   if (b.paths !== undefined && (!Array.isArray(b.paths) || b.paths.length > MAX_PATHS || b.paths.some((x) => typeof x !== "string" || !x.startsWith("/") || x.length > 1000 || /[\n\r\0]/.test(x))))
     throw new Error(`Drop up to ${MAX_PATHS} folders at a time.`);
   const paths = (b.paths ?? []) as string[];
-  if (!text && !images.length && !pasted.length && !fileIds.length && !paths.length) throw new Error("Write a message, or add a picture or pasted text.");
+  if (b.localFiles !== undefined && (!Array.isArray(b.localFiles) || b.localFiles.length > MAX_FILES || b.localFiles.some((x) => typeof x !== "string" || !x.startsWith("/") || x.length > 1000 || /[\n\r\0]/.test(x))))
+    throw new Error(`Send up to ${MAX_FILES} videos at a time.`);
+  const local = (b.localFiles ?? []) as string[];
+  if (!text && !images.length && !pasted.length && !fileIds.length && !paths.length && !local.length) throw new Error("Write a message, or add a picture or pasted text.");
   const c = (b.context && typeof b.context === "object" ? b.context : null) as Record<string, unknown> | null;
   const where = c && capped(c.path, CONTEXT_CAPS.path);
   const context: AssistantContext | undefined = c && where
@@ -270,7 +282,7 @@ function parseTurn(raw: unknown): TurnInput {
         ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
-  return { text, images, pasted, fileIds, files: [], paths, context };
+  return { text, images, pasted, fileIds, files: [], paths, local, context };
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
@@ -649,7 +661,7 @@ const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status ==
 
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
+  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {
@@ -658,6 +670,8 @@ function newestFacts(input: TurnInput): string[] {
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
+  for (const p of input.local) out.push(`The user dropped a video from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
+  if (input.note) out.push(input.note);
   for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
   const c = input.context;
   if (c) {
@@ -670,6 +684,15 @@ function newestFacts(input: TurnInput): string[] {
   }
   return out;
 }
+
+/** The answers under the fit question (fitLine): the last one turns the question off (POST /turn). */
+const FIT_NEW = "New project";
+const FIT_OFF = "Don't ask again";
+/** Told to the reply that answers "Don't ask again". */
+const FIT_OFF_SAID = "That answer turned the question off (Settings, General has the switch): carry on in the open project.";
+/** Asked when footage comes with a message and askFit is on (work-prefs; Settings, General). */
+export const fitLine = (project: string) =>
+  `The project open in the app is ${JSON.stringify(project)}. If the footage clearly doesn't belong there (by its file names, what the user said and, once read, what is said in it), say so in one line and offer_choices "${FIT_NEW}" / ${JSON.stringify(`Keep it in ${project}`)} / "${FIT_OFF}" ("${FIT_OFF}" turns this question off by itself).`;
 
 /** The prompt: the recent messages, what came with the newest one, then the reply it is for. */
 function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
@@ -816,19 +839,34 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
   });
 }
 
-/** A turn that never started ends: stopped by the person, or its video never arrived. The next one may start. */
-function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost"): void {
+/**
+ * A turn that never started ends: stopped by the person (what it waited for is deleted here: nothing will use it), its
+ * video never arrived, or the file it was to send isn't in the window any more (gone). The next one may start.
+ */
+function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" | "gone"): void {
   const conv = load(username);
-  const asked = everyChat(conv).flat().find((x) => x.id === conv.held?.[m.id]?.ask);
+  const h = conv.held?.[m.id];
+  const asked = everyChat(conv).flat().find((x) => x.id === h?.ask);
   if (conv.held) delete conv.held[m.id];
-  const lost = (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
-  const text = how === "stopped" ? "*Stopped.*" : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
-  Object.assign(m, { status: how === "stopped" ? "done" : "error", text, wait: undefined });
+  if (how === "stopped") for (const id of h?.files ?? []) void removeFile(username, id);
+  const lost = m.send ? [`"${m.send.name}"`] : (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
+  const text =
+    how === "stopped"
+      ? "*Stopped.*"
+      : how === "gone"
+        ? `${lost[0]} isn't in this window any more (the page was reloaded): drop it in the chat again.`
+        : m.send
+          ? `${lost[0]} didn't arrive: drop it in the chat again.`
+          : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
+  Object.assign(m, { status: how === "lost" ? "error" : "done", text, wait: undefined });
   sayLater(username, m.id);
   save(username);
   tell(username);
-  if (how === "lost") attend(username, m.id, "failed", text);
+  if (how !== "stopped") attend(username, m.id, "failed", text);
 }
+
+// the uploads a waiting turn names stay through the orphan sweep: WAIT_MS ends that turn instead
+setWaitedFor((username) => new Set(Object.values(load(username).held ?? {}).flatMap((h) => h.files)));
 
 const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
 const wakes = new Map<string, ReturnType<typeof setTimeout>>();
@@ -902,7 +940,8 @@ async function pumpOnce(username: string): Promise<void> {
       delete f.uploading;
       changed = true;
     }
-    const missing = h.files.filter((id) => !inNow(id));
+    // a send waits for the dock to start its upload first
+    const missing = h.send && !h.files.length ? [""] : h.files.filter((id) => !inNow(id));
     // a scheduled run being written in its own chat goes first there too
     const runningBefore = list.slice(0, i).some((x) => x.status === "thinking" && !held[x.id]);
     let wait: AssistantMessage["wait"];
@@ -918,7 +957,9 @@ async function pumpOnce(username: string): Promise<void> {
         continue;
       }
       soonest = Math.min(soonest, last + WAIT_MS);
-      wait = { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
+      wait = m.send
+        ? { for: "videos", videos: 1, text: `Sending "${m.send.name}" to ${m.send.to}` }
+        : { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
     } else if (ahead || runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
@@ -960,10 +1001,45 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
     const f = imageFile(username, im.id);
     return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
   });
-  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], context: h.context };
+  const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], local: asked.localFiles ?? [], context: h.context, note: sent ?? h.fit };
   conv.mac = h.context?.mac === true;
   void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
   return true;
+}
+
+/**
+ * use_file on a file the user dropped in the Mac app (a path), from a reply in the dock, on a server that isn't on their
+ * computer: the file has to be sent here first. A reply that carries on goes after this one, waiting for it (`send`); the
+ * dock uploads that one file and names its upload (POST /sends/:reply). Its name; null when no chat has that reply or
+ * nobody is at it (a scheduled run): the tool then answers as it would without a chat.
+ */
+export async function askSend(user: SessionUser, turn: string, url: string, p: string, to: AssistantFileUse): Promise<string | null> {
+  const conv = load(user.username);
+  const list = everyChat(conv).find((l) => l.some((m) => m.id === turn));
+  const i = list?.findIndex((m) => m.id === turn) ?? -1;
+  const asked = list?.slice(0, Math.max(i, 0)).reverse().find((m) => m.role === "user");
+  if (!list || !asked || unattended(user.username, turn)) return null;
+  const name = path.basename(p);
+  // one send per file and tool while it waits
+  if (list.some((m) => m.status === "thinking" && m.send?.path === p && m.send.to === USE_NAMES[to])) return name;
+  if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) throw new Error("Too many messages are waiting for an answer: try again once they are answered.");
+  const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: Date.now(), status: "thinking", send: { path: p, name, to: USE_NAMES[to] } };
+  list.push(reply);
+  (conv.held ??= {})[reply.id] = {
+    ask: asked.id,
+    files: [],
+    pasted: [],
+    memory: await memoryBlock(user),
+    skills: skillLines(await dockSkills(user.username), "tool"),
+    url,
+    admin: user.role === "admin",
+    at: reply.at,
+    send: to,
+  };
+  save(user.username);
+  void pump(user.username);
+  return name;
 }
 
 /** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */
@@ -1102,6 +1178,12 @@ assistantApp.post("/turn", async (c) => {
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
   const memory = await memoryBlock(u);
+  // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
+  const lastReply = [...load(u.username).messages].reverse().find((m) => m.role === "assistant");
+  const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
+  if (fitOff) writeWorkPrefs(u.username, { askFit: false });
+  const project = (files.length || input.paths.length || input.local.length) && readWorkPrefs(u.username).askFit !== false ? await currentProject(u).catch(() => undefined) : undefined;
+  const fit = fitOff ? FIT_OFF_SAID : project ? fitLine(project.name) : undefined;
   const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
   if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
@@ -1119,6 +1201,7 @@ assistantApp.post("/turn", async (c) => {
     ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
     ...(files.length ? { files } : {}),
     ...(input.paths.length ? { folders: input.paths } : {}),
+    ...(input.local.length ? { localFiles: input.local } : {}),
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
   };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
@@ -1134,6 +1217,7 @@ assistantApp.post("/turn", async (c) => {
     url: `${publicOrigin(c)}/api/mcp`,
     admin: u.role === "admin",
     at: now,
+    ...(fit ? { fit } : {}),
   };
   save(u.username);
   await pump(u.username);
@@ -1176,6 +1260,30 @@ assistantApp.post("/saved", async (c) => {
   conv.pending = undefined;
   conv.messages.push({ id: randomUUID(), role: "note", text: `${spec.name} key saved (…${key.slice(-4)})`, at: Date.now() });
   save(u.username);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/**
+ * The dock's answer to a reply's send (askSend): { id } is the upload it started for that file (the reply carries on once it
+ * is in), { gone: true } says the file isn't in that window any more (it was reloaded), and the reply says to drop it again.
+ */
+assistantApp.post("/sends/:reply", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { id?: unknown; gone?: unknown } | null;
+  const conv = load(u.username);
+  const reply = c.req.param("reply");
+  const h = conv.held?.[reply];
+  const m = messageOf(u.username, reply);
+  if (!h?.send || !m?.send || m.send.id) return c.json({ error: "Nothing waits for that file" }, 404);
+  if (b?.gone === true) endHeld(u.username, m, "gone");
+  else {
+    const id = typeof b?.id === "string" ? b.id : "";
+    if (!(await uploadOf(u.username, id))) return c.json({ error: "No such upload" }, 400);
+    h.files = [id];
+    m.send.id = id;
+    save(u.username);
+  }
+  await pump(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
 

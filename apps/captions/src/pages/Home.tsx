@@ -1,4 +1,3 @@
-import { SendToCleanerButton } from "@/components/SendToCleanerButton";
 import { useEffect, useState } from "react";
 import { useCachedList } from "@/lib/local-cache";
 import { useLocation, useNavigate } from "react-router";
@@ -37,6 +36,26 @@ import { ProjectSettingsDialog } from "@/components/ProjectSettingsDialog";
 import { AppBar } from "@/components/AppBar";
 import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "@/components/PersistenceStatus";
+import { useMe } from "@/lib/auth";
+import { itemActionsFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
+
+/** Buttons a plug-in puts on the open project (itemActions.captions in its web.tsx), gated per account. `onRun` gets the project's id. */
+function ProjectActions() {
+  const me = useMe();
+  const projectId = useStudio((s) => s.projectId);
+  if (!projectId) return null;
+  return itemActionsFor(me, webPlugins, "captions").map((a) => (
+    <button
+      key={a.label}
+      type="button"
+      onClick={() => void a.onRun(projectId)}
+      className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+    >
+      {a.icon ? <a.icon className="h-3.5 w-3.5" /> : null} {a.label}
+    </button>
+  ));
+}
 
 /** Header dropdown: jump between saved projects or back to all projects. */
 function ProjectSwitcher() {
@@ -191,17 +210,16 @@ export default function Home() {
   const location = useLocation();
   const projectLibraryRequested =
     new URLSearchParams(location.search).get("view") === "projects";
-  // /captions?project=<id>: open that project (Review's "Caption Studio")
+  // /captions?project=<id>: open that project (Review's "Caption Studio"). With &clip=<id> it is read again from the
+  // server and opens on that clip: a clip that was just added to it from outside this page (addEditedClip, api/projects.ts)
   const projectRequested = new URLSearchParams(location.search).get("project");
-  const cleanerClipRequested = new URLSearchParams(location.search).get(
-    "cleanerClip",
-  );
+  const clipRequested = new URLSearchParams(location.search).get("clip");
   useEffect(() => {
     if (!projectRequested) return;
     navigate("/captions", { replace: true });
     if (
       useStudio.getState().projectId === projectRequested &&
-      !cleanerClipRequested
+      !clipRequested
     ) {
       // already open: untouched, it takes what the server has made for it since
       void takeServerCopy(projectRequested);
@@ -211,14 +229,14 @@ export default function Home() {
       if (!(await confirmDiscardUnsavedProject("Open another project"))) return;
       await flushPendingSave();
       if (
-        await loadSession(projectRequested, { server: !!cleanerClipRequested })
+        await loadSession(projectRequested, { server: !!clipRequested })
       ) {
-        if (cleanerClipRequested)
-          useStudio.getState().switchClip(cleanerClipRequested);
+        if (clipRequested)
+          useStudio.getState().switchClip(clipRequested);
         useStudio.setState({ projectLibraryOpen: false });
       }
     })();
-  }, [navigate, projectRequested, cleanerClipRequested]);
+  }, [navigate, projectRequested, clipRequested]);
   useEffect(() => {
     if (!projectLibraryRequested) return;
     useStudio.getState().openProjectLibrary();
@@ -390,7 +408,7 @@ export default function Home() {
               }}
             />
           </label>
-          <SendToCleanerButton />
+          <ProjectActions />
           <button
             onClick={() => setExportOpen(true)}
             disabled={cues.length === 0 && texts.length === 0}

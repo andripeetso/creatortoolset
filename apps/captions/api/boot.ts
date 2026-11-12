@@ -5,8 +5,7 @@ import { appRouter } from "./router";
 import { createContext } from "./context";
 import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
-import { cleanApp } from "./clean";
-import { clipsApp } from "./clips";
+import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
 import { enhanceApp } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
@@ -41,6 +40,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
+import { sweepAll, uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
@@ -133,7 +133,6 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/projects") ||
     c.req.path.startsWith("/api/transcribe") ||
     c.req.path.startsWith("/api/enhance") ||
-    c.req.path.startsWith("/api/clean") ||
     c.req.path.startsWith("/api/clips") ||
     c.req.path.startsWith("/api/review/uploads") ||
     c.req.path.startsWith("/api/uploads/relay") ||
@@ -164,6 +163,8 @@ const PUBLIC_CLIP_GET = new RegExp(
   `^/api/clips/${PUBLIC_UUID}(?:/(?:play|thumb|transcript))?$`,
   "i",
 );
+// a shared Video Notes folder (clips.ts /f/:token): the folder's list; its clips play by their own public routes
+const PUBLIC_CLIP_FOLDER_GET = /^\/api\/clips\/f\/[A-Za-z0-9_-]{22}$/;
 const PUBLIC_AGENT_GET =
   /^\/api\/agent-(?:context\.json|transcript\.json|frame\.jpg)$/;
 const PUBLIC_DOC_GET = new RegExp(
@@ -197,7 +198,6 @@ const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
 // their APIs serve each other (Review and Guides play Video Notes).
 export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/enhance", ["enhance"]],
-  ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
   ["/api/edit-steps", ["editor"]],
@@ -257,6 +257,8 @@ if (hostedMode()) {
 }
 // plug-ins' public routes (plugins/<id>/plugin.ts publicRoutes): before the account gate, each checks its own access
 mountPublicRoutes(app, serverPlugins);
+// a file the user's own AI sends with curl (MCP upload_file): the link in the path is its only credential
+app.route("/api/upload", uploadLinkApp);
 // a social sign-in's way back may land in the computer's browser, without the session: its state names the account
 app.route("/api/connectors", connectorsCallbackApp);
 
@@ -291,6 +293,7 @@ app.use("/api/*", async (c, next) => {
   if (
     c.req.method === "GET" &&
     (PUBLIC_CLIP_GET.test(c.req.path) ||
+      PUBLIC_CLIP_FOLDER_GET.test(c.req.path) ||
       PUBLIC_LIBRARY_SHARE.test(c.req.path) ||
       PUBLIC_AGENT_GET.test(c.req.path) ||
       PUBLIC_DOC_GET.test(c.req.path) ||
@@ -391,7 +394,6 @@ app.route("/api/skills", skillsApp);
 app.route("/api/pack-catalog", packCatalogApp);
 app.route("/api/projects", projectsApp);
 app.route("/api/enhance", enhanceApp);
-app.route("/api/clean", cleanApp);
 app.route("/api", clipAgentApp);
 app.route("/api/clips", clipsApp);
 app.route("/api/documents", documentsApp);
@@ -435,6 +437,9 @@ if (process.env.NODE_ENV !== "test") {
   startPlugins(serverPlugins, startFolderPlugin);
   // assistant messages that waited for their videos when the server stopped
   resumeFromDisk();
+  // dropped files: the 7-day ones, and uploads nobody finished (no part for an hour)
+  void sweepAll();
+  setInterval(() => void sweepAll(), 3600_000).unref();
 }
 app.route("/api/stories", storiesApp);
 app.route("/api/folders", foldersApp);
@@ -491,6 +496,8 @@ if (env.isProduction) {
       console.log(`Server running on http://${host ?? "localhost"}:${port}/`);
       // a computer linked to the account runs its tunnel while the server runs (api/connect/connector.ts)
       if (connectState()) startConnector();
+      // Video Notes a restart stopped mid-processing carry on in the background
+      void resumeStoppedClips().catch((e) => console.warn("[clips] resume:", e));
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);

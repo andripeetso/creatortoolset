@@ -22,6 +22,9 @@ export interface ServerPlugin {
   // The name Community lists it under (the id when absent) and one short line on what it does.
   name?: string;
   about?: string;
+  // What it is, in a few words ("AI Editor step"), on a plug-in the team bundles with the app (editor-steps/<folder>):
+  // Community → Plug-ins shows it on the row. Read as text from plugin.ts like name and about, so write it right after them.
+  kind?: string;
   // Environment variable names this plug-in reads. The generator warns about any that are not set.
   env?: string[];
   // Mounted at /api/x/<id>, behind the same login as every other /api route.
@@ -239,6 +242,9 @@ export interface EditorStepInput {
   /** one line on the edit page while it runs: what it is doing now (a first-time install, waiting for the person's AI) */
   say(text: string): void;
 }
+
+/** The ids of the loaded plug-ins (compiled in and from the plug-ins folder). */
+export const loadedPluginIds = (): string[] => loaded.map((p) => p.id);
 
 /** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */
 export function pluginEditorSteps(): (EditorStep & { pluginId: string })[] {
@@ -621,7 +627,7 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
 }
 
 /** The built-in root paths a plug-in may answer before the built-in router (a plug-in's `answers[].path` must be one of these). */
-export const ANSWERABLE_PATHS = ["/api/instagram", "/api/media", "/api/enhance", "/api/review", "/api/clean"] as const;
+export const ANSWERABLE_PATHS = ["/api/instagram", "/api/media", "/api/enhance", "/api/review"] as const;
 
 /** Refuses an answered path that is not in ANSWERABLE_PATHS, or that two plug-ins both answer. */
 function checkAnswers(plugins: ServerPlugin[]): void {

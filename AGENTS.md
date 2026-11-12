@@ -5,8 +5,8 @@ stops being true, fix the rule in the same change.
 
 ## What this is
 
-Creator Toolset: open-source tools for content creators (captions, audio enhancement, client review, video
-cleaning, story splitting, video notes, guides, an Instagram content analyzer, a writing workspace and AI providers).
+Creator Toolset: open-source tools for content creators (captions, audio enhancement, client review,
+story splitting, video notes, guides, an Instagram content analyzer, a writing workspace and AI providers).
 It is one person's app: no sign-up, no invites, no user management. It runs as one web app on the user's machine or
 on their own server, plus a Mac app that relays AI requests to the Claude Code or Codex tool its owner installed
 and signed in to with their own subscription.
@@ -127,7 +127,7 @@ workspace over a new package.
 
 **Storage on the developer's machine.** Build output, renders, downloads and scratch files belong on a
 dedicated external disk when there is one, not in the repository or the home folder. Generated tools under
-`apps/captions/runtime/` (ffmpeg, fingerprint and SSCD builds) are not source: never commit them.
+`apps/captions/runtime/` (ffmpeg and fingerprint builds) are not source: never commit them.
 
 **Images and deploys.** The Docker kit is `apps/captions/Dockerfile` with `docker-compose.yml` (build context: the
 repository root) and `Caddyfile`; `apps/captions/scripts/setup-server.sh <domain>` writes `.env` and starts it. Do not change the image's user, its read-only root or its dropped capabilities without a reason

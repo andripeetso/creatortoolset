@@ -23,6 +23,7 @@ export function Composer({
   onSend,
   onStop,
   onFiles,
+  onRemoveFile,
   onPaste,
   quote,
   onDropQuote,
@@ -35,6 +36,8 @@ export function Composer({
   onStop: () => void;
   /** Picked files (the paperclip): the dock shrinks and adds them. */
   onFiles: (files: File[]) => void;
+  /** A video chip's X: the dock stops its upload and deletes what reached the server. */
+  onRemoveFile?: (file: Draft["files"][number]) => void;
   /** A paste the dock takes as pictures or a file chip; true = taken, so it doesn't go in the box. */
   onPaste: (data: DataTransfer) => boolean;
   quote: string | null;
@@ -139,15 +142,23 @@ export function Composer({
           {draft.files.map((f) => (
             <div key={f.key} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={f.error ?? f.name}>
               <div className={cn("flex h-14 max-w-52 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-[11px]", f.error && "border-destructive/60")}>
-                {f.id || f.error ? <Film className="size-4 shrink-0 text-[var(--tint)]" aria-hidden /> : <Loader2 className="size-4 shrink-0 animate-spin text-[var(--tint)]" aria-hidden />}
+                {f.id || f.path || f.error ? <Film className="size-4 shrink-0 text-[var(--tint)]" aria-hidden /> : <Loader2 className="size-4 shrink-0 animate-spin text-[var(--tint)]" aria-hidden />}
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{f.name}</span>
                   <span className={cn("block tabular-nums", f.error ? "text-destructive" : "text-muted-foreground")}>
-                    {f.error ? "Didn't upload: remove it and add it again" : f.done ? "Ready" : `Uploading · ${f.pct}%`}
+                    {f.error ? "Didn't upload: remove it and add it again" : f.path ? "On this Mac" : f.done ? "Ready" : `Uploading · ${f.pct}%`}
                   </span>
                 </span>
               </div>
-              <button type="button" onClick={() => setDraft((d) => ({ ...d, files: d.files.filter((x) => x.key !== f.key) }))} className={chipX} aria-label={`Remove ${f.name}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  onRemoveFile?.(f);
+                  setDraft((d) => ({ ...d, files: d.files.filter((x) => x.key !== f.key) }));
+                }}
+                className={chipX}
+                aria-label={`Remove ${f.name}`}
+              >
                 <X className="size-3" />
               </button>
             </div>

@@ -12,7 +12,7 @@ describe("plug-in gate ids", () => {
 
 describe("TOOL_NEEDS readiness", () => {
   it("tools that need nothing are ready with nothing set up", () => {
-    for (const t of ["review", "clean", "stories", "captions"] as const) expect(readiness(t, []).ready).toBe(true);
+    for (const t of ["review", "stories", "captions"] as const) expect(readiness(t, []).ready).toBe(true);
   });
 
   it("the Audio Enhancer is ready with either key", () => {
@@ -67,7 +67,7 @@ describe("home order and need copy", () => {
       ["instagram", "workshop"],
       ["media", "editor", "review"],
       [],
-      ["enhance", "captions", "clean", "stories", "notes", "guides"],
+      ["enhance", "captions", "stories", "notes", "guides"],
     ]);
     expect(TOOL_GROUPS.flatMap((g) => g.tools).sort()).toEqual([...TOOLS].sort());
   });

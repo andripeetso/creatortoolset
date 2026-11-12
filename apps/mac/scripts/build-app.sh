@@ -2,14 +2,13 @@
 # Builds "Creator Toolset.app" into apps/mac/build: a release binary from the Swift
 # package, Sparkle (the updater), the Info.plist, the icon (AppIcon.png), the server the app runs
 # (Resources/server: Node, the built web app, its two external packages, the plug-in builder with the app's own
-# source, FFmpeg, the fingerprint tools and, with SSCD_CACHE, the SSCD model), and a code signature. Ad-hoc by default; SIGN_IDENTITY="Developer ID
+# source, FFmpeg and the fingerprint tools), and a code signature. Ad-hoc by default; SIGN_IDENTITY="Developer ID
 # Application: …" signs for other Macs (with the hardened runtime notarization needs). The build number is the
 # repo's commit count, so every release is newer than the one before; VERSION=… sets the version people see
 # (default 1.0.<build>). Apple silicon only.
 #   SPARKLE_PUBLIC_KEY=…  the EdDSA public key of your Sparkle signing key (Sparkle's generate_keys)
 #   FEED_URL=…            the appcast the app reads (with SPARKLE_PUBLIC_KEY; set both or neither)
 #   NOTARY_PROFILE=…      a notarytool keychain profile: with SIGN_IDENTITY, notarizes and staples the app
-#   SSCD_CACHE=…          a verified SSCD model folder (see install-sscd-runtime.mjs); unset = no duplicate check model
 #   CT_BUILD_CACHE=…      where downloads are kept between builds (default build/cache)
 #   BUNDLE_ID=…           the bundle id (default com.creatortoolset.mac); an installed build keeps its id to keep updating
 #   APP_NAME=…            the name in the menu bar and Dock (default Creator Toolset)
@@ -167,7 +166,7 @@ mkdir -p "$src_out/scripts"
 # no step on, one with it on). Empty is fine: the list below is read so that bash 3.2 with set -u takes an empty one.
 HELD_STEPS=""
 held=(); for s in $HELD_STEPS; do held+=(--exclude "/$s"); done
-for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the AI Editor's steps, put in on Turn on
+for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the team's plug-ins (the AI Editor's steps and others), put in on Download
   more=(); [ "$d" = editor-steps ] && more=(${held[@]+"${held[@]}"})
   rsync -a --exclude '*.test.*' --exclude '*.spec.*' --exclude '*.gen.ts' --exclude 'node_modules' ${more[@]+"${more[@]}"} "$captions/$d/" "$src_out/$d/"
 done
@@ -184,11 +183,6 @@ find "$ort/darwin" -mindepth 1 -maxdepth 1 ! -name arm64 -exec rm -rf {} +
 
 bash "$captions/scripts/install-ffmpeg-runtime-mac.sh" "$server/runtime" "$cache"
 bash "$captions/scripts/install-fingerprint-runtime.sh" "$server/runtime/fingerprints" "$cache/threatexchange-ec3671b.tar.gz"
-if [ -n "${SSCD_CACHE:-}" ]; then
-  node "$captions/scripts/install-sscd-runtime.mjs" "$server/runtime/sscd" "$SSCD_CACHE"
-else
-  echo "SSCD_CACHE unset: the app ships without the SSCD model (the duplicate check skips it)"
-fi
 
 # inside out: the server's programs, Sparkle's helpers, Sparkle, then the app (Sparkle's documented order)
 id="${SIGN_IDENTITY:--}"

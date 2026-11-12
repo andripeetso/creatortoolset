@@ -42,6 +42,7 @@
   "include": [
     "src",
     "plugins/**/web.tsx",
-    "plugin-examples/**/web.tsx"
+    "plugin-examples/**/web.tsx",
+    "editor-steps/**/web.tsx"
   ]
 }

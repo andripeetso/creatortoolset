@@ -20,6 +20,7 @@ import {
   sendTurn,
   startOver,
   stopTurn,
+  sendAnswer,
   useAssistant,
 } from "@/lib/assistant";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
@@ -28,9 +29,8 @@ import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud
 import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
-import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
-import { chunkedUpload } from "@/lib/uploads";
-import { chooseFolderOnMac, droppedFoldersOnMac, thisMacBridge } from "@/lib/thisMac";
+import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
+import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
@@ -53,7 +53,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; folders?: string[]; quote?: string };
+type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; quote?: string };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -105,8 +105,11 @@ export function AssistantDock() {
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
-  /** Each video upload of this window, by its file id, so Stop can end it. ponytail: a removed chip's upload still runs to the end */
-  const uploads = useRef(new Map<string, AbortController>());
+  /** Each video upload of this window, by its chip's key: Stop and a chip's X end it. */
+  const uploads = useRef(new Map<string, Upload>());
+  /** The sends this window answered, by their reply's id (null: it told the server the file isn't here), and how far each is. */
+  const sends = useRef(new Map<string, Upload | null>());
+  const [sendState, setSendState] = useState<Record<string, { pct: number; error?: string }>>({});
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -235,6 +238,7 @@ export function AssistantDock() {
       ...(it.images?.length ? { images: it.images } : {}),
       ...(it.pasted?.length ? { pasted: it.pasted } : {}),
       ...(it.files?.length ? { files: it.files.map((f) => f.id) } : {}),
+      ...(it.local?.length ? { localFiles: it.local } : {}),
       ...(it.folders?.length ? { paths: it.folders } : {}),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
     });
@@ -280,7 +284,7 @@ export function AssistantDock() {
     });
   }, []);
   const addFiles = useCallback(
-    async (files: File[], folder = false) => {
+    async (files: File[], folder = false, paths?: Map<File, string>) => {
       const pics = files.filter(isPicture);
       let media = files.filter((f) => !isPicture(f) && isMediaFile(f));
       // a folder's other files (a camera's sidecars, notes) are passed over without a word
@@ -292,19 +296,14 @@ export function AssistantDock() {
         setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
         media = media.slice(0, Math.max(room, 0));
       }
-      // a video uploads at once, and the message may go as soon as the upload is made: the server waits for the rest.
-      // It keeps uploading after the message goes (its chip has left the box: the chat shows it as uploading)
+      // dropped in the Mac app, a video goes as its path and nothing uploads. Otherwise it uploads at once, and the message
+      // may go as soon as the upload is made: the server waits for the rest, and it keeps uploading after the message goes
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
         const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
         setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
-        const ctl = new AbortController();
-        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }), (id) => {
-          uploads.current.set(id, ctl);
-          patch({ id });
-        }, ctl.signal)
-          .then((r) => patch({ id: r.id, pct: 100, done: true }))
-          .catch((e) => patch({ error: e instanceof Error ? e.message : String(e) }));
+        const u = addVideo(f, paths?.get(f), patch);
+        if (u) uploads.current.set(key, u);
       }
       if (!pics.length) return;
       try {
@@ -360,13 +359,44 @@ export function AssistantDock() {
     // send is a fresh function each render; the queue, the reply and the hold decide when to go
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue, held, connectedNow]);
+  // a reply that needs a file dropped here on the server (a tool's send, api/assistant.ts askSend): this window uploads
+  // that one file and names its upload; a file this window no longer has (it was reloaded) is told, and the reply says so
+  useEffect(() => {
+    // only the Mac app has dropped files by their path: a browser window open beside it leaves its sends alone
+    if (!thisMacBridge()) return;
+    for (const m of view?.messages ?? []) {
+      if (m.status !== "thinking" || !m.send || sends.current.has(m.id)) continue;
+      const reply = m.id;
+      const file = droppedByPath.get(m.send.path);
+      if (!file) {
+        sends.current.set(reply, null);
+        void sendAnswer(reply, { gone: true }).then((r) => r.ok && setView(r.data));
+        continue;
+      }
+      const at = (p: { pct: number; error?: string }) => setSendState((s) => ({ ...s, [reply]: p }));
+      at({ pct: 0 });
+      sends.current.set(
+        reply,
+        uploadVideo(file, {
+          pct: (pct) => at({ pct }),
+          id: (id) => void sendAnswer(reply, { id }).then((r) => r.ok && setView(r.data)),
+          done: () => at({ pct: 100 }),
+          error: (error) => at({ pct: 0, error }),
+        }),
+      );
+    }
+  }, [view?.messages]);
   /** A message (and the highlighted text it asks about) back in the box, after what's there. */
   const putBack = (it: Queued) => {
     setDraft((cur) => ({
       text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
-      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id, done: true }))],
+      files: [
+        ...cur.files,
+        ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id, done: true })),
+        ...(it.local ?? []).map((p) => ({ key: p, name: folderName(p), size: 0, pct: 100, done: true, path: p })),
+      ],
       folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
     }));
     if (it.quote) setQuote(it.quote);
@@ -376,7 +406,8 @@ export function AssistantDock() {
     const it: Queued = {
       id: `${Date.now()}-${queue.length}`,
       ...d,
-      ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name })) } : {}),
+      ...(files.some((f) => !f.path) ? { files: files.filter((f) => !f.path).map((f) => ({ id: f.id!, name: f.name })) } : {}),
+      ...(files.some((f) => f.path) ? { local: files.flatMap((f) => (f.path ? [f.path] : [])) } : {}),
       ...(folders.length ? { folders } : {}),
       ...(quote ? { quote } : {}),
     };
@@ -392,12 +423,30 @@ export function AssistantDock() {
   /** A notice's chip: its words go out as a message. */
   const chipSend = (text: string) => submit({ ...EMPTY_DRAFT, text });
   const stop = () => {
-    // Stop on a reply that waits for its videos: those videos stop uploading too (nothing will use them)
+    // the reply Stop ends (the one being written, else the first that waits, as the server picks): the uploads it waits
+    // for stop too (the server deletes what reached it: nothing will use them)
     const msgs = view?.messages ?? [];
-    const w = [...msgs].reverse().findIndex((m) => m.role === "assistant" && m.status === "thinking" && m.wait?.for === "videos");
-    const i = w < 0 ? -1 : msgs.length - 1 - w;
-    for (const f of i > 0 ? (msgs[i - 1]!.files ?? []) : []) uploads.current.get(f.id)?.abort();
+    const thinking = msgs.filter((m) => m.role === "assistant" && m.status === "thinking");
+    const target = thinking.find((m) => !m.wait) ?? thinking[0];
+    const i = target ? msgs.indexOf(target) : -1;
+    const ids = new Set((i > 0 && target?.wait ? (msgs[i - 1]!.files ?? []) : []).map((f) => f.id));
+    for (const u of uploads.current.values()) if (u.id && ids.has(u.id)) u.ctl.abort();
+    if (target) sends.current.get(target.id)?.ctl.abort();
     void stopTurn().then((r) => r.ok && setView(r.data));
+  };
+  /** A chip's X in the box: its upload stops, and what reached the server is deleted. */
+  const removeFile = (f: Draft["files"][number]) => {
+    const u = uploads.current.get(f.key);
+    uploads.current.delete(f.key);
+    if (u) cancelUpload(u);
+    // put back from a message that didn't go: its upload ended earlier, its server copy is still there
+    else if (f.id) cancelUpload({ ctl: new AbortController(), id: f.id });
+  };
+  /** The X on a reply's send: its upload stops, its copy is deleted, and the reply that waited for it ends as stopped. */
+  const cancelSend = (reply: string) => {
+    const u = sends.current.get(reply);
+    if (u) cancelUpload(u);
+    void stopTurn(reply).then((r) => r.ok && setView(r.data));
   };
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
@@ -520,10 +569,10 @@ export function AssistantDock() {
         setDropping(false);
         if (!connectedNow || !e.dataTransfer.files.length) return;
         e.preventDefault();
-        droppedFiles(e.dataTransfer, droppedFoldersOnMac).then(
+        droppedFiles(e.dataTransfer, droppedOnMac).then(
           (d) => {
             if (d.folders.length) setDraft((cur) => ({ ...cur, folders: [...new Set([...cur.folders, ...d.folders])].slice(0, MAX_FOLDERS) }));
-            if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder);
+            if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder, d.paths);
           },
           (err) => setError(err instanceof Error ? err.message : String(err)),
         );
@@ -684,7 +733,7 @@ export function AssistantDock() {
                 i === all.length - 1 && m.status === "done" && m.folderAsk && !thinking && !busy && thisMacBridge()
                   ? () => void chooseFolderOnMac().then((p) => p && submit({ ...EMPTY_DRAFT, folders: [p] }))
                   : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} />;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -765,6 +814,7 @@ export function AssistantDock() {
             }}
             onStop={stop}
             onFiles={(fs) => void addFiles(fs)}
+            onRemoveFile={removeFile}
             onPaste={handlePaste}
             quote={quote}
             onDropQuote={() => setQuote(null)}
@@ -779,7 +829,7 @@ export function AssistantDock() {
 
 /** "2 pictures, Pasted text": what a queued message carries besides its words. */
 const attachmentsLabel = (it: Queued) =>
-  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name), ...(it.folders ?? []).map(folderName)].filter(Boolean).join(", ");
+  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name), ...(it.local ?? []).map(folderName), ...(it.folders ?? []).map(folderName)].filter(Boolean).join(", ");
 
 /** The header's "OpenCode · no app tools", only for an AI that truly has none of the app's tools. */
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
@@ -791,7 +841,24 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
   );
 }
 
-export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
+export function Message({
+  m,
+  onRetry,
+  onChoose,
+  onFolder,
+  onView,
+  sending,
+  onCancelSend,
+}: {
+  m: AssistantMessage;
+  onRetry?: () => void;
+  onChoose?: (text: string) => void;
+  onFolder?: () => void;
+  onView: (v: AssistantView) => void;
+  /** How far this window's upload for the reply's send is (m.send). */
+  sending?: { pct: number; error?: string };
+  onCancelSend?: () => void;
+}) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -808,7 +875,7 @@ export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: Assista
             «{m.quote}»
           </p>
         )}
-        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length) && (
+        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length || !!m.localFiles?.length) && (
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
               <button key={im.id} type="button" onClick={() => setBig(`/api/assistant/images/${encodeURIComponent(im.id)}`)} title={im.name} aria-label={`Show ${im.name}`} className="cursor-zoom-in">
@@ -820,6 +887,12 @@ export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: Assista
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{f.name}</span>
                 {f.uploading && <span className="shrink-0 text-muted-foreground">Uploading</span>}
+              </span>
+            ))}
+            {m.localFiles?.map((p) => (
+              <span key={p} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={p}>
+                <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
+                <span className="truncate">{folderName(p)}</span>
               </span>
             ))}
             {m.folders?.map((p) => (
@@ -859,7 +932,18 @@ export function Message({ m, onRetry, onChoose, onFolder, onView }: { m: Assista
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
         <ConfirmCards confirms={m.confirms} onView={onView} />
-        {m.wait && <p className="text-xs text-muted-foreground">{m.wait.text}</p>}
+        {m.send && sending ? (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="truncate" title={m.send.path}>
+              {sending.error ? `"${m.send.name}" didn't send: ${sending.error}` : `Sending to ${m.send.to} · ${sending.pct}%`}
+            </span>
+            <button type="button" onClick={onCancelSend} className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground" aria-label={`Stop sending ${m.send.name}`} title="Stop sending">
+              <X className="size-3" />
+            </button>
+          </p>
+        ) : (
+          m.wait && <p className="text-xs text-muted-foreground">{m.wait.text}</p>
+        )}
         <Dots />
       </div>
     );

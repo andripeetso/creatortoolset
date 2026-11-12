@@ -1,12 +1,13 @@
 /**
  * The AI Editor's post-processing steps: plug-ins that change the footage a draft plays (the voice, the colour, the
  * faces). Each step makes copies of the source files it changes, and the preview and the exported timeline play those
- * copies. Settings → AI Editor lists every step this app has: the ones loaded, and the ones that come with the app as a
- * plug-in folder (apps/captions/editor-steps/<folder>) that the person turns on.
+ * copies. Settings → AI Editor lists the steps that are loaded. The plug-ins the team makes come with the app as folders
+ * (apps/captions/editor-steps/<folder>: the steps, and others such as an Audio Enhancer engine); Community → Plug-ins lists
+ * them too, each with the kind its plugin.ts says, and the person downloads one there.
  *
  *   GET  /api/edit-steps                → StepsView
  *   PUT  /api/edit-steps/:id            { use?: boolean, values?: Record<string, string> } → StepsView
- *   POST /api/edit-steps/add/:folder    copies the step's folder into the Mac app's plug-ins folder → { folder }
+ *   POST /api/edit-steps/add/:folder    copies the plug-in's folder into the Mac app's plug-ins folder → { folder }
  *       (only on the Mac app's own server; the person then switches it on in the Mac app's own alert)
  *
  * A new edit records the steps in use when it is made (Edit.steps), with their values, and keeps them.
@@ -32,13 +33,16 @@ export interface StepInfo {
 }
 
 /**
- * A row in Settings → AI Editor. state: "add" = comes with the app, not in the plug-ins folder yet; "off" = in the
- * folder, not switched on (or not loaded since); "on" = loaded, so new edits can use it.
+ * A row in Settings → AI Editor (only "on" rows) and Community → Plug-ins (all). state: "add" = comes with the app, not in
+ * the plug-ins folder yet; "off" = in the folder, not switched on (or not loaded since); "on" = a loaded step, so new edits
+ * can use it; "loaded" = a plug-in that comes with the app, loaded, and adds no AI Editor step (Community: Installed).
  */
 export interface StepRow extends StepInfo {
-  state: "add" | "off" | "on";
-  /** its folder name in the plug-ins folder (add and off), for the Mac app's switch */
+  state: "add" | "off" | "on" | "loaded";
+  /** its folder name in the plug-ins folder (add, off and loaded), for the Mac app's switch */
   folder?: string;
+  /** what it is, as its plugin.ts says (add, off and loaded): Community shows it on the row */
+  kind?: string;
   /** new edits use it (only a step that is on) */
   use: boolean;
   /** the person's values for its options, the defaults filled in */

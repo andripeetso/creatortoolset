@@ -35,6 +35,13 @@ export interface AssistantMessage {
   pasted?: string[];
   /** Videos and recordings sent with a user message (api/assistant-files.ts), by name; `uploading` until the file is in. */
   files?: Array<{ id: string; name: string; uploading?: true }>;
+  /** Videos dropped in the Mac app with a user message: their paths on the user's computer (nothing uploaded). */
+  localFiles?: string[];
+  /**
+   * A reply that carries on once a file on the user's computer is on the server (a tool needs it there): the dock that
+   * still has that file uploads it, then names the upload (`id`). `to` is the tool's name ("Review").
+   */
+  send?: { path: string; name: string; to: string; id?: string };
   /**
    * A reply that hasn't started (status "thinking"): it waits for the message's videos to finish uploading ("videos",
    * with how many), or for the reply before it to end ("reply"). `text` is the line to show: "Waiting for 2 videos".
@@ -146,6 +153,8 @@ export interface AssistantTurnInput {
    * its reply waits (`wait`) until the last part is in, then runs. More messages while a reply waits or runs queue behind it.
    */
   files?: string[];
+  /** Videos dropped in the Mac app: their absolute paths on the user's computer, read where they are (nothing uploads). */
+  localFiles?: string[];
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
   paths?: string[];
   context?: AssistantContext;
