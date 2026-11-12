@@ -69,8 +69,8 @@ A pack can carry items the AI editor uses. All are data only (level 0):
 ## Instructions and slots
 
 A pack's instructions are added to one prompt, named by its slot. A pack someone else wrote only reaches an AI that can't
-act on your computer: your AI key, a local model, or Claude, Codex, Gemini, Grok, Muse Code or OpenCode on your Mac
-(their tools are off for these jobs). Cursor, Antigravity, Pi, a local ACP command, and the Workshop's chat and fact
+act on your computer: your AI key, a local model, or Claude, Codex, Grok or OpenCode on your Mac (for these jobs they
+can only answer). Gemini, Muse Code, Cursor, Antigravity, Pi, a local ACP command, and the Workshop's chat and fact
 check on your Mac get only the app's own packs.
 
 | Slot | Where |
