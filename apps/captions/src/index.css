@@ -355,6 +355,20 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   inherits: true;
   initial-value: rgb(167 139 250);
 }
+/* a Home tile with work running (ToolsetHome Running): a light sweeps round the icon's rounded edge; work that waits, a still ring */
+@property --run-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.tile-running {
+  position: absolute; inset: -5px; border-radius: 21px; padding: 2px; pointer-events: none;
+  background: conic-gradient(from var(--run-a), transparent 0 65%, color-mix(in srgb, var(--tint) 45%, white));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: tile-run 1.4s linear infinite;
+}
+@keyframes tile-run { to { --run-a: 360deg; } }
+.tile-running.tile-waiting { animation: none; background: color-mix(in srgb, var(--tint) 45%, white); opacity: 0.35; }
+@media (prefers-reduced-motion: reduce) {
+  .tile-running { animation: none; background: color-mix(in srgb, var(--tint) 45%, white); opacity: 0.5; }
+}
 
 /* the assistant (components/assistant): its bubble's nudge when a reply lands, and the thinking dots */
 /* A suggestion arriving under the assistant's welcome: its row grows from nothing, so the line above is pushed up

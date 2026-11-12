@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
+import { ArrowRight, ChevronRight, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
 import { canUse, canUseTile, useMe, type Me } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { isPhoneHub } from "@/lib/mobile";
@@ -146,8 +146,8 @@ export default function ToolsetHome() {
           : "relative flex h-12 w-12 items-center justify-center rounded-2xl hub-2xl:h-14 hub-2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
-          {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running chip={running[dest]} /> : null}
+          {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && missing && <NeedsSetup what={missing} />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
@@ -375,16 +375,10 @@ const BADGE_MEANS: Partial<Record<Tool, (n: number) => string>> = {
   review: (n) => `${plural(n, "video")} to review`,
 };
 
-/** Work running at a tool, quiet beside its badge: a spinner and how far it is, never red; work that waits has no spinner. */
+/** Work running at a tool: a light sweeping round the icon's edge, under its badge, never red; work that waits has a still
+ *  ring (index.css .tile-running). What it is stays in the Activity list and for screen readers. */
 function Running({ chip }: { chip: Chip }) {
-  return (
-    <span
-      title={chip.title}
-      className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-zinc-950"
-    >
-      {chip.moving && <Loader2 className="h-2.5 w-2.5 animate-spin" />} {chip.text}
-    </span>
-  );
+  return <span role="status" aria-label={chip.title} className={`intro-late tile-running${chip.moving ? "" : " tile-waiting"}`} />;
 }
 
 function Badge({ n, means }: { n: number; means?: (n: number) => string }) {
