@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import type { LibraryWebSlot } from "../../contracts/library-source";
 import type { LucideIcon } from "lucide-react";
-import type { PluginGateId } from "@contracts/tools";
+import type { HomeTile, PluginGateId } from "@contracts/tools";
 import { canUse, type Me } from "./auth";
 import type { ReviewAsset, ReviewVersion } from "./review";
 import type { reviewApi } from "./review";
@@ -36,13 +36,19 @@ export interface SettingsEntry {
 /**
  * A Settings section a plug-in adds. `group` places it inside that sidebar block (after the block's last section); with
  * no group it goes in the Plug-ins block (PLUGINS_GROUP).
- * `adminTab: true` shows it as a tab in Admin instead, after the built-in tabs (see adminTabsFor). `adminOnly` hides it
- * from everyone else.
+ * `adminTab: true` shows it as a tab in Admin instead, after the built-in tabs (see adminTabsFor). `tool` draws it on
+ * that tool's page in Settings → Tools instead, under its title (see toolSectionsFor). `adminOnly` hides it from
+ * everyone else.
  */
 export interface PluginSettingsSection extends SettingsEntry {
   body: ReactNode;
   adminTab?: boolean;
+  tool?: HomeTile;
 }
+
+/** The sections the plug-ins draw on one tool's page (`tool`), for this account: an adminOnly one for admins only. */
+export const toolSectionsFor = (me: { role: string } | null, plugins: ReadonlyArray<{ settings?: PluginSettingsSection[] }>, tool?: HomeTile): PluginSettingsSection[] =>
+  plugins.flatMap((p) => p.settings ?? []).filter((s) => !!s.tool && (!tool || s.tool === tool) && (!s.adminOnly || me?.role === "admin"));
 
 /** A section a plug-in adds to Settings → Devices (`page: "computers"`, after its card) or → Storage (the default). `adminOnly` shows it to admins only. */
 export interface PluginDevicesSection {
@@ -293,7 +299,7 @@ export function settingsWithPlugins<T extends SettingsEntry>(
   builtin: ReadonlyArray<T>,
   plugins: ReadonlyArray<{ settings?: PluginSettingsSection[] }>,
 ): Array<T | PluginSettingsSection> {
-  const extra = plugins.flatMap((p) => p.settings ?? []).filter((s) => !s.adminTab);
+  const extra = plugins.flatMap((p) => p.settings ?? []).filter((s) => !s.adminTab && !s.tool);
   for (const s of extra) {
     if (builtin.some((b) => b.id === s.id)) throw new Error(`plug-in settings section "${s.id}" is already a built-in section`);
   }

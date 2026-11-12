@@ -18,6 +18,8 @@ import { PackRow } from "@/components/community/PacksInstalled";
 import { SkillsView } from "@/components/community/SkillsView";
 import { ToolPlugins, stepsFor, useSteps, type Steps } from "@/components/community/PluginsCatalog";
 import { hasThisMac } from "./ThisMacSection";
+import { toolSectionsFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
 import { PublishButton } from "@/components/community/PublishDialog";
 import { Card, LoadingRow, Section, Status, saveFailed } from "./ui";
 
@@ -73,11 +75,12 @@ function useHomeSwitches() {
 export const skillPlacesOf = (t: HomeTile): SkillPlace[] => SKILL_PLACES.filter((p): p is PackSkillSlot | "workshop.write" => p !== "assistant" && SLOT_TOOL[p] === t);
 
 /** A tool has a page when something can be added to it: packs and skills have a place in it, or a plug-in names it. */
-export const hasToolPage = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0;
+export const hasToolPage = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
 
 /**
- * What the person has added to each tool: installed packs that reach it, skills at its places (their own and the ones
- * packs and plug-ins bring), plug-ins that are in. Best effort: a list that did not load counts nothing.
+ * What the person has added to each tool and is using: installed packs that reach it and are on (not off everywhere, not
+ * pulled), skills at its places that are on (their own and the ones packs and plug-ins bring), plug-ins that are in.
+ * Best effort: a list that did not load counts nothing.
  */
 function useAdded(steps: StepsView | null) {
   const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"] });
@@ -85,9 +88,9 @@ function useAdded(steps: StepsView | null) {
   return (t: HomeTile): number => {
     const places = skillPlacesOf(t) as string[];
     return (
-      (packs.data ?? []).filter((p) => reachesTool(containsOf(p), t)).length +
-      (skills.data?.skills ?? []).filter((s) => places.includes(placeOf(s))).length +
-      (skills.data?.shared ?? []).filter((s) => places.includes(s.place)).length +
+      (packs.data ?? []).filter((p) => !p.off.includes("*") && !p.delisted && reachesTool(containsOf(p), t)).length +
+      (skills.data?.skills ?? []).filter((s) => s.on && places.includes(placeOf(s))).length +
+      (skills.data?.shared ?? []).filter((s) => s.on && places.includes(s.place)).length +
       stepsFor(steps, t).filter((r) => r.state === "on" || r.state === "loaded").length
     );
   };
@@ -173,10 +176,12 @@ function ToolsList({ steps }: { steps: StepsView | null }) {
 
 /**
  * Settings → Tools → <tool>: everything added to one tool, in one place. Its Home switch, the plug-ins that add to it (an
- * AI Editor step with its switch for new edits and options, on the Mac app's own server), the installed packs that reach
- * it, its skills by place, and the way to Community's section for it.
+ * AI Editor step with its switch for new edits and options, on the Mac app's own server) and their own sections (a
+ * plug-in section with `tool`), the installed packs that reach it, its skills by place, and the way to Community's
+ * section for it.
  */
 function ToolPage({ tile, steps }: { tile: HomeTile; steps: Steps }) {
+  const me = useMe();
   const { view, hidden, set } = useHomeSwitches();
   const hosted = useAuth((s) => s.hosted);
   const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"], own: true });
@@ -189,6 +194,11 @@ function ToolPage({ tile, steps }: { tile: HomeTile; steps: Steps }) {
         <Card>{view ? <TileRow tile={tile} have={view.have} shown={!hidden.includes(tile)} onChange={(on) => set(tile, on)} head={<div className="min-w-0 flex-1 text-sm text-muted-foreground">{HOME_TILE_LINES[tile]}</div>} /> : <LoadingRow />}</Card>
       </Section>
       <ToolPlugins steps={steps} tool={tile} inSettings switches={tile === "editor" && hasThisMac() && !hosted} />
+      {toolSectionsFor(me, webPlugins, tile).map((s) => (
+        <Section key={s.id} title={s.title}>
+          {s.body}
+        </Section>
+      ))}
       {mine.length > 0 && (
         <Section title="Packs">
           <Card>

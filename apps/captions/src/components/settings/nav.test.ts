@@ -60,4 +60,10 @@ describe("the sidebar blocks", () => {
     expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Hardware", "Connections", "Plug-ins", "People"]);
     expect(blocks[4].items.map((s) => s.id)).toEqual(["tiny"]);
   });
+
+  it("a plug-in section that names a tool is on that tool's page: no sidebar block, and its address goes there", () => {
+    const plugins = [{ settings: [{ id: "tiny-picks", title: "Tiny picks", body: null, tool: "workshop" } as never] }];
+    expect(navBlocks(navListFor(at(true, true, true), plugins)).map((b) => b.heading)).not.toContain("Plug-ins");
+    expect(resolveSection("tiny-picks", at(true, true, true), plugins)).toEqual({ kind: "redirect", to: "/settings/tools/workshop" });
+  });
 });

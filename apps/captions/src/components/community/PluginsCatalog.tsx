@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import type { StepRow, StepsView } from "@contracts/editor-steps";
 import { isHomeTile, type HomeTile } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
-import { Card, ErrorRow, InUse, ListRow, LoadingRow, saveFailed, Section } from "@/components/settings/ui";
+import { Card, InUse, ListRow, LoadingRow, saveFailed, Section } from "@/components/settings/ui";
 import { StepRowView } from "@/components/settings/EditorStepsSection";
 import { addEditStep, getEditSteps, setEditStep } from "@/lib/editor";
 import { switchPluginOn } from "@/lib/thisMac";
@@ -46,7 +46,8 @@ export function stepsFor(view: StepsView | null, tool: HomeTile | null, q = ""):
  * its switch for new edits and its options instead of Installed.
  */
 export function ToolPlugins({ steps, tool, q, inSettings = false, switches = false }: { steps: Steps; tool: HomeTile | null; q?: string; inSettings?: boolean; switches?: boolean }) {
-  if (steps.error) return <Section title="Plug-ins"><Card><ErrorRow title="The plug-ins could not be read" retry={steps.retry} /></Card></Section>;
+  // best effort: a list that could not be read (a guest, the demo) leaves the section out, as for a tool with none
+  if (steps.error) return null;
   if (!steps.view) return <Section title="Plug-ins"><Card><LoadingRow /></Card></Section>;
   const rows = stepsFor(steps.view, tool, q);
   if (!rows.length) return null;
@@ -81,9 +82,11 @@ function PluginRow({ row, canAdd, inSettings }: { row: StepRow; canAdd: boolean;
       setBusy(false);
     }
   };
-  // a step's settings are on the AI Editor's page; another plug-in's, its own section (from its page half, read now)
-  const own = webPlugins.find((p) => p.id === row.id)?.settings?.find((x) => !x.adminTab)?.id;
-  const to = row.state === "on" ? (inSettings ? null : "/settings/tools/editor") : own ? `/settings/${own}` : null;
+  // a step's settings are on the AI Editor's page; another plug-in's, on its tool's page or in its own section (from its
+  // page half, read now)
+  const own = webPlugins.find((p) => p.id === row.id)?.settings?.find((x) => !x.adminTab);
+  const page = row.state === "on" ? "/settings/tools/editor" : own?.tool ? `/settings/tools/${own.tool}` : own ? `/settings/${own.id}` : null;
+  const to = inSettings && page?.startsWith("/settings/tools/") ? null : page;
   const actions =
     row.state === "on" || row.state === "loaded" ? (
       <>

@@ -1,5 +1,5 @@
-import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users, } from "lucide-react";
-import { settingsWithPlugins, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
+import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
 type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?: { storage?: unknown } }>;
@@ -98,5 +98,8 @@ export type SectionResolution = { kind: "page"; id: string } | { kind: "redirect
 export function resolveSection(section: string, ctx: NavContext, plugins: PluginList = webPlugins): SectionResolution {
   if (RETIRED_PATHS[section]) return { kind: "redirect", to: RETIRED_PATHS[section] };
   if (sectionsFor(ctx, plugins).some((s) => s.id === section)) return { kind: "page", id: section };
+  // a plug-in section drawn on its tool's page
+  const onTool = toolSectionsFor({ role: ctx.admin ? "admin" : "user" }, plugins as ReadonlyArray<{ settings?: PluginSettingsSection[] }>).find((s) => s.id === section);
+  if (onTool) return { kind: "redirect", to: `/settings/tools/${onTool.tool}` };
   return { kind: "redirect", to: "/settings/general" };
 }

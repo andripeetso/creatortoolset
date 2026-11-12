@@ -93,5 +93,5 @@ export default defineWebPlugin({
   id: "adobe-enhance",
   name: "Adobe Enhance Speech",
   about: "Adobe's Enhance Speech in the Audio Enhancer, with your own Adobe account.",
-  settings: [{ id: "adobe-enhance", title: "Adobe Enhance Speech", icon: AudioLines, adminOnly: true, body: <AdobeSection /> }],
+  settings: [{ id: "adobe-enhance", title: "Adobe Enhance Speech", icon: AudioLines, adminOnly: true, tool: "enhance", body: <AdobeSection /> }],
 });

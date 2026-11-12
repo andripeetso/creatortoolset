@@ -4,7 +4,7 @@ import { Scale } from "lucide-react";
 import type { ProvidersView, Selection } from "@contracts/providers";
 import { AppBar } from "@/components/AppBar";
 import { MarkdownBody } from "@/components/MarkdownBody";
-import { Card, EmptyRow, ListRow, Section, SettingsSelect } from "@/components/settings/ui";
+import { Card, EmptyRow, ListRow, SettingsSelect } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -149,8 +149,7 @@ type Tally = { rows: Array<{ name: string; model: string; counts: Partial<Record
 function CompareSettings() {
   const { data } = useCachedLoad<Tally>(`${API}/tally`, () => call(`${API}/tally`));
   return (
-    <Section title="Picks">
-      <Card>
+    <Card>
         {!data ? null : data.rows.length === 0 ? (
           <EmptyRow title="No picks yet" />
         ) : (
@@ -162,8 +161,7 @@ function CompareSettings() {
             />
           ))
         )}
-      </Card>
-    </Section>
+    </Card>
   );
 }
 
@@ -178,5 +176,5 @@ export default defineWebPlugin({
   about: "Two of your AIs write the same draft, names hidden until you pick one.",
   routes: [{ path: "/compare/:sessionId", element: <ComparePage /> }],
   itemActions: { session: [{ label: "Compare", icon: Scale, gate: "compare", onRun: open }] },
-  settings: [{ id: "compare", title: "Compare", icon: Scale, body: <CompareSettings /> }],
+  settings: [{ id: "compare", title: "Compare picks", icon: Scale, tool: "workshop", body: <CompareSettings /> }],
 });
