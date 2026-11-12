@@ -9,6 +9,7 @@
  *   POST /api/assistant/chats            → 201 { id }: a new empty chat (the open chat stays open)
  *   GET  /api/assistant/chats/:id        → AssistantView of that chat (`past` is empty there: the list is GET /chats)
  *   POST /api/assistant/chats/:id/turn   → AssistantTurnInput, 202 with that chat's view (404: the chat is gone)
+ *   POST /api/assistant/chats/:id/settle { settled: boolean } → { chats }: done with it, kept (`settled` in the lists)
  * Replies in different chats are written at the same time, up to 3 per account (MAX_RUNNING, api/assistant.ts); in one
  * chat one at a time, in order. Stop ({ reply }), approvals and confirms are found by their own ids in any chat.
  */
@@ -195,6 +196,8 @@ export interface AssistantPast {
   count: number;
   /** A reply is still being written, waiting for its videos or queued in it (New chat left it running). */
   working?: true;
+  /** Settled (POST /chats/:id/settle) and nothing new in it since. */
+  settled?: true;
 }
 
 /** One chat in GET /api/assistant/chats. */
@@ -213,6 +216,8 @@ export interface AssistantChat {
   working?: true;
   /** A reply in it waits for the person: an Allow / Deny, a Yes / No card, or a key's box. */
   asks?: true;
+  /** Settled (POST /chats/:id/settle) and nothing new in it since: folded away on every device. */
+  settled?: true;
 }
 
 export interface AssistantView {

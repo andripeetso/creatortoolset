@@ -94,6 +94,8 @@ interface Chat {
   title?: string;
   task?: string;
   made?: number;
+  /** Settled (done with, kept): its newest message's time then. A newer message brings it back (isSettled). */
+  settled?: number;
 }
 
 interface Conv {
@@ -101,6 +103,7 @@ interface Conv {
   id?: string;
   title?: string;
   task?: string;
+  settled?: number;
   messages: AssistantMessage[];
   /** One key asked for (ask_secret), account-wide; `turn` is the reply that asked (its chat shows the box). */
   pending?: { env: string; why: string; at: number; turn?: string };
@@ -147,9 +150,9 @@ const titleOf = (messages: AssistantMessage[]) => {
 
 /** The conversation on screen goes into the history (when it has anything) and a fresh one starts; one pushed past PAST_KEPT goes with its pictures. */
 function archive(username: string, conv: Conv): void {
-  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, title: conv.title, task: conv.task }, ...(conv.past ?? [])]);
+  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, title: conv.title, task: conv.task, settled: conv.settled }, ...(conv.past ?? [])]);
   conv.id = randomUUID();
-  conv.title = conv.task = undefined;
+  conv.title = conv.task = conv.settled = undefined;
   conv.messages = [];
   conv.navigate = undefined;
 }
@@ -659,7 +662,7 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     tools: hasTools(route),
     messages: (chat ?? conv).messages.slice(-80),
     // a chat made by POST /chats shows here once it has a message
-    past: chat ? [] : (conv.past ?? []).filter((p) => p.messages.length).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(working(p) ? { working: true as const } : {}) })),
+    past: chat ? [] : (conv.past ?? []).filter((p) => p.messages.length).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(working(p) ? { working: true as const } : {}), ...(isSettled(conv, p) ? { settled: true as const } : {}) })),
     pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
     navigate: conv.navigate ?? null,
     sendNow: true,
@@ -679,9 +682,12 @@ function asking(conv: Conv, c: Chat, now = Date.now()): boolean {
 }
 
 /** Every chat, the open one included, newest first (GET /chats). */
+/** Settled and nothing new since: no newer message, no reply at work, nothing it asks. Every device folds it away. */
+const isSettled = (conv: Conv, c: Chat) => c.settled !== undefined && (c.messages.at(-1)?.at ?? 0) <= c.settled && !working(c) && !asking(conv, c);
+
 function chatList(username: string): AssistantChat[] {
   const conv = load(username);
-  const all: Chat[] = [{ id: conv.id!, title: conv.title, task: conv.task, messages: conv.messages }, ...(conv.past ?? [])];
+  const all: Chat[] = [{ id: conv.id!, title: conv.title, task: conv.task, settled: conv.settled, messages: conv.messages }, ...(conv.past ?? [])];
   return all
     .map((c) => {
       const line = ([...c.messages].reverse().find((m) => m.text.trim())?.text ?? "").replace(/\s+/g, " ").trim();
@@ -694,6 +700,7 @@ function chatList(username: string): AssistantChat[] {
         ...(c.id === conv.id ? { open: true as const } : {}),
         ...(working(c) ? { working: true as const } : {}),
         ...(asking(conv, c) ? { asks: true as const } : {}),
+        ...(isSettled(conv, c) ? { settled: true as const } : {}),
       };
     })
     .sort((a, b) => b.at - a.at);
@@ -1354,6 +1361,20 @@ assistantApp.get("/chats/:id", (c) => {
 
 assistantApp.post("/chats/:id/turn", (c) => sendTurn(c, c.req.param("id")));
 
+/** Settle a chat (done with it, kept) or bring it back: { settled: boolean }. Every device's list folds it the same way. */
+assistantApp.post("/chats/:id/settle", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { settled?: unknown } | null;
+  if (typeof b?.settled !== "boolean") return c.json({ error: "Say settled: true or false" }, 400);
+  const conv = load(u.username);
+  const chat = chatOf(conv, c.req.param("id"));
+  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  chat.settled = b.settled ? (chat.messages.at(-1)?.at ?? Date.now()) : undefined;
+  save(u.username);
+  tell(u.username);
+  return c.json({ chats: chatList(u.username) });
+});
+
 /**
  * Stop a reply (the dock's Stop, or Steer to send a queued message now). { reply: id } stops that one: being written,
  * or waiting (for its videos, or its turn); without it, the one being written, else the first that waits. A waiting one
@@ -1445,7 +1466,7 @@ assistantApp.post("/past/:id/open", (c) => {
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   archive(u.username, conv);
-  Object.assign(conv, { id: found.id, title: found.title, task: found.task, messages: found.messages });
+  Object.assign(conv, { id: found.id, title: found.title, task: found.task, settled: found.settled, messages: found.messages });
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });

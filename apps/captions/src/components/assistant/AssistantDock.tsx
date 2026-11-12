@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -12,6 +12,7 @@ import {
   chatText,
   deletePast,
   getAssistant,
+  settleChat,
   keySaved,
   navigated,
   openAssistant,
@@ -27,6 +28,7 @@ import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/li
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { onTopic } from "@/lib/sync";
+import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
@@ -666,6 +668,14 @@ export function AssistantDock() {
               })
             }
             onDelete={(id) => void deletePast(id).then((r) => r.ok && setView(r.data))}
+            onSettle={function settle(id: string, on: boolean) {
+              void settleChat(id, on).then(async (r) => {
+                if (!r.ok) return setError(r.error);
+                const v = await getAssistant();
+                if (v.ok) setView(v.data);
+                if (on) undoable("settled", () => settle(id, false));
+              });
+            }}
           />
         )}
 
@@ -1053,15 +1063,15 @@ const ago = (at: number) => {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 };
 
-/** Earlier chats, newest first: open one to read it or carry on; the bin deletes it for good. */
-function PastList({ view, onOpen, onDelete }: { view: AssistantView; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
-  return (
-    <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
-      <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
-      {!view.past.length && <p className="px-2.5 py-2 text-muted-foreground">No earlier chats yet.</p>}
-      <ul className="flex flex-col">
-        {view.past.map((p) => (
-          <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">
+/** Earlier chats, newest first: open one to read it or carry on; the tick settles it (folded under Settled on every device), the bin deletes it for good. */
+function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; onOpen: (id: string) => void; onDelete: (id: string) => void; onSettle: (id: string, on: boolean) => void }) {
+  const [showSettled, setShowSettled] = useState(false);
+  const settled = view.past.filter((p) => p.settled);
+  const iconBtn = "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background focus-visible:opacity-100 group-hover/past:opacity-100";
+  const rows = (list: AssistantView["past"]) => (
+    <ul className="flex flex-col">
+      {list.map((p) => (
+        <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">
             <button
               type="button"
               onClick={() => onOpen(p.id)}
@@ -1072,10 +1082,21 @@ function PastList({ view, onOpen, onDelete }: { view: AssistantView; onOpen: (id
               {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-label="Still answering" />}
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{ago(p.at)}</span>
             </button>
+            {(p.settled || !p.working) && (
+              <button
+                type="button"
+                onClick={() => onSettle(p.id, !p.settled)}
+                className={cn(iconBtn, "hover:text-foreground")}
+                aria-label={p.settled ? `Un-settle "${p.title}"` : `Settle "${p.title}"`}
+                title={p.settled ? "Un-settle" : "Settle"}
+              >
+                {p.settled ? <RotateCcw className="size-3.5" /> : <Check className="size-3.5" />}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onDelete(p.id)}
-              className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover/past:opacity-100"
+              className={cn(iconBtn, "mr-1 hover:text-destructive")}
               aria-label={`Delete "${p.title}"`}
               title="Delete for good"
             >
@@ -1083,7 +1104,28 @@ function PastList({ view, onOpen, onDelete }: { view: AssistantView; onOpen: (id
             </button>
           </li>
         ))}
-      </ul>
+    </ul>
+  );
+  return (
+    <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
+      <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
+      {!view.past.length && <p className="px-2.5 py-2 text-muted-foreground">No earlier chats yet.</p>}
+      {rows(view.past.filter((p) => !p.settled))}
+      {!!settled.length && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowSettled((v) => !v)}
+            aria-expanded={showSettled}
+            className="mt-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            Settled ({settled.length})
+            <span className="h-px flex-1 bg-border" />
+            <ChevronDown className={cn("size-3.5 transition-transform", showSettled && "rotate-180")} />
+          </button>
+          {showSettled && rows(settled)}
+        </>
+      )}
     </div>
   );
 }
