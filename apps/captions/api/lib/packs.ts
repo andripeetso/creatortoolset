@@ -10,6 +10,7 @@ import { packItemInstaller } from "./plugin";
 import { slotSkills } from "./skills";
 import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import type { Framework } from "./workshop/types";
+import type { ProviderOpts } from "../ai-complete";
 
 /**
  * Installed packs. Install copies a pack's frameworks and caption styles into the person's account with
@@ -361,19 +362,30 @@ export const isShippedText = (p: InstalledPack, slot: PackSlot): boolean =>
   readOfficialPacks().some((o) => o.pack.id === p.id && o.pack.instructions?.[slot] === p.instructions[slot]);
 
 /**
- * `renderPackInstructions` for a person, read from disk, and after it the slot's skills switched on (lib/skills.ts
- * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. `shippedOnly`: for
- * an AI run with tools on the person's computer (the Workshop's turn on the Mac reads its folder and may search the
- * web), only the app's own shipped packs go in, and of the skills only the person's own: text other people wrote never
- * reaches a run that can act. The Workshop's writing turn gets its skills as files (api/workshop.ts) and the script
- * step only the one a style names (skillText).
+ * The AI programs whose tools stay off on the Mac for a job with no folder, no web and no assistant (apps/mac
+ * ClaudeRequest.swift): Claude (`--tools ""`), Codex (a read-only profile), Gemini (plan mode and a deny policy), Grok
+ * (its to-do list only), Muse Code (no tools) and OpenCode (acpRules). Cursor, Antigravity, Pi and a local ACP command
+ * keep their own tools there, which this app does not switch off.
  */
-export async function packInstructions(username: string, slot: PackSlot, projectId?: string | null, o: { shippedOnly?: boolean } = {}): Promise<string> {
+export const TOOLS_OFF_DRIVERS: ReadonlySet<string> = new Set(["claude", "codex", "gemini", "grok", "musecode", "opencode"]);
+
+/** Whether a job's AI has no tools: the API key or a local model, or a Mac program from the list above. */
+export const runsWithoutTools = (ai: ProviderOpts): boolean => !ai.mac?.provider || TOOLS_OFF_DRIVERS.has(ai.mac.provider.driver);
+
+/**
+ * `renderPackInstructions` for a person, read from disk, and after it the slot's skills switched on (lib/skills.ts
+ * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. Every caller names
+ * the job's AI (`ai`), or says the run has tools (`tools`: the Workshop's turn on the Mac reads its folder and may search
+ * the web). A run with tools gets only the app's own shipped packs and of the skills only the person's own: text other
+ * people wrote never reaches an AI that can act on the person's computer. The Workshop's writing turn gets its skills
+ * as files (api/workshop.ts) and the script step only the one a style names (skillText).
+ */
+export async function packInstructions(username: string, slot: PackSlot, projectId: string | null | undefined, run: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
   const packs = await listInstalled(username);
-  const text = renderPackInstructions(o.shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);
+  const shippedOnly = run.tools || !runsWithoutTools(run.ai);
+  const text = renderPackInstructions(shippedOnly ? packs.filter((p) => isShippedText(p, slot)) : packs, slot, projectId);
   if (!isPackSkillSlot(slot) || slot === "editor.script") return text;
-  const shared = !o.shippedOnly;
-  const skills = await slotSkills(username, slot, projectId, shared ? packs.filter((p) => packOn(p, projectId)) : [], INSTRUCTIONS_MAX - (text ? text.length + 2 : 0), shared);
+  const skills = await slotSkills(username, slot, projectId, shippedOnly ? [] : packs.filter((p) => packOn(p, projectId)), INSTRUCTIONS_MAX - (text ? text.length + 2 : 0), !shippedOnly);
   return skills ? [text, skills].filter(Boolean).join("\n\n") : text;
 }
 

@@ -9,6 +9,8 @@ const dataDir = mkdtempSync(path.join(tmpdir(), "packs-"));
 process.env.DATA_DIR = dataDir;
 
 const { Hono } = await import("hono");
+// a job on the API key: an AI with no tools
+const API = { only: ["anthropic" as const] };
 const { packsApp } = await import("./packs");
 const { checkPack, instructionProblems } = await import("../contracts/packs");
 const { packInstructions, installPack, listInstalled, removePack } = await import("./lib/packs");
@@ -84,22 +86,32 @@ describe("checkPack", () => {
     const words = { format: 1, id: "someone-elses", name: "Someone's", version: "1.0.0", author: "Tiny Acrobatics", license: "CC0-1.0", description: "Words only.", instructions: { "workshop.write": "Open on the result, then show the work." } };
     await installPack("tools-run", checkPack(words).pack!, 0);
     await installPack("tools-run", checkPack(shipped).pack!, 0);
-    const all = await packInstructions("tools-run", "workshop.write");
+    const all = await packInstructions("tools-run", "workshop.write", null, { ai: API });
     expect(all).toContain("Open on the result");
     expect(all).toContain(shipped.instructions!["workshop.write"]!);
-    const mac = await packInstructions("tools-run", "workshop.write", null, { shippedOnly: true });
+    const mac = await packInstructions("tools-run", "workshop.write", null, { ai: API, tools: true });
     expect(mac).toContain(shipped.instructions!["workshop.write"]!);
     expect(mac).not.toContain("Open on the result");
     // a pack that takes a shipped pack's id with other words is not the app's own
     await installPack("tools-run-2", checkPack({ ...shipped, version: "9.9.9", instructions: { "workshop.write": "Something else." } }).pack!, 0);
-    expect(await packInstructions("tools-run-2", "workshop.write", null, { shippedOnly: true })).toBe("");
+    expect(await packInstructions("tools-run-2", "workshop.write", null, { ai: API, tools: true })).toBe("");
   });
 
   it("puts only the app's own pack text into the Workshop's turn on the Mac", () => {
     const src = readFileSync(path.join(import.meta.dirname, "workshop.ts"), "utf-8");
     const turn = src.split("\n").filter((l) => l.includes("packInstructions(") && l.includes("skillLines("));
     expect(turn).toHaveLength(1);
-    expect(turn[0]).toContain("shippedOnly: onMac(user, session.ai)");
+    expect(turn[0]).toContain("tools: onMac(user, session.ai)");
+  });
+
+  it("gives someone else's pack text only to an AI program whose tools are off on the Mac", async () => {
+    const mac = (driver: string) => ({ only: ["mac" as const], mac: { label: "t", provider: { instance: "i", driver, home: "", model: "", effort: "high", device: "d", scope: "own" } } }) as never;
+    for (const d of ["claude", "codex", "gemini", "grok", "musecode", "opencode"]) {
+      expect(await packInstructions("tools-run", "workshop.write", null, { ai: mac(d) }), d).toContain("Open on the result");
+    }
+    for (const d of ["cursor", "antigravity", "pi", "acp", "something-new"]) {
+      expect(await packInstructions("tools-run", "workshop.write", null, { ai: mac(d) }), d).not.toContain("Open on the result");
+    }
   });
 
   it("takes a Home layout as a list of the app's own tiles and nothing else", () => {
@@ -197,10 +209,10 @@ describe("install, update, remove", () => {
     const res = await call("POST", "/api/packs/install", { pack: pack("1.0.0") });
     expect(res.status).toBe(201);
     expect(frameworks().map((f) => [f.name, f.from])).toEqual(expect.arrayContaining([["Result First", { pack: "punchy-hooks", version: "1.0.0" }]]));
-    const block = await packInstructions("tinyacrobatics", "workshop.write", null);
+    const block = await packInstructions("tinyacrobatics", "workshop.write", null, { ai: API });
     expect(block).toContain('[Pack "Punchy Hooks" 1.0.0 by Tiny Acrobatics]');
     expect(block).toContain("the author wins");
-    expect(await packInstructions("tinyacrobatics", "captions.lines", null)).toBe("");
+    expect(await packInstructions("tinyacrobatics", "captions.lines", null, { ai: API })).toBe("");
   });
 
   it("update keeps an edited copy and replaces untouched ones", async () => {
@@ -219,8 +231,8 @@ describe("install, update, remove", () => {
 
   it("switches instructions off for one project only", async () => {
     await call("PATCH", "/api/packs/punchy-hooks", { on: false, projectId: "brand-b" });
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-b")).toBe("");
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-b", { ai: API })).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a", { ai: API })).toContain("Punchy Hooks");
   });
 
   it("remove deletes untouched copies and keeps the edited one", async () => {
@@ -288,12 +300,12 @@ describe("the team's default packs", () => {
     const fresh = await listInstalled("newcreator");
     expect(fresh.map((p) => p.id).sort()).toEqual([...DEFAULT_PACKS].sort());
     expect(fresh.every((p) => p.default && p.off.length === 0)).toBe(true);
-    expect(await packInstructions("newcreator", "workshop.write", null)).toContain('[Pack "Writing basics"');
+    expect(await packInstructions("newcreator", "workshop.write", null, { ai: API })).toContain('[Pack "Writing basics"');
 
     const old = await listInstalled("oldcreator");
     // instruction packs start off for an older account; Storytelling frameworks has none, so nothing to switch
     expect(old.filter((p) => Object.keys(p.instructions).length).every((p) => p.default && p.off.includes("*"))).toBe(true);
-    expect(await packInstructions("oldcreator", "workshop.write", null)).toBe("");
+    expect(await packInstructions("oldcreator", "workshop.write", null, { ai: API })).toBe("");
 
     await removePack("newcreator", "writing-basics");
     expect((await listInstalled("newcreator")).map((p) => p.id)).not.toContain("writing-basics");
@@ -315,17 +327,17 @@ describe("which projects a pack reaches", () => {
   it("installs for several projects, changes them later, and every project again with null", async () => {
     const res = await call("POST", "/api/packs/install", { pack: pack("2.0.0", { id: "two-brands", frameworks: undefined, captionStyles: undefined }), projectIds: ["brand-a", "brand-b"] });
     expect(res.status).toBe(201);
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toContain("Punchy Hooks");
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-b")).toContain("Punchy Hooks");
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-c")).toBe("");
-    expect(await packInstructions("tinyacrobatics", "workshop.write", null)).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a", { ai: API })).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-b", { ai: API })).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-c", { ai: API })).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", null, { ai: API })).toBe("");
 
     await call("PATCH", "/api/packs/two-brands", { projectIds: ["brand-c"] });
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toBe("");
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-c")).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a", { ai: API })).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-c", { ai: API })).toContain("Punchy Hooks");
 
     await call("PATCH", "/api/packs/two-brands", { projectIds: null });
-    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a", { ai: API })).toContain("Punchy Hooks");
     await call("DELETE", "/api/packs/two-brands");
   });
 

@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PACK_LIMITS, PACK_SLOTS, isPackSkillSlot, skillNameKey, type InstalledPack, type PackSkillSlot } from "../../contracts/packs";
 import { SKILL_LIMITS, checkSkill, everyProject, isSkillPlace, oneLine, pickedByStyle, placeLabel, placeOf, type SharedSkill, type Skill, type SkillPlace } from "../../contracts/skills";
+import type { ProviderOpts } from "../ai-complete";
 import { env } from "./env";
 import { pluginSkills } from "./plugin";
 import { slug } from "./workshop/folder";
@@ -285,16 +286,18 @@ export async function slotSkills(username: string, slot: PackSkillSlot, projectI
 }
 
 /**
- * For a job with no folder and no tools (the AI Editor's script step): the text of the skills an editing style picked,
- * by id (the person's own on for the project, or a shared one the account has), under one label, cut at what project
- * instructions may hold (INSTRUCTIONS_MAX) in total. Empty when none of the ids is such a skill.
+ * For a job with no folder (the AI Editor's script step): the text of the skills an editing style picked, by id (the
+ * person's own on for the project, or a shared one the account has), under one label, cut at what project instructions
+ * may hold (INSTRUCTIONS_MAX) in total. A shared one only when `run` names an AI with no tools (packInstructions' rule);
+ * with no `run`, the person's own alone. Empty when none of the ids is such a skill.
  */
-export async function skillText(username: string, ids: string[], projectId?: string | null): Promise<string> {
+export async function skillText(username: string, ids: string[], projectId?: string | null, run?: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
   const picked = (await listSkills(username)).filter((s) => ids.includes(s.id) && skillOn(s, projectId)).slice(0, SKILL_LIMITS.perTurn);
   let shared: SharedSkill[] = [];
-  if (ids.some((id) => /^(pack|plugin):/.test(id))) {
+  if (run && !run.tools && ids.some((id) => /^(pack|plugin):/.test(id))) {
     // packs.ts reads this file for its slots, so it is loaded here when a style names a shared skill
-    const { listInstalled, packOn } = await import("./packs");
+    const { listInstalled, packOn, runsWithoutTools } = await import("./packs");
+    if (!runsWithoutTools(run.ai)) return skillText(username, ids, projectId);
     const packs = (await listInstalled(username)).filter((p) => packOn(p, projectId));
     shared = sharedSkills(packs, await sharedSwitches(username)).filter((s) => ids.includes(s.id) && s.on);
   }

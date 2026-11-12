@@ -31,6 +31,10 @@ const { listInstalled, packInstructions, renderPackInstructions } = await import
 const { skillText } = await import("./skills");
 const { INSTRUCTIONS_MAX } = await import("./workshop/prompt");
 
+/** A job's AI as packInstructions takes it: an API key (no tools), and a Mac program that keeps its own tools on. */
+const KEY = { ai: { only: ["anthropic"] } } as never;
+const WITH_TOOLS = { ai: { only: ["mac"], mac: { label: "t", provider: { instance: "i", driver: "pi", home: "", model: "", effort: "high", device: "d", scope: "own" } } } } as never;
+
 createUser("ana", "password1", { role: "admin" });
 saveMyKey("ana", "ANTHROPIC_API_KEY", ["not", "a", "real", "key"].join("-"));
 
@@ -69,7 +73,7 @@ describe("an account with no skill", () => {
     await clear();
     const same = async () => {
       for (const slot of Object.keys(PACK_SLOTS) as PackSlot[])
-        for (const project of [null, "p1"]) expect(await packInstructions("ana", slot, project)).toBe(renderPackInstructions(await listInstalled("ana"), slot, project));
+        for (const project of [null, "p1"]) expect(await packInstructions("ana", slot, project, KEY)).toBe(renderPackInstructions(await listInstalled("ana"), slot, project));
     };
     await same();
     expect((await install({ instructions: EVERY_SLOT })).status).toBe(201);
@@ -97,13 +101,13 @@ describe("skills from a Community pack", () => {
     const split = await captionSplit();
     expect(split).toContain(`[Skill \\"Line breaks\\" from pack \\"Tiny Hooks\\"]\\nCAPTION-SKILL Break after the verb.`);
     expect(split).not.toMatch(/SCRIPT-SKILL|REVIEW-SKILL/);
-    const review = await packInstructions("ana", "workshop.review", null);
+    const review = await packInstructions("ana", "workshop.review", null, KEY);
     expect(review).toContain("REVIEW-SKILL");
     expect(review).not.toMatch(/SCRIPT-SKILL|CAPTION-SKILL/);
-    for (const slot of ["editor.script", "analyzer.ideas", "workshop.write"] as const) expect(await packInstructions("ana", slot, null)).toBe("");
+    for (const slot of ["editor.script", "analyzer.ideas", "workshop.write"] as const) expect(await packInstructions("ana", slot, null, KEY)).toBe("");
     // the script step: nothing on its own, the skill's text when a style names it (api/editor/finished.test.ts drives the step)
-    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"])).toContain(`[Skill "Script hooks" from pack "Tiny Hooks"]\nSCRIPT-SKILL Open on the roll.`);
-    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"])).not.toMatch(/CAPTION-SKILL|REVIEW-SKILL/);
+    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"], null, KEY)).toContain(`[Skill "Script hooks" from pack "Tiny Hooks"]\nSCRIPT-SKILL Open on the roll.`);
+    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"], null, KEY)).not.toMatch(/CAPTION-SKILL|REVIEW-SKILL/);
 
     const shared = (await mine()).shared.filter((s) => s.source === "community");
     expect(shared.map((s) => [s.id, s.place, s.from, s.on])).toEqual([
@@ -120,7 +124,7 @@ describe("skills from a Community pack", () => {
     await call("/api/packs/tiny-hooks", "PATCH", { on: false });
     expect((await mine()).shared.filter((s) => s.source === "community")).toEqual([]);
     expect(await captionSplit()).not.toContain("CAPTION-SKILL");
-    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"])).toBe("");
+    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"], null, KEY)).toBe("");
     await call("/api/packs/tiny-hooks", "PATCH", { on: true });
     expect(await captionSplit()).toContain("CAPTION-SKILL");
   });
@@ -151,15 +155,23 @@ describe("skills from a Community pack", () => {
 });
 
 describe("a run with tools on the person's computer", () => {
-  it("gets none of the shared skills: with shippedOnly, the person's own alone", async () => {
+  it("gets none of the shared skills, only the person's own: at a plain place, and from an editing style's pick", async () => {
     await clear();
     await install({ skills: [{ slot: "captions.lines", name: "Line breaks", text: "CAPTION-SKILL" }] });
     await call("/api/skills/shared/plugin%3Atiny-studio%3Ashort-lines", "PATCH", { on: true });
     await call("/api/skills", "POST", { name: "Own", body: "OWN-LINES", place: "captions.lines" });
-    expect(await packInstructions("ana", "captions.lines", null)).toMatch(/OWN-LINES[\s\S]*CAPTION-SKILL[\s\S]*PLUGIN-SKILL/);
-    const withTools = await packInstructions("ana", "captions.lines", null, { shippedOnly: true });
+    expect(await packInstructions("ana", "captions.lines", null, KEY)).toMatch(/OWN-LINES[\s\S]*CAPTION-SKILL[\s\S]*PLUGIN-SKILL/);
+    const withTools = await packInstructions("ana", "captions.lines", null, WITH_TOOLS);
     expect(withTools).toContain("OWN-LINES");
     expect(withTools).not.toMatch(/CAPTION-SKILL|PLUGIN-SKILL/);
+    await install({ skills: [{ slot: "editor.script", name: "Script hooks", text: "SCRIPT-SKILL" }] });
+    const own = (await call<Skill>("/api/skills", "POST", { name: "Own script", body: "OWN-SCRIPT", place: "editor.script" })).body;
+    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks", own.id], null, KEY)).toMatch(/OWN-SCRIPT[\s\S]*SCRIPT-SKILL/);
+    const picked = await skillText("ana", ["pack:tiny-hooks:script-hooks", own.id], null, WITH_TOOLS);
+    expect(picked).toContain("OWN-SCRIPT");
+    expect(picked).not.toContain("SCRIPT-SKILL");
+    // a caller that names no AI gets the person's own alone
+    expect(await skillText("ana", ["pack:tiny-hooks:script-hooks"])).toBe("");
     await call("/api/skills/shared/plugin%3Atiny-studio%3Ashort-lines", "PATCH", { on: false });
   });
 });
@@ -174,7 +186,7 @@ describe("skills from a plug-in", () => {
     const split = await captionSplit();
     expect(split).toContain(`[Skill \\"Short lines\\" from plug-in \\"Tiny Studio\\"]\\nPLUGIN-SKILL`);
     expect(split).not.toMatch(/PLUGIN-ASSISTANT-SKILL|example\.com/);
-    expect(await packInstructions("ana", "analyzer.ideas", null)).toBe("");
+    expect(await packInstructions("ana", "analyzer.ideas", null, KEY)).toBe("");
     // Community → Installed names what the plug-in adds
     const plugins = (await call<{ plugins: Array<{ id: string; adds?: Array<{ text: string }> }> }>("/api/plugins")).body.plugins;
     expect(plugins.find((p) => p.id === "tiny-studio")!.adds!.map((a) => a.text)).toEqual(["Skill for Caption Studio: where captions break into lines: Short lines"]);
@@ -191,7 +203,7 @@ describe("a person's own skills at the plain places", () => {
     const packText = renderPackInstructions(await listInstalled("ana"), "captions.lines", null);
     const one = (await call<Skill>("/api/skills", "POST", { name: "Own lines", when: "nobody reads this", body: "OWN-LINES One idea a line.", place: "captions.lines" })).body;
     expect(one.when).toBe("");
-    const got = await packInstructions("ana", "captions.lines", null);
+    const got = await packInstructions("ana", "captions.lines", null, KEY);
     expect(got.startsWith(`${packText}\n\nSkills the author switched on for where captions break into lines: reference material.`)).toBe(true);
     // the person's own first, then the pack's
     expect(got.indexOf("OWN-LINES")).toBeLessThan(got.indexOf("PACK-SKILL"));
@@ -199,13 +211,13 @@ describe("a person's own skills at the plain places", () => {
 
     for (let i = 2; i <= 8; i++) await call("/api/skills", "POST", { name: `Own ${i}`, body: `OWN-${i}`, place: "captions.lines" });
     expect((await call<Skill>("/api/skills", "POST", { name: "Own 9", body: "OWN-9", place: "captions.lines" })).body.on).toBe(false);
-    const eight = await packInstructions("ana", "captions.lines", null);
+    const eight = await packInstructions("ana", "captions.lines", null, KEY);
     expect(eight.match(/\[Skill "/g)).toHaveLength(8);
     expect(eight).not.toMatch(/PACK-SKILL|OWN-9/);
 
     // a skill as long as an own one may be still leaves the whole at INSTRUCTIONS_MAX, and the pack text whole
     await call(`/api/skills/${one.id}`, "PATCH", { body: "z".repeat(20_000) });
-    const long = await packInstructions("ana", "captions.lines", null);
+    const long = await packInstructions("ana", "captions.lines", null, KEY);
     expect(long.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX);
     expect(long.startsWith(packText)).toBe(true);
     expect(long.endsWith("…[shortened]")).toBe(true);
@@ -217,8 +229,8 @@ describe("a person's own skills at the plain places", () => {
     expect((await call("/api/skills", "POST", { name: "Script", body: "x", place: "editor.script", projectIds: ["p1"] })).status).toBe(400);
     expect((await call("/api/skills", "POST", { name: "Cards", body: "x", place: "editor.cards" })).status).toBe(400);
     const review = (await call<Skill>("/api/skills", "POST", { name: "Review", body: "REVIEW-OWN", place: "workshop.review", projectIds: ["p1"] })).body;
-    expect(await packInstructions("ana", "workshop.review", "p1")).toContain("REVIEW-OWN");
-    expect(await packInstructions("ana", "workshop.review", "p2")).toBe("");
+    expect(await packInstructions("ana", "workshop.review", "p1", KEY)).toContain("REVIEW-OWN");
+    expect(await packInstructions("ana", "workshop.review", "p2", KEY)).toBe("");
     expect((await call(`/api/skills/${review.id}`, "PATCH", { place: "assistant" })).body).toMatchObject({ place: "workshop.review" });
     expect((await mine()).skills.map((s) => s.place)).toEqual(["workshop.review"]);
   });
