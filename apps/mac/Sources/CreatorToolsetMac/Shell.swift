@@ -681,6 +681,7 @@ final class Shell: NSObject, ObservableObject {
         let id = UUID()
         let work = relayFolder(for: base, localData: runsHere ? server?.dataDir : nil)
         let relay = RelayRunner(base: base, token: token, work: work,
+            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }),
             onStatus: { [weak self] status in
                 Task { @MainActor in
                     guard let self, self.runnerID == id else { return }
