@@ -84,9 +84,12 @@ export const exportBase = (project: string): string =>
     .replace(/\.[^.]+$/, "")
     .replace(/[^\w.-]+/g, "_");
 
-/** An export's file name, {project}_{clip}: the server appends "-captioned". */
+/**
+ * An export's file name, {project}_{clip}: the server appends "-captioned". A clip already named after its project
+ * (however the spaces are written) is not given the project's name a second time.
+ */
 export function exportName(project: string, clip: string): string {
   const base = exportBase(project);
   const cb = (clip || "captions").replace(/\.[^.]+$/, "");
-  return !base || cb.toLowerCase().startsWith(base.toLowerCase()) ? cb : `${base}_${cb}`;
+  return !base || exportBase(cb).toLowerCase().startsWith(base.toLowerCase()) ? cb : `${base}_${cb}`;
 }

@@ -113,9 +113,13 @@ function publicJob(j: Job): Omit<Job, "params"> & { projectId?: string } {
   return pub as Omit<Job, "params">;
 }
 
-/** Why a render failed, as one plain sentence: what ffmpeg printed stays in the job, for the log. */
-export const exportFailure = (error = ""): string =>
-  /^ffmpeg exited/.test(error) ? "The video could not be rendered" : error.split("\n")[0]!.slice(0, 200).replace(/\.$/, "") || "The export failed";
+/** Why a render failed, as one plain sentence: what ffmpeg or the frame browser printed stays in the job, for the log and the page's tray. */
+const FAILURES: Array<[RegExp, string]> = [
+  [/^Source video is not on the server/, "The video is no longer on the server"],
+  [/^Interrupted by a server restart/, "The server restarted while it was rendering, so it has to be exported again"],
+  [/^(Downloading the export browser failed|playwright-chromium is not installed|Caption renderer is missing)/, "The browser that draws the captions could not be started on this server"],
+];
+export const exportFailure = (error = ""): string => FAILURES.find(([known]) => known.test(error))?.[1] ?? "The video could not be rendered";
 
 /**
  * A render the assistant started (captions_export) has ended: its card ends, and the chat says so once with the
