@@ -37,6 +37,8 @@ async function person(name: string) {
     answer: (id: string, text: string) => app.request(`/api/devices/relay/${id}/done`, { method: "POST", ...json({ text }, device) }),
     view: async () => (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View,
     send: (body: Record<string, unknown>) => app.request("/api/assistant/turn", { method: "POST", ...json(body, { cookie }) }),
+    newChat: async () => (await (await app.request("/api/assistant", { method: "DELETE", headers: { cookie } })).json()) as View,
+    open: (id: string) => app.request(`/api/assistant/past/${id}/open`, { method: "POST", headers: { cookie } }),
     stop: (body?: Record<string, unknown>) => app.request("/api/assistant/stop", { method: "POST", ...(body ? json(body, { cookie }) : { headers: { cookie } }) }),
     /** Starts an upload (one part of `size` bytes); returns its id and the calls that finish it. */
     upload: async (name: string, size = 4096) => {
@@ -61,6 +63,13 @@ const stillWaiting = async (p: Promise<unknown>) => (await Promise.race([p.then(
 async function settled(p: Awaited<ReturnType<typeof person>>) {
   let v = await p.view();
   for (let i = 0; i < 50 && v.messages.at(-1)?.status === "thinking"; i++) v = (await tick(), await p.view());
+  return v;
+}
+
+/** The view once that earlier chat no longer says it is working. */
+async function quiet(p: Awaited<ReturnType<typeof person>>, chat: string) {
+  let v = await p.view();
+  for (let i = 0; i < 50 && v.past.find((c) => c.id === chat)?.working; i++) v = (await tick(), await p.view());
   return v;
 }
 
@@ -271,5 +280,109 @@ describe("the attention hook", () => {
     await p.stop();
     await tick();
     expect(heard).toEqual([]);
+  });
+});
+
+describe("New chat and an earlier chat while a reply runs or waits", () => {
+  it("New chat while a reply is written: the new chat is empty, the reply ends in the earlier one, which says it is working till then", async () => {
+    const p = await person("dan");
+    await p.send({ text: "Old question" });
+    const job = await p.claim();
+    const old = (await p.view()).id;
+    const v = await p.newChat();
+    expect(v.messages).toEqual([]);
+    expect(v.id).not.toBe(old);
+    expect(v.past[0]).toMatchObject({ id: old, working: true });
+    await p.answer(job.id, "Old answer");
+    const after = await quiet(p, old);
+    expect(after.messages).toEqual([]);
+    expect(after.past[0]!.working).toBeUndefined();
+    // opening it again shows the finished answer
+    const r = await p.open(old);
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as View).messages.map((m) => [m.text, m.status])).toEqual([["Old question", undefined], ["Old answer", "done"]]);
+  });
+
+  it("New chat while a reply waits for its video: the video landing starts it, and it answers in its own chat", async () => {
+    const p = await person("eli");
+    const clip = await p.upload("Pier.mp4");
+    await p.send({ text: "Caption the pier", files: [clip.id] });
+    const old = (await p.view()).id;
+    expect((await p.newChat()).past[0]).toMatchObject({ id: old, working: true });
+    const job = p.claim();
+    await clip.part();
+    const got = await job;
+    expect(got.user).toContain("Caption the pier");
+    expect(got.user).toContain(`file id ${clip.id}`);
+    await p.answer(got.id, "Pier captioned.");
+    expect((await quiet(p, old)).messages).toEqual([]);
+    const opened = (await (await p.open(old)).json()) as View;
+    expect(opened.messages.at(-2)!.files).toEqual([{ id: clip.id, name: "Pier.mp4" }]);
+    expect(opened.messages.at(-1)).toMatchObject({ text: "Pier captioned.", status: "done" });
+  });
+
+  it("a queued reply's prompt is its own chat up to its message, whatever chat is open when its turn comes; one at a time across chats", async () => {
+    const p = await person("fay");
+    await p.send({ text: "Alpha one" });
+    const first = await p.claim();
+    await p.send({ text: "Alpha two" });
+    const alpha = (await p.view()).id;
+    await p.newChat();
+    const v = (await (await p.send({ text: "Beta one" })).json()) as View;
+    expect(v.messages.map((m) => [m.text, m.wait?.for])).toEqual([["Beta one", undefined], ["", "reply"]]);
+    const next = p.claim();
+    expect(await stillWaiting(next)).toBe(true);
+    await p.answer(first.id, "Answer alpha one");
+    const second = await next;
+    expect(second.user).toContain("Answer alpha one");
+    expect(second.user).toContain("Alpha two");
+    expect(second.user).not.toContain("Beta");
+    const after = p.claim();
+    expect(await stillWaiting(after)).toBe(true);
+    await p.answer(second.id, "Answer alpha two");
+    const third = await after;
+    expect(third.user).toContain("Beta one");
+    expect(third.user).not.toContain("Alpha");
+    await p.answer(third.id, "Answer beta");
+    expect((await settled(p)).messages.map((m) => m.text)).toEqual(["Beta one", "Answer beta"]);
+    const opened = (await (await p.open(alpha)).json()) as View;
+    expect(opened.messages.filter((m) => m.role === "assistant").map((m) => m.text)).toEqual(["Answer alpha one", "Answer alpha two"]);
+  });
+
+  it("Stop reaches a reply in an earlier chat by its id, and a queued one's Stop leaves the running one alone", async () => {
+    const p = await person("gus");
+    await p.send({ text: "Keep going" });
+    const job = await p.claim();
+    const queued = ((await (await p.send({ text: "Then this" })).json()) as View).messages.at(-1)!.id;
+    const running = (await p.view()).messages.at(-3)!.id;
+    const old = (await p.view()).id;
+    await p.newChat();
+    // the new chat has nothing of its own to stop
+    expect((await p.stop()).status).toBe(404);
+    expect((await p.stop({ reply: queued })).status).toBe(200);
+    expect((await p.view()).past[0]).toMatchObject({ id: old, working: true });
+    expect((await p.stop({ reply: running })).status).toBe(200);
+    await p.answer(job.id, "too late");
+    await quiet(p, old);
+    const opened = (await (await p.open(old)).json()) as View;
+    expect(opened.messages.filter((m) => m.role === "assistant").map((m) => [m.text, m.status])).toEqual([["*Stopped.*", "done"], ["*Stopped.*", "done"]]);
+  });
+
+  it("an earlier chat opens while a reply is written in the open one, which then keeps working among the earlier chats", async () => {
+    const p = await person("hal");
+    await p.send({ text: "Done one" });
+    await p.answer((await p.claim()).id, "Fine.");
+    const done = (await settled(p)).id;
+    await p.newChat();
+    await p.send({ text: "Slow one" });
+    const job = await p.claim();
+    const slow = (await p.view()).id;
+    const r = await p.open(done);
+    expect(r.status).toBe(200);
+    const v = (await r.json()) as View;
+    expect(v.id).toBe(done);
+    expect(v.past.find((c) => c.id === slow)).toMatchObject({ working: true });
+    await p.answer(job.id, "Slow answer.");
+    expect((await quiet(p, slow)).messages.map((m) => m.text)).toEqual(["Done one", "Fine."]);
   });
 });

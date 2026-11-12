@@ -633,7 +633,7 @@ function view(username: string, admin: boolean): AssistantView {
     aiName: route?.instance.name ?? "",
     tools: hasTools(route),
     messages: conv.messages.slice(-80),
-    past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
+    past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(p.messages.some((m) => m.status === "thinking") ? { working: true as const } : {}) })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
     sendNow: true,
@@ -745,13 +745,13 @@ export async function answerWithTools(
   }
 }
 
-/** The turn each account has running, for Stop. */
-const running = new Map<string, AbortController>();
+/** The turn each account has running (its reply's id, in whatever chat it is now), for Stop. */
+const running = new Map<string, { stop: AbortController; reply: string }>();
 
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
 async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
   const stop = new AbortController();
-  running.set(username, stop);
+  running.set(username, { stop, reply: replyId });
   try {
     const text = await answerWithTools(username, route, url, prompt, {
       label: "Assistant",
@@ -778,7 +778,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     const m = messageOf(username, replyId);
     if (m) expireApprovals(m, 0);
     sayLater(username, replyId);
-    if (running.get(username) === stop) running.delete(username);
+    if (running.get(username)?.stop === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
@@ -819,7 +819,7 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
 /** A turn that never started ends: stopped by the person, or its video never arrived. The next one may start. */
 function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost"): void {
   const conv = load(username);
-  const asked = conv.messages.find((x) => x.id === conv.held?.[m.id]?.ask);
+  const asked = everyChat(conv).flat().find((x) => x.id === conv.held?.[m.id]?.ask);
   if (conv.held) delete conv.held[m.id];
   const lost = (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
   const text = how === "stopped" ? "*Stopped.*" : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
@@ -885,14 +885,13 @@ async function pumpOnce(username: string): Promise<void> {
     delete held[id];
     changed = true;
   }
-  for (const [i, m] of conv.messages.entries()) {
-    if (m.status !== "thinking") continue;
-    const h = held[m.id];
-    if (!h) {
-      ahead = true; // being written (a turn, or a scheduled run in this chat)
-      continue;
-    }
-    const asked = conv.messages.find((x) => x.id === h.ask);
+  // in the order they were sent, in whatever chat each is now (New chat and opening an earlier one don't move them)
+  for (const id of Object.keys(held)) {
+    const h = held[id]!;
+    const list = everyChat(conv).find((l) => l.some((m) => m.id === id))!;
+    const i = list.findIndex((m) => m.id === id);
+    const m = list[i]!;
+    const asked = list.find((x) => x.id === h.ask);
     const inNow = (id: string) => {
       const f = files.get(id);
       return f && "file" in f ? f.file : null;
@@ -902,6 +901,8 @@ async function pumpOnce(username: string): Promise<void> {
       changed = true;
     }
     const missing = h.files.filter((id) => !inNow(id));
+    // a scheduled run being written in its own chat goes first there too
+    const runningBefore = list.slice(0, i).some((x) => x.status === "thinking" && !held[x.id]);
     let wait: AssistantMessage["wait"];
     if (missing.length) {
       // a file between its last part and its meta (being joined) has neither: only the clock says it is lost
@@ -916,7 +917,7 @@ async function pumpOnce(username: string): Promise<void> {
       }
       soonest = Math.min(soonest, last + WAIT_MS);
       wait = { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
-    } else if (ahead) wait = { for: "reply", text: "Waiting for the reply before it" };
+    } else if (ahead || runningBefore) wait = { for: "reply", text: "Waiting for the reply before it" };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
@@ -926,7 +927,7 @@ async function pumpOnce(username: string): Promise<void> {
       continue;
     }
     // one that can't start ends there, and the next may start in its place
-    if (startHeld(username, conv, i, h, h.files.map((id) => inNow(id)!))) ahead = true;
+    if (startHeld(username, conv, list, i, h, h.files.map((id) => inNow(id)!))) ahead = true;
     changed = true;
   }
   if (changed) {
@@ -939,9 +940,9 @@ async function pumpOnce(username: string): Promise<void> {
 }
 
 /** A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. false: it ended instead. */
-function startHeld(username: string, conv: Conv, i: number, h: Held, files: AssistantFile[]): boolean {
-  const reply = conv.messages[i]!;
-  const asked = conv.messages.find((x) => x.id === h.ask);
+function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: number, h: Held, files: AssistantFile[]): boolean {
+  const reply = list[i]!;
+  const asked = list.find((x) => x.id === h.ask);
   delete conv.held![reply.id];
   reply.wait = undefined;
   const route = routeOf(username, h.admin);
@@ -957,7 +958,7 @@ function startHeld(username: string, conv: Conv, i: number, h: Held, files: Assi
   });
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], context: h.context };
   conv.mac = h.context?.mac === true;
-  void runTurn(username, reply.id, route, h.url, promptFor(conv.messages.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
+  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
   return true;
 }
 
@@ -1036,8 +1037,9 @@ export async function runInChat(
   tell(username);
   const prompt = `${o.preface}\n\n${promptFor(o.fresh ? [asked] : chat.messages)}`;
   const stop = new AbortController();
-  const open = conv.id === chat.id && !running.has(username);
-  if (open) running.set(username, stop);
+  const chatId = chat.id; // `chat` may be the open one, whose id changes with a New chat
+  const open = conv.id === chatId && !running.has(username);
+  if (open) running.set(username, { stop, reply: reply.id });
   try {
     const text = await answerWithTools(username, o.route, o.url, prompt, {
       label: "Scheduled task",
@@ -1051,21 +1053,21 @@ export async function runInChat(
       },
     });
     Object.assign(messageOf(username, reply.id) ?? {}, { status: "done", text });
-    return { chat: chat.id, text };
+    return { chat: chatId, text };
   } catch (e) {
     const why = stop.signal.aborted ? "Stopped." : (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The run failed.";
     Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
     throw new Error(why);
   } finally {
     sayLater(username, reply.id);
-    if (open && running.get(username) === stop) running.delete(username);
+    if (open && running.get(username)?.stop === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
     tell(username);
-    // a message sent while it ran waited for it
-    if (open) void pump(username);
+    // a message sent while it ran, in its chat, waited for it
+    void pump(username);
   }
 }
 
@@ -1098,7 +1100,7 @@ assistantApp.post("/turn", async (c) => {
   const memory = await memoryBlock(u);
   const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
-  if (conv.messages.filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
+  if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
@@ -1142,18 +1144,18 @@ assistantApp.post("/turn", async (c) => {
 assistantApp.post("/stop", async (c) => {
   const u = c.get("user");
   const b = (await c.req.json().catch(() => null)) as { reply?: unknown } | null;
-  const want = typeof b?.reply === "string" ? b.reply : undefined;
   const conv = load(u.username);
-  const waiting = want ? (conv.held?.[want] ? want : undefined) : running.has(u.username) ? undefined : conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id])?.id;
-  const m = waiting ? conv.messages.find((x) => x.id === waiting) : undefined;
+  const run = running.get(u.username);
+  // without a reply id: the open chat's own (a reply in an earlier chat is stopped by its id)
+  const want = typeof b?.reply === "string" ? b.reply : run && conv.messages.some((m) => m.id === run.reply) ? run.reply : conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id])?.id;
+  const m = want && conv.held?.[want] ? messageOf(u.username, want) : undefined;
   if (m) {
     endHeld(u.username, m, "stopped");
     await pump(u.username);
     return c.json(view(u.username, u.role === "admin"));
   }
-  const stop = running.get(u.username);
-  if (!stop || (want && messageOf(u.username, want)?.status !== "thinking")) return c.json({ error: "Nothing is running" }, 404);
-  stop.abort();
+  if (!run || !want || run.reply !== want) return c.json({ error: "Nothing is running" }, 404);
+  run.stop.abort();
   // the turn ends on the next tick (the Mac call rejects): answer with the view after it
   await new Promise((r) => setTimeout(r, 0));
   return c.json(view(u.username, u.role === "admin"));
@@ -1182,11 +1184,10 @@ assistantApp.post("/cancel", (c) => {
   return c.json(view(u.username, u.role === "admin"));
 });
 
-/** New chat: the conversation goes into the history and a fresh one starts. */
+/** New chat: the conversation goes into the history and a fresh one starts. A reply still running or waiting there keeps writing into it. */
 assistantApp.delete("/", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
-  if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering: wait for it" }, 409);
   archive(u.username, conv);
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
@@ -1196,7 +1197,6 @@ assistantApp.delete("/", (c) => {
 assistantApp.post("/past/:id/open", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
-  if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering: wait for it" }, 409);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
@@ -1214,7 +1214,11 @@ assistantApp.delete("/past/:id", (c) => {
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   dropImages(u.username, found.messages);
+  // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
+  const run = running.get(u.username);
+  if (run && found.messages.some((m) => m.id === run.reply)) run.stop.abort();
   save(u.username);
+  void pump(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
 

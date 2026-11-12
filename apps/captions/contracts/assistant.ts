@@ -171,6 +171,8 @@ export interface AssistantPast {
   /** When its last message was written. */
   at: number;
   count: number;
+  /** A reply is still being written, waiting for its videos or queued in it (New chat left it running). */
+  working?: true;
 }
 
 export interface AssistantView {
