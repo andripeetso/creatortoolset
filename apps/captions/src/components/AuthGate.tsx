@@ -44,6 +44,15 @@ export type SignInProvider = "apple" | "google" | "github";
 export type SignInProviders = Record<SignInProvider, boolean>;
 const PROVIDER_NAME: Record<SignInProvider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
 
+/** The page this login screen stands in for, to come back to after the provider (an error from a try before is dropped). */
+function backHere(): string {
+  if (typeof window === "undefined") return "/";
+  const q = new URLSearchParams(window.location.search);
+  q.delete("error");
+  const s = q.toString();
+  return window.location.pathname + (s ? `?${s}` : "");
+}
+
 /** One "Sign in with …" button per provider this server has keys for (api/sign-in.ts, GET /api/account/providers). */
 export function ProviderButtons({ providers }: { providers: SignInProviders }) {
   return (
@@ -53,7 +62,7 @@ export function ProviderButtons({ providers }: { providers: SignInProviders }) {
         .map((p) => (
           <a
             key={p}
-            href={`/api/account/login/${p}?for=site`}
+            href={`/api/account/login/${p}?for=site&next=${encodeURIComponent(backHere())}`}
             className="flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-sm font-medium text-zinc-100 hover:border-violet-500"
           >
             Sign in with {PROVIDER_NAME[p]}
@@ -148,7 +157,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (state !== "login") return;
     // only a server that mounts the route answers ok; elsewhere the account gate's 401 must not read as providers
-    fetch("/api/account/providers")
+    fetch("/api/account/providers?login=1")
       .then((r) => (r.ok ? (r.json() as Promise<SignInProviders>) : Promise.reject(new Error(String(r.status)))))
       .then(setProviders)
       .catch(() => setProviders({ apple: false, google: false, github: false }));

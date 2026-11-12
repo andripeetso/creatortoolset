@@ -136,6 +136,28 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     expect(again.headers.get("set-cookie")).toBeNull();
   });
 
+  it("goes back to the page the person pressed sign in on, and never to another site", async () => {
+    const via = async (next: string) => {
+      const start = await app.request(`/api/account/login/github?for=site&next=${encodeURIComponent(next)}`);
+      const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+      return (await app.request(`/api/auth/github/callback?code=good-code&state=${state}`)).headers.get("location");
+    };
+    expect(await via("/admin")).toBe("/admin");
+    expect(await via("/review?x=1")).toBe("/review?x=1");
+    for (const bad of ["https://evil.example/", "//evil.example/", "/\\evil.example", "/api/auth/logout", "admin"]) expect(await via(bad), bad).toBe("/");
+  });
+
+  it("shows the login screen only the sign-ins an account here has linked", async () => {
+    // cy has GitHub linked (the test above); with no account on GitHub, the button would only ever fail
+    expect(await (await app.request("/api/account/providers?login=1")).json()).toEqual({ apple: false, google: false, github: true });
+    const { unlinkIdentity } = await import("./users");
+    unlinkIdentity(findUser("cy")!, "github");
+    expect(await (await app.request("/api/account/providers?login=1")).json()).toEqual({ apple: false, google: false, github: false });
+    // Settings (linking another) still sees every provider with keys
+    expect(await (await app.request("/api/account/providers")).json()).toEqual({ apple: false, google: false, github: true });
+    linkIdentity(findUser("cy")!, { provider: "github", sub: "4242", email: "" });
+  });
+
   it("refuses a state this server did not start, and a GitHub state sent to Google's callback", async () => {
     const bogus = await app.request("/api/auth/github/callback?code=good-code&state=not-ours");
     expect([400, 404]).toContain(bogus.status);
