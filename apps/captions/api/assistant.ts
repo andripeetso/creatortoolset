@@ -21,11 +21,11 @@ import { allPartsIn, assistantFilesApp, finishUpload, removeFile, setWaitedFor, 
 import { needsAttention, type Attention } from "./lib/attention";
 import { currentProject, memoryBlock } from "./lib/memory";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
-import type { AssistantApproval, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
+import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
- * The in-app assistant (the dock, src/components/assistant): one conversation per account in
- * $DATA_DIR/assistant/<user>.json (0600). A turn runs on the account's own Claude Code on a paired Mac, never on an
+ * The in-app assistant (the dock, src/components/assistant): an account's chats (the dock's open one and the earlier
+ * ones, each also by its id: /chats) in $DATA_DIR/assistant/<user>.json (0600). A turn runs on the account's own Claude Code on a paired Mac, never on an
  * API key, and only once an AI is connected (no model call before that, nor any paid call). The Mac runs it with
  * this server's MCP tools (mcp.ts) under a job token that lives in memory for that turn (auth.ts). Nothing here
  * stores or forwards a token, and no key value the user types ever passes through this file (saved in the dock
@@ -91,12 +91,13 @@ In this conversation you have no Creator Toolset tools and no tools on the user'
 
 /* ---- the conversation, in memory and on disk ---- */
 
-/** A chat: `title` and `task` are set for one a scheduled task made (its name, its id). */
+/** A chat: `title` and `task` are set for one a scheduled task made (its name, its id). `made`: when POST /chats made it (empty till its first message). */
 interface Chat {
   id: string;
   messages: AssistantMessage[];
   title?: string;
   task?: string;
+  made?: number;
 }
 
 interface Conv {
@@ -105,10 +106,10 @@ interface Conv {
   title?: string;
   task?: string;
   messages: AssistantMessage[];
-  pending?: { env: string; why: string; at: number };
+  /** One key asked for (ask_secret), account-wide; `turn` is the reply that asked (its chat shows the box). */
+  pending?: { env: string; why: string; at: number; turn?: string };
+  /** One page to open, account-wide: whichever reply asked last. */
   navigate?: string;
-  /** The newest message came from the Mac app (its page context said so): its open panel can choose a folder (askFolder). */
-  mac?: boolean;
   /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
   calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
@@ -117,7 +118,7 @@ interface Conv {
   held?: Record<string, Held>;
 }
 
-/** A turn sent before its videos were in, or while another reply was being written: started by pump(). */
+/** A turn sent before its videos were in, while the reply before it in its chat was being written, or past MAX_RUNNING: started by pump(). */
 interface Held {
   /** The user message it answers. */
   ask: string;
@@ -224,6 +225,8 @@ interface TurnInput {
   paths: string[];
   /** Videos dropped in the Mac app: their paths, read where they are (nothing uploads). */
   local: string[];
+  /** Where its pictures and pastes go in the Mac's assistant folder, which every reply shares: "" or "place-<n>/" (placeOf). */
+  dir?: string;
   context?: AssistantContext;
   /** One more line for the AI: the fit question, or what the reply carries on with. */
   note?: string;
@@ -286,14 +289,14 @@ function parseTurn(raw: unknown): TurnInput {
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
-const attachedName = (name: string, i: number, ext: string) => `attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
-const pastedName = (name: string, i: number) => `pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
+const attachedName = (name: string, i: number, ext: string, dir = "") => `${dir}attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
+const pastedName = (name: string, i: number, dir = "") => `${dir}pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
 
 /** The newest message's files for the Mac (the relay writes "base64:" entries as bytes), or undefined with none. */
 function filesFor(input: TurnInput): Record<string, string> | undefined {
   const files: Record<string, string> = {};
-  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type])] = `base64:${im.data}`));
-  input.pasted.forEach((p, i) => (files[pastedName(p.name, i)] = p.text));
+  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)] = `base64:${im.data}`));
+  input.pasted.forEach((p, i) => (files[pastedName(p.name, i, input.dir)] = p.text));
   return Object.keys(files).length ? files : undefined;
 }
 
@@ -331,12 +334,12 @@ function save(username: string): void {
  * The account's open docks read the conversation again (api/lib/sync.ts). For a change no request of the dock made:
  * a reply is written from the Mac's answer, its tools' calls and a scheduled run, so nothing else announces it.
  */
-const tell = (username: string) => announce(username, "assistant");
+const tell = (username: string, turn?: string) => announce(username, "assistant", null, (turn && chatOfTurn(username, turn)) || undefined);
 
 /** Deltas of a reply are saved at most once a second; everything else saves at once. */
 const pendingSave = new Map<string, ReturnType<typeof setTimeout>>();
-function saveSoon(username: string): void {
-  announceSoon(username, "assistant"); // told now, not when the file lands: the dock reads the conversation in memory
+function saveSoon(username: string, turn?: string): void {
+  announceSoon(username, "assistant", 1000, (turn && chatOfTurn(username, turn)) || undefined); // told now, not when the file lands: the dock reads the conversation in memory
   if (pendingSave.has(username)) return;
   pendingSave.set(username, setTimeout(() => {
     pendingSave.delete(username);
@@ -358,7 +361,7 @@ export function noteStep(username: string, turn: string, step: string): void {
   // waiting for the writer calls the same tool again and again: one line
   if (steps.at(-1) === step || steps.length >= 40) return;
   steps.push(step);
-  saveSoon(username);
+  saveSoon(username, turn);
 }
 
 /**
@@ -377,7 +380,7 @@ export function noteWork(username: string, turn: string, card: NonNullable<Assis
   if (had) Object.assign(had, { status: card.status, detail: card.detail });
   else if (!onlyUpdate && work.length < 20) work.push(card);
   else return;
-  saveSoon(username);
+  saveSoon(username, turn);
 }
 
 /** A video the reply shows in the chat (show_video, mcp.ts): the same id replaces its card. */
@@ -389,7 +392,7 @@ export function noteMedia(username: string, turn: string, card: AssistantMedia):
   if (at >= 0) media[at] = card;
   else if (media.length < 10) media.push(card);
   else return;
-  saveSoon(username);
+  saveSoon(username, turn);
 }
 
 /**
@@ -397,11 +400,11 @@ export function noteMedia(username: string, turn: string, card: AssistantMedia):
  * Mac app can choose one (its own open panel hands the page the path); elsewhere the AI is told to ask for a drop or a typed path.
  */
 export function askFolder(username: string, turn: string, why: string): void {
-  if (!load(username).mac) throw new Error("The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path.");
+  if (!fromMac.has(turn)) throw new Error("The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path.");
   const m = messageOf(username, turn);
   if (m?.status !== "thinking") return;
   m.folderAsk = { why: why.replace(/\s+/g, " ").trim().slice(0, 200) };
-  saveSoon(username);
+  saveSoon(username, turn);
 }
 
 /** Answers the reply offers as buttons (offer_choices, mcp.ts): the newest offer replaces an earlier one. */
@@ -409,7 +412,7 @@ export function noteChoices(username: string, turn: string, choices: string[]): 
   const m = messageOf(username, turn);
   if (m?.status !== "thinking") return;
   m.choices = choices;
-  saveSoon(username);
+  saveSoon(username, turn);
 }
 
 /* ---- a tool asks before it deletes, publishes or sends (mcp.ts sure) ---- */
@@ -436,7 +439,7 @@ export function askConfirm(username: string, turn: string, question: string, cal
   list.push({ id, question: question.replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), status: "waiting" });
   calls[id] = call;
   save(username);
-  tell(username);
+  tell(username, turn);
   attend(username, turn, "asks", question);
   return true;
 }
@@ -567,18 +570,20 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
     a = { id: ask.id, tool: ask.tool, summary: approvalSummary(ask), detail: ask.detail, at: Date.now(), status: "waiting" };
     list.push(a);
     save(username);
-    tell(username);
+    tell(username, turn);
     attend(username, turn, "asks", `Asks to ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`);
   } else if (expireApprovals(m)) {
     save(username);
-    tell(username);
+    tell(username, turn);
   }
   return a.status;
 }
 
-/** The user's answer to one of their own replies' approvals; null when there is no such approval. */
+/** The user's answer to one of their own replies' approvals, in whatever chat; null when there is no such approval. */
 export function answerApproval(username: string, id: string, allow: boolean): AssistantApproval | null {
-  for (const m of load(username).messages) {
+  const all = everyChat(load(username)).flat();
+  // the Mac's ask ids are Claude's own tool-call ids: a waiting one first, should one ever repeat
+  for (const m of [...all.filter((x) => x.approvals?.some((a) => a.id === id && a.status === "waiting")), ...all]) {
     const a = m.approvals?.find((x) => x.id === id);
     if (!a) continue;
     if (expireApprovals(m) || a.status === "waiting") {
@@ -607,9 +612,9 @@ export async function navigateTo(username: string, p: string): Promise<string> {
 
 /** The assistant's ask_secret tool: a pending request for one key, shown as a secure box. Never takes a value. */
 export async function askSecret(username: string, env: MyKeyEnv, why: string, turn?: string): Promise<void> {
-  load(username).pending = { env, why, at: Date.now() };
+  load(username).pending = { env, why, at: Date.now(), ...(turn ? { turn } : {}) };
   save(username);
-  tell(username);
+  tell(username, turn);
   if (turn) attend(username, turn, "asks", `Asks for your ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
 }
 
@@ -635,21 +640,59 @@ const providerOf = (route: Route | null): AssistantProvider => (!route ? "none" 
 const TOOL_DRIVERS: string[] = ["claude", "codex", "gemini", "grok"];
 const hasTools = (route: Route | null) => !!route && TOOL_DRIVERS.includes(route.instance.driver);
 
-function view(username: string, admin: boolean): AssistantView {
+/**
+ * The open chat's view (the dock), or with `chat` that chat's (GET /chats/:id): its messages, and the key box only when
+ * a reply in it asked (the open view shows the box whoever asked, as before). A chat's view lists no earlier chats: GET /chats does.
+ */
+function view(username: string, admin: boolean, chat?: Chat): AssistantView {
   const conv = load(username);
-  const pending = conv.pending ? MY_KEYS.find((k) => k.env === conv.pending!.env) : undefined;
+  const ask = conv.pending && (!chat || !conv.pending.turn || chat.messages.some((m) => m.id === conv.pending!.turn)) ? conv.pending : undefined;
+  const pending = ask ? MY_KEYS.find((k) => k.env === ask.env) : undefined;
   const route = routeOf(username, admin);
   return {
-    id: conv.id!,
+    id: chat?.id ?? conv.id!,
     provider: providerOf(route),
     aiName: route?.instance.name ?? "",
     tools: hasTools(route),
-    messages: conv.messages.slice(-80),
-    past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(p.messages.some((m) => m.status === "thinking") ? { working: true as const } : {}) })),
-    pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
+    messages: (chat ?? conv).messages.slice(-80),
+    // a chat made by POST /chats shows here once it has a message
+    past: chat ? [] : (conv.past ?? []).filter((p) => p.messages.length).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(working(p) ? { working: true as const } : {}) })),
+    pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
     navigate: conv.navigate ?? null,
     sendNow: true,
+    chats: true,
   };
+}
+
+const working = (c: Chat) => c.messages.some((m) => m.status === "thinking");
+
+/** A reply in the chat waits for the person: an Allow / Deny, a Yes / No card, or a key's box. */
+function asking(conv: Conv, c: Chat, now = Date.now()): boolean {
+  return (
+    c.messages.some((m) => m.approvals?.some((a) => a.status === "waiting" && now - a.at < APPROVAL_MS) || m.confirms?.some((q) => q.status === "waiting")) ||
+    (!!conv.pending?.turn && c.messages.some((m) => m.id === conv.pending!.turn))
+  );
+}
+
+/** Every chat, the open one included, newest first (GET /chats). */
+function chatList(username: string): AssistantChat[] {
+  const conv = load(username);
+  const all: Chat[] = [{ id: conv.id!, title: conv.title, task: conv.task, messages: conv.messages }, ...(conv.past ?? [])];
+  return all
+    .map((c) => {
+      const line = ([...c.messages].reverse().find((m) => m.text.trim())?.text ?? "").replace(/\s+/g, " ").trim();
+      return {
+        id: c.id,
+        title: c.title ?? titleOf(c.messages),
+        at: c.messages.at(-1)?.at ?? c.made ?? 0,
+        last: line.length > 140 ? `${line.slice(0, 139)}…` : line,
+        count: c.messages.length,
+        ...(c.id === conv.id ? { open: true as const } : {}),
+        ...(working(c) ? { working: true as const } : {}),
+        ...(asking(conv, c) ? { asks: true as const } : {}),
+      };
+    })
+    .sort((a, b) => b.at - a.at);
 }
 
 /** What a reply asked before a tool deleted or sent something, and how it was answered. */
@@ -667,12 +710,12 @@ const marks = (m: AssistantMessage) =>
 function newestFacts(input: TurnInput): string[] {
   const out: string[] = [];
   const n = input.images.length;
-  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
+  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type], input.dir)).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const p of input.local) out.push(`The user dropped a video from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
   if (input.note) out.push(input.note);
-  for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
+  for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i, input.dir)}.`);
   const c = input.context;
   if (c) {
     out.push(`The user is on ${c.path}${c.title ? ` (page title: ${c.title})` : ""}.${c.visible ? ` On screen: ${c.visible}` : ""}`);
@@ -768,13 +811,38 @@ export async function answerWithTools(
   }
 }
 
-/** The turn each account has running (its reply's id, in whatever chat it is now), for Stop. */
-const running = new Map<string, { stop: AbortController; reply: string }>();
+/**
+ * Replies of one account written at the same time, each in its own chat (one chat writes one at a time). More wait, in
+ * the order they were sent. Scheduled runs count too, but never wait (automations.ts already waits for a busy chat).
+ * ponytail: per account, while the computer's relay runs 4 calls at once (mac-claude.ts MAC_SLOTS), shared with the
+ * Workshop and editor jobs on it; a 4th or 5th call waits there up to 3 minutes, then fails. A per-computer count if that bites.
+ */
+export const MAX_RUNNING = 3;
+
+/** The replies each account has being written now (by reply id, in whatever chat each is), for Stop and the cap. */
+const running = new Map<string, Map<string, AbortController>>();
+const runsOf = (username: string) => running.get(username) ?? running.set(username, new Map()).get(username)!;
+/** Replies sent from the Mac app (their page context said so) while they are written: their open panel can choose a folder (askFolder). */
+const fromMac = new Set<string>();
+
+/**
+ * Each reply being written has a place 0..MAX_RUNNING-1 of its own: the Mac writes every reply's pictures and pastes in
+ * one assistant folder, so two at once would write over each other's "pasted/01-…". Place 0 keeps the plain paths, and
+ * the folder holds at most MAX_RUNNING sets, each overwritten by the next reply in that place.
+ */
+const places = new Map<string, number>();
+function placeOf(username: string, reply: string): string {
+  const used = new Set([...runsOf(username).keys()].map((id) => places.get(id)));
+  let n = 0;
+  while (used.has(n)) n++;
+  places.set(reply, n);
+  return n ? `place-${n}/` : "";
+}
 
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
 async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
   const stop = new AbortController();
-  running.set(username, { stop, reply: replyId });
+  runsOf(username).set(replyId, stop);
   try {
     const text = await answerWithTools(username, route, url, prompt, {
       label: "Assistant",
@@ -787,7 +855,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
       onDelta: (t) => {
         const m = messageOf(username, replyId);
         if (m) m.text = t;
-        saveSoon(username);
+        saveSoon(username, replyId);
       },
     });
     Object.assign(messageOf(username, replyId) ?? {}, { status: "done", text });
@@ -801,12 +869,14 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     const m = messageOf(username, replyId);
     if (m) expireApprovals(m, 0);
     sayLater(username, replyId);
-    if (running.get(username)?.stop === stop) running.delete(username);
+    runsOf(username).delete(replyId);
+    fromMac.delete(replyId);
+    places.delete(replyId);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
-    tell(username);
+    tell(username, replyId);
     // the person hears it ended (a Stop is their own doing), and the next message's turn starts
     if (m && !stop.signal.aborted) attend(username, replyId, m.status === "error" ? "failed" : "done", m.text);
     void pump(username);
@@ -831,6 +901,7 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
   needsAttention({
     username,
     reply,
+    chat: chat.id,
     kind,
     title: chat.title ?? titleOf(chat.messages),
     body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "The answer failed." : "Answered."),
@@ -872,8 +943,8 @@ const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
 const wakes = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
- * The account's waiting turns, in order: each shows what it waits for, one whose video stopped arriving ends, and the
- * first whose videos are all in starts once no reply is being written. Called whenever that may have changed (a turn
+ * The account's waiting turns, in order: each shows what it waits for, one whose video stopped arriving ends, and one
+ * whose videos are all in starts once nothing is ahead of it in its chat and fewer than MAX_RUNNING replies are being written. Called whenever that may have changed (a turn
  * sent or ended, a file in, a Stop, the clock, a restart); a call during a run makes it run again, and resolves with it.
  */
 function pump(username: string): Promise<void> {
@@ -918,8 +989,9 @@ async function pumpOnce(username: string): Promise<void> {
   const t = Date.now();
   let changed = false;
   let soonest = Infinity;
-  let ahead = running.has(username);
-  // a chat whose reply waits for its videos holds only the messages after it in that chat: another chat goes on
+  // replies being written now, in every chat: up to MAX_RUNNING at once
+  let busy = runsOf(username).size;
+  // a chat with a reply that waits (for its videos, the reply before it, or a free place) holds the messages after it there: another chat goes on
   const stalled = new Set<AssistantMessage[]>();
   for (const id of Object.keys(held)) if (messageOf(username, id)?.status !== "thinking") {
     delete held[id];
@@ -960,19 +1032,18 @@ async function pumpOnce(username: string): Promise<void> {
       wait = m.send
         ? { for: "videos", videos: 1, text: `Sending "${m.send.name}" to ${m.send.to}` }
         : { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
-    } else if (ahead || runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
+    } else if (runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
+    else if (busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are answering` };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
         changed = true;
       }
-      // waiting on videos (or on its chat's videos) uses no AI: it holds its own chat, not the others
-      if (wait.for === "videos" || (stalled.has(list) && !ahead && !runningBefore)) stalled.add(list);
-      else ahead = true;
+      stalled.add(list);
       continue;
     }
     // one that can't start ends there, and the next may start in its place
-    if (startHeld(username, conv, list, i, h, h.files.map((id) => inNow(id)!))) ahead = true;
+    if (startHeld(username, conv, list, i, h, h.files.map((id) => inNow(id)!))) busy++;
     changed = true;
   }
   if (changed) {
@@ -1002,8 +1073,8 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
     return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
   });
   const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
-  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], local: asked.localFiles ?? [], context: h.context, note: sent ?? h.fit };
-  conv.mac = h.context?.mac === true;
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
+  if (h.context?.mac) fromMac.add(reply.id);
   void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
   return true;
 }
@@ -1096,7 +1167,8 @@ export function chatBusy(username: string, chat: string | undefined): boolean {
  * One scheduled run as a turn: the prompt goes in as the user's message (marked with its task), the reply streams in
  * under it, and the dock shows both like any other turn. `chat` is the chat to post in; gone or absent, a new chat
  * named after the task starts among the earlier chats (the open one is left alone). `fresh`: the reply sees only this
- * prompt, not the chat's earlier messages. In the open chat, the dock's Stop stops it. Resolves with the chat and the
+ * prompt, not the chat's earlier messages. Stop by its reply id stops it (in the open chat, the dock's Stop too). It runs
+ * beside other chats' replies, counts toward MAX_RUNNING and never waits for it. Resolves with the chat and the
  * answer; rejects with the reason when the run fails.
  */
 export async function runInChat(
@@ -1114,12 +1186,11 @@ export async function runInChat(
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
   save(username);
-  tell(username);
+  tell(username, reply.id);
   const prompt = `${o.preface}\n\n${promptFor(o.fresh ? [asked] : chat.messages)}`;
   const stop = new AbortController();
   const chatId = chat.id; // `chat` may be the open one, whose id changes with a New chat
-  const open = conv.id === chatId && !running.has(username);
-  if (open) running.set(username, { stop, reply: reply.id });
+  runsOf(username).set(reply.id, stop);
   try {
     const text = await answerWithTools(username, o.route, o.url, prompt, {
       label: "Scheduled task",
@@ -1129,7 +1200,7 @@ export async function runInChat(
       onDelta: (t) => {
         const m = messageOf(username, reply.id);
         if (m) m.text = t;
-        saveSoon(username);
+        saveSoon(username, reply.id);
       },
     });
     Object.assign(messageOf(username, reply.id) ?? {}, { status: "done", text });
@@ -1140,12 +1211,12 @@ export async function runInChat(
     throw new Error(why);
   } finally {
     sayLater(username, reply.id);
-    if (open && running.get(username)?.stop === stop) running.delete(username);
+    runsOf(username).delete(reply.id);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
-    tell(username);
+    tell(username, reply.id);
     // a message sent while it ran, in its chat, waited for it
     void pump(username);
   }
@@ -1161,8 +1232,11 @@ assistantApp.get("/", (c) => {
   return c.json(view(u.username, u.role === "admin"));
 });
 
-assistantApp.post("/turn", async (c) => {
+/** A message in the open chat (POST /turn), or with `chatId` in that chat, which stays where it is (POST /chats/:id/turn). */
+async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const u = c.get("user");
+  const target = () => (chatId === undefined ? (load(u.username) as Chat) : chatOf(load(u.username), chatId));
+  if (!target()) return c.json({ error: "That conversation is gone" }, 404);
   let input: TurnInput;
   try {
     input = parseTurn(await c.req.json().catch(() => null));
@@ -1179,7 +1253,7 @@ assistantApp.post("/turn", async (c) => {
   }
   const memory = await memoryBlock(u);
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
-  const lastReply = [...load(u.username).messages].reverse().find((m) => m.role === "assistant");
+  const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
   if (fitOff) writeWorkPrefs(u.username, { askFit: false });
   const project = (files.length || input.paths.length || input.local.length) && readWorkPrefs(u.username).askFit !== false ? await currentProject(u).catch(() => undefined) : undefined;
@@ -1190,6 +1264,9 @@ assistantApp.post("/turn", async (c) => {
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
+  // read after the last await: a New chat meanwhile swaps what the open chat is
+  const chat = target();
+  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
   const now = Date.now();
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
   const asked: AssistantMessage = {
@@ -1205,7 +1282,7 @@ assistantApp.post("/turn", async (c) => {
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
   };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
-  conv.messages.push(asked, reply);
+  chat.messages.push(asked, reply);
   // every turn goes through the queue: one with nothing ahead and its videos in starts in this call (Stop counts on that)
   (conv.held ??= {})[reply.id] = {
     ask: asked.id,
@@ -1221,8 +1298,32 @@ assistantApp.post("/turn", async (c) => {
   };
   save(u.username);
   await pump(u.username);
-  return c.json(view(u.username, u.role === "admin"), 202);
+  return c.json(view(u.username, u.role === "admin", chatId === undefined ? undefined : (chatOf(load(u.username), chatId) ?? undefined)), 202);
+}
+
+assistantApp.post("/turn", (c) => sendTurn(c));
+
+/* ---- every chat by its id, none of them made the open one (the phone; the dock keeps the open chat) ---- */
+
+assistantApp.get("/chats", (c) => c.json({ chats: chatList(c.get("user").username) }));
+
+/** A new empty chat among the earlier ones (the open chat stays open): its id. */
+assistantApp.post("/chats", (c) => {
+  const u = c.get("user");
+  const conv = load(u.username);
+  const chat: Chat = { id: randomUUID(), messages: [], made: Date.now() };
+  keepPast(u.username, conv, [chat, ...(conv.past ?? [])]);
+  save(u.username);
+  return c.json({ id: chat.id }, 201);
 });
+
+assistantApp.get("/chats/:id", (c) => {
+  const u = c.get("user");
+  const chat = chatOf(load(u.username), c.req.param("id"));
+  return chat ? c.json(view(u.username, u.role === "admin", chat)) : c.json({ error: "That conversation is gone" }, 404);
+});
+
+assistantApp.post("/chats/:id/turn", (c) => sendTurn(c, c.req.param("id")));
 
 /**
  * Stop a reply (the dock's Stop, or Steer to send a queued message now). { reply: id } stops that one: being written,
@@ -1233,17 +1334,18 @@ assistantApp.post("/stop", async (c) => {
   const u = c.get("user");
   const b = (await c.req.json().catch(() => null)) as { reply?: unknown } | null;
   const conv = load(u.username);
-  const run = running.get(u.username);
-  // without a reply id: the open chat's own (a reply in an earlier chat is stopped by its id)
-  const want = typeof b?.reply === "string" ? b.reply : run && conv.messages.some((m) => m.id === run.reply) ? run.reply : conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id])?.id;
+  const runs = runsOf(u.username);
+  // without a reply id: the open chat's own (a reply in any other chat is stopped by its id)
+  const want = typeof b?.reply === "string" ? b.reply : (conv.messages.find((m) => runs.has(m.id)) ?? conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id]))?.id;
   const m = want && conv.held?.[want] ? messageOf(u.username, want) : undefined;
   if (m) {
     endHeld(u.username, m, "stopped");
     await pump(u.username);
     return c.json(view(u.username, u.role === "admin"));
   }
-  if (!run || !want || run.reply !== want) return c.json({ error: "Nothing is running" }, 404);
-  run.stop.abort();
+  const run = want ? runs.get(want) : undefined;
+  if (!run) return c.json({ error: "Nothing is running" }, 404);
+  run.abort();
   // the turn ends on the next tick (the Mac call rejects): answer with the view after it
   await new Promise((r) => setTimeout(r, 0));
   return c.json(view(u.username, u.role === "admin"));
@@ -1257,8 +1359,9 @@ assistantApp.post("/saved", async (c) => {
   const spec = MY_KEYS.find((k) => k.env === b?.env);
   const key = spec ? myKeys(u.username)[spec.env] : undefined;
   if (!spec || !conv.pending || conv.pending.env !== spec.env || !key) return c.json({ error: "No saved key to record" }, 400);
+  const asker = conv.pending.turn ? chatOfTurn(u.username, conv.pending.turn) : null;
   conv.pending = undefined;
-  conv.messages.push({ id: randomUUID(), role: "note", text: `${spec.name} key saved (…${key.slice(-4)})`, at: Date.now() });
+  ((asker && chatOf(conv, asker)) || conv).messages.push({ id: randomUUID(), role: "note", text: `${spec.name} key saved (…${key.slice(-4)})`, at: Date.now() });
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
@@ -1327,8 +1430,7 @@ assistantApp.delete("/past/:id", (c) => {
   conv.past = conv.past!.filter((p) => p !== found);
   dropImages(u.username, found.messages);
   // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
-  const run = running.get(u.username);
-  if (run && found.messages.some((m) => m.id === run.reply)) run.stop.abort();
+  for (const m of found.messages) runsOf(u.username).get(m.id)?.abort();
   save(u.username);
   void pump(u.username);
   return c.json(view(u.username, u.role === "admin"));

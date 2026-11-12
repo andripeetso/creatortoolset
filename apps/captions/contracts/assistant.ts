@@ -1,8 +1,16 @@
 /**
- * The in-app assistant's dock (api/assistant.ts, src/components/assistant): one conversation per account.
+ * The in-app assistant's dock (api/assistant.ts, src/components/assistant): one open chat per account, plus earlier ones.
  * GET /api/assistant → AssistantView. POST /api/assistant/turn { text } → 202 with the same view (the reply is
  * "thinking" until its status changes; the dock polls while one is). A pending key request is a secure box in the
  * dock; its value never comes back through this API, only the saved key's last four digits in a note.
+ *
+ * Many chats (a view with `chats: true`): every chat by its id, none of them made the open one.
+ *   GET  /api/assistant/chats            → { chats: AssistantChat[] }, newest first, the open chat among them
+ *   POST /api/assistant/chats            → 201 { id }: a new empty chat (the open chat stays open)
+ *   GET  /api/assistant/chats/:id        → AssistantView of that chat (`past` is empty there: the list is GET /chats)
+ *   POST /api/assistant/chats/:id/turn   → AssistantTurnInput, 202 with that chat's view (404: the chat is gone)
+ * Replies in different chats are written at the same time, up to 3 per account (MAX_RUNNING, api/assistant.ts); in one
+ * chat one at a time, in order. Stop ({ reply }), approvals and confirms are found by their own ids in any chat.
  */
 
 /** "none" = no AI connected yet (the dock can't talk), "claude" = Claude Code on a paired Mac (the only one for now), "other" = any other provider. */
@@ -184,6 +192,24 @@ export interface AssistantPast {
   working?: true;
 }
 
+/** One chat in GET /api/assistant/chats. */
+export interface AssistantChat {
+  id: string;
+  /** Its first message, shortened, or a scheduled task's name; "Conversation" while it is empty. */
+  title: string;
+  /** Its newest message's time (ms); an empty chat's, when it was made. */
+  at: number;
+  /** Its newest message with words, on one line, shortened. */
+  last: string;
+  count: number;
+  /** The web dock's open chat (GET /api/assistant). */
+  open?: true;
+  /** A reply is being written, waits for its videos, or waits its turn in it. */
+  working?: true;
+  /** A reply in it waits for the person: an Allow / Deny, a Yes / No card, or a key's box. */
+  asks?: true;
+}
+
 export interface AssistantView {
   /** The open chat's id (a scheduled task posts in a chat by id; ?chat=<id> on any page opens one). */
   id: string;
@@ -199,6 +225,9 @@ export interface AssistantView {
   /** This server takes a message whose videos are still uploading (POST /turn with their ids) and queues messages sent
    *  while a reply runs. Absent on older servers: there a client posts only after its uploads are done. */
   sendNow?: true;
-  /** A page the assistant opened for the user (navigate); the dock moves there and acks it. */
+  /** A page the assistant opened for the user (navigate); the dock moves there and acks it. One per account, from any chat. */
   navigate: string | null;
+  /** This server has the many-chats routes (GET /chats, /chats/:id, its /turn) and writes replies in different chats at
+   *  the same time. Absent on older servers: there only the open chat routes exist and replies run one at a time. */
+  chats?: true;
 }
