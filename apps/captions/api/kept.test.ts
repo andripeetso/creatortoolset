@@ -30,12 +30,13 @@ mkdirSync(at(`assistant/files/tiny/${id(3)}`), { recursive: true });
 linkSync(at(`review/${id(10)}/v1/source`), at(`assistant/files/tiny/${id(3)}/file`));
 put(`review/${id(11)}/meta.json`, JSON.stringify({ id: id(11), owner: "other", versions: [] }));
 // the trash of both tools
-put(`review/trash/${id(12)}/meta.json`, JSON.stringify({ id: id(12), name: "old", owner: "tiny", versions: [], approval: { status: "none" }, deletedAt: Date.now() }));
+put(`review/trash/${id(12)}/meta.json`, JSON.stringify({ id: id(12), name: "old", owner: "tiny", versions: [], approval: { status: "none" }, createdAt: 0, deletedAt: Date.now() }));
 put(`review/trash/${id(12)}/v1/source`, 3000);
 put(`review/trash/${id(13)}/meta.json`, JSON.stringify({ id: id(13), name: "theirs", owner: "other", versions: [], approval: { status: "none" }, deletedAt: Date.now() }));
 const project = (pid: string, deletedAt?: number) => {
   put(`projects/${pid}/meta.json`, JSON.stringify({ id: pid, name: pid, owner: "tiny", createdAt: 0, updatedAt: 0, duration: 0, deletedAt, clips: [{ id: "clip-01", name: "a", duration: 0, createdAt: 0 }] }));
   put(`projects/${pid}/clips/clip-01/original`, 700);
+  put(`projects/${pid}/clips/clip-01/proxy.mp4`, 70); // a proxy is there, so the app doesn't try to make one from the sample file
 };
 project("live-one");
 project("binned", Date.now());
@@ -51,16 +52,29 @@ put("instagram/p1/meta.json", JSON.stringify({}));
 put("workshop/sources/s1.json", JSON.stringify({ owner: "tiny" }));
 put("workshop/sources/s1.txt", 50);
 
+// a trashed Review video as a real one is: the Media Library holds the same file under a second name
+const { libraryDb } = await import("./library/db");
+const blob = `library/blobs/libraries/lib_t/v/${id(30)}/source`;
+libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_t', 'tiny', 'Library', 'local', 0)").run();
+libraryDb().prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at) VALUES (?, 'lib_t', 'video', 'old', NULL, 'tiny', 0, 1)").run(id(12));
+libraryDb()
+  .prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES (?, ?, 1, ?, 3000, '', 'video/mp4', NULL, 'ready', 'tiny', 0)")
+  .run(id(30), id(12), `libraries/lib_t/v/${id(30)}/source`);
+mkdirSync(path.dirname(at(blob)), { recursive: true });
+linkSync(at(`review/trash/${id(12)}/v1/source`), at(blob));
+
 const { keptView, emptyKept } = await import("./kept");
 const { storageApp } = await import("./devices-storage");
 const tiny = { username: "tiny", role: "user" } as Parameters<typeof keptView>[0];
-const admin = { username: "boss", role: "admin" } as Parameters<typeof keptView>[0];
+const admin = { username: "local", role: "admin" } as Parameters<typeof keptView>[0]; // with no APP_SECRET the first admin is "local"
+const second = { username: "boss", role: "admin" } as Parameters<typeof keptView>[0];
 const row = async (u: typeof tiny, kind: string) => (await keptView(u)).rows.find((r) => r.kind === kind)!;
 
-it("counts only the account's own files, and owner-less ones for an admin", async () => {
+it("counts only the account's own files, and owner-less ones for the first admin", async () => {
   expect(await row(tiny, "chat-pictures")).toMatchObject({ items: 1, bytes: 5 });
   expect(await row(tiny, "analyzer")).toMatchObject({ items: 0 });
   expect(await row(admin, "analyzer")).toMatchObject({ items: 1 });
+  expect(await row(second, "analyzer")).toMatchObject({ items: 0 }); // one account has them, so admins never both count them
   expect((await row(tiny, "workshop")).bytes).toBeGreaterThanOrEqual(50);
   expect(await row(tiny, "captions")).toMatchObject({ items: 1 });
 });
@@ -75,6 +89,7 @@ it("a chat video Review also has counts once, as Review's; one still uploading i
 it("the trash has its own rows, and a render going to Finals is not counted", async () => {
   expect(await row(tiny, "review-trash")).toMatchObject({ items: 1, keepDays: 30 });
   expect((await row(tiny, "review-trash")).bytes).toBeGreaterThanOrEqual(3000);
+  expect((await row(tiny, "library")).bytes).toBe(0); // the trashed video's file is the trash's, counted once
   expect(await row(tiny, "captions-trash")).toMatchObject({ items: 1, keepDays: 5 });
   expect(await row(tiny, "exports")).toMatchObject({ items: 1 });
 });
@@ -88,6 +103,7 @@ it("Empty deletes what the row counts and nothing else", async () => {
   expect(has(`assistant/files/tiny/${id(3)}/file`)).toBe(true); // Review's file: deleting it would free nothing
   expect(has(`review/${id(10)}/v1/source`)).toBe(true);
   expect(has(`review/trash/${id(12)}`)).toBe(false);
+  expect(has(blob)).toBe(false); // the Media Library's name for it goes too, so the space is really freed
   expect(has(`review/trash/${id(13)}`)).toBe(true); // another account's
   expect(has("projects/binned")).toBe(false);
   expect(has("projects/live-one")).toBe(true);

@@ -8,7 +8,7 @@ import { VIEW_AS } from "./lib/view-as";
 import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./lib/workspaces";
 import { forgetGrants } from "./library/grants";
 import { deleteUserContent, keepDaysFor } from "./retention";
-import { dirBytes, keptView } from "./kept";
+import { dirBytes, keptView, type Stores } from "./kept";
 import type { KeptKind } from "../contracts/storage";
 import { clearTries, codeRequired, lockedAnywhere, setCodeRequired } from "./lib/sign-in-code";
 import { isPluginGateId, isRetiredAppId, isTool } from "../contracts/tools";
@@ -105,8 +105,9 @@ adminApp.get("/projects", async (c) => {
 /** Each account with what it keeps: the same count as its own Settings → Storage (api/kept.ts), so the two never disagree. */
 adminApp.get("/users", async (c) => {
   const out = [];
+  const stores: Stores = new Map();
   for (const u of listUsers()) {
-    const rows = (await keptView(u)).rows;
+    const rows = (await keptView(u, stores)).rows;
     const n = (kind: KeptKind) => rows.find((r) => r.kind === kind)?.items ?? 0;
     out.push({
       username: u.username,

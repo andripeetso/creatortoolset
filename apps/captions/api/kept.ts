@@ -12,7 +12,7 @@ import type { SessionUser } from "./users";
  *   POST /:kind/empty   → deletes this account's files of one EMPTIED kind: the trash, a chat's pictures and videos,
  *                         finished renders. Work (projects, Review videos, posts…) is deleted in its own tool.
  * Only the caller's own files: a kind's folder is fixed here, never sent by the client. A file with no owner (made before
- * accounts) counts as an admin's, as the admin panel does.
+ * accounts) counts as the server's first admin's.
  *
  * One file often has two names (a hard link, no copy): a Review video is the same file in the Media Library, and a chat
  * video handed to Review, Video Notes or Caption Studio is that tool's file. Such a file counts once, in the first kind of
@@ -48,8 +48,34 @@ async function filesOf(p: string, out: OneFile[] = []): Promise<OneFile[]> {
 export const dirBytes = async (p: string): Promise<number> => (await filesOf(p)).reduce((n, f) => n + f.size, 0);
 
 const at = (...p: string[]) => path.join(env.dataDir, ...p);
-const isMine = (owner: unknown, u: SessionUser) => owner === u.username || (!owner && u.role === "admin");
+// a file with no owner (made before accounts) is the server's first admin's, so two admins never both count it
+const legacyOwner = () => (env.appSecret ? env.adminUsername : "local");
+const isMine = (owner: unknown, u: Who) => owner === u.username || (!owner && u.username === legacyOwner());
 const json = (file: string) => readFile(file, "utf-8").then((s) => JSON.parse(s) as Record<string, unknown>, () => null);
+
+/** The account asked about: its own request, or one row of the admin's list. */
+type Who = Pick<SessionUser, "username">;
+/**
+ * The metas of the stores read so far, by folder: one request reads each store once, however many accounts it asks
+ * about (the admin's list asks about every account).
+ */
+export type Stores = Map<string, Promise<Array<{ id: string; m: Record<string, unknown> }>>>;
+function storeOf(stores: Stores, root: string, file: (name: string) => string | null): Promise<Array<{ id: string; m: Record<string, unknown> }>> {
+  let all = stores.get(root);
+  if (!all) {
+    all = (async () => {
+      const out: Array<{ id: string; m: Record<string, unknown> }> = [];
+      for (const name of await readdir(root).catch(() => [] as string[])) {
+        const f = file(name);
+        const m = f ? await json(f) : null;
+        if (m) out.push({ id: name, m });
+      }
+      return out;
+    })();
+    stores.set(root, all);
+  }
+  return all;
+}
 
 /** One thing an account keeps: its id in its own store, and its paths on disk. */
 interface Item {
@@ -58,16 +84,10 @@ interface Item {
 }
 
 /** The items of a kind that belong to `u`. */
-async function itemsOf(kind: KeptKind, u: SessionUser): Promise<Item[]> {
+async function itemsOf(kind: KeptKind, u: Who, stores: Stores): Promise<Item[]> {
   // `<root>/<id>/<meta>` stores whose meta names the owner (`by`), kept when `pick` says so
-  const owned = async (root: string, pick: (m: Record<string, unknown>) => boolean = () => true, meta = "meta.json", by = "owner") => {
-    const out: Item[] = [];
-    for (const id of await readdir(root).catch(() => [] as string[])) {
-      const m = await json(path.join(root, id, meta));
-      if (m && isMine(m[by], u) && pick(m)) out.push({ id, paths: [path.join(root, id)] });
-    }
-    return out;
-  };
+  const owned = async (root: string, pick: (m: Record<string, unknown>) => boolean = () => true, meta = "meta.json", by = "owner") =>
+    (await storeOf(stores, root, (id) => path.join(root, id, meta))).filter(({ m }) => isMine(m[by], u) && pick(m)).map(({ id }) => ({ id, paths: [path.join(root, id)] }));
   // one folder per account, one entry per item
   const perUser = async (root: string) => (await readdir(root).catch(() => [] as string[])).map((id) => ({ id, paths: [path.join(root, id)] }));
   switch (kind) {
@@ -92,16 +112,14 @@ async function itemsOf(kind: KeptKind, u: SessionUser): Promise<Item[]> {
     case "workshop": {
       // a session's folder; a source is sources/<id>.json (it names the owner) with its text and pages beside it
       const root = at("workshop", "sources");
-      const out = await owned(at("workshop", "sessions"));
-      for (const f of await readdir(root).catch(() => [] as string[])) {
-        if (!f.endsWith(".json")) continue;
-        const id = f.slice(0, -5);
-        if (isMine((await json(path.join(root, f)))?.owner, u)) out.push({ id, paths: [path.join(root, f), path.join(root, `${id}.txt`), path.join(root, id)] });
-      }
-      return out;
+      const sources = await storeOf(stores, root, (f) => (f.endsWith(".json") ? path.join(root, f) : null));
+      return [
+        ...(await owned(at("workshop", "sessions"))),
+        ...sources.filter(({ m }) => isMine(m.owner, u)).map(({ id: f }) => ({ id: f.slice(0, -5), paths: [path.join(root, f), path.join(root, `${f.slice(0, -5)}.txt`), path.join(root, f.slice(0, -5))] })),
+      ];
     }
     case "library": {
-      // the libraries of the account's own workspace, kept on this server's disk (a bucket's bytes are added in keptView)
+      // the libraries of the account's own workspace, kept on this server's disk (a bucket's bytes are added in measure)
       const { libraryDb } = await import("./library/db");
       const { homeOf } = await import("./library/access");
       const libs = libraryDb().prepare("SELECT id FROM libraries WHERE workspace_id = ?").all(homeOf(u.username)) as { id: string }[];
@@ -118,6 +136,22 @@ async function itemsOf(kind: KeptKind, u: SessionUser): Promise<Item[]> {
     case "exports":
       return (await (await import("./exports")).finishedExportDirs(u.username)).map((d) => ({ id: path.basename(d), paths: [d] }));
   }
+}
+
+/**
+ * A project's originals that are in the server's bucket, not on its disk (a clip's originalObjectKey): each clip's
+ * size as it was uploaded. A copy that shares another project's original doesn't count it again.
+ */
+async function bucketOriginals(stores: Stores, projectIds: string[]): Promise<number> {
+  const { sourceObjectKey } = await import("./media-store");
+  const metas = await storeOf(stores, at("projects"), (id) => path.join(at("projects"), id, "meta.json"));
+  let n = 0;
+  for (const { id, m } of metas) {
+    if (!projectIds.includes(id) || !Array.isArray(m.clips)) continue;
+    for (const c of m.clips as Array<{ id?: string; originalObjectKey?: string; originalBytes?: number }>)
+      if (c.id && c.originalObjectKey === sourceObjectKey(id, c.id)) n += c.originalBytes ?? 0;
+  }
+  return n;
 }
 
 /** What a bucket library holds (usage_daily's newest day): the disk has none of it. */
@@ -139,13 +173,13 @@ async function keepDaysOf(kind: KeptKind): Promise<number | undefined> {
  * Every kind's items and their size, each file counted once (`seen` holds the files with a second name already counted).
  * `listed` is what a kind's row stands for: the items Empty deletes.
  */
-async function measure(u: SessionUser): Promise<Array<KeptRow & { listed: Item[] }>> {
+async function measure(u: Who, stores: Stores = new Map()): Promise<Array<KeptRow & { listed: Item[] }>> {
   const seen = new Set<string>();
   const rows: Array<KeptRow & { listed: Item[] }> = [];
   for (const kind of KEPT_KINDS) {
     const listed: Item[] = [];
     let bytes = 0;
-    for (const item of await itemsOf(kind, u)) {
+    for (const item of await itemsOf(kind, u, stores)) {
       const files = (await Promise.all(item.paths.map((p) => filesOf(p)))).flat();
       let size = 0;
       for (const f of files) {
@@ -161,6 +195,7 @@ async function measure(u: SessionUser): Promise<Array<KeptRow & { listed: Item[]
       listed.push(item);
     }
     if (kind === "library") bytes += await bucketBytes(listed.map((i) => i.id));
+    if (kind === "captions" || kind === "captions-trash") bytes += await bucketOriginals(stores, listed.map((i) => i.id));
     const keepDays = await keepDaysOf(kind);
     // a library is counted by its size alone: its folder is there before anything is in it
     rows.push({ kind, bytes, items: kind === "library" ? 0 : listed.length, ...(keepDays ? { keepDays } : {}), listed });
@@ -168,12 +203,13 @@ async function measure(u: SessionUser): Promise<Array<KeptRow & { listed: Item[]
   return rows;
 }
 
-export async function keptView(u: SessionUser): Promise<KeptView> {
-  return { rows: (await measure(u)).map(({ listed: _, ...row }) => row), here: process.env.CT_LOCAL === "1" };
+/** `stores`: shared by a request that asks about several accounts (the admin's list), so each store is read once. */
+export async function keptView(u: Who, stores?: Stores): Promise<KeptView> {
+  return { rows: (await measure(u, stores)).map(({ listed: _, ...row }) => row), here: process.env.CT_LOCAL === "1" };
 }
 
 /** Empty one kind: exactly the items its row counts go, each the way its own tool deletes it. */
-export async function emptyKept(kind: KeptKind, u: SessionUser): Promise<void> {
+export async function emptyKept(kind: KeptKind, u: Who): Promise<void> {
   const listed = (await measure(u)).find((r) => r.kind === kind)?.listed ?? [];
   if (kind === "captions-trash") return (await import("./projects")).emptyProjectTrash(listed.map((i) => i.id));
   if (kind === "review-trash") return (await import("./review")).emptyReviewTrash(listed.map((i) => i.id));

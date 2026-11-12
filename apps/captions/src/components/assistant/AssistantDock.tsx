@@ -878,9 +878,7 @@ export function Message({
         {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length || !!m.localFiles?.length) && (
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
-              <button key={im.id} type="button" onClick={() => setBig(`/api/assistant/images/${encodeURIComponent(im.id)}`)} title={im.name} aria-label={`Show ${im.name}`} className="cursor-zoom-in">
-                <ChatPicture id={im.id} name={im.name} />
-              </button>
+              <ChatPicture key={im.id} id={im.id} name={im.name} onOpen={setBig} />
             ))}
             {m.files?.map((f) => (
               <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
@@ -1120,14 +1118,19 @@ function Dots() {
   );
 }
 
-/** A message's picture; one emptied in Settings → Storage shows as removed. */
-function ChatPicture({ id, name }: { id: string; name: string }) {
+/** A message's picture, opened big on a click; one emptied in Settings → Storage shows as removed and opens nothing. */
+function ChatPicture({ id, name, onOpen }: { id: string; name: string; onOpen: (src: string) => void }) {
   const [gone, setGone] = useState(false);
+  const src = `/api/assistant/images/${encodeURIComponent(id)}`;
   if (gone)
     return (
       <span className="flex size-16 items-center justify-center rounded-lg border bg-muted text-muted-foreground" title={`${name} (removed)`}>
         <ImageOff className="size-4" aria-label="Picture removed" />
       </span>
     );
-  return <img src={`/api/assistant/images/${encodeURIComponent(id)}`} alt={name} loading="lazy" onError={() => setGone(true)} className="size-16 rounded-lg border bg-muted object-cover" />;
+  return (
+    <button type="button" onClick={() => onOpen(src)} title={name} aria-label={`Show ${name}`} className="cursor-zoom-in">
+      <img src={src} alt={name} loading="lazy" onError={() => setGone(true)} className="size-16 rounded-lg border bg-muted object-cover" />
+    </button>
+  );
 }
