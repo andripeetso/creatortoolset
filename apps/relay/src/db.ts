@@ -25,5 +25,11 @@ export function openDb(file: string): DatabaseSync {
       idle_since INTEGER,
       created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS computers_account ON computers (account_id);`);
+  // Added later, so an older file gets them too. released_at: the reaper deleted the tunnel of a computer that was down;
+  // the computer stays on the account and gets a new tunnel when it asks. recovers: the computer has asked at least once,
+  // so it can get one back (older apps cannot, and their tunnels are never released).
+  const cols = new Set((db.prepare('PRAGMA table_info(computers)').all() as { name: string }[]).map((c) => c.name));
+  if (!cols.has('released_at')) db.exec('ALTER TABLE computers ADD COLUMN released_at INTEGER');
+  if (!cols.has('recovers')) db.exec('ALTER TABLE computers ADD COLUMN recovers INTEGER NOT NULL DEFAULT 0');
   return db;
 }

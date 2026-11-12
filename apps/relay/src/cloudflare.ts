@@ -5,8 +5,9 @@ export interface Cloudflare {
   tunnelToken(tunnelId: string): Promise<string>; // connector token for cloudflared
   configureIngress(tunnelId: string, hostname: string, origin: string): Promise<void>;
   createDns(hostname: string, tunnelId: string): Promise<string>; // DNS record id
+  pointDns(recordId: string, tunnelId: string): Promise<void>; // the same record, to another tunnel
   deleteDns(recordId: string): Promise<void>;
-  tunnelStatus(tunnelId: string): Promise<string | null>; // healthy | degraded | inactive | down; null when gone
+  tunnelStatus(tunnelId: string): Promise<string | null>; // healthy | degraded | inactive | down; null when gone or deleted
   deleteTunnel(tunnelId: string): Promise<void>;
 }
 
@@ -71,12 +72,16 @@ export function createCloudflare(cfg: CloudflareConfig): Cloudflare {
       });
       return r.id;
     },
+    async pointDns(id, tunnelId) {
+      await call('PATCH', `${records}/${id}`, { content: `${tunnelId}.cfargotunnel.com` });
+    },
     async deleteDns(id) {
       await call('DELETE', `${records}/${id}`, undefined, true);
     },
     async tunnelStatus(id) {
+      // A deleted tunnel still answers, with deleted_at set (and status "down"): it is gone all the same.
       const r = await call('GET', `${tunnels}/${id}`, undefined, true);
-      return r ? r.status : null;
+      return r && !r.deleted_at ? r.status : null;
     },
     async deleteTunnel(id) {
       // Cloudflare refuses to delete a tunnel with live connectors, so drop them first.

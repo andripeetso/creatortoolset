@@ -92,6 +92,24 @@ export async function linkThisComputer(o: {
   return state;
 }
 
+/**
+ * Asks the broker for this computer's tunnel, signed with this computer's key (no account token). Null while the saved
+ * tunnel stands; a new token when the broker had released it, which it does after the tunnel has been down a while (the
+ * hostname stays the same). BrokerError("unknown_computer") when the account no longer has this computer.
+ */
+export async function renewTunnel(s: ConnectState): Promise<string | null> {
+  const key = computerKey();
+  const payload = JSON.stringify({ purpose: "tunnel", computer_id: s.computerId, at: Math.floor(Date.now() / 1000) });
+  const r = await call(s.brokerUrl, `/v1/computers/${s.computerId}/tunnel`, {
+    body: {
+      public_key: key.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
+      payload,
+      signature: sign(null, Buffer.from(payload), key.privateKey).toString("base64"),
+    },
+  });
+  return typeof r.tunnel_token === "string" ? r.tunnel_token : null;
+}
+
 /** The account id in a broker token. Read, not verified: the token came from the broker over TLS a moment ago. */
 export function accountOfToken(token: string): string {
   const sub = (JSON.parse(Buffer.from(token.split(".")[0] ?? "", "base64url").toString()) as { sub?: unknown }).sub;

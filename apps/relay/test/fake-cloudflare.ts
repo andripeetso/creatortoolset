@@ -70,6 +70,12 @@ export async function fakeCloudflare(): Promise<FakeCloudflare> {
       records.set(id, { name: body.name, content: body.content });
       return reply(res, 200, { id, name: body.name, content: body.content });
     }
+    if ((m = /^\/client\/v4\/zones\/[^/]+\/dns_records\/([^/]+)$/.exec(p)) && req.method === 'PATCH') {
+      const r = records.get(m[1]);
+      if (!r) return reply(res, 404, null);
+      r.content = body.content;
+      return reply(res, 200, { id: m[1], ...r });
+    }
     if ((m = /^\/client\/v4\/zones\/[^/]+\/dns_records\/([^/]+)$/.exec(p)) && req.method === 'DELETE') {
       if (!records.has(m[1])) return reply(res, 404, null);
       records.delete(m[1]);

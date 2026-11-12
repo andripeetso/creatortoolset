@@ -183,10 +183,14 @@ origin.
 - **Computer limit.** `RELAY_FREE_LIMIT` is the number of computers one account may link. Past it, the link is
   refused. The broker counts linked computers, not devices. Paid tiers are for your own code to decide: the public
   broker only knows the one number.
-- **Idle tunnels.** Every 5 minutes the broker checks each tunnel. A tunnel that is not healthy for
-  `RELAY_REAP_AFTER` seconds (default 1800) is removed: its tunnel, its DNS name and its row. A tunnel Cloudflare
-  no longer has is removed at once. A link cut short before its tunnel was saved is removed after the same window.
-- **Dry run first.** `RELAY_REAP_DRY_RUN=1` only logs what it would remove. Read the logs for a day:
+- **Idle tunnels.** Every 5 minutes the broker checks each tunnel. A tunnel that is down or inactive for
+  `RELAY_REAP_AFTER` seconds (default 1800), or that Cloudflare no longer has, is released: the Cloudflare tunnel
+  is deleted, and the computer stays on its account with its DNS name. Its server asks for its tunnel every 5 minutes
+  and gets a new one on the same name, so a computer that slept is back within about 5 minutes of waking. Only
+  computers that have asked are released: an older app cannot get a tunnel back, so its tunnel is kept. A degraded
+  tunnel still serves and counts as up. The one thing removed is a link cut short before its tunnel was saved, after
+  the same window.
+- **Dry run first.** `RELAY_REAP_DRY_RUN=1` only logs what it would release or remove. Read the logs for a day:
 
   ```sh
   docker logs creatortoolset-relay | grep 'reap'
@@ -220,7 +224,7 @@ the Cloudflare token, the signing key.
 | `the relay signing key must be Ed25519` | `RELAY_SIGNING_KEY` holds another key type |
 | Link refused with `limit_reached` (403) | the account already has `RELAY_FREE_LIMIT` computers; unlink one first |
 | `bad_signature` (401) on link | the computer signed with a key other than the one in its link request |
-| Reaper removes a computer that is still running | the tunnel was not healthy for `RELAY_REAP_AFTER` seconds; raise it |
+| A computer shows `down` after it was off a while | its tunnel was released; it gets a new one within 5 minutes of its server running again |
 | Tickets rejected by a computer after a broker restart | the signing key was regenerated; restore the old key file (§7) |
 
 A computer does not need an inbound port, and nothing on your router needs to change.
@@ -235,4 +239,4 @@ cd apps/relay && node --experimental-strip-types --no-warnings --test test/*.tes
 
 They cover the device grant (approve, deny, expired), link refusals (bad signature, replayed and expired challenges,
 a challenge spent by another account, a non-loopback origin), the computer limit, ticket lifetime and single use,
-unlink, rollback when Cloudflare fails, and the reaper, including its dry run.
+unlink, rollback when Cloudflare fails, and the reaper (release, renew on the same hostname, older apps left alone), including its dry run.

@@ -4,7 +4,7 @@ import type { KeyObject } from 'node:crypto';
 import type { Cloudflare } from './cloudflare.ts';
 import { HttpError } from './errors.ts';
 import { DEVICE_GRANT, decideDevice, pollDeviceGrant, startDeviceGrant } from './device.ts';
-import { createChallenge, linkComputer, listComputers, ticketFor, unlinkComputer, type LinkDeps } from './link.ts';
+import { createChallenge, linkComputer, listComputers, renewTunnel, ticketFor, unlinkComputer, type LinkDeps } from './link.ts';
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
@@ -95,18 +95,24 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
       const computers = [];
       for (const r of rows) {
         let status: string | null = null;
-        try {
-          status = await d.cf.tunnelStatus(r.tunnel_id);
-        } catch {
-          status = 'unknown';
+        if (r.released_at !== null) status = 'down'; // released while it was off: it gets a tunnel when it is back
+        else if (r.tunnel_id) {
+          try {
+            status = await d.cf.tunnelStatus(r.tunnel_id);
+          } catch {
+            status = 'unknown';
+          }
         }
         computers.push({ id: r.id, name: r.name, hostname: r.hostname, status: status ?? 'gone', created_at: r.created_at });
       }
       return json(200, { computers });
     }
-    const m = /^\/v1\/computers\/([0-9a-f]{32})(\/ticket)?$/.exec(path);
-    if (m && req.method === 'POST' && m[2]) {
+    const m = /^\/v1\/computers\/([0-9a-f]{32})(\/ticket|\/tunnel)?$/.exec(path);
+    if (m && req.method === 'POST' && m[2] === '/ticket') {
       return json(200, ticketFor(link, accountOf(d, req), m[1]));
+    }
+    if (m && req.method === 'POST' && m[2] === '/tunnel') {
+      return json(200, await renewTunnel(link, m[1], await body(req)));
     }
     if (m && req.method === 'DELETE' && !m[2]) {
       await unlinkComputer(link, accountOf(d, req), m[1]);

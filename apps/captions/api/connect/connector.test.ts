@@ -22,8 +22,17 @@ writeFileSync(
   { mode: 0o600 },
 );
 
-const { PINNED, ensureCloudflared, installVerified, startConnector, stopConnector, unlinkConnector, connectorStatus } = await import("./connector");
-const { connectState } = await import("./state");
+const { PINNED, ensureCloudflared, installVerified, startConnector, stopConnector, unlinkConnector, connectorStatus, renewNow } = await import("./connector");
+const { connectState, saveConnectState } = await import("./state");
+const linked = connectState()!;
+
+// The broker's answer to the tunnel ask (POST /v1/computers/<id>/tunnel); the asks it got are kept.
+let brokerReply = () => Response.json({ unchanged: true });
+const asks: { url: string; body: { payload: string } }[] = [];
+vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+  asks.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) });
+  return brokerReply();
+});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until(check: () => boolean, ms = 6_000) {
@@ -102,6 +111,36 @@ describe("the tunnel process", () => {
     expect(connectorStatus().running).toBe(true);
   });
 
+  it("asks the broker for its tunnel when it starts, signed, and keeps the tunnel while it stands", () => {
+    const ask = asks.find((a) => a.url.endsWith(`/v1/computers/${"a".repeat(32)}/tunnel`));
+    expect(ask).toBeDefined();
+    expect(JSON.parse(ask!.body.payload)).toMatchObject({ purpose: "tunnel", computer_id: "a".repeat(32) });
+    expect(connectState()?.tunnelToken).toBe("secret-tunnel-token");
+  });
+
+  it("takes a new tunnel the broker gives (it had released the old one) and restarts cloudflared on it", async () => {
+    brokerReply = () => Response.json({ tunnel_token: "renewed-token" });
+    await renewNow();
+    expect(connectState()?.tunnelToken).toBe("renewed-token");
+    await until(() => starts().at(-1)?.startsWith("renewed-token ") ?? false);
+    expect(connectorStatus().running).toBe(true);
+    brokerReply = () => Response.json({ unchanged: true });
+  });
+
+  it("keeps its tunnel when the broker cannot be reached or answers an unknown route", async () => {
+    const count = starts().length;
+    brokerReply = () => {
+      throw new TypeError("fetch failed");
+    };
+    await renewNow();
+    brokerReply = () => Response.json({ error: "not_found" }, { status: 404 });
+    await renewNow();
+    expect(connectState()?.tunnelToken).toBe("renewed-token");
+    await sleep(300);
+    expect(starts().length).toBe(count);
+    brokerReply = () => Response.json({ unchanged: true });
+  });
+
   it("stops cloudflared when the server itself is told to stop (SIGTERM), then lets the signal end the server", async () => {
     const pid = connectorStatus().pid!;
     // the listener the connector added (the last one), called as the signal would; its re-raise is not carried out here
@@ -135,6 +174,18 @@ describe("the tunnel process", () => {
     expect(connectState()).toBeNull();
     expect(existsSync(statePath)).toBe(false);
     expect(connectorStatus().running).toBe(false);
+  });
+
+  it("unlinks itself when the account no longer has this computer", async () => {
+    saveConnectState(linked);
+    startConnector();
+    await until(() => connectorStatus().running);
+    await sleep(100); // the ask made at start has answered
+    brokerReply = () => Response.json({ error: "unknown_computer" }, { status: 404 });
+    await renewNow();
+    expect(connectState()).toBeNull();
+    expect(connectorStatus().running).toBe(false);
+    brokerReply = () => Response.json({ unchanged: true });
   });
 
   it("does nothing on a computer that is not linked", async () => {

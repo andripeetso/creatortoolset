@@ -36,9 +36,9 @@ export function createChallenge(d: LinkDeps, accountId: string) {
   return { nonce, expires_in: CHALLENGE_TTL };
 }
 
-// Body: public_key (base64 SPKI of the computer's Ed25519 key), payload (the JSON text the computer signed),
-// signature (base64 Ed25519 over the payload bytes). The signature is checked before the payload is parsed.
-export async function linkComputer(d: LinkDeps, accountId: string, body: Record<string, unknown>) {
+// A body signed with a computer's own key: public_key (base64 SPKI Ed25519), payload (the JSON text it signed),
+// signature (base64 over the payload bytes). The signature is checked before the payload is parsed.
+function signedBody(body: Record<string, unknown>): { key: KeyObject; p: Record<string, unknown> } {
   const { public_key, payload, signature } = body;
   if (typeof public_key !== 'string' || typeof payload !== 'string' || typeof signature !== 'string') {
     throw new HttpError(400, 'bad_request');
@@ -58,12 +58,18 @@ export async function linkComputer(d: LinkDeps, accountId: string, body: Record<
   }
   if (!signed) throw new HttpError(401, 'bad_signature');
 
-  let p: { nonce?: unknown; name?: unknown; origin?: unknown };
+  let p: Record<string, unknown>;
   try {
     p = JSON.parse(payload);
   } catch {
     throw new HttpError(400, 'bad_request');
   }
+  return { key, p };
+}
+
+// The link: a signed payload of { nonce, name, origin }.
+export async function linkComputer(d: LinkDeps, accountId: string, body: Record<string, unknown>) {
+  const { key, p } = signedBody(body);
   const name = typeof p.name === 'string' ? p.name.trim() : '';
   const origin = typeof p.origin === 'string' ? p.origin : '';
   if (typeof p.nonce !== 'string' || !name || name.length > 64 || !ORIGIN.test(origin)) {
@@ -121,8 +127,67 @@ export async function linkComputer(d: LinkDeps, accountId: string, body: Record<
 
 export function listComputers(d: LinkDeps, accountId: string) {
   return d.db
-    .prepare('SELECT id, name, hostname, tunnel_id, created_at FROM computers WHERE account_id = ? ORDER BY created_at')
-    .all(accountId) as unknown as { id: string; name: string; hostname: string; tunnel_id: string; created_at: number }[];
+    .prepare('SELECT id, name, hostname, tunnel_id, released_at, created_at FROM computers WHERE account_id = ? ORDER BY created_at')
+    .all(accountId) as unknown as { id: string; name: string; hostname: string; tunnel_id: string; released_at: number | null; created_at: number }[];
+}
+
+export const PROOF_WINDOW = 300; // seconds a tunnel request's timestamp may be off
+
+/**
+ * A linked computer asks for its tunnel: when its server starts, then every few minutes. It signs { purpose: "tunnel",
+ * computer_id, at } with its own key, so no account token is needed. While its tunnel stands the answer is
+ * { unchanged: true } and Cloudflare is not called. When the reaper released it (the computer was down long enough),
+ * a new tunnel is made, the computer's DNS record is pointed at it, and its token comes back: the hostname never changes.
+ * A computer the broker does not have (unlinked from the account) is 404 unknown_computer.
+ */
+export async function renewTunnel(d: LinkDeps, computerId: string, body: Record<string, unknown>) {
+  const { key, p } = signedBody(body);
+  const now = d.now();
+  if (keyId(key) !== computerId || p.purpose !== 'tunnel' || p.computer_id !== computerId) throw new HttpError(401, 'bad_signature');
+  if (typeof p.at !== 'number' || Math.abs(now - p.at) > PROOF_WINDOW) throw new HttpError(401, 'stale_proof');
+  const row = d.db.prepare('SELECT origin, hostname, dns_id, released_at FROM computers WHERE id = ?').get(computerId) as
+    | { origin: string; hostname: string; dns_id: string; released_at: number | null }
+    | undefined;
+  if (!row) throw new HttpError(404, 'unknown_computer');
+  d.db.prepare('UPDATE computers SET recovers = 1 WHERE id = ? AND recovers = 0').run(computerId);
+  if (row.released_at === null) return { unchanged: true };
+
+  let tunnel = '';
+  try {
+    tunnel = await d.cf.createTunnel(`ct-${computerId}-${now}`);
+    // Claim the row in the same statement that fills it: of two requests that race, only one keeps its tunnel.
+    const claimed = d.db
+      .prepare('UPDATE computers SET tunnel_id = ?, released_at = NULL, idle_since = NULL WHERE id = ? AND released_at IS NOT NULL')
+      .run(tunnel, computerId);
+    if (claimed.changes !== 1) {
+      await d.cf.deleteTunnel(tunnel);
+      return { unchanged: true };
+    }
+    await d.cf.configureIngress(tunnel, row.hostname, row.origin);
+    await d.cf.pointDns(row.dns_id, tunnel);
+    return { tunnel_token: await d.cf.tunnelToken(tunnel) };
+  } catch (e) {
+    try {
+      if (tunnel) await d.cf.deleteTunnel(tunnel);
+    } catch {
+      // a tunnel left behind is one more Cloudflare object, not a broken computer; the next request makes a new one
+    }
+    d.db.prepare("UPDATE computers SET tunnel_id = '', released_at = ? WHERE id = ? AND (tunnel_id = ? OR tunnel_id = '')").run(now, computerId, tunnel);
+    console.error('renew failed', computerId, (e as Error).message);
+    throw new HttpError(502, 'cloudflare');
+  }
+}
+
+/** The reaper's release: the tunnel goes, the computer and its DNS record stay (the record points nowhere until renew). */
+export async function releaseTunnel(
+  d: { db: DatabaseSync; cf: Cloudflare; now: () => number },
+  row: { id: string; tunnel_id: string },
+  exists = true, // false: Cloudflare already deleted it, so there is nothing to delete
+) {
+  if (exists) await d.cf.deleteTunnel(row.tunnel_id);
+  d.db
+    .prepare("UPDATE computers SET tunnel_id = '', released_at = ?, idle_since = NULL WHERE id = ? AND tunnel_id = ?")
+    .run(d.now(), row.id, row.tunnel_id);
 }
 
 // The owner's ticket for one of their computers. Another account's computer is "not found", never "forbidden".

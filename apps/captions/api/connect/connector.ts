@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writ
 import path from "node:path";
 import { promisify } from "node:util";
 import { env } from "../lib/env";
+import { BrokerError, renewTunnel } from "./broker";
 import { connectState, saveConnectState } from "./state";
 
 // The tunnel's byte carrier: cloudflared, a pinned release, run by this server as a child process. It connects out to
@@ -101,13 +102,48 @@ function stopWithServer(): void {
     });
 }
 
+/**
+ * The broker releases a tunnel that has been down a while (the computer slept, or was off) and makes a new one when the
+ * computer asks. So the computer asks: when the tunnel starts, then every few minutes (a wake from sleep lands on the
+ * next ask). A new token is saved and cloudflared is restarted on it; a computer the account removed is unlinked here
+ * too. Anything else (the broker unreachable, an older broker) keeps the saved tunnel and asks again next time.
+ */
+export const RENEW_EVERY = 5 * 60_000;
+let renewTimer: ReturnType<typeof setInterval> | null = null;
+let asking = false;
+
+export async function renewNow(): Promise<void> {
+  const s = connectState();
+  if (!s || asking) return;
+  asking = true;
+  try {
+    const token = await renewTunnel(s);
+    const now = connectState();
+    if (token && now && token !== now.tunnelToken) {
+      saveConnectState({ ...now, tunnelToken: token });
+      console.log("connector: the broker gave this computer a new tunnel; restarting it");
+      child?.kill("SIGTERM");
+    }
+  } catch (e) {
+    if (e instanceof BrokerError && e.code === "unknown_computer") {
+      console.warn("connector: this computer was removed from the account; unlinking");
+      await unlinkConnector();
+    }
+  } finally {
+    asking = false;
+  }
+}
+
 /** Starts the tunnel of a linked computer. Does nothing when this computer is not linked or already running. */
 export function startConnector(): void {
   const s = connectState();
   if (!s?.tunnelToken || run) return;
   stopWithServer();
   stopping = false;
-  const current: Promise<void> = supervise(s.tunnelToken)
+  renewTimer ??= setInterval(() => void renewNow(), RENEW_EVERY);
+  renewTimer.unref?.();
+  void renewNow();
+  const current: Promise<void> = supervise()
     .catch((e: unknown) => console.error("connector:", e instanceof Error ? e.message : e))
     .finally(() => {
       if (run === current) run = null;
@@ -115,10 +151,12 @@ export function startConnector(): void {
   run = current;
 }
 
-async function supervise(token: string): Promise<void> {
+async function supervise(): Promise<void> {
   const bin = await ensureCloudflared();
   let delay = 1_000;
   while (!stopping) {
+    const token = connectState()?.tunnelToken; // read on every start: a renew may have replaced it
+    if (!token) return;
     const began = Date.now();
     // The token goes in the environment, not in argv (argv shows in `ps`). Only PATH is passed on, not the server's env.
     const p = spawn(bin, ["tunnel", "--no-autoupdate", "run"], {
@@ -155,6 +193,8 @@ const pause = (ms: number) =>
 /** Stops the tunnel: SIGTERM, SIGKILL after 10 s, and no restart. Resolves once the process is gone. */
 export async function stopConnector(): Promise<void> {
   stopping = true;
+  if (renewTimer) clearInterval(renewTimer);
+  renewTimer = null;
   wake?.();
   const p = child;
   if (p && p.exitCode === null && p.signalCode === null) {

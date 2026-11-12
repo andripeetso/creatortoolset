@@ -352,40 +352,95 @@ test('bad account tokens are 401 on every account route; unknown routes are 404'
   assert.equal((await api('GET', '/healthz')).text, 'ok');
 });
 
-// --- reaper ---
+// --- reaper and tunnel renew ---
 
-test('reaper: a tunnel down past the window is removed; a healthy one is not; a dry run deletes nothing', async () => {
-  const { id } = await linkOne(acct(), 'Old Mac');
-  const other = await linkOne(acct(), 'Live Mac');
-  const [oldFake, liveFake] = [...fake.tunnels.keys()]; // tunnels are made in link order
-  fake.setStatus(liveFake, 'healthy');
-  const reapOpts = { afterSeconds: 1800 };
+// What the computer's server sends for its tunnel (api/connect/broker.ts renewTunnel).
+function tunnelProof(c: ReturnType<typeof computer>, id: string, o: { at?: number; purpose?: string } = {}) {
+  const payload = JSON.stringify({ purpose: o.purpose ?? 'tunnel', computer_id: id, at: o.at ?? clock });
+  return { public_key: c.spki, payload, signature: sign(null, Buffer.from(payload), c.key).toString('base64') };
+}
+const renew = (c: ReturnType<typeof computer>, id: string, o: { at?: number; purpose?: string } = {}) =>
+  api('POST', `/v1/computers/${id}/tunnel`, { body: tunnelProof(c, id, o) });
 
-  // first sight starts the clock
-  let out = await reap(deps, { ...reapOpts, dryRun: true });
-  assert.ok(out.every((o) => o.action === 'kept'));
-
-  clock += 1800;
-  out = await reap(deps, { ...reapOpts, dryRun: true });
-  assert.equal(out.find((o) => o.id === id)!.action, 'would-remove');
-  assert.equal(out.find((o) => o.id === other.id)!.action, 'kept');
-  assert.equal(fake.tunnels.size, 2, 'dry run deletes nothing');
-
-  out = await reap(deps, { ...reapOpts, dryRun: false });
-  assert.equal(out.find((o) => o.id === id)!.action, 'removed');
-  assert.equal(fake.tunnels.has(oldFake), false);
-  assert.equal(fake.tunnels.has(liveFake), true);
-  assert.equal(fake.records.size, 1, 'the removed computer took its DNS record');
-  const rows = deps.db.prepare('SELECT id FROM computers').all() as { id: string }[];
-  assert.deepEqual(rows.map((r) => r.id), [other.id]);
+test('renew: a standing tunnel is unchanged, with no Cloudflare call; the ask marks the computer as one that recovers', async () => {
+  const { c, id } = await linkOne();
+  const before = fake.tunnels.size;
+  const r = await renew(c, id);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.json, { unchanged: true });
+  assert.equal(fake.tunnels.size, before);
+  assert.equal((deps.db.prepare('SELECT recovers FROM computers WHERE id = ?').get(id) as { recovers: number }).recovers, 1);
 });
 
-test('reaper: a tunnel Cloudflare no longer has is removed at once', async () => {
-  const { id } = await linkOne();
+test('renew: another key, a stale or reused proof, a link payload, and an unknown computer are refused', async () => {
+  const { c, id } = await linkOne();
+  const other = computer();
+  assert.equal((await api('POST', `/v1/computers/${id}/tunnel`, { body: tunnelProof(other, id) })).json.error, 'bad_signature');
+  assert.equal((await renew(c, id, { at: clock - 301 })).json.error, 'stale_proof');
+  assert.equal((await renew(c, id, { purpose: 'link' })).json.error, 'bad_signature');
+  const nonce = await challenge();
+  assert.equal((await api('POST', `/v1/computers/${id}/tunnel`, { body: signedLink(c, nonce) })).status, 401);
+  await api('DELETE', `/v1/computers/${id}`, { token: acct() });
+  const gone = await renew(c, id);
+  assert.equal(gone.status, 404);
+  assert.equal(gone.json.error, 'unknown_computer');
+});
+
+test('reaper: a computer down past the window loses only its tunnel, and gets a new one on the same hostname when back', async () => {
+  const { c, id, hostname } = await linkOne(acct(), 'Sleepy Mac');
+  const live = await linkOne(acct(), 'Live Mac');
+  await renew(c, id);
+  await renew(live.c, live.id);
+  const [oldTunnel, liveTunnel] = [...fake.tunnels.keys()];
+  fake.setStatus(liveTunnel, 'healthy');
+
+  let out = await reap(deps, { afterSeconds: 1800, dryRun: false });
+  assert.ok(out.every((o) => o.action === 'kept'), 'first sight starts the clock');
+  clock += 1800;
+  out = await reap(deps, { afterSeconds: 1800, dryRun: true });
+  assert.equal(out.find((o) => o.id === id)!.action, 'would-release');
+  assert.equal(fake.tunnels.size, 2, 'dry run deletes nothing');
+  out = await reap(deps, { afterSeconds: 1800, dryRun: false });
+  assert.equal(out.find((o) => o.id === id)!.action, 'released');
+  assert.equal(out.find((o) => o.id === live.id)!.action, 'kept');
+  assert.equal(fake.tunnels.has(oldTunnel), false);
+  assert.equal(fake.records.size, 2, 'the DNS record stays');
+
+  // still on the account, shown as down, still gets tickets; later sweeps leave it alone
+  const list = (await api('GET', '/v1/computers', { token: acct() })).json.computers;
+  assert.deepEqual(list.map((x: { id: string; status: string }) => [x.id, x.status]), [[id, 'down'], [live.id, 'healthy']]);
+  assert.equal((await api('POST', `/v1/computers/${id}/ticket`, { token: acct() })).status, 200);
+  assert.equal((await reap(deps, { afterSeconds: 1800, dryRun: false })).find((o) => o.id === id)!.action, 'kept');
+
+  // back: a new tunnel, routed to the same origin, and the same DNS record now points at it
+  const r = await renew(c, id);
+  assert.equal(r.status, 200, r.text);
+  const newTunnel = [...fake.tunnels.keys()].find((t) => t !== liveTunnel)!;
+  assert.equal(r.json.tunnel_token, `connector-token-${newTunnel}`);
+  assert.deepEqual(fake.tunnels.get(newTunnel)!.ingress, [{ hostname, service: 'http://127.0.0.1:43128' }, { service: 'http_status:404' }]);
+  assert.ok([...fake.records.values()].some((rec) => rec.name === hostname && rec.content === `${newTunnel}.cfargotunnel.com`));
+  assert.deepEqual((await renew(c, id)).json, { unchanged: true }, 'asked again: nothing new');
+  assert.equal((await api('GET', '/v1/computers', { token: acct() })).json.computers[0].status, 'inactive');
+});
+
+test('reaper: a tunnel Cloudflare no longer has is released at once; unlink of a released computer still clears DNS', async () => {
+  const { c, id } = await linkOne();
+  await renew(c, id);
   fake.tunnels.clear();
   const out = await reap(deps, { afterSeconds: 1800, dryRun: false });
-  assert.equal(out.find((o) => o.id === id)!.action, 'removed');
+  assert.equal(out.find((o) => o.id === id)!.action, 'released');
+  assert.equal(fake.records.size, 1);
+  assert.equal((await api('DELETE', `/v1/computers/${id}`, { token: acct() })).status, 204);
   assert.equal(fake.records.size, 0);
+});
+
+test('reaper: a computer on an older app (never asked for its tunnel) is never touched', async () => {
+  const { id } = await linkOne();
+  fake.tunnels.clear();
+  clock += 100_000;
+  const out = await reap(deps, { afterSeconds: 1800, dryRun: false });
+  assert.equal(out.find((o) => o.id === id)!.action, 'kept');
+  assert.equal((await api('GET', '/v1/computers', { token: acct() })).json.computers.length, 1);
 });
 
 test('reaper: a link cut short before its tunnel was saved is removed after the window, not before', async () => {
@@ -403,7 +458,8 @@ test('reaper: a link cut short before its tunnel was saved is removed after the 
 });
 
 test('reaper: a tunnel that comes back healthy resets its clock', async () => {
-  const { id } = await linkOne();
+  const { c, id } = await linkOne();
+  await renew(c, id);
   const tid = [...fake.tunnels.keys()][0];
   await reap(deps, { afterSeconds: 1800, dryRun: false });
   clock += 1000;
@@ -413,4 +469,38 @@ test('reaper: a tunnel that comes back healthy resets its clock', async () => {
   clock += 1000; // 2000 s since first sight, but the healthy sweep reset the clock, so this sweep starts it again
   const out = await reap(deps, { afterSeconds: 1800, dryRun: false });
   assert.equal(out.find((o) => o.id === id)!.action, 'kept');
+});
+
+test('reaper: a degraded tunnel (still serving, a connection lost) is alive, however long', async () => {
+  const { c, id } = await linkOne();
+  await renew(c, id);
+  fake.setStatus([...fake.tunnels.keys()][0], 'degraded');
+  await reap(deps, { afterSeconds: 1800, dryRun: false });
+  clock += 100_000;
+  const out = await reap(deps, { afterSeconds: 1800, dryRun: false });
+  assert.equal(out.find((o) => o.id === id)!.action, 'kept');
+});
+
+test('db: a file from before the release columns gets them, and its computers start as ones that do not recover', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const file = `${mkdtempSync(`${process.env.CT_SCRATCH_DIR ?? tmpdir()}/relay-old-`)}/relay.sqlite`;
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE computers (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL,
+            hostname TEXT NOT NULL UNIQUE, tunnel_id TEXT NOT NULL, dns_id TEXT NOT NULL, idle_since INTEGER, created_at INTEGER NOT NULL);
+            INSERT INTO computers VALUES ('x', 'a', 'Old', 'http://127.0.0.1:1', 'x.h', 't', 'd', NULL, 1);`);
+  old.close();
+  const db = openDb(file);
+  assert.deepEqual({ ...(db.prepare('SELECT released_at, recovers FROM computers').get() as object) }, { released_at: null, recovers: 0 });
+  db.close();
+  openDb(file).close(); // a second open adds nothing twice
+});
+
+test('cloudflare: a deleted tunnel (Cloudflare still answers it, with deleted_at) counts as gone', async () => {
+  const answer = (result: unknown) => async () => Response.json({ success: true, errors: [], result });
+  const cf = (result: unknown) =>
+    createCloudflare({ accountId: 'a', zoneId: 'z', token: 't', fetch: answer(result) as unknown as typeof fetch });
+  assert.equal(await cf({ id: 'x', status: 'down', deleted_at: '2026-11-12T15:25:17Z' }).tunnelStatus('x'), null);
+  assert.equal(await cf({ id: 'x', status: 'down', deleted_at: null }).tunnelStatus('x'), 'down');
 });
