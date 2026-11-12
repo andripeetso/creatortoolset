@@ -50,6 +50,7 @@ const mac = pairDevice("onmac", "Studio Mac");
 
 afterAll(async () => {
   await devicesSaved();
+  await new Promise((r) => setTimeout(r, 300)); // an answer's usage is written after it: let the last one land before its folder goes
   rmSync(dir, { recursive: true, force: true });
 });
 

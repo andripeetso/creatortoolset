@@ -40,6 +40,8 @@ export interface EditMeta extends EditBrief {
   steps?: EditStepChoice[];
   /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
   style?: EditStyleCopy;
+  /** which of the name and the brief came through an AI's tool, not from the person at their own screen (routes.ts): finished.ts keeps neither */
+  byTool?: ("name" | "brief")[];
   trashedAt?: number;
 }
 
@@ -74,6 +76,10 @@ export interface StepFiles {
   review: Record<string, ReviewPreview>;
   /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
   post: Record<string, { files: Record<string, string>; notes: string[] }>;
+  /** each version's lines and takes as the script step first planned them, before the person changed any (finished.ts: what they took out) */
+  first: { plans: Pick<VersionPlan, "name" | "lines">[] };
+  /** the person took this edit off its style's finished list: it is never kept for a style again (finished.ts) */
+  finished: { removed: boolean };
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -86,6 +92,19 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
 
 /** The copies the post step made for a version, by source version id: the preview and the export play these (none: the sources' own files). */
 export const postFiles = (editId: string, variant: string): Record<string, string> => readStep(editId, "post")?.[variant]?.files ?? {};
+
+/** Said when a version's newest post step did not finish (failed, stopped, or not done yet). */
+export const POST_UNFINISHED = "Post-processing did not finish on this version: run it again before you export";
+
+/**
+ * True when a version's newest post step is not done: its copies (post.json) are an older run's, which may carry faces
+ * unblurred or a look the cut no longer has, so neither the export nor a preview may play them. A version that never
+ * had a post step (edits from before it) is not held.
+ */
+export function postUnfinished(editId: string, variant: string): boolean {
+  const row = libraryDb().prepare("SELECT state FROM edit_jobs WHERE edit_id = ? AND version_id = ? AND kind = 'post' ORDER BY id DESC LIMIT 1").get(editId, `${editId}:${variant}`) as { state: string } | undefined;
+  return !!row && row.state !== "done";
+}
 
 export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: StepFiles[K]) => writeJsonAtomic(path.join(root(), id, `${name}.json`), value);
 
@@ -283,6 +302,16 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   return out;
 }
 
+/**
+ * EditMeta.byTool once `patch` set the name or the brief: a field an AI's tool wrote (`tool`) is listed, one the person
+ * wrote themselves is theirs again. No key when neither is a tool's.
+ */
+export function byToolAfter(was: EditMeta["byTool"], patch: Partial<EditBrief>, tool: boolean): Pick<EditMeta, "byTool"> {
+  const set = (["name", "brief"] as const).filter((k) => patch[k] !== undefined);
+  const now = [...(was ?? []).filter((k) => !set.includes(k)), ...(tool ? set : [])];
+  return now.length ? { byTool: now } : {};
+}
+
 /** An editing style that is not there: the routes answer 404. */
 export class NoStyle extends Error {}
 
@@ -339,8 +368,8 @@ export function uploadFinished(uploadId: string, versionId: string): Promise<voi
   return waiting;
 }
 
-/** A new edit of `sources` for `username`, or null when a source is not theirs to read. */
-export async function createEdit(username: string, body: Record<string, unknown>): Promise<EditMeta | null> {
+/** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
+export async function createEdit(username: string, body: Record<string, unknown>, tool = false): Promise<EditMeta | null> {
   const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
   const sources = ids(body.sources);
   const uploads = sources.length ? [] : ids(body.uploads);
@@ -372,6 +401,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
+    ...byToolAfter(undefined, brief, tool),
   };
   mkdirSync(path.dirname(fileOf(e.id)), { recursive: true });
   await saveEdit(e);
@@ -401,6 +431,7 @@ export function summaryOf(e: EditMeta): EditSummary {
 
 export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
+  delete meta.byTool; // the server's own mark (finished.ts): `meta` is this call's own copy
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
   const cards = cardsView(e.id, draftNames(e.id));

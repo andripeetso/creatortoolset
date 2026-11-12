@@ -18,7 +18,7 @@ import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
-import { editorTools } from "./mcp-tools/editor";
+import { editorTools, hasStyle } from "./mcp-tools/editor";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
@@ -63,6 +63,12 @@ export const SORT_WAIT_S = { added: 10, asked: 50 };
 const ANSWER_BY_S = 50;
 /** What a media tool's answer says while clips are still being sorted (a transcript first). */
 const STILL_SORTING = "Some clips are still being sorted (their transcript comes first): media_search with these versions waits for the final count.";
+
+/** Said only where the built-in Finals tools are listed (not where a plug-in's Media Library replaces the app's). */
+const FINALS_GUIDE = `Finals: the finished pieces the user keeps. A piece holds versions, and one can be the winner. finals_pieces lists them
+(and gives one in full: each version's post description and where it was posted), finals_piece_update renames a piece,
+sets the winner, orders its versions and writes a version's name or post description, finals_piece_trash moves one to
+the trash or back. A version's id is the one finals_pieces gives.`;
 
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
@@ -173,7 +179,7 @@ export const TOOLS = [
   { name: "workshop_wait", description: "Keep waiting for a workshop_chat reply.", inputSchema: { type: "object", properties: { session: str, reply: str, wait_s: { type: "integer" } }, required: ["session", "reply"] } },
   {
     name: "finals_link_session",
-    description: "Link a Finals piece (its id) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
+    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
     inputSchema: { type: "object", properties: { piece: str, session: str, workshop_piece: str }, required: ["piece", "session"] },
   },
   { name: "list_reviews", description: "His videos in Review: approval, versions, latest file, comment counts, link.", inputSchema: { type: "object", properties: {} } },
@@ -761,6 +767,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     review_share: async (a) => {
       const at = await reviewOf({ json, origin }, a.link);
       if (!at.manage) throw new ToolError("That video is someone else's: only its owner can change its share link.");
+      if (a.on !== false && !(at.asset.share as { enabled?: boolean } | null)?.enabled) await sure(`Turn on the share link of "${String(at.asset.name).slice(0, 80)}"? Anyone with the link can watch${a.download === true ? ", comment and download the file" : " and comment"}, no account needed.`);
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
       const r = await json(at.path, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
@@ -1282,7 +1289,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
-        instructions: plugged.guide ? `${INSTRUCTIONS}\n\n${plugged.guide}` : INSTRUCTIONS,
+        instructions: [INSTRUCTIONS, mainSource() ? "" : FINALS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
@@ -1292,7 +1299,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read")), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));

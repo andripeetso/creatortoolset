@@ -249,6 +249,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => {
   await devicesSaved();
+  await new Promise((r) => setTimeout(r, 300)); // an answer's usage is written after it: let the last one land before its folder goes
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -332,15 +333,6 @@ describe.skipIf(rootReplaced)("the card step", () => {
     expect(readCards(id, "v1")).toMatchObject({ calls: 3, draws: 1, drawn: ["c1", "c2"], done: true });
     expect((await view(id)).cards).toEqual({ v1: { cards: [{ id: "c1", text: "Tuck your chin", liked: false }, { id: "c2", text: "Push with both hands", liked: false }] } });
 
-    // the script is the edit's own file and goes to the Mac alone: no answer to a signed-in page carries it
-    expect(readFileSync(path.join(editDir(id), "cards", "v1", "script.txt"), "utf8")).toBe(SCRIPT);
-    for (const url of [`/api/editor/${id}`, `/api/editor/${id}/drafts/v1`, `/api/editor/${id}/sentences`, `/api/editor/${id}/drafts/v1/export?format=otio`, `/api/editor/${id}/drafts/v1/export?format=fcpxml`, `/api/editor/${id}/cards/v1/c1/still`, "/api/editor", "/api/editor/animation-styles"]) {
-      const got = await call("maker", "GET", url);
-      expect(got.status).toBe(200);
-      expect(Buffer.from(await got.arrayBuffer()).toString("latin1")).not.toContain("kitFrame");
-    }
-    for (const url of [`/api/editor/${id}/cards/v1/script`, `/api/editor/${id}/cards/v1/script.txt`, `/api/editor/${id}/cards/v1`]) expect((await call("maker", "GET", url)).status).toBe(404);
-
     // the preview shows the card there and his take everywhere else, and his voice runs on under it
     const out = path.join(dir, "with-cards.mp4");
     await renderPreview(tl, await localFiles(tl, id), out);
@@ -366,6 +358,16 @@ describe.skipIf(rootReplaced)("the card step", () => {
     expect(jobs(id)).toEqual(["broll", "cards", "post", "preview", "file"].map((kind) => ({ kind, state: "done", error: null })));
     expect((await view(id)).previews.v1).toBeDefined();
   }, 120_000);
+
+  it("the script is the edit's own file and goes to the Mac alone: no answer to a signed-in page carries it", async () => {
+    expect(readFileSync(path.join(editDir(id), "cards", "v1", "script.txt"), "utf8")).toBe(SCRIPT);
+    for (const url of [`/api/editor/${id}`, `/api/editor/${id}/drafts/v1`, `/api/editor/${id}/sentences`, `/api/editor/${id}/drafts/v1/export?format=otio`, `/api/editor/${id}/drafts/v1/export?format=fcpxml`, `/api/editor/${id}/drafts/v1/export`, `/api/editor/${id}/cards/v1/c1/still`, "/api/editor", "/api/editor/animation-styles"]) {
+      const got = await call("maker", "GET", url);
+      expect(got.status, url).toBe(200);
+      expect(Buffer.from(await got.arrayBuffer()).toString("latin1"), url).not.toContain("kitFrame");
+    }
+    for (const url of [`/api/editor/${id}/cards/v1/script`, `/api/editor/${id}/cards/v1/script.txt`, `/api/editor/${id}/cards/v1`]) expect((await call("maker", "GET", url)).status).toBe(404);
+  });
 
   it("the export names the card's clip: a path in the edit's folder, and inside the zip", async () => {
     const otio = await call("maker", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`);

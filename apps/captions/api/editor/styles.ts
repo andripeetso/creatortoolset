@@ -168,6 +168,11 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     if (body.animation !== null && !read(username).animation?.some((a) => a.id === body.animation)) return "No such animation style";
     out.animation = body.animation as string | null;
   }
+  // one of the person's skills, by id; one that is not there (or is switched off) when an edit's script step runs adds nothing
+  if (body.skill !== undefined) {
+    if (body.skill !== null && (!short(body.skill, 100) || !body.skill)) return "skill is a skill's id, or null";
+    out.skill = body.skill as string | null;
+  }
   return out;
 }
 
@@ -181,7 +186,7 @@ export function createStyle(username: string, body: Record<string, unknown>, fro
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const base = from
-    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}) }
+    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}) }
     : PLAIN;
   const now = Date.now();
   const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
@@ -213,7 +218,7 @@ export const deleteStyle = (username: string, id: string): boolean =>
   });
 
 /** What an edit keeps of its style. */
-export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.animation ? { animation: s.animation } : {}) });
+export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.animation ? { animation: s.animation } : {}), ...(s.skill ? { skill: s.skill } : {}) });
 
 /**
  * The one block an edit's style adds to the script step's prompt, after the installed packs' text: the person's own

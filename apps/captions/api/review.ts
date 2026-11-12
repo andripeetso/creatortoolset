@@ -1245,6 +1245,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
     { versionId: ver.versionId },
   );
   if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+  emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
   return c.json({ pieceId: out.pieceId });
 });
 
@@ -1274,6 +1275,7 @@ reviewApp.post("/assets/:id/v/:n/content", async (c) => {
     if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
     pieceId = out.pieceId;
   }
+  emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
   return c.json({ pieceId }, 201);
 });
 
@@ -2340,6 +2342,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       m.approval = { status, by, at: Date.now() };
     });
     if (!meta) return c.json({ error: "Not found" }, 404);
+    if (status === "approved") emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }

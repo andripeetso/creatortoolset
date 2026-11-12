@@ -47,6 +47,9 @@ final class AccountTests: XCTestCase {
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://account?code=")!))
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://review/abc?code=abc123")!))
         XCTAssertNil(accountCode(from: URL(string: "https://accounts.example.com/account?code=abc123")!))
+        XCTAssertTrue(isConnectDone(URL(string: "creatortoolset://connect")!))
+        XCTAssertFalse(isConnectDone(URL(string: "creatortoolset://review/connect")!))
+        XCTAssertFalse(isConnectDone(URL(string: "https://creatortoolset.com/connect")!))
     }
 
     func testAccountServerSetting() {

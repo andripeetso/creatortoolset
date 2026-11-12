@@ -272,6 +272,9 @@ export default function EditorEditPage() {
                 const d = drafts[n];
                 const title = edit.plans.find((p) => p.name === n)?.title ?? n;
                 const cards = edit.cards?.[n];
+                // its newest post step not done: the server refuses the export (api/editor/store.ts postUnfinished), so say why here
+                const post = edit.jobs.filter((j) => j.kind === "post" && j.variant === n).at(-1);
+                const postHeld = !!post && post.state !== "done";
                 return (
                   <article key={n} aria-label={title} className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -315,7 +318,8 @@ export default function EditorEditPage() {
                       </section>
                     )}
                     <div className="flex flex-wrap gap-1.5">
-                      {(["otio", "fcpxml", "zip"] as const).map((f) => (
+                      {postHeld && <p className="text-xs text-amber-600">Post-processing did not finish on this version: run it again before you export</p>}
+                      {!postHeld && (["otio", "fcpxml", "zip"] as const).map((f) => (
                         <Button key={f} asChild size="sm" variant="outline">
                           <a href={exportUrl(id, n, f)} download>
                             <Download className="h-3.5 w-3.5" />
