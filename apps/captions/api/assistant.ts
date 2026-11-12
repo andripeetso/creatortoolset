@@ -848,7 +848,7 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
   const h = conv.held?.[m.id];
   const asked = everyChat(conv).flat().find((x) => x.id === h?.ask);
   if (conv.held) delete conv.held[m.id];
-  if (how === "stopped") for (const id of h?.files ?? []) void removeFile(username, id);
+  if (how === "stopped") for (const id of h?.files ?? []) void removeFile(username, id).catch((e) => console.warn("[assistant] remove a stopped upload:", e instanceof Error ? e.message : e));
   const lost = m.send ? [`"${m.send.name}"`] : (asked?.files ?? []).filter((f) => f.uploading).map((f) => `"${f.name}"`);
   const text =
     how === "stopped"
