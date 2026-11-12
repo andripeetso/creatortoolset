@@ -69,5 +69,9 @@
   { "id": "exports.get", "method": "GET", "path": "/api/exports/:id", "probe": "route" },
   { "id": "exports.file", "method": "GET", "path": "/api/exports/:id/file", "probe": "route" },
   { "id": "editor.list", "method": "GET", "path": "/api/editor", "probe": "list", "shape": { "type": "array" } },
-  { "id": "fonts.file", "method": "GET", "path": "/fonts/:file", "probe": "static" }
+  { "id": "fonts.file", "method": "GET", "path": "/fonts/:file", "probe": "static" },
+  { "id": "editor.draft-review", "method": "POST", "path": "/api/editor/:id/drafts/:name/review", "probe": "route" },
+  { "id": "workshop.workspace", "method": "GET", "path": "/api/workshop/workspace", "probe": "route" },
+  { "id": "workshop.own-post", "method": "POST", "path": "/api/workshop/own-post", "probe": "route" },
+  { "id": "instagram.share", "method": "POST", "path": "/api/instagram/share", "probe": "route" }
 ]
