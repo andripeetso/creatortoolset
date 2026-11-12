@@ -275,7 +275,7 @@ describe("the attention hook", () => {
     const job = await p.claim();
     await p.answer(job.id, "Did   the\nthing.");
     const v = await settled(p);
-    expect(heard).toEqual([{ username: "cal", reply: v.messages.at(-1)!.id, kind: "done", title: "Do the thing", body: "Did the thing.", path: `/?chat=${v.id}`, sentAt: v.messages.at(-2)!.at }]);
+    expect(heard).toEqual([{ username: "cal", reply: v.messages.at(-1)!.id, chat: v.id, kind: "done", title: "Do the thing", body: "Did the thing.", path: `/?chat=${v.id}`, sentAt: v.messages.at(-2)!.at }]);
     // an Allow / Deny on the Mac
     heard.length = 0;
     await p.send({ text: "Make a file" });
@@ -358,15 +358,19 @@ describe("New chat and an earlier chat while a reply runs or waits", () => {
     expect(opened.messages.at(-1)).toMatchObject({ text: "Shortened.", status: "done" });
   });
 
-  it("a queued reply's prompt is its own chat up to its message, whatever chat is open when its turn comes; one at a time across chats", async () => {
+  it("a queued reply's prompt is its own chat up to its message, whatever chat is open when its turn comes; another chat answers meanwhile", async () => {
     const p = await person("fay");
     await p.send({ text: "Alpha one" });
     const first = await p.claim();
     await p.send({ text: "Alpha two" });
     const alpha = (await p.view()).id;
     await p.newChat();
+    // a different chat: not held behind Alpha's replies
     const v = (await (await p.send({ text: "Beta one" })).json()) as View;
-    expect(v.messages.map((m) => [m.text, m.wait?.for])).toEqual([["Beta one", undefined], ["", "reply"]]);
+    expect(v.messages.map((m) => [m.text, m.wait?.for])).toEqual([["Beta one", undefined], ["", undefined]]);
+    const third = await p.claim();
+    expect(third.user).toContain("Beta one");
+    expect(third.user).not.toContain("Alpha");
     const next = p.claim();
     expect(await stillWaiting(next)).toBe(true);
     await p.answer(first.id, "Answer alpha one");
@@ -374,12 +378,7 @@ describe("New chat and an earlier chat while a reply runs or waits", () => {
     expect(second.user).toContain("Answer alpha one");
     expect(second.user).toContain("Alpha two");
     expect(second.user).not.toContain("Beta");
-    const after = p.claim();
-    expect(await stillWaiting(after)).toBe(true);
     await p.answer(second.id, "Answer alpha two");
-    const third = await after;
-    expect(third.user).toContain("Beta one");
-    expect(third.user).not.toContain("Alpha");
     await p.answer(third.id, "Answer beta");
     expect((await settled(p)).messages.map((m) => m.text)).toEqual(["Beta one", "Answer beta"]);
     const opened = (await (await p.open(alpha)).json()) as View;

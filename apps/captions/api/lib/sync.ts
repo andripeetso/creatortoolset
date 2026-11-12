@@ -9,6 +9,7 @@ import type { AuthVars } from "../auth";
  * { seq, topic, origin }: `seq` counts every change since this server started, `topic` is the first part of the
  * changed address after /api ("review", "workshop", "x/<plug-in>"), `origin` is the tab that made the write (its
  * X-CT-Client header), so that tab does not refetch what it just saved. Each account hears only its own changes.
+ * An "assistant" notice may also carry `chat`: the one assistant chat that changed (api/assistant.ts).
  * The browser derives the same topic from a saved list's address (topicOf, src/lib/sync.ts).
  * ponytail: per-account only. A change to a team's shared item reaches the member who made it, not the others;
  * add workspace fan-out when teams edit the same item at once.
@@ -18,7 +19,7 @@ export const bootId = randomUUID();
 let seq = 0;
 /** account → topic → the seq of its newest change, for the hello a (re)connecting tab compares against */
 const latest = new Map<string, Map<string, number>>();
-type Listener = (n: { seq: number; topic: string; origin: string | null }) => void;
+type Listener = (n: { seq: number; topic: string; origin: string | null; chat?: string }) => void;
 const listeners = new Map<string, Set<Listener>>();
 
 /** The topic of an /api address: "/api/review/x" → "review", "/api/x/ba/editor" → "x/ba". Null outside /api. */
@@ -28,8 +29,8 @@ export function topicOf(path: string): string | null {
 }
 
 /** Tell this account's open tabs that a topic changed. For writes outside a request (a background job's save). */
-export function announce(owner: string, topic: string, origin: string | null = null): void {
-  const n = { seq: ++seq, topic, origin };
+export function announce(owner: string, topic: string, origin: string | null = null, chat?: string): void {
+  const n = { seq: ++seq, topic, origin, ...(chat ? { chat } : {}) };
   let topics = latest.get(owner);
   if (!topics) latest.set(owner, (topics = new Map()));
   topics.set(topic, n.seq);

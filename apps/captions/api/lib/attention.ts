@@ -8,6 +8,8 @@ export interface Attention {
   username: string;
   /** The reply it is about (the same reply can ask and later end: a listener that wants one notice per reply counts these). */
   reply: string;
+  /** The chat the reply is in (GET /api/assistant/chats/:id; its asks are answered there by their own ids). */
+  chat: string;
   kind: "done" | "failed" | "asks";
   /** One line each: the chat's title, then what happened. */
   title: string;
