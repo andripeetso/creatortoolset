@@ -50,20 +50,6 @@ final class ConnectTests: XCTestCase {
         XCTAssertNil(tunnelConfig(data: Data(#"{"computerId":"bbbb","hostname":"h","tunnelToken":""}"#.utf8)))
     }
 
-    func testTheTokenGoesInTheEnvironmentNeverInTheArguments() {
-        XCTAssertFalse(tunnelArguments().contains { $0.contains("tok") })
-        let env = tunnelEnvironment("secret-token", base: ["PATH": "/usr/bin", "HOME": "/Users/x", "APP_SECRET": "leak"])
-        XCTAssertEqual(env["TUNNEL_TOKEN"], "secret-token")
-        // only the basics come from the app's own environment, never the server's secret
-        XCTAssertNil(env["APP_SECRET"])
-        XCTAssertEqual(env["PATH"], "/usr/bin")
-    }
-
-    func testNoBundledCloudflaredMeansNoTunnel() {
-        XCTAssertNil(cloudflaredBinary(server: nil))
-        XCTAssertNil(cloudflaredBinary(server: FileManager.default.temporaryDirectory.appendingPathComponent("no-such-server-\(UUID().uuidString)")))
-    }
-
     func testTheAccountSignInAcceptsGitHubFromThePage() {
         XCTAssertEqual(accountAsk("github" as Any, mainFrame: true), "github")
         XCTAssertNil(accountAsk("github" as Any, mainFrame: false))

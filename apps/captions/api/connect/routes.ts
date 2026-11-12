@@ -4,6 +4,7 @@ import { env } from "../lib/env";
 import { findUser, type SessionUser } from "../users";
 import type { AuthVars } from "../auth";
 import { BrokerError, accountOfToken, linkThisComputer, pollDeviceGrant, startDeviceGrant } from "./broker";
+import { startConnector } from "./connector";
 import { connectState } from "./state";
 
 // Settings → Connect: this server joins the account on the broker. Only the owner's signed-in admin may link it.
@@ -68,6 +69,7 @@ connectApp.post("/poll", async (c) => {
       name: hostname(),
       origin: `http://127.0.0.1:${process.env.PORT || "3000"}`,
     });
+    startConnector(); // the tunnel runs from now on, not only after the next restart
     return c.json({ status: "linked", hostname: s.hostname });
   } catch (e) {
     return c.json({ status: "failed", error: e instanceof BrokerError ? e.code : "link_failed" });

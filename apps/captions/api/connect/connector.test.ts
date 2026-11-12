@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // The connector runs a stand-in for cloudflared: a shell script that logs its start (and its token from the environment)
 // and then sleeps. That exercises the real spawn, kill, restart and stop paths without the network.
@@ -100,6 +100,24 @@ describe("the tunnel process", () => {
     process.kill(pid!, "SIGKILL");
     await until(() => starts().length === 2);
     expect(connectorStatus().running).toBe(true);
+  });
+
+  it("stops cloudflared when the server itself is told to stop (SIGTERM), then lets the signal end the server", async () => {
+    const pid = connectorStatus().pid!;
+    // the listener the connector added (the last one), called as the signal would; its re-raise is not carried out here
+    const onTerm = process.listeners("SIGTERM").at(-1) as () => void;
+    const own = vi.spyOn(process, "kill").mockImplementationOnce(() => true);
+    onTerm();
+    expect(own).toHaveBeenCalledWith(process.pid, "SIGTERM");
+    own.mockRestore();
+    await until(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
   });
 
   it("stops cleanly and does not restart", async () => {
