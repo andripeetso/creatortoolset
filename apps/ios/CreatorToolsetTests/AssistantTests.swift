@@ -901,6 +901,36 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(begun, 1)
     }
 
+    func testTheBoxIsThereAgainAfterTheAppClosed() async throws {
+        // owner, 2026-11-12: what is in the box persists when he leaves, closes the app and comes back
+        let queue = scratch()
+        let kept = up("Clip.mov", "test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: kept.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: kept.url)
+        defer { kept.discard() }
+        let stand = Stand()
+        func opened() async -> AssistantModel {
+            let model = AssistantModel()
+            model.server = { stand.server(queue: queue) }
+            await model.load()
+            return model
+        }
+        let before = await opened()
+        before.draft.text = "Make a reel"
+        before.draft.pretend(pictures: [], videos: [kept, .coming()])
+        try await Task.sleep(for: .milliseconds(600))
+        // the app closed: the words and the video are back, the one still coming from Photos never came
+        let after = await opened()
+        XCTAssertEqual(after.draft.text, "Make a reel")
+        XCTAssertEqual(after.draft.videos.map(\.name), ["Clip.mov"])
+        XCTAssertTrue(stand.missing.isEmpty)   // nothing of it went up meanwhile
+        // sent: nothing is kept of the box any more
+        _ = after.draft.take()
+        try await Task.sleep(for: .milliseconds(600))
+        let again = await opened()
+        XCTAssertTrue(again.draft.isEmpty)
+    }
+
     func testSendDoesNotWaitForPhotosToHandAVideoOver() async throws {
         let stand = Stand()
         let model = AssistantModel()

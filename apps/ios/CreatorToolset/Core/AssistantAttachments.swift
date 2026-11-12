@@ -236,7 +236,18 @@ enum AssistantUpload {
 struct AssistantPickedVideo: Transferable {
     let url: URL
 
-    static let folder = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-videos", isDirectory: true)
+    /// Under Application Support, which iOS never empties, and out of the phone's backup.
+    static let folder: URL = {
+        var folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("assistant-videos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
+        return folder
+    }()
+    /// Where copies were kept before 2026-11-12: a message queued then still finds its video there.
+    static let before = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-videos", isDirectory: true)
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .movie) { received in
@@ -260,10 +271,12 @@ extension QueuedMessage.Video {
 
     /// Its copy on the phone, found again by name.
     var url: URL {
-        AssistantPickedVideo.folder.appendingPathComponent(copy, isDirectory: true).appendingPathComponent(name)
+        let url = AssistantPickedVideo.folder.appendingPathComponent(copy, isDirectory: true).appendingPathComponent(name)
+        let old = AssistantPickedVideo.before.appendingPathComponent(copy, isDirectory: true).appendingPathComponent(name)
+        return !FileManager.default.fileExists(atPath: url.path) && FileManager.default.fileExists(atPath: old.path) ? old : url
     }
 
-    /// The copy is still there (iOS may empty the temporary folder while the app is closed).
+    /// The copy is still there.
     var readable: Bool { FileManager.default.fileExists(atPath: url.path) }
 
     /// One Photos has yet to hand over: it stands in the box, and in its message, under a name for now.
@@ -294,12 +307,15 @@ final class AssistantDraft: ObservableObject {
     // a shoot's worth of clips: the AI Editor takes up to 50 chat videos in one edit
     static let maxVideos = 50
 
-    @Published var text = ""
-    @Published private(set) var pictures: [QueuedMessage.Picture] = []
+    @Published var text = "" { didSet { keep() } }
+    @Published private(set) var pictures: [QueuedMessage.Picture] = [] { didSet { keep() } }
     /// Picked videos, on their way up; one Photos is still handing over is `pending`.
-    @Published private(set) var videos: [QueuedMessage.Video] = []
+    @Published private(set) var videos: [QueuedMessage.Video] = [] { didSet { keep() } }
     /// Videos that are up already: picked a while ago, or of a message taken back.
-    @Published private(set) var files: [QueuedMessage.File] = []
+    @Published private(set) var files: [QueuedMessage.File] = [] { didSet { keep() } }
+    /// Where the box is kept on disk, so it is there again after the app closed; nil keeps nothing.
+    private var file: URL?
+    private var saving: Task<Void, Never>?
     /// Told when a video is picked, has come out of Photos or is taken off: its upload starts or stops.
     var changed: (() -> Void)?
     /// A video that left with its message before Photos had handed it over: here it is (nil: it could not be read).
@@ -366,6 +382,36 @@ final class AssistantDraft: ObservableObject {
         } else {
             videos.remove(at: index)
             notice = "A video could not be read"
+        }
+    }
+
+    /// Keeps the box at `file` from now on, and puts back what was kept there. A video Photos was still
+    /// handing over when the app closed never came: it is left out.
+    func keep(at file: URL?) {
+        guard file != self.file else { return }
+        self.file = nil
+        if let file, let data = try? Data(contentsOf: file), var kept = try? JSONDecoder().decode(QueuedMessage.self, from: data) {
+            kept.videos = kept.videos?.filter { $0.pending != true }
+            putBack(kept)
+        }
+        self.file = file
+    }
+
+    /// Saved a moment after the last change (not on every key), or removed once the box is empty.
+    private func keep() {
+        guard let file else { return }
+        saving?.cancel()
+        let box = QueuedMessage(text: text, images: pictures, files: files, videos: videos.isEmpty ? nil : videos)
+        let empty = isEmpty
+        saving = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            if empty {
+                try? FileManager.default.removeItem(at: file)
+            } else if let data = try? JSONEncoder().encode(box) {
+                try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? data.write(to: file, options: .atomic)
+            }
         }
     }
 
