@@ -9,6 +9,8 @@ process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "pack-catalog-"));
 process.env.PACK_CATALOG_URL = "https://catalog.example";
 
 const { Hono } = await import("hono");
+// a job on the API key: an AI with no tools
+const API = { only: ["anthropic" as const] };
 const { env } = await import("./lib/env");
 const { packCatalogApp } = await import("./pack-catalog");
 const { listInstalled, packInstructions } = await import("./lib/packs");
@@ -67,12 +69,12 @@ describe("community catalog", () => {
   });
 
   it("a delisted pack is flagged and its instructions stop", async () => {
-    expect(await packInstructions("tinyacrobatics", "workshop.write", null)).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", null, { ai: API })).toContain("Punchy Hooks");
     hosted["/api/pack-catalog/public/punchy-hooks"] = () => Response.json({ error: "gone", reason: "Copied text" }, { status: 410 });
     const rows = (await (await call("GET", "/api/pack-catalog/updates")).json()) as Array<{ delisted?: string }>;
     expect(rows[0].delisted).toBe("Copied text");
     expect((await listInstalled("tinyacrobatics"))[0].delisted).toBe("Copied text");
-    expect(await packInstructions("tinyacrobatics", "workshop.write", null)).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", null, { ai: API })).toBe("");
     expect((await call("POST", "/api/pack-catalog/punchy-hooks/install")).status).toBe(410);
   });
 
