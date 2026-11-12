@@ -112,4 +112,9 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(DiskCache.read(name, as: [String].self), ["Tiny Acrobatics"])
         XCTAssertNil(DiskCache.read("missing-\(UUID().uuidString)", as: [String].self))
     }
+
+    func testAWorkshopStatusTheAppDoesNotKnowStillReads() throws {
+        XCTAssertEqual(try JSONDecoder().decode(WorkshopStatus.self, from: Data(#""toPost""#.utf8)), .toPost)
+        XCTAssertEqual(try JSONDecoder().decode(WorkshopStatus.self, from: Data(#""archived""#.utf8)), .unknown)
+    }
 }

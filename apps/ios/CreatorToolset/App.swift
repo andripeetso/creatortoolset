@@ -197,6 +197,18 @@ struct SignInAgainView: View {
     }
 }
 
+/// A wide Sign in button for a screen whose list needs the sign-in: opens `SignInAgainView`, then the screen reads
+/// its list again.
+struct SignInAgainButton: View {
+    let done: () async -> Void
+    @State private var open = false
+
+    var body: some View {
+        WideButton(title: "Sign in", systemImage: "person.crop.circle") { open = true }
+            .sheet(isPresented: $open, onDismiss: { Task { await done() } }) { SignInAgainView() }
+    }
+}
+
 /// New message to the assistant: the round button at the bottom of Chats.
 struct ComposeButton: View {
     let action: () -> Void
