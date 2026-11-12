@@ -1,14 +1,85 @@
-import AVKit
+import Photos
 import SwiftUI
 
+/// The last tab: the tools, each a tile with its icon, and under them the one row that opens Settings (tools and
+/// settings in one list read as the same kind of thing).
 struct MoreView: View {
+    @ObservedObject private var access = ToolsetAccess.shared
+    /// A debug build opens Settings without a tap: -MoreOpen settings.
+    @State private var settingsOpen = debugArg("MoreOpen") == "settings"
+
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    // The tools' tiles, each only when the account has it (lane 4 brings the screens):
+                    // if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
+                    // if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
+                }
+                Button {
+                    settingsOpen = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28)
+                        Text("Settings").foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 52)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+        }
+        .navigationTitle("More")
+        .navigationDestination(isPresented: $settingsOpen) { SettingsView() }
+    }
+}
+
+/// A tool as a tile: its icon, big, and its name. A tap opens it.
+struct ToolTile<Destination: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder var destination: () -> Destination
+
+    var body: some View {
+        NavigationLink {
+            destination()
+        } label: {
+            VStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(Color("AccentColor"))
+                    .frame(height: 40)
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, minHeight: 124)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Settings, on a screen of their own: the computers this phone is signed in to, the account, notifications, how the
+/// app looks, uploads, Photos access, and which build this is.
+struct SettingsView: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var account = Account.shared
+    @ObservedObject private var library = PhotoLibrary.shared
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("wifiOnly") private var wifiOnly = false
     @State private var adding = false
 
     var body: some View {
-        List {
+        Form {
             Section("Computers") {
                 ForEach(servers.list) { server in
                     Button { servers.use(server.id) } label: {
@@ -35,25 +106,60 @@ struct MoreView: View {
             if let profile = account.profile {
                 Section("Account") { AccountRow(profile: profile) { account.signOut() } }
             }
-            if let api = servers.api {
-                Section {
-                    NavigationLink("Media Library") { LibraryView() }
-                    NavigationLink("Everything else") {
-                        WebAppView(api: api).ignoresSafeArea(edges: .bottom).navigationBarTitleDisplayMode(.inline)
+            // Notifications: lane 2's row goes here (Section("Notifications") { <its row> }).
+            Section("Appearance") { AppearancePicker() }
+            Section("Uploads") {
+                Toggle("Only upload on Wi-Fi", isOn: $wifiOnly)
+            }
+            Section("Photos") {
+                LabeledContent("Access", value: accessText)
+                if library.access == .limited {
+                    Button("Choose more clips…") { presentLimitedPicker() }
+                }
+                if library.access == .denied || library.access == .restricted || library.access == .limited {
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                     }
                 }
             }
             Section {
-                Toggle("Upload on Wi-Fi only", isOn: $wifiOnly)
+                LabeledContent("Version", value: Self.version)
             }
         }
-        .navigationTitle("More")
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         #if DEBUG
         .onAppear { if Account.demo == "add" { adding = true } }
         #endif
         .sheet(isPresented: $adding) {
             NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) }
         }
+        // back from the iPhone's own Settings: what was changed there shows here
+        .onChange(of: scenePhase) { _, phase in if phase == .active { library.refreshAccess() } }
+    }
+
+    /// "1.0 (12)": the version and the build, as TestFlight names them.
+    static var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? ""
+        let build = info["CFBundleVersion"] as? String ?? ""
+        return build.isEmpty ? version : "\(version) (\(build))"
+    }
+
+    private var accessText: String {
+        switch library.access {
+        case .authorized: "All photos"
+        case .limited: "Selected photos"
+        case .denied, .restricted: "None"
+        default: "Not asked yet"
+        }
+    }
+
+    private func presentLimitedPicker() {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let root = scene.keyWindow?.rootViewController else { return }
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: root)
     }
 }
 
@@ -309,109 +415,5 @@ struct AddServerView: View {
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-struct Asset: Decodable, Identifiable, Hashable {
-    let id: String
-    let kind: String
-    let title: String
-    let versionId: String
-    let thumbUrl: String?
-    let state: String
-}
-
-/// The Media Library, newest first, 60 at a time.
-struct LibraryView: View {
-    @EnvironmentObject private var servers: Servers
-    @State private var library: LibrarySummary?
-    @State private var assets: [Asset] = []
-    @State private var next: String?
-    @State private var loaded = false
-    @State private var error: String?
-    @State private var open: Asset?
-
-    private let columns = [GridItem(.adaptive(minimum: 104), spacing: 2)]
-
-    var body: some View {
-        ScrollView {
-            if let error { Problem(text: error).padding() }
-            LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(assets) { asset in
-                    Button { open = asset } label: {
-                        RemoteImage(path: asset.thumbUrl ?? "")
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay(alignment: .bottomTrailing) {
-                                if asset.state == "processing" {
-                                    ProgressView().padding(4)
-                                } else if asset.kind == "video" {
-                                    Image(systemName: "play.fill").font(.caption).padding(4).shadow(radius: 2)
-                                }
-                            }
-                    }
-                    .onAppear { if asset == assets.last, next != nil { Task { await load(more: true) } } }
-                }
-            }
-        }
-        .overlay {
-            if !loaded {
-                ProgressView()
-            } else if assets.isEmpty && error == nil {
-                ContentUnavailableView("Nothing here yet", systemImage: "photo.on.rectangle",
-                                       description: Text("Upload clips and they show here."))
-            }
-        }
-        .navigationTitle(library?.name ?? "Media Library")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await load(more: false) }
-        .refreshable { await load(more: false) }
-        .sheet(item: $open) { AssetView(asset: $0) }
-    }
-
-    private struct Page: Decodable {
-        let items: [Asset]
-        let next: String?
-    }
-
-    private func load(more: Bool) async {
-        guard let api = servers.api else { return }
-        defer { loaded = true }
-        do {
-            if library == nil { library = try await api.firstLibrary() }
-            guard let library else { return }
-            var path = "/api/library/\(library.id)/assets?limit=60"
-            if more, let next { path += "&cursor=\(next.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? next)" }
-            let page: Page = try await api.get(path)
-            assets = more ? assets + page.items : page.items
-            next = page.next
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-private struct AssetView: View {
-    let asset: Asset
-    @EnvironmentObject private var servers: Servers
-    @State private var player: AVPlayer?
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if asset.kind == "video" || asset.kind == "audio", let player {
-                    NativePlayer(player: player)
-                } else {
-                    RemoteImage(path: "/api/library/media/\(asset.versionId)/source").scaledToFit()
-                }
-            }
-            .navigationTitle(asset.title)
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .onAppear {
-            player = servers.api?.player("/api/library/media/\(asset.versionId)/play")
-            player?.play()
-        }
-        .onDisappear { player?.pause() }
     }
 }

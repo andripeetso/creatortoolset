@@ -1,23 +1,32 @@
 import Foundation
+import Photos
 import UIKit
 
 /// Moves every upload into the server's Media Library through its resumable upload
 /// (`apps/captions/api/library/routes.ts`): start it, send the bytes in chunks (or the parts straight to the
 /// library's bucket), then finish. Each chunk is a background transfer, so it carries on with the phone locked or the
 /// app closed, and after any failure the upload resumes from the server's own byte count.
+///
+/// A clip of the camera roll is first copied out of Photos (`preparing`). On a server whose Media Library is a
+/// plug-in's, the Upload tab's clips go there instead (`Studio/CatalogUpload.swift`); a New edit's clips always go to
+/// the server's own library, which starts the edit from their upload ids.
 @MainActor
 final class UploadEngine: ObservableObject {
     static let shared = UploadEngine()
 
     let store = UploadStore()
-    private let transfers = Transfers.shared
+    let transfers = Transfers.shared
     private var reconciling = false
     private var reconcileAgain = false
     private var timer: Timer?
     /// The server's chunks are 32 MB; never send more in one request.
     private let maxChunk: Int64 = 32 << 20
 
-    init() { transfers.engine = self }
+    init() {
+        transfers.engine = self
+        // a piece saved into Photos from a server is never offered back as footage
+        SaveToPhotos.added = { ids in LibraryIndex.shared.markInLibrary(ids, server: Servers.shared.currentId) }
+    }
 
     // MARK: What the screens call
 
@@ -28,15 +37,28 @@ final class UploadEngine: ObservableObject {
         store.add(item)
     }
 
+    /// Camera-roll clips, waiting for Upload. A clip already waiting or on its way to that server is not added twice.
+    func add(_ assets: [PHAsset], server: String) {
+        store.add(assets.filter { store.byAsset[UploadStore.key(asset: $0.localIdentifier, server: server)].map(\.isFinished) ?? true }
+            .map { UploadItem(asset: $0.localIdentifier, filename: Exporter.name(for: $0), isVideo: $0.mediaType == .video,
+                              capturedAt: $0.creationDate, server: server) })
+    }
+
     /// Upload everything picked, and everything that failed before (a New edit's clips go with their edit).
     func uploadAll() {
         for item in store.items where (item.state == .picked || item.state == .failed) && item.edit == nil {
-            store.update(item.id) {
-                $0.state = .sending
-                $0.attempts = 0
-                $0.nextAttemptAt = nil
-                $0.note = nil
-            }
+            retry(item.id)
+        }
+    }
+
+    /// One clip again from the start of its way: the copy on the phone, then the server's own count.
+    func retry(_ id: UUID) {
+        store.update(id) {
+            $0.state = .preparing
+            $0.attempts = 0
+            $0.nextAttemptAt = nil
+            $0.note = nil
+            $0.catalog = nil
         }
         kick()
     }
@@ -45,6 +67,7 @@ final class UploadEngine: ObservableObject {
         Task {
             await transfers.cancel(itemId: id)
             store.remove(id)
+            AppFiles.removeSlices(of: id)
         }
     }
 
@@ -118,15 +141,77 @@ final class UploadEngine: ObservableObject {
             let active = await transfers.activeItemIds()
             for item in store.items where item.isWorking && !active.contains(item.id) {
                 if let at = item.nextAttemptAt, at > Date() { continue }
-                await resume(item.id)
+                switch item.state {
+                case .preparing: await prepare(item.id)
+                case .confirming: break
+                default: item.route == .catalog ? await catalogResume(item.id) : await resume(item.id)
+                }
             }
+            await catalogConfirm()
         } while reconcileAgain
     }
 
     // MARK: Steps
 
-    private func api(for item: UploadItem) -> API? {
+    func api(for item: UploadItem) -> API? {
         Servers.shared.list.first { $0.id == item.server }.map { API(server: $0.url, cookie: Keychain.get($0.id)) }
+    }
+
+    /// The copy on the phone (out of Photos for a camera-roll clip), then where it goes, then on its way.
+    func prepare(_ id: UUID) async {
+        guard var item = store.item(id) else { return }
+        guard let api = api(for: item) else { return fail(id, "Its server was removed") }
+        do {
+            if !FileManager.default.fileExists(atPath: AppFiles.upload(id).path) {
+                // a file from Files or a New edit clip has nothing to copy it again from
+                guard let assetId = item.assetId else { return fail(id, "The copy on the phone is gone: pick the file again") }
+                guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetId], options: nil).firstObject else {
+                    return fail(id, "This clip is no longer in Photos")
+                }
+                note(id, "Getting it from Photos…")
+                let exported = try await Exporter.export(asset, to: AppFiles.upload(id))
+                store.update(id) {
+                    $0.size = exported.size
+                    $0.filename = exported.filename
+                    $0.sha256 = nil
+                    $0.uploadId = nil
+                    $0.direct = nil
+                    $0.sent = 0
+                }
+            }
+            if item.route == nil {
+                let route = try await Self.route(for: item, api: api)
+                store.update(id) { $0.route = route }
+            }
+            guard let fresh = store.item(id) else { return }
+            item = fresh
+            if item.route == .catalog { return await catalogPrepare(id, api) }
+            store.update(id) {
+                $0.state = .sending
+                $0.note = nil
+            }
+            await resume(id)
+        } catch APIError.signedOut {
+            perform(.signedOut, id)
+        } catch let error as ExportError {
+            fail(id, error.localizedDescription)
+        } catch {
+            // offline, or Photos couldn't hand it over yet (an iCloud download, low space): later
+            perform(.retryLater(error.localizedDescription), id)
+        }
+    }
+
+    /// A New edit's clips go to the server's own library; the Upload tab's to a plug-in's library when the server's
+    /// Media Library is one. Asked of the clip's own server, which may not be the one in use.
+    private static func route(for item: UploadItem, api: API) async throws -> UploadItem.Route {
+        if item.edit != nil { return .library }
+        // a debug build can send there on a scratch server whose library lists no source: -UploadRoute catalog
+        if debugArg("UploadRoute") == "catalog" { return .catalog }
+        return try await ServerPlugins.read(api).catalog ? .catalog : .library
+    }
+
+    func note(_ id: UUID, _ text: String?) {
+        store.update(id) { $0.note = text }
     }
 
     private func resume(_ id: UUID) async {
@@ -266,11 +351,13 @@ final class UploadEngine: ObservableObject {
         switch step.kind {
         case .patch: store.liveBytes[step.itemId] = step.offset + sent
         case .part: store.liveBytes[step.itemId] = Int64(step.part - 1) * (item.direct?.partSize ?? 0) + sent
-        case .finish: break
+        case .relayPatch, .catalogPatch: store.liveBytes[step.itemId] = step.offset + sent
+        case .finish, .relayComplete, .catalogComplete: break
         }
     }
 
     func transferFinished(_ step: TransferStep, response: HTTPURLResponse?, body: Data, error: Error?) {
+        if step.catalog { return catalogFinished(step, response: response, body: body, error: error) }
         try? FileManager.default.removeItem(at: AppFiles.slice(step))
         store.liveBytes[step.itemId] = nil
         guard let item = store.item(step.itemId), item.isWorking else { return }
@@ -282,7 +369,7 @@ final class UploadEngine: ObservableObject {
         perform(action, step.itemId)
     }
 
-    private func perform(_ action: NextAction, _ id: UUID) {
+    func perform(_ action: NextAction, _ id: UUID) {
         switch action {
         case .send(let from):
             store.update(id) {
@@ -300,14 +387,7 @@ final class UploadEngine: ObservableObject {
         case .finish:
             startFinish(id)
         case .done(let duplicate):
-            store.update(id) {
-                $0.state = .done
-                $0.duplicate = duplicate
-                $0.sent = $0.size
-                $0.note = nil
-            }
-            // a New edit's copy stays until its edit has started: Try again sends it once more
-            if store.item(id)?.edit == nil { try? FileManager.default.removeItem(at: AppFiles.upload(id)) }
+            landed(id, duplicate: duplicate)
         case .startOver(let why):
             // a new upload id is one the edit never hears of: its row says so and offers Try again
             if store.item(id)?.edit != nil { return fail(id, why) }
@@ -337,7 +417,25 @@ final class UploadEngine: ObservableObject {
         }
     }
 
-    private func fail(_ id: UUID, _ why: String) {
+    /// In the library. A New edit's copy stays until its edit has started (Try again sends it once more); any other
+    /// copy is deleted, and its camera-roll clip carries the green check from now on.
+    func landed(_ id: UUID, duplicate: Bool) {
+        store.update(id) {
+            $0.state = .done
+            $0.duplicate = duplicate
+            $0.sent = $0.size
+            $0.note = nil
+            $0.nextAttemptAt = nil
+            $0.finishedAt = Date()
+            $0.catalog = nil
+        }
+        guard let item = store.item(id), item.edit == nil else { return }
+        try? FileManager.default.removeItem(at: AppFiles.upload(id))
+        AppFiles.removeSlices(of: id)
+        if let asset = item.assetId { LibraryIndex.shared.markInLibrary([asset], server: item.server) }
+    }
+
+    func fail(_ id: UUID, _ why: String) {
         store.update(id) {
             $0.state = .failed
             $0.note = why

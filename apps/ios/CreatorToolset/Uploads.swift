@@ -1,13 +1,17 @@
 import Foundation
 
-/// One file on its way to the server's Media Library. The file is copied into the app when it is picked, so an upload
-/// carries on after the app is closed (`AppFiles.uploads`).
+/// One file on its way to the server's Media Library. The file is copied into the app (`AppFiles.uploads`), so an
+/// upload carries on after the app is closed: a pick from Files at once, a clip of the camera roll when Upload is pressed.
 struct UploadItem: Codable, Identifiable, Hashable {
-    enum State: String, Codable { case picked, sending, finishing, done, failed }
+    /// picked: waits for Upload. preparing: copied out of Photos and fingerprinted. confirming: the library is fetching
+    /// it from where it was sent (a studio's fast route).
+    enum State: String, Codable { case picked, preparing, sending, finishing, confirming, done, failed }
+    /// Where it goes: the server's own Media Library, or a plug-in's library behind it (`Studio/CatalogUpload.swift`).
+    enum Route: String, Codable { case library, catalog }
 
     let id: UUID
-    let filename: String
-    let size: Int64
+    var filename: String
+    var size: Int64
     /// The server it goes to (`Server.id`), fixed when it is picked.
     let server: String
     var state: State = .picked
@@ -23,6 +27,17 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var nextAttemptAt: Date?
     /// The phone's New edit it is a clip of (`PhoneEdit.id`): it waits for that Start, not for Upload.
     var edit: UUID?
+    // Added later: optional, so a queue saved by an older build still reads.
+    /// The camera-roll clip it is (`PHAsset.localIdentifier`); nil for a file picked in Files or for New edit.
+    var assetId: String?
+    var isVideo: Bool?
+    var capturedAt: Date?
+    /// Decided once, before the first byte; nil (an older upload) is the server's own library.
+    var route: Route?
+    /// The phone's fingerprint of the file (the plug-in's library checks it).
+    var sha256: String?
+    var catalog: CatalogSend?
+    var finishedAt: Date?
 
     struct Direct: Codable, Hashable {
         let partSize: Int64
@@ -31,15 +46,35 @@ struct UploadItem: Codable, Identifiable, Hashable {
         var nextPart: Int? { (1...urls.count).first { etags[$0] == nil } }
     }
 
-    var isWorking: Bool { state == .sending || state == .finishing }
+    var isWorking: Bool { state == .preparing || state == .sending || state == .finishing || state == .confirming }
+    var isFinished: Bool { state == .done }
+
+    /// A clip of the camera roll, waiting for Upload.
+    init(asset: String, filename: String, isVideo: Bool, capturedAt: Date?, server: String, id: UUID = UUID()) {
+        self.init(id: id, filename: filename, size: 0, server: server)
+        assetId = asset
+        self.isVideo = isVideo
+        self.capturedAt = capturedAt
+    }
+
+    init(id: UUID, filename: String, size: Int64, server: String) {
+        self.id = id
+        self.filename = filename
+        self.size = size
+        self.server = server
+    }
 }
 
 /// The uploads, saved as JSON next to their files.
 @MainActor
 final class UploadStore: ObservableObject {
-    @Published private(set) var items: [UploadItem] = []
+    @Published private(set) var items: [UploadItem] = [] {
+        didSet { byAsset = Self.byAsset(items) }
+    }
     /// Bytes of the chunk in flight, for the progress bar only (not saved).
     @Published var liveBytes: [UUID: Int64] = [:]
+    /// The newest upload of each camera-roll clip, per server (`key(asset:server:)`).
+    private(set) var byAsset: [String: UploadItem] = [:]
 
     private let file = AppFiles.root.appendingPathComponent("uploads.json")
 
@@ -51,8 +86,22 @@ final class UploadStore: ObservableObject {
 
     func item(_ id: UUID) -> UploadItem? { items.first { $0.id == id } }
 
-    func add(_ item: UploadItem) {
-        items.append(item)
+    nonisolated static func key(asset: String, server: String) -> String { server + "|" + asset }
+
+    nonisolated static func byAsset(_ items: [UploadItem]) -> [String: UploadItem] {
+        var out: [String: UploadItem] = [:]
+        for item in items { if let asset = item.assetId { out[key(asset: asset, server: item.server)] = item } }
+        return out
+    }
+
+    /// Sent so far: the running transfer's bytes when there is one.
+    func sentBytes(_ item: UploadItem) -> Int64 { max(item.sent, liveBytes[item.id] ?? 0) }
+
+    func add(_ item: UploadItem) { add([item]) }
+
+    func add(_ fresh: [UploadItem]) {
+        guard !fresh.isEmpty else { return }
+        items.append(contentsOf: fresh)
         save()
     }
 
@@ -64,6 +113,7 @@ final class UploadStore: ObservableObject {
 
     func remove(_ id: UUID) {
         items.removeAll { $0.id == id }
+        liveBytes[id] = nil
         try? FileManager.default.removeItem(at: AppFiles.upload(id))
         save()
     }
@@ -85,6 +135,11 @@ enum AppFiles {
 
     static func upload(_ id: UUID) -> URL { uploads.appendingPathComponent(id.uuidString) }
     static func slice(_ step: TransferStep) -> URL { slices.appendingPathComponent("\(step.itemId.uuidString)-\(step.kind.rawValue)-\(step.part)") }
+
+    static func removeSlices(of id: UUID) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: slices.path)) ?? []
+        for name in names where name.hasPrefix(id.uuidString) { try? FileManager.default.removeItem(at: slices.appendingPathComponent(name)) }
+    }
 
     private static func dir(_ name: String) -> URL {
         let url = root.appendingPathComponent(name, isDirectory: true)
@@ -117,7 +172,9 @@ enum AppFiles {
 /// One request of an upload, run by the background session. Encoded in the task's description, so a finished
 /// transfer still finds its upload after iOS relaunched the app.
 struct TransferStep: Equatable {
-    enum Kind: String { case patch, part, finish }
+    /// patch, part, finish: the server's own library. The catalog's: bytes to the fast route (`relay`), its complete,
+    /// a piece straight to the library, its complete (`Studio/CatalogUpload.swift`).
+    enum Kind: String { case patch, part, finish, relayPatch, relayComplete, catalogPatch, catalogComplete }
 
     let itemId: UUID
     let kind: Kind
@@ -127,6 +184,7 @@ struct TransferStep: Equatable {
     var part: Int = 0
 
     var encoded: String { "\(itemId.uuidString)|\(kind.rawValue)|\(offset)|\(part)" }
+    var catalog: Bool { [.relayPatch, .relayComplete, .catalogPatch, .catalogComplete].contains(kind) }
 
     init(itemId: UUID, kind: Kind, offset: Int64 = 0, part: Int = 0) {
         self.itemId = itemId
@@ -187,6 +245,8 @@ enum Rules {
             if status == 409 { return .startOver("Checking that the server has it") }
             // gone, or the bucket refused the parts: the server marked it failed
             if status == 404 || status == 400 || status == 500 { return .startOver(message) }
+        case .relayPatch, .relayComplete, .catalogPatch, .catalogComplete:
+            break
         }
         if status == 413 || status == 507 { return .failed(message) }
         if status >= 500 || status == 409 || status == 429 { return .retryLater(message) }
