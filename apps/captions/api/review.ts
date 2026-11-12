@@ -1547,6 +1547,17 @@ reviewApp.delete("/trash/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+/** How long a deleted video stays in the trash (Settings → Storage says it). */
+export const REVIEW_TRASH_DAYS = TRASH_DAYS;
+/** Empty on Settings → Storage: the deleted videos in `ids` go for good now, the way the trash's own delete does it. */
+export async function emptyReviewTrash(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    if (!(await readTrashed(id))) continue;
+    await withLock(id, () => rm(trashDir(id), { recursive: true, force: true }));
+    await syncLibrary(id);
+  }
+}
+
 /** The trash empties itself after TRASH_DAYS; an upload nobody resumed goes after UPLOAD_DAYS. */
 async function purgeTrash(): Promise<void> {
   const cutoff = Date.now() - TRASH_DAYS * 86_400_000;

@@ -787,8 +787,9 @@ async function findByShortcode(
   return null;
 }
 
-async function libraryBytes(): Promise<number> {
-  return (await allMetas()).reduce((n, m) => n + (m.bytes || 0), 0);
+/** What one account's posts take: its size limit is its own, so one account's posts never stop another's. */
+async function libraryBytes(user: SessionUser): Promise<number> {
+  return (await allMetas()).reduce((n, m) => n + (listedFor(m, user) ? m.bytes || 0 : 0), 0);
 }
 
 async function readSearchText(id: string): Promise<string> {
@@ -3557,7 +3558,7 @@ async function ingestOne(
       return { ok: true, meta: existing, existing: true };
     }
   }
-  if (wants(recipe, "media") && (await libraryBytes()) >= MAX_TOTAL_BYTES) {
+  if (wants(recipe, "media") && (await libraryBytes(user)) >= MAX_TOTAL_BYTES) {
     return {
       ok: false,
       error: `The Instagram library is over its ${Math.round(MAX_TOTAL_BYTES / 1024 ** 3)} GB quota — delete some posts first`,

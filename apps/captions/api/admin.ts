@@ -7,8 +7,9 @@ import { secureAttr, type AuthVars } from "./auth";
 import { VIEW_AS } from "./lib/view-as";
 import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./lib/workspaces";
 import { forgetGrants } from "./library/grants";
-import { deleteUserContent } from "./retention";
-import { dirBytes } from "./kept";
+import { deleteUserContent, keepDaysFor } from "./retention";
+import { dirBytes, keptView } from "./kept";
+import type { KeptKind } from "../contracts/storage";
 import { clearTries, codeRequired, lockedAnywhere, setCodeRequired } from "./lib/sign-in-code";
 import { isPluginGateId, isRetiredAppId, isTool } from "../contracts/tools";
 import {
@@ -41,7 +42,6 @@ adminApp.use("*", async (c, next) => {
 
 const CAPTION_PROJECTS_DIR = path.join(env.dataDir, "projects");
 const ENHANCE_PROJECTS_DIR = path.join(env.dataDir, "enhance");
-const INSTAGRAM_DIR = path.join(env.dataDir, "instagram");
 
 /** One project on disk as the admin panel sees it ("" owner = pre-account). */
 interface AdminProject {
@@ -95,47 +95,6 @@ async function scanProjects(): Promise<AdminProject[]> {
   return [...captions, ...enhance];
 }
 
-/** Per-owner live project count and bytes on disk. */
-async function projectFootprints(): Promise<Map<string, { projects: number; bytes: number }>> {
-  const out = new Map<string, { projects: number; bytes: number }>();
-  for (const p of await scanProjects()) {
-    // legacy projects predate accounts — attribute them to the admin
-    const owner = p.owner || (env.appSecret ? env.adminUsername : "local");
-    const cur = out.get(owner) ?? { projects: 0, bytes: 0 };
-    cur.projects += 1;
-    cur.bytes += p.bytes;
-    out.set(owner, cur);
-  }
-  return out;
-}
-
-/** Instagram ingests: per-owner post count and bytes on disk. */
-async function instagramFootprints(): Promise<Map<string, { posts: number; bytes: number }>> {
-  const out = new Map<string, { posts: number; bytes: number }>();
-  let ids: string[] = [];
-  try {
-    ids = (await readdir(INSTAGRAM_DIR, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
-  } catch {
-    return out;
-  }
-  for (const id of ids) {
-    const dir = path.join(INSTAGRAM_DIR, id);
-    let meta: Record<string, unknown>;
-    try {
-      meta = JSON.parse(await readFile(path.join(dir, "meta.json"), "utf-8"));
-    } catch {
-      continue;
-    }
-    const owner = typeof meta.owner === "string" && meta.owner ? meta.owner : env.appSecret ? env.adminUsername : "local";
-    const bytes = await dirBytes(dir).catch(() => 0);
-    const cur = out.get(owner) ?? { posts: 0, bytes: 0 };
-    cur.posts += 1;
-    cur.bytes += bytes;
-    out.set(owner, cur);
-  }
-  return out;
-}
-
 /* every project on the server, newest first — the admin Projects tab */
 adminApp.get("/projects", async (c) => {
   const projects = await scanProjects();
@@ -143,10 +102,13 @@ adminApp.get("/projects", async (c) => {
   return c.json(projects);
 });
 
+/** Each account with what it keeps: the same count as its own Settings → Storage (api/kept.ts), so the two never disagree. */
 adminApp.get("/users", async (c) => {
-  const [footprints, ig] = await Promise.all([projectFootprints(), instagramFootprints()]);
-  return c.json(
-    listUsers().map((u) => ({
+  const out = [];
+  for (const u of listUsers()) {
+    const rows = (await keptView(u)).rows;
+    const n = (kind: KeptKind) => rows.find((r) => r.kind === kind)?.items ?? 0;
+    out.push({
       username: u.username,
       name: u.displayName ?? "",
       role: u.role,
@@ -155,11 +117,13 @@ adminApp.get("/users", async (c) => {
       usage: u.usage,
       code: !!u.code,
       locked: lockedAnywhere(u.username),
-      projects: footprints.get(u.username)?.projects ?? 0,
-      instagramPosts: ig.get(u.username)?.posts ?? 0,
-      storageBytes: (footprints.get(u.username)?.bytes ?? 0) + (ig.get(u.username)?.bytes ?? 0),
-    })),
-  );
+      projects: n("captions") + n("enhance"),
+      instagramPosts: n("analyzer"),
+      storageBytes: rows.reduce((sum, r) => sum + r.bytes, 0),
+      keepDays: keepDaysFor(u.role),
+    });
+  }
+  return c.json(out);
 });
 
 adminApp.post("/users", async (c) => {

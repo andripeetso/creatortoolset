@@ -18,7 +18,7 @@ import { fmtAgo, lastActiveText, msg } from "@/components/settings/helpers";
  * of a reload and when the server can't be reached, and they are read again behind that and when an admin changes one.
  */
 
-/** Stored as the account's role: admin, team (files kept 28 days after they last change), or user (14). */
+/** Stored as the account's role: admin, team or user. Team and user differ only on a server with an age limit (CONTENT_EXPIRES=1, api/retention.ts): files kept 28 days after they last change, or 14. */
 type Role = "user" | "team" | "admin";
 
 interface AdminUser {
@@ -34,6 +34,8 @@ interface AdminUser {
   projects: number;
   instagramPosts?: number;
   storageBytes: number;
+  /** Set on a server with an age limit: the days this account's files stay after they last change. */
+  keepDays?: number;
 }
 
 interface AdminProject {
@@ -181,7 +183,8 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                           admin
                             ? { label: "Remove admin", confirm: { title: `Remove ${u.username} as admin?`, ok: "Remove admin" }, onSelect: () => changeRole(u, "team") }
                             : { label: "Make admin", confirm: { title: `Make ${u.username} an admin?`, body: "Admins see every project and manage accounts.", ok: "Make admin" }, onSelect: () => changeRole(u, "admin") },
-                          ...(admin
+                          // team or plain only changes how long files stay, so it is offered on a server with an age limit
+                          ...(admin || !u.keepDays
                             ? []
                             : [
                                 {

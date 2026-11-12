@@ -2416,6 +2416,16 @@ async function copyIfExists(from: string, to: string): Promise<void> {
   await copyFile(from, to);
 }
 
+/** How long a deleted project stays in the trash (Settings → Storage says it). */
+export const PROJECT_TRASH_DAYS = TRASH_KEEP_DAYS;
+/** Empty on Settings → Storage: the deleted projects in `ids` go for good now, the way the trash's own delete does it. */
+export async function emptyProjectTrash(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    const meta = okId(id) ? await readMeta(id).catch(() => null) : null;
+    if (meta?.deletedAt) await purgeDeletedProject(id, meta);
+  }
+}
+
 async function sweepDeletedProjects(): Promise<void> {
   let ids: string[] = [];
   try {

@@ -16,6 +16,10 @@ import { adminCount, findUser } from "./users";
  */
 export const KEEP_DAYS = { user: 14, team: 28 } as const;
 
+/** The days a role's files stay on a server with the age limit on; undefined when they stay (no limit, or an admin). */
+export const keepDaysFor = (role: string): number | undefined =>
+  process.env.CONTENT_EXPIRES === "1" && (role === "user" || role === "team") ? KEEP_DAYS[role] : undefined;
+
 /** Does the item `owner` last changed at `at` (epoch ms) go? */
 export type Expired = (owner: string | undefined, at: number) => boolean;
 
@@ -24,8 +28,8 @@ export function retentionRule(now = Date.now()): Expired {
     if (!owner) return false; // pre-account saves are the admin's
     const user = findUser(owner);
     if (!user) return true;
-    if (user.role === "admin" || process.env.CONTENT_EXPIRES !== "1") return false;
-    return at < now - KEEP_DAYS[user.role] * 86_400_000;
+    const days = keepDaysFor(user.role);
+    return days !== undefined && at < now - days * 86_400_000;
   };
 }
 
