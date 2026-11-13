@@ -341,13 +341,59 @@ describe("designs: an AI that designs", () => {
     expect(got.frames[0]).not.toHaveProperty("words");
     expect(got.pictures).toEqual([{ id: d.pictures[0], what: "the video's own frame" }]);
     expect(got.looks).toContainEqual({ name: "Paper cut", brief: "Torn paper edges, one loud colour.", pictures: 2 });
-    expect(got).not.toHaveProperty("look");
+    // the person's one look comes with its pictures unasked: an AI that never asks for a look still designs from it
+    expect(typeof got.look === "object" && [got.look.name, got.look.pictures.map((p) => p.what)]).toEqual(["Paper cut", ["a picture the user made and liked in this look", "an inspiration for this look"]]);
+    expect(got.how).toContain("Design in one of them");
     const withLook = await read(d.id, "?look=paper%20cut");
     expect(typeof withLook.look === "object" && withLook.look.pictures.map((p) => p.what)).toEqual(["a picture the user made and liked in this look", "an inspiration for this look"]);
     expect((await read(d.id, "?look=Nope")).look).toBe("There is no look called Nope");
     const out = (await write(d.id, { frames: [{ id: "p1", layers: [{ type: "image", picture: d.pictures[0], fit: "cover", x: 0, y: 0, w: 1280, h: 720 }, { ...text, text: "3 MISTAKES" }, { type: "image", picture: "ffffffff.png", x: 0, y: 0, w: 10, h: 10 }] }] })).body;
     expect(out.design.pages[0]!.layers).toMatchObject([{ type: "image" }, { type: "text", text: "3 MISTAKES" }]);
     expect(out.notes).toEqual(["Frame 1: a picture that is not in this design: left out"]);
+  });
+
+  it("with several looks the AI is told to pick one and read it first; a plug-in's own looks are listed after the account's, their pictures made small", async () => {
+    const { Hono } = await import("hono");
+    const { definePlugin, mountPlugins } = await import("./lib/plugin");
+    // a big picture a plug-in keeps as a file of its own
+    const big = path.join(dataDir, "studio-look.png");
+    execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xE9E2D0:s=1600x2400", "-frames:v", "1", big]);
+    let asked = "";
+    mountPlugins(new Hono(), [
+      definePlugin({
+        id: "tiny-studio",
+        design: {
+          looks: (user) => {
+            asked = user.username;
+            return [
+              { name: "Tiny Mobile", brief: "Everything hangs on threads.", pictures: [{ file: path.join(dataDir, "gone.png"), made: false }, { file: big, made: true }] },
+              // named like one of the account's own: the account's stands
+              { name: "paper cut", brief: "Not this one.", pictures: [] },
+            ];
+          },
+        },
+      }),
+      definePlugin({ id: "tiny-broken", design: { looks: () => { throw new Error("its store is down"); } } }),
+    ]);
+    try {
+      const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
+      const got = await read(d.id);
+      expect(asked).toBe("jordan");
+      expect(got.looks).toEqual([{ name: "Paper cut", brief: "Torn paper edges, one loud colour.", pictures: 2 }, { name: "Tiny Mobile", brief: "Everything hangs on threads.", pictures: 2 }]);
+      // two looks with pictures: none is shown unasked, and the answer says to pick one
+      expect(got.look).toBe('Pick the look this design is in ("Paper cut", "Tiny Mobile"; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.');
+      // the plug-in's look by name: the picture it made first, as a small JPEG; the file that is gone is left out
+      const tiny = (await read(d.id, "?look=tiny%20mobile")).look;
+      if (typeof tiny !== "object") throw new Error(String(tiny));
+      expect(tiny.pictures.map((p) => p.what)).toEqual(["a picture the user made and liked in this look"]);
+      const jpeg = Buffer.from(tiny.pictures[0]!.jpeg, "base64");
+      expect([jpeg[0], jpeg[1]]).toEqual([0xff, 0xd8]);
+      // no longer than 768 px on its longest side (the height here): read from the JPEG's own frame header
+      const sof = jpeg.findIndex((b, i) => b === 0xff && (jpeg[i + 1] === 0xc0 || jpeg[i + 1] === 0xc2));
+      expect([jpeg.readUInt16BE(sof + 5), jpeg.readUInt16BE(sof + 7)]).toEqual([768, 512]);
+    } finally {
+      mountPlugins(new Hono(), []);
+    }
   });
 
   it("a look at the frames: with no browser to draw them, no pictures and a line saying why; another account's is not found", async () => {

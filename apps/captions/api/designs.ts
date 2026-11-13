@@ -13,6 +13,7 @@ import { cutOut } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
 import { env } from "./lib/env";
+import { pluginLooks } from "./lib/plugin";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
 import { blobs, libraryDb } from "./library/db";
 import { ffmpeg } from "./library/media/run";
@@ -34,8 +35,11 @@ const PICTURE = /^[a-z0-9]{8}\.(jpg|png|webp)$/;
 const TYPE: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 /** How many frames an AI is shown at once. */
 const LOOK_FRAMES = 6;
-/** A look's pictures handed to an AI that asks for it: the ones the person made and liked first. */
+/** A look's pictures handed to an AI that asks for it: the ones the person made and liked first. And how many it gets of the person's one look when it asked for none. */
 const LOOK_PICTURES = 8;
+const LOOK_UNASKED = 4;
+/** The longest side of a look's picture as an AI is shown it, when it is not already a small still. */
+const LOOK_SIDE = 768;
 
 const dirOf = (owner: string) => path.join(env.dataDir, "designs", owner);
 const fileOf = (owner: string, id: string) => path.join(dirOf(owner), `${id}.json`);
@@ -179,6 +183,8 @@ const HOW = `A design is a canvas of frames. A frame is one picture (a carousel 
 
 ${DESIGN_LAYERS}
 
+"looks" are the user's looks: each a collection of pictures they made and liked, and inspirations, with a few words of their own. Design in one of them. Its pictures come with this answer when the user has one look, and with "look": its name otherwise: study them before your first change, and carry their finish into the frames (the ground and how it is lit, the type, the materials, the shadows, how much is left empty), never their words or one of them copied. A design made without a look's pictures comes out generic.
+
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
 To change a design, give either or both of:
@@ -209,21 +215,88 @@ async function framesForAi(user: AuthVars["user"], d: Design): Promise<{ pages: 
   return { pages, words: pages.map((p) => (p.block ? bySlide.get(p.block) : undefined)) };
 }
 
-/** What an AI is given to design from: each frame with its size, its words and its layers, the fonts, the pictures, the person's looks in their own words (a look's pictures when one is asked for by name), and how a design is changed. */
+/** A look as an AI that designs meets it: its name, its brief, how many pictures it has, and those pictures as small JPEGs, the ones made and liked first. */
+interface Look {
+  id?: string;
+  name: string;
+  brief: string;
+  pictures: number;
+  show: (max: number) => Promise<{ jpeg: string; made: boolean }[]>;
+}
+
+/** A picture file of any size as a small JPEG; null when it cannot be read. */
+async function smallJpeg(file: string): Promise<string | null> {
+  const tmp = path.join(env.dataDir, "designs", `.look-${randomBytes(6).toString("hex")}.jpg`);
+  try {
+    await mkdir(path.dirname(tmp), { recursive: true });
+    await ffmpeg(["-y", "-i", file, "-frames:v", "1", "-vf", `scale=w='min(${LOOK_SIDE},iw)':h='min(${LOOK_SIDE},ih)':force_original_aspect_ratio=decrease`, "-q:v", "5", "-f", "image2", "-c:v", "mjpeg", tmp], true);
+    return (await readFile(tmp)).toString("base64");
+  } catch {
+    return null;
+  } finally {
+    await rm(tmp, { force: true });
+  }
+}
+
+/**
+ * The looks an AI may design in: the account's own animation styles, then the ones a plug-in keeps (a studio's own
+ * collections). A plug-in's look named like one of the account's own is left out.
+ * ponytail: a plug-in's pictures are made small at every read that shows them (ffmpeg, a few a call); kept by file and
+ * change time when that is felt.
+ */
+async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
+  const own = animationStyles(owner).map((s): Look => ({
+    id: s.id,
+    name: s.name,
+    brief: s.brief,
+    pictures: s.pictures.length,
+    show: async (max) => {
+      const p = await stylePictures(owner, s, max);
+      return p.images.map((i, n) => ({ jpeg: i.jpegBase64, made: n < p.made }));
+    },
+  }));
+  const theirs = (await pluginLooks(user)).filter((l) => l.name.trim() && !own.some((o) => o.name.toLowerCase() === l.name.toLowerCase()));
+  return [
+    ...own,
+    ...theirs.map((l): Look => ({
+      name: l.name,
+      brief: l.brief,
+      pictures: l.pictures.length,
+      show: async (max) => {
+        const out: { jpeg: string; made: boolean }[] = [];
+        for (const p of [...l.pictures.filter((x) => x.made), ...l.pictures.filter((x) => !x.made)]) {
+          if (out.length >= max) break;
+          const jpeg = await smallJpeg(p.file);
+          if (jpeg) out.push({ jpeg, made: p.made });
+        }
+        return out;
+      },
+    })),
+  ];
+}
+
+/**
+ * What an AI is given to design from: each frame with its size, its words and its layers, the fonts, the pictures,
+ * the person's looks in their own words, one look's pictures, and how a design is changed. The look whose pictures it
+ * gets: the one it asked for by name; unasked, the person's one look when they have exactly one with pictures (an AI
+ * that never asks still designs from it). With several, it is told to pick one and read it first.
+ */
 async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | undefined) {
   const { pages, words } = await framesForAi(user, d);
-  const styles = animationStyles(d.owner);
-  const style = lookNamed ? styles.find((s) => s.id === lookNamed || s.name.toLowerCase() === lookNamed.toLowerCase()) : undefined;
-  const shown = style ? await stylePictures(d.owner, style, LOOK_PICTURES) : null;
+  const looks = await looksOf(user, d.owner);
+  const pictured = looks.filter((l) => l.pictures > 0);
+  const style = lookNamed ? looks.find((s) => s.id === lookNamed || s.name.toLowerCase() === lookNamed.toLowerCase()) : pictured.length === 1 ? pictured[0] : undefined;
+  const shown = style ? await style.show(lookNamed ? LOOK_PICTURES : LOOK_UNASKED) : null;
   return {
     id: d.id,
     name: d.name,
     fonts: DESIGN_FONTS.map((f) => f.family),
     pictures: d.pictures.map((id) => ({ id, what: d.from && "version" in d.from && id === d.pictures[0] ? "the video's own frame" : "a picture added to this design" })),
     // a look is its pictures first: its name and brief are what words carry, and its pictures come when it is asked for
-    looks: styles.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, 600) } : {}), pictures: s.pictures.length })),
+    looks: looks.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, 600) } : {}), pictures: s.pictures })),
     ...(lookNamed && !style ? { look: `There is no look called ${lookNamed}` } : {}),
-    ...(style && shown ? { look: { name: style.name, pictures: shown.images.map((i, n) => ({ what: n < shown.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpegBase64 })) } } : {}),
+    ...(!lookNamed && pictured.length > 1 ? { look: `Pick the look this design is in (${pictured.slice(0, 12).map((l) => `"${l.name}"`).join(", ")}; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.` } : {}),
+    ...(style && shown ? { look: { name: style.name, pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })) } } : {}),
     frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), layers: p.layers })),
     how: HOW,
   };

@@ -114,8 +114,19 @@ export interface ServerPlugin {
   // job reads, checked like a pack's when the server starts (one that fails is left out and named in the log). Each
   // account switches them on in Community → Skills (api/lib/skills.ts); an AI Editor script skill is picked on a style.
   skills?: PackSkill[];
+  // The Designer's looks (api/designs.ts): looks the plug-in keeps itself (a studio's own collections of pictures), listed
+  // to an AI that designs after the account's own animation styles. Each is its name, a short brief in the person's own
+  // words and its pictures as files the server can read (png, jpg or webp), the ones made and liked first.
+  design?: { looks?: (user: SessionUser) => PluginLook[] | Promise<PluginLook[]> };
   // Reserved for later waves. Nothing reads these yet; the generator warns when a plug-in sets one.
   on?: unknown;
+}
+
+/** A look a plug-in keeps (ServerPlugin.design.looks). `made`: a picture the person made and liked in it; else an inspiration. */
+export interface PluginLook {
+  name: string;
+  brief: string;
+  pictures: { file: string; made: boolean }[];
 }
 
 export const definePlugin = (plugin: ServerPlugin): ServerPlugin => plugin;
@@ -365,6 +376,19 @@ export async function pluginFinalsVersions(sessionId: string, docId: string, mai
       out.push(...((await p.workshop?.finalsVersions?.(sessionId, docId, mainDocId)) ?? []));
     } catch (e) {
       console.warn(`[plugin] ${p.id} finals versions failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return out;
+}
+
+/** The looks every loaded plug-in keeps for the Designer, in load order. A throw is logged and skipped. */
+export async function pluginLooks(user: SessionUser): Promise<PluginLook[]> {
+  const out: PluginLook[] = [];
+  for (const p of loaded) {
+    try {
+      out.push(...((await p.design?.looks?.(user)) ?? []));
+    } catch (e) {
+      console.warn(`[plugin] ${p.id} looks failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   return out;
