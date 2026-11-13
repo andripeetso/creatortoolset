@@ -25,10 +25,34 @@ export type ThisMacState = {
   computer?: string;
   host?: string;
   device?: string | null;
+  /** Settings → General → Dictation (apps/mac Dictation.swift `bridgeState`); missing in older Mac apps */
+  dictation?: DictationState;
   /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
   version?: string;
   /** the app's last answer, kept on this device: it has not answered in this window yet */
   saved?: true;
+};
+
+export type DictationAction = "talk" | "history" | "file" | "cancel";
+
+/** Dictation on this Mac, as the app keeps it; the page sets it with `thismac-dictation:<what>:<value>`. */
+export type DictationState = {
+  on: boolean;
+  /** each action's key as shown ("F13", "⌥Space", "Hold fn"; "" = none) */
+  keys: Record<DictationAction, string>;
+  /** the action whose key the app is waiting for */
+  picking: DictationAction | null;
+  /** why no key works right now (another dictation app has them), one quiet line; missing in older Mac apps */
+  paused?: string | null;
+  /** who writes the words down: this Mac's model, or the server's engine (POST /api/transcribe/mic); missing in older Mac apps */
+  engine?: "mac" | "server";
+  model: string;
+  /** `here`: on this Mac; `removable`: this app downloaded it; `progress`: 0–1 while it downloads */
+  models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;
+  keep: number;
+  sounds: boolean;
+  /** the permission still to give, or null */
+  needs: "Microphone" | "Accessibility" | null;
 };
 
 /** Where the app's last answer is kept (lib/local-cache), so a page that shows it paints at once. */

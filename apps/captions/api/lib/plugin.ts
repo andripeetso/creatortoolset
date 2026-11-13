@@ -51,7 +51,7 @@ export interface ServerPlugin {
   // LaunchAgent labels this plug-in's rows may start, stop or restart on the Mac the app runs on (a row's buttons, ActivityAction).
   // A row's button for any other label is dropped by the server before it reaches the Mac (activity.ts cleanActions).
   launchAgents?: string[];
-  // Items for the Mac app's Go and gear menus, read by GET /api/activity/menu (api/activity.ts).
+  // Items for the Mac app's Go menu and its menu bar panel's Settings & More, read by GET /api/activity/menu (api/activity.ts).
   menu?: MenuFn;
   // Per-edit flags: each shows as a chip on an AI Editor edit and is saved with that edit (api/editor/store.ts).
   editFlags?: EditFlag[];

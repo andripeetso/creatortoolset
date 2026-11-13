@@ -11,7 +11,7 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
-const { pairDevice, touchDevice } = await import("./devices");
+const { pairDevice, setDeviceKinds, touchDevice } = await import("./devices");
 const { strongest, transcribeOnComputer, ComputerOff, COMPUTER_LIMITS } = await import("./computer-transcribe");
 const { speechFor, writeVoicePrefs } = await import("./speech");
 
@@ -20,8 +20,8 @@ const key = `Bearer ${newApiKey(ana, "full")}`;
 const json = (body: unknown, extra: Record<string, string> = {}, method = "POST") => ({ method, headers: { "content-type": "application/json", ...extra }, body: JSON.stringify(body) });
 const as = (token: string) => ({ authorization: `Bearer ${token}` });
 const report = (token: string, machine: Record<string, unknown>) => app.request("/api/devices/relay/report", json({ drivers: [], homes: [], machine }, as(token)));
-const claim = async (token: string, models: string[] = [], getting: string[] = []) =>
-  (await (await app.request("/api/devices/relay/editor/claim", json({ kinds: [TRANSCRIBE_KIND], models, getting }, as(token)))).json()) as { job: { id: number; model: string } | null; models: string[] };
+const claim = async (token: string, models: string[] = [], getting: string[] = [], asked: string[] = []) =>
+  (await (await app.request("/api/devices/relay/editor/claim", json({ kinds: [TRANSCRIBE_KIND], models, getting, asked }, as(token)))).json()) as { job: { id: number; model: string } | null; models: string[] };
 const voice = async () => (await (await app.request("/api/voice-prefs", { headers: { authorization: key } })).json()) as { computers: { name: string; models: { id: string; state: string }[] }[] };
 const want = (computer: string, model: string, keep: boolean) => app.request("/api/voice-prefs/models", json({ computer, model, keep }, { authorization: key }, "PUT"));
 
@@ -169,5 +169,26 @@ describe("Download and Remove", () => {
     await claim(pc.token, ["whisper-large-v3", "whisper-large-v3-turbo"]);
     writeVoicePrefs("ana", { languages: [], stt: { default: { engine: "local" }, per: { transcripts: null } } });
     expect(speechFor("ana", "transcripts")).toMatchObject({ model: "whisper-large-v3-turbo", on: "computers" });
+  });
+
+  it("a Mac: offered only what it runs, and what its person did on it (Dictation) is the wish", async () => {
+    const studio = pairDevice("ana", "Tiny Studio Mac");
+    await report(studio.token, { os: "mac", cpus: 10, memGb: 16, freeGb: 8 });
+    setDeviceKinds(studio.device.id, [TRANSCRIBE_KIND]);
+    // a Mac runs Core ML models, a Linux helper the others
+    expect((await want(studio.device.id, "parakeet-tdt-0.6b-v3", true)).status).toBe(400);
+    expect((await want(pc.device.id, "whisper-small", true)).status).toBe(400);
+    // Download pressed before its first claim, with turbo already on it from before: both stay
+    expect((await want(studio.device.id, "whisper-small", true)).status).toBe(200);
+    expect((await claim(studio.token, ["whisper-large-v3-turbo"])).models).toEqual(["whisper-small", "whisper-large-v3-turbo"]);
+    expect((await claim(studio.token, ["whisper-large-v3-turbo", "whisper-small"])).models).toEqual(["whisper-small", "whisper-large-v3-turbo"]);
+    // a model a person downloaded on the Mac itself is kept, not deleted on its next claim
+    const got = await claim(studio.token, ["whisper-large-v3-turbo", "whisper-small", "whisper-base.en"], [], ["whisper-base.en"]);
+    expect(got.models).toEqual(["whisper-small", "whisper-large-v3-turbo", "whisper-base.en"]);
+    // one removed there is not downloaded again
+    expect((await claim(studio.token, ["whisper-large-v3-turbo", "whisper-base.en"])).models).toEqual(["whisper-large-v3-turbo", "whisper-base.en"]);
+    // the page offers it the Mac's models only
+    const shown = (await voice()).computers.find((c) => c.name === "Tiny Studio Mac") as { os?: string } | undefined;
+    expect(shown?.os).toBe("mac");
   });
 });

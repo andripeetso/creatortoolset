@@ -70,7 +70,7 @@ describe("a use's own need", () => {
 describe("models on your computers", () => {
   it("with none, offers to add a computer; with one, each model can be downloaded, and one it has removed", () => {
     expect(html(view())).toContain('href="/settings/devices"');
-    const out = html(view({ computers: [{ id: "d1", name: "Studio PC", online: false, models: [{ id: "whisper-large-v3-turbo", state: "ready" }] }] }));
+    const out = html(view({ computers: [{ id: "d1", name: "Studio PC", online: false, os: "linux", models: [{ id: "whisper-large-v3-turbo", state: "ready" }] }] }));
     expect(out).toContain("Studio PC");
     expect(out).toContain("Off");
     expect(out).toContain(">Remove<");
@@ -123,5 +123,40 @@ describe("the language picker", () => {
       expect(isLanguage(c)).toBe(true);
       expect(languageName(c)).not.toBe(c);
     }
+  });
+});
+
+describe("dictation and the models on a Mac", () => {
+  const dictation = (over: Record<string, unknown> = {}) => ({
+    on: true, keys: { talk: "Hold fn", history: "", file: "", cancel: "" }, picking: null, engine: "mac", model: "whisper-base.en", keep: 10, sounds: true, needs: null, paused: null,
+    models: [{ id: "whisper-base.en", name: "Whisper Base (English)", size: "145 MB", here: true, removable: true, progress: null }],
+    ...over,
+  });
+  const withMac = (v: VoiceView, d: Record<string, unknown>) =>
+    renderToStaticMarkup(<MemoryRouter><VoiceBody view={v} save={() => {}} mac={{ dictation: d } as never} /></MemoryRouter>);
+
+  it("a Mac is offered the Mac's models, a Linux computer the others", () => {
+    const out = html(view({ computers: [{ id: "m", name: "Tiny Mac", online: true, os: "mac", models: [] }] }));
+    expect(out).toContain("Whisper small (English)");
+    expect(out).not.toContain("Parakeet");
+    const pc = html(view({ computers: [{ id: "p", name: "Tiny PC", online: true, os: "linux", models: [] }] }));
+    expect(pc).toContain("Parakeet");
+    expect(pc).not.toContain("Whisper small (English)");
+  });
+
+  it("on this Mac the engine is chosen; the server's says what it needs and has no model row", () => {
+    const mac = withMac(view(), dictation());
+    expect(mac).toContain("Engine");
+    expect(mac).toContain("Speech model");
+    const need = { use: "mic" as const, needs: "Needs a Deepgram key", key: "DEEPGRAM_API_KEY" as const };
+    const server = withMac(view({ resolved: [...view().resolved.filter((r) => r.use !== "mic"), need] }), dictation({ engine: "server" }));
+    expect(server).toContain("Needs a Deepgram key");
+    expect(server).not.toContain("Speech model");
+  });
+
+  it("while the other dictation app is open, one quiet line says why it is off", () => {
+    const out = withMac(view(), dictation({ paused: "Off while your earlier dictation app is open", needs: "Accessibility" }));
+    expect(out).toContain("Off while your earlier dictation app is open");
+    expect(out).not.toContain("Needs Accessibility");
   });
 });

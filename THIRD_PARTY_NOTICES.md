@@ -95,7 +95,14 @@ copy each one's licence next to the files they install.
 
 ## Mac app
 
-- [Sparkle](https://github.com/sparkle-project/Sparkle) (updates): MIT. It is the Mac app's only package.
+- [Sparkle](https://github.com/sparkle-project/Sparkle) (updates): MIT.
+- WhisperKit (dictation's speech recognition), the `WhisperKit` library of
+  [argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift) 1.1.0, statically linked: MIT, Copyright (c) 2024
+  argmax, inc. Its package also lists swift-argument-parser (Apache-2.0) for its command-line tools, which the app does
+  not link.
+- The Whisper speech models (OpenAI, MIT, https://github.com/openai/whisper), converted for Core ML by Argmax
+  (https://huggingface.co/argmaxinc/whisperkit-coreml). Not in the app: dictation downloads the one chosen in
+  Settings the first time someone dictates, into `~/Library/Application Support/Creator Toolset/dictation/models`.
 - The server inside the app (`apps/mac/scripts/build-app.sh` puts it in `Contents/Resources/server`):
   - Node.js 22 for macOS arm64 (the official build from nodejs.org, version and SHA-256 in the script): MIT,
     with the licences of the libraries it includes in `NODE-LICENSE` next to it.
@@ -108,3 +115,33 @@ copy each one's licence next to the files they install.
     dependencies; the fingerprint tools listed above.
   - The plug-in builder's packages, `esbuild`, `tailwindcss`, `tailwindcss-animate` and `postcss` (all MIT), with
     their npm dependencies, each with its licence file in `node_modules`.
+
+## Dictation code in the Mac app
+
+The dictation in `apps/mac/Sources/CreatorToolsetMac/Dictation/` (talk keys, microphone capture, transcription,
+pasting at the cursor, the pill, History, Transcribe a file) is adapted from Parrot, an open-source macOS dictation
+app by Humanitas Labs (https://github.com/humanitas-labs/parrot), published under this licence:
+
+```
+MIT License
+
+Copyright (c) 2026 Humanitas Labs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -21,6 +21,9 @@ let cardsKind = "cards-draw"
 struct EditorJob: Equatable {
     let id: Int
     let kind: String
+    /// a transcript (TranscribeJob.swift): the model to run, and the languages spoken (empty: hear which)
+    var model: String? = nil
+    var languages: [String] = []
 }
 
 extension EditorJob {
@@ -28,7 +31,7 @@ extension EditorJob {
     init?(claim data: Data) {
         guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let job = answer["job"] as? [String: Any],
               let id = job["id"] as? Int, id > 0, let kind = job["kind"] as? String else { return nil }
-        self.init(id: id, kind: kind)
+        self.init(id: id, kind: kind, model: job["model"] as? String, languages: job["languages"] as? [String] ?? [])
     }
 }
 
