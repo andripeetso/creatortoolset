@@ -216,9 +216,10 @@ final class Dictation: ObservableObject {
     /// Whether any key is registered: dictation on, no picker open, the earlier app not running.
     nonisolated static func keysLive(on: Bool, paused: Bool, earlierAppOpen: Bool) -> Bool { on && !paused && !earlierAppOpen }
 
-    /// The menu bar's Dictate row: what it does from there; while the earlier app has the keys, a click switches to this one.
+    /// The menu bar's Dictate row: what it does from there, or why it does nothing (the earlier app has the keys and
+    /// the paste; a click used to do nothing without a word).
     nonisolated static func menuTitle(phase: Phase, earlierAppOpen: Bool) -> String {
-        if earlierAppOpen { return EarlierDictationApp.switchLine }
+        if earlierAppOpen { return EarlierDictationApp.pausedLine }
         return phase == .recording ? "Stop Dictating" : phase == .transcribing ? "Writing it down…" : "Dictate"
     }
 
@@ -488,8 +489,6 @@ final class Dictation: ObservableObject {
 
     /// The menu bar's Dictate: starts or stops, the same as a tapped talk key.
     func toggle() {
-        // the other dictation app has the keys: the click is "use this one", so it quits and the keys come on here
-        if earlierAppOpen { EarlierDictationApp.quit(); return }
         if !prefs.on { update { $0.on = true } }
         talk(.toggle)
     }

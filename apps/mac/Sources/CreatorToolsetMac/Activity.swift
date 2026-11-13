@@ -126,7 +126,7 @@ struct ActivityPanel: View {
             // what the talk key does, from here: start, stop (the words go where the cursor was), or wait for the words
             PanelMenuRow(title: Dictation.menuTitle(phase: dictation.phase, earlierAppOpen: dictation.earlierAppOpen),
                          shortcut: dictation.earlierAppOpen ? nil : dictation.talkKeyText) { dictation.toggle() }
-                .disabled(dictation.phase == .transcribing)
+                .disabled(dictation.phase == .transcribing || dictation.earlierAppOpen)
             PanelMoreRow { MoreMenu(shell: shell, checkForUpdates: checkForUpdates) }
         }
         .onAppear { Task { await shell.refresh() } }

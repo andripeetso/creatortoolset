@@ -19,14 +19,6 @@ enum EarlierDictationApp {
 
     /// What Settings shows while it runs (`bridgeState` `paused`).
     static let pausedLine = "Off while your other dictation app is open"
-
-    /// The menu bar's Dictate row while it runs: a click quits it, and the keys come on here (Dictation watches it quit).
-    static let switchLine = "Dictate here (quits your other dictation app)"
-
-    /// Asks it to quit, as its own Quit does.
-    static func quit() {
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).forEach { $0.terminate() }
-    }
 }
 
 /// Pasting, unless the earlier app runs (it opened while the words were being written down): then nothing is pasted,
