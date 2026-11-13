@@ -207,15 +207,13 @@ export function useChatModeKey(enabled: boolean): void {
   }, [enabled]);
 }
 
-/** Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that has the light. */
+/** Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that is shown with the wash. */
 export function toggleChatMode(from?: HTMLElement | null): void {
-  washTo({ on: !useChatMode.getState().on }, from, { light: true });
+  washTo({ on: !useChatMode.getState().on }, from, { wash: true });
 }
 
-/** How long the front takes to cross the window (ms): for the chat-mode switch, */
+/** How long the front takes to cross the window (ms). */
 export const WASH = 900;
-/** and for the smaller switches (the page shown or hidden, a new chat, a chat's first page). */
-const WASH_SMALL = 520;
 /** How wide the soft rim is where the two screens meet (px; index.css has the same number). */
 const RIM = 220;
 /** How strong the light on the front is, 0 (none) to 1. Quiet by choice: it was turned up once and read as a toy. */
@@ -224,8 +222,6 @@ const LIGHT = 0.5;
 const DRAWN = 1.012;
 /** How far across its reach the front is (0 to 1) at `t` (0 to 1): it takes a moment to get going and finishes fast. */
 export const frontAt = (t: number): number => t ** 2;
-/** When (0 to 1) the front is `d` of its reach away from the button: frontAt the other way round. */
-export const frontReaches = (d: number): number => Math.min(1, Math.max(0, d)) ** (1 / 2);
 
 /** The switch on its way and what it changes. */
 let washing: { skipTransition(): void } | null = null;
@@ -244,17 +240,20 @@ function middleOf(el?: Element | null): { x: number; y: number } | null {
 }
 
 /**
- * Change how chat mode shares the window (on or off, the page shown or hidden) from a button; `also` is what else
- * changes in the same breath (the chat on show).
+ * Change how chat mode shares the window (on or off, the page shown or hidden); `also` is what else changes in the
+ * same breath (the chat on show). The change is there at once, with no effect, for everything but one switch.
  *
- * The screen as it was stays where it is and the new one washes over it from the button outwards, through a wide soft
- * rim, in one movement that takes a moment to get going and finishes fast. The new screen settles to its size as one,
- * toward the button: nothing in it moves on its own. With `light` (the chat-mode switch itself) a soft band of light in the
- * project's colour rides on the front; the smaller switches, which happen all day, have none. With no button (⌘J on a
- * screen whose bar has none) it starts where the button stands. Changed again while it runs, or where motion is
- * turned down, the new screen is there at once.
+ * `wash`: chat mode itself turned on or off, from its button or ⌘J. Only then the screen as it was stays where it is
+ * and the new one washes over it from the button outwards, through a wide soft rim, in one movement that takes a
+ * moment to get going and finishes fast, with a soft band of light in the project's colour on the front. The new
+ * screen settles to its size as one, toward the button: nothing in it moves on its own. With no button (⌘J on a screen
+ * whose bar has none) it starts where the button stands. Any change while it runs, or where motion is turned down,
+ * and the new screen is there at once.
+ *
+ * The page shown or hidden beside the chats, a new chat, a chat's first page: those happen all day, and the wash on
+ * each of them was too much.
  */
-export function washTo(patch: Partial<Stored>, from?: Element | null, how: { also?: () => void; light?: boolean } = {}): void {
+export function washTo(patch: Partial<Stored>, from?: Element | null, how: { also?: () => void; wash?: boolean } = {}): void {
   const { set } = useChatMode.getState();
   // what else changes with the layout (another chat is opened) is part of the same new screen
   const change = () => {
@@ -263,16 +262,15 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
   };
   // asked for twice (a page opened by two things at once): the switch on its way is the answer
   if (washing && !how.also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return;
-  if (washing || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+  if (!how.wash || washing || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
     cutShort();
     return change();
   }
   const pressed = middleOf(from);
-  const duration = how.light ? WASH : WASH_SMALL;
   const go = (picture: string | null) => {
     // no button on screen: about where it stands in the chats' bar
     const { x, y } = pressed ?? middleOf() ?? { x: 28, y: 28 };
-    wash(x, y, picture, duration, !!how.light);
+    wash(x, y, picture);
   };
   if (!document.startViewTransition) {
     // no picture of the old screen to wash over: the chats show from the button
@@ -302,13 +300,13 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
 }
 
 /**
- * The front from (x, y), crossing the window in `duration`. `picture`: the pseudo-element that holds the new screen,
- * shown through a round mask that grows (index.css gives it the mask; its size and place are animated here) while the
- * whole of it settles to its size; null where there is no such picture, and the chats alone are shown from the
- * button. `light`: the band of light on the front (index.css .chat-wash-light), which leaves the window after the
- * front has, fading.
+ * The front from (x, y), crossing the window in WASH. `picture`: the pseudo-element that holds the new screen, shown
+ * through a round mask that grows (index.css gives it the mask; its size and place are animated here) while the whole
+ * of it settles to its size; null where there is no such picture, and the chats alone are shown from the button. On
+ * the front rides the band of light (index.css .chat-wash-light), which leaves the window after the front has, fading.
  */
-function wash(x: number, y: number, picture: string | null, duration: number, light: boolean): void {
+function wash(x: number, y: number, picture: string | null): void {
+  const duration = WASH;
   const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
   // the front is the middle of the rim; it ends half a rim past the window's far corner, which is then all new
   const reach = far + RIM / 2;
@@ -339,7 +337,7 @@ function wash(x: number, y: number, picture: string | null, duration: number, li
       { duration },
     );
   }
-  if (light) {
+  {
     // its rim is where the new screen is whole (it is drawn in that screen, which thins out across the rim). It comes
     // up as it grows and is all there once it is WIDE: small, the band would be a thin circle round the button
     const TAIL = 0.35;
