@@ -175,6 +175,24 @@ describe("New edit: files dropped on the page", () => {
   });
 });
 
+describe("New edit: opened with a take in hand (the Media Library's New edit on a clip)", () => {
+  it("shows the form at once with the take picked, also for someone who has not answered How do you like to work?, and makes nothing until Create and run", async () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><NewEditSheet open onClose={() => {}} start={{ folder: "", name: "", pick: [{ versionId: "ver_9", title: "Take nine" }] }} styles={{ styles: [], last: null }} onStyles={async () => {}} /></MemoryRouter>));
+    await flush();
+    await flush();
+    expect(document.body.textContent).not.toContain("How do you like to work?");
+    expect(document.body.textContent).toContain("1 picked");
+    expect(posted).toEqual([]);
+    act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await flush();
+    await flush();
+    expect(posted.at(-1)).toMatchObject({ sources: ["ver_9"] });
+  });
+});
+
 describe("New edit: How do you like to work?", () => {
   const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim().startsWith(text))!;
   const press = async (text: string) => {
