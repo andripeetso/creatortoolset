@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LocalAiRow } from "@contracts/local-ai";
-import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome, webRowsFor, webRowState } from "./OwnAiSection";
+import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome, webRowsFor, webRowState, webAppsShown, WEB_APPS } from "./OwnAiSection";
 
 it("ChatGPT and Claude rows: on a linked computer they use the broker's address; on the web this server's; else hidden", () => {
   const origin = "https://studio.example.com";
@@ -68,4 +68,12 @@ it("a ChatGPT or Claude row through Connect is installed once the app has used i
   expect(webRowState("connect", { usedAt: 1 })).toBe("installed");
   expect(webRowState("web")).toBe("install");
   expect(webRowState("web", {})).toBe("installed");
+});
+
+it("through Connect a ChatGPT or Claude row shows only once that store lists Creator Toolset; on the web always", () => {
+  const apps = [{ name: "ChatGPT", listing: "" }, { name: "Claude", listing: "https://claude.ai/directory/creator-toolset" }];
+  expect(webAppsShown("connect", apps).map((a) => a.name)).toEqual(["Claude"]);
+  expect(webAppsShown("web", apps).map((a) => a.name)).toEqual(["ChatGPT", "Claude"]);
+  // today neither store lists it: a linked computer shows neither row
+  expect(webAppsShown("connect", WEB_APPS)).toEqual([]);
 });

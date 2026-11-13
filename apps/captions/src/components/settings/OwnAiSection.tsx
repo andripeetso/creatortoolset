@@ -27,6 +27,9 @@ export const WEB_APPS = [
   {
     name: "ChatGPT",
     logo: "codex",
+    // Creator Toolset's page in ChatGPT's store, once it is listed there. Until then a linked computer has no row for it:
+    // the only way in before that is adding it by address, which is not a thing to send people to.
+    listing: "" as string,
     open: () => "https://chatgpt.com/plugins",
     steps: [
       "Open ChatGPT's Plugins page, press + and choose Add custom MCP server. No + there? Turn on Developer mode in ChatGPT's Settings → Security and login first.",
@@ -38,6 +41,8 @@ export const WEB_APPS = [
   {
     name: "Claude",
     logo: "claude",
+    // Creator Toolset's page in Claude's directory, once it is listed there (as for ChatGPT)
+    listing: "" as string,
     // the add dialog, filled in; if Claude ignores the fields, the steps below still say what goes where
     open: (url: string) => `https://claude.ai/customize/connectors?${new URLSearchParams({ modal: "add-custom-connector", connectorName: "Creator Toolset", connectorUrl: url })}`,
     steps: [
@@ -53,6 +58,9 @@ export const WEB_APPS = [
  * installed once the AI app has used the connection. On the web the key is made by the AI app's own sign-in, so it
  * counts as installed at once. Pure, so it is tested.
  */
+/** The ChatGPT and Claude rows a server shows: on the web all of them (added by this server's address); through Connect only the ones whose store lists Creator Toolset. Pure, so it is tested. */
+export const webAppsShown = <T extends { listing: string }>(via: "connect" | "web", apps: readonly T[]): T[] => apps.filter((a) => via === "web" || !!a.listing);
+
 export function webRowState(via: "connect" | "web", key?: { usedAt?: number }): "install" | "finish" | "installed" {
   if (!key) return "install";
   return via === "web" || key.usedAt ? "installed" : "finish";
@@ -163,7 +171,7 @@ export function OwnAiSection() {
   const here = local?.local ? connectableRows(local) : [];
   const connectAi = useConnectAi();
   const webRows = webRowsFor({ onWeb: onTheWeb(), connectAi, origin: typeof window === "undefined" ? "" : window.location.origin });
-  const web = webRows.show ? WEB_APPS : [];
+  const web = webRows.show ? webAppsShown(webRows.via, WEB_APPS) : [];
   // the apps with a row of their own above are not listed again under Installed in
   const rowed = [...(local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name)), ...web.map((a) => a.name)];
   const webRow = (a: (typeof WEB_APPS)[number]) => (
@@ -320,8 +328,8 @@ const newest = (keys: AiKeyInfo[], name: string) => keys.filter((k) => k.name ==
 /**
  * ChatGPT or Claude. Neither takes a server from a link, so Install opens the steps in the row: what to press there,
  * the address with Copy, and a button that opens the right page. The row says Installed once the app has its key.
- * On a computer linked through Connect, Install opens the app's store page (through the Connect service, which knows
- * it) and gets this computer ready for it (POST /api/connect/ai); the row says Installed once the app has used it.
+ * On a computer linked through Connect (rows only for apps whose store lists Creator Toolset), Install opens its page
+ * in that store and gets this computer ready for it (POST /api/connect/ai); the row says Installed once the app has used it.
  * Remove there takes the app's grant back.
  */
 function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
@@ -338,11 +346,10 @@ function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
   const setGrant = (on: boolean) =>
     fetch("/api/connect/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ app: app.name, on }) }).then((r) => json<{ ok: boolean }>(r));
   const state = webRowState(via, aiKey);
-  // the Connect service's page for adding it in that app: its store page once it is listed there (the broker knows)
-  const addUrl = via === "connect" ? new URL(`/add/${app.name.toLowerCase()}`, url).href : "";
   const install = async () => {
-    // opened in the press itself: a window opened after waiting for an answer is one a browser or the Mac app refuses
-    window.open(addUrl, "_blank", "noopener");
+    // Creator Toolset's page in that app's store, opened in the press itself: a window opened after waiting for an
+    // answer is one a browser or the Mac app refuses
+    window.open(app.listing, "_blank", "noopener");
     setBusy(true);
     setFailed(null);
     try {
