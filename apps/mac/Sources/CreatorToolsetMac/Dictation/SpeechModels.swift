@@ -132,7 +132,7 @@ final class SpeechModels {
                     }
                 }
             },
-            transcribe: { model, languages, samples in try transcript(model: model, languages: languages, samples: samples) }
+            transcribe: { model, languages, samples, soon in try transcript(model: model, languages: languages, samples: samples, soon: soon) }
         )
     }
 
@@ -141,7 +141,9 @@ final class SpeechModels {
     /// at once could hold every one past 40 s, and the server takes the transcript back); beat like CardJob if that shows.
     /// ponytail: it loads its own copy of the model beside dictation's (twice the memory while both are in), so a
     /// dictation never waits behind an hour of transcript; share one pipeline if memory gets tight.
-    nonisolated static func transcript(model id: String, languages: [String], samples: [Float]) throws -> (words: [HeardWord], language: String?) {
+    /// `soon` (the mic: the server waits 15 s): heard by dictation's model when it is this one and loaded, at once; else
+    /// refused at once, so the server goes on another way now. Loading a model for it takes longer than the wait.
+    nonisolated static func transcript(model id: String, languages: [String], samples: [Float], soon: Bool = false) throws -> (words: [HeardWord], language: String?) {
         guard let m = ModelRegistry.find(id), m.onDisk else {
             throw TranscribeRefused(why: "This Mac does not have \(ModelRegistry.find(id)?.displayName ?? id).")
         }
@@ -149,7 +151,14 @@ final class SpeechModels {
         let done = DispatchSemaphore(value: 0)
         let answer = Heard()
         Task.detached {
-            if m.parakeet != nil {
+            if soon {
+                do {
+                    guard let warm = await Dictation.shared.loadedTranscriber(m.id) else {
+                        throw TranscribeRefused(why: "\(m.displayName) isn't loaded on this Mac yet.")
+                    }
+                    answer.result = .success(try await heard(by: warm, samples: samples, languages: languages))
+                } catch { answer.result = .failure(error) }
+            } else if m.parakeet != nil {
                 let engine = ParakeetTranscriber(model: m)
                 do { answer.result = .success(try await engine.words(samples)) } catch { answer.result = .failure(error) }
                 await engine.unload()
@@ -163,6 +172,13 @@ final class SpeechModels {
         done.wait()
         return try answer.result!.get()
     }
+}
+
+/// The words, by dictation's own transcriber (a Whisper or a Parakeet one).
+private func heard(by t: LoadingTranscriber, samples: [Float], languages: [String]) async throws -> (words: [HeardWord], language: String?) {
+    if let w = t as? WhisperKitTranscriber { return try await w.words(samples, languages: languages) }
+    if let p = t as? ParakeetTranscriber { return try await p.words(samples) }
+    throw TranscribeRefused(why: "This Mac's model can't give the words' times.")
 }
 
 private final class Heard: @unchecked Sendable {

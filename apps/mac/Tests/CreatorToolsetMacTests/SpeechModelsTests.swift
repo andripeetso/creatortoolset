@@ -49,15 +49,15 @@ final class SpeechModelsTests: XCTestCase {
 
     private final class Seen: @unchecked Sendable {
         var wanted: [[String]] = []
-        var heard: [(String, [String], Int)] = []
+        var heard: [(String, [String], Int, Bool)] = []
     }
 
     private func link(_ seen: Seen, words: [HeardWord] = [HeardWord(text: "Hi", start: 0.1, end: 0.3)], fail: String? = nil) -> SpeechLink {
         SpeechLink(
             claim: { ["models": ["whisper-base.en"], "getting": [], "asked": ["whisper-base.en"]] },
             answered: { _, wanted in seen.wanted.append(wanted); return false },
-            transcribe: { model, languages, samples in
-                seen.heard.append((model, languages, samples.count))
+            transcribe: { model, languages, samples, soon in
+                seen.heard.append((model, languages, samples.count, soon))
                 if let fail { throw TranscribeRefused(why: fail) }
                 return (words, "en")
             })
@@ -87,8 +87,21 @@ final class SpeechModelsTests: XCTestCase {
         XCTAssertEqual(seen.heard.first?.0, "whisper-base.en")
         XCTAssertEqual(seen.heard.first?.1, ["en"])
         XCTAssertEqual(seen.heard.first?.2, 1600)
+        XCTAssertEqual(seen.heard.first?.3, false)   // a library transcript: its own model, loaded for it
         let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: site.requests[2].body) as? NSDictionary)
         XCTAssertEqual(sent, ["words": [["text": "Hi", "start": 0.1, "end": 0.3]], "language": "en"])
+    }
+
+    func testAMicRecordingIsMarkedSoonSoOnlyALoadedModelHearsIt() async throws {
+        let data = Data(#"{"job":{"id":9,"kind":"transcribe","editId":"","variant":"","model":"whisper-large-v3-turbo","languages":[],"soon":true}}"#.utf8)
+        XCTAssertEqual(EditorJob(claim: data), EditorJob(id: 9, kind: "transcribe", model: "whisper-large-v3-turbo", languages: [], soon: true))
+        // a model this Mac has but has not loaded: refused at once, so the server goes on another way within its wait.
+        // Off the main thread, as the relay runs it (it waits there for dictation's answer from the main actor).
+        let start = Date()
+        let result = await Task.detached { Result { try SpeechModels.transcript(model: "whisper-base.en", languages: [], samples: [0.1, 0.2], soon: true) } }.value
+        guard case .failure(let error) = result else { return XCTFail("heard with no loaded model") }
+        XCTAssertTrue(error is TranscribeRefused, "\(error)")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 
     func testATranscriptThatCannotBeMadeOrIsRefusedIsFailedNeverLeftWaiting() async throws {

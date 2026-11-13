@@ -139,6 +139,8 @@ export interface DeviceJob {
   /** a transcribe job: the model to run, and the languages spoken (empty: hear which) */
   model?: string;
   languages?: string[];
+  /** a recording someone waits on (the mic): a computer hears it with a model it has loaded, or refuses it at once */
+  soon?: boolean;
 }
 
 export interface DeviceClaim {

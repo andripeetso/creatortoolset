@@ -96,6 +96,8 @@ interface Job {
   rank: number;
   /** never handed to a Mac (EDITOR_LIMITS) */
   noMac: boolean;
+  /** someone waits on it (MIC_LIMITS): the computer is told, so it answers with a model it has loaded or refuses at once */
+  soon: boolean;
   end: (r: TranscribeResult | Error) => void;
 }
 const jobs = new Map<number, Job>();
@@ -144,7 +146,7 @@ export const CAPTION_LIMITS = { claimMs: 30_000, takeMs: 3 * 60_000, rank: 1 } a
  * its length (two minutes at most), and else it is written another way (api/transcribe.ts POST /mic), all well under
  * the proxy's 60 s.
  */
-export const MIC_LIMITS = { claimMs: 4_000, takeMs: 15_000, checkMs: 1_000, exact: true, rank: 2 } as const;
+export const MIC_LIMITS = { claimMs: 4_000, takeMs: 15_000, checkMs: 1_000, exact: true, rank: 2, soon: true } as const;
 
 /**
  * The AI Editor's words, one window of an edit's sound (45 s at most) at a time, while the edit's worker waits on the
@@ -154,7 +156,7 @@ export const MIC_LIMITS = { claimMs: 4_000, takeMs: 15_000, checkMs: 1_000, exac
  */
 export const EDITOR_LIMITS = { claimMs: 15_000, takeMs: 30_000, checkMs: 1_000, exact: true, rank: 0.5, noMac: true } as const;
 
-type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: number; exact?: boolean; noMac?: boolean };
+type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: number; exact?: boolean; noMac?: boolean; soon?: boolean };
 
 /**
  * The words in `audio` (a WAV, 16 kHz mono 16-bit) heard by `model` on one of `owner`'s computers. Rejects with
@@ -194,7 +196,7 @@ export function transcribeOnComputer(
       if (r instanceof Error) reject(r);
       else resolve(r);
     };
-    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, rank: limits.rank ?? 0, noMac: !!limits.noMac, end };
+    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, rank: limits.rank ?? 0, noMac: !!limits.noMac, soon: !!limits.soon, end };
     jobs.set(id, j);
     void wakeEditorPolls();
   });
@@ -225,7 +227,7 @@ export function claimTranscript(d: Device, balance: Balance): DeviceJob | null {
   if (!j) return null;
   j.device = d.id;
   j.since = Date.now();
-  return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages };
+  return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages, ...(j.soon ? { soon: true } : {}) };
 }
 
 /** The audio file of a transcript this computer holds, or null. */

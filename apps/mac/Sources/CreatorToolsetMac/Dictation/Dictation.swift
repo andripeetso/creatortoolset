@@ -608,6 +608,12 @@ final class Dictation: ObservableObject {
         prefs.engine == .server ? ServerTranscriber(site: { await Dictation.shared.site?() }) : currentTranscriber()
     }
 
+    /// Dictation's model when it is `id` and already loaded (a recording someone waits on is heard by it, SpeechModels).
+    func loadedTranscriber(_ id: String) async -> LoadingTranscriber? {
+        guard let transcriber, transcriber.modelID == id, await transcriber.loaded() else { return nil }
+        return transcriber
+    }
+
     private func currentTranscriber() -> LoadingTranscriber {
         if let transcriber { return transcriber }
         let made = model.transcriber()
