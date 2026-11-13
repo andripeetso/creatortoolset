@@ -144,7 +144,47 @@ final class SpeechModelsTests: XCTestCase {
         XCTAssertFalse(SpeechModels.restore(variant, earlier: earlier), "only one set aside comes back")
     }
 
+    // MARK: what the owner wants on this Mac
+
+    func testTheOwnersWishesAreDoneOneDownloadAtATimeAndAFailedOneWaits() {
+        let now = Date()
+        let at = Date(timeIntervalSince1970: 0)
+        // wanted and missing: queued; here and not wanted: removed; one downloading is left alone
+        var p = SpeechModels.plan(wanted: ["whisper-small", "whisper-base.en"], held: ["whisper-large-v3-turbo", "whisper-base.en"],
+                                  downloading: nil, queue: [], failed: [:], now: now)
+        XCTAssertEqual(p.remove, ["whisper-large-v3-turbo"])
+        XCTAssertEqual(p.queue, ["whisper-small"])
+        p = SpeechModels.plan(wanted: [], held: ["whisper-small"], downloading: "whisper-small", queue: ["whisper-base.en"], failed: ["whisper-small.en": at], now: now)
+        XCTAssertEqual(p.remove, [], "a download in progress is not removed under itself")
+        XCTAssertEqual(p.queue, [], "a wish taken back leaves the queue")
+        XCTAssertTrue(p.failed.isEmpty)
+        // a failed download is tried again only after `retry`; ids this Mac doesn't run are left alone
+        let failed = ["whisper-small": now.addingTimeInterval(-60)]
+        p = SpeechModels.plan(wanted: ["whisper-small", "parakeet-tdt-0.6b-v3"], held: [], downloading: nil, queue: [], failed: failed, now: now)
+        XCTAssertEqual(p.queue, [])
+        XCTAssertEqual(p.failed, failed)
+        p = SpeechModels.plan(wanted: ["whisper-small"], held: [], downloading: nil, queue: [], failed: failed, now: now.addingTimeInterval(SpeechModels.retry))
+        XCTAssertEqual(p.queue, ["whisper-small"])
+        XCTAssertTrue(p.failed.isEmpty)
+    }
+
     // MARK: the earlier dictation app
+
+    private final class Pasted: Delivering {
+        var texts: [String] = []
+        func deliver(_ text: String, focusAtStart: FocusSnapshot?) throws { texts.append(text) }
+    }
+
+    @MainActor
+    func testNothingIsPastedWhileTheEarlierAppIsOpen() {
+        let pasted = Pasted()
+        var open = true
+        let delivery = UnlessEarlierApp(pasted, running: { open })
+        XCTAssertThrowsError(try delivery.deliver("hi", focusAtStart: nil)) { XCTAssertTrue($0 is EarlierAppOpen) }
+        open = false
+        XCTAssertNoThrow(try delivery.deliver("hi", focusAtStart: nil))
+        XCTAssertEqual(pasted.texts, ["hi"])
+    }
 
     func testWhileTheEarlierDictationAppRunsNothingHereListens() throws {
         XCTAssertTrue(EarlierDictationApp.listens(on: true, earlierRunning: false))

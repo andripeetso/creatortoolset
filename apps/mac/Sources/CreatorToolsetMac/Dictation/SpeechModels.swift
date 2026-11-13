@@ -17,7 +17,7 @@ final class SpeechModels {
     private var queue: [String] = []
     private var failed: [String: Date] = [:]
     /// A failed download is tried again this long after, when it is still wanted.
-    static let retry: TimeInterval = 300
+    nonisolated static let retry: TimeInterval = 300
 
     private static let askedKey = "dictation.asked"
     nonisolated private static let asideKey = "dictation.setAside"
@@ -31,7 +31,9 @@ final class SpeechModels {
     }
 
     func finished(_ id: String, ok: Bool) {
-        if !ok { failed[id] = Date() }
+        failed[id] = ok ? nil : Date()
+        // reported as getting meanwhile, so the server does not ask again on every poll; then a claim asks it again
+        if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + Self.retry + 1) { SpeechModels.shared.changed() } }
         changed()
         startNext()
     }
@@ -61,25 +63,30 @@ final class SpeechModels {
     /// What the owner wants here: each model here that is not wanted goes (Remove), each wanted one that is missing is
     /// downloaded, one at a time. Ids this Mac doesn't run are left alone. True when something changed at once.
     func want(_ wanted: [String], now: Date = Date()) -> Bool {
-        var changed = false
-        for id in Self.held() where !wanted.contains(id) && Dictation.shared.download?.id != id {
-            Dictation.shared.remove(id)
-            changed = true
-        }
-        for id in failed.keys where !wanted.contains(id) { failed[id] = nil; changed = true }
-        let before = queue.count
-        // ponytail: a download already running finishes even when its wish was cancelled; the next claim removes it
-        queue.removeAll { !wanted.contains($0) }
-        changed = changed || queue.count != before
-        let held = Self.held()
-        for id in wanted where ModelRegistry.find(id) != nil && !held.contains(id) && !queue.contains(id) && Dictation.shared.download?.id != id {
-            if let at = failed[id], now.timeIntervalSince(at) < Self.retry { continue }
-            failed[id] = nil
-            queue.append(id)
-            changed = true
-        }
+        let plan = Self.plan(wanted: wanted, held: Self.held(), downloading: Dictation.shared.download?.id, queue: queue, failed: failed, now: now)
+        plan.remove.forEach { Dictation.shared.remove($0) }
+        let changed = !plan.remove.isEmpty || plan.queue != queue || plan.failed != failed
+        queue = plan.queue
+        failed = plan.failed
         startNext()
         return changed
+    }
+
+    /// What `want` does, as data. Pure, so it is tested: a model here that is not wanted goes (not one downloading); a
+    /// wish no longer wanted leaves the queue and the failed list; a wanted one that is missing is queued, unless its
+    /// download failed under `retry` ago. Ids this Mac doesn't run are left alone.
+    /// ponytail: a download already running finishes even when its wish was cancelled; the next claim removes it.
+    nonisolated static func plan(wanted: [String], held: [String], downloading: String?, queue: [String], failed: [String: Date], now: Date)
+        -> (remove: [String], queue: [String], failed: [String: Date]) {
+        let remove = held.filter { !wanted.contains($0) && $0 != downloading }
+        var queue = queue.filter { wanted.contains($0) }
+        var failed = failed.filter { wanted.contains($0.key) }
+        for id in wanted where ModelRegistry.find(id) != nil && !held.contains(id) && !queue.contains(id) && id != downloading {
+            if let at = failed[id], now.timeIntervalSince(at) < retry { continue }
+            failed[id] = nil
+            queue.append(id)
+        }
+        return (remove, queue, failed)
     }
 
     private func startNext() {
@@ -130,6 +137,8 @@ final class SpeechModels {
     }
 
     /// A transcript with a model on this Mac (never downloaded for it: the server sends only models this Mac said it has).
+    /// ponytail: no heartbeat of its own; the long poll keeps the Mac online, which needs a free slot (four AI requests
+    /// at once could hold every one past 40 s, and the server takes the transcript back); beat like CardJob if that shows.
     /// ponytail: it loads its own copy of the model beside dictation's (twice the memory while both are in), so a
     /// dictation never waits behind an hour of transcript; share one pipeline if memory gets tight.
     nonisolated static func transcript(model id: String, languages: [String], samples: [Float]) throws -> (words: [HeardWord], language: String?) {

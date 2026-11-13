@@ -97,8 +97,12 @@ export const STT_MODELS: SttModel[] = [
     page: "https://huggingface.co/openai/whisper-base.en", licence: "Apache-2.0", coreml: "openai_whisper-base.en", mb: 145, languages: ["en"], computer: true },
 ];
 
-/** Whether a computer of this kind (its report's `os`) can download `m`: a Mac its `coreml`, any other its `download`. */
-export const runsOn = (m: SttModel, os: string | undefined): boolean => (os === "mac" ? !!m.coreml : !!m.download);
+/**
+ * Whether a computer of this kind (its report's `os`) can download `m`: a Mac its `coreml`, any other its `download`.
+ * One that has not said what it is yet: only a model both have.
+ */
+export const runsOn = (m: SttModel, os: string | undefined): boolean =>
+  os === "mac" ? !!m.coreml : os ? !!m.download : !!m.coreml && !!m.download;
 
 export interface VoicePrefs {
   /** ISO 639-1 codes, the ones spoken in this person's videos; empty = detect it each time. */

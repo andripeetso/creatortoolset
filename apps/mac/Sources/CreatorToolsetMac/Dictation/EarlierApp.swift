@@ -20,3 +20,25 @@ enum EarlierDictationApp {
     /// What Settings shows while it runs (`bridgeState` `paused`).
     static let pausedLine = "Off while your other dictation app is open"
 }
+
+/// Pasting, unless the earlier app runs (it opened while the words were being written down): then nothing is pasted,
+/// and the words wait in History.
+@MainActor
+final class UnlessEarlierApp: Delivering {
+    private let inner: Delivering
+    private let running: () -> Bool
+
+    init(_ inner: Delivering, running: @escaping () -> Bool = EarlierDictationApp.isRunning) {
+        self.inner = inner
+        self.running = running
+    }
+
+    func deliver(_ text: String, focusAtStart: FocusSnapshot?) throws {
+        if running() { throw EarlierAppOpen() }
+        try inner.deliver(text, focusAtStart: focusAtStart)
+    }
+}
+
+struct EarlierAppOpen: UserFacingError {
+    var userMessage: String { "Not pasted: your other dictation app is open · in History" }
+}
