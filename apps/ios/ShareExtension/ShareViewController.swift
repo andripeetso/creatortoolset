@@ -245,6 +245,8 @@ struct ShareCard: View {
         let hex: [String: UInt32] = [
             "violet": 0x8B5CF6, "sky": 0x0EA5E9, "emerald": 0x10B981, "amber": 0xF59E0B,
             "rose": 0xF43F5E, "orange": 0xF97316, "teal": 0x14B8A6, "pink": 0xEC4899,
+            "blue": 0x3B82F6, "indigo": 0x6366F1, "fuchsia": 0xD946EF, "red": 0xEF4444,
+            "lime": 0x84CC16, "cyan": 0x06B6D4, "yellow": 0xEAB308, "slate": 0x64748B,
         ]
         let v = hex[key ?? ""] ?? 0x8B5CF6
         return Color(red: Double(v >> 16 & 0xFF) / 255, green: Double(v >> 8 & 0xFF) / 255, blue: Double(v & 0xFF) / 255)

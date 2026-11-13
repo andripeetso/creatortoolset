@@ -1,23 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
-import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Loader2, Paperclip, Sparkles, X } from "lucide-react";
 import { PLATFORMS, type SocialPlatform } from "@contracts/connectors";
-import { timeAgo } from "@/lib/exports";
-import {
-  addAccount,
-  analyzerHome,
-  getInstagramAvailability,
-  listAccounts,
-  mineAccount,
-  accountCatalogReady,
-  fmtCount,
-  getAccount,
-  type InstagramAccount,
-  type InstagramAvailability,
-} from "@/lib/instagram";
+import { listAccounts } from "@/lib/instagram";
 import {
   PROJECT_NOTES_MAX,
+  attachKind,
   draftProjectNotes,
+  fileBase64,
   foldProjectInstructions,
   listFrameworks,
   listRules,
@@ -28,7 +17,9 @@ import {
   type WorkshopProject,
   type WorkshopRule,
 } from "@/lib/workshop";
-import { PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
+import { pdfText } from "@/lib/pdf-text";
+import { PROJECT_COLORS, projectColor, type ProjectColor } from "@/lib/workspace";
+import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { LanguageSelect } from "../LanguageSelect";
 
 const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes: "", accountId: null };
@@ -40,15 +31,6 @@ function fieldsFrom(initial?: WorkshopProject): ProjectFields {
   // knowledge lives in the account's Knowledge now (sources); the form never sends the old context files back
   const { knowledge: _old, ...cur } = initial ? { ...EMPTY, ...initial, accountId: initial.accountId ?? null } : EMPTY;
   return { ...cur, notes: foldProjectInstructions(cur), audience: "", voice: "", cta: "" };
-}
-
-function sameHandle(raw: string, username: string): boolean {
-  return raw.trim().replace(/^@/, "").toLowerCase() === username.toLowerCase();
-}
-
-function withAccount(list: InstagramAccount[], acc: InstagramAccount): InstagramAccount[] {
-  const rest = list.filter((a) => a.id !== acc.id);
-  return [acc, ...(acc.mine ? rest.map((a) => ({ ...a, mine: undefined })) : rest)];
 }
 
 /** Setup's payload: the name, the colour and the handles that have text. No accountId, so no Analyzer account and no fetch. */
@@ -64,8 +46,14 @@ export function setupProjectFields(
   return { name: f.name.trim(), audience: "", voice: "", cta: "", notes: "", color: f.color, handles };
 }
 
-/** Brand profile: instructions always in the prompt; which of the account's knowledge, frameworks and rules it uses.
- *  variant "setup" is the first-run project step: name, colour, where it posts (handles only). */
+const DOC = /\.(docx|odt|epub)$/i;
+const readable = (file: File) => DOC.test(file.name) || ["text", "pdf"].includes(attachKind(file));
+
+/**
+ * A project: name, colour, its accounts, the instructions always in the prompt (written for you from whatever you drop
+ * in, if you like), the language of its videos and, once made, which of the account's knowledge, frameworks and rules it
+ * uses. variant "setup" is the first-run project step: name, colour, where it posts (handles only).
+ */
 export function ProjectForm({
   initial,
   busy,
@@ -74,6 +62,7 @@ export function ProjectForm({
   formId,
   variant,
   onReady,
+  made,
 }: {
   initial?: WorkshopProject;
   busy: boolean;
@@ -83,28 +72,36 @@ export function ProjectForm({
   /** First-run setup: the form gets this id and the setup window's own button submits it (no box, no buttons here, no
    *  knowledge off-switches yet: everything starts on). */
   formId?: string;
-  /** "setup": the first-run project step. No Instagram lookup, Sync, instructions or knowledge; handles only. */
+  /** "setup": the first-run project step. No accounts, instructions or knowledge; handles only. */
   variant?: "setup";
   /** Tells the parent whether the name has text, so it can enable its own Create button. */
   onReady?: (ready: boolean) => void;
+  /** The project was just created in this form: what is left is connecting its accounts, and the button says Done. */
+  made?: boolean;
 }) {
   const setup = variant === "setup";
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
-  const [handle, setHandle] = useState("");
   // setup's edit shows the saved handles, so saving again keeps them (and the page can change them)
   const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>(() => (setup && initial?.handles ? { ...initial.handles } : {}));
-  const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
-  const [avail, setAvail] = useState<InstagramAvailability | null>(null);
-  const [pulling, setPulling] = useState(false);
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [frameworks, setFrameworks] = useState<WorkshopFramework[]>([]);
   const [rules, setRules] = useState<WorkshopRule[]>([]);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  // "Write it for me": what the person drops in, and the drafting of the instructions from it
+  const [writing, setWriting] = useState(false);
+  const [context, setContext] = useState("");
+  const [dropped, setDropped] = useState<File[]>([]);
   const [drafting, setDrafting] = useState(false);
+  const pick = useRef<HTMLInputElement>(null);
+  // the <form> holds no rows of its own: the accounts' buttons sit in this box too, and inside a form the first of them
+  // would be what Enter presses. The name, the handles and the submit button belong to it by `form=`.
+  const ownId = useId();
+  const fid = formId ?? `project-form-${ownId}`;
   const alive = useRef(true);
   const set = (k: "name" | "notes") => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setF((cur) => ({ ...cur, [k]: e.target.value }));
-  const locked = busy || pulling || drafting;
+  const locked = busy || pending || drafting;
   const off = f.off ?? [];
   const toggleOff = (id: string) =>
     setF((cur) => {
@@ -119,17 +116,39 @@ export function ProjectForm({
       }
       return { ...cur, [id]: "" };
     });
-  const draft = () => {
-    if (!linked) return;
+  const addFiles = (files: FileList | File[]) => {
+    const list = [...files];
+    const bad = list.filter((x) => !readable(x));
+    setError(bad.length ? `Can't read ${bad.map((x) => x.name).join(", ")}: drop text, PDF, Word, OpenDocument or EPUB` : null);
+    setDropped((cur) => [...cur, ...list.filter(readable)].slice(0, 5));
+  };
+  const canWrite = !!context.trim() || dropped.length > 0 || !!initial?.accountId;
+  const write = async () => {
     setError(null);
     setDrafting(true);
-    draftProjectNotes(linked.id, f.name)
-      .then(({ notes }) => alive.current && setF((cur) => ({ ...cur, notes: cur.notes.trim() ? `${cur.notes.trim()}\n\n${notes}` : notes })))
-      .catch((err) => alive.current && setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => alive.current && setDrafting(false));
+    try {
+      // an @handle the Analyzer already reads brings its bio and posts; the project's own Instagram always does
+      const handles = new Set((context.match(/@[\w.]+/g) ?? []).map((h) => h.slice(1).toLowerCase()));
+      const known = handles.size ? await listAccounts("", { projectId: null }).catch(() => []) : [];
+      const accountIds = [initial?.accountId, ...known.filter((a) => handles.has(a.username.toLowerCase())).map((a) => a.id)].filter((x): x is string => !!x);
+      let text = context.trim();
+      const files: Array<{ name: string; data: string }> = [];
+      for (const file of dropped) {
+        if (DOC.test(file.name)) files.push({ name: file.name, data: await fileBase64(file) });
+        else text += `\n\nThe file ${file.name}:\n${(attachKind(file) === "pdf" ? await pdfText(file) : await file.text()).slice(0, 20_000)}`;
+      }
+      const { notes } = await draftProjectNotes({ name: f.name, text, accountIds, files });
+      if (!alive.current) return;
+      setF((cur) => ({ ...cur, notes: cur.notes.trim() ? `${cur.notes.trim()}\n\n${notes}` : notes }));
+      setWriting(false);
+      setContext("");
+      setDropped([]);
+    } catch (err) {
+      if (alive.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (alive.current) setDrafting(false);
+    }
   };
-  const linked = accounts.find((a) => a.id === f.accountId);
-  const canSync = accountCatalogReady(avail, true);
 
   useEffect(() => {
     alive.current = true;
@@ -143,97 +162,37 @@ export function ProjectForm({
   }, [f.name, onReady]);
 
   useEffect(() => {
-    if (setup) return;
+    if (setup || !initial) return;
     listFrameworks().then(setFrameworks).catch(() => {});
     listRules().then(setRules).catch(() => {});
     listSources().then(setSources).catch(() => {});
-  }, [setup]);
-  // another project's own sources never show here; a new project sees the account-wide ones
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the project, not each new copy of it from the store
+  }, [setup, initial?.id]);
+  // another project's own sources never show here
   const knowledge = sources.filter((s) => !s.projectId || s.projectId === initial?.id);
-
-  useEffect(() => {
-    if (setup) return;
-    Promise.all([listAccounts("", { projectId: null }), getInstagramAvailability()])
-      .then(([list, nextAvail]) => {
-        setAccounts(list);
-        setAvail(nextAvail);
-        const found = initial?.accountId ? list.find((a) => a.id === initial.accountId) : undefined;
-        // a new project starts with "my account" only when it's the first one: a second brand has its own Instagram
-        const acc = found ?? (!initial && !useWorkspace.getState().projects.length ? mineAccount(list) : undefined);
-        if (!acc) return;
-        setHandle(`@${acc.username}`);
-        setF((cur) => ({ ...cur, accountId: acc.id }));
-      })
-      .catch(() => {});
-  }, [initial, setup]);
-
-  const watch = (id: string) => {
-    let n = 0;
-    const tick = () => {
-      if (!alive.current) return;
-      getAccount(id)
-        .then((acc) => {
-          if (!alive.current) return;
-          setAccounts((list) => withAccount(list, acc));
-          if (acc.status === "processing" && n++ < 90) window.setTimeout(tick, 1000);
-        })
-        .catch(() => {});
-    };
-    window.setTimeout(tick, 800);
-  };
-
-  const connect = async (runNow: boolean) => {
-    const raw = handle.trim();
-    if (!raw) throw new Error("Enter @yourhandle");
-    // "My account" is the one Instagram login (Meta Graph) and stays with its brand: another project's handle is
-    // linked to that project, not made "mine"
-    const cur = mineAccount(accounts);
-    const mine = !cur || sameHandle(raw, cur.username) || initial?.accountId === cur.id;
-    const acc = await addAccount(raw, { mine, run: runNow && canSync ? "now" : "later" });
-    setHandle(`@${acc.username}`);
-    setF((cur) => ({ ...cur, accountId: acc.id }));
-    setAccounts((list) => withAccount(list, acc));
-    if (acc.status === "processing") watch(acc.id);
-    return acc.id;
-  };
-
-  const sync = () => {
-    setError(null);
-    setPulling(true);
-    void connect(true)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setPulling(false));
-  };
+  const switches = [...knowledge, ...frameworks, ...rules];
 
   return (
-    <form
-      id={formId}
-      className={formId ? "flex flex-col gap-4" : "flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"}
+    <div className={formId ? "flex flex-col gap-4" : "flex flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"}>
+      <form
+      id={fid}
+      className="contents"
       onSubmit={(e) => {
         e.preventDefault();
         setError(null);
-        if (setup) {
-          if (!f.name.trim()) return;
-          setPulling(true);
-          void Promise.resolve(onSave(setupProjectFields(f, where)))
-            .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-            .finally(() => setPulling(false));
-          return;
-        }
-        setPulling(true);
-        const raw = handle.trim();
-        const skipPull = Boolean(linked && raw && sameHandle(raw, linked.username));
-        // no handle: a project without Instagram (a creator on other platforms is not stuck in setup)
-        void (!raw ? Promise.resolve(null) : skipPull ? Promise.resolve(linked!.id) : connect(true))
-          .then((accountId) => Promise.resolve(onSave({ ...f, accountId, audience: "", voice: "", cta: "" })))
+        if (setup && !f.name.trim()) return;
+        setPending(true);
+        // the project's Analyzer account (f.accountId) goes back as it was: accounts are connected below, not typed here
+        void Promise.resolve(onSave(setup ? setupProjectFields(f, where) : { ...f, audience: "", voice: "", cta: "" }))
           .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-          .finally(() => setPulling(false));
+          .finally(() => alive.current && setPending(false));
       }}
-    >
+      />
       <label className="text-[11px] text-zinc-400">
         Name
         <input
-          autoFocus
+          form={fid}
+          autoFocus={!made}
           required
           value={f.name}
           onChange={set("name")}
@@ -243,7 +202,7 @@ export function ProjectForm({
       </label>
       <div>
         <p className="text-[11px] text-zinc-400">Colour</p>
-        <div className="mt-1 flex gap-1.5" role="radiogroup" aria-label="Project colour">
+        <div className="mt-1.5 flex flex-wrap gap-2" role="radiogroup" aria-label="Project colour">
           {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => {
             const on = projectColor({ id: initial?.id ?? "new", color: f.color }) === c;
             return (
@@ -255,7 +214,7 @@ export function ProjectForm({
                 aria-label={c}
                 title={c}
                 onClick={() => setF((cur) => ({ ...cur, color: c }))}
-                className={`h-5 w-5 rounded-full ${PROJECT_COLORS[c].dot} ${on ? "ring-2 ring-white/80 ring-offset-2 ring-offset-zinc-900" : "opacity-60 hover:opacity-100"}`}
+                className={`h-7 w-7 rounded-full transition-transform ${PROJECT_COLORS[c].dot} ${on ? "ring-2 ring-zinc-200 ring-offset-2 ring-offset-zinc-900" : "hover:scale-110"}`}
               />
             );
           })}
@@ -286,6 +245,7 @@ export function ProjectForm({
               {p.label} handle
               <input
                 value={where[p.id] ?? ""}
+                form={fid}
                 onChange={(e) => setWhere((cur) => ({ ...cur, [p.id]: e.target.value }))}
                 placeholder="@yourhandle"
                 disabled={locked}
@@ -297,102 +257,124 @@ export function ProjectForm({
           <p className="mt-1 text-[10px] text-zinc-600">Only the handle is saved. Nothing is fetched.</p>
         </div>
       ) : (
-      <div>
-        <p className="text-[11px] text-zinc-400">My Instagram</p>
-        <div className="mt-1 flex gap-2">
-          <input
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-            placeholder="@yourhandle"
-            disabled={locked}
-            spellCheck={false}
-            className={`${input} mt-0`}
-          />
-          <button
-            type="button"
-            disabled={locked || !handle.trim() || !canSync}
-            onClick={sync}
-            title="Refresh profile, every post, insights and comments from the official Instagram login"
-            className="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {pulling || linked?.status === "processing" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Sync
-          </button>
-        </div>
-        {linked ? (
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-zinc-500">
-            <span className="text-violet-300/80">Analyzer · @{linked.username}</span>
-            {linked.counts.fetchedAt > 0 ? <span>{fmtCount(linked.counts.followers)} followers</span> : null}
-            <span>{linked.catalogCount ?? 0} listed</span>
-            {linked.lastCatalogAt ? <span>synced {timeAgo(linked.lastCatalogAt)}</span> : <span>not synced yet</span>}
-            {linked.status === "processing" ? <span className="text-violet-300">syncing…</span> : null}
-            <Link to={`${analyzerHome()}/accounts/${linked.id}`} className="text-violet-400 hover:underline">
-              Open
-            </Link>
+        <div>
+          <p className="text-[11px] text-zinc-400">Accounts</p>
+          {initial ? (
+            <div className="mt-1">
+              <ConnectorsSection projectId={initial.id} back={`/projects?edit=${initial.id}`} />
+            </div>
+          ) : null}
+          <p className="mt-1 text-[10px] text-zinc-600">
+            {initial
+              ? "Optional. Skip it if you like: they can be connected any time in Settings → Social accounts."
+              : "Optional. Once it's made you can connect them here, or any time later in Settings → Social accounts."}
           </p>
-        ) : null}
-        <p className="mt-0.5 text-[10px] text-zinc-600">
-          {canSync
-            ? "Sync is this project's Instagram in Analyzer: the official login's posts, insights, comments and trial reels."
-            : "Links the handle as your account. To read its posts, log in with Instagram or add your own Apify key (Settings → API keys), then Sync."}
-        </p>
-      </div>
+        </div>
+      )}
+      {!setup && (
+        <div className="text-[11px] text-zinc-400">
+          <span className="flex items-center justify-between">
+            <label htmlFor="project-notes">Instructions</label>
+            {!writing ? (
+              <button
+                type="button"
+                onClick={() => setWriting(true)}
+                disabled={locked}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-violet-300 hover:bg-zinc-800 disabled:opacity-40"
+              >
+                <Sparkles className="h-3 w-3" />
+                Write it for me
+              </button>
+            ) : null}
+          </span>
+          {writing ? (
+            <div
+              className="mt-1 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 p-2"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                addFiles(e.dataTransfer.files);
+              }}
+            >
+              <textarea
+                autoFocus
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                disabled={drafting}
+                placeholder="Drop in anything about it: a description, links, @handles, old posts, a document."
+                className={`${input} min-h-24 resize-none [field-sizing:content]`}
+              />
+              {dropped.length ? (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {dropped.map((file, i) => (
+                    <span key={`${file.name}-${i}`} className="flex items-center gap-1 rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
+                      {file.name}
+                      <button type="button" aria-label={`Remove ${file.name}`} disabled={drafting} onClick={() => setDropped((cur) => cur.filter((_, j) => j !== i))}>
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-1.5 flex items-center gap-2">
+                <input ref={pick} type="file" multiple hidden onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
+                <button type="button" disabled={drafting} onClick={() => pick.current?.click()} className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
+                  <Paperclip className="h-3 w-3" /> Add a file
+                </button>
+                <span className="flex-1" />
+                <button type="button" disabled={drafting} onClick={() => setWriting(false)} className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void write()}
+                  disabled={drafting || !canWrite}
+                  className="flex items-center gap-1 rounded-md bg-violet-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                >
+                  {drafting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  Write the instructions
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <textarea
+            id="project-notes"
+            value={f.notes}
+            onChange={set("notes")}
+            maxLength={PROJECT_NOTES_MAX}
+            placeholder="Who you write for, how you sound, what never to say."
+            // grows with the text: one scroll for the window, not a second one inside the box
+            className={`${input} mt-1 min-h-28 resize-none [field-sizing:content]`}
+          />
+          <span className="mt-0.5 block text-[10px] text-zinc-600">
+            {f.notes.length}/{PROJECT_NOTES_MAX} — always in the prompt, so keep it short.
+          </span>
+        </div>
       )}
       {error ? <p className="text-[10px] text-red-400">{error}</p> : null}
       {!setup && (
-      <label className="text-[11px] text-zinc-400">
-        <span className="flex items-center justify-between">
-          Instructions
-          {linked ? (
-            <button
-              type="button"
-              onClick={draft}
-              disabled={locked || !(linked.catalogCount ?? 0)}
-              title={linked.catalogCount ? "Draft the facts about this brand from its bio and posts, for you to rewrite" : "Sync the Instagram first"}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-violet-300 hover:bg-zinc-800 disabled:opacity-40"
-            >
-              {drafting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-              Draft from my posts
-            </button>
-          ) : null}
-        </span>
-        <textarea
-          value={f.notes}
-          onChange={set("notes")}
-          maxLength={PROJECT_NOTES_MAX}
-          placeholder="Who you write for, how you sound, what never to say."
-          // grows with the text: one scroll for the window, not a second one inside the box
-          className={`${input} mt-1 min-h-28 resize-none [field-sizing:content]`}
-        />
-        <span className="mt-0.5 block text-[10px] text-zinc-600">
-          {f.notes.length}/{PROJECT_NOTES_MAX} — always in the prompt, so keep it short.
-        </span>
-      </label>
-      )}
-      {!setup && (
-        <label className="text-[11px] text-zinc-400">
-          Spoken in its videos
+        <div className="text-[11px] text-zinc-400">
+          <label htmlFor="project-language">Spoken in its videos</label>
           <LanguageSelect
+            id="project-language"
             value={f.languages?.[0] ?? ""}
             onChange={(code) => setF((cur) => ({ ...cur, languages: code ? [code] : [] }))}
             disabled={locked}
             className={`${input} mt-1`}
           />
-          <span className="mt-0.5 block text-[10px] text-zinc-600">What its transcripts listen for.</span>
-        </label>
+        </div>
       )}
-      {!formId && !setup && (knowledge.length || frameworks.length || rules.length) ? (
-        <div>
-          <p className="text-[11px] text-zinc-400">Knowledge, frameworks and rules</p>
-          <p className="mb-1.5 text-[10px] text-zinc-600">
+      {/* only once the project exists, and folded: everything starts on, and most never change it */}
+      {!formId && !setup && initial && switches.length ? (
+        <details className="group">
+          <summary className="cursor-pointer select-none text-[11px] text-zinc-500 hover:text-zinc-300">
+            Knowledge, frameworks and rules · {switches.filter((x) => !off.includes(x.id)).length} of {switches.length} on
+          </summary>
+          <p className="mb-1.5 mt-1 text-[10px] text-zinc-600">
             All of yours are on in every project. Switch off what this one shouldn't use. Add knowledge in the Workshop's Knowledge tab.
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {[...knowledge, ...frameworks, ...rules].map((x) => {
+            {switches.map((x) => {
               const on = !off.includes(x.id);
               return (
                 <button
@@ -409,24 +391,25 @@ export function ProjectForm({
               );
             })}
           </div>
-        </div>
+        </details>
       ) : null}
       {/* Cancel / Save stay in view at the bottom while the form scrolls */}
       {!formId && <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
-        {onCancel && (
+        {onCancel && !made && (
           <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
             Cancel
           </button>
         )}
         <button
           type="submit"
+          form={fid}
           disabled={locked || f.name.trim().length === 0}
           className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
         >
-          {(busy || pulling) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {initial ? "Save" : "Create project"}
+          {(busy || pending) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {made ? "Done" : initial ? "Save" : "Create project"}
         </button>
       </div>}
-    </form>
+    </div>
   );
 }

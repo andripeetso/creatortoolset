@@ -97,7 +97,7 @@ type ProjectFields = Pick<Project, "name" | "audience" | "voice" | "cta" | "note
 };
 
 /** The colours a project can take (the client maps each to its classes). */
-export const PROJECT_COLORS = ["violet", "sky", "emerald", "amber", "rose", "orange", "teal", "pink"] as const;
+export const PROJECT_COLORS = ["violet", "sky", "emerald", "amber", "rose", "orange", "teal", "pink", "blue", "indigo", "fuchsia", "red", "lime", "cyan", "yellow", "slate"] as const;
 
 function parseAccountId(raw: unknown): string | null {
   if (raw === null || raw === "") return null;

@@ -33,7 +33,7 @@ const themed = (() => {
   const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]
   for (const n of shades) out.violet[n] = vary(`violet-${n}`, colors.violet[n], colors.violet[n])
   const base = { ":root": light, ".dark": dark }
-  const tints = ["sky", "emerald", "amber", "rose", "orange", "teal", "pink"]
+  const tints = ["sky", "emerald", "amber", "rose", "orange", "teal", "pink", "blue", "indigo", "fuchsia", "red", "lime", "cyan", "yellow", "slate"]
   for (const [sel, isDark] of [[":root", false], [".dark", true]])
     for (const h of tints) {
       const v = {}
