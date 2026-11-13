@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { Link } from "react-router";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Plus } from "lucide-react";
 import { useChatMode } from "@/lib/chat-mode";
+import { isPhoneHub } from "@/lib/mobile";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import {
   DropdownMenu,
@@ -54,7 +55,7 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
         </DropdownMenuLabel>
         {projects.length === 0 ? (
           <DropdownMenuItem asChild>
-            <Link to="/projects">Create a project</Link>
+            <Link to="/projects?add=1">Create a project</Link>
           </DropdownMenuItem>
         ) : (
           projects.map((p) => (
@@ -75,6 +76,15 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
           ))
         )}
         <DropdownMenuSeparator />
+        {/* start a new one from here: it opens the form, and a new project is the one picked. Not on a phone, where
+            projects are made on the computer */}
+        {projects.length > 0 && !isPhoneHub() && (
+          <DropdownMenuItem asChild>
+            <Link to="/projects?add=1">
+              <Plus className="size-3.5" /> New project…
+            </Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
           <Link to="/projects">Manage projects…</Link>
         </DropdownMenuItem>
