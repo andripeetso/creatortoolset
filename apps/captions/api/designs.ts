@@ -2,18 +2,20 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
 import { animationStyles } from "./editor/animation-styles";
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
+import { cutOut } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
 import { env } from "./lib/env";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
 import { blobs, libraryDb } from "./library/db";
+import { ffmpeg } from "./library/media/run";
 import { ownedSession, readDoc } from "./workshop";
 
 /**
@@ -133,7 +135,7 @@ const frameLabel = (p: DesignPage, k: number) => `Frame ${k + 1}${p.name ? ` (${
 export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}) and "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom. The kinds:
 - {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"spacing":0,"upper":false,"outline":{"color":"#rrggbb","width":8},"gradient":{…}}: "spacing" is pixels between the letters; the words wrap inside w, and "\\n" starts a new line; size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
 - {"type":"shape","shape":"${DESIGN_SHAPES.join("|")}","fill":"#rrggbb","gradient":{…},"radius":0,"stroke":{"color":"#rrggbb","width":4}}: a shape fills its box; a triangle points up and an arrow to the right (turn them with "rotate"; "flipX" points the arrow left); a thin rect is a line.
-- {"type":"image","picture":"<id>","fit":"cover|contain","zoom":1,"focus":{"x":0.5,"y":0.5},"radius":0}: only a picture listed under "pictures" (how one gets there is below). "cover" fills the box and cuts the rest off: "focus" says which part stays (0 = the picture's left or top edge, 1 = its right or bottom), "zoom" (1 to 8) goes closer.
+- {"type":"image","picture":"<id>","fit":"cover|contain","zoom":1,"focus":{"x":0.5,"y":0.5},"radius":0}: only a picture listed under "pictures" (how one gets there is below). "cover" fills the box and cuts the rest off: "focus" says which part stays (0 = the picture's left or top edge, 1 = its right or bottom), "zoom" (1 to 8) goes closer. Its colours: "adjust":{${DESIGN_ADJUST.map((k) => `"${k}":0`).join(",")}} (each -100 to 100), "duotone":{"dark":"#rrggbb","light":"#rrggbb"} (two colours in place of its own; black and white for a black and white picture), "vignette" (1 to 100 darkens the corners, -1 to -100 lightens them), "grain" (0 to 100), "blur" (pixels; a blurred photo behind words keeps them readable). They are settings of the layer, not a changed picture: 0 or null puts one back.
 - {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.`;
 
 const HOW = `A design is a canvas of frames. A frame is one picture (a carousel slide, a cover, a thumbnail, anything): it has an id, a size (w, h) and layers. The user sees every frame side by side, moves and edits any layer by hand, and exports each frame as a PNG of exactly its size.
@@ -144,7 +146,8 @@ A frame that has "words" draws a slide of the user's carousel: those words are t
 
 To change a design, give either or both of:
 - "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "name", "w" or "h"). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
-- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is.
+- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off.
+- A change {"frame":"<id>","layer":"<a picture layer's id>","cutout":true} takes the picture's background away (the user's own Mac cuts it out, which takes some seconds; the answer says so when no Mac of theirs is on). {"set":{"picture":"<its 'uncut' id>","uncut":null}} puts the background back.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
 After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit). Look, and fix what does not sit right.`;
@@ -260,7 +263,9 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const [layer] = t.layers.splice(at, 1);
     if (c.remove === true) continue;
     t.set.push(String(c.layer));
-    const changed = raw(c.set) ? { ...(layer as Raw), ...(c.set as Raw), id: (layer as Raw).id } : layer;
+    // a field that is itself a set of fields ("adjust", "shadow", "gradient") takes the ones given and keeps the rest; null takes it off whole
+    const was = layer as Raw;
+    const changed = raw(c.set) ? { ...was, ...Object.fromEntries(Object.entries(c.set as Raw).map(([k, v]) => [k, raw(v) && raw(was[k]) ? { ...raw(was[k]), ...raw(v) } : v])), id: was.id } : layer;
     if (c.order === "front") t.layers.push(changed);
     else if (c.order === "back") t.layers.unshift(changed);
     else t.layers.splice(at, 0, changed);
@@ -443,6 +448,52 @@ designsApp.post("/:id/pictures", (c) =>
     }
     await save({ ...d, updatedAt: stamp(d) });
     return { id };
+  }),
+);
+
+/** The longest side a cut-out is kept at when it comes back too heavy to keep whole: more than any frame shows. */
+const CUT_SIDE = 2560;
+
+// A picture of the design with its background taken away, as a new picture of the design (the first one stays: the
+// layer that shows the cut-out names it, so the background can be put back). The cutting is done by a Mac of the
+// person's own (lib/cutouts.ts): nothing leaves their machines, and without such a Mac the answer says what is missing.
+designsApp.post("/:id/pictures/:pid/cutout", (c) =>
+  answer(c, async () => {
+    const d = await mine(c);
+    const pid = c.req.param("pid");
+    if (!PICTURE.test(pid) || !d.pictures.includes(pid)) throw new DesignError("Not found", 404);
+    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+    const dir = picturesOf(d.owner, d.id);
+    const tmp = path.join(dir, `.cut-${randomBytes(6).toString("hex")}.png`);
+    try {
+      // a WebP is not a picture the Mac takes: it goes as a PNG
+      let bytes = await readFile(path.join(dir, pid));
+      if (pid.endsWith(".webp")) {
+        await ffmpeg(["-y", "-i", path.join(dir, pid), "-frames:v", "1", "-f", "image2", "-c:v", "png", tmp], true);
+        bytes = await readFile(tmp);
+      }
+      let cut: Buffer;
+      try {
+        cut = await cutOut(d.owner, bytes);
+      } catch (e) {
+        throw new DesignError(e instanceof Error ? e.message : String(e));
+      }
+      // a cut-out is a PNG, often several times its photo's weight: one over the cap for a picture is kept smaller
+      if (cut.length > DESIGN_LIMITS.pictureBytes) {
+        const whole = `${tmp}.whole.png`;
+        await writeFile(whole, cut);
+        await ffmpeg(["-y", "-i", whole, "-frames:v", "1", "-vf", `scale=w='min(${CUT_SIDE},iw)':h='min(${CUT_SIDE},ih)':force_original_aspect_ratio=decrease`, "-f", "image2", "-c:v", "png", tmp], true).finally(() => rm(whole, { force: true }));
+        cut = await readFile(tmp);
+        if (cut.length > 2 * DESIGN_LIMITS.pictureBytes) throw new DesignError("The cut-out is too heavy to keep in a design");
+      }
+      // onto the design as it is now: the cutting took a while, and a hand or an AI may have changed it meanwhile
+      const now = (await read(d.owner, d.id)) ?? d;
+      const id = await addPicture(now, cut, "png");
+      await save({ ...now, updatedAt: stamp(now) });
+      return { id };
+    } finally {
+      await rm(tmp, { force: true });
+    }
   }),
 );
 

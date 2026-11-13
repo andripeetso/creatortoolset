@@ -1,4 +1,4 @@
-import { DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type Layer } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
@@ -27,6 +27,20 @@ const named = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g,
 
 /** A gradient as it may be saved (its colour "#rrggbb", its angle in a full turn), or nothing when it is none. */
 const gradient = (v: unknown): { gradient?: Gradient } => (obj(v) && typeof v.to === "string" && COLOR.test(v.to.trim()) ? { gradient: { to: sixDigits(color(v.to, "#000000")), angle: round(num(v.angle, -360, 360, 90)) } } : {});
+
+/** A picture's colour changes as they may be saved: each one named, a whole number in its range, and none at all when every one is 0. */
+function retouched(raw: Record<string, unknown>): Pick<ImageLayer, "adjust" | "duotone" | "vignette" | "grain" | "blur"> {
+  const whole = (v: unknown, lo: number, hi: number) => Math.round(num(v, lo, hi, 0));
+  const adjust = Object.fromEntries(DESIGN_ADJUST.map((k) => [k, obj(raw.adjust) ? whole(raw.adjust[k], -100, 100) : 0] as const).filter(([, v]) => v));
+  const two = obj(raw.duotone) && typeof raw.duotone.dark === "string" && typeof raw.duotone.light === "string" && COLOR.test(raw.duotone.dark.trim()) && COLOR.test(raw.duotone.light.trim()) ? raw.duotone : null;
+  return {
+    ...(Object.keys(adjust).length ? { adjust } : {}),
+    ...(two ? { duotone: { dark: sixDigits(color(two.dark, "#000000")), light: sixDigits(color(two.light, "#ffffff")) } } : {}),
+    ...(whole(raw.vignette, -100, 100) ? { vignette: whole(raw.vignette, -100, 100) } : {}),
+    ...(whole(raw.grain, 0, 100) ? { grain: whole(raw.grain, 0, 100) } : {}),
+    ...(whole(raw.blur, 0, 200) ? { blur: whole(raw.blur, 0, 200) } : {}),
+  };
+}
 
 /** A span moved inside 0..page, and cut to the page when it is longer than it. */
 const inside = (at: number, size: number, page: number): [number, number] => (size >= page ? [0, page] : [Math.min(Math.max(at, 0), page - size), size]);
@@ -193,6 +207,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       fit: oneOf(raw.fit, ["cover", "contain"] as const, "cover"),
       ...(num(raw.zoom, 1, 8, 1) > 1 ? { zoom: round(num(raw.zoom, 1, 8, 1)) } : {}),
       ...(obj(raw.focus) ? { focus: { x: round(num(raw.focus.x, 0, 1, 0.5)), y: round(num(raw.focus.y, 0, 1, 0.5)) } } : {}),
+      ...retouched(raw),
+      // the picture it was cut out of: one of this design's own, and not itself
+      ...(typeof raw.uncut === "string" && raw.uncut !== raw.picture && r.pictures.includes(raw.uncut) ? { uncut: raw.uncut } : {}),
       ...(num(raw.radius, 0, 2000, 0) ? { radius: round(num(raw.radius, 0, 2000, 0)) } : {}),
     };
   }

@@ -15,6 +15,9 @@ const { createAnimation, pictureFile } = await import("./editor/animation-styles
 const { change } = await import("./editor/styles");
 const { ffmpegCommand } = await import("./ffmpeg-runtime");
 const { blobs, libraryDb } = await import("./library/db");
+const { CUTOUT_KIND } = await import("../contracts/devices");
+const { claimCutout, cutoutFailed, cutoutSent, heldCutout } = await import("./lib/cutouts");
+const { pairDevice, setDeviceKinds, touchDevice } = await import("./lib/devices");
 const { createUser } = await import("./users");
 
 createUser("jordan", "password1", { role: "user" });
@@ -247,6 +250,11 @@ describe("designs: an AI that designs", () => {
     expect(out.notes).toEqual(["Frame 1 has no layer ghost", "A change names no frame of this design (p9): its frames are p1"]);
     const gone = (await write(d.id, { changes: [{ frame: "p1", layer: "moon", remove: true }] })).body;
     expect(gone.design.pages[0]!.layers.map((l) => l.id)).toEqual(["title", "sun"]);
+    // a field that is a set of fields takes the ones given and keeps the rest; null takes it off whole
+    await write(d.id, { changes: [{ frame: "p1", layer: "sun", set: { shadow: { color: "#102030", opacity: 0.5, blur: 10, x: 1, y: 2 }, gradient: { to: "#00ff00", angle: 30 } } }] });
+    const part = (await write(d.id, { changes: [{ frame: "p1", layer: "sun", set: { shadow: { blur: 40 }, gradient: null } }] })).body.design.pages[0]!.layers[1]!;
+    expect(part.shadow).toEqual({ color: "#102030", opacity: 0.5, blur: 40, x: 1, y: 2 });
+    expect(part).not.toHaveProperty("gradient");
     // on a slide's frame a change may not put other words on it
     const piece = await fromPiece();
     const held = (await write(piece.id, { changes: [{ frame: "p3", layer: "l1", set: { text: "Buy now" } }, { frame: "p3", add: { ...text, text: "Try it today" } }] })).body;
@@ -321,6 +329,78 @@ describe("designs: an AI that designs", () => {
     expect(look.body.why).toContain("No pictures of the pages");
     expect((await call("GET", `/api/designs/${d.id}/look`, undefined, "robin")).status).toBe(404);
   });
+});
+
+describe("designs: a picture's background taken away", () => {
+  const png = (w: number, h: number, more: string[] = []) => execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", `color=c=red:s=${w}x${h}`, "-frames:v", "1", ...more, "-f", "image2pipe", "-c:v", "png", "-"], { maxBuffer: 1 << 28 });
+  const upload = async (id: string, bytes: Buffer, type = "image/png") => (await call<{ id: string }>("POST", `/api/designs/${id}/pictures`, { name: "a picture", type, data: bytes.toString("base64") })).body.id;
+  /** Jordan's Mac takes the cut-out that waits, looks at what it was sent, and answers `result` (bytes, or why it cannot). */
+  const macAnswers = async (mac: { id: string; owner: string }, result: (sent: { picture: Buffer; mime: string }) => Buffer | string) => {
+    let job = null as ReturnType<typeof claimCutout>;
+    for (let n = 0; n < 200 && !(job = claimCutout(mac, [CUTOUT_KIND])); n++) await new Promise((r) => setTimeout(r, 10));
+    const sent = heldCutout(mac.id, job!.id)!;
+    const out = result(sent);
+    if (typeof out === "string") cutoutFailed(mac.id, job!.id, out);
+    else cutoutSent(mac.id, job!.id, out);
+    return sent;
+  };
+
+  it("says what is missing without a Mac; with one, keeps the cut-out as a new picture of the design and the first picture too", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const first = await upload(d.id, png(64, 48));
+    const none = await call<{ error: string }>("POST", `/api/designs/${d.id}/pictures/${first}/cutout`, {});
+    expect([none.status, none.body.error]).toEqual([400, "Needs a Mac with Creator Toolset on"]);
+
+    const mac = pairDevice("jordan", "Jordan's Mac").device;
+    setDeviceKinds(mac.id, [CUTOUT_KIND]);
+    touchDevice(mac.id);
+    const cut = png(64, 48, ["-vf", "format=rgba,colorchannelmixer=aa=0.5"]);
+    const asked = call<{ id: string }>("POST", `/api/designs/${d.id}/pictures/${first}/cutout`, {});
+    const sent = await macAnswers(mac, () => cut);
+    expect(sent.mime).toBe("image/png");
+    const made = await asked;
+    expect(made.status).toBe(200);
+    expect(made.body.id).toMatch(/^[0-9a-f]{8}\.png$/);
+    const after = (await call<Design>("GET", `/api/designs/${d.id}`)).body;
+    expect(after.pictures).toEqual([first, made.body.id]);
+    expect(after.updatedAt).toBeGreaterThan(d.updatedAt);
+    as = "jordan";
+    expect(Buffer.from(await (await app.request(`/api/designs/${d.id}/pictures/${made.body.id}`)).arrayBuffer()).equals(cut)).toBe(true);
+    // the layer shows the cut-out and remembers the picture it was cut from
+    const saved = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...after.pages[0], layers: [{ type: "image", picture: made.body.id, uncut: first, fit: "cover", x: 0, y: 0, w: 500, h: 500 }] }] })).body;
+    expect(saved.pages[0]!.layers[0]).toMatchObject({ picture: made.body.id, uncut: first });
+
+    // the Mac's own words when it cannot, and someone else's design or a picture that is not the design's: not found
+    const failing = call<{ error: string }>("POST", `/api/designs/${d.id}/pictures/${first}/cutout`, {});
+    await macAnswers(mac, () => "No subject was found in the picture.");
+    expect((await failing).body).toEqual({ error: "No subject was found in the picture." });
+    expect((await call("POST", `/api/designs/${d.id}/pictures/${first}/cutout`, {}, "robin")).status).toBe(404);
+    expect((await call("POST", `/api/designs/${d.id}/pictures/ffffffff.png/cutout`, {})).status).toBe(404);
+    expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pictures).toHaveLength(2);
+  }, 60_000);
+
+  it("sends a WebP to the Mac as a PNG, and keeps a cut-out that comes back too heavy at a smaller size", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const webp = execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x48", "-frames:v", "1", "-f", "webp", "-"]);
+    const first = await upload(d.id, webp, "image/webp");
+    expect(first).toMatch(/\.webp$/);
+    const mac = pairDevice("jordan", "Jordan's Mac").device;
+    setDeviceKinds(mac.id, [CUTOUT_KIND]);
+    touchDevice(mac.id);
+    // noise does not shrink: a 4000 × 3000 PNG of it is far over a picture's cap
+    const heavy = execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "nullsrc=s=4000x3000,geq=random(1)*255:128:128", "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "image2pipe", "-c:v", "png", "-"], { maxBuffer: 1 << 28 });
+    expect(heavy.length).toBeGreaterThan(8_000_000);
+    const asked = call<{ id: string }>("POST", `/api/designs/${d.id}/pictures/${first}/cutout`, {});
+    const sent = await macAnswers(mac, () => heavy);
+    expect(sent.mime).toBe("image/png");
+    const made = await asked;
+    expect(made.status).toBe(200);
+    as = "jordan";
+    const kept = Buffer.from(await (await app.request(`/api/designs/${d.id}/pictures/${made.body.id}`)).arrayBuffer());
+    // a PNG says its size at bytes 16 to 24
+    expect([kept.readUInt32BE(16), kept.readUInt32BE(20)]).toEqual([2560, 1920]);
+    expect(kept.length).toBeLessThan(heavy.length);
+  }, 120_000);
 });
 
 describe("designs: blank frames, limits, and what does not get lost", () => {

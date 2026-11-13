@@ -159,6 +159,31 @@ describe("the designer's own fonts and a layer's shadow", () => {
     // a text with nothing of these is as it was: no empty fields
     expect(Object.keys(cleanPages([{ layers: [text({ spacing: 0 })] }], rules).pages[0]!.layers[0]!)).not.toContain("spacing");
   });
+
+  it("keeps a picture's colour changes, each a whole number in its range and none when it is nothing; the picture it was cut from must be the design's own", () => {
+    const picture = (more: object) => ({ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, ...more });
+    const two = { ...rules, pictures: ["ab12cd34.jpg", "cd34ef56.png"] };
+    const { pages, notes } = cleanPages(
+      [
+        {
+          layers: [
+            picture({ adjust: { exposure: 250, contrast: -12.4, warmth: 0, glow: 50, saturation: "lots" }, duotone: { dark: "#123", light: "#FFEEDD80" }, vignette: -500, grain: 33.6, blur: 1000 }),
+            picture({ adjust: { exposure: 0 }, duotone: { dark: "navy", light: "#ffffff" }, vignette: 0, grain: -5, blur: "soft", uncut: "ffffffff.png" }),
+            { ...picture({ uncut: "ab12cd34.jpg" }), picture: "cd34ef56.png" },
+            picture({ uncut: "ab12cd34.jpg" }),
+          ],
+        },
+      ],
+      two,
+    );
+    expect(notes).toEqual([]);
+    const [changed, plain, cut, itself] = pages[0]!.layers;
+    expect(changed).toMatchObject({ adjust: { exposure: 100, contrast: -12 }, duotone: { dark: "#112233", light: "#ffeedd" }, vignette: -100, grain: 34, blur: 200 });
+    expect(Object.keys((changed as { adjust: object }).adjust)).toEqual(["exposure", "contrast"]);
+    for (const k of ["adjust", "duotone", "vignette", "grain", "blur", "uncut"]) expect(plain).not.toHaveProperty(k);
+    expect(cut).toMatchObject({ picture: "cd34ef56.png", uncut: "ab12cd34.jpg" });
+    expect(itself).not.toHaveProperty("uncut");
+  });
 });
 
 describe("what the layers list keeps", () => {

@@ -12,7 +12,7 @@ import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
 import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrames, pageName, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
 import { coloursOn } from "@/lib/design/colour";
-import { addPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
+import { addPicture, cutOutPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import { onTopic } from "@/lib/sync";
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
  *
  * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
  * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
- * lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
+ * (in a picture: moves it inside its box) · lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -76,6 +76,9 @@ function DesignPage({ id }: { id: string }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [framed, setFramed] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  /** The picture layer being moved inside its box, and whether a picture's background is being cut away. */
+  const [cropping, setCropping] = useState<string | null>(null);
+  const [cutting, setCutting] = useState(false);
   const [tool, setTool] = useState<Tool>("move");
   const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
   const [pointed, setPointed] = useState<string | null>(null);
@@ -248,6 +251,7 @@ function DesignPage({ id }: { id: string }) {
     setAt(to);
     setSelected(ids);
     setFramed(frame);
+    setCropping((id) => (id && ids.length === 1 && ids[0] === id ? id : null));
     setError(null);
   }, []);
   const step = (back: boolean) => {
@@ -411,6 +415,30 @@ function DesignPage({ id }: { id: string }) {
     }
   };
 
+  /**
+   * The picked picture with its background taken away. The cut-out is a new picture of the design, and the layer
+   * keeps the one it was cut from, so ⌘Z (or the panel) puts the background back.
+   */
+  const cutOut = async () => {
+    const l = mine.length === 1 ? mine[0]! : null;
+    if (!design || !base || l?.type !== "image" || cutting) return;
+    const onto = base.id;
+    setCutting(true);
+    setError(null);
+    try {
+      const cut = await cutOutPicture(design.id, l.picture);
+      setDesign((d) => (d ? { ...d, pictures: [...d.pictures, cut] } : d));
+      // onto the layer as it is by now: the cutting took a while
+      const page = latest.current.find((p) => p.id === onto);
+      const now = page?.layers.find((x) => x.id === l.id);
+      if (page && now?.type === "image") setPage({ ...page, layers: page.layers.map((x) => (x.id === l.id ? { ...now, picture: cut, uncut: now.uncut ?? now.picture } : x)) });
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setCutting(false);
+    }
+  };
+
   /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
   const make = (to: number, r: Rect, dragged: boolean) => {
     const f = frames[to];
@@ -446,6 +474,7 @@ function DesignPage({ id }: { id: string }) {
       if (e.key === "+" || e.key === "=") return run(() => zoom("in"));
       if (e.key === "-") return run(() => zoom("out"));
       if (!e.shiftKey && TOOL_KEYS[c]) return run(() => setTool(TOOL_KEYS[c]!));
+      if (cropping && (e.key === "Escape" || e.key === "Enter")) return run(() => setCropping(null));
       if (e.key === "Escape") return run(() => (dropper ? setDropper(null) : tool !== "move" ? setTool("move") : pick(k, [])));
       if (e.key === "Delete" || e.key === "Backspace") return run(remove);
       const by = ARROWS[e.key];
@@ -455,6 +484,7 @@ function DesignPage({ id }: { id: string }) {
       if (!has) return;
       if (by) run(() => patch((l) => ({ ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "text") run(() => setEditing(mine[0]!.id));
+      else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "image") run(() => setCropping(mine[0]!.id));
       else if (c === "BracketRight") run(() => order(true));
       else if (c === "BracketLeft") run(() => order(false));
       // 1 to 9: 10 % to 90 %; 0: all the way
@@ -505,7 +535,7 @@ function DesignPage({ id }: { id: string }) {
         c.height = f.h * as.scale;
         const ctx = c.getContext("2d")!;
         ctx.setTransform(as.scale, 0, 0, as.scale, 0, 0);
-        drawPage(ctx, p, f.w, f.h, loaded);
+        drawPage(ctx, p, f.w, f.h, loaded, true);
         const blob = await new Promise<Blob | null>((done) => c.toBlob(done, type, 0.92));
         if (!blob) throw new Error(`${pageName(p, n)} could not be saved as a picture`);
         files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}${as.scale > 1 ? `@${as.scale}x` : ""}.${as.jpeg ? "jpg" : "png"}`, data: new Uint8Array(await blob.arrayBuffer()) });
@@ -593,6 +623,8 @@ function DesignPage({ id }: { id: string }) {
               onMakeFrame={makeFrame}
               editing={editing}
               onEdit={setEditing}
+              cropping={cropping}
+              onCrop={setCropping}
               pointed={pointed}
               dropper={dropper ? (hex) => (dropper.take(hex), setDropper(null)) : null}
               menu={
@@ -649,6 +681,10 @@ function DesignPage({ id }: { id: string }) {
           zoom={view.z}
           onZoom={zoom}
           onExport={(only, as) => void exportPngs(only, as)}
+          cropping={!!cropping}
+          onCrop={(on) => setCropping(on && mine.length === 1 ? mine[0]!.id : null)}
+          onCutOut={() => void cutOut()}
+          cutting={cutting}
           colours={colours}
           onDropper={(take) => setDropper({ take })}
         />

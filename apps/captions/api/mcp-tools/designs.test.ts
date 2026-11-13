@@ -140,6 +140,55 @@ describe("the Designer's tools", () => {
     expect(off.text).toContain("isn't switched on");
   });
 
+  it("a picture's colours changed a setting at a time, and its background cut away by the user's own Mac over the road a real Mac takes", async () => {
+    const { pairDevice } = await import("../lib/devices");
+    const made = await tool(anaKey, "design_make", { version: "ver_t", t: 1, format: "thumbnail" });
+    const read = (await tool<Read>(anaKey, "design_get", { id: made.out.id })).out;
+    const frame = read.frames[0]!.id;
+    const first = read.pictures[0]!.id;
+    expect(read.how).toContain('"adjust":{"exposure":0');
+    // one setting, then another: the first stays
+    await tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame, layer: "l1", set: { adjust: { exposure: 30, contrast: 20 }, vignette: 50 } }] });
+    await tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame, layer: "l1", set: { adjust: { warmth: 25, contrast: 0 } } }] });
+    type Pic = Layer & { picture: string; uncut?: string; adjust?: object; vignette?: number };
+    const toned = (await tool<Read>(anaKey, "design_get", { id: made.out.id })).out.frames[0]!.layers[0] as Pic;
+    expect(toned).toMatchObject({ adjust: { exposure: 30, warmth: 25 }, vignette: 50 });
+    expect(toned.adjust).not.toHaveProperty("contrast");
+
+    // no Mac of hers is on: said in words, nothing changed
+    const none = await tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame, layer: "l1", cutout: true }] });
+    expect([none.error, none.text]).toEqual([true, "Needs a Mac with Creator Toolset on. A picture's background is cut out by the Creator Toolset app on the user's own Mac, so that Mac has to be on with the app open. Nothing was changed."]);
+
+    // her Mac, as the Mac app talks to the server: it lists what it takes, is handed the cut-out, fetches the picture, sends a PNG
+    const mac = pairDevice("ana", "Ana's Mac");
+    const asMac = { authorization: `Bearer ${mac.token}` };
+    const claim = async () => ((await (await app.request("/api/devices/relay/editor/claim", { method: "POST", headers: { "content-type": "application/json", ...asMac }, body: JSON.stringify({ kinds: ["cutout"] }) })).json()) as { job: { id: number; kind: string } | null }).job;
+    expect(await claim()).toBeNull();
+    const asked = tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame, layer: "l1", cutout: true }] });
+    let job = null as Awaited<ReturnType<typeof claim>>;
+    for (let n = 0; n < 200 && !(job = await claim()); n++) await new Promise((r) => setTimeout(r, 10));
+    expect(job).toMatchObject({ kind: "cutout" });
+    const sent = await app.request(`/api/devices/relay/cutout/${job!.id}`, { headers: asMac });
+    expect([sent.status, sent.headers.get("content-type")]).toEqual([200, "image/jpeg"]);
+    const png = execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x48,format=rgba,colorchannelmixer=aa=0.5", "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"]);
+    const form = new FormData();
+    form.set("cutout", new File([new Uint8Array(png)], "cutout.png", { type: "image/png" }));
+    expect((await app.request(`/api/devices/relay/cutout/${job!.id}`, { method: "POST", headers: asMac, body: form })).status).toBe(200);
+    const done = await asked;
+    expect(done.error).toBe(false);
+    expect(done.out.changed).toEqual([{ frame, n: 1, layers: ["l1"] }]);
+    const after = (await tool<Read>(anaKey, "design_get", { id: made.out.id })).out;
+    const cut = after.frames[0]!.layers[0] as Pic;
+    expect(after.pictures.map((p) => p.id)).toEqual([first, cut.picture]);
+    expect(cut).toMatchObject({ uncut: first, adjust: { exposure: 30, warmth: 25 }, vignette: 50 });
+    expect(cut.picture).toMatch(/\.png$/);
+    // and the background put back
+    await tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame, layer: "l1", set: { picture: first, uncut: null } }] });
+    const back = (await tool<Read>(anaKey, "design_get", { id: made.out.id })).out.frames[0]!.layers[0] as Pic;
+    expect(back.picture).toBe(first);
+    expect(back).not.toHaveProperty("uncut");
+  }, 60_000);
+
   it("says in words what it cannot do, and another account's design is not found", async () => {
     expect((await tool(anaKey, "design_make", {})).text).toContain("Say what to design");
     expect((await tool(anaKey, "design_update", {})).text).toContain("Give the design's id");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { drawingUrl, fontOf, inLayer, layerAt, lineHeightOf, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
+import { drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -38,6 +38,23 @@ describe("drawing a design", () => {
     expect(star[0]![0]).toBeCloseTo(100);
     expect(star[0]![1]).toBeCloseTo(0);
     for (const [x, y] of star) expect(x >= 0 && x <= 200 && y >= 0 && y <= 200).toBe(true);
+  });
+
+  it("keeps what was made for a layer of a frame: two frames' layers of the same id are two places, and the ones used longest ago go when there are too many", () => {
+    const kept = new Map<string, { key: string; size: number; made: string }>();
+    let made = 0;
+    const get = (place: string, key: string, size = 10, room = 100) => keptOr(kept, place, key, size, room, (old) => `${place}:${key}:${++made}${old ? " (from the old one)" : ""}`);
+    // every frame's first layer is "l1": drawn twice, each is made once
+    for (let n = 0; n < 2; n++) for (const frame of ["p1", "p2"]) get(`${frame}/l1`, "warm");
+    expect(made).toBe(2);
+    // a layer changed is made again, from the one it had; the other is not
+    expect(get("p1/l1", "cool")).toBe("p1/l1:cool:3 (from the old one)");
+    expect(get("p2/l1", "warm")).toBe("p2/l1:warm:2");
+    // too many: the one used longest ago goes, the one just asked for never does
+    get("p3/l1", "big", 85);
+    expect([...kept.keys()]).toEqual(["p2/l1", "p3/l1"]);
+    get("p4/l1", "huge", 500);
+    expect([...kept.keys()]).toEqual(["p4/l1"]);
   });
 
   it("names a text's font at its real weight and size, its line height and its shown letters", () => {

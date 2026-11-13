@@ -100,7 +100,26 @@ export const designTools: ToolModule = {
       const picture = a.picture ? (await ctx.json<{ id: string }>(`${at}/pictures`, "POST", a.picture)).id : "";
       const added = picture ? { picture_added: picture } : {};
       if (picture && !a.frames && !a.changes) return { id: a.id, ...added };
-      const { design, notes, touched, wrote } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }>(`${at}/pages`, "POST", { frames: a.frames, changes: a.changes });
+      // a change that asks for a cut-out: the picture is cut first (a new picture of the design), and the change becomes
+      // a plain one that shows it and remembers the picture it was cut from
+      const changes = Array.isArray(a.changes) ? (a.changes as Args[]) : undefined;
+      const cuts = (changes ?? []).filter((c) => c && c.cutout === true);
+      if (cuts.length) {
+        const now = await ctx.json<Design>(at);
+        for (const c of cuts) {
+          const layer = now.pages.find((p) => p.id === c.frame)?.layers.find((l) => l.id === c.layer);
+          if (layer?.type !== "image") throw new ToolError(`A cut-out is of a picture layer: ${String(c.frame)} has no picture layer ${String(c.layer)}.`);
+          // refused (no Mac of theirs on, a picture with no subject): its reason, and what that means for the person
+          const cut = (
+            await ctx.json<{ id: string }>(`${at}/pictures/${enc(layer.picture)}/cutout`, "POST", {}).catch((e: unknown) => {
+              throw new ToolError(`${e instanceof Error ? e.message : String(e)}. A picture's background is cut out by the Creator Toolset app on the user's own Mac, so that Mac has to be on with the app open. Nothing was changed.`);
+            })
+          ).id;
+          c.set = { ...(c.set as Args | undefined), picture: cut, uncut: layer.uncut ?? layer.picture };
+          delete c.cutout;
+        }
+      }
+      const { design, notes, touched, wrote } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes });
       const frames = design.pages.map((p, k) => ({ id: p.id, n: k + 1 }));
       const drawn = await seen(ctx, at, frames, touched);
       // each frame written, with the layers this call wrote in it (a frame given whole: all of them)

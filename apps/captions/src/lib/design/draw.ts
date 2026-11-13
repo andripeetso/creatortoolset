@@ -1,5 +1,6 @@
-import type { DesignPage, DesignShape, Gradient, Layer, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
+import { retouch, retouches } from "./retouch";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
@@ -129,10 +130,72 @@ function drawText(ctx: Ctx, l: TextLayer) {
   });
 }
 
+/**
+ * Things made for a place (a layer of a frame) and kept: the one a place has is given back while its `key` is the
+ * same, and made again (from the old one, to use its memory again) when it is not. The ones used longest ago are let
+ * go once all of them together are over `room`; the one just asked for always stays.
+ */
+export function keptOr<T>(kept: Map<string, { key: string; size: number; made: T }>, place: string, key: string, size: number, room: number, make: (old?: T) => T): T {
+  const had = kept.get(place);
+  kept.delete(place);
+  const now = had?.key === key ? had : { key, size, made: make(had?.made) };
+  // the newest last: the first is the one used longest ago
+  kept.set(place, now);
+  let all = 0;
+  for (const k of kept.values()) all += k.size;
+  for (const [other, k] of kept) {
+    if (all <= room || other === place) break;
+    kept.delete(other);
+    all -= k.size;
+  }
+  return now.made;
+}
+
+type Canvas = HTMLCanvasElement | OffscreenCanvas;
+/** The pixels a retouched picture is worked at on the canvas (a saved file is worked at its full size), and the pixels of them kept at once: about 6 MB and 48 MB. */
+const LIVE_PIXELS = 1_500_000;
+const KEPT_PIXELS = 12_000_000;
+const retouched = new WeakMap<Loaded, Map<string, { key: string; size: number; made: Canvas }>>();
+
+/**
+ * A picture with its layer's colour changes made (lib/design/retouch.ts), as it lies in the layer's box. Kept one a
+ * layer of a frame (`place`) for each set of loaded pictures, and made again only when the layer, the picture or the
+ * size it is drawn at changes: a slider dragged about leaves one picture behind, not one for every value it passed.
+ */
+function retouchedPicture(l: ImageLayer, pic: CanvasImageSource & { width: number; height: number }, loaded: Loaded, zoom: number, place: string, exact: boolean): Canvas {
+  // made at the size it is drawn at, in steps (so a zoom that glides does not make it again at every step of the
+  // glide), never finer than twice the design's own pixels, and on the canvas never more pixels than LIVE_PIXELS
+  let scale = exact ? zoom : Math.min(2, 2 ** (Math.round(Math.log2(Math.max(zoom, 0.02)) * 2) / 2));
+  if (!exact && l.w * l.h * scale * scale > LIVE_PIXELS) scale = Math.sqrt(LIVE_PIXELS / (l.w * l.h));
+  const w = Math.max(1, Math.round(l.w * scale));
+  const h = Math.max(1, Math.round(l.h * scale));
+  const key = JSON.stringify([l.picture, pic.width, pic.height, w, h, l.fit, l.zoom, l.focus, l.adjust, l.duotone, l.vignette, l.grain, l.blur]);
+  let mine = retouched.get(loaded);
+  if (!mine) retouched.set(loaded, (mine = new Map()));
+  return keptOr(mine, place, key, w * h, KEPT_PIXELS, (old) => {
+    const canvas = old ?? (typeof OffscreenCanvas === "undefined" ? document.createElement("canvas") : new OffscreenCanvas(w, h));
+    // setting the size empties it
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+    placePicture(ctx, { ...l, w, h }, pic);
+    const pixels = ctx.getImageData(0, 0, w, h);
+    retouch(pixels.data, w, h, w / l.w, l);
+    ctx.putImageData(pixels, 0, 0);
+    return canvas;
+  });
+}
+
+/** A picture in its layer's box: filling it or fitting in it, bigger by its zoom, with what the box cuts off taken from both sides by where the focus is (0 keeps the picture's left or top edge, 1 its right or bottom). */
+function placePicture(ctx: Ctx, l: Pick<ImageLayer, "w" | "h" | "fit" | "zoom" | "focus">, pic: { width: number; height: number } & CanvasImageSource) {
+  const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
+  ctx.drawImage(pic, (l.w - pic.width * k) * (l.focus?.x ?? 0.5), (l.h - pic.height * k) * (l.focus?.y ?? 0.5), pic.width * k, pic.height * k);
+}
+
 /** How far off the canvas a layer is drawn to throw its shadow alone back onto it, in canvas pixels. */
 const FAR = 30_000;
 
-function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
+function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean) {
   ctx.save();
   ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
   if (l.rotate) ctx.rotate((l.rotate * Math.PI) / 180);
@@ -152,16 +215,16 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
     ctx.shadowBlur = l.shadow.blur * k;
     ctx.shadowOffsetX = l.shadow.x * k + FAR;
     ctx.shadowOffsetY = l.shadow.y * k;
-    paintLayer(ctx, l, loaded, true);
+    paintLayer(ctx, l, loaded, true, frame, exact);
     ctx.restore();
   }
   if (l.blend) ctx.globalCompositeOperation = l.blend;
-  paintLayer(ctx, l, loaded, false);
+  paintLayer(ctx, l, loaded, false, frame, exact);
   ctx.restore();
 }
 
 /** A layer in its own box. `cast`: only what throws its shadow (a picture's whole box, not the picture cut to its corners). */
-function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
+function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
   if (l.type === "text") drawText(ctx, l);
   else if (l.type === "shape") {
     if (l.shape === "ellipse") {
@@ -192,9 +255,10 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
           return void ctx.fill();
         }
         ctx.clip();
-        const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
-        // what the box cuts off is taken from both sides by where the focus is: 0 keeps the picture's left (top) edge, 1 its right (bottom)
-        ctx.drawImage(pic, (l.w - pic.width * k) * (l.focus?.x ?? 0.5), (l.h - pic.height * k) * (l.focus?.y ?? 0.5), pic.width * k, pic.height * k);
+        if (retouches(l)) {
+          const t = ctx.getTransform();
+          ctx.drawImage(retouchedPicture(l, pic, loaded, Math.hypot(t.a, t.b), `${frame}/${l.id}`, exact), 0, 0, l.w, l.h);
+        } else placePicture(ctx, l, pic);
       } else ctx.drawImage(pic, 0, 0, l.w, l.h);
     } else {
       // not loaded (yet, or gone): its place is shown, so nothing is silently missing from the page
@@ -204,10 +268,11 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
   }
 }
 
-export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded): void {
+/** `exact`: for a file that is saved (or a picture an AI is shown): a retouched picture is worked at every pixel it is drawn at, where the canvas works at fewer when the picture is big. */
+export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded, exact = false): void {
   ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
   ctx.fillRect(0, 0, w, h);
-  for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded);
+  for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact);
 }
 
 /** A point of the page in a layer's own box (its rotation taken out): inside when 0..w and 0..h. */

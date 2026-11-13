@@ -15,6 +15,7 @@
  *   POST   /api/designs/:id/pages       { frames?: [{ id?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? }] } → DesignAnswer & { touched: frame ids } (an AI's work: whole frames replaced or added, or single layers changed; checked as above)
  *   GET    /api/designs/:id/look        ?frames=<id>,<id> → { pictures: [{ page, jpeg (base64), spills }], why? }: the frames as small pictures, for the AI to look at
  *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP); or { version, t }: that moment of a library video, copied in
+ *   POST   /api/designs/:id/pictures/:pid/cutout   → { id }: that picture with its background taken away, as a new picture of the design (cut by a Mac of the person's own)
  *   GET    /api/designs/:id/pictures/:pid
  * A picture layer names a picture in the design's own folder by its id, never an address: a video's frame and anything
  * else from the library is copied in, so a design keeps what it shows.
@@ -34,6 +35,10 @@ export const formatOf = (id: unknown) => DESIGN_FORMATS.find((f) => f.id === id)
 
 /** Pixels between two frames the app places itself (a new design's frames in a row, a new frame beside the last). */
 export const DESIGN_GAP = 120;
+
+/** What a picture layer can change about its picture's colours, each from -100 to 100 (absent = 0). */
+export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
+export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
 export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
 
@@ -106,6 +111,18 @@ export interface ImageLayer extends Box {
   zoom?: number;
   /** which part of the picture stays in the box when it is cut: 0 = its left (top) edge, 1 = its right (bottom); absent = the middle */
   focus?: { x: number; y: number };
+  /** changes to the picture's colours, each -100 to 100 */
+  adjust?: Partial<Record<DesignAdjust, number>>;
+  /** two colours in place of the picture's own: its darks become `dark`, its lights `light` (black and white for a black and white picture) */
+  duotone?: { dark: string; light: string };
+  /** darker (above 0) or lighter (below 0) towards the corners of the box: -100 to 100 */
+  vignette?: number;
+  /** film grain, 0 to 100 */
+  grain?: number;
+  /** a soft blur, in the design's pixels */
+  blur?: number;
+  /** the picture this one was cut out of (its background taken away): kept, so the background can be put back */
+  uncut?: string;
   /** corner radius in pixels */
   radius?: number;
 }

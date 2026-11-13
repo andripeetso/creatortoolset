@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { DESIGN_LIMITS, type DesignPage, type DesignShape, type Layer, type TextLayer } from "@contracts/design";
+import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { drawPage, fontOf, layerAt, lineHeightOf, type Loaded } from "@/lib/design/draw";
+import { drawPage, fontOf, inLayer, layerAt, lineHeightOf, type Loaded } from "@/lib/design/draw";
 import { boundsOf, frameOf, freshIds, intersects, pageName, resizeAll, resizeBox, snapMove, zoomAt, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
  *               frame's and the other layers' edges and middles; Shift keeps one axis, Alt drags a copy) and, let
  *               go over another frame, leaves it in that frame; a drag from empty canvas draws a box round the
  *               layers to pick; a double click on words types in place.
+ *   A picture   a double click (or Enter) on a picture moves it inside its box: a drag slides it, the wheel or a
+ *               pinch zooms it, and a press beside it (or Esc) is done with it. The box itself stays.
  *   Handles     a corner or a side resizes about the opposite one (Shift keeps the shape, Alt the middle), through
  *               the layer's rotation; just outside a corner turns it (Shift: steps of 15°). Several layers resize
  *               together.
@@ -56,6 +58,8 @@ export function Stage({
   onMakeFrame,
   editing,
   onEdit,
+  cropping,
+  onCrop,
   pointed,
   dropper,
   menu,
@@ -80,8 +84,8 @@ export function Stage({
   onPick: (at: number, ids: string[], framed?: boolean) => void;
   /** frames while a drag is under way (not a step to undo) */
   onLive: (pages: DesignPage[] | null) => void;
-  /** frames once a drag or an edit ends (one step to undo, however many frames it changed) */
-  onCommit: (pages: DesignPage[]) => void;
+  /** frames once a drag or an edit ends (one step to undo, however many frames it changed; `merge`: joined to the step before it of the same name) */
+  onCommit: (pages: DesignPage[], merge?: string) => void;
   tool: Tool;
   /** a box drawn with a making tool, in its frame's pixels; `dragged` false: a click, the box has no size */
   onMake: (at: number, box: Rect, dragged: boolean) => void;
@@ -90,6 +94,9 @@ export function Stage({
   /** the text layer being typed in */
   editing: string | null;
   onEdit: (id: string | null) => void;
+  /** the picture layer being moved inside its box */
+  cropping: string | null;
+  onCrop: (id: string | null) => void;
   /** a layer pointed at in the layers list */
   pointed: string | null;
   /** the dropper is out: a press on the canvas gives it the colour under the pointer, and picks nothing */
@@ -119,6 +126,21 @@ export function Stage({
   const here = fr[at];
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
   const typed = page?.layers.find((l): l is TextLayer => l.id === editing && l.type === "text");
+  const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");
+  // the wheel or a pinch over a picture that is being moved in its box zooms the picture, not the canvas
+  const pictureZoom = useRef<{ now: number; set: (zoom: number) => void } | null>(null);
+  useEffect(() => {
+    pictureZoom.current =
+      cropped && page
+        ? {
+            now: cropped.zoom ?? 1,
+            set: (to) => {
+              const zoom = Math.round(Math.min(8, Math.max(1, to)) * 100) / 100;
+              if (zoom !== (cropped.zoom ?? 1)) onCommit([{ ...page, layers: page.layers.map((l) => (l.id === cropped.id ? { ...cropped, zoom: zoom > 1 ? zoom : undefined } : l)) }], `zoom ${cropped.id}`);
+            },
+          }
+        : null;
+  });
 
   // the words to type get the keys without the canvas scrolling to them: a box partly off the canvas would otherwise
   // drag everything on it sideways, and the pointer would then be off by that much (found in a real browser)
@@ -165,6 +187,8 @@ export function Stage({
     };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
+      const picture = pictureZoom.current;
+      if (picture) return picture.set(picture.now * Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * 0.01));
       const v = live.current;
       if (e.ctrlKey || e.metaKey) return setView(zoomAt(v, v.z * Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * 0.01), ...spot(e)));
       // a wheel with Shift scrolls sideways
@@ -176,7 +200,9 @@ export function Stage({
     const pinch = (e: Event) => {
       e.preventDefault();
       const g = e as Event & { scale: number; clientX: number; clientY: number };
-      if (e.type === "gesturestart") from = live.current.z;
+      const picture = pictureZoom.current;
+      if (e.type === "gesturestart") from = picture ? picture.now : live.current.z;
+      else if (picture) picture.set(from * g.scale);
       else setView(zoomAt(live.current, from * g.scale, ...spot(g)));
     };
     el.addEventListener("wheel", wheel, { passive: false });
@@ -418,6 +444,39 @@ export function Stage({
     );
   };
 
+  /**
+   * A picture slid inside its box. The box cuts off what does not fit, and the focus says from which side: a drag
+   * moves the picture by what was dragged, along the layer's own axes, as far as there is picture to show.
+   */
+  const slidePicture = (e: React.PointerEvent, l: ImageLayer) => {
+    const pic = loaded.get(l.picture);
+    if (!page || !pic?.width || !pic.height) return;
+    const from = world(e);
+    const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
+    // the room the picture has to move in: below 0 where it is bigger than the box
+    const room = { x: l.w - pic.width * k, y: l.h - pic.height * k };
+    const was = { x: l.focus?.x ?? 0.5, y: l.focus?.y ?? 0.5 };
+    const a = (-(l.rotate ?? 0) * Math.PI) / 180;
+    const part = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 1000) / 1000;
+    let last: DesignPage | null = null;
+    drag(
+      e,
+      (ev) => {
+        const to = world(ev);
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const along = (dx * Math.cos(a) - dy * Math.sin(a)) * (l.flipX ? -1 : 1);
+        const down = (dx * Math.sin(a) + dy * Math.cos(a)) * (l.flipY ? -1 : 1);
+        last = withLayers(page, [{ ...l, focus: { x: Math.abs(room.x) > 0.5 ? part(was.x + along / room.x) : was.x, y: Math.abs(room.y) > 0.5 ? part(was.y + down / room.y) : was.y } }]);
+        onLive([last]);
+      },
+      () => {
+        onLive(null);
+        if (last) onCommit([last]);
+      },
+    );
+  };
+
   /** A frame dragged by its name: it catches on the other frames' edges and middles. A press without a drag only picks it. */
   const moveFrame = (e: React.PointerEvent, k: number) => {
     // the hand, the dropper, a making tool and the other buttons are the canvas's own press
@@ -492,6 +551,11 @@ export function Stage({
     const k = frameUnder(p);
     const hit = hitAt(k, p);
     if (e.button !== 0) return;
+    // a picture being moved in its box: a press on it slides it, a press beside it is done with it
+    if (cropped && here) {
+      if (inLayer(cropped, p.x - here.x, p.y - here.y).inside) return slidePicture(e, cropped);
+      onCrop(null);
+    }
     if (tool === "frame") return make(e, -1);
     if (tool !== "move") return make(e, k >= 0 ? k : at);
     if (!hit) return marquee(e, k);
@@ -562,9 +626,10 @@ export function Stage({
             const p = world(e);
             const k = frameUnder(p);
             const hit = hitAt(k, p);
-            if (hit?.type !== "text" || tool !== "move") return;
+            if (tool !== "move" || (hit?.type !== "text" && hit?.type !== "image")) return;
             onPick(k, [hit.id]);
-            onEdit(hit.id);
+            if (hit.type === "text") onEdit(hit.id);
+            else onCrop(hit.id);
           }}
         >
           <canvas ref={canvas} aria-label="The frames" className="pointer-events-none block h-full w-full" />
@@ -591,7 +656,15 @@ export function Stage({
           {band && <div className="pointer-events-none absolute border border-[#0d99ff] bg-[#0d99ff]/10" style={onScreen(band)} />}
           {drawn && <div className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={onScreen(drawn)} />}
           {!typed && picked.length > 1 && picked.map((l) => <div key={l.id} className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, l)} />)}
-          {!typed && around && here && (
+          {cropped && here && (
+            <>
+              <div data-cropping className="pointer-events-none absolute cursor-move outline-dashed outline-2 outline-[#0d99ff]" style={place(at, cropped)} />
+              <div className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm px-1 text-[11px] leading-4 text-white" style={{ background: BLUE, left: view.x + (here.x + cropped.x + cropped.w / 2) * view.z, top: view.y + (here.y + boundsOf([cropped]).y + boundsOf([cropped]).h) * view.z + 6 }}>
+                Drag to move the picture, scroll to zoom it
+              </div>
+            </>
+          )}
+          {!typed && !cropped && around && here && (
             <>
               <div data-selection className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, one ?? around)}>
                 {/* just outside each corner: turning (one layer only) */}

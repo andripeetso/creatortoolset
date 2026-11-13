@@ -26,7 +26,7 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   c.height = Math.round(spec.height * spec.scale);
   const ctx = c.getContext("2d")!;
   ctx.setTransform(spec.scale, 0, 0, spec.scale, 0, 0);
-  drawPage(ctx, spec.page, spec.width, spec.height, loaded);
+  drawPage(ctx, spec.page, spec.width, spec.height, loaded, true);
   const spills: string[] = [];
   for (const l of layers) {
     if (l.type !== "text") continue;

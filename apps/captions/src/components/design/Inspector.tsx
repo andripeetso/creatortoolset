@@ -17,15 +17,17 @@ import {
   CaseUpper,
   Check,
   ChevronDown,
+  Crop,
   FlipHorizontal2,
   FlipVertical2,
   Link2,
   Minus,
   Plus,
+  RotateCcw,
   Unlink2,
 } from "lucide-react";
 import type { Design, DesignPage, Layer } from "@contracts/design";
-import { DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { typedHex } from "@/lib/design/colour";
@@ -195,6 +197,70 @@ export interface ExportAs {
   scale: number;
 }
 
+const ADJUST_NAMES = { exposure: "Exposure", contrast: "Contrast", highlights: "Highlights", shadows: "Shadows", warmth: "Warmth", tint: "Tint", saturation: "Saturation" } as const;
+
+/**
+ * A setting on a line: its name, a track to drag and its number. While it is dragged the canvas shows it, and it is
+ * one step to undo when let go; the arrows step it (Shift: by ten) and a double click puts it back to nothing.
+ */
+function Slide({ label, value, min, max, onLive, onCommit }: { label: string; value: number | null; min: number; max: number; onLive: (n: number | null) => void; onCommit: (n: number) => void }) {
+  const v = value ?? 0;
+  const part = (n: number) => (n - min) / (max - min);
+  const at = (x: number, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    return Math.round(min + Math.min(1, Math.max(0, (x - r.left) / r.width)) * (max - min));
+  };
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.focus();
+    let last = at(e.clientX, el);
+    onLive(last);
+    const move = (ev: PointerEvent) => onLive((last = at(ev.clientX, el)));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      // the keys go back to the canvas: Space still drags it, ⌘Z still undoes
+      el.blur();
+      if (last !== value) onCommit(last);
+      else onLive(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+  return (
+    <div className="grid grid-cols-[4.25rem_1fr_1.75rem] items-center gap-2">
+      <span className={cn("truncate", DIM)}>{label}</span>
+      <div
+        role="slider"
+        aria-label={label}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={v}
+        tabIndex={0}
+        onPointerDown={drag}
+        onDoubleClick={() => v && onCommit(0)}
+        onKeyDown={(e) => {
+          const by = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;
+          if (!by) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onCommit(Math.min(max, Math.max(min, v + by * (e.shiftKey ? 10 : 1))));
+        }}
+        className="relative h-6 cursor-ew-resize touch-none outline-none"
+      >
+        <div className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 rounded bg-zinc-500/30" />
+        <div className="absolute top-1/2 h-0.5 -translate-y-1/2 bg-[#0d99ff]" style={{ left: `${Math.min(part(0), part(v)) * 100}%`, width: `${Math.abs(part(v) - part(Math.max(min, 0))) * 100}%` }} />
+        <div className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#0d99ff] bg-white shadow-sm" style={{ left: `${part(v) * 100}%` }} />
+      </div>
+      <span className="text-right tabular-nums">{value === null ? "…" : v}</span>
+    </div>
+  );
+}
+
 /** A choice of a few, as a row of buttons with the chosen one raised. */
 function Choice<V extends string | number>({ label, value, options, onPick }: { label: string; value: V | null; options: readonly (readonly [V, string])[]; onPick: (v: V) => void }) {
   return (
@@ -252,6 +318,10 @@ export function Inspector({
   zoom,
   onZoom,
   onExport,
+  cropping,
+  onCrop,
+  onCutOut,
+  cutting,
   colours,
   onDropper,
 }: {
@@ -276,6 +346,12 @@ export function Inspector({
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
   /** every frame, or the one at this place, saved as said */
   onExport: (only: number | undefined, as: ExportAs) => void;
+  /** the picked picture is being moved inside its box (the canvas's crop), and the switch for it */
+  cropping: boolean;
+  onCrop: (on: boolean) => void;
+  /** the picked picture's background taken away (a Mac of the person's own cuts it out); `cutting`: one is being cut */
+  onCutOut: () => void;
+  cutting: boolean;
   /** the colours the design already uses, for the picker */
   colours: readonly string[];
   /** the next press on the canvas gives its colour to `take` */
@@ -294,6 +370,10 @@ export function Inspector({
   /** A number field for the picked layers: `to` gives each layer with the number set. */
   const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number } = {}) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
+  );
+  /** A slider for the picked layers, like `num`. */
+  const slide = (label: string, value: number | null, to: (n: number) => (l: Layer) => Layer, min: number, max: number) => (
+    <Slide key={label} label={label} value={value} min={min} max={max} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
   );
   const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} colours={colours} onDropper={onDropper} onSet={(c, merge) => onPatch(to(c), merge)} />;
   /** The picked layers resized so the box round them is `w` × `h` (one layer: that layer; with the lock, in its shape). */
@@ -584,7 +664,16 @@ export function Inspector({
             )}
           </Section>
           {image && (
-            <Section title="Picture">
+            <Section
+              title="Picture"
+              action={
+                one && (
+                  <Tap label="Move the picture inside its box" on={cropping} onClick={() => onCrop(!cropping)}>
+                    <Crop className="h-3.5 w-3.5" />
+                  </Tap>
+                )
+              }
+            >
               <Choice label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined))} options={[["cover", "Fill"], ["contain", "Fit"]] as const} onPick={(fit) => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))} />
               <div className="grid grid-cols-3 gap-2">
                 {num("⊕", "Zoom in percent", (() => {
@@ -600,6 +689,47 @@ export function Inspector({
                   </div>
                 ))}
               </div>
+              {one?.type === "image" &&
+                (one.uncut ? (
+                  <button type="button" onClick={() => onPatch((l) => (l.type === "image" && l.uncut ? { ...l, picture: l.uncut, uncut: undefined } : l))} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
+                    Put the background back
+                  </button>
+                ) : (
+                  <button type="button" disabled={cutting} onClick={onCutOut} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
+                    {cutting ? "Cutting it out" : "Remove background"}
+                  </button>
+                ))}
+            </Section>
+          )}
+          {image && (
+            <Section
+              title="Adjust"
+              action={
+                picked.some((l) => l.type === "image" && (l.adjust || l.duotone || l.vignette || l.grain || l.blur)) && (
+                  <Tap label="Put the picture's colours back as they were" onClick={() => onPatch((l) => (l.type === "image" ? { ...l, adjust: undefined, duotone: undefined, vignette: undefined, grain: undefined, blur: undefined } : l))}>
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </Tap>
+                )
+              }
+            >
+              {DESIGN_ADJUST.map((k) =>
+                slide(ADJUST_NAMES[k], same((l) => (l.type === "image" ? (l.adjust?.[k] ?? 0) : undefined)), (n) => (l) => (l.type === "image" ? { ...l, adjust: { ...l.adjust, [k]: n || undefined } } : l), -100, 100),
+              )}
+              {slide("Vignette", same((l) => (l.type === "image" ? (l.vignette ?? 0) : undefined)), (n) => (l) => (l.type === "image" ? { ...l, vignette: n || undefined } : l), -100, 100)}
+              {slide("Grain", same((l) => (l.type === "image" ? (l.grain ?? 0) : undefined)), (n) => (l) => (l.type === "image" ? { ...l, grain: n || undefined } : l), 0, 100)}
+              {slide("Blur", same((l) => (l.type === "image" ? (l.blur ?? 0) : undefined)), (n) => (l) => (l.type === "image" ? { ...l, blur: n || undefined } : l), 0, 100)}
+              <Choice
+                label="The picture's colours"
+                value={picked.every((l) => l.type === "image" && l.duotone) ? "two" : "own"}
+                options={[["own", "Its own colours"], ["two", "Two colours"]] as const}
+                onPick={(v) => onPatch((l) => (l.type === "image" ? { ...l, duotone: v === "two" ? (l.duotone ?? { dark: "#000000", light: "#ffffff" }) : undefined } : l))}
+              />
+              {picked.every((l) => l.type === "image" && l.duotone) && (
+                <div className="grid grid-cols-2 gap-2">
+                  {colour("Its darks", same((l) => (l.type === "image" ? l.duotone?.dark : undefined)), (c) => (l) => (l.type === "image" && l.duotone ? { ...l, duotone: { ...l.duotone, dark: c } } : l))}
+                  {colour("Its lights", same((l) => (l.type === "image" ? l.duotone?.light : undefined)), (c) => (l) => (l.type === "image" && l.duotone ? { ...l, duotone: { ...l.duotone, light: c } } : l))}
+                </div>
+              )}
             </Section>
           )}
         </>

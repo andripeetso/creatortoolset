@@ -30,6 +30,9 @@ export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage
 export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;
 
+/** One of the design's pictures with its background taken away, as a new picture of the design: its id. Cut by a Mac of the person's own; the error says what is missing when none is on. */
+export const cutOutPicture = async (id: string, picture: string) => (await send<{ id: string }>(`${base(id)}/pictures/${picture}/cutout`, "POST", {})).id;
+
 /** A picture from this computer into the design's own folder, as it is (no shrinking, transparency kept); answers its id. */
 export async function addPicture(id: string, file: File): Promise<string> {
   const data = await new Promise<string>((done, fail) => {
