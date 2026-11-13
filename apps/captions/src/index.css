@@ -282,45 +282,21 @@ html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5r
 html.chat-wash::view-transition-old(root),
 html.chat-wash::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 html.chat-wash::view-transition-new(root) {
-  /* solid up to a rim 90px wide (RIM, lib/chat-mode.ts) */
-  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 90px), transparent) 0 0 / 0 0 no-repeat;
-  mask: radial-gradient(circle closest-side, #000 calc(100% - 90px), transparent) 0 0 / 0 0 no-repeat;
+  /* solid up to a rim 220px wide (RIM, lib/chat-mode.ts) */
+  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 220px), transparent) 0 0 / 0 0 no-repeat;
+  mask: radial-gradient(circle closest-side, #000 calc(100% - 220px), transparent) 0 0 / 0 0 no-repeat;
 }
-/* The lights of that switch (sized and moved in script). They are drawn over what is under them with no blending, so
-   they show on a dark screen and on a light one, whatever the theme (some tools are always dark). */
-.chat-wash-light,
-.chat-wash-lens,
-.chat-wash-bloom {
+/* The light on the front of the chat-mode switch (sized, moved and dimmed in script): one soft band, no line in it
+   anywhere. The project's colour, which shows on a light screen, and white, which shows on a dark one; drawn over
+   what is under it with no blending and no change to its colours, at a strength it can be read through. */
+.chat-wash-light {
   position: fixed;
   z-index: 70;
   border-radius: 50%;
   pointer-events: none;
-}
-/* On the front: a white crest, behind it the colours of a soap film round the ring (twice round, so any quarter of it
-   has them), trailing off toward the button. The colours are strong enough to show on white, where the crest cannot. */
-.chat-wash-light {
   background:
-    radial-gradient(circle closest-side, transparent 91%, rgb(255 255 255 / 0.9) 94.5%, transparent 98%),
-    conic-gradient(from 70deg, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8);
-  -webkit-mask: radial-gradient(circle closest-side, transparent 42%, rgb(0 0 0 / 0.2) 58%, rgb(0 0 0 / 0.55) 76%, rgb(0 0 0 / 0.95) 88%, #000 96%, transparent);
-  mask: radial-gradient(circle closest-side, transparent 42%, rgb(0 0 0 / 0.2) 58%, rgb(0 0 0 / 0.55) 76%, rgb(0 0 0 / 0.95) 88%, #000 96%, transparent);
-}
-/* Under the front: what is there is softened and its colours pushed, as through moving water. */
-.chat-wash-lens {
-  -webkit-backdrop-filter: blur(6px) saturate(1.8) hue-rotate(-20deg);
-  backdrop-filter: blur(6px) saturate(1.8) hue-rotate(-20deg);
-  -webkit-mask: radial-gradient(circle closest-side, transparent 60%, #000 85%, #000 94%, transparent);
-  mask: radial-gradient(circle closest-side, transparent 60%, #000 85%, #000 94%, transparent);
-}
-/* At the button, before the front leaves it: a white heart in the same colours. */
-.chat-wash-bloom {
-  background:
-    radial-gradient(circle closest-side, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.5) 20%, transparent 55%),
-    conic-gradient(from 70deg, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8);
-  -webkit-mask: radial-gradient(circle closest-side, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.35) 62%, transparent);
-  mask: radial-gradient(circle closest-side, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.35) 62%, transparent);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+    radial-gradient(circle closest-side, transparent 48%, rgb(255 255 255 / 0.05) 62%, rgb(255 255 255 / 0.15) 76%, rgb(255 255 255 / 0.2) 84%, rgb(255 255 255 / 0.15) 91%, rgb(255 255 255 / 0.05) 96.5%, transparent),
+    radial-gradient(circle closest-side, transparent 48%, rgb(var(--violet-600) / 0.08) 62%, rgb(var(--violet-600) / 0.24) 76%, rgb(var(--violet-600) / 0.34) 84%, rgb(var(--violet-600) / 0.24) 91%, rgb(var(--violet-600) / 0.08) 96.5%, transparent);
 }
 /* In the Mac app the window's buttons sit over the chats' own bar (data-chat-bar), so the page's bar gives up the room
    it kept for them. */
