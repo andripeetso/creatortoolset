@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, History, ImageOff, KeyRound, Loader2, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, ImageOff, KeyRound, MessageCircle, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -9,32 +9,35 @@ import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
 import {
   cancelSecret,
-  chatText,
-  deletePast,
   getAssistant,
-  settleChat,
   keySaved,
   navigated,
   openAssistant,
   openPast,
   saveKey,
+  seenChat,
   sendTurn,
+  sendTurnTo,
   startOver,
   stopTurn,
   sendAnswer,
   useAssistant,
 } from "@/lib/assistant";
+import { useChatMode, useChatModeKey, useChatModeLayout } from "@/lib/chat-mode";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { onTopic } from "@/lib/sync";
-import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { duration, WorkCards, WorkingFor } from "./WorkCards";
+import { chatTitle, useChats } from "./ChatList";
+import { ChatModeButton } from "./ChatModeButton";
+import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
+import { useChatPage } from "./useChatPage";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { ConfirmCards } from "./ConfirmCards";
@@ -55,7 +58,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; quote?: string };
+type Queued = { id: string; chat?: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; quote?: string };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -97,7 +100,8 @@ function suggestionsFor(path: string): string[] {
  * beside the page. Its state is the server's (api/assistant.ts): no AI yet = a line and "Connect your AI" (setup,
  * step 4); an AI = the chat. It starts folded to the bubble. After setup it says hello once (Welcome.tsx). A key it
  * asks for is typed into a password box that saves straight to Settings → API keys. You can talk to it (the mic) and have its
- * replies read aloud (the speaker).
+ * replies read aloud (the speaker). In chat mode (lib/chat-mode.ts) it is the left of the window instead: every chat in a
+ * list, the open one beside it, the page to the right.
  */
 export function AssistantDock() {
   const me = useMe();
@@ -119,8 +123,8 @@ export function AssistantDock() {
   const [closing, setClosing] = useState(false);
   /** The last message you've seen (undefined until the first load): a newer reply while closed nudges the bubble. */
   const [seenId, setSeenId] = useState<string | null | undefined>(undefined);
-  /** The list of earlier conversations shows in place of the chat. */
-  const [showPast, setShowPast] = useState(false);
+  const chatMode = useChatMode((s) => s.on);
+  const [chats, reloadChats] = useChats(real && chatMode);
   const bottom = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -135,13 +139,13 @@ export function AssistantDock() {
   const setup = useSetup((s) => s.view);
   const connected = !!view && view.provider !== "none";
   const welcome = useWelcome({
-    open: !collapsed,
+    open: !collapsed || chatMode,
     eligible: !!view && !!setup && talk !== "chat" && setupFinished(setup) && view.messages.length === 0,
     connected,
     user: me?.username ?? "",
   });
   // the suggestions under an empty chat arrive one at a time, once the welcome has finished writing
-  const popped = usePopIn(suggestionsFor(pathname).length, !collapsed && !!view && welcome.stage !== "typing");
+  const popped = usePopIn(suggestionsFor(pathname).length, (!collapsed || useChatMode.getState().on) && !!view && welcome.stage !== "typing");
 
   const load = useCallback(async () => {
     const r = await getAssistant();
@@ -197,7 +201,6 @@ export function AssistantDock() {
       if (!r.ok) return setError(r.error);
       setView(r.data);
       setSeenId(r.data.messages.at(-1)?.id ?? null);
-      setShowPast(false);
       openAssistant();
     })();
   }, [search, real, pathname, navigate]);
@@ -212,11 +215,11 @@ export function AssistantDock() {
   }, [view?.navigate]);
 
   useEffect(() => {
-    if (!collapsed) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed]);
+    if (!collapsed || chatMode) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed, chatMode, view?.id]);
 
   // docked and open: the page moves over to make room
-  const docked = !collapsed && place.mode === "dock";
+  const docked = !collapsed && place.mode === "dock" && !chatMode;
   useEffect(() => {
     if (!docked) return;
     const body = document.body.style;
@@ -227,6 +230,51 @@ export function AssistantDock() {
     };
   }, [docked]);
 
+  // chat mode: the chats take the left of the window and the page moves over by as much, laid out for the room it has left
+  const showChatMode = real && chatMode;
+  const layout = useChatModeLayout(showChatMode);
+  useChatModeKey(real);
+  // the list folded away opens over the chat from its button, until a chat is picked
+  const [listOpen, setListOpen] = useState(false);
+  // the page beside the chats is the open chat's own (useChatPage): its newest card or video is what it works on
+  const newest = view?.messages
+    .flatMap((m) => [...(m.work ?? []), ...(m.media ?? [])])
+    .filter((w) => w.href?.startsWith("/"))
+    .at(-1);
+  useChatPage(showChatMode && !layout.full, view?.id, newest && { id: newest.id, href: newest.href });
+  // only chats, and a link in one is followed (a card, the app's name, a page the assistant opens): the page shows again
+  const route = pathname + search;
+  const routeWas = useRef(route);
+  const forcedFull = useRef(false);
+  forcedFull.current = showChatMode && layout.forced;
+  useEffect(() => {
+    if (routeWas.current === route) return;
+    routeWas.current = route;
+    const cm = useChatMode.getState();
+    if (!cm.on) return;
+    if (!cm.page) cm.set({ page: true });
+    // a window with no room for the page beside the chats: the page is what was asked for, the assistant floats over it
+    else if (forcedFull.current) {
+      cm.set({ on: false });
+      openAssistant();
+    }
+  }, [route]);
+  // the chat on screen is seen: what ended in it is not marked Done in the list (here or on another device)
+  const visible = showChatMode || !collapsed;
+  useEffect(() => {
+    if (!visible || !view?.id || !view.chats || last?.status === "thinking") return;
+    const look = () => document.visibilityState === "visible" && void seenChat(view.id);
+    look();
+    document.addEventListener("visibilitychange", look);
+    return () => document.removeEventListener("visibilitychange", look);
+    // again when the newest message changes or ends
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, view?.id, last?.id, last?.status]);
+  // a reply that starts, ends or asks changes the list's groups
+  useEffect(() => {
+    if (chatMode) reloadChats();
+  }, [chatMode, reloadChats, view?.id, view?.messages.length, last?.status]);
+
   // the current project's colour, like the home page's tools (violet when Settings → Appearance turns it off)
   const tint = { "--tint": "rgb(var(--violet-600))" } as React.CSSProperties; // the project's colour (data-tint on <html>)
 
@@ -235,7 +283,7 @@ export function AssistantDock() {
     unlockAudio();
     setBusy(true);
     setError(null);
-    const r = await sendTurn({
+    const input = {
       text: it.text,
       ...(it.images?.length ? { images: it.images } : {}),
       ...(it.pasted?.length ? { pasted: it.pasted } : {}),
@@ -243,10 +291,14 @@ export function AssistantDock() {
       ...(it.local?.length ? { localFiles: it.local } : {}),
       ...(it.folders?.length ? { paths: it.folders } : {}),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
-    });
+    };
+    // a message goes to the chat it was written in, even when another one is open by now
+    const r = it.chat && view?.chats ? await sendTurnTo(it.chat, input) : await sendTurn(input);
     setBusy(false);
-    if (r.ok) setView(r.data);
-    else {
+    if (r.ok) {
+      if (r.data.id === openId.current) setView(r.data);
+      else reloadChats();
+    } else {
       setError(r.error);
       if (r.code === "NO_PROVIDER") void load();
     }
@@ -258,9 +310,25 @@ export function AssistantDock() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // Each chat keeps its own unsent box: switching chats puts this one's aside and brings the other's back (kept for as
+  // long as the window is open). `openId` is the chat on screen now, for replies that come back after a switch.
+  const openId = useRef<string | undefined>(undefined);
+  const drafts = useRef(new Map<string, Draft>());
+  useEffect(() => {
+    const id = view?.id;
+    if (!id || openId.current === id) return;
+    const was = openId.current;
+    openId.current = id;
+    // the first chat loaded keeps whatever was typed while it loaded
+    if (was === undefined) return;
+    drafts.current.set(was, draftRef.current);
+    setDraft(drafts.current.get(id) ?? EMPTY_DRAFT);
+    drafts.current.delete(id);
+  }, [view?.id]);
   const [queue, setQueue] = useState<Queued[]>(storedQueue);
-  // a queued message the server refused stays first and waits for a click (no retry loop)
-  const [held, setHeld] = useState(false);
+  // a queued message the server refused waits for a click (no retry loop), and holds back the ones after it in its own
+  // chat only: another chat's messages still go
+  const [held, setHeld] = useState<string[]>([]);
   const sending = useRef(false);
   useEffect(() => {
     const save = (q: Queued[]) => (q.length ? localStorage.setItem(QUEUE_KEY, JSON.stringify(q)) : localStorage.removeItem(QUEUE_KEY));
@@ -349,14 +417,15 @@ export function AssistantDock() {
   }, [handed, addPictures]);
   const connectedNow = !!view && view.provider !== "none";
   useEffect(() => {
-    const next = queue[0];
+    const stuck = new Set(queue.filter((q) => held.includes(q.id)).map((q) => q.chat ?? ""));
+    const next = queue.find((q) => !stuck.has(q.chat ?? ""));
     // the server queues a message sent while a reply is being written: only a send in flight or a refused one holds this
-    if (!next || held || !connectedNow || sending.current) return;
+    if (!next || !connectedNow || sending.current) return;
     sending.current = true;
     void send(next).then((ok) => {
       sending.current = false;
       if (ok) setQueue((q) => q.filter((x) => x.id !== next.id));
-      else setHeld(true);
+      else setHeld((h) => [...h, next.id]);
     });
     // send is a fresh function each render; the queue, the reply and the hold decide when to go
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -390,7 +459,16 @@ export function AssistantDock() {
   }, [view?.messages]);
   /** A message (and the highlighted text it asks about) back in the box, after what's there. */
   const putBack = (it: Queued) => {
-    setDraft((cur) => ({
+    // a message written in another chat goes back to that chat's box
+    if (it.chat && openId.current && it.chat !== openId.current) {
+      drafts.current.set(it.chat, withMessage(drafts.current.get(it.chat) ?? EMPTY_DRAFT, it));
+      return;
+    }
+    setDraft((cur) => withMessage(cur, it));
+    if (it.quote) setQuote(it.quote);
+  };
+  /** The box with a message added back after what's there. */
+  const withMessage = (cur: Draft, it: Queued): Draft => ({
       text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
@@ -400,13 +478,12 @@ export function AssistantDock() {
         ...(it.local ?? []).map((p) => ({ key: p, name: folderName(p), size: 0, pct: 100, done: true, path: p })),
       ],
       folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
-    }));
-    if (it.quote) setQuote(it.quote);
-  };
+  });
   // the pending highlighted text goes with this message and leaves the box
   const submit = ({ files, folders, ...d }: Draft) => {
     const it: Queued = {
       id: `${Date.now()}-${queue.length}`,
+      ...(view?.id ? { chat: view.id } : {}),
       ...d,
       ...(files.some((f) => !f.path) ? { files: files.filter((f) => !f.path).map((f) => ({ id: f.id!, name: f.name })) } : {}),
       ...(files.some((f) => f.path) ? { local: files.flatMap((f) => (f.path ? [f.path] : [])) } : {}),
@@ -434,7 +511,8 @@ export function AssistantDock() {
     const ids = new Set((i > 0 && target?.wait ? (msgs[i - 1]!.files ?? []) : []).map((f) => f.id));
     for (const u of uploads.current.values()) if (u.id && ids.has(u.id)) u.ctl.abort();
     if (target) sends.current.get(target.id)?.ctl.abort();
-    void stopTurn().then((r) => r.ok && setView(r.data));
+    // by its id: with several chats at work, never another chat's reply
+    void stopTurn(target?.id).then((r) => r.ok && setView(r.data));
   };
   /** A chip's X in the box: its upload stops, and what reached the server is deleted. */
   const removeFile = (f: Draft["files"][number]) => {
@@ -452,17 +530,17 @@ export function AssistantDock() {
   };
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
-    setHeld(false);
+    setHeld((h) => h.filter((x) => x !== id));
     if (thinking) stop();
   };
   const editQueued = (it: Queued) => {
     setQueue((q) => q.filter((x) => x.id !== it.id));
-    if (queue[0]?.id === it.id) setHeld(false);
+    setHeld((h) => h.filter((x) => x !== it.id));
     putBack(it);
   };
   const unqueue = (it: Queued) => {
     setQueue((q) => q.filter((x) => x.id !== it.id));
-    if (queue[0]?.id === it.id) setHeld(false);
+    setHeld((h) => h.filter((x) => x !== it.id));
   };
 
   const close = useCallback(() => {
@@ -477,7 +555,7 @@ export function AssistantDock() {
 
   // once the welcome has been said, a press outside the card and the bubble closes the dock, as the X does
   useEffect(() => {
-    if (welcome.stage !== "ready") return;
+    if (welcome.stage !== "ready" || chatMode) return;
     const away = (e: PointerEvent) => {
       const t = e.target as Node;
       if (cardRef.current?.contains(t) || bubbleRef.current?.contains(t)) return;
@@ -486,13 +564,13 @@ export function AssistantDock() {
     };
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
-  }, [welcome.stage, welcome.end, close]);
+  }, [welcome.stage, welcome.end, close, chatMode]);
 
   if (!real) return null;
 
   const corner = cornerOf(place);
 
-  if (collapsed) {
+  if (collapsed && !chatMode) {
     return (
       <>
         <button
@@ -534,10 +612,48 @@ export function AssistantDock() {
     );
   }
 
+  const newChat = async () => {
+    stopSpeaking();
+    const r = await startOver();
+    if (!r.ok) return;
+    setView(r.data);
+    setSeenId(null);
+  };
+  const openChat = async (id: string) => {
+    if (id === view?.id) return;
+    const r = await openPast(id);
+    if (!r.ok) return setError(r.error);
+    setView(r.data);
+    setSeenId(r.data.messages.at(-1)?.id ?? null);
+  };
+  /** The queued messages written in the chat on screen (one from before chats were told apart shows everywhere). */
+  const shownQueue = queue.filter((q) => !q.chat || q.chat === view?.id);
   const chatting = connected;
   const empty = chatting && !view.messages.length;
   const pending = view?.pending;
   const headBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40";
+  // a new chat in chat mode: the question and the message box in the middle of the column, the suggestions under the box
+  const centred = chatMode && empty && !pending;
+  // a few things to ask from the page you're on; a press sends one
+  const chips = suggestionsFor(pathname).slice(0, popped).map((s, i) => (
+              <div key={`${pathname}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
+                <div className={cn("min-h-0 motion-safe:[animation:ct-pop-clip_260ms_both]", i === 0 && welcome.showing ? "pt-3" : "pt-2")}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
+                    className={cn(
+                      "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
+                      "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
+                      "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:duration-300",
+                    )}
+                  >
+                    <span>{s}</span>
+                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
+                  </button>
+                </div>
+              </div>
+            ));
 
   return (
     <section
@@ -545,22 +661,30 @@ export function AssistantDock() {
       aria-label="Assistant"
       data-assistant-dock
       // where the open card stands, for what else stands at the window's edges (a toast keeps clear of it, index.css)
-      data-corner={place.mode === "dock" ? "dock" : place.corner}
+      data-corner={chatMode ? "chats" : place.mode === "dock" ? "dock" : place.corner}
+      data-chat-panel={chatMode || undefined}
       className={cn(
         // above page dialogs (z-50, Settings among them), under confirms (z-[60], alert-dialog.tsx)
-        "pointer-events-auto fixed z-[55] flex flex-col overflow-hidden bg-popover text-popover-foreground",
-        place.mode === "dock"
+        "pointer-events-auto fixed z-[55] flex overflow-hidden bg-popover text-popover-foreground",
+        chatMode ? "flex-row" : "flex-col",
+        // in chat mode the chats are part of the window: a dialog (z-50) stands over them as it does over the page
+        chatMode
+          ? cn("inset-y-0 left-0 z-[45]", !layout.full && "border-r")
+          : place.mode === "dock"
           ? "inset-y-0 right-0 border-l shadow-2xl"
           : cn("h-[min(600px,calc(100dvh-6rem))] w-[min(400px,calc(100vw-2rem))] rounded-2xl border shadow-2xl shadow-black/30", AT[place.corner], ORIGIN[place.corner]),
         // opening grows out of the bubble's corner with a little overshoot (docked: slides in); closing shrinks back
-        closing
+        chatMode
+          ? ""
+          : closing
           ? cn("motion-safe:animate-out motion-safe:fill-mode-forwards motion-safe:duration-150", place.mode === "dock" ? "motion-safe:slide-out-to-right" : "motion-safe:fade-out motion-safe:zoom-out-90")
           : cn(
               "motion-safe:animate-in motion-safe:duration-300",
               place.mode === "dock" ? "motion-safe:slide-in-from-right" : "motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:ease-[cubic-bezier(.3,1.3,.5,1)]",
             ),
       )}
-      style={place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
+      // --chat-w is the layout's width on <html> (lib/chat-mode.ts): the panel follows a drag of its edge at once
+      style={chatMode ? { ...tint, width: "var(--chat-w)" } : place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
       onDragOver={(e) => {
         if (!connectedNow || !e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -585,6 +709,31 @@ export function AssistantDock() {
           Drop pictures, videos or a folder
         </div>
       )}
+      {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} />}
+      {chatMode && !layout.list && listOpen && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} onClose={() => setListOpen(false)} />}
+      <div className={cn("flex min-w-0 flex-1 flex-col", !chatMode && "contents")}>
+      {chatMode ? (
+        <ChatHeader
+          layout={layout}
+          title={!view ? "" : view.messages.length ? (chats?.find((c) => c.open)?.title ?? "Assistant") : chatTitle({ title: "", count: 0 })}
+          dot={
+            <span className="relative flex size-2.5 shrink-0" aria-hidden>
+              {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_70%,transparent)] motion-safe:animate-ping" />}
+              <span className={cn("relative size-2.5 rounded-full", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
+            </span>
+          }
+          onNew={() => void newChat()}
+          canNew={!!view?.messages.length}
+          onList={() => setListOpen(true)}
+        >
+          <NoToolsNote view={view} />
+          {readAloud.speaking && (
+            <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">
+              <VolumeX className="size-4" />
+            </button>
+          )}
+        </ChatHeader>
+      ) : (
       <header
         onPointerDown={cardThrow.onPointerDown}
         onDoubleClick={(e) => {
@@ -606,78 +755,23 @@ export function AssistantDock() {
             <VolumeX className="size-4" />
           </button>
         )}
-        {!!view?.messages.length && !showPast && <CopyButton className={headBtn} text={() => chatText(view.messages)} label="Copy the whole chat" />}
-        {view && (
-          <button
-            type="button"
-            className={cn(headBtn, showPast && "bg-muted text-foreground")}
-            onClick={() => setShowPast((s) => !s)}
-            aria-pressed={showPast}
-            aria-label="Earlier chats"
-            title="Earlier chats"
-          >
-            <History className="size-4" />
-          </button>
-        )}
         {!!view?.messages.length && (
-          <button
-            type="button"
-            className={headBtn}
-            onClick={() => {
-              stopSpeaking();
-              setShowPast(false);
-              void startOver().then((r) => {
-                if (!r.ok) return;
-                setView(r.data);
-                setSeenId(null);
-              });
-            }}
-            aria-label="Start a new chat"
-            title="New chat (this one stays in Earlier chats)"
-          >
+          <button type="button" className={headBtn} onClick={() => void newChat()} aria-label="Start a new chat" title="New chat (this one stays in chat mode's list)">
             <SquarePen className="size-4" />
           </button>
         )}
-        <button
-          type="button"
-          className={headBtn}
-          onClick={() => cardThrow.moveTo(place.mode === "dock" ? { mode: "float", corner: "br" } : { mode: "dock" })}
-          aria-label={place.mode === "dock" ? "Float over the page" : "Dock to the side"}
-          title={place.mode === "dock" ? "Float over the page" : "Dock to the side"}
-        >
-          {place.mode === "dock" ? <PanelRightClose className="size-4" /> : <PanelRight className="size-4" />}
-        </button>
+        {/* earlier chats and the rest live in chat mode */}
+        <ChatModeButton className="size-7" />
         <button type="button" className={headBtn} onClick={close} aria-label="Hide the assistant" title="Hide">
           <X className="size-4" />
         </button>
       </header>
+      )}
 
-      {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing */}
-      <div className={cn("relative min-h-0 flex-1 px-4 pt-2 pb-3 text-sm", place.mode === "dock" ? "overflow-y-scroll" : "overflow-y-auto")}>
+      {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing.
+          In chat mode the messages and the box keep to a readable column in the middle */}
+      <div className={cn("relative min-h-0 flex-1 pt-2 pb-3 text-sm", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
         {!view && <Dots />}
-
-        {view && showPast && (
-          <PastList
-            view={view}
-            onOpen={(id) =>
-              void openPast(id).then((r) => {
-                if (!r.ok) return setError(r.error);
-                setView(r.data);
-                setSeenId(r.data.messages.at(-1)?.id ?? null);
-                setShowPast(false);
-              })
-            }
-            onDelete={(id) => void deletePast(id).then((r) => r.ok && setView(r.data))}
-            onSettle={function settle(id: string, on: boolean) {
-              void settleChat(id, on).then(async (r) => {
-                if (!r.ok) return setError(r.error);
-                const v = await getAssistant();
-                if (v.ok) setView(v.data);
-                if (on) undoable("settled", () => settle(id, false));
-              });
-            }}
-          />
-        )}
 
         {view?.provider === "none" && (
           <div className="flex h-full flex-col items-start justify-end gap-3 pb-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
@@ -695,7 +789,7 @@ export function AssistantDock() {
           </div>
         )}
 
-        {empty && !showPast && (
+        {empty && (
           <div className="flex h-full flex-col justify-end">
             {notice && (
               <div className="pb-2">
@@ -704,30 +798,16 @@ export function AssistantDock() {
             )}
             {/* the welcome writes at the bottom, right above the message box. The suggestions come after it has finished,
                 one after another, and each grows in under it, so the line is pushed up a step at a time (owner, 2026-11-10) */}
-            {welcome.showing && <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />}
-            {suggestionsFor(pathname).slice(0, popped).map((s, i) => (
-              <div key={`${pathname}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
-                <div className={cn("min-h-0 motion-safe:[animation:ct-pop-clip_260ms_both]", i === 0 && welcome.showing ? "pt-3" : "pt-2")}>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
-                    className={cn(
-                      "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
-                      "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
-                      "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:duration-300",
-                    )}
-                  >
-                    <span>{s}</span>
-                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
-                  </button>
-                </div>
-              </div>
-            ))}
+            {welcome.showing ? (
+              <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
+            ) : (
+              centred && <h3 className="pb-3 text-center text-2xl font-semibold tracking-tight text-balance">What should we make?</h3>
+            )}
+            {!centred && chips}
           </div>
         )}
 
-        {chatting && !empty && !showPast && (
+        {chatting && !empty && (
           <div className="flex flex-col gap-3">
             {view.messages.map((m, i, all) => {
               const asked = all[i - 1];
@@ -784,20 +864,20 @@ export function AssistantDock() {
 
       {/* the message box shares the header's and the chat's left and right edges */}
       {chatting && (
-        <div className="shrink-0 px-4 pt-1 pb-4">
+        <div className={cn("shrink-0 pt-1 pb-4", chatMode ? "px-[max(1.5rem,calc((100%-46rem)/2))]" : "px-4")}>
           {/* a question still waiting for a press sits over the message box, however far up its reply is (owner,
               2026-11-12: he opened a chat that asked for his approval and could not see where); answered, it goes back
               under its reply */}
           <ApprovalCards approvals={view?.messages.flatMap((m) => m.approvals ?? []).filter((x) => x.status === "waiting")} />
           <ConfirmCards confirms={view?.messages.flatMap((m) => m.confirms ?? []).filter((x) => x.status === "waiting")} onView={setView} />
-          {queue.length > 0 && (
+          {shownQueue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
-              {queue.map((it, i) => (
+              {shownQueue.map((it) => (
                 <li
                   key={it.id}
                   className="flex items-center gap-2 rounded-xl border bg-muted/60 px-3 py-1.5 text-[13px] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1"
                 >
-                  <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{i === 0 && held ? "Not sent" : "Queued"}</span>
+                  <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{held.includes(it.id) ? "Not sent" : "Queued"}</span>
                   <span className="min-w-0 flex-1 truncate" title={it.text}>
                     {it.text.trim() || attachmentsLabel(it)}
                     {it.text.trim() && attachmentsLabel(it) ? <span className="ml-1.5 text-[11px] text-muted-foreground">+ {attachmentsLabel(it)}</span> : null}
@@ -838,6 +918,10 @@ export function AssistantDock() {
           />
         </div>
       )}
+      {/* a new chat's suggestions under the box; as tall as the room above it, so the box sits in the middle */}
+      {centred && <div className="min-h-0 flex-1 overflow-y-auto px-[max(1.5rem,calc((100%-46rem)/2))] pb-4">{chips}</div>}
+      </div>
+      {chatMode && !layout.full && <ChatEdge />}
     </section>
   );
 }
@@ -1059,81 +1143,6 @@ function CopyButton({ text, label, className }: { text: () => string; label: str
   );
 }
 
-const ago = (at: number) => {
-  const d = new Date(at);
-  const days = Math.floor((Date.now() - at) / 86_400_000);
-  if (days < 1 && d.getDate() === new Date().getDate()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
-};
-
-/** Earlier chats, newest first: open one to read it or carry on; the tick settles it (folded under Settled on every device), the bin deletes it for good. */
-function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; onOpen: (id: string) => void; onDelete: (id: string) => void; onSettle: (id: string, on: boolean) => void }) {
-  const [showSettled, setShowSettled] = useState(false);
-  const settled = view.past.filter((p) => p.settled);
-  const iconBtn = "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background focus-visible:opacity-100 group-hover/past:opacity-100";
-  const rows = (list: AssistantView["past"]) => (
-    <ul className="flex flex-col">
-      {list.map((p) => (
-        <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">
-            <button
-              type="button"
-              onClick={() => onOpen(p.id)}
-              className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-2 text-left"
-              title="Open this chat"
-            >
-              <span className="min-w-0 flex-1 truncate">{p.title}</span>
-              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-hidden />}
-              {/* a working chat's last message is the reply it is writing: its time is when the work started */}
-              <span className={cn("shrink-0 text-xs tabular-nums", p.working ? "text-[var(--tint)]" : "text-muted-foreground")}>{p.working ? <>Working <WorkingFor since={p.at} compact /></> : ago(p.at)}</span>
-            </button>
-            {(p.settled || !p.working) && (
-              <button
-                type="button"
-                onClick={() => onSettle(p.id, !p.settled)}
-                className={cn(iconBtn, "hover:text-foreground")}
-                aria-label={p.settled ? `Un-settle "${p.title}"` : `Settle "${p.title}"`}
-                title={p.settled ? "Un-settle" : "Settle"}
-              >
-                {p.settled ? <RotateCcw className="size-3.5" /> : <Check className="size-3.5" />}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => onDelete(p.id)}
-              className={cn(iconBtn, "mr-1 hover:text-destructive")}
-              aria-label={`Delete "${p.title}"`}
-              title="Delete for good"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          </li>
-        ))}
-    </ul>
-  );
-  return (
-    <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
-      <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
-      {!view.past.length && <p className="px-2.5 py-2 text-muted-foreground">No earlier chats yet.</p>}
-      {rows(view.past.filter((p) => !p.settled))}
-      {!!settled.length && (
-        <>
-          <button
-            type="button"
-            onClick={() => setShowSettled((v) => !v)}
-            aria-expanded={showSettled}
-            className="mt-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            Settled ({settled.length})
-            <span className="h-px flex-1 bg-border" />
-            <ChevronDown className={cn("size-3.5 transition-transform", showSettled && "rotate-180")} />
-          </button>
-          {showSettled && rows(settled)}
-        </>
-      )}
-    </div>
-  );
-}
 
 /** What the AI did, folded into one row. While it works: the step it is on, a light running through it (the time is
     the "Working for" line above). Once done: "Worked for 1m 12s" (or "N steps" for a reply from before that was kept), opening to the list. */

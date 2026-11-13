@@ -466,7 +466,7 @@ function PostView({
   const failed = JOB_GROUPS.filter((g) => groupStatus(post.jobs, g.types) === "error");
 
   return (
-    <div className="mx-auto w-[1160px] max-w-[96vw]">
+    <div className="mx-auto w-[1160px] max-w-[96%]">
       <button
         onClick={onClose}
         className="mb-3 flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200"
@@ -1470,12 +1470,12 @@ export default function InstagramPage() {
       )}
 
       {/* with posts the grid runs across the window; a project with nothing in it is the name, one line and the paste box */}
-      <div className={postId ? "mt-6 w-full" : fresh ? "w-[760px] max-w-[92vw]" : "w-full max-w-[1640px] px-4 pt-6 sm:px-8"}>
+      <div className={postId ? "mt-6 w-full" : fresh ? "w-[760px] max-w-[92%]" : "w-full max-w-[1640px] px-4 pt-6 sm:px-8"}>
         {opening ? (
           // the post's frame, empty, so nothing jumps when it arrives
-          <div aria-busy="true" aria-label="Opening post" className="mx-auto h-[70vh] w-[760px] max-w-[92vw] rounded-xl bg-zinc-900/40" />
+          <div aria-busy="true" aria-label="Opening post" className="mx-auto h-[70vh] w-[760px] max-w-[92%] rounded-xl bg-zinc-900/40" />
         ) : postId && !viewing ? (
-          <div className="mx-auto w-[760px] max-w-[92vw]">
+          <div className="mx-auto w-[760px] max-w-[92%]">
             <button
               type="button"
               onClick={() => navigate(base)}

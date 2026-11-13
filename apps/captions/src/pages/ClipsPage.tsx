@@ -289,7 +289,7 @@ function ClipView({
   const cinema = theater && !isProcessing(session);
   // the rail stays when the request ended with none (it says why): the page around it does not move
   const showChapters = chapters.length > 0 || making.pending || !!making.failed;
-  const col = "mx-auto w-[1080px] max-w-[96vw]";
+  const col = "mx-auto w-[1080px] max-w-[96%]";
 
   const copyLink = async () => {
     const url = `${window.location.origin}/clips/${session.id}`;
@@ -718,12 +718,12 @@ export default function ClipsPage() {
         <ToolIntro icon={Video} title="Video Notes" line="Every recording gets a transcript, a title, a summary, chapters and takeaways" />
       )}
       {!clipId && (
-        <div className="mx-auto w-[960px] max-w-[92vw]">
+        <div className="mx-auto w-[960px] max-w-[92%]">
         </div>
       )}
 
       {phone && !clipId ? (
-        <div className="mb-5 w-[720px] max-w-[92vw]">
+        <div className="mb-5 w-[720px] max-w-[92%]">
           <DesktopHint>
             Full Video Notes is on your desktop. You can still watch recordings here.
           </DesktopHint>
@@ -731,7 +731,7 @@ export default function ClipsPage() {
       ) : null}
 
       <div
-        className={current || clipId ? "w-full" : "w-[720px] max-w-[92vw]"}
+        className={current || clipId ? "w-full" : "w-[720px] max-w-[92%]"}
       >
         {clipId && !current && !opening && backTo ? (
           <button

@@ -56,7 +56,7 @@ export default function InstagramAnalysisPage() {
         </div>
       </div>
 
-      <div className="mx-auto w-[960px] max-w-[96vw]">
+      <div className="mx-auto w-[960px] max-w-[96%]">
         <Link to={base} className="mb-4 flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
           <ArrowLeft className="h-3.5 w-3.5" /> Library
         </Link>

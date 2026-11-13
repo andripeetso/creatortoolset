@@ -2,7 +2,8 @@
  * Where the assistant sits (components/assistant): a corner of the window (the bubble, and the chat card floating
  * over the page) or docked to the right edge as a full-height panel that moves the page aside (not the left: the
  * corner buttons live there). You drag it there or throw it; it settles on the nearest place. Kept per browser in
- * localStorage, never as pixels, so a resized window can't strand it off screen.
+ * localStorage, never as pixels, so a resized window can't strand it off screen. Chat mode (lib/chat-mode.ts) is the
+ * other way to have it beside the page: on the left, with every chat.
  */
 
 export type Corner = "tl" | "tr" | "bl" | "br";

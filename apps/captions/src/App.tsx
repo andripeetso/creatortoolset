@@ -34,7 +34,7 @@ import EditorEditPage from "./pages/EditorEditPage";
 import type { Tool } from "@contracts/tools";
 import { isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { analyzerHome } from "@/lib/instagram";
-import { isPhoneHub } from "@/lib/mobile";
+import { isPhoneHub, isPhonePath } from "@/lib/mobile";
 import { ExportTray } from "@/components/ExportTray";
 import { SetupDialog } from "@/components/SetupDialog";
 import { FirstOpen } from "@/components/setup/FirstOpen";
@@ -310,7 +310,7 @@ export default function App() {
       navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/", { replace: true });
     }
   };
-  const onMobile = location.pathname.startsWith("/m");
+  const onMobile = isPhonePath(location.pathname);
   const publicPage =
     isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname);
 

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Film, Magnet, MoveHorizontal, Pause, Play, Plus, Redo2, Repeat, SkipBack, SkipForward, Undo2, Volume2, VolumeX, ZoomIn } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { trimOf, type ScreenEvents, type ScreenLook, type Zoom } from "@/lib/screen-recording";
-import { clock, dragTrim, dragZoom, rulerStep, zoomSlot, type ZoomGrip } from "@/lib/screen-timeline";
+import { TimelineFrame } from "@/components/timeline/TimelineFrame";
+import { clock, dragTrim, dragZoom, zoomSlot, type ZoomGrip } from "@/lib/screen-timeline";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { sliderToZoom, zoomToSlider } from "@/lib/time-axis";
 import { useTimeAxis } from "@/lib/use-time-axis";
@@ -152,14 +153,6 @@ export function Timeline({
     setGhost(null);
   };
 
-  const marks = useMemo(() => {
-    const out: number[] = [];
-    if (!(perSecond > 0)) return { step: 1, at: out };
-    const step = rulerStep(perSecond);
-    for (let t = 0; t <= duration + 1e-6; t += step) out.push(Math.round(t * 10) / 10);
-    return { step, at: out };
-  }, [perSecond, duration]);
-
   const icon = "rounded-md p-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:pointer-events-none disabled:opacity-30 [&_svg]:h-4 [&_svg]:w-4";
 
   return (
@@ -249,17 +242,10 @@ export function Timeline({
           </span>
         </div>
 
-        <div ref={scroller} className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden px-1.5">
-          <div ref={inner} className="relative" style={{ width: duration > 0 ? duration * axis.pps : "100%" }}>
-            {/* the ruler: press or drag to move through the recording */}
-            <div className="relative h-5 cursor-pointer overflow-hidden" onPointerDown={scrub}>
-              {marks.at.map((t) => (
-                <span key={t} className="absolute top-0 flex h-full items-end pb-0.5" style={{ left: x(t) }}>
-                  <span className="absolute bottom-0 h-1.5 w-px bg-zinc-700" />
-                  <span className="pl-1.5 text-[10px] tabular-nums text-zinc-500">{clock(t, marks.step < 1)}</span>
-                </span>
-              ))}
-            </div>
+        {/* the frame the app's timelines share (the scroller, the content at the axis's width, the ruler's marks):
+            press or drag on the ruler to move through the recording */}
+        <TimelineFrame scroller={scroller} inner={inner} seconds={duration} pps={perSecond} rulerHeight={20}
+          className="min-w-0 flex-1 overflow-y-hidden px-1.5" ruler={{ className: "cursor-pointer", onPointerDown: scrub }}>
 
             {/* the recording: the kept part is lit, its ends are handles */}
             <div className="relative h-10 cursor-pointer overflow-hidden rounded-lg bg-zinc-900" onPointerDown={scrub}>
@@ -342,8 +328,7 @@ export function Timeline({
               <span className="absolute -left-[5px] top-0 h-2.5 w-[11px] rounded-sm bg-zinc-100" />
               <span className="absolute inset-y-0 -left-px w-0.5 bg-zinc-100" />
             </div>
-          </div>
-        </div>
+        </TimelineFrame>
       </div>
     </div>
   );

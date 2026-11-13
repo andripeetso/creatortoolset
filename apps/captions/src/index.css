@@ -282,6 +282,24 @@ html:has(button[data-assistant-dock][data-corner="bl"]) [data-sonner-toaster] { 
    takes room, tailwind.config.js): the text is as wide as before, stays in the middle of the card and does not move
    when it outgrows the card. No rule here. */
 
+/* Chat mode (lib/chat-mode.ts): the chats stand at the left of the window, --chat-w wide, and the page moves over by as
+   much. The chats carry the chat-mode button and, while their list stands beside the chat (data-chat-list), the app's
+   name and the account: a page's own bar leaves those out then. */
+html[data-chat-mode] body { padding-left: var(--chat-w); }
+html[data-chat-mode] main [data-chat-toggle] { display: none; }
+html[data-chat-list] main :is([data-home-link], [data-user-menu]) { display: none; }
+/* Only chats: the page is not drawn at all. */
+html[data-chat-mode="full"] main { display: none; }
+/* What a page pins to the window from edge to edge (its own dialogs and drop overlays, a selection bar centred at the
+   bottom, the bar's fade) stands in the page's part of the window, not over or under the chats. Not what a page places
+   from the right (a drawer). */
+html[data-chat-mode] main .fixed:is(.inset-0, .inset-x-0):not([class*="left-auto"]) { left: var(--chat-w); }
+html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5rem); }
+/* In the Mac app the window's buttons sit over the chats' own bar (data-chat-bar), so the page's bar gives up the room
+   it kept for them. */
+html.mac-app:not(.mac-full) [data-chat-bar] { padding-left: 84px; }
+html.mac-app[data-chat-mode] main [data-titlebar] { padding-left: 1rem; }
+
 html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }
 /* The dim behind a dialog covers the window but not the page's own bar beside it, where the window's backdrop shows
    (the body's colour). While a dialog is open the backdrop is that colour as the dim leaves it (half black over it), so

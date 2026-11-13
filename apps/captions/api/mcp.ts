@@ -1093,7 +1093,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     },
     navigate: async (a) => {
       someoneThere();
-      return { status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) };
+      return { status: "opening", path: await navigateTo(user.username, String(a.path ?? ""), jobTurn(auth.get("authorization") ?? undefined) ?? undefined) };
     },
     // the card's src and href are the site's own routes, so the browser's cookie passes the same checks this call did
     show_video: async (a) => {

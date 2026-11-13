@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Square, Star, Triangle, Type } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { layerName, pageName } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ import { Tip } from "./Tip";
 
 const ROW = "group relative flex h-8 w-full cursor-default items-center gap-1.5 pr-2 text-left";
 const ON = "bg-[#0d99ff]/20";
-const KIND = { text: Type, image: Image, drawing: PenTool } as const;
+const KIND = { text: Type, image: Image, drawing: PenTool, path: Spline } as const;
 const SHAPE = { rect: Square, ellipse: Circle, triangle: Triangle, star: Star, arrow: ArrowRight } as const;
 
 type Drop = { key: string; after: boolean };

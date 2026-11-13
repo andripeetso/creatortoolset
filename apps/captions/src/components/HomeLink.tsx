@@ -79,6 +79,8 @@ export function HomeLink({
       }}
       title="Creator Toolset"
       aria-label="Creator Toolset home"
+      // in chat mode the name stands at the top of the chats, so a page's own bar leaves it out (index.css)
+      data-home-link
       className={cn("shrink-0 rounded-md px-1.5 py-1 hover:bg-zinc-500/15", className)}
     >
       <Wordmark />

@@ -44,6 +44,20 @@ export function rulerStep(pxPerSecond: number): number {
   return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => s * pxPerSecond >= 64) ?? 1200;
 }
 
+/**
+ * The ruler's marks between two places on the content (px from 0:00), and the step they stand at. A long, zoomed
+ * timeline has thousands of marks: only the ones near what shows are drawn.
+ */
+export function rulerMarks(pps: number, seconds: number, fromPx = 0, toPx = Infinity): { step: number; at: number[] } {
+  if (!(pps > 0)) return { step: 1, at: [] };
+  const step = rulerStep(pps);
+  const first = Math.max(0, Math.floor(fromPx / pps / step));
+  const last = Math.min(Math.floor((seconds + 1e-6) / step), Math.ceil(toPx / pps / step));
+  const at: number[] = [];
+  for (let k = first; k <= last; k++) at.push(Math.round(k * step * 10) / 10);
+  return { step, at };
+}
+
 /** m:ss, with tenths when `fine`. */
 export function clock(t: number, fine = false): string {
   const s = Math.max(0, t);

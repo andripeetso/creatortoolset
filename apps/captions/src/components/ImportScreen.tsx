@@ -453,7 +453,7 @@ export function ImportScreen() {
         }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        className={dropZoneClass(drag, "w-[560px] max-w-[90vw] shrink-0 cursor-pointer")}
+        className={dropZoneClass(drag, "w-[560px] max-w-[90%] shrink-0 cursor-pointer")}
       >
         <DropZoneText
           title="Drop videos here, or click to browse"
@@ -474,7 +474,7 @@ export function ImportScreen() {
       </label>
 
       {recent.length > 0 && (
-        <div className="mt-8 w-[560px] max-w-[90vw]">
+        <div className="mt-8 w-[560px] max-w-[90%]">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
               <Clock className="h-3.5 w-3.5" /> Recent projects
@@ -501,7 +501,7 @@ export function ImportScreen() {
       )}
 
       {deletedSessions.length > 0 && (
-        <details className="mt-4 w-[560px] max-w-[90vw] rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+        <details className="mt-4 w-[560px] max-w-[90%] rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
           <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
             Trash · {deletedSessions.length} project
             {deletedSessions.length === 1 ? "" : "s"} · recoverable for{" "}
@@ -544,7 +544,7 @@ export function ImportScreen() {
         </details>
       )}
 
-      <div className="mb-2 mt-10 grid w-[560px] max-w-[90vw] grid-cols-3 gap-3 text-center text-xs text-zinc-500">
+      <div className="mb-2 mt-10 grid w-[560px] max-w-[90%] grid-cols-3 gap-3 text-center text-xs text-zinc-500">
         <div className="rounded-lg bg-zinc-900/60 px-3 py-3">
           <span className="mb-1 block text-sm font-medium text-zinc-300">
             1 · Transcribe

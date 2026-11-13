@@ -875,10 +875,11 @@ export function Player() {
             )}
             {words.length === 0 && status.phase === "idle" && !serverCaptioning && (
               <>
-                <EnginePicker className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-200 outline-none" />
+                {/* the picker gives way to the button when the player is narrow (beside the chats in chat mode) */}
+                <EnginePicker className="min-w-0 shrink rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-200 outline-none" />
                 <button
                   onClick={runTranscription}
-                  className="flex items-center gap-2 rounded-md bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500"
+                  className="flex shrink-0 items-center gap-2 rounded-md bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500"
                 >
                   <Sparkles className="h-4 w-4" /> Transcribe
                 </button>

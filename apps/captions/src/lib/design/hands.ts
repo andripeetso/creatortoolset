@@ -235,7 +235,7 @@ export function regroup<T extends Layer>(coming: readonly T[], there: readonly L
 
 export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
-export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : SHAPE_NAMES[l.shape]);
+export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : SHAPE_NAMES[l.shape]);
 export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
 
 /**

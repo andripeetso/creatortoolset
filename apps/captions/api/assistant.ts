@@ -99,6 +99,8 @@ interface Chat {
   made?: number;
   /** Settled (done with, kept): its newest message's time then. A newer message brings it back (isSettled). */
   settled?: number;
+  /** When the person last sent a message in it or looked at it (POST /chats/:id/seen): a reply that ended later is unread. */
+  seen?: number;
 }
 
 interface Conv {
@@ -107,11 +109,14 @@ interface Conv {
   title?: string;
   task?: string;
   settled?: number;
+  seen?: number;
   messages: AssistantMessage[];
   /** One key asked for (ask_secret), account-wide; `turn` is the reply that asked (its chat shows the box). */
   pending?: { env: string; why: string; at: number; turn?: string };
-  /** One page to open, account-wide: whichever reply asked last. */
+  /** One page to open: whichever reply asked last. `navigateChat` is the chat that reply is in; the page opens while
+   *  that chat is the open one (a reply in a chat nobody is looking at never moves the page under another chat). */
   navigate?: string;
+  navigateChat?: string;
   /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
   calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
@@ -153,11 +158,12 @@ const titleOf = (messages: AssistantMessage[]) => {
 
 /** The conversation on screen goes into the history (when it has anything) and a fresh one starts; one pushed past PAST_KEPT goes with its pictures. */
 function archive(username: string, conv: Conv): void {
-  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, title: conv.title, task: conv.task, settled: conv.settled }, ...(conv.past ?? [])]);
+  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, title: conv.title, task: conv.task, settled: conv.settled, seen: conv.seen }, ...(conv.past ?? [])]);
+  // a page this chat asked for goes with it; one another chat asked for waits for that chat
+  if (!conv.navigateChat || conv.navigateChat === conv.id) conv.navigate = conv.navigateChat = undefined;
   conv.id = randomUUID();
-  conv.title = conv.task = conv.settled = undefined;
+  conv.title = conv.task = conv.settled = conv.seen = undefined;
   conv.messages = [];
-  conv.navigate = undefined;
 }
 
 /** The history capped at PAST_KEPT: the oldest scheduled-task chats go first, so runs never push the person's own chats out. */
@@ -637,11 +643,13 @@ export function appPath(p: string): string | null {
   return /^\/(?!\/)[A-Za-z0-9/_.~%-]*(\?[A-Za-z0-9_=&.%-]*)?$/.test(p) ? p : null;
 }
 
-/** The assistant's navigate tool: records the page for the dock to open. */
-export async function navigateTo(username: string, p: string): Promise<string> {
+/** The assistant's navigate tool: records the page for the dock to open. `turn` is the reply that asked: the page opens in its chat. */
+export async function navigateTo(username: string, p: string, turn?: string): Promise<string> {
   const to = appPath(p);
   if (!to) throw new Error("navigate takes a relative path in this app, such as /workshop or /settings/connectors");
-  load(username).navigate = to;
+  const conv = load(username);
+  conv.navigate = to;
+  conv.navigateChat = (turn && chatOfTurn(username, turn)) || undefined;
   save(username);
   tell(username);
   return to;
@@ -695,7 +703,7 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     // a chat made by POST /chats shows here once it has a message
     past: chat ? [] : (conv.past ?? []).filter((p) => p.messages.length).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(working(p) ? { working: true as const } : {}), ...(isSettled(conv, p) ? { settled: true as const } : {}) })),
     pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
-    navigate: conv.navigate ?? null,
+    navigate: (!conv.navigateChat || conv.navigateChat === (chat?.id ?? conv.id) ? conv.navigate : undefined) ?? null,
     sendNow: true,
     videosLater: true,
     chats: true,
@@ -714,11 +722,19 @@ function asking(conv: Conv, c: Chat, now = Date.now()): boolean {
 
 /** Every chat, the open one included, newest first (GET /chats). */
 /** Settled and nothing new since: no newer message, no reply at work, nothing it asks. Every device folds it away. */
+/** Its newest reply ended after the person last sent or looked: finished (or failed) and not seen yet. A chat from before
+ *  `seen` was kept, or a scheduled task's run nobody sent, is never unread. */
+function unread(c: Chat): boolean {
+  if (c.seen === undefined || working(c)) return false;
+  const m = [...c.messages].reverse().find((x) => x.role === "assistant");
+  return !!m && m.status !== "thinking" && (m.started ?? m.at) + (m.took ?? 0) > c.seen;
+}
+
 const isSettled = (conv: Conv, c: Chat) => c.settled !== undefined && (c.messages.at(-1)?.at ?? 0) <= c.settled && !working(c) && !asking(conv, c);
 
 function chatList(username: string): AssistantChat[] {
   const conv = load(username);
-  const all: Chat[] = [{ id: conv.id!, title: conv.title, task: conv.task, settled: conv.settled, messages: conv.messages }, ...(conv.past ?? [])];
+  const all: Chat[] = [{ id: conv.id!, title: conv.title, task: conv.task, settled: conv.settled, seen: conv.seen, messages: conv.messages }, ...(conv.past ?? [])];
   return all
     .map((c) => {
       const line = ([...c.messages].reverse().find((m) => m.text.trim())?.text ?? "").replace(/\s+/g, " ").trim();
@@ -731,6 +747,7 @@ function chatList(username: string): AssistantChat[] {
         ...(c.id === conv.id ? { open: true as const } : {}),
         ...(working(c) ? { working: true as const } : {}),
         ...(asking(conv, c) ? { asks: true as const } : {}),
+        ...(unread(c) ? { unread: true as const } : {}),
         ...(isSettled(conv, c) ? { settled: true as const } : {}),
       };
     })
@@ -1405,6 +1422,8 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const chat = target();
   if (!chat) return c.json({ error: "That conversation is gone" }, 404);
   const now = Date.now();
+  // whoever sends has seen the chat up to here: the reply to this is unread until they look again
+  chat.seen = now;
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
   const asked: AssistantMessage = {
     id: randomUUID(),
@@ -1475,6 +1494,16 @@ assistantApp.post("/chats/:id/settle", async (c) => {
   save(u.username);
   tell(u.username);
   return c.json({ chats: chatList(u.username) });
+});
+
+/** The person is looking at this chat now: what ended in it up to here is no longer unread (a quiet write, nobody is told). */
+assistantApp.post("/chats/:id/seen", (c) => {
+  const u = c.get("user");
+  const chat = chatOf(load(u.username), c.req.param("id"));
+  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  chat.seen = Date.now();
+  save(u.username);
+  return c.json({ ok: true });
 });
 
 /**
@@ -1570,7 +1599,7 @@ assistantApp.post("/past/:id/open", (c) => {
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   archive(u.username, conv);
-  Object.assign(conv, { id: found.id, title: found.title, task: found.task, settled: found.settled, messages: found.messages });
+  Object.assign(conv, { id: found.id, title: found.title, task: found.task, settled: found.settled, seen: found.seen, messages: found.messages });
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
@@ -1636,7 +1665,7 @@ assistantApp.post("/confirms/:id", async (c) => {
 assistantApp.post("/navigated", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
-  conv.navigate = undefined;
+  conv.navigate = conv.navigateChat = undefined;
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });

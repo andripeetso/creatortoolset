@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
+import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { AppBar } from "@/components/AppBar";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
+import { usePageNeeds } from "@/lib/chat-mode";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
 import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
 import { coloursOn } from "@/lib/design/colour";
+import { inPixels, refit } from "@/lib/design/path";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
@@ -29,7 +31,7 @@ import { cn } from "@/lib/utils";
  * moment later.
  *
  * ⌘G groups the picked layers, ⇧⌘G takes the group apart.
- * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
+ * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text, P pen (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
  * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
  * (in a picture: moves it inside its box) · lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
  */
@@ -48,9 +50,10 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["triangle", "Triangle", "", Triangle],
   ["star", "Star", "", Star],
   ["arrow", "Arrow", "", ArrowRight],
+  ["pen", "Pen", "P", PenTool],
   ["text", "Text", "T", Type],
 ];
-const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text" };
+const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text", KeyP: "pen" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 // the panels' colours. The app's zinc greys mirror in the light theme (tailwind.config.js), so zinc-50 is the ink in both
@@ -70,6 +73,8 @@ export default function DesignRoute() {
 }
 
 function DesignPage({ id }: { id: string }) {
+  // the layers, the canvas and what is picked side by side: beside the chats (chat mode) the page asks for that much
+  usePageNeeds(920);
   const [design, setDesign] = useState<Design | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLive] = useState<Page[] | null>(null);
@@ -80,6 +85,8 @@ function DesignPage({ id }: { id: string }) {
   /** The picture layer being moved inside its box, and whether a picture's background is being cut away. */
   const [cropping, setCropping] = useState<string | null>(null);
   const [cutting, setCutting] = useState(false);
+  /** The path layer whose points are shown for moving, and the picked one of them. */
+  const [shaping, setShaping] = useState<{ id: string; anchor: number | null } | null>(null);
   const [tool, setTool] = useState<Tool>("move");
   const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
   const [pointed, setPointed] = useState<string | null>(null);
@@ -253,11 +260,14 @@ function DesignPage({ id }: { id: string }) {
     setSelected(ids);
     setFramed(frame);
     setCropping((id) => (id && ids.length === 1 && ids[0] === id ? id : null));
+    setShaping((s) => (s && ids.length === 1 && ids[0] === s.id ? s : null));
     setError(null);
   }, []);
   const step = (back: boolean) => {
     merging.current = null;
     setLive(null);
+    // the path being shaped may have other points now: none of them is the picked one
+    setShaping((s) => s && { ...s, anchor: null });
     setHist((h) => (h ? (back ? histUndo(h) : histRedo(h)) : h));
   };
 
@@ -455,10 +465,27 @@ function DesignPage({ id }: { id: string }) {
     }
   };
 
+  /** A line drawn with the pen, as a layer: closed, a filled shape; open, a line alone. */
+  const makePath = (to: number, path: { x: number; y: number; w: number; h: number; points: { x: number; y: number; in?: [number, number]; out?: [number, number] }[]; closed: boolean }) => {
+    const { closed, ...rest } = path;
+    put(to, 1, ([id]) => [{ id: id!, type: "path", ...rest, ...(closed ? { closed: true, fill: "#d9d9d9" } : { stroke: { color: "#111111", width: 6, round: true } }) }]);
+    setTool("move");
+  };
+  /** The picked point of the path being shaped taken out; a path left with one point goes with it. */
+  const removePoint = () => {
+    const l = base?.layers.find((x) => x.id === shaping?.id);
+    if (!base || !shaping || shaping.anchor === null || l?.type !== "path") return;
+    const px = inPixels(l).filter((_, n) => n !== shaping.anchor);
+    setShaping(px.length < 2 ? null : { id: l.id, anchor: null });
+    if (px.length < 2) return void (setPage({ ...base, layers: base.layers.filter((x) => x.id !== l.id) }), setSelected([]));
+    // a closed line needs three points to hold anything
+    setPage({ ...base, layers: base.layers.map((x) => (x.id === l.id ? refit({ ...l, closed: l.closed && px.length > 2 ? true : undefined }, px) : x)) });
+  };
+
   /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
   const make = (to: number, r: Rect, dragged: boolean) => {
     const f = frames[to];
-    if (!f || tool === "move" || tool === "hand" || tool === "frame") return;
+    if (!f || tool === "move" || tool === "hand" || tool === "frame" || tool === "pen") return;
     const words = tool === "text";
     const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? f.w / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? f.w * 0.08 : 100)) };
     const ids = put(to, 1, ([id]) => [tool === "text" ? textLayer(id!, "Text", b, f.w) : { id: id!, type: "shape", shape: tool, fill: "#d9d9d9", ...b }]);
@@ -492,6 +519,10 @@ function DesignPage({ id }: { id: string }) {
       if (e.key === "-") return run(() => zoom("out"));
       if (!e.shiftKey && TOOL_KEYS[c]) return run(() => setTool(TOOL_KEYS[c]!));
       if (cropping && (e.key === "Escape" || e.key === "Enter")) return run(() => setCropping(null));
+      // the pen's line is ended by taking the move tool up again; a path being shaped: Delete takes its picked point out
+      if (tool === "pen" && e.key === "Enter") return run(() => setTool("move"));
+      if (shaping && (e.key === "Escape" || e.key === "Enter")) return run(() => setShaping(null));
+      if (shaping && shaping.anchor !== null && (e.key === "Delete" || e.key === "Backspace")) return run(removePoint);
       if (e.key === "Escape") return run(() => (dropper ? setDropper(null) : tool !== "move" ? setTool("move") : pick(k, [])));
       if (e.key === "Delete" || e.key === "Backspace") return run(remove);
       const by = ARROWS[e.key];
@@ -502,6 +533,7 @@ function DesignPage({ id }: { id: string }) {
       if (by) run(() => patch((l) => ({ ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "text") run(() => setEditing(mine[0]!.id));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "image") run(() => setCropping(mine[0]!.id));
+      else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "path") run(() => setShaping({ id: mine[0]!.id, anchor: null }));
       else if (c === "BracketRight") run(() => order(true));
       else if (c === "BracketLeft") run(() => order(false));
       // 1 to 9: 10 % to 90 %; 0: all the way
@@ -640,6 +672,9 @@ function DesignPage({ id }: { id: string }) {
               onMakeFrame={makeFrame}
               editing={editing}
               onEdit={setEditing}
+              onMakePath={makePath}
+              shaping={shaping}
+              onShape={setShaping}
               cropping={cropping}
               onCrop={setCropping}
               pointed={pointed}
