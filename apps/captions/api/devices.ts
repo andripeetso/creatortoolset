@@ -43,7 +43,7 @@ export const devicesApp = new Hono<{ Variables: AuthVars }>();
 /** The device behind a ctd_ token on an editor route; a 401 when there is none. Keeps the device here (it is alive). */
 function deviceCaller(c: Context): Device | null {
   const d = deviceForToken(c.req.header("authorization"));
-  if (d) touchDevice(d.id);
+  if (d) touchDevice(d.id, c.req.header("user-agent"));
   return d;
 }
 /** A job id from the path; anything that is not a positive integer matches no job. */

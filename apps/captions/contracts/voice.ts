@@ -61,6 +61,8 @@ export interface SttModel {
    * Parakeet's Hugging Face repository (FluidAudio). apps/mac Dictation/Whisper.swift ModelRegistry keeps the same ids.
    */
   coreml?: string;
+  /** The first Mac app that runs its `coreml` (`runsOn`); an older one, or one that never said its version, is not offered it. */
+  macSince?: string;
   /** A Mac's download size when its Core ML version differs from `mb` (`sizeOn`). */
   coremlMb?: number;
   /** Download size, for a local model. */
@@ -91,7 +93,7 @@ export const STT_MODELS: SttModel[] = [
     page: "https://huggingface.co/openai/whisper-large-v3", licence: "Apache-2.0", download: "Systran/faster-whisper-large-v3", mb: 3090, languages: "many", computer: true },
   // its card lists 25 languages; on Estonian it got nearly half the words wrong, so it is offered for English only
   { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", by: "NVIDIA", about: "English only: the fastest, and the closest word times",
-    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", coreml: "FluidInference/parakeet-tdt-0.6b-v3-coreml", coremlMb: 494, mb: 2550, languages: ["en"], computer: true },
+    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", coreml: "FluidInference/parakeet-tdt-0.6b-v3-coreml", macSince: "0.15.38", coremlMb: 494, mb: 2550, languages: ["en"], computer: true },
   { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Small and quick, the one the browser already uses",
     page: "https://huggingface.co/openai/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
   // a Mac's smaller ones (Dictation on a Mac): after the others, so none of them is a computer's default
@@ -102,15 +104,24 @@ export const STT_MODELS: SttModel[] = [
   { id: "whisper-base.en", engine: "local", name: "Whisper base (English)", by: "OpenAI", about: "English only, the smallest and quickest",
     page: "https://huggingface.co/openai/whisper-base.en", licence: "Apache-2.0", coreml: "openai_whisper-base.en", mb: 145, languages: ["en"], computer: true },
   { id: "parakeet-tdt-0.6b-v2", engine: "local", name: "Parakeet TDT 0.6B v2", by: "NVIDIA", about: "English only, on a Mac: as quick as v3",
-    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2", licence: "CC-BY-4.0", coreml: "FluidInference/parakeet-tdt-0.6b-v2-coreml", mb: 475, languages: ["en"], computer: true },
+    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2", licence: "CC-BY-4.0", coreml: "FluidInference/parakeet-tdt-0.6b-v2-coreml", macSince: "0.15.38", mb: 475, languages: ["en"], computer: true },
 ];
 
+/** Whether a Mac app of `version` is `min` or newer; a build from source ("dev") is the newest, no version the oldest. */
+export const macAtLeast = (version: string | undefined, min: string): boolean => {
+  if (!version) return false;
+  if (version === "dev") return true;
+  const a = version.split(".").map(Number), b = min.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  return true;
+};
+
 /**
- * Whether a computer of this kind (its report's `os`) can download `m`: a Mac its `coreml`, any other its `download`.
- * One that has not said what it is yet: only a model both have.
+ * Whether a computer of this kind (its report's `os`) can download `m`: a Mac its `coreml` (one its app version runs:
+ * `macSince`), any other its `download`. One that has not said what it is yet: only a model both have.
  */
-export const runsOn = (m: SttModel, os: string | undefined): boolean =>
-  os === "mac" ? !!m.coreml : os ? !!m.download : !!m.coreml && !!m.download;
+export const runsOn = (m: SttModel, os: string | undefined, version?: string): boolean =>
+  os === "mac" ? !!m.coreml && (!m.macSince || macAtLeast(version, m.macSince)) : os ? !!m.download : !!m.coreml && !!m.download && !m.macSince;
 
 /** The download size on a computer that runs `os`. */
 export const sizeOn = (m: SttModel, os: string | undefined): number | undefined => (os === "mac" ? m.coremlMb ?? m.mb : m.mb);
@@ -156,6 +167,8 @@ export interface SttComputer {
   online: boolean;
   /** what it is (its report): which models it can download (`runsOn`) */
   os?: "mac" | "linux" | "windows";
+  /** its Mac app's version (a model's `macSince`) */
+  version?: string;
   /** ready: downloaded; downloading: under way; asked: Download was pressed, the computer has not started (it is off) */
   models: { id: string; state: "ready" | "downloading" | "asked" }[];
 }
