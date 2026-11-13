@@ -201,6 +201,8 @@ export function WorkshopDesk({
   const drawer = !layout.focus && all.includes("content") && all.some((id) => id !== "content");
   const board = (layout: DeskLayout) => {
     const vis = visibleIslands(layout);
+    // Focus is a column at reading width in the middle of the window (the page leaves out its sidebar too), not the piece stretched across it
+    if (layout.focus) return <div className={`${DESK} mx-auto max-w-4xl`}>{wrap(vis[0]!)}</div>;
     if (vis.length === 1) {
       return <div className={DESK}>{wrap(vis[0]!)}</div>;
     }
