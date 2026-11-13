@@ -160,7 +160,7 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up: General, Appearance, Tools,
-    AI (Providers, Scheduled tasks, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
+    AI (Providers, Voice, Scheduled tasks, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
     API keys, Headless access), People (Team, Admin; on a hosted server). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **A tool is what you use; plug-ins, packs and skills are what you add to it; Community is where you find more.**

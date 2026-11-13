@@ -600,7 +600,7 @@ export function AssistantDock() {
         </span>
         <span className="flex-1 text-sm font-semibold tracking-tight">Assistant</span>
         <NoToolsNote view={view} />
-        {/* read-aloud is an add-on (Settings → General): the dock only offers to stop a reply being read */}
+        {/* read-aloud is an add-on (Settings → Voice): the dock only offers to stop a reply being read */}
         {readAloud.speaking && (
           <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">
             <VolumeX className="size-4" />

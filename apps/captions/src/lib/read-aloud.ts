@@ -4,7 +4,7 @@ import { create } from "zustand";
  * "Read replies aloud" for the assistant: each new reply is spoken. The voice is Kokoro, a small open speech model
  * that runs in the browser (workers/speak.worker.ts; ~90 MB, downloaded the first time, then cached). Where it
  * can't run, the computer's own voice reads instead. An add-on, off by default: switched on per browser in
- * Settings → General (localStorage), never from the dock.
+ * Settings → Voice (localStorage), never from the dock.
  */
 
 // a new key: everyone who had the dock's old speaker switch on starts off again
