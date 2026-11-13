@@ -17,17 +17,19 @@ import {
   CaseUpper,
   Check,
   ChevronDown,
+  FlipHorizontal2,
+  FlipVertical2,
   Link2,
   Minus,
   Plus,
   Unlink2,
 } from "lucide-react";
 import type { Design, DesignPage, Layer } from "@contracts/design";
-import { DESIGN_FORMATS, DESIGN_LIMITS } from "@contracts/design";
+import { DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { typedHex } from "@/lib/design/colour";
-import { boundsOf, frameOf, pageName, resizeAll, type Align } from "@/lib/design/hands";
+import { boundsOf, frameOf, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
@@ -184,6 +186,47 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
 
 /** The shadow a press on + gives. */
 const SHADOW = { color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8 };
+/** The gradient a press on + gives: down the box, to black. */
+const GRADIENT = { to: "#000000", angle: 90 };
+const BLEND_NAMES = { multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken", lighten: "Lighten", "soft-light": "Soft light" } as const;
+/** How a frame or the picked layers are saved as pictures: PNG or JPEG, at their size or twice it. */
+export interface ExportAs {
+  jpeg: boolean;
+  scale: number;
+}
+
+/** A choice of a few, as a row of buttons with the chosen one raised. */
+function Choice<V extends string | number>({ label, value, options, onPick }: { label: string; value: V | null; options: readonly (readonly [V, string])[]; onPick: (v: V) => void }) {
+  return (
+    <div role="group" aria-label={label} className="grid gap-1 rounded-[5px] bg-[#f5f5f5] p-0.5 dark:bg-[#383838]" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      {options.map(([v, name]) => (
+        <button key={String(v)} type="button" aria-pressed={value === v} onClick={() => onPick(v)} className={cn("h-5 rounded-[4px]", value === v ? "bg-white shadow-sm dark:bg-[#5a5a5a]" : DIM)}>
+          {name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A choice of many, as a field that opens a list. */
+function PickOne<V extends string>({ label, value, options, onPick }: { label: string; value: string; options: readonly (readonly [V, string])[]; onPick: (v: V) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label={label} className={cn(FIELD, "w-full justify-between outline-none")}>
+        <span className="truncate">{value}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-48">
+        {options.map(([v, name]) => (
+          <DropdownMenuItem key={v} onSelect={() => onPick(v)} className="flex items-center justify-between gap-2">
+            {name}
+            {name === value && <Check className="h-3.5 w-3.5 shrink-0" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const ALIGNS: [Align, string, typeof AlignLeft][] = [
   ["left", "Align left", AlignStartVertical],
@@ -231,14 +274,15 @@ export function Inspector({
   onDistribute: (axis: "x" | "y") => void;
   zoom: number;
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
-  /** every frame, or the one at this place */
-  onExport: (only?: number) => void;
+  /** every frame, or the one at this place, saved as said */
+  onExport: (only: number | undefined, as: ExportAs) => void;
   /** the colours the design already uses, for the picker */
   colours: readonly string[];
   /** the next press on the canvas gives its colour to `take` */
   onDropper: (take: (hex: string) => void) => void;
 }) {
   const [ratio, setRatio] = useState(false);
+  const [as, setAs] = useState<ExportAs>({ jpeg: false, scale: 1 });
   const one = picked.length === 1 ? picked[0]! : null;
   const box = one ?? (picked.length ? boundsOf(picked) : null);
   /** What every picked layer has in common, or null when they differ (or one has none). */
@@ -257,6 +301,22 @@ export function Inspector({
 
   const text = every((l) => l.type === "text");
   const shape = every((l) => l.type === "shape");
+  const image = every((l) => l.type === "image");
+  /** The gradient of a text or a shape (a picture and a drawing have none). */
+  const gradOf = (l: Layer) => (l.type === "shape" || l.type === "text" ? l.gradient : undefined);
+  const setGrad = (g: { to: string; angle: number } | undefined) => (l: Layer): Layer => (l.type === "shape" || l.type === "text" ? { ...l, gradient: g } : l);
+  const hasGrad = picked.some(gradOf);
+  /** A + or − beside a section's name, for the one thing the section can add. */
+  const addOrRemove = (has: boolean, what: string, add: () => void, remove: () => void) =>
+    has ? (
+      <Tap label={`Remove the ${what}`} onClick={remove}>
+        <Minus className="h-3.5 w-3.5" />
+      </Tap>
+    ) : (
+      <Tap label={`Add a ${what}`} onClick={add}>
+        <Plus className="h-3.5 w-3.5" />
+      </Tap>
+    );
   const hasLine = picked.some((l) => (l.type === "shape" && l.stroke) || (l.type === "text" && l.outline));
   const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" ? { ...l, stroke: v } : l.type === "text" ? { ...l, outline: v } : l);
   const lineOf = (l: Layer) => (l.type === "shape" ? l.stroke : l.type === "text" ? l.outline : undefined);
@@ -269,9 +329,9 @@ export function Inspector({
   const big = { min: DESIGN_LIMITS.frameMin, max: DESIGN_LIMITS.frameMax };
 
   return (
-    <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
+    <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? `${picked.length} selected` : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.shape === "ellipse" ? "Ellipse" : "Rectangle") : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? `${picked.length} selected` : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : SHAPE_NAMES[one.shape]) : "Frame"}</h2>
         <DropdownMenu>
           <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
             {Math.round(zoom * 100)}%
@@ -335,10 +395,16 @@ export function Inspector({
               </DropdownMenuContent>
             </DropdownMenu>
           </Section>
-          <Section title="Fill">
+          <Section title="Fill" action={addOrRemove(!!page.gradient, "gradient", () => onPage({ ...page, gradient: GRADIENT }), () => onPage({ ...page, gradient: undefined }))}>
             <div className="flex">
               <Colour title="The frame's colour" value={page.background} colours={colours} onDropper={onDropper} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
             </div>
+            {page.gradient && (
+              <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                <Colour title="Gradient to" value={page.gradient.to} colours={colours} onDropper={onDropper} onSet={(to, merge) => onPage({ ...page, gradient: { ...page.gradient!, to } }, merge)} />
+                <Num label="∠" title="Gradient angle in degrees" value={page.gradient.angle} min={-360} max={360} onLive={(n) => onPagePreview(n === null ? null : { ...page, gradient: { ...page.gradient!, angle: n } })} onCommit={(n) => onPage({ ...page, gradient: { ...page.gradient!, angle: n } })} />
+              </div>
+            )}
           </Section>
         </>
       )}
@@ -389,26 +455,52 @@ export function Inspector({
               {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
                 num("◜", "Corner radius", same((l) => (l.type === "image" || l.type === "shape" ? (l.radius ?? 0) : undefined)), (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, radius: n || undefined } : l), { min: 0, max: 2000 })}
             </div>
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <PickOne
+                  label="Blend"
+                  value={(() => {
+                    const b = same((l) => l.blend ?? "normal");
+                    return b === null ? "Mixed" : b === "normal" ? "Normal" : BLEND_NAMES[b];
+                  })()}
+                  options={[["normal", "Normal"] as const, ...DESIGN_BLENDS.map((b) => [b, BLEND_NAMES[b]] as const)]}
+                  onPick={(b) => onPatch((l) => ({ ...l, blend: b === "normal" ? undefined : b }))}
+                />
+              </div>
+              <Tap label="Flip left to right" on={every((l) => !!l.flipX)} onClick={() => onPatch((l) => ({ ...l, flipX: l.flipX ? undefined : true }))}>
+                <FlipHorizontal2 className="h-3.5 w-3.5" />
+              </Tap>
+              <Tap label="Flip top to bottom" on={every((l) => !!l.flipY)} onClick={() => onPatch((l) => ({ ...l, flipY: l.flipY ? undefined : true }))}>
+                <FlipVertical2 className="h-3.5 w-3.5" />
+              </Tap>
+            </div>
+            {shape && (
+              <PickOne
+                label="Shape"
+                value={(() => {
+                  const s = same((l) => (l.type === "shape" ? l.shape : undefined));
+                  return s === null ? "Mixed" : SHAPE_NAMES[s];
+                })()}
+                options={DESIGN_SHAPES.map((s) => [s, SHAPE_NAMES[s]] as const)}
+                onPick={(s) => onPatch((l) => (l.type === "shape" ? { ...l, shape: s } : l))}
+              />
+            )}
           </Section>
           {(shape || text) && (
-            <Section title="Fill">
+            <Section title="Fill" action={addOrRemove(hasGrad, "gradient", () => onPatch(setGrad(GRADIENT)), () => onPatch(setGrad(undefined)))}>
               <div className="flex">{colour("Fill", same((l) => (l.type === "shape" ? l.fill : l.type === "text" ? l.color : undefined)), (c) => (l) => (l.type === "shape" ? { ...l, fill: c } : l.type === "text" ? { ...l, color: c } : l))}</div>
+              {hasGrad && (
+                <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                  {colour("Gradient to", same((l) => gradOf(l)?.to), (c) => (l) => setGrad({ angle: gradOf(l)?.angle ?? GRADIENT.angle, to: c })(l))}
+                  {num("∠", "Gradient angle in degrees", same((l) => gradOf(l)?.angle), (n) => (l) => setGrad({ to: gradOf(l)?.to ?? GRADIENT.to, angle: n })(l), { min: -360, max: 360 })}
+                </div>
+              )}
             </Section>
           )}
           {(shape || text) && (
             <Section
               title="Stroke"
-              action={
-                hasLine ? (
-                  <Tap label="Remove the stroke" onClick={() => onPatch(setLine(undefined))}>
-                    <Minus className="h-3.5 w-3.5" />
-                  </Tap>
-                ) : (
-                  <Tap label="Add a stroke" onClick={() => onPatch(setLine({ color: "#000000", width: 4 }))}>
-                    <Plus className="h-3.5 w-3.5" />
-                  </Tap>
-                )
-              }
+              action={addOrRemove(hasLine, "stroke", () => onPatch(setLine({ color: "#000000", width: 4 })), () => onPatch(setLine(undefined)))}
             >
               {hasLine && (
                 <div className="grid grid-cols-[1fr_4.5rem] gap-2">
@@ -436,9 +528,10 @@ export function Inspector({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
                 {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
+                {num("↔", "Letter spacing in pixels", same((l) => (l.type === "text" ? (l.spacing ?? 0) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, spacing: n || undefined } : l), { min: -20, max: 200 })}
               </div>
               <div className="flex justify-between">
                 {(
@@ -471,17 +564,7 @@ export function Inspector({
           )}
           <Section
             title="Effects"
-            action={
-              picked.some((l) => l.shadow) ? (
-                <Tap label="Remove the shadow" onClick={() => onPatch((l) => ({ ...l, shadow: undefined }))}>
-                  <Minus className="h-3.5 w-3.5" />
-                </Tap>
-              ) : (
-                <Tap label="Add a shadow" onClick={() => onPatch((l) => ({ ...l, shadow: SHADOW }))}>
-                  <Plus className="h-3.5 w-3.5" />
-                </Tap>
-              )
-            }
+            action={addOrRemove(picked.some((l) => l.shadow), "shadow", () => onPatch((l) => ({ ...l, shadow: SHADOW })), () => onPatch((l) => ({ ...l, shadow: undefined })))}
           >
             {picked.some((l) => l.shadow) && (
               <>
@@ -500,24 +583,21 @@ export function Inspector({
               </>
             )}
           </Section>
-          {every((l) => l.type === "image") && (
+          {image && (
             <Section title="Picture">
-              <div role="group" aria-label="How the picture sits in its box" className="grid grid-cols-2 gap-1 rounded-[5px] bg-[#f5f5f5] p-0.5 dark:bg-[#383838]">
-                {(
-                  [
-                    ["cover", "Fill"],
-                    ["contain", "Fit"],
-                  ] as const
-                ).map(([fit, label]) => (
-                  <button
-                    key={fit}
-                    type="button"
-                    aria-pressed={same((l) => (l.type === "image" ? l.fit : undefined)) === fit}
-                    onClick={() => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))}
-                    className={cn("h-5 rounded-[4px]", same((l) => (l.type === "image" ? l.fit : undefined)) === fit ? "bg-white shadow-sm dark:bg-[#5a5a5a]" : "text-zinc-500 dark:text-[#b3b3b3]")}
-                  >
-                    {label}
-                  </button>
+              <Choice label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined))} options={[["cover", "Fill"], ["contain", "Fit"]] as const} onPick={(fit) => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))} />
+              <div className="grid grid-cols-3 gap-2">
+                {num("⊕", "Zoom in percent", (() => {
+                  const z = same((l) => (l.type === "image" ? (l.zoom ?? 1) : undefined));
+                  return z === null ? null : Math.round(z * 100);
+                })(), (n) => (l) => (l.type === "image" ? { ...l, zoom: n > 100 ? n / 100 : undefined } : l), { min: 100, max: 800 })}
+                {(["x", "y"] as const).map((axis) => (
+                  <div key={axis}>
+                    {num(axis === "x" ? "↔" : "↕", axis === "x" ? "Which part stays in view, left to right, in percent" : "Which part stays in view, top to bottom, in percent", (() => {
+                      const f = same((l) => (l.type === "image" ? (l.focus?.[axis] ?? 0.5) : undefined));
+                      return f === null ? null : Math.round(f * 100);
+                    })(), (n) => (l) => (l.type === "image" ? { ...l, focus: { x: 0.5, y: 0.5, ...l.focus, [axis]: n / 100 } } : l), { min: 0, max: 100 })}
+                  </div>
                 ))}
               </div>
             </Section>
@@ -526,11 +606,15 @@ export function Inspector({
       )}
 
       <Section title="Export">
-        <button type="button" onClick={() => onExport(at)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
+        <div className="grid grid-cols-2 gap-2">
+          <Choice label="File type" value={as.jpeg ? "jpeg" : "png"} options={[["png", "PNG"], ["jpeg", "JPG"]] as const} onPick={(t) => setAs({ ...as, jpeg: t === "jpeg" })} />
+          <Choice label="Size" value={as.scale} options={[[1, "1×"], [2, "2×"]] as const} onPick={(scale) => setAs({ ...as, scale })} />
+        </div>
+        <button type="button" onClick={() => onExport(at, as)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
           Export {pageName(page, at)}
         </button>
         {count > 1 && (
-          <button type="button" onClick={() => onExport()} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
+          <button type="button" onClick={() => onExport(undefined, as)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
             Export all {count} frames
           </button>
         )}

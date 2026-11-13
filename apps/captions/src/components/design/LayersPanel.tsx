@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Image, Lock, LockOpen, PenTool, Plus, Square, Type } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Image, Lock, LockOpen, PenTool, Plus, Square, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { layerName, pageName } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ import { Tip } from "./Tip";
 const ROW = "group relative flex h-8 w-full cursor-default items-center gap-1.5 pr-2 text-left";
 const ON = "bg-[#0d99ff]/20";
 const KIND = { text: Type, image: Image, drawing: PenTool } as const;
+const SHAPE = { rect: Square, ellipse: Circle, triangle: Triangle, star: Star, arrow: ArrowRight } as const;
 
 type Drop = { key: string; after: boolean };
 
@@ -154,7 +155,7 @@ export function LayersPanel({
                 [...p.layers].reverse().map((l) => {
                   const key = layerKey + l.id;
                   const on = k === at && selected.includes(l.id);
-                  const Icon = l.type === "shape" ? (l.shape === "ellipse" ? Circle : Square) : KIND[l.type];
+                  const Icon = l.type === "shape" ? SHAPE[l.shape] : KIND[l.type];
                   const set = (patch: Partial<Layer>) => onPage({ ...p, layers: p.layers.map((x) => (x.id === l.id ? ({ ...x, ...patch } as Layer) : x)) });
                   return (
                     <div

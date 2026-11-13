@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { DESIGN_LIMITS, type DesignPage, type Layer, type TextLayer } from "@contracts/design";
+import { DESIGN_LIMITS, type DesignPage, type DesignShape, type Layer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, layerAt, lineHeightOf, type Loaded } from "@/lib/design/draw";
 import { boundsOf, frameOf, freshIds, intersects, pageName, resizeAll, resizeBox, snapMove, zoomAt, type Handle, type Rect, type View } from "@/lib/design/hands";
@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
  *               tool or the middle button drags the canvas.
  */
 
-export type Tool = "move" | "hand" | "frame" | "rect" | "ellipse" | "text";
+export type Tool = "move" | "hand" | "frame" | DesignShape | "text";
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 const CURSOR: Record<Handle, string> = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
@@ -630,7 +630,7 @@ export function Stage({
                 if (text !== typed.text) onCommit([text ? withLayers(page, [{ ...typed, text }]) : { ...page, layers: page.layers.filter((l) => l.id !== typed.id) }]);
               }}
               className="absolute resize-none overflow-hidden border-0 bg-transparent p-0 outline outline-1 outline-[#0d99ff]"
-              style={{ ...place(at, typed), font: fontOf(typed, view.z), lineHeight: `${lineHeightOf(typed) * view.z}px`, color: typed.color, textAlign: typed.align, textTransform: typed.upper ? "uppercase" : undefined }}
+              style={{ ...place(at, typed), font: fontOf(typed, view.z), lineHeight: `${lineHeightOf(typed) * view.z}px`, letterSpacing: typed.spacing ? `${typed.spacing * view.z}px` : undefined, color: typed.color, textAlign: typed.align, textTransform: typed.upper ? "uppercase" : undefined }}
             />
           )}
         </div>

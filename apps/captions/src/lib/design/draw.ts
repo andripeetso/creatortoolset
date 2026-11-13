@@ -1,4 +1,4 @@
-import type { DesignPage, Layer, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, Gradient, Layer, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
 
 /**
@@ -50,25 +50,82 @@ function roundedRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: nu
   ctx.closePath();
 }
 
+/** A fill for a w × h box: the colour, or its gradient across the box, as long as the box is along the gradient's angle. */
+function fillOf(ctx: Ctx, color: string, g: Gradient | undefined, w: number, h: number): string | CanvasGradient {
+  if (!g) return color;
+  const a = (g.angle * Math.PI) / 180;
+  const half = (Math.abs(Math.cos(a)) * w + Math.abs(Math.sin(a)) * h) / 2;
+  const grad = ctx.createLinearGradient(w / 2 - Math.cos(a) * half, h / 2 - Math.sin(a) * half, w / 2 + Math.cos(a) * half, h / 2 + Math.sin(a) * half);
+  grad.addColorStop(0, color);
+  grad.addColorStop(1, g.to);
+  return grad;
+}
+
+/** The corners of a shape that is made of straight sides, in its w × h box: a triangle pointing up, a five-pointed star, an arrow pointing right. */
+export function shapePoints(shape: Exclude<DesignShape, "rect" | "ellipse">, w: number, h: number): [number, number][] {
+  if (shape === "triangle") return [[w / 2, 0], [w, h], [0, h]];
+  if (shape === "arrow") {
+    // the head is as long as the box is high, and never more than half the arrow
+    const neck = w - Math.min(w / 2, h);
+    return [[0, h * 0.3], [neck, h * 0.3], [neck, 0], [w, h / 2], [neck, h], [neck, h * 0.7], [0, h * 0.7]];
+  }
+  return Array.from({ length: 10 }, (_, k): [number, number] => {
+    const a = -Math.PI / 2 + (k * Math.PI) / 5;
+    const r = k % 2 ? 0.4 : 1;
+    return [w / 2 + (Math.cos(a) * r * w) / 2, h / 2 + (Math.sin(a) * r * h) / 2];
+  });
+}
+
+/**
+ * How wide a line of a text is drawn. With letter spacing each letter is measured and drawn by itself, the spacing
+ * between them (a browser's own letter spacing on a canvas is not in every browser), so the stage, the saved PNG and
+ * the picture an AI is shown all break their lines at the same words.
+ */
+export function textWidth(l: Pick<TextLayer, "spacing">, s: string, measure: (s: string) => number): number {
+  if (!l.spacing) return measure(s);
+  const letters = Array.from(s);
+  return letters.reduce((n, ch) => n + measure(ch), 0) + l.spacing * Math.max(0, letters.length - 1);
+}
+
 function drawText(ctx: Ctx, l: TextLayer) {
   ctx.font = fontOf(l);
   ctx.textBaseline = "alphabetic";
-  ctx.textAlign = l.align;
-  const lines = wrapLines(shownText(l), l.w, (s) => ctx.measureText(s).width);
+  const measure = (s: string) => ctx.measureText(s).width;
+  const lines = wrapLines(shownText(l), l.w, (s) => textWidth(l, s, measure));
   const lh = lineHeightOf(l);
   const top = l.valign === "middle" ? (l.h - lines.length * lh) / 2 : l.valign === "bottom" ? l.h - lines.length * lh : 0;
-  const x = l.align === "center" ? l.w / 2 : l.align === "right" ? l.w : 0;
+  const fill = fillOf(ctx, l.color, l.gradient, l.w, l.h);
+  if (l.outline) {
+    ctx.lineJoin = "round";
+    ctx.lineWidth = l.outline.width * 2;
+    ctx.strokeStyle = l.outline.color;
+  }
   lines.forEach((line, k) => {
     // the letters sit in the middle of their line: the baseline is about 0.8 of the letter height under its top
     const y = top + k * lh + (lh - l.size) / 2 + l.size * 0.8;
-    if (l.outline) {
-      ctx.lineJoin = "round";
-      ctx.lineWidth = l.outline.width * 2;
-      ctx.strokeStyle = l.outline.color;
-      ctx.strokeText(line, x, y);
+    if (!l.spacing) {
+      ctx.textAlign = l.align;
+      const x = l.align === "center" ? l.w / 2 : l.align === "right" ? l.w : 0;
+      if (l.outline) ctx.strokeText(line, x, y);
+      ctx.fillStyle = fill;
+      return void ctx.fillText(line, x, y);
     }
-    ctx.fillStyle = l.color;
-    ctx.fillText(line, x, y);
+    // letter by letter from the line's left end: every outline first, so none lies over the letter before it
+    // ponytail: a "letter" is a code point, so with spacing set an accent written as its own mark, a joined emoji and
+    // right-to-left or joining scripts come apart; split by grapheme (Intl.Segmenter) when someone spaces such words
+    ctx.textAlign = "left";
+    const wide = textWidth(l, line, measure);
+    const left = l.align === "center" ? (l.w - wide) / 2 : l.align === "right" ? l.w - wide : 0;
+    const each = (draw: (ch: string, x: number) => void) => {
+      let x = left;
+      for (const ch of Array.from(line)) {
+        draw(ch, x);
+        x += measure(ch) + l.spacing!;
+      }
+    };
+    if (l.outline) each((ch, x) => ctx.strokeText(ch, x, y));
+    ctx.fillStyle = fill;
+    each((ch, x) => ctx.fillText(ch, x, y));
   });
 }
 
@@ -79,6 +136,7 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
   ctx.save();
   ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
   if (l.rotate) ctx.rotate((l.rotate * Math.PI) / 180);
+  if (l.flipX || l.flipY) ctx.scale(l.flipX ? -1 : 1, l.flipY ? -1 : 1);
   ctx.translate(-l.w / 2, -l.h / 2);
   ctx.globalAlpha = l.opacity ?? 1;
   if (l.shadow) {
@@ -97,6 +155,7 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded) {
     paintLayer(ctx, l, loaded, true);
     ctx.restore();
   }
+  if (l.blend) ctx.globalCompositeOperation = l.blend;
   paintLayer(ctx, l, loaded, false);
   ctx.restore();
 }
@@ -108,10 +167,17 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
     if (l.shape === "ellipse") {
       ctx.beginPath();
       ctx.ellipse(l.w / 2, l.h / 2, l.w / 2, l.h / 2, 0, 0, Math.PI * 2);
-    } else roundedRect(ctx, 0, 0, l.w, l.h, l.radius ?? 0);
-    ctx.fillStyle = l.fill;
+    } else if (l.shape === "rect") roundedRect(ctx, 0, 0, l.w, l.h, l.radius ?? 0);
+    else {
+      ctx.beginPath();
+      shapePoints(l.shape, l.w, l.h).forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+    }
+    ctx.fillStyle = fillOf(ctx, l.fill, l.gradient, l.w, l.h);
     ctx.fill();
     if (l.stroke) {
+      // a rectangle keeps its square corners; a star's or an arrow's points are rounded off, or a wide line would spike far out of them
+      ctx.lineJoin = l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round";
       ctx.lineWidth = l.stroke.width;
       ctx.strokeStyle = l.stroke.color;
       ctx.stroke();
@@ -126,8 +192,9 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
           return void ctx.fill();
         }
         ctx.clip();
-        const k = l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height);
-        ctx.drawImage(pic, (l.w - pic.width * k) / 2, (l.h - pic.height * k) / 2, pic.width * k, pic.height * k);
+        const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
+        // what the box cuts off is taken from both sides by where the focus is: 0 keeps the picture's left (top) edge, 1 its right (bottom)
+        ctx.drawImage(pic, (l.w - pic.width * k) * (l.focus?.x ?? 0.5), (l.h - pic.height * k) * (l.focus?.y ?? 0.5), pic.width * k, pic.height * k);
       } else ctx.drawImage(pic, 0, 0, l.w, l.h);
     } else {
       // not loaded (yet, or gone): its place is shown, so nothing is silently missing from the page
@@ -138,7 +205,7 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean) {
 }
 
 export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded): void {
-  ctx.fillStyle = page.background;
+  ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
   ctx.fillRect(0, 0, w, h);
   for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded);
 }

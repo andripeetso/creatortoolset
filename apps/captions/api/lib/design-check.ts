@@ -1,4 +1,4 @@
-import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "../../contracts/design";
+import { DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type Layer } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
@@ -24,6 +24,9 @@ const oneOf = <T extends string>(v: unknown, all: readonly T[], or: T): T => (al
 const round = (n: number) => Math.round(n * 100) / 100;
 /** A name as one line of at most the limit's letters, or "" when there is none. */
 const named = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, DESIGN_LIMITS.layerName) : "");
+
+/** A gradient as it may be saved (its colour "#rrggbb", its angle in a full turn), or nothing when it is none. */
+const gradient = (v: unknown): { gradient?: Gradient } => (obj(v) && typeof v.to === "string" && COLOR.test(v.to.trim()) ? { gradient: { to: sixDigits(color(v.to, "#000000")), angle: round(num(v.angle, -360, 360, 90)) } } : {});
 
 /** A span moved inside 0..page, and cut to the page when it is longer than it. */
 const inside = (at: number, size: number, page: number): [number, number] => (size >= page ? [0, page] : [Math.min(Math.max(at, 0), page - size), size]);
@@ -135,6 +138,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...(obj(raw.shadow)
       ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
       : {}),
+    ...(DESIGN_BLENDS.includes(raw.blend as never) ? { blend: raw.blend as (typeof DESIGN_BLENDS)[number] } : {}),
+    ...(raw.flipX === true ? { flipX: true } : {}),
+    ...(raw.flipY === true ? { flipY: true } : {}),
     ...(named(raw.name) ? { name: named(raw.name) } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),
     ...(raw.locked === true ? { locked: true } : {}),
@@ -166,6 +172,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       font: oneOf(raw.font, FONTS, DEFAULT_FONT),
       size: round(num(raw.size, 8, 600, 48)),
       color: color(raw.color, "#111111"),
+      ...gradient(raw.gradient),
+      ...(typeof raw.spacing === "number" && num(raw.spacing, -20, 200, 0) ? { spacing: round(num(raw.spacing, -20, 200, 0)) } : {}),
       align: oneOf(raw.align, ["left", "center", "right"] as const, "left"),
       ...(raw.valign === "middle" || raw.valign === "bottom" ? { valign: raw.valign } : {}),
       ...(typeof raw.lineHeight === "number" ? { lineHeight: round(num(raw.lineHeight, 0.8, 3, 1.15)) } : {}),
@@ -178,15 +186,24 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       say("a picture that is not in this design: left out");
       return null;
     }
-    return { type: "image", ...box, picture: raw.picture, fit: oneOf(raw.fit, ["cover", "contain"] as const, "cover"), ...(num(raw.radius, 0, 2000, 0) ? { radius: round(num(raw.radius, 0, 2000, 0)) } : {}) };
+    return {
+      type: "image",
+      ...box,
+      picture: raw.picture,
+      fit: oneOf(raw.fit, ["cover", "contain"] as const, "cover"),
+      ...(num(raw.zoom, 1, 8, 1) > 1 ? { zoom: round(num(raw.zoom, 1, 8, 1)) } : {}),
+      ...(obj(raw.focus) ? { focus: { x: round(num(raw.focus.x, 0, 1, 0.5)), y: round(num(raw.focus.y, 0, 1, 0.5)) } } : {}),
+      ...(num(raw.radius, 0, 2000, 0) ? { radius: round(num(raw.radius, 0, 2000, 0)) } : {}),
+    };
   }
   if (raw.type === "shape") {
     const stroke = line(raw.stroke, 200);
     return {
       type: "shape",
       ...box,
-      shape: oneOf(raw.shape, ["rect", "ellipse"] as const, "rect"),
+      shape: oneOf(raw.shape, DESIGN_SHAPES, "rect"),
       fill: color(raw.fill, "#dddddd"),
+      ...gradient(raw.gradient),
       ...(num(raw.radius, 0, 2000, 0) ? { radius: round(num(raw.radius, 0, 2000, 0)) } : {}),
       ...(stroke ? { stroke } : {}),
     };
@@ -241,7 +258,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       }
       if (left.length) notes.push(`Page ${k + 1}: these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`);
     }
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...place, background: color(p.background, "#ffffff"), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), layers });
   }
   return { pages, notes };
 }

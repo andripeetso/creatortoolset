@@ -121,6 +121,44 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(pages[0]!.layers[1]!.shadow).toEqual({ color: "#112233", opacity: 0.35, blur: 24, x: 0, y: 8 });
     expect(pages[0]!.layers[2]).not.toHaveProperty("shadow");
   });
+
+  it("keeps a gradient, letter spacing, a blend, a flip, a shape's kind and a picture's zoom and focus, each held to what can be drawn", () => {
+    const shape = (more: object) => ({ type: "shape", x: 0, y: 0, w: 100, h: 100, fill: "#ff0000", ...more });
+    const picture = (more: object) => ({ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, ...more });
+    const { pages, notes } = cleanPages(
+      [
+        {
+          background: "#101010",
+          gradient: { to: "#ABC", angle: 9000 },
+          layers: [
+            text({ spacing: 12.345, gradient: { to: "#00ff00" }, blend: "multiply", flipX: true, flipY: "yes" }),
+            text({ spacing: 5000, gradient: { to: "green", angle: 10 }, blend: "difference" }),
+            shape({ shape: "star", gradient: { to: "#0000ff80", angle: -45 } }),
+            shape({ shape: "hexagon", gradient: "sunset" }),
+            picture({ zoom: 2.5, focus: { x: -1, y: 0.25 } }),
+            picture({ zoom: 0.2, focus: "left" }),
+          ],
+        },
+      ],
+      rules,
+    );
+    expect(notes).toEqual([]);
+    expect(pages[0]).toMatchObject({ background: "#101010", gradient: { to: "#aabbcc", angle: 360 } });
+    const [spaced, wide, star, plain, close, whole] = pages[0]!.layers;
+    expect(spaced).toMatchObject({ spacing: 12.35, gradient: { to: "#00ff00", angle: 90 }, blend: "multiply", flipX: true });
+    expect(spaced).not.toHaveProperty("flipY");
+    expect(wide).toMatchObject({ spacing: 200 });
+    expect(wide).not.toHaveProperty("gradient");
+    expect(wide).not.toHaveProperty("blend");
+    expect(star).toMatchObject({ shape: "star", gradient: { to: "#0000ff", angle: -45 } });
+    expect(plain).toMatchObject({ shape: "rect" });
+    expect(plain).not.toHaveProperty("gradient");
+    expect(close).toMatchObject({ zoom: 2.5, focus: { x: 0, y: 0.25 } });
+    expect(whole).not.toHaveProperty("zoom");
+    expect(whole).not.toHaveProperty("focus");
+    // a text with nothing of these is as it was: no empty fields
+    expect(Object.keys(cleanPages([{ layers: [text({ spacing: 0 })] }], rules).pages[0]!.layers[0]!)).not.toContain("spacing");
+  });
 });
 
 describe("what the layers list keeps", () => {

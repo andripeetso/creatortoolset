@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_FORMATS, DESIGN_LIMITS, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
+import { DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
 import { animationStyles } from "./editor/animation-styles";
@@ -130,10 +130,10 @@ const frameLabel = (p: DesignPage, k: number) => `Frame ${k + 1}${p.name ? ` (${
 /* ---- an AI that designs (the assistant, a connected AI) ---- */
 
 /** How layers are written: what an AI that reads a design is told (GET /:id/pages). */
-export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "opacity" (0 to 1) and "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. The kinds:
-- {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"upper":false,"outline":{"color":"#rrggbb","width":8}}: the words wrap inside w, and "\\n" starts a new line; size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
-- {"type":"shape","shape":"rect|ellipse","fill":"#rrggbb","radius":0,"stroke":{"color":"#rrggbb","width":4}}
-- {"type":"image","picture":"<id>","fit":"cover|contain","radius":0}: only a picture listed under "pictures" (how one gets there is below).
+export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}) and "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom. The kinds:
+- {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"spacing":0,"upper":false,"outline":{"color":"#rrggbb","width":8},"gradient":{…}}: "spacing" is pixels between the letters; the words wrap inside w, and "\\n" starts a new line; size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
+- {"type":"shape","shape":"${DESIGN_SHAPES.join("|")}","fill":"#rrggbb","gradient":{…},"radius":0,"stroke":{"color":"#rrggbb","width":4}}: a shape fills its box; a triangle points up and an arrow to the right (turn them with "rotate"); a thin rect is a line.
+- {"type":"image","picture":"<id>","fit":"cover|contain","zoom":1,"focus":{"x":0.5,"y":0.5},"radius":0}: only a picture listed under "pictures" (how one gets there is below). "cover" fills the box and cuts the rest off: "focus" says which part stays (0 = the picture's left or top edge, 1 = its right or bottom), "zoom" (1 to 8) goes closer.
 - {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.`;
 
 const HOW = `A design is a canvas of frames. A frame is one picture (a carousel slide, a cover, a thumbnail, anything): it has an id, a size (w, h) and layers. The user sees every frame side by side, moves and edits any layer by hand, and exports each frame as a PNG of exactly its size.
@@ -143,7 +143,7 @@ ${DESIGN_LAYERS}
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
 To change a design, give either or both of:
-- "frames": [{"id":"<frame id>","background":"#rrggbb","layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "name", "w" or "h"). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
+- "frames": [{"id":"<frame id>","background":"#rrggbb","layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "name", "w" or "h"). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
 - "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
@@ -184,7 +184,7 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
     looks: styles.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, 600) } : {}), pictures: s.pictures.length })),
     ...(lookNamed && !style ? { look: `There is no look called ${lookNamed}` } : {}),
     ...(style && shown ? { look: { name: style.name, pictures: shown.images.map((i, n) => ({ what: n < shown.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpegBase64 })) } } : {}),
-    frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, layers: p.layers })),
+    frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), layers: p.layers })),
     how: HOW,
   };
 }
@@ -272,7 +272,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const k = next.findIndex((p) => p.id === id);
     const was = next[k]!;
     const label = frameLabel(was, k);
-    const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, name: t.more.name ?? was.name }], {
+    const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, name: t.more.name ?? was.name }], {
       w: d.width,
       h: d.height,
       pictures: d.pictures,

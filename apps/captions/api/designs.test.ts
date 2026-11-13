@@ -220,6 +220,12 @@ describe("designs: an AI that designs", () => {
     expect((await write(d.id, {})).status).toBe(400);
     expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages).toEqual(out.body.design.pages);
     expect((await call("POST", `/api/designs/${d.id}/pages`, { frames: [{ id: "p1", layers: [] }] }, "robin")).status).toBe(404);
+    // a frame's gradient: given, it is the frame's and the AI reads it back; a later change that says nothing of it keeps it; null takes it off
+    await write(d.id, { frames: [{ id: "p3", gradient: { to: "#ff8800", angle: 45 } }] });
+    await write(d.id, { frames: [{ id: "p3", background: "#222222" }] });
+    const again = (await call<{ frames: Array<{ id: string; background: string; gradient?: object }> }>("GET", `/api/designs/${d.id}/pages`)).body.frames[2]!;
+    expect(again).toMatchObject({ id: "p3", background: "#222222", gradient: { to: "#ff8800", angle: 45 } });
+    expect((await write(d.id, { frames: [{ id: "p3", gradient: null }] })).body.design.pages[2]).not.toHaveProperty("gradient");
   });
 
   it("changes one layer at a time: set, remove, reorder and add, each checked like a whole frame", async () => {

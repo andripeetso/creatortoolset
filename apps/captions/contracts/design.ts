@@ -37,6 +37,18 @@ export const DESIGN_GAP = 120;
 
 export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
 
+/** The ways a layer can mix with what is under it, beside lying over it. */
+export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
+export type DesignBlend = (typeof DESIGN_BLENDS)[number];
+/** The shapes. A triangle points up and an arrow to the right: `rotate` turns them. */
+export const DESIGN_SHAPES = ["rect", "ellipse", "triangle", "star", "arrow"] as const;
+export type DesignShape = (typeof DESIGN_SHAPES)[number];
+/** A fill that runs from the layer's (or frame's) own colour to `to`, along `angle` in degrees: 0 is left to right, 90 top to bottom. */
+export interface Gradient {
+  to: string;
+  angle: number;
+}
+
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
   id: string;
@@ -49,6 +61,11 @@ interface Box {
   opacity?: number;
   /** a soft shadow under the layer: its colour ("#rrggbb"), how strong (0 to 1), its blur and how far it falls, in pixels */
   shadow?: { color: string; opacity: number; blur: number; x: number; y: number };
+  /** how it mixes with what is under it; absent = it lies over it */
+  blend?: DesignBlend;
+  /** mirrored left to right, top to bottom */
+  flipX?: boolean;
+  flipY?: boolean;
   /** what the layers list calls it; absent = what it is (a text's own words, "Rectangle", "Picture", "Drawing") */
   name?: string;
   /** kept in the design, but not drawn and not in the saved PNG */
@@ -66,6 +83,9 @@ export interface TextLayer extends Box {
   size: number;
   /** "#rrggbb" */
   color: string;
+  gradient?: Gradient;
+  /** pixels between the letters, beside the font's own; absent = 0 */
+  spacing?: number;
   align: "left" | "center" | "right";
   /** where the lines sit in the box; absent = top */
   valign?: "top" | "middle" | "bottom";
@@ -82,14 +102,19 @@ export interface ImageLayer extends Box {
   picture: string;
   /** cover: fills the box and is cut at its edges; contain: fits inside it whole */
   fit: "cover" | "contain";
+  /** how much bigger than it fits (1 to 8); absent = 1 */
+  zoom?: number;
+  /** which part of the picture stays in the box when it is cut: 0 = its left (top) edge, 1 = its right (bottom); absent = the middle */
+  focus?: { x: number; y: number };
   /** corner radius in pixels */
   radius?: number;
 }
 
 export interface ShapeLayer extends Box {
   type: "shape";
-  shape: "rect" | "ellipse";
+  shape: DesignShape;
   fill: string;
+  gradient?: Gradient;
   radius?: number;
   stroke?: { color: string; width: number };
 }
@@ -119,6 +144,7 @@ export interface DesignPage {
   block?: string;
   /** "#rrggbb" */
   background: string;
+  gradient?: Gradient;
   /** bottom first: a later layer is drawn over an earlier one */
   layers: Layer[];
 }

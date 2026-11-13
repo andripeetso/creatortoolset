@@ -160,8 +160,9 @@ export function freshIds(page: DesignPage, count: number): string[] {
   return out;
 }
 
+export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
-export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.shape === "ellipse" ? "Ellipse" : "Rectangle");
+export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : SHAPE_NAMES[l.shape]);
 export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
 
 /**
@@ -173,7 +174,7 @@ export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame $
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
   if (!base) return mine;
   const out: Record<string, unknown> = { ...theirs };
-  for (const f of ["name", "x", "y", "w", "h", "background", "layers"] as const) {
+  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "layers"] as const) {
     if (JSON.stringify(mine[f]) === JSON.stringify(base[f])) continue;
     if (mine[f] === undefined) delete out[f];
     else out[f] = mine[f];

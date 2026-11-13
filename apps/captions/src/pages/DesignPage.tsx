@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Redo2, Square, Type, Undo2 } from "lucide-react";
+import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { AppBar } from "@/components/AppBar";
-import { Inspector } from "@/components/design/Inspector";
+import { Inspector, type ExportAs } from "@/components/design/Inspector";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
  * any others. Each frame is saved as a PNG of exactly its size. Every change is a step ⌘Z takes back, and is saved a
  * moment later.
  *
- * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
+ * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
  * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
  * lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
  */
@@ -44,6 +44,9 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["frame", "Frame", "F", Frame],
   ["rect", "Rectangle", "R", Square],
   ["ellipse", "Ellipse", "O", Circle],
+  ["triangle", "Triangle", "", Triangle],
+  ["star", "Star", "", Star],
+  ["arrow", "Arrow", "", ArrowRight],
   ["text", "Text", "T", Type],
 ];
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text" };
@@ -411,10 +414,10 @@ function DesignPage({ id }: { id: string }) {
   /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
   const make = (to: number, r: Rect, dragged: boolean) => {
     const f = frames[to];
-    if (!f) return;
+    if (!f || tool === "move" || tool === "hand" || tool === "frame") return;
     const words = tool === "text";
     const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? f.w / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? f.w * 0.08 : 100)) };
-    const ids = put(to, 1, ([id]) => [words ? textLayer(id!, "Text", b, f.w) : { id: id!, type: "shape", shape: tool === "ellipse" ? "ellipse" : "rect", fill: "#d9d9d9", ...b }]);
+    const ids = put(to, 1, ([id]) => [tool === "text" ? textLayer(id!, "Text", b, f.w) : { id: id!, type: "shape", shape: tool, fill: "#d9d9d9", ...b }]);
     setTool("move");
     if (ids && words) setEditing(ids[0]!);
   };
@@ -476,9 +479,10 @@ function DesignPage({ id }: { id: string }) {
     };
   });
 
-  const exportPngs = async (only?: number) => {
+  const exportPngs = async (only?: number, as: ExportAs = { jpeg: false, scale: 1 }) => {
     if (!design) return;
     setError(null);
+    const type = as.jpeg ? "image/jpeg" : "image/png";
     try {
       const files: { name: string; data: Uint8Array }[] = [];
       for (const [n, p] of pages.entries()) {
@@ -494,17 +498,19 @@ function DesignPage({ id }: { id: string }) {
             img.addEventListener("error", () => fail(gone), { once: true });
           });
         }
-        // each frame at its own size
+        // each frame at its own size (or twice it)
         const f = frames[n]!;
         const c = document.createElement("canvas");
-        c.width = f.w;
-        c.height = f.h;
-        drawPage(c.getContext("2d")!, p, f.w, f.h, loaded);
-        const blob = await new Promise<Blob | null>((done) => c.toBlob(done, "image/png"));
+        c.width = f.w * as.scale;
+        c.height = f.h * as.scale;
+        const ctx = c.getContext("2d")!;
+        ctx.setTransform(as.scale, 0, 0, as.scale, 0, 0);
+        drawPage(ctx, p, f.w, f.h, loaded);
+        const blob = await new Promise<Blob | null>((done) => c.toBlob(done, type, 0.92));
         if (!blob) throw new Error(`${pageName(p, n)} could not be saved as a picture`);
-        files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
+        files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}${as.scale > 1 ? `@${as.scale}x` : ""}.${as.jpeg ? "jpg" : "png"}`, data: new Uint8Array(await blob.arrayBuffer()) });
       }
-      if (files.length === 1) downloadBlob(files[0]!.name, new Blob([files[0]!.data as BlobPart], { type: "image/png" }));
+      if (files.length === 1) downloadBlob(files[0]!.name, new Blob([files[0]!.data as BlobPart], { type }));
       else downloadBlob(`${fileName(design.name)}.zip`, zipStored(files));
     } catch (e) {
       setError(message(e));
@@ -642,7 +648,7 @@ function DesignPage({ id }: { id: string }) {
           onDistribute={(axis) => arrange(distribute(mine, axis))}
           zoom={view.z}
           onZoom={zoom}
-          onExport={(only) => void exportPngs(only)}
+          onExport={(only, as) => void exportPngs(only, as)}
           colours={colours}
           onDropper={(take) => setDropper({ take })}
         />

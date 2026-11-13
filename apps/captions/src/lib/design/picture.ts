@@ -1,5 +1,5 @@
 import type { PictureSpec } from "@contracts/design";
-import { drawingUrl, drawPage, fontOf, lineHeightOf, shownText, sourceOf, wrapLines, type Loaded } from "./draw";
+import { drawingUrl, drawPage, fontOf, lineHeightOf, shownText, sourceOf, textWidth, wrapLines, type Loaded } from "./draw";
 
 /**
  * A page as a small JPEG, drawn by the same function as the designer's canvas and the saved PNG, and the words on it
@@ -31,8 +31,9 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   for (const l of layers) {
     if (l.type !== "text") continue;
     ctx.font = fontOf(l);
-    const lines = wrapLines(shownText(l), l.w, (s) => ctx.measureText(s).width);
-    const wide = Math.ceil(Math.max(...lines.map((s) => ctx.measureText(s).width)));
+    const widthOf = (s: string) => textWidth(l, s, (t) => ctx.measureText(t).width);
+    const lines = wrapLines(shownText(l), l.w, widthOf);
+    const wide = Math.ceil(Math.max(...lines.map(widthOf)));
     const tall = Math.ceil(lines.length * lineHeightOf(l));
     if (wide > l.w + 1 || tall > l.h + 1) spills.push(`“${l.text.replace(/\s+/g, " ").slice(0, 40)}” does not fit its box: at size ${l.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}`);
   }
