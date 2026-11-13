@@ -45,6 +45,8 @@ vi.mock("@/lib/local-cache", async () => {
 vi.mock("./EditTimeline", async () => {
   const { createElement } = await vi.importActual<typeof import("react")>("react");
   return {
+    // the rules of an own cut are the real ones
+    ...(await vi.importActual<typeof import("./EditTimeline")>("./EditTimeline")),
     EditTimeline: (p: {
       view: { tracks: { items: unknown[] }[] };
       waves?: Record<string, Float32Array> | null;

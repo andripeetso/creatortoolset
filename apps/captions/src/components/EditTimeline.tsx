@@ -64,6 +64,12 @@ export interface TimelineRules {
   /** false = the layers stay as they are: none added or removed, and no clip changes layer */
   layers?: boolean;
 }
+/**
+ * What the app's own AI Editor cuts into a version by hand (api/editor/edits.ts): a voice stays with its picture (cut,
+ * pulled in or taken out), the layers stay as they are. For every page that makes such a cut, so none offers an edit the
+ * maker refuses.
+ */
+export const OWN_CUT_RULES: TimelineRules = { can: (it, mode) => it.track !== "A1" || mode === "head" || mode === "tail", layers: false };
 // the loudest peak of a clip's own sound, found once per array
 const peakCache = new WeakMap<Float32Array, number>();
 function peakOf(data: Float32Array): number {

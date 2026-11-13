@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, ThumbsUp, Trash2 } from "lucide-react";
+import { Download, ExternalLink, Loader2, Play, RotateCcw, Scissors, Square, ThumbsUp, Trash2 } from "lucide-react";
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
+import { EditorCutPanel, type CutEdits } from "@/components/EditorCutPanel";
 import { Button } from "@/components/ui/button";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
@@ -18,6 +19,7 @@ import { STYLE_NAME_MAX } from "@contracts/editor-styles";
  * One edit (/editor/:id): its steps (a step that needs a key or provider links to the setting), an eye line per source
  * (drag it onto the speaker's eyes once: punch-ins keep it in place), the script table (lines × versions, each cell the
  * take that version uses: play it, swap it among the line's takes), and per version its preview, checks and downloads.
+ * Edit by hand opens one version's timeline across the page (components/EditorCutPanel.tsx).
  * It polls while a step is queued or running.
  */
 
@@ -37,6 +39,10 @@ export default function EditorEditPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState<string | null>(null); // a take's play URL
+  const [cutting, setCutting] = useState<string | null>(null); // the version open to edit by hand
+  // the hand edits made on each filed version and not made into the next one yet: closing the panel or opening another
+  // version loses none of them
+  const cuts = useRef(new Map<string, CutEdits>());
   // takes with no picture to draw a line on (a voice recording): they have no eye line, and an edit of only those has no Eye line section
   const [blind, setBlind] = useState<string[]>([]);
   const busy = !!edit?.jobs.some((j) => j.state === "queued" || j.state === "running");
@@ -296,6 +302,25 @@ export default function EditorEditPage() {
                 </Button>
               </div>
             )}
+            {/* one version at a time, across the page: a timeline needs the width. Keyed on what it is filed as, so the
+                edit's own refreshes keep the edits being made and a newly filed version starts clean */}
+            {cutting && edit.previews[cutting] && (
+              <EditorCutPanel
+                key={`${edit.previews[cutting].assetId}.${edit.previews[cutting].n}`}
+                kept={cuts.current.get(`${edit.previews[cutting].assetId}.${edit.previews[cutting].n}`)}
+                onKeep={(h) => cuts.current.set(`${edit.previews[cutting].assetId}.${edit.previews[cutting].n}`, h)}
+                editId={id}
+                name={cutting}
+                title={edit.plans.find((p) => p.name === cutting)?.title ?? cutting}
+                at={edit.previews[cutting]}
+                working={edit.jobs.some((j) => j.variant === cutting && (j.state === "queued" || j.state === "running"))}
+                onMade={(e) => {
+                  setEdit(e);
+                  setError(null);
+                }}
+                onClose={() => setCutting(null)}
+              />
+            )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {edit.drafts.map((n) => {
                 const pv = edit.previews[n];
@@ -357,6 +382,13 @@ export default function EditorEditPage() {
                           </a>
                         </Button>
                       ))}
+                      {pv && (
+                        <Button size="sm" variant={cutting === n ? "secondary" : "ghost"} aria-pressed={cutting === n} onClick={() => setCutting(n)}
+                          title="Trim, cut, move and take out clips on this version's timeline, then make the next version from them with no AI">
+                          <Scissors className="h-3.5 w-3.5" />
+                          Edit by hand
+                        </Button>
+                      )}
                       {pv && (
                         <Button asChild size="sm" variant="ghost">
                           <Link to={`/review/${pv.assetId}?v=${pv.n}`}>

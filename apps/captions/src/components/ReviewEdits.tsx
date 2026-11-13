@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewEditRef, ReviewPlayCard, ReviewPlayPlan, ReviewSlotContext, ReviewTimelineSlot } from "@/lib/plugin";
 import { CameraView, RecropBox } from "@/components/RecropBox";
 import { toast } from "sonner";
-import { EditTimeline, type Placeholder, type TimelineRules } from "@/components/EditTimeline";
+import { EditTimeline, OWN_CUT_RULES, type Placeholder } from "@/components/EditTimeline";
 import { getEdit, makeCut, retryJob } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import type { Edit } from "@contracts/editor";
@@ -52,7 +52,7 @@ import {
 // are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
 // On a cut the app's own AI Editor made (`version.draft`), Make the next version cuts the edits into it as they are,
-// with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_RULES). The panel follows that
+// with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_CUT_RULES). The panel follows that
 // edit's steps for this version: it says while the next version is being made, takes it in when it is filed, and shows
 // a step that failed with Try again. The edit loads for its creator only, so nobody else gets the button.
 
@@ -81,9 +81,6 @@ export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTim
   // a new version starts clean: the panel remounts per version
   return <Edits key={version.n} {...ctx} hooks={ctx.hooks ?? {}} edit={version.edit} />;
 }
-
-/** What the app's own AI Editor cuts into a version: a voice stays with its picture (cut, pulled in or taken out), the layers stay as they are. */
-const OWN_RULES: TimelineRules = { can: (it, mode) => it.track !== "A1" || mode === "head" || mode === "tail", layers: false };
 
 const framingOf = (i: TimelineItem): Framing => ({ zoom: i.zoom ?? 1, pan: i.pan ?? 0, tilt: i.tilt ?? 0 });
 const secs = (s: number) => `${s.toFixed(1)}s`;
@@ -543,7 +540,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           },
           onFace: edit && hooks.face ? (item: TimelineItem) => openFace(item) : undefined,
           history: { back: hist.past.length, ahead: hist.future.length, undo, redo },
-          rules: own ? OWN_RULES : undefined,
+          rules: own ? OWN_CUT_RULES : undefined,
         } : {})}
       />
     </div>
