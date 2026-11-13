@@ -124,7 +124,8 @@ export type LibraryStep = "files" | "transcript" | "describe" | "embed";
  * key (`api`), the team's budget (`budget`), a transcription key, this computer (`device`, free), the server (`server`);
  * `none`: nothing to run it on yet (`missing` says what to add); `off`: the library has the step switched off.
  */
-export type LibraryStepRoute = "provider" | "api" | "budget" | "deepgram" | "openai" | "device" | "server" | "none" | "off";
+/** `device`: the server itself, on its owner's computer; `computer`: a model downloaded on one of the person's computers. */
+export type LibraryStepRoute = "provider" | "api" | "budget" | "deepgram" | "openai" | "device" | "computer" | "server" | "none" | "off";
 
 export interface LibraryStepEstimate {
   step: LibraryStep;

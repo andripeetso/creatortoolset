@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
+import { needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
 import { speechFor } from "../lib/speech";
 import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
@@ -44,11 +45,17 @@ export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]
   return r;
 }
 
-/** What transcribes `use` for `actor`: their key, else this computer when the server is on it. Throws NeedsKey when there is neither. */
-export function transcribeRoute(actor: string | null, use: SpeechUse = "transcripts"): { provider: "deepgram" | "openai"; key: string } | { provider: "device" } {
+type Route = { provider: "deepgram" | "openai"; key: string } | { provider: "device" } | { provider: "computer"; model: string; languages: string[] };
+
+/**
+ * What transcribes `use` for `actor` (lib/speech.ts speechFor): their key, this computer when the server is on it, or a
+ * model on one of their own computers. Throws NeedsKey when there is none.
+ */
+export function transcribeRoute(actor: string | null, use: SpeechUse = "transcripts"): Route {
   const s = speechFor(actor, use);
   if ("needs" in s) throw new NeedsKey(s.needs);
-  return s.engine === "local" ? { provider: "device" } : { provider: s.engine, key: s.key };
+  if (s.engine !== "local") return { provider: s.engine, key: s.key };
+  return s.on === "server" ? { provider: "device" } : { provider: "computer", model: s.model, languages: s.languages };
 }
 
 /** Words into segments: one per utterance when Deepgram marks them, else a new one after a pause or 30 words. */
@@ -141,6 +148,12 @@ async function device(file: string, status: string): Promise<Transcribed> {
   return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
 }
 
+/** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches. */
+async function computer(file: string, actor: string, model: string, languages: string[]): Promise<Transcribed> {
+  const { words, language } = await transcribeOnComputer(actor, model, languages, file);
+  return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
+}
+
 /**
  * A file's transcript as its actor's key gives it, or this computer: the route first (no audio is cut without one),
  * then the provider. Throws NeedsKey without a route. `status` names an on-device run (a version's id) for deviceStatus.
@@ -153,14 +166,21 @@ export async function transcribeFile(
   scratch: string,
   status: string = src,
   { use = "transcripts", fillers = true, soon = false, languages }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[] } = {},
-): Promise<Transcribed & { provider: "deepgram" | "openai" | "device" }> {
+): Promise<Transcribed & { provider: Route["provider"] }> {
   const route = transcribeRoute(actor, use);
+  // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
+  if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
   await mkdir(scratch, { recursive: true });
-  const out = path.join(scratch, `transcribe-${randomUUID()}.${route.provider === "deepgram" ? "wav" : route.provider === "openai" ? "m4a" : "f32"}`);
+  const wav = route.provider === "deepgram" || route.provider === "computer";
+  const out = path.join(scratch, `transcribe-${randomUUID()}.${wav ? "wav" : route.provider === "openai" ? "m4a" : "f32"}`);
   try {
     if (route.provider === "device") await ffmpegTo(out, ["-i", src, ...DEVICE_AUDIO], soon);
-    else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])], soon);
-    const t = route.provider === "device" ? await device(out, status) : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages) : await openai(out, route.key, languages);
+    else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(wav ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])], soon);
+    const t =
+      route.provider === "device" ? await device(out, status)
+      : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages)
+      : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
+      : await openai(out, route.key, languages);
     return { ...t, provider: route.provider };
   } finally {
     await rm(out, { force: true });

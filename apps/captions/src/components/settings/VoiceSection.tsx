@@ -1,10 +1,10 @@
 import { Link } from "react-router";
 import { ExternalLink, X } from "lucide-react";
-import { SPEECH_USES, SPEECH_USE_NAMES, type SpeechUse, type SttEngine, type SttResolved, type VoiceView } from "@contracts/voice";
+import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
-import { LANGUAGES, SAME, engineOptions, keyFix, languageName, modelOf, needWords, putVoice, useVoice, withLanguage } from "@/lib/voice";
+import { LANGUAGES, SAME, engineOptions, keyFix, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
 import { Card, ErrorRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
 
@@ -34,10 +34,17 @@ export function VoiceSection() {
       saveFailed(msg(e));
     }
   };
-  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} />;
+  const want = async (computer: string, model: string, keep: boolean) => {
+    try {
+      set(await putModel(computer, model, keep));
+    } catch (e) {
+      saveFailed(msg(e));
+    }
+  };
+  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} want={(c, m, k) => void want(c, m, k)} />;
 }
 
-export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void }) {
+export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void; want?: (computer: string, model: string, keep: boolean) => void }) {
   const setLanguages = (languages: string[]) => save({ languages }, { ...view, languages });
   const setChoice = (use: SpeechUse | "default", value: string) => {
     if (use === "default") {
@@ -88,7 +95,7 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
             id="stt-default"
             title="Default"
             status={<Runs r={view.resolvedDefault} full />}
-            control={<SettingsSelect label="Default: engine" value={view.stt.default.engine} onValueChange={(v) => setChoice("default", v)} options={engineOptions(view, view.stt.default.engine, true)} />}
+            control={<SettingsSelect label="Default: engine" value={view.stt.default.engine} onValueChange={(v) => setChoice("default", v)} options={engineOptions(view.available, view.stt.default.engine, true)} />}
           />
           {SPEECH_USES.map((use) => {
             const own = view.stt.per[use];
@@ -101,7 +108,7 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
                 // a use that follows the Default shares its need: the Default's row says it once
                 status={r && (own || !("needs" in r)) && <Runs r={r} full={!!own} />}
                 control={
-                  <SettingsSelect label={`${SPEECH_USE_NAMES[use]}: engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view, own?.engine, false)} />
+                  <SettingsSelect label={`${SPEECH_USE_NAMES[use]}: engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view.availableFor[use], own?.engine, false)} />
                 }
               />
             );
@@ -109,8 +116,80 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
         </Card>
       </Section>
 
+      <OnMyComputers computers={view.computers} want={want} />
+
       <TextToSpeech />
     </div>
+  );
+}
+
+/** The models a computer can download: one row each per computer, with where it comes from and its licence. */
+const COMPUTER_MODELS = STT_MODELS.filter((m) => m.computer);
+
+/** A model's origin in one line: who made it, its licence, its size, its page. */
+function Origin({ m }: { m: SttModel }) {
+  return (
+    <>
+      {m.by ? `By ${m.by}` : null}
+      {m.by ? " · " : null}
+      {m.licence}
+      {m.mb ? ` · ${(m.mb / 1000).toFixed(1)} GB` : null} ·{" "}
+      <a href={m.page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
+        Model page
+        <ExternalLink className="size-3" aria-hidden />
+      </a>
+    </>
+  );
+}
+
+/**
+ * Speech models on the person's own computers: nothing downloads until Download is pressed, and the strongest computer
+ * that has a model does the work. No computer runs them yet: the button that adds one.
+ */
+function OnMyComputers({ computers, want }: { computers: SttComputer[]; want: (computer: string, model: string, keep: boolean) => void }) {
+  return (
+    <Section title="Models on your computers">
+      {computers.length ? (
+        computers.map((c) => (
+          <Card key={c.id}>
+            <Row title={c.name} status={c.online ? undefined : "Off"} />
+            {COMPUTER_MODELS.map((m) => {
+              const has = c.models.find((x) => x.id === m.id);
+              return (
+                <Row
+                  key={m.id}
+                  title={m.name}
+                  status={<Origin m={m} />}
+                  control={
+                    !has ? (
+                      <Button size="sm" variant="outline" onClick={() => want(c.id, m.id, true)}>Download</Button>
+                    ) : has.state === "ready" ? (
+                      <Button size="sm" variant="outline" onClick={() => want(c.id, m.id, false)}>Remove</Button>
+                    ) : (
+                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                        {has.state === "downloading" ? "Downloading" : c.online ? "Starting" : "When it's on"}
+                        <Button size="sm" variant="ghost" onClick={() => want(c.id, m.id, false)}>Cancel</Button>
+                      </span>
+                    )
+                  }
+                />
+              );
+            })}
+          </Card>
+        ))
+      ) : (
+        <Card>
+          <Row
+            title="Run speech models on your own computers"
+            control={
+              <Button asChild size="sm" variant="outline">
+                <Link to="/settings/devices">Add a computer</Link>
+              </Button>
+            }
+          />
+        </Card>
+      )}
+    </Section>
   );
 }
 
@@ -137,7 +216,7 @@ function Runs({ r, full }: { r: SttResolved; full?: boolean }) {
   if (!full) return <>{m.name}</>;
   return (
     <>
-      {m.name}: {m.about} · {m.licence} ·{" "}
+      {m.name}{m.by && !m.name.includes(m.by) ? ` by ${m.by}` : ""}: {m.about} · {m.licence} ·{" "}
       <a href={m.page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
         Model page
         <ExternalLink className="size-3" aria-hidden />

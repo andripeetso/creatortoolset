@@ -15,9 +15,13 @@ export const getVoice = () => fetch("/api/voice-prefs").then((r) => json<VoiceVi
 export const putVoice = (body: { languages?: string[]; stt?: { default?: SttChoice; per?: Partial<Record<SpeechUse, SttChoice | null>> } }) =>
   fetch("/api/voice-prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => json<VoiceView>(r));
 
+/** Download (keep) or remove a model on one of the person's computers (api/voice-prefs.ts PUT /models). */
+export const putModel = (computer: string, model: string, keep: boolean) =>
+  fetch("/api/voice-prefs/models", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ computer, model, keep }) }).then((r) => json<VoiceView>(r));
+
 export const useVoice = () => useCachedLoad<VoiceView>("/api/voice-prefs", getVoice, { own: true });
 
-export const ENGINE_NAMES: Record<SttEngine, string> = { auto: "Automatic", deepgram: "Deepgram", openai: "OpenAI", local: "This computer" };
+export const ENGINE_NAMES: Record<SttEngine, string> = { auto: "Automatic", deepgram: "Deepgram", openai: "OpenAI", local: "On my computers" };
 
 /** A use's "Same as default" in its select. */
 export const SAME = "same";
@@ -26,8 +30,8 @@ export const SAME = "same";
  * The engines a select offers: the ones that can serve this account now, plus the one it is set to (so a key removed
  * later still shows what is chosen). `auto` only on the Default; a use offers "Same as default" instead.
  */
-export function engineOptions(view: Pick<VoiceView, "available">, current: SttEngine | undefined, isDefault: boolean) {
-  const engines = [...view.available, ...(current && current !== "auto" && !view.available.includes(current) ? [current] : [])];
+export function engineOptions(can: Exclude<SttEngine, "auto">[], current: SttEngine | undefined, isDefault: boolean) {
+  const engines = [...can, ...(current && current !== "auto" && !can.includes(current) ? [current] : [])];
   return [
     isDefault ? { value: "auto", label: ENGINE_NAMES.auto } : { value: SAME, label: "Same as default" },
     ...engines.map((e) => ({ value: e, label: ENGINE_NAMES[e] })),

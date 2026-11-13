@@ -19,6 +19,8 @@ const view = (over: Partial<VoiceView> = {}): VoiceView => ({
   ],
   resolvedDefault: { use: "default", engine: "deepgram", model: "nova-3" },
   available: ["deepgram"],
+  availableFor: { captions: ["deepgram"], transcripts: ["deepgram", "local"], editor: ["deepgram"], mic: ["deepgram"] },
+  computers: [],
   stt: { default: { engine: "auto" }, per: { editor: { engine: "openai" } } },
   ...over,
 });
@@ -54,6 +56,24 @@ describe("the Voice page", () => {
   });
 });
 
+describe("models on your computers", () => {
+  it("with none, offers to add a computer; with one, each model can be downloaded, and one it has removed", () => {
+    expect(html(view())).toContain('href="/settings/devices"');
+    const out = html(view({ computers: [{ id: "d1", name: "Studio PC", online: false, models: [{ id: "whisper-large-v3-turbo", state: "ready" }] }] }));
+    expect(out).toContain("Studio PC");
+    expect(out).toContain("Off");
+    expect(out).toContain(">Remove<");
+    expect(out).toContain(">Download<");
+    expect(out).toContain("By OpenAI");
+  });
+
+  it("a use offers a model on your computers only when it can run there", () => {
+    const v = view();
+    expect(engineOptions(v.availableFor.transcripts, undefined, false).map((o) => o.value)).toContain("local");
+    expect(engineOptions(v.availableFor.editor, undefined, false).map((o) => o.value)).not.toContain("local");
+  });
+});
+
 describe("read-aloud", () => {
   it("is there even when the voice settings can't load: it is kept in this browser", async () => {
     useAuth.setState({ required: true, me: { username: "sam", role: "admin", cloud: false, off: [] } });
@@ -74,9 +94,9 @@ describe("read-aloud", () => {
 
 describe("the engine choices", () => {
   it("offers only the engines that can serve now, plus the one already chosen", () => {
-    expect(engineOptions(view(), "auto", true).map((o) => o.value)).toEqual(["auto", "deepgram"]);
-    expect(engineOptions(view(), "openai", false).map((o) => o.value)).toEqual(["same", "deepgram", "openai"]);
-    expect(engineOptions(view(), undefined, false).map((o) => o.value)).toEqual(["same", "deepgram"]);
+    expect(engineOptions(view().available, "auto", true).map((o) => o.value)).toEqual(["auto", "deepgram"]);
+    expect(engineOptions(view().available, "openai", false).map((o) => o.value)).toEqual(["same", "deepgram", "openai"]);
+    expect(engineOptions(view().available, undefined, false).map((o) => o.value)).toEqual(["same", "deepgram"]);
   });
 
   it("a key need goes to that key's row; a local engine has no key", () => {

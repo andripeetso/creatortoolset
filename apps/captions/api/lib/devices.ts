@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { rename, writeFile } from "node:fs/promises";
@@ -147,6 +147,35 @@ export function pairDevice(owner: string, name: string, version?: string): { dev
   return { device: strip(d), token, replaced };
 }
 
+/**
+ * A computer with no browser (a Linux helper, apps/helper) pairs with a code its owner gets in Settings → Devices → Add a
+ * computer: 12 characters (60 bits), 10 minutes, one live code per account (a new one ends the older), and it works once:
+ * any swap that names it uses it up. Kept in memory only and never logged; the swap is rate-limited by address
+ * (api/devices.ts devicePairApp).
+ */
+export const PAIR_CODE_MS = 10 * 60_000;
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const pairCodes = new Map<string, { owner: string; expiresAt: number }>();
+const plainCode = (typed: string) => typed.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+export function mintPairCode(owner: string, now = Date.now()): { code: string; expiresAt: number } {
+  for (const [k, v] of pairCodes) if (v.expiresAt <= now || v.owner === owner) pairCodes.delete(k);
+  const raw = Array.from({ length: 12 }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join("");
+  const expiresAt = now + PAIR_CODE_MS;
+  pairCodes.set(raw, { owner, expiresAt });
+  return { code: raw.match(/.{4}/g)!.join("-"), expiresAt };
+}
+
+/** The code's computer, paired for the account that made the code; null for a wrong, used or expired code (it is used up either way). */
+export function pairWithCode(typed: string, name: string, version?: string, now = Date.now()): ReturnType<typeof pairDevice> | null {
+  const code = plainCode(typed);
+  const hit = pairCodes.get(code);
+  pairCodes.delete(code);
+  // an account removed since it made the code pairs nothing (an open server's one account is in no list)
+  if (!hit || hit.expiresAt <= now || (env.appSecret && !findUser(hit.owner))) return null;
+  return pairDevice(hit.owner, name, version);
+}
+
 export const listDevices = (keep: (d: Device) => boolean): Device[] => all().filter((d) => keep(strip(d))).map(strip);
 
 export function renameDevice(id: string, name: string): Device | undefined {
@@ -204,6 +233,15 @@ export function setDeviceKinds(id: string, kinds: string[]): void {
   if (!d || JSON.stringify(d.kinds ?? []) === JSON.stringify(kinds)) return;
   d.kinds = kinds;
   persist();
+}
+
+/** A computer's speech models (lib/computer-transcribe.ts). Written only when they change. */
+export function setDeviceStt(id: string, stt: NonNullable<Device["stt"]>): void {
+  const d = find(id);
+  if (!d || JSON.stringify(d.stt) === JSON.stringify(stt)) return;
+  d.stt = stt;
+  persist();
+  tell(d.owner);
 }
 
 /** A device's report (the Mac relay `report`). */

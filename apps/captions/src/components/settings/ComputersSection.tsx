@@ -10,6 +10,7 @@ import { webPlugins } from "@/plugins.gen";
 import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
 import { fmtAgo } from "./helpers";
@@ -300,6 +301,9 @@ function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: 
  * Add computer: the Mac app is the way that works today. In the Mac app, "Other ways" folds "I already have a server" (its
  * Servers page; a browser cannot list servers). The close X takes no focus on open.
  */
+/** The one command a Linux computer runs: the server hands out the helper (public/helper) and the computer swaps the code for its token. */
+export const linuxCommand = (url: string, code: string) => `curl -fsSL ${url}/helper/install.sh | sh -s -- ${url} ${code}`;
+
 function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOpenChange: (o: boolean) => void; macApp: boolean }) {
   const navigate = useNavigate();
   return (
@@ -308,34 +312,91 @@ function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOp
         <DialogHeader>
           <DialogTitle>Add a computer</DialogTitle>
         </DialogHeader>
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-          <li>Install the Creator Toolset Mac app on the Mac that runs your AI.</li>
-          <li>Open it and sign in with this account.</li>
-          <li>Turn on Use this Mac for my AI. The Mac then shows up here.</li>
-        </ol>
-        {macApp && (
-          <Advanced summary="Other ways">
-            <Row
-              className="px-0 sm:px-0"
-              title="I already have a server"
-              description="Its Creator Toolset runs on its own. Join it from Servers."
-              control={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    onOpenChange(false);
-                    navigate("/settings/servers?add=1");
-                  }}
-                >
-                  Open Servers
-                </Button>
-              }
-            />
-          </Advanced>
-        )}
+        <Tabs defaultValue="mac">
+          <TabsList>
+            <TabsTrigger value="mac">Mac</TabsTrigger>
+            <TabsTrigger value="linux">Linux</TabsTrigger>
+          </TabsList>
+          <TabsContent value="mac" className="space-y-3 pt-2">
+            <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
+              <li>Install the Creator Toolset Mac app on the Mac that runs your AI.</li>
+              <li>Open it and sign in with this account.</li>
+              <li>Turn on Use this Mac for my AI. The Mac then shows up here.</li>
+            </ol>
+            {macApp && (
+              <Advanced summary="Other ways">
+                <Row
+                  className="px-0 sm:px-0"
+                  title="I already have a server"
+                  description="Its Creator Toolset runs on its own. Join it from Servers."
+                  control={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        onOpenChange(false);
+                        navigate("/settings/servers?add=1");
+                      }}
+                    >
+                      Open Servers
+                    </Button>
+                  }
+                />
+              </Advanced>
+            )}
+          </TabsContent>
+          <TabsContent value="linux" className="pt-2">
+            <LinuxSteps />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type LinuxCode = { code: string; url: string | null; expiresAt: number };
+
+/**
+ * A Linux computer (with or without a graphics card) runs speech models for this account: a one-time code (10 minutes,
+ * works once) inside the one command to run there. Made when the tab opens, and again when it runs out.
+ */
+function LinuxSteps() {
+  const [code, setCode] = useState<LinuxCode | null | undefined>(undefined); // undefined: making one; null: couldn't
+  const mint = useCallback(() => {
+    setCode(undefined);
+    void fetch("/api/devices/code", { method: "POST" })
+      .then((r) => (r.ok ? (r.json() as Promise<LinuxCode>) : null))
+      .catch(() => null)
+      .then(setCode);
+  }, []);
+  useEffect(mint, [mint]);
+  useEffect(() => {
+    if (!code) return;
+    const t = window.setTimeout(mint, Math.max(0, code.expiresAt - Date.now()));
+    return () => window.clearTimeout(t);
+  }, [code, mint]);
+
+  if (code === undefined) return <Card><LoadingRow title="Making a code…" /></Card>;
+  if (code === null) return <Card><ErrorRow title="Couldn't make a code" detail="Check the connection, then try again." retry={mint} /></Card>;
+  if (!code.url) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Another computer can't reach this one yet. In the Creator Toolset Mac app, turn on Access from other devices, then come back here.
+      </p>
+    );
+  }
+  const command = linuxCommand(code.url, code.code);
+  return (
+    <div className="space-y-3 text-sm">
+      <p>Run this on the Linux computer, as the user it should run under. It installs the helper and pairs it with your account; the computer then shows up here and can run speech models for your transcripts.</p>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 break-all rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{command}</code>
+        <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(command)}>
+          Copy
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">The code {code.code} works once, for 10 minutes; then a new one appears here.</p>
+    </div>
   );
 }
 
