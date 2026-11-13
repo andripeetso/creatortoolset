@@ -216,6 +216,13 @@ final class Dictation: ObservableObject {
     /// Whether any key is registered: dictation on, no picker open, the earlier app not running.
     nonisolated static func keysLive(on: Bool, paused: Bool, earlierAppOpen: Bool) -> Bool { on && !paused && !earlierAppOpen }
 
+    /// The menu bar's Dictate row: what it does from there, or why it does nothing (the earlier app has the keys and
+    /// the paste; a click used to do nothing without a word).
+    nonisolated static func menuTitle(phase: Phase, earlierAppOpen: Bool) -> String {
+        if earlierAppOpen { return EarlierDictationApp.pausedLine }
+        return phase == .recording ? "Stop Dictating" : phase == .transcribing ? "Writing it down…" : "Dictate"
+    }
+
     /// The earlier dictation app is running (`earlierAppRunning`), kept current from NSWorkspace's launch and quit
     /// notifications. The one check for "another app has dictation's keys".
     @Published private(set) var earlierAppOpen = false

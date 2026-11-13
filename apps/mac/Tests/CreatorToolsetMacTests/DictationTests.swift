@@ -404,6 +404,9 @@ final class EarlierAppTests: XCTestCase {
         XCTAssertFalse(Dictation.keysLive(on: true, paused: false, earlierAppOpen: true), "it has the same keys")
         XCTAssertFalse(Dictation.keysLive(on: true, paused: true, earlierAppOpen: false), "a key picker is open")
         XCTAssertFalse(Dictation.keysLive(on: false, paused: false, earlierAppOpen: false))
+        // the menu row says why a click does nothing while the earlier app has the keys
+        XCTAssertEqual(Dictation.menuTitle(phase: .off, earlierAppOpen: true), EarlierDictationApp.pausedLine)
+        XCTAssertEqual(Dictation.menuTitle(phase: .off, earlierAppOpen: false), "Dictate")
     }
 }
 
