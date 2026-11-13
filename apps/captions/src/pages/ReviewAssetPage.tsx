@@ -1416,7 +1416,7 @@ function Header({
         </Link>
       )}
       {/* an AI Editor version has its own timeline (the editor's), so no file is added here */}
-      {manage && version.status === "ready" && !version.removed && !version.edit && (
+      {manage && version.status === "ready" && !version.removed && !version.edit && !version.draft && (
         <>
           {version.timelineFile && <span className="truncate text-xs text-zinc-500">Timeline from {version.timelineFile}</span>}
           <button

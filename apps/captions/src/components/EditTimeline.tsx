@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, X } from "lucide-react";
-import { wavePath } from "@/lib/waveform";
+import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
 import {
   editedSpan,
   layerFor,
@@ -22,6 +22,7 @@ import {
  * With `onEdit` (Review) an Edit mode moves (to another layer too), trims,
  * extends and removes items, adds and removes layers and draws placeholders;
  * the page keeps the edits (with undo) and sends them as a comment.
+ * `rules` say what whoever makes the next version can make of an edit: an edit nobody would make isn't offered.
  */
 const LABEL_W = 72;
 const RIGHT = 8;
@@ -53,6 +54,24 @@ const rank = (id: string) => (id[0] === "V" ? 10 - Number(id.slice(1)) : 10 + Nu
 /** A span on a lane the reviewer wants something in; id "new" = the one being written. */
 export type Placeholder = { id: string; track: string; rec: number; len: number; text?: string; look?: PlaceholderLook; color?: string };
 type Mode = "move" | "head" | "tail" | "slip";
+/** What can be edited on this timeline (none = everything Edit mode has). */
+export interface TimelineRules {
+  /** false = this clip is not moved, has that edge dragged, or is slipped */
+  can?: (item: TimelineItem, mode: Mode) => boolean;
+  /** false = the layers stay as they are: none added or removed, and no clip changes layer */
+  layers?: boolean;
+}
+// the loudest peak of a clip's own sound, found once per array
+const peakCache = new WeakMap<Float32Array, number>();
+function peakOf(data: Float32Array): number {
+  let peak = peakCache.get(data);
+  if (peak === undefined) {
+    peak = 0;
+    for (const v of data) if (v > peak) peak = v;
+    peakCache.set(data, peak);
+  }
+  return peak;
+}
 type Drag =
   | { kind: "scrub"; tap?: number; lane?: boolean }
   | { kind: "pan"; x0: number; left0: number }
@@ -63,7 +82,7 @@ type Drag =
   | { kind: "hole"; ph: Placeholder; mode: Mode | "draw"; x0: number; f0: number; df: number; moved: boolean };
 
 export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true,
-  edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin }: {
+  edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin, rules }: {
   view: TimelineView;
   /** seconds */
   time: number;
@@ -99,8 +118,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   onRange?: (from: number, to: number) => void;
   /** a click on empty space outside the range: drop it */
   onClearRange?: () => void;
-  /** audio peaks (lib/waveform) by lane; "*" = any other audio lane */
+  /** audio peaks (lib/waveform) by lane ("*" = any other audio lane): the cut's own sound, drawn under each clip's own
+   *  span. By a clip's key: that clip's own media from its first second (its span starts `before` frames in), drawn
+   *  under the clip and under what its edges are pulled out to */
   waves?: Record<string, Float32Array> | null;
+  rules?: TimelineRules;
   /** the page's undo and redo of the unsent edits, with how many steps each way */
   history?: { back: number; ahead: number; undo: () => void; redo: () => void };
   /** an edge or a slip while it's dragged (null when let go): the page plays it live */
@@ -256,7 +278,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   const seekFrame = (f: number) => onSeek(Math.max(0, Math.min(seconds, f / fps)));
   const editable = (it: TimelineItem, mode: Mode) =>
     // the talent never moves; the voice moves sideways, never slips
-    edit && !editOf[it.key]?.remove && !(it.track === "V1" && (mode === "move" || mode === "slip")) && !(it.track === "A1" && mode === "slip");
+    edit && !editOf[it.key]?.remove && !(it.track === "V1" && (mode === "move" || mode === "slip")) && !(it.track === "A1" && mode === "slip") &&
+    (rules?.can?.(it, mode) ?? true);
+  const layered = rules?.layers !== false;
+  /** A clip's own sound: its own, or that of the clip it was cut or copied from (a piece's `before` counts from the same first second). */
+  const ownWave = (it: TimelineItem) => waves?.[it.key] ?? (it.from ? waves?.[it.from] : undefined) ?? (it.copyOf ? waves?.[it.copyOf] : undefined);
   const shape = (it: TimelineItem, now = drag) => {
     const e = editOf[it.key];
     const d = now?.kind === "item" && now.mode && now.moved && !now.dup &&
@@ -325,7 +351,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     if (changes.length) onEdit?.(changes);
   };
   const nudgeBy = (list: TimelineItem[], n: number) => {
-    const on = list.filter((i) => i.track !== "V1" && !editOf[i.key]?.remove);
+    const on = list.filter((i) => editable(i, "move"));
     const step = Math.max(n, ...on.map((i) => -spanOf(i).rec)); // the earliest stops the group at 0:00
     if (on.length) onEdit?.(on.map((i) => [i, { move: (editOf[i.key]?.move ?? 0) + step }]));
   };
@@ -361,7 +387,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   };
   /** at frame f; on `lane` when it's a layer of the clip's kind, else where it came from */
   const pasteAt = (f: number, lane?: string) =>
-    place(clip.map((c) => ({ ...c, start: f + c.off, track: lane && (lane === c.it.track || layerFor(c.it.track, lane)) ? lane : c.track })));
+    place(clip.map((c) => ({ ...c, start: f + c.off, track: lane && (lane === c.it.track || (layered && layerFor(c.it.track, lane))) ? lane : c.track })));
   const jumpCut = (dir: 1 | -1) => {
     const cuts = [0, view.duration, ...items.flatMap((i) => [spanOf(i).rec, spanOf(i).rec + spanOf(i).len])];
     const to = dir > 0 ? Math.min(...cuts.filter((c) => c > playF)) : Math.max(...cuts.filter((c) => c < playF));
@@ -475,7 +501,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
       const moving = m === "move" && picked.length > 1 && picked.includes(it.key) && !e.altKey;
       setDrag({ kind: "item", it, mode: m, x0: e.clientX, f0: f, df: 0, moved: false, add: e.shiftKey || e.metaKey,
         dup: m === "move" && e.altKey && it.track !== "A1", // the voice is never copied
-        group: moving ? items.filter((i) => picked.includes(i.key) && i.track !== "V1" && !editOf[i.key]?.remove).map((i) => i.key) : undefined });
+        group: moving ? items.filter((i) => picked.includes(i.key) && editable(i, "move")).map((i) => i.key) : undefined });
     } else if (edit && tool === "placeholder" && lane && lane !== "V1" && lane !== "A1") {
       setDrag({ kind: "hole", ph: { id: "new", track: lane, rec: f, len: 1, look: "card" }, mode: "draw", x0: e.clientX, f0: f, df: 0, moved: false });
     } else if (e.pointerType === "touch") { // a finger may be scrolling the lanes: seek when it lifts
@@ -517,7 +543,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
       const over = drag.mode === "move"
         ? (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>("[data-lane]")?.dataset.lane
         : undefined;
-      const lane = over && drag.it.track !== "A1" && (over === drag.it.track || layerFor(drag.it.track, over)) ? over : drag.lane;
+      const lane = over && drag.it.track !== "A1" && (over === drag.it.track || (layered && layerFor(drag.it.track, over))) ? over : drag.lane;
       if (!drag.moved && Math.abs(e.clientX - drag.x0) < 4 && lane === drag.lane) return;
       if (!drag.mode) { // not editable here: a drag from an item scrubs
         seekFrame(frameAt(e.clientX));
@@ -784,7 +810,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
           {/* ruler: seconds, line markers, QA flags */}
           <div className="flex h-7">
             <div className="sticky left-0 z-40 flex shrink-0 items-center bg-zinc-950 px-1" style={{ width: LABEL_W }}>
-              {edit && (
+              {edit && layered && (
                 <button data-menu onPointerDown={(e) => e.stopPropagation()} onClick={() => setLayerMenu((v) => !v)}
                   title="Add a video or audio layer"
                   className="flex items-center gap-0.5 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-200 hover:border-violet-500 hover:bg-zinc-900">
@@ -839,7 +865,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 )}
                 <span className="font-mono text-zinc-400">{t.id}</span>
                 <span className="truncate text-[9px]">{t.name}</span>
-                {edit && t.id !== "V1" && t.id !== "A1" && (
+                {edit && layered && t.id !== "V1" && t.id !== "A1" && (
                   <button aria-label={`Remove layer ${t.id}`} title="Remove this layer (takes out what's on it)"
                     onPointerDown={(e) => e.stopPropagation()} onClick={() => dropLayer(t.id)}
                     className="ml-auto hidden rounded text-zinc-500 hover:text-rose-400 group-hover/lane:block">
@@ -868,7 +894,15 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                   const changed = span.rec !== it.rec || span.len !== it.len || laneOf(it) !== it.track;
                   const blade = edit && tool === "blade";
                   const slipping = edit && tool === "slip" && editable(it, "slip");
-                  const handles = editable(it, "head") && !blade && tool !== "slip";
+                  const handles = (editable(it, "head") || editable(it, "tail")) && !blade && tool !== "slip";
+                  // its own sound reaches under what its edges were pulled out to; the cut's sound only under its own span
+                  const own = ownWave(it);
+                  let wave: { d: string; n: number; left: number; width: number } | null = null;
+                  if (own?.length) {
+                    const from = ((it.before ?? 0) + v.slip - v.head) / fps;
+                    const [a, b] = [Math.max(0, from), Math.min(own.length / PEAKS_PER_SECOND, from + span.len / fps)];
+                    if (b > a) wave = { ...wavePath(own, a, b, peakOf(own)), left: x((a - from) * fps), width: x((b - a) * fps) };
+                  } else if (waveOf[it.key]) wave = { ...waveOf[it.key], left: x(v.head), width: x(it.len) };
                   return (
                     <button key={it.key} data-key={it.key}
                       title={`${it.label}${it.detail ? `\n${it.detail}` : ""}`}
@@ -885,11 +919,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                         <span className="pointer-events-none absolute inset-y-0 z-10 w-px bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
                           style={{ left: x(bladeAt.f - span.rec) }} />
                       )}
-                      {waveOf[it.key] && (
-                        <svg viewBox={`0 -1 ${waveOf[it.key].n} 2`} preserveAspectRatio="none" aria-hidden
+                      {wave && (
+                        <svg viewBox={`0 -1 ${wave.n} 2`} preserveAspectRatio="none" aria-hidden
                           className="pointer-events-none absolute top-0.5 h-[calc(100%-4px)] text-white/35"
-                          style={{ left: x(it.rec - span.rec), width: x(it.len) }}>
-                          <path d={waveOf[it.key].d} fill="currentColor" />
+                          style={{ left: wave.left, width: wave.width }}>
+                          <path d={wave.d} fill="currentColor" />
                         </svg>
                       )}
                       {v.head > 0 && <span className="pointer-events-none absolute inset-y-0 left-0" style={{ width: x(v.head), background: ADDED }} />}
@@ -910,8 +944,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                       {handles && (
                         <>
                           {/* a short clip keeps a middle to grab and move */}
-                          <span data-mode="head" className="absolute inset-y-0 left-0 cursor-ew-resize group-hover:bg-white/50" style={{ width: grip(span.len) }} />
-                          <span data-mode="tail" className="absolute inset-y-0 right-0 cursor-ew-resize group-hover:bg-white/50" style={{ width: grip(span.len) }} />
+                          {editable(it, "head") && <span data-mode="head" className="absolute inset-y-0 left-0 cursor-ew-resize group-hover:bg-white/50" style={{ width: grip(span.len) }} />}
+                          {editable(it, "tail") && <span data-mode="tail" className="absolute inset-y-0 right-0 cursor-ew-resize group-hover:bg-white/50" style={{ width: grip(span.len) }} />}
                         </>
                       )}
                     </button>
@@ -1045,8 +1079,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
               })}>Add a placeholder here (5 s)</button>
             )}
             <div className="my-1 border-t border-zinc-800" />
-            <button className={row} onClick={act(() => { setEditing(true); addLayer("V"); })}>Add a video layer</button>
-            <button className={row} onClick={act(() => { setEditing(true); addLayer("A"); })}>Add an audio layer</button>
+            {layered && <button className={row} onClick={act(() => { setEditing(true); addLayer("V"); })}>Add a video layer</button>}
+            {layered && <button className={row} onClick={act(() => { setEditing(true); addLayer("A"); })}>Add an audio layer</button>}
             {history && (
               <>
                 <div className="my-1 border-t border-zinc-800" />

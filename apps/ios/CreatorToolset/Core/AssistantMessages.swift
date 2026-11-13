@@ -109,8 +109,9 @@ struct AssistantReply: View {
             }
             ForEach(message.work ?? []) { AssistantWorkCard(work: $0) }
             ForEach(message.media ?? []) { AssistantVideoCard(media: $0) }
-            ForEach(message.approvals ?? []) { AssistantApprovalCard(approval: $0) }
-            ForEach(message.confirms ?? []) { AssistantConfirmCard(confirm: $0) }
+            // the ones still waiting sit over the message box (AssistantChatView.bottomBar); answered, they come back here
+            ForEach((message.approvals ?? []).filter { $0.status != "waiting" }) { AssistantApprovalCard(approval: $0) }
+            ForEach((message.confirms ?? []).filter { $0.status != "waiting" }) { AssistantConfirmCard(confirm: $0) }
             if let retry {
                 WideButton(title: "Try again", systemImage: "arrow.clockwise", kind: .plain, action: retry)
             }

@@ -13,7 +13,9 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
+import { cleanEdits } from "../../contracts/edit-timeline";
+import { applyEdits, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
 import { cardsApp } from "./cards/routes";
 import { markPasses, nextPass } from "./passes";
@@ -298,6 +300,42 @@ editorApp.post("/:id/drafts/:name/review", (c) => {
   const name = c.req.param("name");
   if (!r || !readDraft(r.e.id, name)) return notFound(c);
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "preview", r.e.createdBy, true, "edit_jobs");
+  return c.json(viewOf(r.e));
+});
+
+/** Notes this route writes start with this, so the next hand cut replaces them. */
+const HAND_NOTE = "Cut by hand in Review";
+
+/**
+ * The timeline edits made in Review on a version of this draft (body: the Review video, its version n, the edits as
+ * Review sends them), cut into the draft with no AI: the edits as made, or none of them (edits.ts). The draft it replaces
+ * is kept as a revision. The new cut then goes through post-processing again (a longer shot shows frames the old copies
+ * never covered), is rendered and is filed in Review as the next version.
+ */
+editorApp.post("/:id/drafts/:name/cut", async (c) => {
+  const r = load(c);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const b = await body(c);
+  const bad = (error: string, code: "invalid" | "conflict") => c.json({ error, code }, code === "invalid" ? 400 : 409);
+  const at = readStep(r.e.id, "review")?.[name];
+  if (!at || at.assetId !== b.asset || at.n !== b.n) return bad("A newer version of this cut is in Review: make your edits on that one", "conflict");
+  const filed = readFiled(r.e.id, at.assetId, at.n);
+  if (!filed || filed.variant !== name) return bad("This version was filed before its timeline could be edited: file the cut in Review again first", "conflict");
+  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return bad("This version is still being made", "conflict");
+  const edits = cleanEdits(b.edits);
+  if (!edits.length) return bad("There are no timeline edits to make", "invalid");
+  let timeline;
+  try {
+    timeline = applyEdits(filed.timeline, edits);
+  } catch (e) {
+    if (e instanceof EditRefused) return bad(e.message, "invalid");
+    throw e;
+  }
+  const notes = [...d.notes.filter((n) => !n.startsWith(HAND_NOTE)), `${HAND_NOTE}: ${edits.length} timeline edit${edits.length === 1 ? "" : "s"} on version ${at.n}`];
+  await saveDraft(r.e.id, name, { timeline, notes });
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.e.createdBy, true, "edit_jobs");
   return c.json(viewOf(r.e));
 });
 
