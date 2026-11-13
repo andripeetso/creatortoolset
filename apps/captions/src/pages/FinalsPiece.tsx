@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { canUse, useMe } from "@/lib/auth";
 import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Palette, Scissors, Trash2 } from "lucide-react";
 import { createDesign } from "@/lib/designs";
+import { useWorkspace } from "@/lib/workspace";
 import type { AssetCard, LibrarySummary, Piece, PieceItem } from "@contracts/library";
 import { PLATFORMS } from "@contracts/connectors";
 import { AppBar } from "@/components/AppBar";
@@ -181,7 +182,8 @@ export function PieceEditor({
     setBusy(true);
     setError(null);
     try {
-      const d = await createDesign({ format: v && v.videoWidth > v.videoHeight ? "thumbnail" : "cover", version: pickVersion, t: v?.currentTime ?? 0, title: piece.label });
+      // in the brand project this window is in
+      const d = await createDesign({ format: v && v.videoWidth > v.videoHeight ? "thumbnail" : "cover", version: pickVersion, t: v?.currentTime ?? 0, title: piece.label, project: useWorkspace.getState().currentProjectId ?? undefined });
       onDesign?.(d.id);
     } catch (e) {
       setError(message(e));

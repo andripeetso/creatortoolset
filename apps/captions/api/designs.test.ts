@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Design, DesignAnswer, DesignSummary } from "../contracts/design";
+import type { Design, DesignAnswer, DesignListed, DesignSummary } from "../contracts/design";
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "designs-"));
 process.env.DATA_DIR = dataDir;
@@ -470,5 +470,64 @@ describe("designs: blank frames, limits, and what does not get lost", () => {
     await deleteUserContent("robin");
     expect((await call<DesignSummary[]>("GET", "/api/designs", undefined, "robin")).body).toEqual([]);
     expect((await call<DesignSummary[]>("GET", "/api/designs")).body.length).toBeGreaterThan(0);
+  });
+});
+
+// Last in the file: it gives the script a project and then deletes the script's session.
+describe("designs: what each is connected to", () => {
+  const BRAND = "eeeeeeee-0000-4000-8000-0000000000b1";
+  const OTHER = "eeeeeeee-0000-4000-8000-0000000000b2";
+  const THEIRS = "eeeeeeee-0000-4000-8000-0000000000b3";
+  const project = (id: string, owner: string, name: string, updatedAt: number) => {
+    mkdirSync(ws("projects"), { recursive: true });
+    writeFileSync(ws("projects", `${id}.json`), JSON.stringify({ id, owner, name, audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt }));
+  };
+  const list = async () => (await call<DesignListed[]>("GET", "/api/designs")).body;
+
+  it("the list says the script or the video a design was made from, by its name, and the brand project it is in", async () => {
+    project(BRAND, "jordan", "Tiny Acrobatics", 2);
+    project(OTHER, "jordan", "Healthy Homes", 1);
+    project(THEIRS, "robin", "Not Jordan's", 3);
+    // the script is in the second project: its design is too, whatever the window says
+    writeFileSync(ws("sessions", SESSION, "meta.json"), JSON.stringify({ id: SESSION, owner: "jordan", title: "Floor time", projectId: OTHER, query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+    const ofPiece = (await call<Design>("POST", "/api/designs", { format: "portrait", session: SESSION, doc: DOC, project: BRAND })).body;
+    expect(ofPiece.project).toBe(OTHER);
+    const ofVideo = (await call<Design>("POST", "/api/designs", { format: "cover", version: "ver_v", t: 1, title: "Cover", project: BRAND })).body;
+    // made in the project the window is in; one that is not the person's, or none: the account's current project (its newest)
+    const own = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, pages: 0, name: "In the second", project: OTHER })).body;
+    const notMine = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, name: "Asked for another's", project: THEIRS })).body;
+    const unsaid = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, name: "Said nothing" })).body;
+    expect([ofVideo.project, own.project, notMine.project, unsaid.project]).toEqual([BRAND, OTHER, BRAND, BRAND]);
+
+    const all = await list();
+    const of = (id: string) => all.find((d) => d.id === id)!;
+    expect(of(ofPiece.id)).toMatchObject({ madeFrom: "Tiny Acrobatics floor time", project: OTHER, projectName: "Healthy Homes", from: { session: SESSION, doc: DOC } });
+    expect(of(ofVideo.id)).toMatchObject({ madeFrom: "Tiny Acrobatics take", projectName: "Tiny Acrobatics" });
+    expect(of(own.id)).toMatchObject({ projectName: "Healthy Homes" });
+    expect(of(own.id)).not.toHaveProperty("madeFrom");
+    expect(of(notMine.id).projectName).toBe("Tiny Acrobatics");
+    // the script moved to the other project: its design follows it at the next list
+    writeFileSync(ws("sessions", SESSION, "meta.json"), JSON.stringify({ id: SESSION, owner: "jordan", title: "Floor time", projectId: BRAND, query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+    expect((await list()).find((d) => d.id === ofPiece.id)).toMatchObject({ project: BRAND, projectName: "Tiny Acrobatics" });
+    // another account's list has none of it
+    expect((await call<DesignListed[]>("GET", "/api/designs", undefined, "robin")).body).toEqual([]);
+  });
+
+  it("a design whose script, video or project is gone is still listed, without what is gone", async () => {
+    const before = await list();
+    const ofPiece = before.find((d) => d.madeFrom === "Tiny Acrobatics floor time")!;
+    const ofVideo = before.find((d) => d.madeFrom === "Tiny Acrobatics take")!;
+    rmSync(ws("sessions", SESSION), { recursive: true, force: true });
+    libraryDb().exec("DELETE FROM asset_versions WHERE id = 'ver_v'");
+    rmSync(ws("projects", `${OTHER}.json`));
+    const res = await call<DesignListed[]>("GET", "/api/designs");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(before.length);
+    const piece = res.body.find((d) => d.id === ofPiece.id)!;
+    expect(piece).toMatchObject({ from: { session: SESSION, doc: DOC } });
+    expect(piece).not.toHaveProperty("madeFrom");
+    expect(res.body.find((d) => d.id === ofVideo.id)).not.toHaveProperty("madeFrom");
+    // the design made in the project that is gone has no project's name any more
+    expect(res.body.find((d) => d.name === "In the second")).not.toHaveProperty("projectName");
   });
 });

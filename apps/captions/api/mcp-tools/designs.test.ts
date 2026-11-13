@@ -94,7 +94,8 @@ describe("the Designer's tools", () => {
     // the piece has its design: asking again hands that one back; and the list has it
     expect((await tool(anaKey, "design_make", { session: SESSION, doc: DOC })).out).toMatchObject({ id: made.out.id, existed: true, frames: 2 });
     const list = (await tool<{ designs: Array<{ id: string; name: string; frames: number; from?: string; link: string }> }>(anaKey, "design_get")).out.designs;
-    expect(list).toContainEqual(expect.objectContaining({ id: made.out.id, name: "Tiny Acrobatics floor time", frames: 2, from: "a Workshop carousel" }));
+    // with the piece it was made from, by its title
+    expect(list).toContainEqual(expect.objectContaining({ id: made.out.id, name: "Tiny Acrobatics floor time", frames: 2, from: "a Workshop carousel: Tiny Acrobatics floor time" }));
   });
 
   it("blank frames to design from nothing, a second frame of another size beside them, and a cover from a library video's frame", async () => {

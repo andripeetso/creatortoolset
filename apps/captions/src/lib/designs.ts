@@ -1,4 +1,4 @@
-import type { Design, DesignPage, DesignSummary, NewDesign } from "@contracts/design";
+import type { Design, DesignListed, DesignPage, NewDesign } from "@contracts/design";
 
 /** The designer's calls to api/designs.ts. */
 
@@ -22,7 +22,7 @@ async function send<T>(url: string, method = "GET", body?: unknown): Promise<T> 
 const base = (id: string) => `/api/designs/${id}`;
 
 /** My designs, newest first; `piece` narrows them to one Workshop carousel piece's. */
-export const listDesigns = (piece?: { session: string; doc: string }) => send<DesignSummary[]>(`/api/designs${piece ? `?session=${encodeURIComponent(piece.session)}&doc=${encodeURIComponent(piece.doc)}` : ""}`);
+export const listDesigns = (piece?: { session: string; doc: string }) => send<DesignListed[]>(`/api/designs${piece ? `?session=${encodeURIComponent(piece.session)}&doc=${encodeURIComponent(piece.doc)}` : ""}`);
 export const createDesign = (d: NewDesign) => send<Design>("/api/designs", "POST", d);
 export const getDesign = (id: string) => send<Design>(base(id));
 /** `since`: the design's last change this window knows of (its updatedAt). Changed after it: DesignChanged, and nothing was saved. */

@@ -220,7 +220,20 @@ export interface DesignSummary {
   height: number;
   pages: number;
   from?: DesignSource;
+  /** The brand project it belongs to (a Workshop project's id): the one it was made in. */
+  project?: string;
   updatedAt: number;
+}
+
+/**
+ * A design as the lists show it (GET /api/designs): with what it was made from and its project in words. Both are
+ * read when the list is: `madeFrom` is the Workshop piece's title or the library video's as it is now, and is absent
+ * once that piece or video is gone; `projectName` is its project's (a carousel piece's design: the project its
+ * script is in now).
+ */
+export interface DesignListed extends DesignSummary {
+  madeFrom?: string;
+  projectName?: string;
 }
 
 export interface Design extends Omit<DesignSummary, "pages"> {
@@ -240,7 +253,7 @@ export interface Design extends Omit<DesignSummary, "pages"> {
  * `blank`: of its own, with `pages` empty frames of the format's size (one when it does not say; 0 is an empty canvas,
  * whose frames are made on it and may be of any size).
  */
-export type NewDesign = { format: DesignFormat; name?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string } | { blank: true; pages?: number });
+export type NewDesign = { format: DesignFormat; name?: string; /** the brand project it is made in (the window's current one); absent or not the person's: the account's current one. A piece's design is its script's. */ project?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string } | { blank: true; pages?: number });
 
 /** What the server's drawing browser is given to draw one page as a small picture (api/lib/design-picture.ts, src/lib/design/picture.ts). */
 export interface PictureSpec {

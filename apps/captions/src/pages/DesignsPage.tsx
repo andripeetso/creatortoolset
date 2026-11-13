@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Pencil, PenTool, Plus, Trash2 } from "lucide-react";
-import type { DesignSummary } from "@contracts/design";
+import type { DesignListed } from "@contracts/design";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { askRename } from "@/components/browse/browse";
@@ -16,19 +16,23 @@ import { confirmDialog } from "@/lib/dialogs";
 import { timeAgo } from "@/lib/exports";
 import { useToolFolders } from "@/lib/folders";
 import { onTopic } from "@/lib/sync";
+import { useWorkspace } from "@/lib/workspace";
 
 /**
  * The Designer's start (/design): every design of this account, in the person's own folders, as cards or rows, found
  * by a search and sorted newest first or by name (the same browser as the other tools' start screens:
  * components/browse). Each opens in the designer (/design/:id). New canvas makes an empty canvas (its frames are made
- * on it: the frame tool offers the picture sizes), in the folder that is open. A carousel piece's design is started
- * from the piece (Design, beside Visualize in the Content Workshop), a cover from a video in Finals: both are listed
- * here too. A design made or changed somewhere else (the assistant, another window) shows without a reload.
+ * on it: the frame tool offers the picture sizes), in the folder that is open and the brand project the window is in. A
+ * carousel piece's design is started from the piece (Design, beside Visualize in the Content Workshop), a cover from a
+ * video in Finals: both are listed here too, each with the script or the video it was made from (the script's name
+ * opens it), and a search finds a design by that name too. With more than one brand project, each design says which
+ * it is in. A design made or changed somewhere else (the assistant, another window) shows without a reload.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const madeFrom = (d: DesignSummary) => (!d.from ? "" : "session" in d.from ? "From a Workshop carousel" : "From a video");
-const framesOf = (d: DesignSummary) => (d.pages ? `${d.pages} ${d.pages === 1 ? "frame" : "frames"}` : "No frames yet");
+/** What it was made from, in words: by its name while that script or video is there, else only what kind of thing it was. */
+const madeFrom = (d: DesignListed) => (!d.from ? "" : "session" in d.from ? (d.madeFrom ? `Script: ${d.madeFrom}` : "From a Workshop carousel") : d.madeFrom ? `Video: ${d.madeFrom}` : "From a video");
+const framesOf = (d: DesignListed) => (d.pages ? `${d.pages} ${d.pages === 1 ? "frame" : "frames"}` : "No frames yet");
 const SORTS = ["recent", "name"] as const;
 const SORT_KEY = "design:sort";
 /** Every card's picture box, width over height: a frame of any shape (a tall cover, a wide thumbnail) is fitted inside it. */
@@ -36,7 +40,7 @@ const TILE = 1;
 
 export default function DesignsPage() {
   const navigate = useNavigate();
-  const [designs, setDesigns] = useState<DesignSummary[] | null>(null);
+  const [designs, setDesigns] = useState<DesignListed[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useBrowseView("design");
   const [find, setFind] = useState("");
@@ -51,12 +55,33 @@ export default function DesignsPage() {
 
   // the open folder's designs (every folder's when searching); the server sends them newest change first
   const folders = useToolFolders("design", designs ?? [], find);
-  const listed = folders.here.filter((d) => matches(find, d.name, madeFrom(d))).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const listed = folders.here.filter((d) => matches(find, d.name, madeFrom(d), d.projectName)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  // with one brand project its name on every design says nothing
+  const projects = useWorkspace((s) => s.projects.length);
+  /** What a design is connected to: the script (a link to it) or the video it was made from, and its project. Nothing when it has neither. */
+  const connection = (d: DesignListed, className: string) => {
+    const from = madeFrom(d);
+    const project = projects > 1 ? d.projectName : undefined;
+    if (!from && !project) return null;
+    return (
+      <p data-connection className={className}>
+        {d.from && "session" in d.from && d.madeFrom ? (
+          <Link to={`/workshop/sessions/${d.from.session}`} className="hover:text-zinc-200 hover:underline">
+            {from}
+          </Link>
+        ) : (
+          from
+        )}
+        {from && project && " · "}
+        {project}
+      </p>
+    );
+  };
 
   const start = async () => {
     try {
       // an empty canvas: no frame yet (the size is only what a frame made by a click starts as)
-      const d = await createDesign({ format: "portrait", blank: true, pages: 0, name: "Untitled canvas" });
+      const d = await createDesign({ format: "portrait", blank: true, pages: 0, name: "Untitled canvas", project: useWorkspace.getState().currentProjectId ?? undefined });
       // made with a folder open: it is in that folder
       if (folders.open) await folders.move([d.id], folders.open, false).catch(() => {});
       navigate(`/design/${d.id}`);
@@ -64,16 +89,16 @@ export default function DesignsPage() {
       setError(message(e));
     }
   };
-  const rename = async (d: DesignSummary) => {
+  const rename = async (d: DesignListed) => {
     const name = await askRename("Rename", d.name);
     if (name && name !== d.name) await saveDesign(d.id, { name }).then(load, (e) => setError(message(e)));
   };
-  const remove = async (d: DesignSummary) => {
+  const remove = async (d: DesignListed) => {
     const yes = await confirmDialog({ title: `Delete “${d.name}”?`, body: "Its frames and the pictures added to it are deleted for good. PNGs you saved stay where you saved them.", ok: "Delete", danger: true });
     if (yes) await deleteDesign(d.id).then(load, (e) => setError(message(e)));
   };
   /** A design's own buttons: move it to a folder, rename it, delete it. `on`: the classes of one button. */
-  const actions = (d: DesignSummary, on: string, danger: string) => (
+  const actions = (d: DesignListed, on: string, danger: string) => (
     <>
       <MoveToMenu state={folders} id={d.id} className={on} />
       <button type="button" title="Rename" aria-label={`Rename ${d.name}`} className={on} onClick={() => void rename(d)}>
@@ -127,8 +152,8 @@ export default function DesignsPage() {
                 <FolderGrid size="small">
                   <ToolFolderCards state={folders} pictureOf={() => undefined} aspect="square" />
                   {listed.map((d) => (
-                    <div key={d.id} data-design={d.id} className="group relative">
-                      <Link to={`/design/${d.id}`} aria-label={`Open ${d.name}`} {...folders.drag(d.id)} className="block w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 text-left transition-colors hover:border-violet-500/60">
+                    <div key={d.id} data-design={d.id} className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-violet-500/60">
+                      <Link to={`/design/${d.id}`} aria-label={`Open ${d.name}`} {...folders.drag(d.id)} className="block w-full text-left">
                         <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-zinc-950 p-4">
                           <PenTool className="absolute inset-0 m-auto h-8 w-8 text-zinc-700" />
                           <div className="relative flex h-full w-full items-center justify-center">
@@ -139,10 +164,10 @@ export default function DesignsPage() {
                           <p className="truncate text-sm font-medium text-zinc-100">{d.name}</p>
                           <p className="mt-1 truncate text-xs text-zinc-500">
                             {framesOf(d)} · {timeAgo(d.updatedAt)}
-                            {madeFrom(d) && ` · ${madeFrom(d)}`}
                           </p>
                         </div>
                       </Link>
+                      {connection(d, "-mt-2 truncate px-3.5 pb-3 text-xs text-zinc-500")}
                       <div className="absolute right-1.5 top-1.5 flex gap-1 rounded-md bg-black/60 p-0.5 text-white opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                         {actions(d, "rounded p-1 hover:bg-white/20", "rounded p-1 hover:bg-red-600")}
                       </div>
@@ -158,11 +183,11 @@ export default function DesignsPage() {
                         <RowLink to={`/design/${d.id}`}>
                           <PenTool className="h-4 w-4 shrink-0 text-zinc-500" />
                           <span className="min-w-0 flex-1 truncate text-sm text-zinc-100">{d.name}</span>
-                          {madeFrom(d) && <span className="hidden shrink-0 text-[11px] text-zinc-500 sm:inline">{madeFrom(d)}</span>}
-                          <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
-                            {framesOf(d)} · {timeAgo(d.updatedAt)}
-                          </span>
                         </RowLink>
+                        {connection(d, "hidden min-w-0 max-w-[40%] shrink truncate text-[11px] text-zinc-500 sm:block")}
+                        <Link to={`/design/${d.id}`} tabIndex={-1} className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+                          {framesOf(d)} · {timeAgo(d.updatedAt)}
+                        </Link>
                         <span className="flex shrink-0 gap-0.5 text-zinc-600 opacity-0 focus-within:opacity-100 group-hover:opacity-100">
                           {actions(d, "rounded p-1.5 hover:bg-zinc-800 hover:text-zinc-200", "rounded p-1.5 hover:bg-zinc-800 hover:text-red-400")}
                         </span>

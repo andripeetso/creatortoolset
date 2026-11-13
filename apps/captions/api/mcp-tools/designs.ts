@@ -1,4 +1,4 @@
-import { DESIGN_FORMATS, type Design, type DesignAnswer, type DesignSummary } from "../../contracts/design";
+import { DESIGN_FORMATS, type Design, type DesignAnswer, type DesignListed } from "../../contracts/design";
 import { type Args, pick, str, ToolError, type ToolContext, type ToolModule, when } from "./types";
 
 // The Designer's tools, for the AI that designs: find a design, read it, start one, change it. The AI designs the
@@ -59,8 +59,10 @@ export const designTools: ToolModule = {
   handlers: {
     design_get: async (a, ctx) => {
       if (!a.id) {
-        const all = await ctx.json<DesignSummary[]>("/api/designs");
-        return { designs: all.map((d) => ({ ...about(ctx.origin, d, d.pages), ...pick({ from: d.from ? ("session" in d.from ? "a Workshop carousel" : "a video") : "", changed: when(d.updatedAt) }, ["from", "changed"]) })) };
+        const all = await ctx.json<DesignListed[]>("/api/designs");
+        // what each was made from, by its title when that piece or video is still there, and the brand project it is in
+        const from = (d: DesignListed) => (!d.from ? "" : `${"session" in d.from ? "a Workshop carousel" : "a video"}${d.madeFrom ? `: ${d.madeFrom}` : ""}`);
+        return { designs: all.map((d) => ({ ...about(ctx.origin, d, d.pages), ...pick({ from: from(d), project: d.projectName ?? "", changed: when(d.updatedAt) }, ["from", "project", "changed"]) })) };
       }
       const at = `/api/designs/${enc(a.id)}`;
       const read = await ctx.json<ForAi>(`${at}/pages${a.look ? `?look=${enc(a.look)}` : ""}`);
@@ -83,7 +85,7 @@ export const designTools: ToolModule = {
       if (!piece && !a.version && !a.format) throw new ToolError("Say what to design: blank frames (format, and a name), a carousel piece (session and doc), or a library video's frame (version, and t in seconds).");
       if (piece) {
         // the piece's own design, with whatever the person has done on it by hand: never a second one
-        const had = (await ctx.json<DesignSummary[]>(`/api/designs?session=${enc(a.session)}&doc=${enc(a.doc)}`))[0];
+        const had = (await ctx.json<DesignListed[]>(`/api/designs?session=${enc(a.session)}&doc=${enc(a.doc)}`))[0];
         if (had) return { ...about(ctx.origin, had, had.pages), existed: true };
       }
       const d = await ctx.json<Design>(

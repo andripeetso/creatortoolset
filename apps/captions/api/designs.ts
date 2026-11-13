@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignListed, type DesignPage, type DesignSummary } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
 import { animationStyles } from "./editor/animation-styles";
@@ -16,6 +16,7 @@ import { env } from "./lib/env";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
 import { blobs, libraryDb } from "./library/db";
 import { ffmpeg } from "./library/media/run";
+import { ownedProjects, resolveProjectId } from "./lib/workshop/workspace";
 import { ownedSession, readDoc } from "./workshop";
 
 /**
@@ -64,7 +65,42 @@ async function save(d: Design): Promise<Design> {
 /** When a design is changed now: always after its last change, so a window can tell that it has not seen this one (`since`, on a save). */
 const stamp = (d: Design): number => Math.max(Date.now(), d.updatedAt + 1);
 
-const summaryOf = (d: Design): DesignSummary => ({ id: d.id, name: d.name, kind: d.kind, format: d.format, width: d.width, height: d.height, pages: d.pages.length, ...(d.from ? { from: d.from } : {}), updatedAt: d.updatedAt });
+const summaryOf = (d: Design): DesignSummary => ({ id: d.id, name: d.name, kind: d.kind, format: d.format, width: d.width, height: d.height, pages: d.pages.length, ...(d.from ? { from: d.from } : {}), ...(d.project ? { project: d.project } : {}), updatedAt: d.updatedAt });
+
+/**
+ * The designs as the lists show them: each with what it was made from (the Workshop piece's title, the library
+ * video's) and its brand project's name, as they are now. A piece's design is in the project its script is in now.
+ * The list never fails over a connection: a session that was deleted, a piece that cannot be read and a video that
+ * is no longer the person's to read are left out, and the design is listed without them.
+ * ponytail: one piece file read for every design made from a piece, at every list; kept by the file's change time
+ * when someone has hundreds of them.
+ */
+async function listed(user: AuthVars["user"], all: readonly Design[]): Promise<DesignListed[]> {
+  const projects = new Map((await ownedProjects(user.username).catch(() => [])).map((p) => [p.id, p.name]));
+  // a session is read once, however many of its pieces have a design
+  const sessions = new Map<string, ReturnType<typeof ownedSession>>();
+  const sessionOf = (id: string) => sessions.get(id) ?? sessions.set(id, ownedSession(id, user).catch(() => null)).get(id)!;
+  return Promise.all(
+    all.map(async (d): Promise<DesignListed> => {
+      let madeFrom: string | undefined;
+      let project = d.project;
+      if (d.from && "session" in d.from) {
+        const meta = await sessionOf(d.from.session);
+        const piece = meta ? await readDoc(meta.id, d.from.doc).catch(() => null) : null;
+        madeFrom = piece?.title || undefined;
+        project = meta?.projectId ?? project;
+      } else if (d.from) {
+        try {
+          if (sourcesWorkspace(d.owner, [d.from.version])) madeFrom = (libraryDb().prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(d.from.version) as { title?: string } | undefined)?.title || undefined;
+        } catch {
+          // the library cannot be read right now: the design is listed without its video's name
+        }
+      }
+      const projectName = project ? projects.get(project) : undefined;
+      return { ...summaryOf(d), ...(project && projectName ? { project } : {}), ...(madeFrom ? { madeFrom } : {}), ...(projectName ? { projectName } : {}) };
+    }),
+  );
+}
 
 async function addPicture(d: Design, bytes: Buffer, ext: string): Promise<string> {
   const id = `${randomBytes(4).toString("hex")}.${ext}`;
@@ -110,14 +146,14 @@ interface Slide {
 }
 
 /** The slides of a Workshop carousel piece the caller may see, as words (picture tokens out), with the piece's title. */
-async function slidesOf(user: AuthVars["user"], session: string, doc: string): Promise<{ title: string; slides: Slide[] }> {
+async function slidesOf(user: AuthVars["user"], session: string, doc: string): Promise<{ title: string; slides: Slide[]; project?: string }> {
   const meta = await ownedSession(session, user);
   const piece = meta ? await readDoc(meta.id, doc) : null;
   if (!piece) throw new DesignError("Not found", 404);
   if (piece.kind !== "carousel") throw new DesignError("Only a carousel piece has slides to design");
   const slides = piece.blocks.map((b) => ({ id: b.id, words: slideWords(b.text) })).filter((s) => s.words);
   if (!slides.length) throw new DesignError("This carousel has no words yet: write its slides first");
-  return { title: piece.title, slides: slides.slice(0, DESIGN_LIMITS.pages) };
+  return { title: piece.title, slides: slides.slice(0, DESIGN_LIMITS.pages), project: meta!.projectId };
 }
 
 /**
@@ -343,10 +379,10 @@ designsApp.get("/", (c) =>
     const names = await readdir(dirOf(owner)).catch(() => [] as string[]);
     const all = (await Promise.all(names.filter((n) => n.endsWith(".json")).map((n) => read(owner, n.slice(0, -5))))).filter((d): d is Design => !!d);
     const { session, doc } = c.req.query();
-    return all
-      .filter((d) => !session || !doc || (pieceOf(d)?.session === session && pieceOf(d)?.doc === doc))
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map(summaryOf);
+    return listed(
+      c.get("user"),
+      all.filter((d) => !session || !doc || (pieceOf(d)?.session === session && pieceOf(d)?.doc === doc)).sort((a, b) => b.updatedAt - a.updatedAt),
+    );
   }),
 );
 
@@ -363,9 +399,11 @@ designsApp.post("/", (c) =>
     const named = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, DESIGN_LIMITS.name) : "";
     if (typeof b.session === "string" && typeof b.doc === "string") {
       if (format.kind !== "carousel") throw new DesignError("A carousel's slides take a carousel size");
-      const { title, slides } = await slidesOf(user, b.session, b.doc);
+      const { title, slides, project } = await slidesOf(user, b.session, b.doc);
       d.name = named || title.slice(0, DESIGN_LIMITS.name) || d.name;
       d.from = { session: b.session, doc: b.doc };
+      // its script's project
+      if (project) d.project = project;
       d.pages = plainPages(slides.map((s) => s.words), d.width, d.height, slides.map((s) => s.id));
     } else if (typeof b.version === "string" && typeof b.t === "number" && Number.isFinite(b.t) && b.t >= 0) {
       if (format.kind === "carousel") throw new DesignError("A video's frame takes the cover or the thumbnail size");
@@ -380,6 +418,12 @@ designsApp.post("/", (c) =>
       d.name = named || d.name;
       d.pages = withFrames(Array.from({ length: count }, (_, k) => ({ id: `p${k + 1}`, background: "#ffffff", layers: [] })), d.width, d.height);
     } else throw new DesignError("Say what the design is of: a carousel piece (session and doc), a video's moment (version and t), or blank: true");
+    // made on its own, or from a video: in the brand project the window is in when that is the person's own, else the
+    // account's current one (the way a Workshop session gets its project)
+    if (!pieceOf(d)) {
+      const project = await resolveProjectId(user, typeof b.project === "string" ? b.project : null).catch(() => undefined);
+      if (project) d.project = project;
+    }
     return save(d);
   }),
 );
