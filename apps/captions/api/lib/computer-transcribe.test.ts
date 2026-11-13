@@ -162,9 +162,9 @@ describe("speechFor with computers", () => {
     // another model on computers: Deepgram too
     writeVoicePrefs("ana", { languages: ["en"], stt: { per: { editor: { engine: "local", model: "whisper-large-v3-turbo" } } } });
     expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only with Parakeet: this runs on Deepgram" });
-    // the Default set to computers counts as picked
+    // the Default set to computers does not move the AI Editor: only its own row does
     writeVoicePrefs("ana", { stt: { default: { engine: "local" }, per: { editor: null } } });
-    expect(speechFor("ana", "editor")).toMatchObject({ engine: "local", model: "parakeet-tdt-0.6b-v3", on: "computers" });
+    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only when picked on this row: this runs on Deepgram" });
     // with a key, Automatic stays on Deepgram
     writeVoicePrefs("ana", { stt: { default: { engine: "auto" } } });
     expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", model: "nova-3" });

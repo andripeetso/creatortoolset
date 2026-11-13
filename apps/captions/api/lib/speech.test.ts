@@ -31,8 +31,8 @@ describe("which engine turns speech into text", () => {
     expect(speechFor("local", "mic")).toMatchObject({ engine: "openai" });
     expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram" });
     writeVoicePrefs("local", { stt: { default: { engine: "local" } } });
-    // the AI Editor on computers hears English edits only: with no language set it stays on Deepgram, and says why
-    expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only edits in English: this runs on Deepgram" });
+    // the AI Editor goes to computers only when picked on its own row: on the Default it stays on Deepgram, and says why
+    expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only when picked on this row: this runs on Deepgram" });
     expect(speechFor("local", "transcripts")).toEqual({ needs: "Needs a speech model on one of your computers" });
     expect(resolvedFor("local").find((r) => r.use === "mic")).toEqual({ use: "mic", engine: "openai", model: "whisper-1" });
     writeVoicePrefs("local", { stt: { default: { engine: "auto" }, per: { mic: null } } });

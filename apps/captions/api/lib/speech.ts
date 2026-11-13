@@ -99,6 +99,7 @@ const KEY: Partial<Record<Engine, "DEEPGRAM_API_KEY" | "OPENAI_API_KEY">> = { de
 /** Why the AI Editor, set to run on the person's computers, runs on Deepgram (the row's quiet line). */
 const EDITOR_ENGLISH_ONLY = "On your computers only edits in English: this runs on Deepgram";
 const EDITOR_MODEL_ONLY = "On your computers only with Parakeet: this runs on Deepgram";
+const EDITOR_ROW_ONLY = "On your computers only when picked on this row: this runs on Deepgram";
 const englishOnly = (langs: string[]) => langs.length === 1 && langs[0] === "en";
 
 /** `on`: a local model runs on the server itself (lib/device-transcribe.ts) or on the person's computers (lib/computer-transcribe.ts). */
@@ -137,8 +138,8 @@ function onDeepgram(actor: Actor, languages: string[], note: string): Speech | {
  * What `use` runs on for `actor`: their choice for that use, else their default; `auto` is the first that serves them
  * (Deepgram, OpenAI, a model on their own computers: localFor). `languages` (a project's or an edit's) win over the person's. Null + why when
  * nothing can serve them.
- * The AI Editor runs on their computers only when they chose it (never on `auto`), with EDITOR_COMPUTER_MODEL, for an
- * edit in English alone; any other model or language is Deepgram, as the editor ran before (onDeepgram).
+ * The AI Editor runs on their computers only when they picked it on its own row (never on `auto` or the Default), with
+ * EDITOR_COMPUTER_MODEL, for an edit in English alone; anything else is Deepgram, as the editor ran before (onDeepgram).
  */
 export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: string[]): Speech | { needs: string; key?: "DEEPGRAM_API_KEY" | "OPENAI_API_KEY" } {
   const prefs = readVoicePrefs(userOf(actor));
@@ -151,7 +152,9 @@ export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: 
   const as: SpeechUse = use === "default" ? "transcripts" : use;
   const chosen = (choice.engine === engine && choice.model) || undefined;
   if (engine === "local" && use === "editor") {
-    const why = chosen && chosen !== EDITOR_COMPUTER_MODEL ? EDITOR_MODEL_ONLY : englishOnly(langs) ? null : EDITOR_ENGLISH_ONLY;
+    const why = !prefs.stt.per.editor ? EDITOR_ROW_ONLY
+      : chosen && chosen !== EDITOR_COMPUTER_MODEL ? EDITOR_MODEL_ONLY
+      : englishOnly(langs) ? null : EDITOR_ENGLISH_ONLY;
     if (why) return onDeepgram(actor, langs, why);
     const l = localFor(actor, use, EDITOR_COMPUTER_MODEL, langs);
     return "needs" in l ? l : { engine, ...l, languages: langs };
