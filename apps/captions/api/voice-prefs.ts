@@ -25,6 +25,7 @@ async function computers(username: string): Promise<SttComputer[]> {
       name: d.name,
       online: isOnline(d.id),
       ...(d.report?.machine?.os ? { os: d.report.machine.os } : {}),
+      ...(d.version ? { version: d.version } : {}),
       models: ids.map((id) => ({ id, state: s.held.includes(id) ? "ready" : s.getting.includes(id) ? "downloading" : "asked" }) as const),
     };
   });

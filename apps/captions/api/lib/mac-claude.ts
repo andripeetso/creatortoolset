@@ -476,7 +476,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const device = deviceOf(c);
     if (!device) return c.json({ error: "Unauthorized" }, 401);
     c.set("device", device);
-    touchDevice(device);
+    touchDevice(device, c.req.header("user-agent"));
     // on its way out (leave): a post about a running answer goes to the next process (the relay sends it again on 503)
     if (leaving && /\/(text|step|ask|done|fail)$/.test(c.req.path)) return c.json({ error: "Restarting" }, 503);
     await next();

@@ -150,9 +150,13 @@ describe("dictation and the models on a Mac", () => {
     renderToStaticMarkup(<MemoryRouter><VoiceBody view={v} save={() => {}} mac={{ dictation: d } as never} /></MemoryRouter>);
 
   it("a Mac is offered the Mac's models, a Linux computer the others", () => {
-    const out = html(view({ computers: [{ id: "m", name: "Tiny Mac", online: true, os: "mac", models: [] }] }));
+    const out = html(view({ computers: [{ id: "m", name: "Tiny Mac", online: true, os: "mac", version: "0.15.38", models: [] }] }));
     expect(out).toContain("Whisper small (English)");
     expect(out).toContain("Parakeet TDT 0.6B v2");
+    // an older Mac app can't run Parakeet: not offered
+    const old = html(view({ computers: [{ id: "m", name: "Tiny Mac", online: true, os: "mac", version: "0.15.37", models: [] }] }));
+    expect(old).toContain("Whisper small (English)");
+    expect(old).not.toContain("Parakeet");
     const pc = html(view({ computers: [{ id: "p", name: "Tiny PC", online: true, os: "linux", models: [] }] }));
     expect(pc).toContain("Parakeet TDT 0.6B v3");
     expect(pc).not.toContain("Parakeet TDT 0.6B v2");
