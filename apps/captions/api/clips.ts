@@ -336,11 +336,12 @@ async function ownedMeta(id: string, user: SessionUser): Promise<Meta | null> {
   return meta && canSee(meta, user) ? meta : null;
 }
 
-const publicMeta = (m: Meta) => {
+/** `writingBefore`: the sections being written before `m` was read from disk (GET /:id). */
+const publicMeta = (m: Meta, writingBefore: Iterable<BlockKind> = []) => {
   const nested = m.blocks?.find((b) => b.kind === "chapters")?.chapters;
   const chapters = m.chapters?.length ? m.chapters : nested;
   const blocks = m.blocks?.filter((b) => b.kind !== "chapters");
-  const gen = [...(generating.get(m.id) ?? [])];
+  const gen = [...new Set([...writingBefore, ...(generating.get(m.id) ?? [])])];
   const errors = blockErrorMap(m.id);
   return {
     ...m,
@@ -936,7 +937,7 @@ async function clipMetas(keep: (m: Meta) => boolean): Promise<Meta[]> {
 clipsApp.get("/", async (c) => {
   const user = c.get("user");
   const metas = await clipMetas((m) => m.owner === user.username || (user.role === "admin" && !m.owner));
-  return c.json(metas.map(publicMeta));
+  return c.json(metas.map((m) => publicMeta(m)));
 });
 
 // GET /api/clips/f/:token[?f=<a folder inside>] → SharedFolder: a shared folder of Video Notes, no account needed (its
@@ -1054,9 +1055,12 @@ clipsApp.post("/", async (c) => {
 });
 
 clipsApp.get("/:id", async (c) => {
+  // a section is saved before it leaves `generating`: one that finishes while the note is read from disk may be missing from
+  // that read, so it is still reported as being written (the next read has it), never as neither
+  const writing = [...(generating.get(c.req.param("id")) ?? [])];
   const meta = await publishedMeta(c.req.param("id"));
   if (!meta) return c.json({ error: "Not found" }, 404);
-  return c.json(publicMeta(meta), 200, {
+  return c.json(publicMeta(meta, writing), 200, {
     "Cache-Control": "no-store",
   });
 });
