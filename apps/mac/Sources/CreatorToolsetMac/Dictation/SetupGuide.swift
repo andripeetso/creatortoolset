@@ -27,7 +27,7 @@ struct SetupFacts: Equatable {
     /// 0...1 while the model downloads.
     var progress: Double?
 
-    var canStart: Bool { microphone && accessibility }
+    var canStart: Bool { microphone && accessibility && !languages.isEmpty }
 
     /// The page's one line for the talk key.
     static func line(for talk: KeyBinding?) -> String {
@@ -287,6 +287,8 @@ final class SetupGuide: ObservableObject {
     private var languages: [String] = []
     /// What dictation listens for with no ticks (the server's Voice languages, else the Mac's).
     private var defaults: [String] = []
+    /// A language was ticked or unticked since the page opened: the server's answer doesn't replace the ticks.
+    private var touched = false
     private var tick: Timer?
 
     static var isOpen: Bool { window?.isVisible == true }
@@ -327,8 +329,7 @@ final class SetupGuide: ObservableObject {
             speech: engine ? "Deepgram or OpenAI (your key)" : server ? "Your server" : "This Mac · \(m.displayName)",
             leavesMac: server || engine,
             modelSize: modelSize(m.sizeMB),
-            // with a server, a missing model shows only while one downloads (chosen in the Speech list)
-            modelHere: engine || d.modelOnDisk || (server && d.download == nil),
+            modelHere: engine || d.modelOnDisk,
             progress: d.download?.id == m.id ? d.download?.progress : nil)
     }
 
@@ -337,6 +338,7 @@ final class SetupGuide: ObservableObject {
         switch action {
         case .pickTalk: d.pick(.talk)
         case .language(let code):
+            touched = true
             if let at = languages.firstIndex(of: code) { languages.remove(at: at) } else { languages.append(code) }
             d.setLanguages(languages, defaults: defaults)
         case .allowMicrophone: d.allowMicrophone()
@@ -367,9 +369,14 @@ final class SetupGuide: ObservableObject {
                 MainActor.assumeIsolated { self?.refresh() }
             }
         }
+        // the Mac's languages at once, then the server's Voice languages when it answers
+        touched = false
+        defaults = SpokenLanguage.preferredCodes().filter(SpokenLanguage.whisperLanguages.contains)
+        languages = Dictation.shared.prefs.languages ?? defaults
+        refresh()
         Task {
             defaults = await Dictation.shared.defaultLanguages()
-            languages = Dictation.shared.prefs.languages ?? defaults
+            if !touched { languages = Dictation.shared.prefs.languages ?? defaults }
             refresh()
         }
     }

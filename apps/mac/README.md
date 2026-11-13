@@ -476,8 +476,8 @@ ML compiles it, then about 2 s).
   gone through once (Get Started, or closed); Settings' Set up opens it any time. One page: the talk key, the languages
   (the server's Voice languages, else the Mac's, until ticked), Microphone and Accessibility with their own Allow,
   where speech turns into text (this Mac's model with its download, or your speech server), and Get Started once both
-  permissions are given. Opening it starts loading the model, or downloading it when it is not here and no speech
-  server is set. Nothing opens it by itself at launch. Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
+  permissions are given. Opening it starts loading the model, or downloading it when it is not here (with a speech
+  server it is what dictation falls back on). Nothing opens it by itself at launch. Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
   Settings pane, and the download's progress. Before Accessibility no key tap can exist, so the keys are Carbon
   hotkeys and the hold key is read from the modifier state ten times a second (a hold of 1 s with no other key counts
   as the first press). Switching dictation off stops a download in progress.

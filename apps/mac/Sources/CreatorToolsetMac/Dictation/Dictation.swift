@@ -91,7 +91,7 @@ struct DictationPrefs: Equatable {
     var languages: [String]?
 
     static let keys = (on: "dictation.on", engine: "dictation.engine", model: "dictation.model", keep: "dictation.keep",
-                       sounds: "dictation.sounds", imported: "dictation.imported", used: "dictation.used",
+                       sounds: "dictation.sounds", imported: "dictation.imported",
                        guided: "dictation.guided", server: "dictation.server", languages: "dictation.languages",
                        importedServer: "dictation.importedServer")
 
@@ -198,7 +198,10 @@ func firstHoldCounts(heldFor: TimeInterval, secondsSinceKeyDown: TimeInterval) -
 @MainActor
 final class Dictation: ObservableObject {
     static let shared = Dictation()
-    nonisolated static let recordings = DictationRecordings(directory: DictationPaths.recordings)
+    /// Under tests a folder of their own, so nothing a test does prunes the person's History.
+    nonisolated static let recordings = DictationRecordings(directory: AppLog.underTests
+        ? FileManager.default.temporaryDirectory.appendingPathComponent("creator-toolset-tests-recordings", isDirectory: true)
+        : DictationPaths.recordings)
 
     enum Phase: Equatable {
         case off
@@ -616,7 +619,7 @@ final class Dictation: ObservableObject {
 
     /// The setup page's Languages: the ticks, or nil to follow `defaults` (what it showed before any tick).
     func setLanguages(_ codes: [String], defaults: [String]) {
-        update { $0.languages = Set(codes) == Set(defaults) ? nil : codes }
+        update { $0.languages = codes.isEmpty || Set(codes) == Set(defaults) ? nil : codes }
     }
 
     /// The server's Voice languages when it has them, else the Mac's: what dictation listens for with no ticks.
@@ -654,11 +657,11 @@ final class Dictation: ObservableObject {
         SetupGuide.show()
     }
 
-    /// The setup page opened: the model starts loading, or downloading when it isn't here and no speech server is set,
-    /// so it is ready by the time the page is done.
+    /// The setup page opened: the model starts loading, or downloading when it isn't here, so it is ready by the time
+    /// the page is done (with a speech server, it is what dictation falls back on).
     func prepareModel() {
         guard prefs.engine == .thisMac else { return }
-        if modelOnDisk { warm() } else if speechServer == nil { fetch(model) }
+        if modelOnDisk { warm() } else { fetch(model) }
     }
 
     /// The guide's Allow for the microphone: the system's question the first time, then its Settings pane.
@@ -685,10 +688,6 @@ final class Dictation: ObservableObject {
     /// Sets one action's key; the caller checked it (DictationKeys.problem).
     func setKey(_ action: DictationAction, _ binding: KeyBinding?) {
         update { $0.keys[action] = binding }
-    }
-
-    func setEngine(_ engine: DictationEngine) {
-        update { $0.engine = engine }
     }
 
     /// Settings' key button: the picker for one action, refusing a key another action or the recording shortcut has.
@@ -902,9 +901,6 @@ enum DictationSetupError: LocalizedError {
 private final class PhaseObserver: DictationObserver {
     func dictationStarted() { Dictation.shared.sync() }
     func dictationTranscribing() { Dictation.shared.sync() }
-    func dictationFinished(_ result: DictationResult) {
-        UserDefaults.standard.set(true, forKey: DictationPrefs.keys.used)
-        Dictation.shared.sync()
-    }
+    func dictationFinished(_ result: DictationResult) { Dictation.shared.sync() }
     func dictationFailed(_ error: Error) { Dictation.shared.sync() }
 }
