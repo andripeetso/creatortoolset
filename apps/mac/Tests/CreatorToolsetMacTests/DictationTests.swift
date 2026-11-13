@@ -625,20 +625,3 @@ final class DictationBridgeStateTests: XCTestCase {
         }
     }
 }
-
-final class DictationOfferTests: XCTestCase {
-    func testShowsOnceToSomeoneNeverSetUpWhenCalm() {
-        XCTAssertEqual(dictationOffer(offered: false, guided: false, dictationOn: true, pageCalm: true, busy: false), .show)
-    }
-
-    func testNeverAgainOnceOfferedSetUpOrOff() {
-        XCTAssertEqual(dictationOffer(offered: true, guided: false, dictationOn: true, pageCalm: true, busy: false), .never)
-        XCTAssertEqual(dictationOffer(offered: false, guided: true, dictationOn: true, pageCalm: true, busy: false), .never)
-        XCTAssertEqual(dictationOffer(offered: false, guided: false, dictationOn: false, pageCalm: true, busy: false), .never)
-    }
-
-    func testWaitsForTheCalmPageAndNothingInFront() {
-        XCTAssertEqual(dictationOffer(offered: false, guided: false, dictationOn: true, pageCalm: false, busy: false), .wait)
-        XCTAssertEqual(dictationOffer(offered: false, guided: false, dictationOn: true, pageCalm: true, busy: true), .wait)
-    }
-}

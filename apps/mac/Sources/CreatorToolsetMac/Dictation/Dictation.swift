@@ -324,7 +324,9 @@ final class Dictation: ObservableObject {
             prefs.keys = .first(hadDictation: before, keyboardHasF13: before || DictationKeys.keyboardHasF13())
             prefs.save()
         }
-        if !d.bool(forKey: DictationPrefs.keys.imported) {
+        // a copy beside the app (the first-run copy) starts as a new person's would: nothing taken from the earlier app
+        let takesOver = AppIdentity.copy() == nil
+        if takesOver, !d.bool(forKey: DictationPrefs.keys.imported) {
             d.set(true, forKey: DictationPrefs.keys.imported)
             let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/parrot/settings.json")
             let legacy = CFPreferencesCopyAppValue("pushToTalkHotkey" as CFString, "parrot" as CFString) as? String
@@ -335,7 +337,7 @@ final class Dictation: ObservableObject {
                 DictationLog.info("took over the earlier dictation app's settings")
             }
         }
-        if !d.bool(forKey: DictationPrefs.keys.importedServer) {
+        if takesOver, !d.bool(forKey: DictationPrefs.keys.importedServer) {
             d.set(true, forKey: DictationPrefs.keys.importedServer)
             let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/parrot/settings.json")
             if prefs.server.isEmpty, let server = DictationPrefs.earlierServer(settings: try? Data(contentsOf: file)) {
@@ -881,7 +883,7 @@ final class Dictation: ObservableObject {
         switch what {
         case "on": update { $0.on = value == "1" }
         case "pick": if let action = DictationAction(rawValue: value) { pick(action) }
-        case "guide": SetupGuide.show()
+        case "guide": SetupGuide.showFromPage()
         case "model": if ModelRegistry.find(value) != nil { update { $0.model = value } }
         case "engine": if let e = DictationEngine(rawValue: value) { update { $0.engine = e } }
         case "download": if let m = ModelRegistry.find(value) { fetch(m) }

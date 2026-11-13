@@ -35,7 +35,6 @@ import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import { primeIntroSound } from "@/lib/intro-sound";
-import { postToApp } from "@/lib/mac-record";
 import { isPhoneHub } from "@/lib/mobile";
 import {
   MAKE_NAMES,
@@ -44,7 +43,6 @@ import {
   firstProjectName,
   markIntroSeen,
   introPlays,
-  pageCalm,
   introSeen,
   rememberLater,
   setupFinished,
@@ -58,7 +56,6 @@ import {
   toolsWithJob,
   useSetup,
   useSetupLive,
-  useIntro,
   useSetupShown,
   useWorkPrefs,
   useWorkTalk,
@@ -158,15 +155,6 @@ export function SetupDialog() {
     return () => window.clearTimeout(t);
   }, [note]);
   useSetupLive(open);
-  // the Mac app offers dictation's setup once, as a sheet, after this has held for 3 s: Done hands over to the welcome
-  // in the same press, and the assistant opens when the welcome ends
-  const introOn = useIntro((s) => s.on);
-  const calm = pageCalm({ loaded: real && !!view && !!prefs && loaded, open, intro: introOn });
-  useEffect(() => {
-    if (!calm) return void postToApp("thismac-page:busy");
-    const t = window.setTimeout(() => postToApp("thismac-page:calm"), 3000);
-    return () => window.clearTimeout(t);
-  }, [calm]);
   // the person's Creator Toolset account, asked of the Mac app only while setup is up; once a sign-in was offered the
   // screen stays the path's last one, so signing in on it does not take it away from under her
   const account = useMacAccount({ on: open, first: "offered" });

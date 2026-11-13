@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, jobsFor, MAKE_NAMES, markIntroSeen, pageCalm, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
@@ -111,15 +111,6 @@ describe("Home's welcome animation", () => {
     endIntro(); // Skip pressed as it ends
     expect(useIntro.getState().on).toBe(false);
     expect(after).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("the Mac app's one-time offer waits for a calm page", () => {
-  it("is calm once loaded, with setup and the welcome off screen", () => {
-    expect(pageCalm({ loaded: true, open: false, intro: false })).toBe(true);
-    expect(pageCalm({ loaded: false, open: false, intro: false })).toBe(false); // setup may still open by itself
-    expect(pageCalm({ loaded: true, open: true, intro: false })).toBe(false);
-    expect(pageCalm({ loaded: true, open: false, intro: true })).toBe(false);
   });
 });
 
