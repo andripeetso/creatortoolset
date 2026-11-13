@@ -23,8 +23,9 @@ export interface TimelineItem {
   tilt?: number;
   /** V1: the grade it's rendered with */
   grade?: Grade;
-  /** an overlay a plug-in can play (its clip id) and where in it this item starts, in seconds */
+  /** an overlay a plug-in can play (its clip id) */
   clip?: number;
+  /** where in its media (`src`, or `clip`) this item starts, in seconds: what plays it from the original */
   ins?: number;
   /** record frames of its media before its first frame and after its last (none = no end known):
    *  how far an edge can be pulled out or the clip slipped */
@@ -401,3 +402,79 @@ export function splitView(view: TimelineView, edits: ItemEdit[]): TimelineView {
   return { ...cut, tracks };
 }
 
+// ---- the edit as it plays from its originals --------------------------------
+// The preview above plays the old cut with skips and holds. Played from the originals, the voice (A1) runs on its own
+// clock, the edited timeline: the render's frames with every hold put in and every skip taken out. A clip's voice plays
+// from its own recording there, handles included (a longer clip plays the words the cut left out).
+
+type Spans = Pick<PlayPlan, "skips" | "holds">;
+const ms = (s: number) => Math.round(s * 1000) / 1000;
+
+/** A frame of the cut as a frame of the edited timeline: the holds it is past added, the skipped frames before it taken out. */
+export function editedFrame(plan: Spans, r: number): number {
+  let e = r;
+  for (const h of plan.holds) if (r >= h.at + 1) e += h.frames;
+  for (const [a, b] of plan.skips) e -= Math.max(0, Math.min(b, r) - a);
+  return e;
+}
+
+/** [a, b) without the skips, cut after each held frame (the timeline goes on there while the picture waits). */
+function playedSpans(a: number, b: number, plan: Spans): [number, number][] {
+  return minus([a, b], plan.skips).flatMap(([x, y]) => {
+    const cuts = plan.holds.map((h) => h.at + 1).filter((c) => c > x && c < y).sort((p, q) => p - q);
+    const edges = [x, ...cuts, y];
+    return edges.slice(0, -1).map((c, i): [number, number] => [c, edges[i + 1]]);
+  });
+}
+
+/** One stretch of a recording on the edited timeline: from frame `at` for `frames`, `offset` seconds into `src`. */
+export type SoundPiece = { src: string; at: number; frames: number; offset: number };
+
+/** Pieces that run on from each other, in the timeline and in the recording, as one. */
+function joined(list: SoundPiece[], fps: number): SoundPiece[] {
+  const out: SoundPiece[] = [];
+  for (const p of list) {
+    const q = out.at(-1);
+    if (q && q.src === p.src && q.at + q.frames === p.at && Math.abs(q.offset + q.frames / fps - p.offset) < 1e-6) q.frames += p.frames;
+    else out.push({ ...p });
+  }
+  return out;
+}
+
+/** The cut's own sound (a stem the length of the render) on the edited timeline: what plays between skips and holds. */
+export function renderPieces(plan: Spans, frames: number, fps: number, src = "render"): SoundPiece[] {
+  return joined(playedSpans(0, frames, plan).map(([a, b]) => ({ src, at: editedFrame(plan, a), frames: b - a, offset: ms(a / fps) })), fps);
+}
+
+/**
+ * Each voice clip (A1, with its recording `src` and in point `ins`) on the edited timeline, from its recording: what the
+ * picture skips is cut from it too, an edge pulled out plays the recording's words past it (into a hold, when the shot
+ * was made longer with it), a move puts it that much later. `view` is the split view (splitView), so a cut clip's
+ * pieces are clips of their own.
+ */
+export function voicePieces(view: TimelineView, edits: ItemEdit[], plan: Spans): SoundPiece[] {
+  const fps = view.fps;
+  const out: SoundPiece[] = [];
+  for (const it of view.tracks.find((t) => t.id === "A1")?.items ?? []) {
+    const e = edits.find((x) => x.key === it.key);
+    if (!it.src || it.ins === undefined || e?.remove) continue;
+    const [move, head, tail, slip] = [e?.move ?? 0, e?.head ?? 0, e?.tail ?? 0, e?.slip ?? 0];
+    const src = it.src;
+    const sec = (r: number) => ms(it.ins! + (r - it.rec + slip) / fps);
+    const pieces: SoundPiece[] = playedSpans(it.rec + Math.max(0, -head), it.rec + it.len - Math.max(0, -tail), plan)
+      .map(([a, b]) => ({ src, at: editedFrame(plan, a) + move, frames: b - a, offset: sec(a) }));
+    if (!pieces.length) continue;
+    if (head > 0) pieces.unshift({ src, at: pieces[0].at - head, frames: head, offset: ms(pieces[0].offset - head / fps) });
+    if (tail > 0) {
+      const p = pieces.at(-1)!;
+      pieces.push({ src, at: p.at + p.frames, frames: tail, offset: ms(p.offset + p.frames / fps) });
+    }
+    // nothing before the recording's first second (an edge pulled out further than it has)
+    const inside = pieces.map((p) => {
+      const cut = p.offset < 0 ? Math.round(-p.offset * fps) : 0;
+      return cut ? { ...p, at: p.at + cut, frames: p.frames - cut, offset: 0 } : p;
+    }).filter((p) => p.frames > 0);
+    out.push(...joined(inside, fps));
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
