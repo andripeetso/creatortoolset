@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -199,5 +199,18 @@ describe("what a box drawn across the canvas picks", () => {
   });
   it("a box on nothing picks nothing", () => {
     expect(boxPick(frames, box(0, 1500, 300, 300), { home: -1 })).toBeNull();
+  });
+});
+
+describe("a group's own name", () => {
+  it("is the name its maker gave it, as words; a group made by hand has none", () => {
+    expect(groupName("palm-trees")).toBe("Palm trees");
+    expect(groupName("sun")).toBe("Sun");
+    expect(groupName("badge-2")).toBe("Badge 2");
+    expect(groupName("g1")).toBeNull();
+    expect(groupName("g27")).toBeNull();
+    expect(groupName(undefined)).toBeNull();
+    // a name that only starts like a hand-made one is a name
+    expect(groupName("glow")).toBe("Glow");
   });
 });

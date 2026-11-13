@@ -236,6 +236,12 @@ export function withGroups(layers: readonly Layer[], ids: readonly string[]): st
 }
 
 /** A group id these layers do not use yet (nor any in `also`). */
+/**
+ * A group's own name, as the layers list and the panel say it: the name its maker gave it ("palm-trees" reads "Palm
+ * trees"). A group made by hand (⌘G: g1, g2 …) has none.
+ */
+export const groupName = (id: string | undefined): string | null => (!id || /^g\d+$/.test(id) ? null : id.replace(/-+/g, " ").replace(/^./, (c) => c.toUpperCase()));
+
 export function freshGroup(layers: readonly Layer[], also: readonly string[] = []): string {
   const taken = new Set([...layers.map((l) => l.group), ...also]);
   for (let n = 1; ; n++) if (!taken.has(`g${n}`)) return `g${n}`;
