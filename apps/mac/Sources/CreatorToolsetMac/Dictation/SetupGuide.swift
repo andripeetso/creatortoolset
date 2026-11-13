@@ -1,240 +1,402 @@
-// The dictation setup guide: shown once, on the first press of the talk key, and again from Settings ("Set up
-// dictation"). Four steps, each skippable: the talk key, the two permissions, where speech turns into text, and a box to
-// try it in.
+// The dictation setup page: one page, opened by the first press of the talk key (or the menu bar's Dictate) before
+// dictation was set up, and by Settings' Set up. The talk key, the languages, both permissions with their own Allow,
+// where speech turns into text, and Get Started. Opening it starts loading (or downloading) the model, so it is ready
+// by the time the page is done. Nothing opens it by itself at launch.
 import AppKit
 import SwiftUI
 
-/// What the guide shows, as plain values, so the steps are drawn in a test (SetupGuideShotsTests).
-struct GuideFacts: Equatable {
+/// What the page shows, as plain values, so it is drawn in a test (SetupGuideShotsTests).
+struct SetupFacts: Equatable {
     var talkKey: String?
-    var talkHint: String
+    /// "Press F13, speak, press again." (`line(for:)`).
+    var line: String
     var picking = false
+    /// Ticked languages as codes, in the order ticked.
+    var languages: [String] = []
     var microphone = false
+    /// The microphone was refused once: only System Settings can change it now.
+    var microphoneDenied = false
     var accessibility = false
-    /// The server has an engine the person has a key for, and dictation can use it (DictationEngine.serverWired).
-    var serverOffered = false
-    var engine = DictationEngine.thisMac
-    var modelName: String
+    /// Where speech turns into text: "This Mac · Whisper Large v3 Turbo", "Your server".
+    var speech: String
+    /// A speech server or the server's engine writes the words: they leave this Mac.
+    var leavesMac = false
     var modelSize: String
+    /// The Mac's model is here (or not needed): nothing to show beside Speech.
     var modelHere = false
     /// 0...1 while the model downloads.
     var progress: Double?
 
-    /// What still keeps "Try it" from working, in one line; nil when nothing does.
-    var missing: String? {
-        if !microphone || !accessibility { return "Allow \(!microphone ? "the microphone" : "Accessibility") first (step 2)." }
-        if engine == .thisMac || !serverOffered, !modelHere {
-            return progress.map { "The speech model is downloading · \(Int($0 * 100))%" } ?? "Download the speech model first (step 3)."
+    var canStart: Bool { microphone && accessibility }
+
+    /// The page's one line for the talk key.
+    static func line(for talk: KeyBinding?) -> String {
+        switch talk {
+        case .key(let s)?: return "Press \(s.display), speak, press again."
+        case .hold(let k)?: return "Hold \(k.shortName), speak, and let go."
+        case nil: return "Choose a talk key, then speak."
         }
-        return nil
+    }
+
+    /// The Languages pill: "English", "English, Estonian", "English +2".
+    static func summary(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return "None"
+        case 1, 2: return names.joined(separator: ", ")
+        default: return "\(names[0]) +\(names.count - 1)"
+        }
     }
 }
 
-enum GuideAction {
-    case pickTalk, allowMicrophone, allowAccessibility, engine(DictationEngine), download, close
+enum SetupAction: Equatable {
+    case pickTalk, language(String), allowMicrophone, allowAccessibility, model(String), getStarted
 }
 
-struct SetupGuideView: View {
-    static let steps = 4
-    @Binding var step: Int
-    let facts: GuideFacts
-    let act: (GuideAction) -> Void
-    @State private var tried = ""
+struct SetupPageView: View {
+    let facts: SetupFacts
+    var models: [TranscriptionModel] = ModelRegistry.shared
+    var model = ModelRegistry.standardID
+    let act: (SetupAction) -> Void
+    @State private var showsLanguages = false
+    @State private var showsSpeech = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Step \(step + 1) of \(Self.steps)").font(.caption).foregroundStyle(.secondary)
-            content.frame(maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 0)
-            HStack {
-                if step < Self.steps - 1 { Button("Skip") { act(.close) } }
-                Spacer()
-                if step > 0 { Button("Back") { step -= 1 } }
-                Button(step == Self.steps - 1 ? "Done" : "Next") {
-                    if step == Self.steps - 1 { act(.close) } else { step += 1 }
+        VStack(spacing: 0) {
+            Image(systemName: "waveform")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .windowBackgroundColor))
+                .frame(width: 64, height: 64)
+                .background(Circle().fill(Color.primary))
+            Text("Dictation")
+                .font(.system(size: 24, weight: .semibold))
+                .padding(.top, 16)
+            Text(facts.line)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+
+            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 12) {
+                GridRow {
+                    label("Talk key")
+                    Button { act(.pickTalk) } label: { PillLabel(title: facts.picking ? "Press a key…" : facts.talkKey ?? "Choose") }
+                        .buttonStyle(.plain)
+                        .disabled(facts.picking)
                 }
+                GridRow {
+                    label("Languages")
+                    Button { showsLanguages.toggle() } label: {
+                        PillLabel(title: SetupFacts.summary(facts.languages.map { SpokenLanguage.displayName($0) }), chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showsLanguages, arrowEdge: .bottom) {
+                        LanguageChecklist(ticked: facts.languages) { act(.language($0)) }
+                    }
+                }
+                GridRow {
+                    label("Microphone")
+                    permission(granted: facts.microphone, action: facts.microphoneDenied ? "Open Settings" : "Allow") { act(.allowMicrophone) }
+                }
+                .padding(.top, 8)
+                GridRow {
+                    label("Accessibility")
+                    permission(granted: facts.accessibility, action: "Allow") { act(.allowAccessibility) }
+                }
+                GridRow(alignment: .top) {
+                    label("Speech").padding(.top, 6)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button { showsSpeech.toggle() } label: { PillLabel(title: facts.speech, chevron: true) }
+                            .buttonStyle(.plain)
+                            .popover(isPresented: $showsSpeech, arrowEdge: .bottom) { modelList }
+                        // under the pill, so a long model name and the download fit the page
+                        if !facts.modelHere {
+                            HStack(spacing: 8) {
+                                if let progress = facts.progress {
+                                    ProgressView(value: progress).frame(width: 120)
+                                    Text("Downloading · \(Int(progress * 100))%").monospacedDigit()
+                                } else {
+                                    Text("Not downloaded · \(facts.modelSize)")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 14)
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .fixedSize()
+            .padding(.top, 32)
+
+            Button("Get Started") { act(.getStarted) }
+                .buttonStyle(PillButtonStyle(primary: true))
+                .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
+                .disabled(!facts.canStart)
+                .padding(.top, 32)
+
+            if !facts.leavesMac {
+                Label("Audio and text never leave your Mac.", systemImage: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 14)
             }
         }
-        .padding(20)
-        .frame(width: 440, height: 300)
+        .padding(.horizontal, 40)
+        .padding(.top, 44)
+        .padding(.bottom, 28)
+        .frame(width: 420)
     }
 
-    @ViewBuilder private var content: some View {
-        switch step {
-        case 0:
-            heading("Your talk key", "Press it to start talking and again to stop. Or hold a key like fn while you talk.")
-            HStack(spacing: 12) {
-                Text(facts.picking ? "Press a key…" : facts.talkKey ?? "None")
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12)))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.3)))
-                Button("Change…") { act(.pickTalk) }.disabled(facts.picking)
-            }
-        case 1:
-            heading("Allow two things", "The microphone hears you. Accessibility lets your key work in every app and puts the words where your cursor is.")
-            VStack(spacing: 10) {
-                permission("Microphone", granted: facts.microphone) { act(.allowMicrophone) }
-                permission("Accessibility", granted: facts.accessibility) { act(.allowAccessibility) }
-            }
-        case 2:
-            heading("Where speech turns into text", facts.serverOffered ? "Pick one. You can change it in Settings." : "On this Mac: private, and it works offline.")
-            if facts.serverOffered {
-                Picker("", selection: Binding(get: { facts.engine }, set: { act(.engine($0)) })) {
-                    Text("This Mac").tag(DictationEngine.thisMac)
-                    Text("Deepgram or OpenAI (your key)").tag(DictationEngine.server)
+    private func label(_ text: String) -> some View {
+        Text(text).foregroundStyle(.secondary)
+    }
+
+    /// This Mac's models, the chosen one ticked. With a speech server it is what dictation falls back on.
+    private var modelList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if facts.leavesMac { Text("When your server doesn't answer:").font(.caption).foregroundStyle(.secondary) }
+            ForEach(models, id: \.id) { m in
+                Button {
+                    showsSpeech = false
+                    act(.model(m.id))
+                } label: {
+                    HStack {
+                        Image(systemName: "checkmark").opacity(m.id == model ? 1 : 0)
+                        Text(m.displayName)
+                        Spacer()
+                        Text(modelSize(m.sizeMB)).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-            }
-            if facts.engine == .thisMac || !facts.serverOffered {
-                model
-            } else {
-                Text("Uses your speech key on the server. Nothing to download.").foregroundStyle(.secondary)
-            }
-        default:
-            heading("Try it", facts.talkKey == nil ? "Click in the box, then choose Dictate in the menu bar."
-                : "Click in the box, then \(facts.talkHint.prefix(1).lowercased() + facts.talkHint.dropFirst()).")
-            TextField("Your words appear here", text: $tried, axis: .vertical)
-                .lineLimit(3...5)
-                .textFieldStyle(.roundedBorder)
-            if let missing = facts.missing {
-                Text(missing).font(.callout).foregroundStyle(.orange)
+                .buttonStyle(.plain)
             }
         }
+        .padding(14)
+        .frame(width: 300)
     }
 
-    private var model: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(facts.modelName)
-                Text(facts.modelSize).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if facts.modelHere {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("Downloaded")
-            } else if let progress = facts.progress {
-                ProgressView(value: progress).frame(width: 120)
-                Text("\(Int(progress * 100))%").monospacedDigit().foregroundStyle(.secondary)
-            } else {
-                Button("Download") { act(.download) }
-            }
+    @ViewBuilder
+    private func permission(granted: Bool, action: String, allow: @escaping () -> Void) -> some View {
+        if granted {
+            Label("Allowed", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.secondary)
+                .symbolRenderingMode(.multicolor)
+                .padding(.vertical, 6)
+        } else {
+            // filled, so what is still missing reads as the next thing to do
+            Button(action, action: allow).buttonStyle(PillButtonStyle(primary: true))
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
-    }
-
-    private func heading(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.title2.weight(.semibold))
-            Text(text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func permission(_ name: String, granted: Bool, allow: @escaping () -> Void) -> some View {
-        HStack {
-            Text(name)
-            Spacer()
-            if granted {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("Allowed")
-            } else {
-                Button("Allow", action: allow)
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 }
 
-/// The guide's window and what it reads from dictation, refreshed while it is open (a permission given in System
-/// Settings ticks without a click).
+/// A capsule with a light fill, with a chevron when it opens a list.
+struct PillLabel: View {
+    let title: String
+    var chevron = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title).font(.system(size: 13, weight: .medium))
+            if chevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .contentShape(Capsule())
+    }
+}
+
+/// A button drawn as a pill; `primary` is filled in the text colour, for the one thing to do next.
+struct PillButtonStyle: ButtonStyle {
+    var primary = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.controlSize) private var controlSize
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: primary ? .semibold : .medium))
+            .foregroundStyle(primary ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+            .padding(.horizontal, controlSize == .large ? 22 : 14)
+            .padding(.vertical, controlSize == .large ? 9 : 6)
+            .background(Capsule().fill(Color.primary.opacity(primary ? (configuration.isPressed ? 0.8 : 1) : (configuration.isPressed ? 0.14 : 0.08))))
+            .contentShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.35)
+    }
+}
+
+/// Checkboxes for the languages the person speaks, in a popover so ticks stay open between clicks: the Mac's
+/// languages, the common ones, then More Languages.
+struct LanguageChecklist: View {
+    let ticked: [String]
+    let toggle: (String) -> Void
+    @State private var showsMore = false
+
+    /// Languages many people dictate in, offered right after the Mac's own.
+    static let common = ["en", "es", "fr", "de", "it", "pt", "zh", "ja", "ko", "hi", "ar"]
+
+    /// The Mac's languages (and any ticked) first, the common ones next, every other Whisper language under More.
+    static func menu(preferred: [String], ticked: [String]) -> (mac: [String], common: [String], more: [String]) {
+        let known = SpokenLanguage.whisperLanguages
+        var seen = Set<String>()
+        let mac = (preferred + ticked).filter { known.contains($0) && seen.insert($0).inserted }
+        let common = Self.common.filter { known.contains($0) && !seen.contains($0) }
+        let more = known.subtracting(mac + common).sorted {
+            SpokenLanguage.displayName($0).localizedStandardCompare(SpokenLanguage.displayName($1)) == .orderedAscending
+        }
+        return (mac, common, more)
+    }
+
+    var body: some View {
+        let menu = Self.menu(preferred: SpokenLanguage.preferredCodes(), ticked: ticked)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                rows(menu.mac)
+                Divider().padding(.vertical, 2)
+                rows(menu.common)
+                Divider().padding(.vertical, 2)
+                DisclosureGroup("More Languages", isExpanded: $showsMore) {
+                    VStack(alignment: .leading, spacing: 6) { rows(menu.more) }.padding(.top, 6)
+                }
+            }
+            .padding(14)
+        }
+        .frame(width: 240, height: 340)
+    }
+
+    private func rows(_ codes: [String]) -> some View {
+        ForEach(codes, id: \.self) { code in
+            Toggle(SpokenLanguage.displayName(code), isOn: Binding(get: { ticked.contains(code) }, set: { _ in toggle(code) }))
+                .toggleStyle(.checkbox)
+        }
+    }
+}
+
+/// The page's window and what it reads from dictation, refreshed while it is open (a permission given in System
+/// Settings ticks without a click). One window, reused.
 @MainActor
 final class SetupGuide: ObservableObject {
     private static var window: NSWindow?
     private static let guide = SetupGuide()
+    private static let delegate = Delegate()
 
-    @Published var step = 0
-    @Published private(set) var facts = SetupGuide.read(serverOffered: false)
-    private var serverOffered = false
+    @Published private(set) var facts = SetupGuide.read(languages: [])
+    private var languages: [String] = []
+    /// What dictation listens for with no ticks (the server's Voice languages, else the Mac's).
+    private var defaults: [String] = []
     private var tick: Timer?
 
     static var isOpen: Bool { window?.isVisible == true }
 
     static func show() {
-        UserDefaults.standard.set(true, forKey: DictationPrefs.keys.guided)
         let g = guide
         if window == nil {
-            let host = NSHostingController(rootView: SetupGuideHost(guide: g))
-            let w = NSWindow(contentViewController: host)
-            w.title = "Set Up Dictation"
-            w.styleMask.remove(.resizable)
+            let host = NSHostingView(rootView: SetupGuideHost(guide: g))
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize),
+                             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            w.contentView = host
+            w.title = "Dictation"
+            w.titleVisibility = .hidden
+            w.titlebarAppearsTransparent = true
+            w.isMovableByWindowBackground = true
             w.isReleasedWhenClosed = false
-            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { _ in
-                MainActor.assumeIsolated { g.stopWatching() }
-            }
+            w.delegate = delegate
+            w.center()
             window = w
         }
-        if !isOpen { g.step = 0; window?.center() }
-        g.startWatching()
+        g.start()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.orderFrontRegardless()  // a shortcut can't activate an accessory app on macOS 14+
     }
 
-    static func read(serverOffered: Bool) -> GuideFacts {
+    static func read(languages: [String]) -> SetupFacts {
         let d = Dictation.shared
         let m = d.model
-        return GuideFacts(
-            talkKey: d.talkKeyText, talkHint: d.talkHint, picking: d.picking == .talk,
-            microphone: MicrophoneAccess.status == .authorized, accessibility: AXIsProcessTrusted(),
-            serverOffered: serverOffered, engine: d.prefs.engine,
-            modelName: m.displayName, modelSize: modelSize(m.sizeMB), modelHere: d.modelOnDisk,
+        let server = d.prefs.engine == .thisMac && d.speechServer != nil
+        let engine = d.prefs.engine == .server
+        return SetupFacts(
+            talkKey: d.talkKeyText, line: SetupFacts.line(for: d.prefs.keys.talk), picking: d.picking == .talk,
+            languages: languages,
+            microphone: MicrophoneAccess.status == .authorized,
+            microphoneDenied: [.denied, .restricted].contains(MicrophoneAccess.status),
+            accessibility: AXIsProcessTrusted(),
+            speech: engine ? "Deepgram or OpenAI (your key)" : server ? "Your server" : "This Mac · \(m.displayName)",
+            leavesMac: server || engine,
+            modelSize: modelSize(m.sizeMB),
+            // with a server, a missing model shows only while one downloads (chosen in the Speech list)
+            modelHere: engine || d.modelOnDisk || (server && d.download == nil),
             progress: d.download?.id == m.id ? d.download?.progress : nil)
     }
 
-    func act(_ action: GuideAction) {
+    func act(_ action: SetupAction) {
         let d = Dictation.shared
         switch action {
         case .pickTalk: d.pick(.talk)
+        case .language(let code):
+            if let at = languages.firstIndex(of: code) { languages.remove(at: at) } else { languages.append(code) }
+            d.setLanguages(languages, defaults: defaults)
         case .allowMicrophone: d.allowMicrophone()
         case .allowAccessibility: d.allowAccessibility()
-        case .engine(let e): d.setEngine(e)
-        case .download: d.fetch(d.model)
-        case .close: Self.window?.close()
+        case .model(let id):
+            d.command("model", id)
+            d.prepareModel()
+        case .getStarted:
+            Self.done()
+            Self.window?.close()
         }
         refresh()
     }
 
+    /// Get Started, or the window closed by hand: set up, so later presses use the pill's steps.
+    fileprivate static func done() { UserDefaults.standard.set(true, forKey: DictationPrefs.keys.guided) }
+
     private func refresh() {
-        let new = Self.read(serverOffered: serverOffered)
+        let new = Self.read(languages: languages)
         if new != facts { facts = new }
     }
 
-    private func startWatching() {
+    private func start() {
+        Dictation.shared.prepareModel()
         refresh()
         if tick == nil {
             tick = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refresh() }
             }
         }
-        guard DictationEngine.serverWired, let engines = Dictation.shared.serverEngines else { return }
         Task {
-            serverOffered = !(await engines()).isEmpty
+            defaults = await Dictation.shared.defaultLanguages()
+            languages = Dictation.shared.prefs.languages ?? defaults
             refresh()
         }
     }
 
-    private func stopWatching() {
+    fileprivate func stop() {
         tick?.invalidate()
         tick = nil
         KeyPicker.close()
+    }
+
+    private final class Delegate: NSObject, NSWindowDelegate {
+        /// Asked for the close button and ⌘W only, not for Get Started's `close()`.
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            MainActor.assumeIsolated { SetupGuide.done() }
+            return true
+        }
+
+        func windowWillClose(_ notification: Notification) {
+            MainActor.assumeIsolated { SetupGuide.guide.stop() }
+        }
     }
 }
 
 private struct SetupGuideHost: View {
     @ObservedObject var guide: SetupGuide
+    @ObservedObject private var dictation = Dictation.shared
     var body: some View {
-        SetupGuideView(step: $guide.step, facts: guide.facts) { guide.act($0) }
+        SetupPageView(facts: guide.facts, model: dictation.prefs.model) { guide.act($0) }
     }
 }

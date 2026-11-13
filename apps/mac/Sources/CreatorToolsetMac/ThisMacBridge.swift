@@ -84,19 +84,12 @@ func installInAI(app: String, name: String = "creator-toolset", url: String, key
 
 /// GET /api/voice-prefs' languages, the ones the person speaks (Settings → AI → Voice), for dictation's language
 /// hint. A server without that page answers with an error, and dictation then chooses among the Mac's own languages.
-/// `available`: the engines it can run, for the dictation setup guide's "Your server's engine" (missing on older servers).
-struct VoiceLanguages: Decodable { let languages: [String]; var available: [String]? }
+struct VoiceLanguages: Decodable { let languages: [String] }
 
 extension Shell {
     func voiceLanguages() async -> [String]? {
         guard let reply: VoiceLanguages = try? await client().get("/api/voice-prefs") else { return nil }
         return reply.languages.isEmpty ? nil : reply.languages
-    }
-
-    /// The speech services the person has a key for on the open server (deepgram, openai); none on an older server.
-    func voiceKeyEngines() async -> [String] {
-        let reply: VoiceLanguages? = try? await client().get("/api/voice-prefs")
-        return (reply?.available ?? []).filter { $0 == "deepgram" || $0 == "openai" }
     }
 
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,

@@ -55,7 +55,7 @@ describe("the dictation group", () => {
 
   it("names what the keys do and shows each setting", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />);
-    for (const text of ["Talk", "Hold fn", "F16", ">Choose key</button>", "Transcribe a file", "Set up dictation", "Speech model", "Sounds when it starts and stops", ">Open</button>"]) {
+    for (const text of ["Talk", "Hold fn", "F16", ">Choose key</button>", "Transcribe a file", ">Set up</button>", "Speech model", "Sounds when it starts and stops", ">Open</button>"]) {
       expect(html).toContain(text);
     }
     // a model already on this Mac that this app did not download: neither Download nor Remove
@@ -73,16 +73,24 @@ describe("the dictation group", () => {
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: base({ here: true, removable: true }) })} />)).toContain(">Remove</button>");
   });
 
-  it("says which permission is missing, next to the setup guide", () => {
+  it("says which permission is missing, next to Set up", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility" }) })} />);
     expect(html).toContain("Needs Accessibility");
-    expect(html).toContain(">Set up dictation</button>");
+    expect(html).toContain(">Set up</button>");
   });
 
   it("says in one line why the keys are off while another dictation app is open", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility", paused: "Off while your earlier dictation app is open" }) })} />);
     expect(html).toContain("Off while your earlier dictation app is open");
     expect(html).not.toContain("Needs");
+  });
+
+  it("shows the speech server's address where the app has one, and not with the server's engine", () => {
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />)).not.toContain("Speech server");
+    const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "http://tiny-acrobatics.example:7886/api/transcribe" }) })} />);
+    expect(html).toContain("Speech server");
+    expect(html).toContain('value="http://tiny-acrobatics.example:7886/api/transcribe"');
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "", engine: "server" }) })} />)).not.toContain("Speech server");
   });
 
   it("asks for a key while the app waits for one", () => {

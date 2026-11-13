@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { confirmDialog } from "@/lib/dialogs";
 import { Card, Row, Section, SettingsSelect, Status } from "./ui";
@@ -6,6 +8,24 @@ import { tell, type DictationAction, type ThisMacState } from "./ThisMacSection"
 
 const KEEP = [5, 10, 25, 50, 100];
 const NAMES: Record<DictationAction, string> = { talk: "Talk", history: "History", file: "Transcribe a file", cancel: "Cancel" };
+
+/** The speech server's address, saved on Enter or when the field loses focus; empty for none. */
+function ServerField({ value, save }: { value: string; save: (v: string) => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const done = () => text.trim() !== value && save(text.trim());
+  return (
+    <Input
+      aria-label="Speech server"
+      placeholder="https://…/api/transcribe"
+      className="sm:w-72"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={done}
+      onKeyDown={(e) => e.key === "Enter" && done()}
+    />
+  );
+}
 
 /**
  * Dictation on this Mac (apps/mac Dictation.swift): shown only where the app reports it. The app keeps every value; each
@@ -36,7 +56,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
           status={!d.on ? undefined : d.paused ? d.paused : d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
           control={
             <>
-              {d.on && <Button size="sm" variant="outline" onClick={() => set("guide")}>Set up dictation</Button>}
+              {d.on && <Button size="sm" variant="outline" onClick={() => set("guide")}>Set up</Button>}
               <Switch checked={d.on} aria-label="Dictation" onCheckedChange={(on) => set("on", on ? "1" : "0")} />
             </>
           }
@@ -59,6 +79,14 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                     options={[{ value: "mac", label: "This Mac" }, { value: "server", label: "Deepgram or OpenAI (your key)" }]}
                   />
                 }
+              />
+            )}
+            {d.engine !== "server" && d.server !== undefined && (
+              <Row
+                id="dictation-server"
+                title="Speech server"
+                description="Your own server's address. Tried first; this Mac's model when it doesn't answer."
+                control={<ServerField value={d.server} save={(v) => set("server", v)} />}
               />
             )}
             {d.engine !== "server" && <Row

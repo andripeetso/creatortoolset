@@ -1,9 +1,11 @@
 // Dictation: talk, and the words are pasted where the cursor is. The person's own keys (DictationKeys.swift) talk (tap to
 // start and stop, or hold a modifier), open History, transcribe a file and cancel. On from the first launch, but nothing
-// asks for a permission and nothing downloads until the person first presses the talk key, which opens the setup guide
-// (SetupGuide.swift). Its settings live in the site's Settings → AI → Voice → Dictation (ThisMacBridge.swift answers
+// asks for a permission and nothing downloads until the person first presses the talk key (or the menu bar's Dictate,
+// or Settings' Set up), which opens the setup page (SetupGuide.swift). A model already on this Mac loads at launch, so
+// the keys work at once. Its settings live in the site's Settings → AI → Voice → Dictation (ThisMacBridge.swift answers
 // with `bridgeState`, `command` sets them).
-// Speech is turned into text on this Mac by Whisper through WhisperKit (THIRD_PARTY_NOTICES.md).
+// Speech is turned into text by the person's own speech server when one is set, else (and when it doesn't answer) on
+// this Mac by Whisper through WhisperKit (THIRD_PARTY_NOTICES.md).
 import AppKit
 import AVFoundation
 import Carbon.HIToolbox
@@ -83,10 +85,15 @@ struct DictationPrefs: Equatable {
     /// Recordings kept in History.
     var keep = 10
     var sounds = true
+    /// The person's own speech server, tried before this Mac's model (SpeechServerTranscriber); "" = none.
+    var server = ""
+    /// The languages ticked on the setup page; nil = the server's Voice languages, else the Mac's.
+    var languages: [String]?
 
     static let keys = (on: "dictation.on", engine: "dictation.engine", model: "dictation.model", keep: "dictation.keep",
                        sounds: "dictation.sounds", imported: "dictation.imported", used: "dictation.used",
-                       guided: "dictation.guided")
+                       guided: "dictation.guided", server: "dictation.server", languages: "dictation.languages",
+                       importedServer: "dictation.importedServer")
 
     static func load(_ d: UserDefaults = .standard) -> DictationPrefs {
         var p = DictationPrefs()
@@ -96,6 +103,8 @@ struct DictationPrefs: Equatable {
         if let model = d.string(forKey: keys.model), ModelRegistry.find(model) != nil { p.model = model }
         if let keep = d.object(forKey: keys.keep) as? Int { p.keep = max(1, keep) }
         if let sounds = d.object(forKey: keys.sounds) as? Bool { p.sounds = sounds }
+        if let server = d.string(forKey: keys.server) { p.server = server }
+        p.languages = d.stringArray(forKey: keys.languages)
         return p
     }
 
@@ -106,10 +115,12 @@ struct DictationPrefs: Equatable {
         d.set(model, forKey: Self.keys.model)
         d.set(keep, forKey: Self.keys.keep)
         d.set(sounds, forKey: Self.keys.sounds)
+        d.set(server, forKey: Self.keys.server)
+        if let languages { d.set(languages, forKey: Self.keys.languages) } else { d.removeObject(forKey: Self.keys.languages) }
     }
 
     /// The earlier dictation app's choices on this Mac, taken over once: its keys (F13–F16, with its hold key, if it
-    /// had one, to talk), recordings kept, sounds and model. Its server address never comes over.
+    /// had one, to talk), recordings kept, sounds and model. Its speech server comes over apart (`earlierServer`).
     /// `settings` is its settings.json, `legacyKey` its older `pushToTalkHotkey` default.
     func importing(settings: Data?, legacyKey: String?) -> DictationPrefs {
         var p = self
@@ -125,6 +136,14 @@ struct DictationPrefs: Equatable {
         if let sounds = extras?["sounds"] as? Bool { p.sounds = sounds }
         if let id = model?["id"] as? String, ModelRegistry.find(id) != nil { p.model = id }
         return p
+    }
+
+    /// The earlier app's speech server address (its settings.json `extras.server`), when it is one.
+    static func earlierServer(settings: Data?) -> String? {
+        let json = settings.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        guard let text = (json?["extras"] as? [String: Any])?["server"] as? String,
+              SpeechServerTranscriber.url(text) != nil else { return nil }
+        return text.trimmingCharacters(in: .whitespaces)
     }
 }
 
@@ -224,11 +243,12 @@ final class Dictation: ObservableObject {
 
     /// The earlier dictation app is running (`earlierAppRunning`), kept current from NSWorkspace's launch and quit
     /// notifications. The one check for "another app has dictation's keys".
-    @Published private(set) var earlierAppOpen = false
+    @Published var earlierAppOpen = false
 
     private var runningWatch: NSKeyValueObservation?
 
     private func watchEarlierApp() {
+        guard !AppLog.underTests else { return }
         // menu bar apps (that one is) don't always get launch and quit notifications: the running list does change
         runningWatch = NSWorkspace.shared.observe(\.runningApplications) { _, _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { Dictation.shared.checkEarlierApp() } }
@@ -248,19 +268,18 @@ final class Dictation: ObservableObject {
         earlierAppOpen = open
         DictationLog.info(open ? "earlier dictation app open: keys off" : "earlier dictation app quit: keys on")
         // a recording or a transcription in progress pastes nothing
-        if open { controllerStore?.discard(); sync() }
-        applyKeys()
+        if open { controllerStore?.discard() }
+        // its quit brings everything back, the model's load too
+        apply()
     }
 
-    /// A key picker or the guide's first step is open: no dictation key does anything.
+    /// A key picker is open: no dictation key does anything.
     var keysPaused = false {
         didSet { if keysPaused != oldValue { applyKeys() } }
     }
 
     /// Which action's key picker is open, for Settings' "Press a key…".
     @Published private(set) var picking: DictationAction?
-    /// The server's speech engines (deepgram, openai) the person has a key for. Set by the Shell.
-    var serverEngines: (() async -> [String])?
 
     /// The languages the person speaks (the server's Voice settings), or nil when it has none. Set by the Shell.
     var languages: (() async -> [String]?)?
@@ -312,6 +331,15 @@ final class Dictation: ObservableObject {
                 DictationLog.info("took over the earlier dictation app's settings")
             }
         }
+        if !d.bool(forKey: DictationPrefs.keys.importedServer) {
+            d.set(true, forKey: DictationPrefs.keys.importedServer)
+            let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/parrot/settings.json")
+            if prefs.server.isEmpty, let server = DictationPrefs.earlierServer(settings: try? Data(contentsOf: file)) {
+                prefs.server = server
+                prefs.save()
+                DictationLog.info("took over the earlier dictation app's speech server")
+            }
+        }
         Self.recordings.keep = prefs.keep
         // History and Transcribe a file work from the first F14/F15, before any dictation
         DictationHistory.model.transcribe = { [weak self] url in
@@ -329,7 +357,6 @@ final class Dictation: ObservableObject {
     }
 
     private func apply() {
-        watchEarlierApp()
         let paused = prefs.on && EarlierDictationApp.isRunning()
         guard EarlierDictationApp.listens(on: prefs.on, earlierRunning: paused) else {
             phase = .off
@@ -348,9 +375,20 @@ final class Dictation: ObservableObject {
         applyKeys()
         // granted in System Settings whenever: the taps come on then, no relaunch
         if !AXIsProcessTrusted() { watchTrust() }
-        // used here before: load the model now, so the first dictation after a launch doesn't wait for it
-        if UserDefaults.standard.bool(forKey: DictationPrefs.keys.used), prefs.engine == .thisMac, modelOnDisk { Task { try? await currentTranscriber().warmUp() } }
+        warm()
     }
+
+    /// Loads the model already on this Mac and opens the speech server's connection, in the background, so the first
+    /// press after a launch doesn't wait (the first load in a new app takes minutes; the server answers meanwhile).
+    /// A model not on this Mac is never downloaded here.
+    func warm() {
+        guard !AppLog.underTests, prefs.on else { return }
+        if prefs.engine == .thisMac, modelOnDisk { Task { try? await currentTranscriber().warmUp() } }
+        if prefs.engine == .thisMac, let server = speechServer { Task { await server.warmUp() } }
+    }
+
+    /// The person's own speech server, or nil when none is set.
+    var speechServer: SpeechServerTranscriber? { SpeechServerTranscriber.url(prefs.server).map(SpeechServerTranscriber.init) }
 
     private func update(_ change: (inout DictationPrefs) -> Void) {
         let old = prefs
@@ -367,6 +405,10 @@ final class Dictation: ObservableObject {
             Task { await transcriber.unload() }
         }
         if prefs.engine != old.engine { controllerStore?.replaceTranscriber(engineTranscriber()) }
+        if prefs.server != old.server || prefs.engine != old.engine {
+            controllerStore?.remote = prefs.engine == .thisMac ? speechServer : nil
+            warm()
+        }
         if prefs.on != old.on || prefs.keys != old.keys { apply() }
     }
 
@@ -390,6 +432,7 @@ final class Dictation: ObservableObject {
     /// that swallows them. Without: the keys through Carbon (no permission needed, so the first press can start the
     /// setup) and a watch for a first hold. Off, or a picker open: none.
     private func applyKeys() {
+        guard !AppLog.underTests else { return }
         unregisterCarbon()
         let live = Self.keysLive(on: prefs.on, paused: keysPaused, earlierAppOpen: earlierAppOpen)
         let trusted = AXIsProcessTrusted()
@@ -487,11 +530,13 @@ final class Dictation: ObservableObject {
     // MARK: talking
 
     /// The menu bar's Dictate: starts or stops, the same as a tapped talk key.
-    func toggle() {
-        // the other dictation app has the keys: the click is "use this one", so it quits and the keys come on here
-        if earlierAppOpen { EarlierDictationApp.quit(); return }
+    /// While the other dictation app has the keys, the click is "use this one": it quits, dictation here is switched
+    /// on, and the keys come on once it has gone (`checkEarlierApp`).
+    func toggle(quitEarlier: () -> Void = EarlierDictationApp.quit) {
+        let earlier = earlierAppOpen
+        if earlier { quitEarlier() }
         if !prefs.on { update { $0.on = true } }
-        talk(.toggle)
+        if !earlier { talk(.toggle) }
     }
 
     private func talk(_ input: TalkRouter.Input) {
@@ -541,8 +586,9 @@ final class Dictation: ObservableObject {
             observers: [pill, sounds, PhaseObserver(), FailureAlert()],
             delivery: UnlessEarlierApp(TextDelivery(mode: .paste)),
             recordings: Self.recordings,
-            context: { [weak self] in TranscriptionContext(spokenLanguages: self?.spoken ?? []) }
+            context: { [weak self] in TranscriptionContext(spokenLanguages: self?.prefs.languages ?? self?.spoken ?? []) }
         )
+        made.remote = prefs.engine == .thisMac ? speechServer : nil
         controllerStore = made
         return made
     }
@@ -568,6 +614,18 @@ final class Dictation: ObservableObject {
         return made
     }
 
+    /// The setup page's Languages: the ticks, or nil to follow `defaults` (what it showed before any tick).
+    func setLanguages(_ codes: [String], defaults: [String]) {
+        update { $0.languages = Set(codes) == Set(defaults) ? nil : codes }
+    }
+
+    /// The server's Voice languages when it has them, else the Mac's: what dictation listens for with no ticks.
+    func defaultLanguages() async -> [String] {
+        let server = await languages?() ?? []
+        let codes = server.isEmpty ? SpokenLanguage.preferredCodes() : server
+        return codes.filter(SpokenLanguage.whisperLanguages.contains)
+    }
+
     /// The server's languages for Whisper, at most every five minutes; none = the Mac's own languages.
     private func refreshLanguages() {
         guard Date().timeIntervalSince(spokenAt) > 300, let languages else { return }
@@ -585,16 +643,22 @@ final class Dictation: ObservableObject {
     var modelOnDisk: Bool { model.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }
 
     var ready: Bool {
-        MicrophoneAccess.status == .authorized && AXIsProcessTrusted() && (prefs.engine == .server || modelOnDisk)
+        MicrophoneAccess.status == .authorized && AXIsProcessTrusted()
+            && (prefs.engine == .server || modelOnDisk || speechServer != nil)
     }
 
-    /// The first press of the talk key while something is missing: the setup guide the very first time, after that the
-    /// pill's step-by-step `setUp`.
+    /// The first press of the talk key (or the menu bar's Dictate) while something is missing: the setup page until it
+    /// was gone through once, after that the pill's step-by-step `setUp`.
     private func firstPress() {
         guard SetupGuide.isOpen || !UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided) else { return setUp() }
-        // the model downloads while the guide is read, as the pill's setup did
-        if prefs.engine == .thisMac, !modelOnDisk { fetch(model) }
         SetupGuide.show()
+    }
+
+    /// The setup page opened: the model starts loading, or downloading when it isn't here and no speech server is set,
+    /// so it is ready by the time the page is done.
+    func prepareModel() {
+        guard prefs.engine == .thisMac else { return }
+        if modelOnDisk { warm() } else if speechServer == nil { fetch(model) }
     }
 
     /// The guide's Allow for the microphone: the system's question the first time, then its Settings pane.
@@ -678,7 +742,7 @@ final class Dictation: ObservableObject {
     }
 
     private func watchTrust() {
-        guard trustWatch == nil else { return }
+        guard trustWatch == nil, !AppLog.underTests else { return }
         trustWatch = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self, AXIsProcessTrusted() else { return }
@@ -782,6 +846,7 @@ final class Dictation: ObservableObject {
             },
             "keep": prefs.keep,
             "sounds": prefs.sounds,
+            "server": prefs.server,
             "needs": (!prefs.on ? nil
                 : MicrophoneAccess.status != .authorized ? "Microphone"
                 : !AXIsProcessTrusted() ? "Accessibility" : nil) ?? NSNull(),
@@ -800,6 +865,10 @@ final class Dictation: ObservableObject {
         case "remove": remove(value)
         case "keep": if let n = Int(value), (1...500).contains(n) { update { $0.keep = n } }
         case "sounds": update { $0.sounds = value == "1" }
+        // an address, or "" for none; anything else is not a speech server and changes nothing
+        case "server":
+            let text = value.trimmingCharacters(in: .whitespaces)
+            if text.isEmpty || SpeechServerTranscriber.url(text) != nil { update { $0.server = text } }
         case "history": DictationHistory.show()
         case "file": TranscribeFile.show()
         case "setup": setUp()

@@ -14,6 +14,8 @@ final class DictationPill {
         case hidden
         case recording
         case transcribing
+        /// The recording waits for the model to load: no seconds counted, as nothing is being written down yet.
+        case waiting
         /// One line of text, for example why a recording failed.
         case message(String)
     }
@@ -157,6 +159,10 @@ extension DictationPill: DictationObserver {
         show(.transcribing)
     }
 
+    func dictationWaitingForModel() {
+        show(.waiting)
+    }
+
     func dictationFinished(_ result: DictationResult) {
         hide()
     }
@@ -274,6 +280,14 @@ private struct OverlayPill: View {
                     label(seconds < 1 ? "Transcribing" : "Transcribing \(seconds)s")
                         .monospacedDigit()
                 }
+            }
+            .frame(height: 20)
+        case .waiting:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .environment(\.colorScheme, .dark)
+                label("Getting the speech model ready")
             }
             .frame(height: 20)
         case .message(let text):
