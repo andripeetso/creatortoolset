@@ -33,12 +33,15 @@ export type ThisMacState = {
   saved?: true;
 };
 
+export type DictationAction = "talk" | "history" | "file" | "cancel";
+
 /** Dictation on this Mac, as the app keeps it; the page sets it with `thismac-dictation:<what>:<value>`. */
 export type DictationState = {
   on: boolean;
-  /** the key held to talk, or "off" */
-  hold: string;
-  holdKeys: Array<{ id: string; name: string }>;
+  /** each action's key as shown ("F13", "⌥Space", "Hold fn"; "" = none) */
+  keys: Record<DictationAction, string>;
+  /** the action whose key the app is waiting for */
+  picking: DictationAction | null;
   model: string;
   /** `here`: on this Mac; `removable`: this app downloaded it; `progress`: 0–1 while it downloads */
   models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;

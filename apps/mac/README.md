@@ -455,24 +455,32 @@ its process stop it, after up to 20 s). See also "Not checked yet".
 Talk, and the words are pasted where the cursor is, in any app (`Dictation/`). On for everyone from the first launch,
 but nothing asks for a permission and nothing downloads until the first press of a talk key.
 
-- **F13** starts and stops. **Holding fn** (or the key chosen in Settings, or Off) talks while it is held; a tap
-  shorter than 0.3 s, or a hold with another key, does nothing. **F14** opens History (the last recordings: copy a
-  transcript, transcribe a failed one again), **F15** Transcribe a file (audio or video, on this Mac), **F16** cancels
-  the recording or the transcription in progress (nothing is pasted; History still gets it). F13–F16 are taken from
-  macOS, so its own brightness keys don't also act on them.
-- The first press: the pill at the bottom of the screen says what to allow (Microphone, then Accessibility, with the
-  System Settings pane) and the speech model downloads with its size and progress there. Before Accessibility no key
-  tap can exist, so F13 is a Carbon hotkey and the hold key is read from the modifier state ten times a second (a hold of
-  1 s with no other key counts as the first press). Switching dictation off stops a download in progress.
+- Four keys, each the person's own (`Dictation/DictationKeys.swift`): **Talk** (a key or combination taps to start and
+  stop, or a modifier like fn or right ⌥ is held while talking; a hold shorter than 0.3 s, or one with another key,
+  does nothing), **History** (the last recordings: copy a transcript, transcribe a failed one again), **Transcribe a
+  file** (audio or video, on this Mac) and **Cancel** (the recording or the transcription in progress; nothing is
+  pasted, History still gets it). The first keys: F13–F16 on a keyboard that has them (Apple's full-size ones, by name)
+  or where dictation ran before; otherwise hold fn to talk and no key for the other three (the menu bar panel and
+  Settings open them). Bound keys are taken from macOS, so its own brightness keys don't also act on F14/F15.
+- Each key is chosen in the key picker the recording shortcut also uses: a key with ⌘, ⌥ or ⌃, or a function key
+  alone; Talk also takes a modifier pressed and let go on its own. A key another action or the recording shortcut has
+  is refused with a sentence. While the picker is open no key works, so pressing one chooses it.
+- The first press of Talk opens the setup guide (`Dictation/SetupGuide.swift`, once; again from Settings' Set up
+  dictation): the talk key, Microphone and Accessibility with ticks, where speech turns into text (this Mac with the
+  model's download, or the server's engine once that is wired: `DictationEngine.serverWired`), and a box to try it.
+  Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
+  Settings pane, and the download's progress. Before Accessibility no key tap can exist, so the keys are Carbon
+  hotkeys and the hold key is read from the modifier state ten times a second (a hold of 1 s with no other key counts
+  as the first press). Switching dictation off stops a download in progress.
 - Speech becomes text on this Mac with Whisper (WhisperKit, Core ML); the default model is Whisper Large v3 Turbo
   (1.6 GB) in `~/Library/Application Support/Creator Toolset/dictation/models`. A complete copy in the earlier
   dictation app's models folder is loaded where it is, never downloaded again or removed. Whisper is told the languages from the server's Voice settings (`GET /api/voice-prefs`) when it has
   them, else it chooses among the Mac's own languages.
 - The text is pasted with ⌘V through the clipboard, which is put back once the app has read it; a password field
   gets nothing. Recordings and transcripts are kept in `dictation/recordings` (the last 10 by default).
-- Settings → General → Dictation on the site shows and sets it (`thismac-dictation:<what>:<value>`,
+- Settings → AI → Voice → Dictation on the site shows and sets it (`thismac-dictation:<what>:<value>`,
   `Dictation.bridgeState`); the app keeps the values in `UserDefaults` (`dictation.*`). The earlier dictation app's
-  choices are taken over once (its F13 means hold to talk is Off here).
+  choices are taken over once (F13–F16, with its hold key as Talk if it had one).
 
 ## Notifications and the Dock badge
 

@@ -492,16 +492,8 @@ private func hotkeyCallback(
     return Unmanaged.passUnretained(event)
 }
 
-/// The plain function keys (`kVK_F13` … `kVK_F16`).
-enum FunctionKeyCode {
-    static let f13: Int64 = 105
-    static let f14: Int64 = 107
-    static let f15: Int64 = 113
-    static let f16: Int64 = 106
-}
-
-/// System-wide shortcuts on plain function keys (F13 talk, F14 History,
-/// F15 Transcribe a file, F16 cancel). An event tap rather than `RegisterEventHotKey`: macOS's
+/// System-wide dictation keys, the person's own (DictationKeys.swift): a key with its modifiers, F13 or ⌥Space.
+/// An event tap rather than `RegisterEventHotKey`: macOS's
 /// own shortcuts (F14/F15 are display brightness) win over Carbon hotkeys,
 /// but a tap sees the key first. The tap is at the HID level, ahead of every
 /// session tap: display tools re-create their session taps at the head on
@@ -518,28 +510,28 @@ enum FunctionKeyCode {
 final class FunctionKeys {
     static let shared = FunctionKeys()
 
-    private var actions: [Int64: () -> Void] = [:]
+    private var actions: [UInt64: () -> Void] = [:]
     private var tap: CFMachPort?
     private var retry: Timer?
     private var watchdog: Timer?
     private var thread: Thread?
 
-    /// Bound keycodes, read by the tap's thread.
+    /// Bound keys, read by the tap's thread.
     nonisolated let keycodes = KeycodeSet()
 
     /// Whether the tap is on (it needs Accessibility).
     var isOn: Bool { tap != nil }
 
     /// Replaces every binding. Empty: the tap stays but swallows nothing.
-    func bind(_ bindings: [(keycode: Int64, action: () -> Void)]) {
-        actions = Dictionary(bindings.map { ($0.keycode, $0.action) }, uniquingKeysWith: { $1 })
+    func bind(_ bindings: [(key: Shortcut, action: () -> Void)]) {
+        actions = Dictionary(bindings.map { (keyCombo($0.key.keyCode, $0.key.carbonModifiers), $0.action) }, uniquingKeysWith: { $1 })
         keycodes.set(Set(actions.keys))
-        DictationLog.info("function keys: \(actions.keys.sorted())")
+        DictationLog.info("keys: \(bindings.map(\.key.display))")
         if !actions.isEmpty { installTap() }
     }
 
-    fileprivate func fire(_ keycode: Int64) {
-        actions[keycode]?()
+    fileprivate func fire(_ combo: UInt64) {
+        actions[combo]?()
     }
 
     fileprivate func reenable() {
@@ -590,26 +582,51 @@ final class FunctionKeys {
     }
 }
 
-/// A set of keycodes the tap's thread reads while the main thread may replace it.
+/// One key with its modifiers, as the tap matches it: the keycode, and the Carbon modifiers above it.
+func keyCombo(_ keyCode: UInt32, _ carbonModifiers: UInt32) -> UInt64 { UInt64(carbonModifiers) << 32 | UInt64(keyCode) }
+
+/// An event's ⌘ ⌥ ⌃ ⇧ as Carbon modifiers; fn, the keypad and Caps Lock don't count (F13 arrives with fn set).
+func carbonModifiers(_ flags: CGEventFlags) -> UInt32 {
+    var m = 0
+    if flags.contains(.maskCommand) { m |= cmdKey }
+    if flags.contains(.maskAlternate) { m |= optionKey }
+    if flags.contains(.maskControl) { m |= controlKey }
+    if flags.contains(.maskShift) { m |= shiftKey }
+    return UInt32(m)
+}
+
+/// The bound keys the tap's thread reads while the main thread may replace them, and the keys it swallowed a key-down
+/// of: their key-up is swallowed too, even when a modifier was let go first.
 final class KeycodeSet: @unchecked Sendable {
     private let lock = NSLock()
-    private var codes: Set<Int64> = []
+    private var combos: Set<UInt64> = []
+    private var down: Set<Int64> = []
 
-    func set(_ new: Set<Int64>) {
+    func set(_ new: Set<UInt64>) {
         lock.lock()
-        codes = new
+        combos = new
         lock.unlock()
     }
 
-    func contains(_ code: Int64) -> Bool {
+    /// A key-down: whether it is bound (and is now down).
+    func press(_ keycode: Int64, modifiers: UInt32) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return codes.contains(code)
+        guard combos.contains(keyCombo(UInt32(keycode), modifiers)) else { return false }
+        down.insert(keycode)
+        return true
+    }
+
+    /// A key-up: whether its key-down was swallowed.
+    func release(_ keycode: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return down.remove(keycode) != nil
     }
 }
 
-/// What the tap does with one key event: swallow it or let it through, and whether
-/// to run the key's action (a first key-down, not a repeat). Pure, so it is tested.
+/// What the tap does with one key event: swallow it or let it through, and whether to run the key's action (a first
+/// key-down, not a repeat). `bound`: a bound key-down, or the key-up of one. Pure, so it is tested.
 func functionKeyVerdict(bound: Bool, keyDown: Bool, autorepeat: Bool) -> (swallow: Bool, fire: Bool) {
     guard bound else { return (false, false) }
     return (true, keyDown && !autorepeat)
@@ -626,13 +643,16 @@ private func functionKeyCallback(
         return Unmanaged.passUnretained(event)
     }
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+    let modifiers = carbonModifiers(event.flags)
+    let keyDown = type == .keyDown
     let verdict = functionKeyVerdict(
-        bound: keys.keycodes.contains(keycode),
-        keyDown: type == .keyDown,
+        bound: keyDown ? keys.keycodes.press(keycode, modifiers: modifiers) : keys.keycodes.release(keycode),
+        keyDown: keyDown,
         autorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
     )
     if verdict.fire {
-        DispatchQueue.main.async { MainActor.assumeIsolated { keys.fire(keycode) } }
+        let combo = keyCombo(UInt32(keycode), modifiers)
+        DispatchQueue.main.async { MainActor.assumeIsolated { keys.fire(combo) } }
     }
     return verdict.swallow ? nil : Unmanaged.passUnretained(event)
 }

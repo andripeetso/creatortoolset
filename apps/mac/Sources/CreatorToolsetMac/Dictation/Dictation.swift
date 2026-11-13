@@ -1,7 +1,8 @@
-// Dictation: talk, and the words are pasted where the cursor is. F13 starts and stops, holding fn (or the key chosen in
-// Settings) talks while held, F14 opens History, F15 transcribes a file, F16 cancels. On from the first launch, but
-// nothing asks for a permission and nothing downloads until the person first presses a talk key. Its settings live in
-// the site's Settings → General → Dictation (ThisMacBridge.swift answers with `bridgeState`, `command` sets them).
+// Dictation: talk, and the words are pasted where the cursor is. The person's own keys (DictationKeys.swift) talk (tap to
+// start and stop, or hold a modifier), open History, transcribe a file and cancel. On from the first launch, but nothing
+// asks for a permission and nothing downloads until the person first presses the talk key, which opens the setup guide
+// (SetupGuide.swift). Its settings live in the site's Settings → AI → Voice → Dictation (ThisMacBridge.swift answers
+// with `bridgeState`, `command` sets them).
 // Speech is turned into text on this Mac by Whisper through WhisperKit (THIRD_PARTY_NOTICES.md).
 import AppKit
 import AVFoundation
@@ -69,23 +70,34 @@ func modelSize(_ mb: Int) -> String {
     mb >= 1000 ? String(format: "%.1f GB", Double(mb) / 1000) : "\(mb) MB"
 }
 
-/// Dictation's settings, kept in UserDefaults; Settings → General → Dictation only shows and sets them.
+/// Where dictation turns speech into text. The setup guide offers `.server` only once `serverWired` is true: the
+/// dictation itself on the server's engine is built on its own branch, which flips the flag and reads `prefs.engine`.
+enum DictationEngine: String {
+    case thisMac = "mac"
+    case server
+    static let serverWired = false
+}
+
+/// Dictation's settings, kept in UserDefaults; Settings → AI → Voice → Dictation only shows and sets them.
 struct DictationPrefs: Equatable {
     var on = true
-    /// The key held to talk; nil = off (F13 still starts and stops).
-    var hold: HotkeyKey? = .fn
+    /// Saved apart, one per action (DictationKeys.save); until then, hold fn (`Dictation.start` picks the first keys).
+    var keys = DictationKeys.holdFn
+    var engine = DictationEngine.thisMac
     var model = ModelRegistry.standardID
     /// Recordings kept in History.
     var keep = 10
     var sounds = true
 
-    static let keys = (on: "dictation.on", hold: "dictation.hold", model: "dictation.model", keep: "dictation.keep",
-                       sounds: "dictation.sounds", imported: "dictation.imported", used: "dictation.used")
+    static let keys = (on: "dictation.on", engine: "dictation.engine", model: "dictation.model", keep: "dictation.keep",
+                       sounds: "dictation.sounds", imported: "dictation.imported", used: "dictation.used",
+                       guided: "dictation.guided")
 
     static func load(_ d: UserDefaults = .standard) -> DictationPrefs {
         var p = DictationPrefs()
         if let on = d.object(forKey: keys.on) as? Bool { p.on = on }
-        if let hold = d.string(forKey: keys.hold) { p.hold = HotkeyKey(rawValue: hold) }
+        if let keys = DictationKeys.load(d) { p.keys = keys }
+        if let engine = d.string(forKey: keys.engine).flatMap(DictationEngine.init) { p.engine = engine }
         if let model = d.string(forKey: keys.model), ModelRegistry.find(model) != nil { p.model = model }
         if let keep = d.object(forKey: keys.keep) as? Int { p.keep = max(1, keep) }
         if let sounds = d.object(forKey: keys.sounds) as? Bool { p.sounds = sounds }
@@ -94,14 +106,15 @@ struct DictationPrefs: Equatable {
 
     func save(_ d: UserDefaults = .standard) {
         d.set(on, forKey: Self.keys.on)
-        d.set(hold?.rawValue ?? "off", forKey: Self.keys.hold)
+        keys.save(d)
+        d.set(engine.rawValue, forKey: Self.keys.engine)
         d.set(model, forKey: Self.keys.model)
         d.set(keep, forKey: Self.keys.keep)
         d.set(sounds, forKey: Self.keys.sounds)
     }
 
-    /// The earlier dictation app's choices on this Mac, taken over once: its talk key (F13 there means the hold key is
-    /// off here, since F13 always talks), recordings kept, sounds and model. Its server address never comes over.
+    /// The earlier dictation app's choices on this Mac, taken over once: its keys (F13–F16, with its hold key, if it
+    /// had one, to talk), recordings kept, sounds and model. Its server address never comes over.
     /// `settings` is its settings.json, `legacyKey` its older `pushToTalkHotkey` default.
     func importing(settings: Data?, legacyKey: String?) -> DictationPrefs {
         var p = self
@@ -109,8 +122,9 @@ struct DictationPrefs: Equatable {
         let hotkey = json["hotkey"] as? [String: Any]
         let extras = json["extras"] as? [String: Any]
         let model = json["model"] as? [String: Any]
-        if let key = (hotkey?["key"] as? String) ?? legacyKey {
-            if key == "f13" { p.hold = nil } else if let k = HotkeyKey(rawValue: key) { p.hold = k }
+        if let key = (hotkey?["key"] as? String) ?? legacyKey, key == "f13" || HotkeyKey(rawValue: key) != nil {
+            p.keys = .functionKeys
+            if let k = HotkeyKey(rawValue: key) { p.keys.talk = .hold(k) }
         }
         if let keep = extras?["keepRecordings"] as? Int { p.keep = max(1, keep) }
         if let sounds = extras?["sounds"] as? Bool { p.sounds = sounds }
@@ -121,9 +135,9 @@ struct DictationPrefs: Equatable {
 
 /// What a talk key means, given who started the recording in progress. Pure, so it is tested.
 ///
-/// F13 (and the menu bar's Dictate) toggles: it stops any recording, whichever key started it. Holding the hold key
-/// starts one only when nothing records, and its release stops only the recording it started, so a hold during an F13
-/// recording does nothing. F16 cancels whatever runs.
+/// A tapped talk key (and the menu bar's Dictate) toggles: it stops any recording, whichever started it. Holding the
+/// hold key starts one only when nothing records, and its release stops only the recording it started, so a hold during
+/// a tapped recording does nothing. Cancel cancels whatever runs.
 struct TalkRouter {
     enum Input: Equatable { case toggle, holdDown, holdUp, holdCancel, cancel }
     enum Action: Equatable {
@@ -185,8 +199,27 @@ final class Dictation: ObservableObject {
     /// The model being downloaded and how far (0...1).
     @Published private(set) var download: (id: String, progress: Double)?
 
-    /// How to talk, for the menu bar row: "F13 or hold fn".
-    var talkKeyText: String { prefs.hold.map { "F13 or hold \($0.shortName)" } ?? "F13" }
+    /// The talk key, for the menu bar row: "F13", "⌥Space", "Hold fn"; nil = none.
+    var talkKeyText: String? { prefs.keys.talk?.display }
+
+    /// How to talk, in a sentence: "Press F13 to talk", "Hold fn to talk".
+    var talkHint: String {
+        switch prefs.keys.talk {
+        case .key(let s)?: return "Press \(s.display) to talk"
+        case .hold(let k)?: return "Hold \(k.shortName) to talk"
+        case nil: return "Choose a talk key in Settings"
+        }
+    }
+
+    /// A key picker or the guide's first step is open: no dictation key does anything.
+    var keysPaused = false {
+        didSet { if keysPaused != oldValue { applyKeys() } }
+    }
+
+    /// Which action's key picker is open, for Settings' "Press a key…".
+    @Published private(set) var picking: DictationAction?
+    /// The server's speech engines (deepgram, openai) the person has a key for. Set by the Shell.
+    var serverEngines: (() async -> [String])?
 
     /// The languages the person speaks (the server's Voice settings), or nil when it has none. Set by the Shell.
     var languages: (() async -> [String]?)?
@@ -196,7 +229,7 @@ final class Dictation: ObservableObject {
     private var router = TalkRouter()
     private let monitor = HotkeyMonitor()
     private var monitorOn = false
-    private var carbonF13: EventHotKeyRef?
+    private var carbonKeys: [EventHotKeyRef] = []
     private var carbonHandler: EventHandlerRef?
     private var holdWatch: Timer?
     private var holdDownAt: TimeInterval?
@@ -219,6 +252,12 @@ final class Dictation: ObservableObject {
     /// Once, at launch: takes over the earlier app's choices the first time, then listens if dictation is on.
     func start() {
         let d = UserDefaults.standard
+        if !DictationKeys.isSaved(d) {
+            // dictation ran here before the keys were the person's own: it had F13–F16
+            let before = d.bool(forKey: DictationPrefs.keys.imported)
+            prefs.keys = .first(hadDictation: before, keyboardHasF13: before || DictationKeys.keyboardHasF13())
+            prefs.save()
+        }
         if !d.bool(forKey: DictationPrefs.keys.imported) {
             d.set(true, forKey: DictationPrefs.keys.imported)
             let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/parrot/settings.json")
@@ -251,10 +290,7 @@ final class Dictation: ObservableObject {
             needs = nil
             fetching?.cancel()
             if pillMade { pill.hide() }
-            FunctionKeys.shared.bind([])
-            if monitorOn { monitor.stop(); monitorOn = false }
-            unregisterF13()
-            holdWatch?.invalidate(); holdWatch = nil
+            applyKeys()
             trustWatch?.invalidate(); trustWatch = nil
             if let transcriber { Task { await transcriber.unload() } }
             transcriber = nil
@@ -262,14 +298,9 @@ final class Dictation: ObservableObject {
             return
         }
         if phase == .off { phase = .idle }
-        if AXIsProcessTrusted() {
-            installTaps()
-        } else {
-            registerF13()
-            watchFirstHold()
-            // granted in System Settings whenever: the taps come on then, no relaunch
-            watchTrust()
-        }
+        applyKeys()
+        // granted in System Settings whenever: the taps come on then, no relaunch
+        if !AXIsProcessTrusted() { watchTrust() }
         // used here before: load the model now, so the first dictation after a launch doesn't wait for it
         if UserDefaults.standard.bool(forKey: DictationPrefs.keys.used), modelOnDisk { Task { try? await currentTranscriber().warmUp() } }
     }
@@ -288,82 +319,110 @@ final class Dictation: ObservableObject {
             controllerStore?.replaceTranscriber(currentTranscriber())
             Task { await transcriber.unload() }
         }
-        if prefs.hold != old.hold, let hold = prefs.hold { monitor.setKey(hold) }
-        if prefs.on != old.on || prefs.hold != old.hold { apply() }
+        if prefs.on != old.on || prefs.keys != old.keys { apply() }
     }
 
     // MARK: keys
 
-    /// The taps need Accessibility: the hold key on a listen-only tap, F13–F16 on the one that swallows them.
-    private func installTaps() {
-        unregisterF13()
-        holdWatch?.invalidate(); holdWatch = nil
-        FunctionKeys.shared.bind([
-            (FunctionKeyCode.f13, { [weak self] in self?.talk(.toggle) }),
-            (FunctionKeyCode.f14, { DictationHistory.toggle() }),
-            (FunctionKeyCode.f15, { TranscribeFile.toggle() }),
-            (FunctionKeyCode.f16, { [weak self] in self?.talk(.cancel) }),
-        ])
-        if let hold = prefs.hold {
-            monitor.setKey(hold)
-            if !monitorOn {
-                do {
-                    monitor.onHealthChange = { health in DictationLog.info("hold key: \(health)") }
-                    try monitor.start { [weak self] event in
-                        MainActor.assumeIsolated {
-                            switch event {
-                            case .pressed: self?.talk(.holdDown)
-                            case .released: self?.talk(.holdUp)
-                            case .cancelled: self?.talk(.holdCancel)
-                            }
-                        }
-                    }
-                    monitorOn = true
-                } catch {
-                    DictationLog.error("hold key unavailable: \(error)")
-                }
-            }
-        } else if monitorOn {
-            monitor.stop()
-            monitorOn = false
+    private var holdKey: HotkeyKey? {
+        if case .hold(let k)? = prefs.keys.talk { return k }
+        return nil
+    }
+
+    private func run(_ action: DictationAction) {
+        switch action {
+        case .talk: talk(.toggle)
+        case .history: DictationHistory.toggle()
+        case .file: TranscribeFile.toggle()
+        case .cancel: talk(.cancel)
         }
     }
 
-    /// F13 through Carbon, which needs no permission, so the first press can start the setup.
-    private func registerF13() {
-        guard carbonF13 == nil else { return }
+    /// The keys as they should be now. With Accessibility: the hold key on a listen-only tap, the other keys on the one
+    /// that swallows them. Without: the keys through Carbon (no permission needed, so the first press can start the
+    /// setup) and a watch for a first hold. Off, or a picker open: none.
+    private func applyKeys() {
+        unregisterCarbon()
+        let live = prefs.on && !keysPaused
+        let trusted = AXIsProcessTrusted()
+        let pressed = DictationAction.allCases.compactMap { action -> (key: Shortcut, action: () -> Void)? in
+            guard case .key(let s)? = prefs.keys[action] else { return nil }
+            return (s, { [weak self] in self?.run(action) })
+        }
+        FunctionKeys.shared.bind(live && trusted ? pressed : [])
+        holdWatch?.invalidate(); holdWatch = nil
+        if live, !trusted { registerCarbon(); watchFirstHold() }
+        guard live, trusted, let hold = holdKey else {
+            if monitorOn { monitor.stop(); monitorOn = false }
+            return
+        }
+        monitor.setKey(hold)
+        guard !monitorOn else { return }
+        do {
+            monitor.onHealthChange = { health in DictationLog.info("hold key: \(health)") }
+            try monitor.start { [weak self] event in
+                MainActor.assumeIsolated {
+                    switch event {
+                    case .pressed: self?.talk(.holdDown)
+                    case .released: self?.talk(.holdUp)
+                    case .cancelled: self?.talk(.holdCancel)
+                    }
+                }
+            }
+            monitorOn = true
+        } catch {
+            DictationLog.error("hold key unavailable: \(error)")
+        }
+    }
+
+    private func registerCarbon() {
         if carbonHandler == nil {
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
             InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
                 var id = EventHotKeyID()
                 GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
                                   MemoryLayout<EventHotKeyID>.size, nil, &id)
+                // only its own: the recording shortcut registers on the same target
                 guard id.signature == Dictation.hotKeySignature else { return OSStatus(eventNotHandledErr) }
-                DispatchQueue.main.async { MainActor.assumeIsolated { Dictation.shared.talk(.toggle) } }
+                let index = Int(id.id)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard DictationAction.allCases.indices.contains(index) else { return }
+                        Dictation.shared.run(DictationAction.allCases[index])
+                    }
+                }
                 return noErr
             }, 1, &spec, nil, &carbonHandler)
         }
-        let id = EventHotKeyID(signature: Self.hotKeySignature, id: 1)
-        RegisterEventHotKey(UInt32(kVK_F13), 0, id, GetApplicationEventTarget(), 0, &carbonF13)
+        for (index, action) in DictationAction.allCases.enumerated() {
+            guard case .key(let s)? = prefs.keys[action] else { continue }
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: Self.hotKeySignature, id: UInt32(index))
+            if RegisterEventHotKey(s.keyCode, s.carbonModifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr, let ref {
+                carbonKeys.append(ref)
+            } else {
+                DictationLog.info("\(action.name) key \(s.display) not available: another app has it")
+            }
+        }
     }
 
     nonisolated static let hotKeySignature = OSType(0x4354_4454)   // "CTDT"
 
-    private func unregisterF13() {
-        if let carbonF13 { UnregisterEventHotKey(carbonF13) }
-        carbonF13 = nil
+    private func unregisterCarbon() {
+        carbonKeys.forEach { UnregisterEventHotKey($0) }
+        carbonKeys = []
     }
 
     /// Without Accessibility: a first real hold of the hold key starts the setup (see `firstHoldCounts`).
     private func watchFirstHold() {
-        guard holdWatch == nil, prefs.hold != nil else { return }
+        guard holdWatch == nil, holdKey != nil else { return }
         holdWatch = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkFirstHold() }
         }
     }
 
     private func checkFirstHold() {
-        guard let key = prefs.hold else { return }
+        guard let key = holdKey else { return }
         let flags = CGEventSource.flagsState(.combinedSessionState)
         let others = flags.intersection(HotkeyMonitor.chordFlags).subtracting(key.flag)
         let held = flags.contains(key.flag) && others.isEmpty
@@ -373,13 +432,13 @@ final class Dictation: ObservableObject {
         } else if let down = holdDownAt {
             holdDownAt = nil
             let sinceKey = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
-            if firstHoldCounts(heldFor: now - down, secondsSinceKeyDown: sinceKey) { setUp() }
+            if firstHoldCounts(heldFor: now - down, secondsSinceKeyDown: sinceKey) { firstPress() }
         }
     }
 
     // MARK: talking
 
-    /// The menu bar's Dictate: starts or stops, the same as F13.
+    /// The menu bar's Dictate: starts or stops, the same as a tapped talk key.
     func toggle() {
         if !prefs.on { update { $0.on = true } }
         talk(.toggle)
@@ -390,7 +449,7 @@ final class Dictation: ObservableObject {
         let recording = controllerStore?.state == .recording
         if !recording, input != .cancel, input != .holdCancel, !ready {
             // a hold asks only once it was a real hold (its release), never on a stray tap of fn
-            if input == .toggle || input == .holdUp { setUp() }
+            if input == .toggle || input == .holdUp { firstPress() }
             return
         }
         let controller = self.controller()
@@ -467,11 +526,61 @@ final class Dictation: ObservableObject {
 
     // MARK: first press: permissions and the model
 
-    private var model: TranscriptionModel { ModelRegistry.model(prefs.model) }
-    private var modelOnDisk: Bool { model.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }
+    var model: TranscriptionModel { ModelRegistry.model(prefs.model) }
+    var modelOnDisk: Bool { model.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }
 
-    private var ready: Bool {
+    var ready: Bool {
         MicrophoneAccess.status == .authorized && AXIsProcessTrusted() && modelOnDisk
+    }
+
+    /// The first press of the talk key while something is missing: the setup guide the very first time, after that the
+    /// pill's step-by-step `setUp`.
+    private func firstPress() {
+        if SetupGuide.isOpen || !UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided) { SetupGuide.show() } else { setUp() }
+    }
+
+    /// The guide's Allow for the microphone: the system's question the first time, then its Settings pane.
+    func allowMicrophone() {
+        if MicrophoneAccess.status == .notDetermined {
+            MicrophoneAccess.requestIfUndetermined()
+        } else {
+            openPane("Privacy_Microphone")
+        }
+    }
+
+    /// The guide's Allow for Accessibility: the system's sheet the first time (it adds this app to the list), then the
+    /// pane. The keys come on by themselves once it is given.
+    func allowAccessibility() {
+        if askedAccessibility {
+            openPane("Privacy_Accessibility")
+        } else {
+            askedAccessibility = true
+            _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+        }
+        watchTrust()
+    }
+
+    /// Sets one action's key; the caller checked it (DictationKeys.problem).
+    func setKey(_ action: DictationAction, _ binding: KeyBinding?) {
+        update { $0.keys[action] = binding }
+    }
+
+    func setEngine(_ engine: DictationEngine) {
+        update { $0.engine = engine }
+    }
+
+    /// Settings' key button: the picker for one action, refusing a key another action or the recording shortcut has.
+    func pick(_ action: DictationAction) {
+        picking = action
+        KeyPicker.show(
+            title: action.name,
+            prompt: "Press the key for \(action.name).\n"
+                + (action == .talk ? "Tap it, or hold a key like fn on its own. " : "")
+                + "Esc keeps \(prefs.keys[action]?.display ?? "none"), Delete clears it.",
+            allowsHold: action == .talk,
+            check: { [weak self] in self?.prefs.keys.problem($0, for: action, recording: RecordShortcut.shared.shortcut) },
+            done: { [weak self] in self?.setKey(action, $0) },
+            closed: { [weak self] in self?.picking = nil })
     }
 
     /// What the first press (or Settings' Allow) does: the model starts downloading, and the pill says the first thing
@@ -518,7 +627,7 @@ final class Dictation: ObservableObject {
                 timer.invalidate()
                 self.trustWatch = nil
                 DictationLog.info("accessibility granted")
-                if self.prefs.on { self.installTaps() }
+                self.applyKeys()
                 // only a setup in progress says Ready
                 if self.needs != nil {
                     self.needs = nil
@@ -536,10 +645,10 @@ final class Dictation: ObservableObject {
             let m = ModelRegistry.model(download.id)
             return pill.show(.message("Downloading the speech model · \(modelSize(m.sizeMB)) · \(Int(download.progress * 100))%"))
         }
-        if ready { pill.showMessage("Ready. Press \(talkKeyText) to talk") }
+        if ready { pill.showMessage("Ready. \(talkHint)") }
     }
 
-    private func openPane(_ pane: String) {
+    func openPane(_ pane: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) }
     }
 
@@ -583,12 +692,13 @@ final class Dictation: ObservableObject {
 
     // MARK: Settings (ThisMacBridge.swift)
 
-    /// Settings → General → Dictation, as the page shows it.
+    /// Settings → AI → Voice → Dictation, as the page shows it.
     func bridgeState() -> [String: Any] {
         [
             "on": prefs.on,
-            "hold": prefs.hold?.rawValue ?? "off",
-            "holdKeys": HotkeyKey.allCases.map { ["id": $0.rawValue, "name": $0.displayName] },
+            // each action's key as shown ("" = none), and the one whose picker is open
+            "keys": Dictionary(uniqueKeysWithValues: DictationAction.allCases.map { ($0.rawValue, prefs.keys[$0]?.display ?? "") }),
+            "picking": picking?.rawValue ?? NSNull(),
             "model": prefs.model,
             "models": ModelRegistry.shared.map { m -> [String: Any] in
                 let variant = m.whisperKitID ?? ""
@@ -612,7 +722,8 @@ final class Dictation: ObservableObject {
     func command(_ what: String, _ value: String) {
         switch what {
         case "on": update { $0.on = value == "1" }
-        case "hold": update { $0.hold = HotkeyKey(rawValue: value) }
+        case "pick": if let action = DictationAction(rawValue: value) { pick(action) }
+        case "guide": SetupGuide.show()
         case "model": if ModelRegistry.find(value) != nil { update { $0.model = value } }
         case "download": if let m = ModelRegistry.find(value) { fetch(m) }
         case "remove": remove(value)

@@ -81,7 +81,8 @@ final class DictationPrefsTests: XCTestCase {
     func testDefaultsAreOnWithFnAndTurbo() {
         let p = DictationPrefs.load(defaults())
         XCTAssertTrue(p.on)
-        XCTAssertEqual(p.hold, .fn)
+        XCTAssertEqual(p.keys, .holdFn)
+        XCTAssertEqual(p.engine, .thisMac)
         XCTAssertEqual(p.model, "whisper-large-v3-turbo")
         XCTAssertEqual(p.keep, 10)
         XCTAssertTrue(p.sounds)
@@ -91,15 +92,17 @@ final class DictationPrefsTests: XCTestCase {
         let d = defaults()
         var p = DictationPrefs()
         p.on = false
-        p.hold = nil
+        p.keys = DictationKeys(talk: .key(Shortcut(keyCode: 49, carbonModifiers: 2048, display: "⌥Space")), cancel: .key(.function(106, "F16")))
+        p.engine = .server
         p.model = "whisper-base.en"
         p.keep = 25
         p.sounds = false
         p.save(d)
         XCTAssertEqual(DictationPrefs.load(d), p)
-        p.hold = .rightOption
+        p.keys.talk = .hold(.rightOption)
+        p.keys.cancel = nil
         p.save(d)
-        XCTAssertEqual(DictationPrefs.load(d).hold, .rightOption)
+        XCTAssertEqual(DictationPrefs.load(d).keys, DictationKeys(talk: .hold(.rightOption)))
     }
 
     func testAnUnknownModelLoadsAsTheDefault() {
@@ -116,7 +119,7 @@ final class DictationPrefsTests: XCTestCase {
          "extras":{"keepRecordings":25,"sounds":false,"server":"http://tiny-acrobatics.example:7886/api/transcribe"}}
         """
         let p = DictationPrefs().importing(settings: Data(json.utf8), legacyKey: nil)
-        XCTAssertNil(p.hold, "F13 talked there, so no hold key here")
+        XCTAssertEqual(p.keys, .functionKeys, "F13 talked there: F13–F16 here, no hold key")
         XCTAssertEqual(p.model, "whisper-small")
         XCTAssertEqual(p.keep, 25)
         XCTAssertFalse(p.sounds)
@@ -125,9 +128,10 @@ final class DictationPrefsTests: XCTestCase {
 
     func testImportFallsBackToTheOlderKeyAndKeepsDefaultsForTheRest() {
         let p = DictationPrefs().importing(settings: nil, legacyKey: "right-option")
-        XCTAssertEqual(p.hold, .rightOption)
-        XCTAssertEqual(p, { var d = DictationPrefs(); d.hold = .rightOption; return d }())
-        XCTAssertEqual(DictationPrefs().importing(settings: Data("{}".utf8), legacyKey: "f13").hold, nil)
+        XCTAssertEqual(p.keys.talk, .hold(.rightOption))
+        XCTAssertEqual(p.keys.cancel, .key(.function(106, "F16")))
+        XCTAssertEqual(p, { var d = DictationPrefs(); d.keys = .functionKeys; d.keys.talk = .hold(.rightOption); return d }())
+        XCTAssertEqual(DictationPrefs().importing(settings: Data("{}".utf8), legacyKey: "f13").keys, .functionKeys)
         XCTAssertEqual(DictationPrefs().importing(settings: Data("not json".utf8), legacyKey: nil), DictationPrefs())
         let unknown = DictationPrefs().importing(settings: Data(#"{"model":{"id":"parakeet"},"hotkey":{"key":"caps"}}"#.utf8), legacyKey: nil)
         XCTAssertEqual(unknown, DictationPrefs())
@@ -303,5 +307,70 @@ final class DictationControllerTests: XCTestCase {
         let date = Date(timeIntervalSince1970: 1_900_000_000)
         XCTAssertNotEqual(recordings.save([0.1], at: date), recordings.save([0.1], at: date))
         XCTAssertNotNil(DictationRecordings.date(of: recordings.recent()[0].wav))
+    }
+}
+
+final class DictationKeysTests: XCTestCase {
+    private let optionSpace = KeyBinding.key(Shortcut(keyCode: 49, carbonModifiers: 2048, display: "⌥Space"))
+
+    func testFirstKeysFollowTheKeyboard() {
+        XCTAssertEqual(DictationKeys.first(hadDictation: false, keyboardHasF13: true), .functionKeys)
+        XCTAssertEqual(DictationKeys.first(hadDictation: true, keyboardHasF13: false), .functionKeys, "keeps the keys it had")
+        let laptop = DictationKeys.first(hadDictation: false, keyboardHasF13: false)
+        XCTAssertEqual(laptop.talk, .hold(.fn))
+        XCTAssertNil(laptop.history)
+        XCTAssertNil(laptop.file)
+        XCTAssertNil(laptop.cancel)
+    }
+
+    func testClashesAreRefusedWithASentence() {
+        let keys = DictationKeys.functionKeys
+        XCTAssertEqual(keys.problem(.key(.function(107, "F14")), for: .talk, recording: nil), "That clashes with History (F14).")
+        XCTAssertNil(keys.problem(.key(.function(105, "F13")), for: .talk, recording: nil), "its own key again")
+        XCTAssertEqual(keys.problem(.key(.standard), for: .file, recording: .standard), "That clashes with the recording shortcut (⌥⇧R).")
+        XCTAssertEqual(keys.problem(.key(.function(106, "F16")), for: nil, recording: nil), "That clashes with Cancel (F16).")
+        XCTAssertEqual(keys.problem(.hold(.fn), for: .history, recording: nil), "Only Talk can be a key you hold.")
+        // holding right ⌥ to talk and ⌥Space to cancel: the hold would start on the way to the combination
+        var held = DictationKeys(talk: .hold(.rightOption))
+        XCTAssertEqual(held.problem(optionSpace, for: .cancel, recording: nil), "That clashes with Talk (Hold right ⌥).")
+        held.talk = .hold(.fn)
+        XCTAssertNil(held.problem(optionSpace, for: .cancel, recording: nil))
+    }
+
+    func testAPickerTakesACombinationAFunctionKeyOrALoneHeldModifier() {
+        var c = KeyCapture(allowsHold: true)
+        XCTAssertEqual(c.keyDown(keyCode: 49, flags: .option, characters: " "), .binding(optionSpace))
+        XCTAssertEqual(c.keyDown(keyCode: 105, flags: .function, characters: nil), .binding(.key(.function(105, "F13"))))
+        if case .refused = c.keyDown(keyCode: 0, flags: [], characters: "a") {} else { XCTFail("a bare letter would type nothing") }
+        XCTAssertEqual(c.keyDown(keyCode: 53, flags: [], characters: nil), .keep)
+        XCTAssertEqual(c.keyDown(keyCode: 51, flags: [], characters: nil), .clear)
+        // right ⌥ down and up on its own
+        XCTAssertNil(c.flagsChanged(keyCode: 61, flags: .option))
+        XCTAssertEqual(c.flagsChanged(keyCode: 61, flags: []), .binding(.hold(.rightOption)))
+        // ⌥ down, then a key: a combination, not a hold
+        XCTAssertNil(c.flagsChanged(keyCode: 58, flags: .option))
+        _ = c.keyDown(keyCode: 49, flags: .option, characters: " ")
+        XCTAssertNil(c.flagsChanged(keyCode: 58, flags: []))
+        // ⌘ held, then ⌥: not alone
+        XCTAssertNil(c.flagsChanged(keyCode: 55, flags: .command))
+        XCTAssertNil(c.flagsChanged(keyCode: 58, flags: [.command, .option]))
+        XCTAssertNil(c.flagsChanged(keyCode: 58, flags: .command))
+        // fn on its own
+        XCTAssertNil(c.flagsChanged(keyCode: 63, flags: .function))
+        XCTAssertEqual(c.flagsChanged(keyCode: 63, flags: []), .binding(.hold(.fn)))
+        var noHold = KeyCapture(allowsHold: false)
+        XCTAssertNil(noHold.flagsChanged(keyCode: 61, flags: .option))
+        XCTAssertNil(noHold.flagsChanged(keyCode: 61, flags: []))
+    }
+
+    func testTheTapMatchesTheModifiersButNotFn() {
+        let set = KeycodeSet()
+        set.set([keyCombo(49, 2048), keyCombo(105, 0)])
+        XCTAssertTrue(set.press(49, modifiers: carbonModifiers(.maskAlternate)))
+        XCTAssertFalse(set.press(49, modifiers: 0), "Space alone types a space")
+        XCTAssertTrue(set.press(105, modifiers: carbonModifiers(.maskSecondaryFn)), "F13 arrives with fn")
+        XCTAssertTrue(set.release(49), "its key-up is swallowed too")
+        XCTAssertFalse(set.release(49))
+        XCTAssertFalse(set.release(0))
     }
 }

@@ -2,9 +2,10 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { confirmDialog } from "@/lib/dialogs";
 import { Card, Row, Section, SettingsSelect, Status } from "./ui";
-import { tell, type ThisMacState } from "./ThisMacSection";
+import { tell, type DictationAction, type ThisMacState } from "./ThisMacSection";
 
 const KEEP = [5, 10, 25, 50, 100];
+const KEYS: Array<[DictationAction, string]> = [["talk", "Talk"], ["history", "History"], ["file", "Transcribe a file"], ["cancel", "Cancel"]];
 
 /**
  * Dictation on this Mac (apps/mac Dictation.swift): shown only where the app reports it. The app keeps every value; each
@@ -26,29 +27,30 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
         <Row
           id="dictation"
           title="Dictation"
-          description="Talk, and the words go where the cursor is. F13 starts and stops, F16 cancels."
+          description="Talk, and the words go where the cursor is."
           status={d.on && d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
           control={
             <>
-              {d.on && d.needs && <Button size="sm" variant="outline" onClick={() => set("setup")}>Allow</Button>}
+              {d.on && <Button size="sm" variant="outline" onClick={() => set("guide")}>Set up dictation</Button>}
               <Switch checked={d.on} aria-label="Dictation" onCheckedChange={(on) => set("on", on ? "1" : "0")} />
             </>
           }
         />
         {d.on && (
           <>
-            <Row
-              id="dictation-hold"
-              title="Hold to talk"
-              control={
-                <SettingsSelect
-                  label="Hold to talk"
-                  value={d.hold}
-                  onValueChange={(v) => set("hold", v)}
-                  options={[{ value: "off", label: "Off" }, ...d.holdKeys.map((k) => ({ value: k.id, label: k.name }))]}
-                />
-              }
-            />
+            {KEYS.map(([action, title]) => (
+              <Row
+                key={action}
+                id={`dictation-key-${action}`}
+                title={title}
+                description={action === "talk" ? "Tap to start and stop, or hold a key like fn while you talk." : undefined}
+                control={
+                  <Button size="sm" variant="outline" className="min-w-24" aria-label={`${title} key`} onClick={() => set("pick", action)}>
+                    {d.picking === action ? "Press a key…" : d.keys[action] || "Choose"}
+                  </Button>
+                }
+              />
+            ))}
             <Row
               id="dictation-model"
               title="Speech model"
@@ -69,7 +71,7 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
             <Row
               id="dictation-history"
               title="History"
-              description="The last recordings, to copy or transcribe again. F14 opens it."
+              description="The last recordings, to copy or transcribe again."
               control={
                 <>
                   <SettingsSelect
@@ -86,7 +88,7 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
             <Row
               id="dictation-file"
               title="Transcribe a file"
-              description="Audio or video, on this Mac. F15 opens it."
+              description="Audio or video, on this Mac."
               control={<Button size="sm" variant="outline" onClick={() => set("file")}>Open</Button>}
             />
             <Row

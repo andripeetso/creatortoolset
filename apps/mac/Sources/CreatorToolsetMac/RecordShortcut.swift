@@ -14,10 +14,11 @@ struct Shortcut: Codable, Equatable {
 
     static let standard = Shortcut(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey), display: "⌥⇧R")
 
-    /// The shortcut a key press makes, or nil when it has no ⌘, ⌥ or ⌃ (a bare key would type nothing anywhere).
+    /// The shortcut a key press makes, or nil when it has no ⌘, ⌥ or ⌃ and is not a function key (a bare typing key
+    /// would type nothing anywhere).
     static func from(keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?) -> Shortcut? {
         let flags = flags.intersection([.command, .option, .control, .shift])
-        guard !flags.intersection([.command, .option, .control]).isEmpty else { return nil }
+        guard !flags.intersection([.command, .option, .control]).isEmpty || functionKeys.contains(Int(keyCode)) else { return nil }
         var carbon = 0
         var symbols = ""
         if flags.contains(.control) { carbon |= controlKey; symbols += "⌃" }
@@ -30,7 +31,10 @@ struct Shortcut: Codable, Equatable {
     private static let named: [Int: String] = [
         kVK_Space: "Space", kVK_Return: "↩", kVK_Tab: "⇥", kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4",
         kVK_F5: "F5", kVK_F6: "F6", kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12",
+        kVK_F13: "F13", kVK_F14: "F14", kVK_F15: "F15", kVK_F16: "F16", kVK_F17: "F17", kVK_F18: "F18", kVK_F19: "F19", kVK_F20: "F20",
     ]
+    private static let functionKeys: Set<Int> = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+        kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20]
 
     private static func keyName(_ code: UInt16, _ characters: String?) -> String {
         named[Int(code)] ?? (characters ?? "?").uppercased()
@@ -55,6 +59,8 @@ final class RecordShortcut: ObservableObject {
     private var item: NSStatusItem?
     private var watch: AnyCancellable?
     private var clock: Timer?
+    /// A key picker is open (KeyPicker): the shortcut is off so pressing it chooses it.
+    private var paused = false
 
     private init() {
         let defaults = UserDefaults.standard
@@ -94,10 +100,15 @@ final class RecordShortcut: ObservableObject {
         register()
     }
 
+    func pause(_ on: Bool) {
+        paused = on
+        register()
+    }
+
     private func register() {
         if let hotKey { UnregisterEventHotKey(hotKey) }
         hotKey = nil
-        guard let shortcut else { return }
+        guard let shortcut, !paused else { return }
         let id = EventHotKeyID(signature: Self.signature, id: 1)
         let status = RegisterEventHotKey(shortcut.keyCode, shortcut.carbonModifiers, id, GetApplicationEventTarget(), 0, &hotKey)
         if status != noErr { AppLog.write("recording shortcut \(shortcut.display) not available (\(status)): another app has it") }
@@ -145,51 +156,17 @@ final class RecordShortcut: ObservableObject {
 
     // MARK: choosing the shortcut
 
-    private var picker: NSPanel?
-    private var keyWatch: Any?
-
-    /// A small window that takes the next key press as the shortcut. Esc keeps the old one, Delete turns it off.
+    /// The key picker (DictationKeys.swift) for the next key press: Esc keeps the old one, Delete turns it off, and a
+    /// dictation key is refused.
     func choose() {
-        closePicker()
-        let label = NSTextField(wrappingLabelWithString: "Press the new shortcut for recording.\nEsc keeps \(shortcut?.display ?? "none"), Delete turns it off.")
-        label.alignment = .center
-        label.font = .systemFont(ofSize: 13)
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 90), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        panel.title = "Recording Shortcut"
-        label.frame = NSRect(x: 16, y: 16, width: 288, height: 58)
-        panel.contentView?.addSubview(label)
-        panel.center()
-        panel.level = .floating
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        picker = panel
-        // the old shortcut would fire instead of being chosen again
-        if let hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
-        keyWatch = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === self.picker else { return event }
-            switch Int(event.keyCode) {
-            case kVK_Escape: self.closePicker()
-            case kVK_Delete, kVK_ForwardDelete:
-                self.set(nil)
-                self.closePicker()
-            default:
-                guard let new = Shortcut.from(keyCode: event.keyCode, flags: event.modifierFlags, characters: event.charactersIgnoringModifiers) else {
-                    NSSound.beep()   // needs ⌘, ⌥ or ⌃
-                    return nil
-                }
-                self.set(new)
-                self.closePicker()
-            }
-            return nil
-        }
-    }
-
-    private func closePicker() {
-        if let keyWatch { NSEvent.removeMonitor(keyWatch) }
-        keyWatch = nil
-        picker?.orderOut(nil)
-        picker = nil
-        register()
-        drawButton()
+        KeyPicker.show(
+            title: "Recording Shortcut",
+            prompt: "Press the new shortcut for recording.\nEsc keeps \(shortcut?.display ?? "none"), Delete turns it off.",
+            allowsHold: false,
+            check: { Dictation.shared.prefs.keys.problem($0, for: nil, recording: nil) },
+            done: { [weak self] new in
+                if case .key(let s)? = new { self?.set(s) } else { self?.set(nil) }
+            },
+            closed: { [weak self] in self?.drawButton() })
     }
 }

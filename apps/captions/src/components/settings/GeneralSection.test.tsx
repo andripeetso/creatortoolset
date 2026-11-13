@@ -34,8 +34,8 @@ describe("the version row", () => {
 
 const dictation = (over: Partial<DictationState> = {}): DictationState => ({
   on: true,
-  hold: "fn",
-  holdKeys: [{ id: "fn", name: "fn (Globe)" }, { id: "right-option", name: "Right Option (⌥)" }],
+  keys: { talk: "Hold fn", history: "", file: "", cancel: "F16" },
+  picking: null,
   model: "whisper-large-v3-turbo",
   models: [
     { id: "whisper-large-v3-turbo", name: "Whisper Large v3 Turbo", size: "1.6 GB", here: true, removable: false, progress: null },
@@ -55,7 +55,7 @@ describe("the dictation group", () => {
 
   it("names what the keys do and shows each setting", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />);
-    for (const text of ["F13 starts and stops, F16 cancels", "F14 opens it", "F15 opens it", "Hold to talk", "Speech model", "Sounds when it starts and stops", ">Open</button>"]) {
+    for (const text of ["Talk", "Hold fn", "F16", ">Choose</button>", "Transcribe a file", "Set up dictation", "Speech model", "Sounds when it starts and stops", ">Open</button>"]) {
       expect(html).toContain(text);
     }
     // a model already on this Mac that this app did not download: neither Download nor Remove
@@ -73,16 +73,21 @@ describe("the dictation group", () => {
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: base({ here: true, removable: true }) })} />)).toContain(">Remove</button>");
   });
 
-  it("says which permission is missing, with Allow", () => {
+  it("says which permission is missing, next to the setup guide", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility" }) })} />);
     expect(html).toContain("Needs Accessibility");
-    expect(html).toContain(">Allow</button>");
+    expect(html).toContain(">Set up dictation</button>");
+  });
+
+  it("asks for a key while the app waits for one", () => {
+    const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ picking: "history" }) })} />);
+    expect(html).toContain("Press a key…");
   });
 
   it("shows only the switch while dictation is off", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ on: false, needs: "Microphone" }) })} />);
     expect(html).toContain("Dictation");
-    expect(html).not.toContain("Hold to talk");
+    expect(html).not.toContain("Hold fn");
     expect(html).not.toContain("Needs");
   });
 });

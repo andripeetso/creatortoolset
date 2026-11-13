@@ -129,8 +129,9 @@ final class Shell: NSObject, ObservableObject {
             self.pageAlert(title, text, done)
         }
         if Recorder.available { RecordShortcut.shared.install(recorder) }
-        // after the recording shortcut: its F13 handler runs first and passes on every other hotkey
+        // after the recording shortcut: its hotkey handler runs first and passes on every other hotkey
         Dictation.shared.languages = { [weak self] in await self?.voiceLanguages() }
+        Dictation.shared.serverEngines = { [weak self] in await self?.voiceKeyEngines() ?? [] }
         Dictation.shared.start()
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
