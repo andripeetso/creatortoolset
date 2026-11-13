@@ -169,6 +169,22 @@ test('without its secret the broker has none of this', async () => {
   assert.equal((await c.allow('ChatGPT')).status, 404);
 });
 
+test("a computer's Install opens the app's store page once listed, and the by-address page until then", async () => {
+  const until = await fetch(`${base}/add/chatgpt`, { redirect: 'manual' });
+  assert.equal(until.status, 200);
+  const html = await until.text();
+  assert.ok(html.includes('Add Creator Toolset to ChatGPT'));
+  assert.ok(html.includes(`value="${SELF}/mcp"`));
+  assert.ok(html.includes('Sign in to your Creator Toolset account and press Allow.'));
+  const claude = await (await fetch(`${base}/add/Claude`)).text();
+  assert.ok(claude.includes('connectorUrl=' + encodeURIComponent(`${SELF}/mcp`)));
+  deps.gateway!.listings = { ChatGPT: 'https://chatgpt.com/plugins/creator-toolset' };
+  const listed = await fetch(`${base}/add/chatgpt`, { redirect: 'manual' });
+  assert.equal(listed.status, 302);
+  assert.equal(listed.headers.get('location'), 'https://chatgpt.com/plugins/creator-toolset');
+  assert.equal((await fetch(`${base}/add/other`)).status, 404);
+});
+
 test('an AI app finds where to sign in, and the domain check answers', async () => {
   const r = await mcp('', rpc('tools/list'));
   assert.equal(r.status, 401);

@@ -33,6 +33,8 @@ export interface GatewayDeps {
   originOf?: (hostname: string) => string;
   /** The token the ChatGPT directory gives to prove the domain is ours (RELAY_OPENAI_APPS_CHALLENGE). */
   openaiChallenge?: string;
+  /** Creator Toolset's own page in each AI app's store, once it is listed there, by the app's name (RELAY_LISTING_CHATGPT, RELAY_LISTING_CLAUDE). */
+  listings?: Record<string, string>;
 }
 
 const REQ_TTL = 600; // seconds a sign-in may take, from the AI app's redirect to the approval
@@ -545,6 +547,52 @@ export function openPage(gw: GatewayDeps, computer: string, rest: string, query:
       `<p>It is on your computer.</p>` +
       `<p><a style="${button};background:#111;color:#fff" href="${esc(inApp)}">Open in the app</a></p>` +
       `<p><a href="${esc(inBrowser)}">Open in the browser</a>. It asks for your computer's password.</p>`,
+    { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' } },
+  );
+}
+
+/** The AI apps a computer's Install opens (GET /add/<app>): its store page, and how to add it by address until it is listed. */
+const ADD: Record<string, { name: string; open: (mcp: string) => string; steps: string[] }> = {
+  chatgpt: {
+    name: 'ChatGPT',
+    open: () => 'https://chatgpt.com/plugins',
+    steps: [
+      "In ChatGPT, open Plugins, press + and choose Add custom MCP server. No + there? Turn on Developer mode in ChatGPT's Settings → Security and login first.",
+      'Name it Creator Toolset and paste the address above as the Server URL.',
+      'Authentication: OAuth. Tick I understand and want to continue, then press Create as a plugin.',
+      'Sign in to your Creator Toolset account and press Allow.',
+    ],
+  },
+  claude: {
+    name: 'Claude',
+    open: (mcp) => `https://claude.ai/customize/connectors?${new URLSearchParams({ modal: 'add-custom-connector', connectorName: 'Creator Toolset', connectorUrl: mcp })}`,
+    steps: [
+      'In Claude, open Customize → Connectors, press + Add and choose Add custom connector.',
+      'Name it Creator Toolset and paste the address above as the server URL.',
+      'Press Continue, then Add, then Connect.',
+      'Sign in to your Creator Toolset account and press Allow.',
+    ],
+  },
+};
+
+/**
+ * GET /add/<app>: where a computer's Install button sends the person. Once Creator Toolset is in that app's store, its
+ * page there (Install there, sign in, Allow). Until then, a short page that adds it by this address.
+ */
+export function addPage(gw: GatewayDeps, slug: string): Response {
+  const a = ADD[slug.toLowerCase()];
+  if (!a) return json(404, { error: 'not_found' });
+  const listed = gw.listings?.[a.name];
+  if (listed) return go(listed);
+  const mcp = `${gw.publicUrl}/mcp`;
+  const steps = a.steps.map((s) => `<li style="margin:0 0 8px">${esc(s)}</li>`).join('');
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Add Creator Toolset to ${esc(a.name)}</title>` +
+      `<body style="font:16px/1.5 system-ui,sans-serif;max-width:520px;margin:12vh auto;padding:0 20px"><h1 style="font-size:20px">Add Creator Toolset to ${esc(a.name)}</h1>` +
+      `<p>It isn't in ${esc(a.name)}'s store yet, so it is added by its address:</p>` +
+      `<p><input readonly value="${esc(mcp)}" onclick="this.select()" style="width:100%;box-sizing:border-box;font:14px ui-monospace,monospace;padding:10px;border:1px solid #ccc;border-radius:8px"></p>` +
+      `<ol style="padding-left:20px">${steps}</ol>` +
+      `<p><a href="${esc(a.open(mcp))}" style="display:inline-block;padding:10px 18px;border-radius:9px;background:#111;color:#fff;text-decoration:none;font-weight:600">Open ${esc(a.name)}</a></p>`,
     { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' } },
   );
 }
