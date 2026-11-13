@@ -620,7 +620,7 @@ final class EarlierAppTests: XCTestCase {
 final class DictationBridgeStateTests: XCTestCase {
     func testTheSettingsAnswerBuildsWithEveryField() {
         let state = Dictation.shared.bridgeState()
-        for key in ["on", "keys", "picking", "paused", "engine", "model", "models", "keep", "sounds", "server", "needs"] {
+        for key in ["on", "keys", "picking", "paused", "setUp", "engine", "model", "models", "keep", "sounds", "server", "needs"] {
             XCTAssertNotNil(state[key], "missing \(key)")
         }
     }
