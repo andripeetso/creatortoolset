@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { MIC_LIMITS, needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
-import { speechFor } from "../lib/speech";
+import { readVoicePrefs, speechFor } from "../lib/speech";
 import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
@@ -70,11 +70,14 @@ export function wordsToSegments(words: { text: string; start: number; end: numbe
   return out.map(({ start, end, text }) => ({ start, end, text }));
 }
 
-/** Stores a version's transcript (and its words, when given) and rewrites its search rows (FTS5 has no upsert), in one transaction. */
-export function saveTranscript(db: DatabaseSync, versionId: string, provider: string, language: string | null, segments: Segment[], words?: TimedWord[]): void {
+/**
+ * Stores a version's transcript (and its words, when given; `model`: the speech model of a computer's) and rewrites its
+ * search rows (FTS5 has no upsert), in one transaction.
+ */
+export function saveTranscript(db: DatabaseSync, versionId: string, provider: string, language: string | null, segments: Segment[], words?: TimedWord[], model?: string): void {
   db.exec("BEGIN");
   try {
-    db.prepare("INSERT OR REPLACE INTO transcripts (version_id, provider, language, text, segments, created_at, words) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    db.prepare("INSERT OR REPLACE INTO transcripts (version_id, provider, language, text, segments, created_at, words, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       versionId,
       provider,
       language,
@@ -82,6 +85,7 @@ export function saveTranscript(db: DatabaseSync, versionId: string, provider: st
       JSON.stringify(segments),
       Date.now(),
       words ? JSON.stringify(words) : null,
+      model ?? null,
     );
     db.prepare("DELETE FROM search_segments WHERE version_id = ?").run(versionId);
     const add = db.prepare("INSERT INTO search_segments (version_id, seg, text) VALUES (?, ?, ?)");
@@ -167,7 +171,7 @@ export async function transcribeFile(
   scratch: string,
   status: string = src,
   { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use) }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route } = {},
-): Promise<Transcribed & { provider: Route["provider"] }> {
+): Promise<Transcribed & { provider: Route["provider"]; model?: string }> {
   // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
   if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
   await mkdir(scratch, { recursive: true });
@@ -181,21 +185,66 @@ export async function transcribeFile(
       : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon)
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
       : await openai(out, route.key, languages);
-    return { ...t, provider: route.provider };
+    return { ...t, provider: route.provider, ...(route.provider === "computer" ? { model: route.model } : {}) };
   } finally {
     await rm(out, { force: true });
   }
 }
 
 /**
- * The languages an AI Editor edit asked a version's transcript in (its `languages`, set by analyze before it queues the
- * transcript); a version with none is heard in its actor's Voice languages.
+ * An AI Editor edit's ask for a version's transcript, set by analyze before it queues the transcript and cleared once
+ * it is made: `by`, the account that started the edit; `languages`, the edit's (a version with none is heard in its
+ * actor's Voice languages).
  */
 // ponytail: kept in memory; analyze sets it again each time it looks while it waits, so a restart only loses a run already started
-export const askVersionIn = new Map<string, string[]>();
+export const askVersionIn = new Map<string, { by: string; languages?: string[] }>();
 
-/** Transcribes one version's audio as its job's actor, and stores it. */
+/**
+ * Where the AI Editor row (Settings → AI → Voice) sends an edit's transcript: only the row's own choice (Automatic, or
+ * "Same as default", leave the editor on the library's engine, as before), resolved by speechFor "editor" for the edit's
+ * languages: a key of `actor`'s, or Parakeet on `actor`'s own computers for an edit in English alone. Null when the row
+ * has no choice of its own or it can't serve this edit (a need, or the row's note that it runs elsewhere): the
+ * library's engine then, as before.
+ */
+export function editorRoute(actor: string | null, languages?: string[]): Route | null {
+  const own = actor ? readVoicePrefs(actor).stt.per.editor : undefined;
+  if (!own || own.engine === "auto") return null;
+  const s = speechFor(actor, "editor", languages);
+  if ("needs" in s) return null;
+  if (s.engine !== "local") return s.note ? null : { provider: s.engine, key: s.key };
+  return s.on === "computers" ? { provider: "computer", model: s.model, languages: s.languages } : null;
+}
+
+/** What a version's transcript runs on for its job's `actor`: the AI Editor row's route when an edit `actor` started asked for it, else the library's. */
+export function versionRoute(actor: string | null, versionId: string): Route {
+  const ask = askVersionIn.get(versionId);
+  return (ask?.by === actor && editorRoute(actor, ask.languages)) || transcribeRoute(actor);
+}
+
+/** Versions an edit had heard on the AI Editor row's route ("<version>|<provider>:<model>"): heard again for it once at most (analyze.ts). */
+export const heardForEditor = new Set<string>();
+export const editorKey = (versionId: string, r: Route) => `${versionId}|${r.provider}:${r.provider === "computer" ? r.model : ""}`;
+
+/**
+ * Transcribes one version's audio as its job's actor, and stores it. Asked by an AI Editor edit its actor started, it
+ * runs where the editor row says (editorRoute); what the person's computers can't do is made on the library's engine,
+ * and the transcript is made all the same. The library keeps one transcript a clip (Finals, search): the one the
+ * editor's choice made is that clip's library transcript too, with the provider and model that made it.
+ */
 export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
-  const { provider, segments, words, language } = await transcribeFile(src, actor, scratch, versionId, { languages: askVersionIn.get(versionId) });
-  saveTranscript(db, versionId, provider, language, segments, words);
+  const ask = askVersionIn.get(versionId);
+  const languages = ask?.languages;
+  const editor = ask?.by === actor ? editorRoute(actor, languages) : null;
+  const make = (route?: Route) => transcribeFile(src, actor, scratch, versionId, { languages, ...(route ? { use: "editor" as const, route } : {}) });
+  let t: Awaited<ReturnType<typeof make>>;
+  try {
+    t = await make(editor ?? undefined);
+  } catch (e) {
+    if (editor?.provider !== "computer") throw e;
+    console.warn(`[transcribe] ${versionId} for ${actor}'s edit not on their computers: ${e instanceof Error ? e.message : e}`);
+    t = await make();
+  }
+  if (editor) heardForEditor.add(editorKey(versionId, editor));
+  saveTranscript(db, versionId, t.provider, t.language, t.segments, t.words, t.model);
+  if (askVersionIn.get(versionId) === ask) askVersionIn.delete(versionId);
 }

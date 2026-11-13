@@ -160,12 +160,43 @@ describe("AI Editor analyze", () => {
     const plain = await analyze(["ver_early"], Date.now());
     expect(plain.job()).toMatchObject({ error: expect.stringMatching(/Pick the language it is spoken in on the edit/) });
     const { job } = await analyze(["ver_early"], Date.now(), { languages: ["et"] });
-    expect(askVersionIn.get("ver_early")).toEqual(["et"]);
+    expect(askVersionIn.get("ver_early")).toEqual({ by: "mem-a", languages: ["et"] });
     expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
     expect(job()).toMatchObject({ state: "queued" });
     // the next look, while that transcript is still to come: it waits, it does not fail on the old silence
     await tick(Date.now() + 60_000);
     expect(job()).toMatchObject({ state: "queued" });
     d.prepare("DELETE FROM edit_jobs").run();
+  });
+
+  it("the AI Editor row's own choice hears a clip made on another engine once more; on Same as default its transcript is used", async () => {
+    const { writeVoicePrefs } = await import("../lib/speech");
+    const { saveMyKey } = await import("../my-keys");
+    const d = libraryDb();
+    const done = () => d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_late' AND kind = 'transcribe'").run();
+    saveTranscript(d, "ver_late", "deepgram", "en", [], [word("second", 0, 0.5), word("file.", 0.6, 0.9)]);
+    done();
+    saveMyKey("mem-a", "OPENAI_API_KEY", "sk-test");
+    try {
+      // the row on Same as default: the library's transcript as it is
+      expect((await analyze(["ver_late"], Date.now())).job()).toMatchObject({ state: "done" });
+      d.prepare("DELETE FROM edit_jobs").run();
+      // the row on OpenAI: heard again by it as the edit's creator, and the edit waits for it
+      writeVoicePrefs("mem-a", { stt: { per: { editor: { engine: "openai" } } } });
+      const { job } = await analyze(["ver_late"], Date.now());
+      expect(transcribeJob("ver_late")).toEqual({ state: "queued", actor: "mem-a" });
+      expect(job()).toMatchObject({ state: "queued" });
+      await tick(Date.now() + 60_000);
+      expect(job()).toMatchObject({ state: "queued" });
+      // made, on its library engine all the same (a fallback): once only, the edit goes on with it
+      done();
+      await tick(Date.now() + 120_000);
+      expect(job()).toMatchObject({ state: "done" });
+      expect(transcribeJob("ver_late")).toEqual({ state: "done", actor: "mem-a" });
+    } finally {
+      writeVoicePrefs("mem-a", { stt: { per: { editor: null } } });
+      saveMyKey("mem-a", "OPENAI_API_KEY", null);
+      d.prepare("DELETE FROM edit_jobs").run();
+    }
   });
 });

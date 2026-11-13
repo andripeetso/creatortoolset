@@ -9,7 +9,7 @@ import { blobs, libraryDb } from "../library/db";
 import { enqueueJob, prepareFirst } from "../library/jobs";
 import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
-import { askVersionIn, transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
+import { askVersionIn, editorKey, editorRoute, heardForEditor, versionRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { eyelineOf } from "./eyeline";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
@@ -131,6 +131,18 @@ interface SourceRow {
 /** Versions heard again in an edit's own languages ("<version>|<languages>"): each is asked once, not on every look. */
 const askedAgain = new Set<string>();
 
+/**
+ * A version transcribed on another engine than the AI Editor row's own choice now gives (editorRoute): the key it is
+ * heard again by (once: heardForEditor), or null. The row on "Same as default": null, the transcript stays.
+ */
+function editorWantsAgain(db: ReturnType<typeof libraryDb>, versionId: string, by: string, languages?: string[]): string | null {
+  const want = editorRoute(by, languages);
+  if (!want) return null;
+  const t = db.prepare("SELECT provider, model FROM transcripts WHERE version_id = ?").get(versionId) as { provider: string; model: string | null } | undefined;
+  if (t?.provider === want.provider && (want.provider !== "computer" || t.model === want.model)) return null;
+  return editorKey(versionId, want);
+}
+
 export async function analyzeStep({ edit, job, signal }: StepContext): Promise<void> {
   const db = libraryDb();
   const rows = edit.sources.map(
@@ -158,8 +170,7 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
       continue;
     }
     const languages = edit.languages?.length ? edit.languages : undefined;
-    if (languages) askVersionIn.set(row.id, languages);
-    else askVersionIn.delete(row.id);
+    askVersionIn.set(row.id, { by: edit.createdBy, ...(languages ? { languages } : {}) });
     const words = wordsOf(db, row.id);
     // a take heard as silence (asked in another language) is heard once more in the language the edit names
     if (words && languages && !words.length) {
@@ -176,7 +187,25 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
         continue;
       }
     }
+    // one made on another engine than the AI Editor row's own choice is heard once more by that engine; it becomes
+    // the clip's library transcript too (transcribeVersion)
+    const redo = words ? editorWantsAgain(db, row.id, edit.createdBy, languages) : null;
+    if (redo) {
+      if (!heardForEditor.has(redo)) {
+        heardForEditor.add(redo);
+        enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
+        prepareFirst(row.id);
+        wait = true;
+        continue;
+      }
+      const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as { state: string } | undefined;
+      if (t?.state === "queued" || t?.state === "running") {
+        wait = true;
+        continue;
+      }
+    }
     if (words) {
+      askVersionIn.delete(row.id);
       ready.push({ row, probe, words });
       continue;
     }
@@ -191,7 +220,7 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
     else if (job?.state === "failed") throw new Error(`Transcribing “${row.title}” failed (${job.error ?? "no reason given"}): retry it in the Media Library`);
     else {
       // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
-      if (job?.state === "needs_key" && job.actor === edit.createdBy) transcribeRoute(edit.createdBy);
+      if (job?.state === "needs_key" && job.actor === edit.createdBy) versionRoute(edit.createdBy, row.id);
       // none yet, done before word timings were kept, or parked for someone else: transcribe as the edit's creator
       enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
       wait = true;

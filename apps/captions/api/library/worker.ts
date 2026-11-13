@@ -19,7 +19,7 @@ import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
-import { NeedsKey, transcribeRoute, transcribeVersion } from "./transcribe";
+import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortUnsorted } from "./roll";
 
 /**
@@ -132,9 +132,9 @@ export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | n
 // ponytail: one such job first in its lane holds back a key's job behind it (another account's)
 let onDevice = 0;
 const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
-  const j = db.prepare("SELECT kind, actor FROM jobs WHERE id = ?").get(id) as { kind: string; actor: string | null };
+  const j = db.prepare("SELECT kind, actor, version_id FROM jobs WHERE id = ?").get(id) as { kind: string; actor: string | null; version_id: string };
   try {
-    if (j.kind === "transcribe") return transcribeRoute(j.actor).provider === "device";
+    if (j.kind === "transcribe") return versionRoute(j.actor, j.version_id).provider === "device";
     if (j.kind === "embed") return "device" in embedRoute(j.actor);
   } catch {
     // no route: it parks as needs_key when it runs

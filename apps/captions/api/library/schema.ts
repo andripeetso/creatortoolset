@@ -363,4 +363,7 @@ export const MIGRATIONS: string[] = [
     WHERE c.kind = 'smart' AND c.query = '{"roll":"a"}');
   UPDATE assets SET filed_roll = 'none' WHERE id IN (SELECT v.asset_id FROM derived_from f JOIN asset_versions v ON v.id = f.version_id WHERE f.note = 'export');
   `,
+  // 17: the speech model a transcript made on the person's own computer came from (provider 'computer'): the AI Editor
+  // hears a clip again when its row picks another model (editor/analyze.ts)
+  `ALTER TABLE transcripts ADD COLUMN model TEXT;`,
 ];
