@@ -1,4 +1,4 @@
-// The menu items the server's plug-ins add (GET /api/activity/menu) to the Go menu and the menu bar panel's gear.
+// The menu items the server's plug-ins add (GET /api/activity/menu) to the Go menu and the menu bar panel's Settings & More.
 // No Swift in a plug-in: a plug-in gives a title and an app path, and the window opens it.
 import SwiftUI
 

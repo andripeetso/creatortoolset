@@ -1,6 +1,6 @@
 // Quick recording from anywhere: a keyboard shortcut that works in every app (start, and stop while recording) and a
 // record button in the menu bar (the time while recording; a click stops). Both are the user's to change: the shortcut
-// in "Recording Shortcut…", the button with "Record Button in Menu Bar" (the menu bar panel's gear → Screen Recordings).
+// in "Recording Shortcut…", the button with "Record Button in Menu Bar" (the menu bar panel's Settings & More → Screen Recordings).
 import AppKit
 import Carbon.HIToolbox
 import Combine
