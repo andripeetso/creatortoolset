@@ -477,7 +477,11 @@ ML compiles it, then about 2 s).
   (the server's Voice languages, else the Mac's, until ticked), Microphone and Accessibility with their own Allow,
   where speech turns into text (this Mac's model with its download, or your speech server), and Get Started once both
   permissions are given. Opening it starts loading the model, or downloading it when it is not here (with a speech
-  server it is what dictation falls back on). Nothing opens it by itself at launch. Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
+  server it is what dictation falls back on). Once per Mac, if dictation was never set up and is on, the page offers
+  itself as a sheet on the main window, with Not now (and Esc): when the site's page says it is calm (`thismac-page:calm`,
+  sent 3 s after its own setup and welcome are off screen, `pageCalm` in `src/lib/setup.ts`), and not over an alert,
+  another sheet, a recording or a dictation (`dictationOffer`). That sheet loads the model only after the first click
+  on it. Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
   Settings pane, and the download's progress. Before Accessibility no key tap can exist, so the keys are Carbon
   hotkeys and the hold key is read from the modifier state ten times a second (a hold of 1 s with no other key counts
   as the first press). Switching dictation off stops a download in progress.
