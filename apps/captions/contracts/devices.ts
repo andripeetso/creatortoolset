@@ -44,8 +44,8 @@ export const CUTOUT_KIND = "cutout";
  * for the Media Library's transcripts when their engine is `local` (api/lib/speech.ts speechFor). Not an edit step: it is
  * listed, hinted and claimed on the road above, with what the computer holds in the claim:
  *   claim { kinds: [..., "transcribe"], models: [ids it has], getting: [ids it is downloading] }
- *     → { job, models: [ids its owner wants on it] }   it downloads each wanted one it lacks from the model's page
- *       (STT_MODELS `page`, a Hugging Face repository) and deletes each it has that is not wanted, then claims again
+ *     → { job, models: [ids its owner wants on it] }   it downloads each wanted one it lacks (STT_MODELS `download`, a
+ *       Hugging Face repository) and deletes each it has that is not wanted, then claims again
  *   GET  transcribe/:id            → the audio: WAV, 16 kHz mono 16-bit; the job's `model` and `languages` say how
  *   POST transcribe/:id            TranscribeResult → DeviceEnded
  *   POST transcribe/:id/fail       { error } → DeviceEnded

@@ -6,7 +6,7 @@ import { deviceTranscribes } from "./device-transcribe";
 import { speechComputers } from "./computer-transcribe";
 import { isOnline } from "./devices";
 import {
-  DEFAULT_VOICE_PREFS, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
+  COMPUTER_USES, DEFAULT_VOICE_PREFS, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
   type SpeechUse, type SttChoice, type SttEngine, type SttResolved, type VoicePrefs,
 } from "../../contracts/voice";
 
@@ -67,20 +67,32 @@ export function writeVoicePrefs(username: string, b: Record<string, unknown>): V
   return next;
 }
 
-/** Engines that can serve this account now: a key it has, this computer, or a computer of its own with a speech model. */
-export function availableEngines(actor: Actor): Engine[] {
+/** The account's computers that `use` may run on: none for a use that does not route to computers yet (COMPUTER_USES). */
+const computersFor = (actor: Actor, use: SpeechUse | undefined) => (use && COMPUTER_USES.includes(use) ? speechComputers(userOf(actor)) : []);
+
+/**
+ * Engines that can serve `use` for this account now: a key it has, the server itself, or (for COMPUTER_USES) a computer
+ * of its own with a speech model. No use: the ones every use can run.
+ */
+export function availableEngines(actor: Actor, use?: SpeechUse): Engine[] {
   const out: Engine[] = [];
   if (!keyFor(actor, "DEEPGRAM_API_KEY").missing) out.push("deepgram");
   if (!keyFor(actor, "OPENAI_API_KEY").missing) out.push("openai");
-  if (deviceTranscribes() || speechComputers(userOf(actor)).some((d) => d.stt?.held.length)) out.push("local");
+  if (deviceTranscribes() || computersFor(actor, use).some((d) => d.stt?.held.length)) out.push("local");
   return out;
 }
+
+/** availableEngines for each use, for the Voice page's per-use rows. */
+export const availableFor = (actor: Actor): Record<SpeechUse, Engine[]> =>
+  Object.fromEntries(SPEECH_USES.map((use) => [use, availableEngines(actor, use)])) as Record<SpeechUse, Engine[]>;
 
 const NEEDS: Record<Engine, string> = {
   deepgram: "Needs a Deepgram key",
   openai: "Needs an OpenAI key",
   local: "Needs a speech model on one of your computers",
 };
+/** A use that does not route to computers yet, asked to run on one (COMPUTER_USES). */
+const COMPUTERS_ONLY_FOR = "Speech models on your computers do Media Library transcripts only";
 
 /** `on`: a local model runs on the server itself (lib/device-transcribe.ts) or on the person's computers (lib/computer-transcribe.ts). */
 export type Speech =
@@ -93,19 +105,21 @@ export type Speech =
  * STT_MODELS that hears these languages (none: one that hears every language) on a computer that is on; else the
  * server's own; else one on a computer that is off.
  */
-function localFor(actor: Actor, chosen: string | undefined, langs: string[]): { model: string; on: "server" | "computers" } | { needs: string } {
-  const mine = speechComputers(userOf(actor));
+function localFor(actor: Actor, use: SpeechUse, chosen: string | undefined, langs: string[]): { model: string; on: "server" | "computers" } | { needs: string } {
+  const routed = COMPUTER_USES.includes(use);
+  const mine = computersFor(actor, use);
   const kept = (id: string) => mine.filter((d) => d.stt?.held.includes(id));
   if (chosen) {
     const m = STT_MODELS.find((x) => x.id === chosen)!;
     if (!m.computer) return deviceTranscribes() ? { model: chosen, on: "server" } : { needs: NEEDS.local };
+    if (!routed) return { needs: COMPUTERS_ONLY_FOR };
     return kept(chosen).length ? { model: chosen, on: "computers" } : { needs: `Needs ${m.name} on one of your computers` };
   }
   const hears = (m: (typeof STT_MODELS)[number]) => m.languages === "many" || (langs.length > 0 && langs.every((l) => m.languages.includes(l)));
   const fit = STT_MODELS.filter((m) => m.computer && hears(m) && kept(m.id).length);
   const on = fit.find((m) => kept(m.id).some((d) => isOnline(d.id))) ?? (deviceTranscribes() ? undefined : fit[0]);
   if (on) return { model: on.id, on: "computers" };
-  return deviceTranscribes() ? { model: "whisper-base", on: "server" } : { needs: NEEDS.local };
+  return deviceTranscribes() ? { model: "whisper-base", on: "server" } : { needs: routed ? NEEDS.local : COMPUTERS_ONLY_FOR };
 }
 
 /**
@@ -117,13 +131,14 @@ export function speechFor(actor: Actor, use: SpeechUse, languages?: string[]): S
   const prefs = readVoicePrefs(userOf(actor));
   const choice = prefs.stt.per[use] ?? prefs.stt.default;
   const langs = languages?.length ? languages : prefs.languages;
-  const can = availableEngines(actor);
+  const can = availableEngines(actor, use);
   const engine = choice.engine === "auto" ? can[0] : choice.engine;
   if (!engine) return { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys" };
-  if (!can.includes(engine)) return { needs: NEEDS[engine] };
+  // local asked of a use that can't run on computers: a model on one would not help, so it says that
+  if (!can.includes(engine)) return { needs: engine === "local" && !COMPUTER_USES.includes(use) ? COMPUTERS_ONLY_FOR : NEEDS[engine] };
   const chosen = (choice.engine === engine && choice.model) || undefined;
   if (engine === "local") {
-    const l = localFor(actor, chosen, langs);
+    const l = localFor(actor, use, chosen, langs);
     return "needs" in l ? l : { engine, ...l, languages: langs };
   }
   const model = chosen || STT_MODELS.find((m) => m.engine === engine)!.id;

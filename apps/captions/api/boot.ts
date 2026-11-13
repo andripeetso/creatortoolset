@@ -50,7 +50,7 @@ import { providersApp } from "./providers";
 import { mcpApp, pluginToolsOf } from "./mcp";
 import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
-import { devicesApp } from "./devices";
+import { devicePairApp, devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
 import { connectState, tunnelHostname } from "./connect/state";
 import { startConnector } from "./connect/connector";
@@ -267,6 +267,8 @@ if (hostedMode()) {
 mountPublicRoutes(app, serverPlugins);
 // a file the user's own AI sends with curl (MCP upload_file): the link in the path is its only credential
 app.route("/api/upload", uploadLinkApp);
+// a computer with no browser swaps its owner's one-time code for its token (devices.ts): the code is its only credential
+app.route("/api/devices/pair", devicePairApp);
 // a social sign-in's way back may land in the computer's browser, without the session: its state names the account
 app.route("/api/connectors", connectorsCallbackApp);
 // an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access

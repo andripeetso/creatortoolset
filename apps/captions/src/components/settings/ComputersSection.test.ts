@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { phoneLine } from "./ComputersSection";
+import { linuxCommand, phoneLine } from "./ComputersSection";
 import { searchSettings } from "./search";
 
 describe("phoneLine", () => {
@@ -10,6 +10,10 @@ describe("phoneLine", () => {
   it("an https address is a tunnel or the hosted site: the line names the address", () => {
     expect(phoneLine("https://sam.example.com")).toEqual({ wifi: false, host: "sam.example.com" });
   });
+});
+
+it("a Linux computer's one command fetches the helper from this server and pairs with the code", () => {
+  expect(linuxCommand("https://sam.example.com", "ABCD-EFGH-JKLM")).toBe("curl -fsSL https://sam.example.com/helper/install.sh | sh -s -- https://sam.example.com ABCD-EFGH-JKLM");
 });
 
 describe("phone rows are searchable", () => {

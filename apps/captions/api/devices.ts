@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
 import { CUTOUT_KIND, parseKinds, parseModels, RESOLVE_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
-import type { AuthVars } from "./auth";
+import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy } from "./editor/engine";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
@@ -13,7 +13,8 @@ import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balan
 import { claimTranscript, declareModels, heldAudio, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
-import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, moveProviders, pairDevice, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
+import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
+import { clearTries, waitFor, wrongTry } from "./lib/sign-in-code";
 import { findUser } from "./users";
 import { resolveGranted } from "./lib/packs";
 import { storageApp } from "./devices-storage";
@@ -21,6 +22,8 @@ import { storageApp } from "./devices-storage";
 /**
  * The Macs that run AI jobs (lib/devices.ts). Routes (boot.ts mounts them at /api/devices):
  *   POST /api/devices body {name, version?} → {device, token}   pair this account's Mac (the token is shown once)
+ *   POST /api/devices/code → {code, expiresAt, url}              a one-time code for a computer with no browser (apps/helper)
+ *   POST /api/devices/pair {code, name, version?} → {device, token}   that computer swaps it (devicePairApp, before the account gate)
  *   GET /api/devices → Array<Device & {online}>                  own; admins also the workspace's and admins' Macs
  *   PATCH /api/devices/:id {name}                                owner or admin
  *   DELETE /api/devices/:id                                      owner or admin
@@ -246,6 +249,15 @@ devicesApp.post("/", async (c) => {
   return c.json({ device, token });
 });
 
+devicesApp.post("/code", async (c) => {
+  const u = c.get("user");
+  if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
+  if (RESERVED.has(u.username)) return c.json({ error: "This account can't pair a computer" }, 400);
+  c.header("Cache-Control", "no-store");
+  // url: where another computer reaches this server (null: it listens on this computer only, as for a phone)
+  return c.json({ ...mintPairCode(u.username), url: await phoneOrigin(c) });
+});
+
 devicesApp.get("/", (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
@@ -280,4 +292,33 @@ devicesApp.delete("/:id", async (c) => {
   if (!manageable(u, id)) return c.json({ error: "Not found" }, 404);
   await revokeDevice(id);
   return c.json({ ok: true });
+});
+
+/**
+ * POST /api/devices/pair {code, name, version?} → {device, token}: a computer with no browser swaps its owner's one-time
+ * code (lib/devices.ts mintPairCode) for its own `ctd_` token. Mounted before the account gate (boot.ts): the code is its
+ * only credential, and a cookie sent with it changes nothing (the computer is always the code's account's). Five wrong
+ * codes from one address are free, then each waits twice as long as the last (lib/sign-in-code.ts, as for passwords).
+ */
+export const devicePairApp = new Hono();
+const PAIR_TRIES = "devices/pair"; // no account is named with a slash, so this lock is no account's
+devicePairApp.post("/", async (c) => {
+  c.header("Cache-Control", "no-store");
+  const from = clientAddress(c);
+  const wait = waitFor(PAIR_TRIES, from);
+  if (wait) {
+    c.header("Retry-After", String(Math.ceil(wait / 1000)));
+    return c.json({ error: "Too many wrong codes. Try again later." }, 429);
+  }
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const name = typeof b?.name === "string" ? b.name.trim().slice(0, 60) : "";
+  if (typeof b?.code !== "string" || !name) return c.json({ error: "code, name" }, 400);
+  const paired = pairWithCode(b.code, name, typeof b.version === "string" ? b.version.slice(0, 40) : undefined);
+  if (!paired) {
+    wrongTry(PAIR_TRIES, from);
+    return c.json({ error: "That code is used or expired. Get a new one in Settings → Devices." }, 400);
+  }
+  clearTries(PAIR_TRIES, from);
+  if (paired.replaced.length) await moveProviders(paired.device.owner, paired.replaced, paired.device.id);
+  return c.json({ device: paired.device, token: paired.token });
 });

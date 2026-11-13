@@ -3,7 +3,7 @@ import type { AuthVars } from "./auth";
 import { readBalance } from "./lib/balance";
 import { speechComputers, strongest, wantModel } from "./lib/computer-transcribe";
 import { isOnline } from "./lib/devices";
-import { availableEngines, readVoicePrefs, resolvedFor, writeVoicePrefs } from "./lib/speech";
+import { availableEngines, availableFor, readVoicePrefs, resolvedFor, writeVoicePrefs } from "./lib/speech";
 import type { SttComputer, VoiceView } from "../contracts/voice";
 
 /**
@@ -33,6 +33,7 @@ const view = async (user: AuthVars["user"]): Promise<VoiceView> => ({
   ...readVoicePrefs(user.username),
   resolved: resolvedFor(user),
   available: availableEngines(user),
+  availableFor: availableFor(user),
   computers: await computers(user.username),
 });
 

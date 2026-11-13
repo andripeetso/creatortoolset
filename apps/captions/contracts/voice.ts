@@ -10,6 +10,9 @@
 export const SPEECH_USES = ["captions", "transcripts", "editor", "mic"] as const;
 export type SpeechUse = (typeof SPEECH_USES)[number];
 
+/** The uses a model on the person's own computers runs today (api/library/transcribe.ts); the others never offer it. */
+export const COMPUTER_USES: readonly SpeechUse[] = ["transcripts"];
+
 export const SPEECH_USE_NAMES: Record<SpeechUse, string> = {
   captions: "Captions",
   transcripts: "Media Library transcripts",
@@ -38,10 +41,17 @@ export interface SttModel {
   name: string;
   /** One line: what it is good at, measured where we measured. */
   about: string;
-  /** Where it is hosted (the model's own page). */
+  /** Who made it: the catalog line reads "Whisper large-v3 turbo by OpenAI, MIT". */
+  by: string;
+  /** The model's own page (its makers'), whose licence `licence` is. */
   page: string;
   /** Its licence as published on that page; every one listed allows commercial use. */
   licence: string;
+  /**
+   * The Hugging Face repository a computer downloads (`computer` models; apps/helper keeps the same map): a community
+   * conversion of the model on `page` for the runtime that runs it (faster-whisper, onnx-asr), under the same licence.
+   */
+  download?: string;
   /** Download size, for a local model. */
   mb?: number;
   /** A local model one of the person's computers downloads (Download, contracts/devices.ts TRANSCRIBE_KIND); absent = the server's own (whisper-base). */
@@ -56,20 +66,20 @@ export interface SttModel {
  * on Estonian; Parakeet was the fastest and closest in timing on English.
  */
 export const STT_MODELS: SttModel[] = [
-  { id: "nova-3", engine: "deepgram", name: "Deepgram Nova-3", about: "Keeps every um and restart, which the AI Editor cuts at",
+  { id: "nova-3", engine: "deepgram", name: "Deepgram Nova-3", by: "Deepgram", about: "Keeps every um and restart, which the AI Editor cuts at",
     page: "https://developers.deepgram.com/docs/models-languages-overview", licence: "Paid API, your own key", languages: "many" },
-  { id: "whisper-1", engine: "openai", name: "OpenAI Whisper", about: "Tidies speech: an um or a restart is often left out",
+  { id: "whisper-1", engine: "openai", name: "OpenAI Whisper", by: "OpenAI", about: "Tidies speech: an um or a restart is often left out",
     page: "https://platform.openai.com/docs/guides/speech-to-text", licence: "Paid API, your own key", languages: "many" },
-  // what a computer downloads is the page's own repository: a conversion for its runtime (faster-whisper, onnx-asr)
-  { id: "whisper-large-v3", engine: "local", name: "Whisper large-v3", about: "The closest a free model came to Deepgram on Estonian (30% words wrong), best with a graphics card",
-    page: "https://huggingface.co/Systran/faster-whisper-large-v3", licence: "MIT", mb: 3090, languages: "many", computer: true },
-  { id: "whisper-large-v3-turbo", engine: "local", name: "Whisper large-v3 turbo", about: "As close as large-v3 on Estonian, twice as fast with half the memory",
-    page: "https://huggingface.co/deepdml/faster-whisper-large-v3-turbo-ct2", licence: "MIT", mb: 1621, languages: "many", computer: true },
+  // the first a computer has is the one used when no model is chosen (api/lib/speech.ts localFor): turbo is the default
+  { id: "whisper-large-v3-turbo", engine: "local", name: "Whisper large-v3 turbo", by: "OpenAI", about: "As close as large-v3 on Estonian, twice as fast with half the memory",
+    page: "https://huggingface.co/openai/whisper-large-v3-turbo", licence: "MIT", download: "deepdml/faster-whisper-large-v3-turbo-ct2", mb: 1621, languages: "many", computer: true },
+  { id: "whisper-large-v3", engine: "local", name: "Whisper large-v3", by: "OpenAI", about: "The closest a free model came to Deepgram on Estonian (30% words wrong), best with a graphics card",
+    page: "https://huggingface.co/openai/whisper-large-v3", licence: "Apache-2.0", download: "Systran/faster-whisper-large-v3", mb: 3090, languages: "many", computer: true },
   // its card lists 25 languages; on Estonian it got nearly half the words wrong, so it is offered for English only
-  { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", about: "English only: the fastest, and the closest word times",
-    page: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx", licence: "CC-BY-4.0, by NVIDIA", mb: 2550, languages: ["en"], computer: true },
-  { id: "whisper-base", engine: "local", name: "Whisper base", about: "Small and quick, the one the browser already uses",
-    page: "https://huggingface.co/onnx-community/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
+  { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", by: "NVIDIA", about: "English only: the fastest, and the closest word times",
+    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", mb: 2550, languages: ["en"], computer: true },
+  { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Small and quick, the one the browser already uses",
+    page: "https://huggingface.co/openai/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
 ];
 
 export interface VoicePrefs {
@@ -88,8 +98,13 @@ export type SttResolved =
 export interface VoiceView extends VoicePrefs {
   /** Each use as it resolves for this account right now. */
   resolved: SttResolved[];
-  /** Engines that can serve this account now (a key, this computer, or a computer of theirs with a model), so the page offers only those. */
+  /**
+   * Engines that can serve every use now (a key, or a model on the server itself), so a page that reads one list never
+   * offers a use what it can't run. `availableFor` is per use: a model on the person's computers serves only the uses
+   * in COMPUTER_USES, so `local` may be in a use's list and not in this one.
+   */
   available: Exclude<SttEngine, "auto">[];
+  availableFor: Record<SpeechUse, Exclude<SttEngine, "auto">[]>;
   /**
    * The person's own computers that run speech models (they declare TRANSCRIBE_KIND), strongest first: the order a
    * transcript goes in. Per computer, the `computer` models it has, is downloading, or was asked to download. Download
