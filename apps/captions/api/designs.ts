@@ -375,8 +375,8 @@ designsApp.post("/", (c) =>
       d.from = { version: b.version, t: b.t };
       d.pages = [coverPage(await addPicture(d, frame, "jpg"), title, d.width, d.height)];
     } else if (b.blank === true) {
-      // a design of its own: empty frames to draw on
-      const count = Number.isInteger(b.pages) ? Math.min(DESIGN_LIMITS.pages, Math.max(1, b.pages as number)) : 1;
+      // a design of its own: empty frames to draw on (one when it does not say; `pages: 0` is an empty canvas, its frames made on it)
+      const count = Number.isInteger(b.pages) ? Math.min(DESIGN_LIMITS.pages, Math.max(0, b.pages as number)) : 1;
       d.name = named || d.name;
       d.pages = withFrames(Array.from({ length: count }, (_, k) => ({ id: `p${k + 1}`, background: "#ffffff", layers: [] })), d.width, d.height);
     } else throw new DesignError("Say what the design is of: a carousel piece (session and doc), a video's moment (version and t), or blank: true");
@@ -402,7 +402,9 @@ designsApp.put("/:id", (c) =>
     // a design made before frames knew their slides: each frame is its slide's by the order the design was in
     const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
     const pages = withFrames(cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures }).pages, d.width, d.height, was);
-    if (!pages.length) throw new DesignError("A design keeps at least one frame");
+    // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
+    // could be kept is not, and nothing is saved over what is there
+    if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
     return save({ ...d, name, pages, updatedAt: stamp(d) });
   }),
 );

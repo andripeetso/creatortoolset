@@ -791,8 +791,10 @@ export function Stage({
       if (on) return shapeDrag(e, shaped, px, on);
       onShape(null);
     }
-    if (tool === "pen") return penDown(e, p, k);
     if (tool === "frame") return make(e, -1);
+    // a canvas with no frame yet: there is nothing to draw a layer on
+    if (tool !== "move" && !fr.length) return;
+    if (tool === "pen") return penDown(e, p, k);
     if (tool !== "move") return make(e, k >= 0 ? k : at);
     // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it)
     if (!hit && k >= 0 && (framedIds.includes(pages[k]!.id) || !pages[k]!.layers.some((l) => !l.hidden && !l.locked))) return moveFrame(e, k);

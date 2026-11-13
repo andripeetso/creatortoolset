@@ -237,6 +237,8 @@ export interface Design extends Omit<DesignSummary, "pages"> {
  * A new design. From a carousel piece: `session` and `doc`, one page a slide, laid out plainly until the AI designs it.
  * From a video: `version` (a library version) and `t` (seconds): that frame is copied in as the picture, with `title`
  * as its words. `format` must be one of that kind's (a piece: a carousel format; a video: cover or thumbnail).
+ * `blank`: of its own, with `pages` empty frames of the format's size (one when it does not say; 0 is an empty canvas,
+ * whose frames are made on it and may be of any size).
  */
 export type NewDesign = { format: DesignFormat; name?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string } | { blank: true; pages?: number });
 
