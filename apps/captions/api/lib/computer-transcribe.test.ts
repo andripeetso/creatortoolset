@@ -141,12 +141,14 @@ describe("speechFor with computers", () => {
   // the AI Editor cuts at restarts and "um"s: on a computer only with Parakeet (EDITOR_COMPUTER_MODEL), only when picked,
   // only for an edit in English alone; anything else stays on Deepgram, as before
   it("the AI Editor: offered a computer with Parakeet, never on Automatic, Deepgram for another model or language", async () => {
+    // the PC gets Parakeet too: a Mac never runs the editor's (isMac)
+    await claim(pc.token, ["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"]);
     writeVoicePrefs("ana", { languages: ["en"], stt: { default: { engine: "auto" }, per: { transcripts: null } } });
     const v = (await (await app.request("/api/voice-prefs", { headers: { authorization: key } })).json()) as { available: string[]; availableFor: Record<string, string[]>; resolved: { use: string }[] };
     expect(v.availableFor.transcripts).toContain("local");
     expect(v.availableFor.captions).toContain("local");
     expect(v.availableFor.mic).toContain("local");
-    expect(v.availableFor.editor).toContain("local");   // the Mac has Parakeet
+    expect(v.availableFor.editor).toContain("local");   // the PC has Parakeet
     expect(v.available).not.toContain("local");
     // Automatic with no key: the others run on a computer, the AI Editor is never sent there unasked
     expect(speechFor("ana", "transcripts")).toMatchObject({ engine: "local", on: "computers" });
