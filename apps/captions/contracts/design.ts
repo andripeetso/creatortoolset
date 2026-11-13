@@ -1,21 +1,20 @@
 /**
  * Designs: pictures the person's AI designs and the person then changes by hand. A carousel's slides (from a Content
- * Workshop carousel piece), a video's cover, a thumbnail. A design is pages of layers: text, pictures, shapes and
- * drawings, each with a place and a size in the picture's own pixels. It is data, never a program: the AI answers
- * layers, code checks every value (api/designs.ts), the browser draws them (src/lib/design/draw.ts) and saves each
- * page as a PNG of exactly the design's size.
+ * Workshop carousel piece), a video's cover, a thumbnail. A design is one canvas of frames, each a picture of its own
+ * size made of layers: text, pictures, shapes and drawings, each with a place and a size in its frame's own pixels.
+ * It is data, never a program: the AI answers layers, code checks every value (api/designs.ts), the browser draws
+ * them (src/lib/design/draw.ts) and saves each frame as a PNG of exactly its size.
  *
  * Contract (api/designs.ts, mounted at /api/designs):
  *   GET    /api/designs?session=&doc=   → DesignSummary[] (mine; narrowed to one Workshop piece when both are given)
  *   POST   /api/designs                 NewDesign → Design (a piece's slides, a video's frame, or blank pages)
  *   GET    /api/designs/:id             → Design
- *   PUT    /api/designs/:id             { name?, pages?, look? } → Design (what the person changed by hand)
+ *   PUT    /api/designs/:id             { name?, pages?, since? } → Design (what the person changed by hand). `since`: the updatedAt this window last knew; the design changed after it → 409 { error, design } and nothing is written
  *   DELETE /api/designs/:id
- *   POST   /api/designs/:id/design      { look?: string | null, notes?: string } → DesignAnswer (the AI designs the pages)
- *   GET    /api/designs/:id/pages       → what an AI designs from: the size, fonts, pictures, looks' briefs, each page with its words, how layers are written
- *   POST   /api/designs/:id/pages       { pages: [{ page, background?, layers }] } → DesignAnswer (an AI's pages: each one named is replaced, checked as above)
- *   GET    /api/designs/:id/look        ?pages=1,2 → { pictures: [{ page, jpeg (base64), spills }], why? }: the pages as small pictures, for the AI to look at
- *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP)
+ *   GET    /api/designs/:id/pages       ?look=<name> → what an AI designs from: the fonts, pictures, looks' briefs (one look's pictures when named), each frame with its id, size, words and layers, and how frames and changes are written
+ *   POST   /api/designs/:id/pages       { frames?: [{ id?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? }] } → DesignAnswer & { touched: frame ids } (an AI's work: whole frames replaced or added, or single layers changed; checked as above)
+ *   GET    /api/designs/:id/look        ?frames=<id>,<id> → { pictures: [{ page, jpeg (base64), spills }], why? }: the frames as small pictures, for the AI to look at
+ *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP); or { version, t }: that moment of a library video, copied in
  *   GET    /api/designs/:id/pictures/:pid
  * A picture layer names a picture in the design's own folder by its id, never an address: a video's frame and anything
  * else from the library is copied in, so a design keeps what it shows.
@@ -33,7 +32,10 @@ export type DesignFormat = (typeof DESIGN_FORMATS)[number]["id"];
 export type DesignKind = (typeof DESIGN_FORMATS)[number]["kind"];
 export const formatOf = (id: unknown) => DESIGN_FORMATS.find((f) => f.id === id) ?? null;
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
+/** Pixels between two frames the app places itself (a new design's frames in a row, a new frame beside the last). */
+export const DESIGN_GAP = 120;
+
+export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
@@ -60,7 +62,7 @@ export interface TextLayer extends Box {
   text: string;
   /** one of the designer's font families (src/lib/design/fonts.ts DESIGN_FONTS) */
   font: string;
-  /** letter height in pixels */
+  /** font size in pixels */
   size: number;
   /** "#rrggbb" */
   color: string;
@@ -100,10 +102,21 @@ export interface DrawingLayer extends Box {
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer;
 
+/**
+ * A frame: one picture of the design, with a place and a size of its own on the design's canvas, so a carousel's
+ * slides, a cover and a thumbnail can lie side by side in one design. (Called a page where it is a carousel's.)
+ */
 export interface DesignPage {
   id: string;
-  /** what the canvas and the layers list call it; absent = "Page 3" by its place */
+  /** what the canvas and the layers list call it; absent = "Frame 3" by its place in the list */
   name?: string;
+  /** its top left corner on the canvas and its size, in pixels. The server gives every frame these (a design saved before frames had a place gets them in a row, each the design's size) */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  /** the Workshop carousel slide (its block's id) this frame draws: its words are that slide's, as the piece has them now */
+  block?: string;
   /** "#rrggbb" */
   background: string;
   /** bottom first: a later layer is drawn over an earlier one */

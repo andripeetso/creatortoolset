@@ -6,9 +6,10 @@ import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
 /**
- * The layers list: every page with its layers under it, the front one on top. A click picks (Shift or ⌘ adds or
- * takes one), a double click on a name renames, the eye hides and the lock locks, and a row is dragged to a new place:
- * a layer among its page's layers, a page among the pages.
+ * The layers list: every frame of the canvas with its layers under it, the front one on top. A click picks (Shift or
+ * ⌘ adds or takes one), a double click on a name renames, the eye hides and the lock locks, and a row is dragged to a
+ * new place: a layer among its frame's layers, a frame among the frames (where two frames lie over each other, the
+ * lower one in the list is drawn on top, and the list's order numbers the saved PNGs).
  */
 
 const ROW = "group relative flex h-8 w-full cursor-default items-center gap-1.5 pr-2 text-left";
@@ -35,7 +36,7 @@ export function LayersPanel({
   onPick: (at: number, ids: string[], framed?: boolean) => void;
   /** the layer the pointer is on, for the canvas to outline */
   onPoint: (id: string | null) => void;
-  /** a page with a layer renamed, hidden, locked or moved (one step to undo) */
+  /** a frame with a layer renamed, hidden, locked or moved (one step to undo) */
   onPage: (page: DesignPage) => void;
   onMovePage: (from: number, to: number) => void;
   onAddPage: () => void;
@@ -109,8 +110,8 @@ export function LayersPanel({
     <nav aria-label="Layers" className="flex w-60 shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
         <h2 className="font-semibold">Layers</h2>
-        <Tip label="Add a page" side="right">
-          <button type="button" aria-label="Add a page" onClick={onAddPage} className="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-zinc-500/15">
+        <Tip label="Add a frame" side="right">
+          <button type="button" aria-label="Add a frame" onClick={onAddPage} className="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-zinc-500/15">
             <Plus className="h-3.5 w-3.5" />
           </button>
         </Tip>

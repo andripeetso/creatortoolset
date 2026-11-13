@@ -2,50 +2,48 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_LIMITS, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
+import { DESIGN_FORMATS, DESIGN_LIMITS, formatOf, type Design, type DesignAnswer, type DesignPage, type DesignSummary } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
-import { aiFor, completeWithFallback } from "./ai-complete";
-import { completeVisionWithFallback, type VisionImage } from "./ai-vision";
 import type { AuthVars } from "./auth";
-import { animationStyles, findAnimation } from "./editor/animation-styles";
+import { animationStyles } from "./editor/animation-styles";
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
-import { cleanPages, coverPage, plainPages, slideWords } from "./lib/design-check";
+import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
 import { env } from "./lib/env";
-import { parseJsonObject } from "./lib/instagram/vision";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
 import { blobs, libraryDb } from "./library/db";
-import { whoFor } from "./library/describe";
 import { ownedSession, readDoc } from "./workshop";
 
 /**
- * Designs (contracts/design.ts): pages of layers the person's AI designs and the person changes by hand. One JSON file
- * a design, $DATA_DIR/designs/<owner>/<id>.json, with its pictures beside it in <id>/. The AI's call is the task and
- * the answer's shape; the look is the brief and the pictures of the animation style the person picked, and nothing
- * else: no pack text, no rules drawn from them. Every page's words are the author's (cleanPages leaves out a text
- * layer that says anything else).
+ * Designs (contracts/design.ts): a canvas of frames, each a picture made of layers, that the person's AI designs and
+ * the person changes by hand. One JSON file a design, $DATA_DIR/designs/<owner>/<id>.json, with its pictures beside
+ * it in <id>/. The app itself asks no AI anything here: the person's AI designs through the assistant's tools
+ * (api/mcp-tools/designs.ts), which read a design as an AI needs it and write frames and single layers back. Every
+ * value it writes is checked (api/lib/design-check.ts), and a frame that draws a Workshop carousel slide keeps that
+ * slide's words: a text layer that says anything else is left out.
  */
 
 const USER = /^[a-zA-Z0-9._-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PICTURE = /^[a-z0-9]{8}\.(jpg|png|webp)$/;
 const TYPE: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
-const LABEL = "Designer";
-/** How many pages an AI is shown at once. */
-const LOOK_PAGES = 6;
-/** The look's pictures a design call carries, as the cards' make call does: the ones made and liked first. */
+/** How many frames an AI is shown at once. */
+const LOOK_FRAMES = 6;
+/** A look's pictures handed to an AI that asks for it: the ones the person made and liked first. */
 const LOOK_PICTURES = 8;
 
 const dirOf = (owner: string) => path.join(env.dataDir, "designs", owner);
 const fileOf = (owner: string, id: string) => path.join(dirOf(owner), `${id}.json`);
 const picturesOf = (owner: string, id: string) => path.join(dirOf(owner), id);
 
+/** A design as it is kept, every frame with its place and size (one saved before frames had them gets them in a row). */
 async function read(owner: string, id: string): Promise<Design | null> {
   if (!USER.test(owner) || !UUID.test(id)) return null;
   try {
-    return JSON.parse(await readFile(fileOf(owner, id), "utf8")) as Design;
+    const d = JSON.parse(await readFile(fileOf(owner, id), "utf8")) as Design;
+    return { ...d, pages: withFrames(d.pages, d.width, d.height) };
   } catch {
     return null;
   }
@@ -61,6 +59,9 @@ async function save(d: Design): Promise<Design> {
   return d;
 }
 
+/** When a design is changed now: always after its last change, so a window can tell that it has not seen this one (`since`, on a save). */
+const stamp = (d: Design): number => Math.max(Date.now(), d.updatedAt + 1);
+
 const summaryOf = (d: Design): DesignSummary => ({ id: d.id, name: d.name, kind: d.kind, format: d.format, width: d.width, height: d.height, pages: d.pages.length, ...(d.from ? { from: d.from } : {}), updatedAt: d.updatedAt });
 
 async function addPicture(d: Design, bytes: Buffer, ext: string): Promise<string> {
@@ -71,7 +72,19 @@ async function addPicture(d: Design, bytes: Buffer, ext: string): Promise<string
   return id;
 }
 
-/** What the design call may not go on without, as the person reads it; `status` is the answer's. */
+/** A moment of a library video this account may read, as a JPEG, with the video's title. The frame is copied: a design keeps what it shows, whatever happens to the video. */
+async function videoFrame(owner: string, version: string, t: number): Promise<{ frame: Buffer; title: string }> {
+  if (!sourcesWorkspace(owner, [version])) throw new DesignError("Not found", 404);
+  const row = libraryDb().prepare("SELECT v.source_key, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; title: string } | undefined;
+  if (!row) throw new DesignError("Not found", 404);
+  try {
+    return { frame: await extractClipJpegFrame({ src: await blobs.localCopy(row.source_key), cacheDir: path.join(dirOf(owner), ".frames"), atMs: Math.round(t * 1000) }), title: row.title };
+  } catch (e) {
+    throw new DesignError(`That moment of the video could not be read (${e instanceof Error ? e.message : String(e)})`, 502);
+  }
+}
+
+/** What cannot be done, as the person (or their AI) reads it; `status` is the answer's. */
 export class DesignError extends Error {
   constructor(
     message: string,
@@ -81,199 +94,218 @@ export class DesignError extends Error {
   }
 }
 
+/** A save by a window that had not seen the design's last change: nothing is written, and it is told the design as it is now. */
+class Changed extends Error {
+  constructor(readonly design: Design) {
+    super("The design was changed somewhere else");
+  }
+}
+
+interface Slide {
+  /** the Workshop block's id */
+  id: string;
+  words: string;
+}
+
 /** The slides of a Workshop carousel piece the caller may see, as words (picture tokens out), with the piece's title. */
-async function slidesOf(user: AuthVars["user"], session: string, doc: string): Promise<{ title: string; slides: string[] }> {
+async function slidesOf(user: AuthVars["user"], session: string, doc: string): Promise<{ title: string; slides: Slide[] }> {
   const meta = await ownedSession(session, user);
   const piece = meta ? await readDoc(meta.id, doc) : null;
   if (!piece) throw new DesignError("Not found", 404);
   if (piece.kind !== "carousel") throw new DesignError("Only a carousel piece has slides to design");
-  const slides = piece.blocks.map((b) => slideWords(b.text)).filter(Boolean).slice(0, DESIGN_LIMITS.pages);
+  const slides = piece.blocks.map((b) => ({ id: b.id, words: slideWords(b.text) })).filter((s) => s.words);
   if (!slides.length) throw new DesignError("This carousel has no words yet: write its slides first");
-  return { title: piece.title, slides };
+  return { title: piece.title, slides: slides.slice(0, DESIGN_LIMITS.pages) };
 }
 
-/* ---- the AI's call ---- */
+/**
+ * The frames with each slide's frame naming its slide. A design made before frames knew their slides is matched by
+ * order, once: the save that follows keeps it, and from then on a frame is its slide's wherever it is moved to.
+ */
+const matched = (pages: DesignPage[], slides: readonly Slide[]): DesignPage[] => (pages.some((p) => p.block) ? pages : pages.map((p, k) => (slides[k] ? { ...p, block: slides[k]!.id } : p)));
 
-/** How layers are written: part of the design call, and what an AI that asks for a design's pages is told (GET /:id/pages). */
-export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from the page's top left corner, and may have "rotate" (degrees about its middle), "opacity" (0 to 1) and "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}). Layers are drawn in order, a later one over an earlier one. The kinds:
-- {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"upper":false,"outline":{"color":"#rrggbb","width":8}}: the words wrap inside w; size is the letter height in pixels.
+const pieceOf = (d: Design): { session: string; doc: string } | null => (d.from && "session" in d.from ? d.from : null);
+const frameLabel = (p: DesignPage, k: number) => `Frame ${k + 1}${p.name ? ` (${p.name})` : ""}`;
+
+/* ---- an AI that designs (the assistant, a connected AI) ---- */
+
+/** How layers are written: what an AI that reads a design is told (GET /:id/pages). */
+export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "opacity" (0 to 1) and "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. The kinds:
+- {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"upper":false,"outline":{"color":"#rrggbb","width":8}}: the words wrap inside w, and "\\n" starts a new line; size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
 - {"type":"shape","shape":"rect|ellipse","fill":"#rrggbb","radius":0,"stroke":{"color":"#rrggbb","width":4}}
-- {"type":"image","picture":"<id>","fit":"cover|contain","radius":0}: only a picture listed under "Pictures".
+- {"type":"image","picture":"<id>","fit":"cover|contain","radius":0}: only a picture listed under "pictures" (how one gets there is below).
 - {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.`;
-const AUTHORS_WORDS = "The words on each page are the author's. Place every word of a page on that page, as written: you choose where the words go, how big they are and how they are split across text layers, and you never add, drop or change one.";
 
-export const DESIGN_SYSTEM = `You design pictures for a creator: carousel slides, video covers and thumbnails. Your design is data, not a picture: pages of layers that the app draws exactly as you give them, and that the person then moves, resizes and restyles by hand.
+const HOW = `A design is a canvas of frames. A frame is one picture (a carousel slide, a cover, a thumbnail, anything): it has an id, a size (w, h) and layers. The user sees every frame side by side, moves and edits any layer by hand, and exports each frame as a PNG of exactly its size.
 
 ${DESIGN_LAYERS}
 
-${AUTHORS_WORDS}
+A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
-Answer with JSON only, one page for each page asked for, in order:
-{"pages":[{"background":"#rrggbb","layers":[…]}]}`;
+To change a design, give either or both of:
+- "frames": [{"id":"<frame id>","background":"#rrggbb","layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "name", "w" or "h"). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
+- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is.
+- "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
-export interface DesignAsk {
-  kind: Design["kind"];
-  w: number;
-  h: number;
-  /** each page's own words */
-  pages: readonly string[];
-  /** the picked style's brief, and how many of its pictures go with the call (the made and liked ones first) */
-  look?: { name: string; brief: string; made: number; inspirations: number };
-  notes?: string;
-  pictures: readonly { id: string; what: string }[];
-}
-
-export function designPrompt(a: DesignAsk): { system: string; user: string } {
-  const what = a.kind === "carousel" ? `A carousel of ${a.pages.length} ${a.pages.length === 1 ? "slide" : "slides"}` : a.kind === "cover" ? "A video's cover" : "A video's thumbnail";
-  const look = a.look
-    ? [
-        `The look: ${JSON.stringify(a.look.name)}${a.look.brief.trim() ? `, in the author's own words:\n${a.look.brief.trim()}` : ""}`,
-        a.look.made + a.look.inspirations
-          ? `The pictures with this message show that look: ${[a.look.made && `the first ${a.look.made} ${a.look.made === 1 ? "is one" : "are ones"} the author made and liked`, a.look.inspirations && `${a.look.made ? "the rest are" : "they are"} inspirations`].filter(Boolean).join(", ")}.`
-          : "",
-      ].filter(Boolean).join("\n")
-    : "The look: none picked.";
-  return {
-    system: DESIGN_SYSTEM,
-    user: [
-      `${what}. Each page is ${a.w} × ${a.h} pixels.`,
-      `Fonts: ${DESIGN_FONTS.map((f) => JSON.stringify(f.family)).join(", ")}`,
-      look,
-      ...(a.notes?.trim() ? [`Notes from the author:\n${a.notes.trim()}`] : []),
-      `Pictures:\n${a.pictures.length ? a.pictures.map((p) => `${p.id} = ${p.what}`).join("\n") : "(none)"}`,
-      `Pages:\n${a.pages.map((p, k) => `--- page ${k + 1} ---\n${p}`).join("\n")}`,
-    ].join("\n\n"),
-  };
-}
-
-/** The answer's pages, as given: a list is all that is asked of its shape here; cleanPages checks what is in it. */
-export function parseDesign(text: string): unknown[] {
-  const o = parseJsonObject(text);
-  if (!Array.isArray(o.pages) || !o.pages.length) throw new Error("The AI's answer has no pages");
-  return o.pages;
-}
-
-/** One answer from the person's AI and nothing but an answer, as the cards' calls are made (api/editor/cards/step.ts): with pictures when the look has them, in words alone when it has none. */
-async function ask<T>(actor: string, prompt: { system: string; user: string }, images: VisionImage[], parse: (text: string) => T): Promise<T> {
-  const who = whoFor(actor);
-  if (images.length) return (await completeVisionWithFallback(prompt.system, prompt.user, images, undefined, parse, who, { label: LABEL, job: "editor" })).value;
-  const route = aiFor(who, "editor", LABEL);
-  if (route.off) throw new DesignError(route.off);
-  return completeWithFallback(prompt.system, prompt.user, undefined, parse, { ...route, retries: 0 });
-}
-
-/** The person's AI designs the pages: the words stay the author's, the look is the picked style's brief and pictures. */
-export async function designPages(user: AuthVars["user"], d: Design, body: { look?: unknown; notes?: unknown }): Promise<DesignAnswer> {
-  // every page of the design, with the words it may place: a piece's slides as they are now, else what the page
-  // says (or the design's name). A page the person added beyond the slides is one of them, and stays
-  const mine = await pagesForAi(user, d);
-  const words = mine.words ?? mine.pages.map((p) => saidOn(p) || d.name);
-  const lookId = typeof body.look === "string" ? body.look : body.look === null ? "" : (d.look ?? "");
-  const style = lookId ? findAnimation(d.owner, lookId) : null;
-  if (lookId && !style) throw new DesignError("That style is gone: pick another", 404);
-  const shown = style ? await stylePictures(d.owner, style, LOOK_PICTURES) : { images: [], made: 0, inspirations: 0 };
-  const prompt = designPrompt({
-    kind: d.kind,
-    w: d.width,
-    h: d.height,
-    pages: words,
-    ...(style ? { look: { name: style.name, brief: style.brief, made: shown.made, inspirations: shown.inspirations } } : {}),
-    notes: typeof body.notes === "string" ? body.notes.slice(0, DESIGN_LIMITS.notes) : "",
-    pictures: d.pictures.map((id) => ({ id, what: "version" in (d.from ?? {}) && id === d.pictures[0] ? "the video's own frame" : "a picture the author added" })),
-  });
-  let raw: unknown[];
-  try {
-    raw = await ask(d.owner, prompt, shown.images, parseDesign);
-  } catch (e) {
-    if (e instanceof DesignError) throw e;
-    throw new DesignError(e instanceof Error ? e.message : String(e), 502);
-  }
-  // a page the answer has beyond the pages asked for is not looked at
-  const made = cleanPages(raw.slice(0, words.length), { w: d.width, h: d.height, pictures: d.pictures, words });
-  // a page for each page of words: one the answer left out, or left empty, stays as it was
-  const pages: DesignPage[] = mine.pages.map((was, k) => {
-    const now = made.pages[k];
-    if (now?.layers.length) return { ...now, id: was.id, ...(was.name ? { name: was.name } : {}) };
-    made.notes.push(`Page ${k + 1}: nothing in the answer could be drawn, so it is as it was`);
-    return was;
-  });
-  if (!made.pages.some((p) => p.layers.length)) throw new DesignError(`The AI's design had nothing that could be drawn${made.notes.length ? ` (${made.notes.slice(0, 2).join("; ")})` : ""}`, 502);
-  // onto the design as it is now: the AI can take a minute, and a design deleted meanwhile stays deleted
-  const still = await read(d.owner, d.id);
-  if (!still) throw new DesignError("Not found", 404);
-  const design = await save({ ...still, pages, ...(style ? { look: style.id } : { look: undefined }), updatedAt: Date.now() });
-  return { design, notes: made.notes };
-}
-
-/* ---- an AI that writes the layers itself (the assistant, a connected AI) ---- */
-
-const saidOn = (p: DesignPage): string => p.layers.flatMap((l) => (l.type === "text" ? [l.text] : [])).join("\n");
+After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box (nothing said: they fit). Look, and fix what does not sit right.`;
 
 /**
- * The pages as an AI works on them. A carousel piece's design: its pages, a plain page for each slide written since
- * (so that slide can be designed too), and each page's words as the slide has them now: those are held, as in the
- * design call. A cover or a thumbnail: its pages, and no words held, since what it says is asked for in the chat.
+ * The frames as an AI works on them, and each frame's own words (undefined: it is no slide, and may say anything).
+ * A carousel piece's design: its frames, a plain frame for each slide written since (so that slide can be designed
+ * too), and for each slide's frame the slide's words as the piece has them now.
  */
-async function pagesForAi(user: AuthVars["user"], d: Design): Promise<{ pages: DesignPage[]; words: string[] | null }> {
-  if (!("session" in (d.from ?? {}))) return { pages: d.pages, words: null };
-  const { slides } = await slidesOf(user, (d.from as { session: string }).session, (d.from as { doc: string }).doc);
-  const taken = new Set(d.pages.map((p) => p.id));
-  const more = plainPages(slides, d.width, d.height)
-    .slice(d.pages.length)
-    .map((p, k) => ({ ...p, id: taken.has(p.id) ? `p${Date.now().toString(36)}${k}` : p.id }));
-  const pages = [...d.pages, ...more].slice(0, DESIGN_LIMITS.pages);
-  return { pages, words: pages.map((p, k) => slides[k] ?? saidOn(p)) };
+async function framesForAi(user: AuthVars["user"], d: Design): Promise<{ pages: DesignPage[]; words: (string | undefined)[] }> {
+  const piece = pieceOf(d);
+  if (!piece) return { pages: d.pages, words: d.pages.map(() => undefined) };
+  const { slides } = await slidesOf(user, piece.session, piece.doc);
+  const mine = matched(d.pages, slides);
+  const drawn = new Set(mine.map((p) => p.block));
+  const fresh = slides.filter((s) => !drawn.has(s.id));
+  // a slide written since goes beside the rightmost frame, under an id that is its slide's (the same at every read, so
+  // the frame an AI read is the frame it then writes)
+  const more = plainPages(fresh.map((s) => s.words), d.width, d.height, fresh.map((s) => s.id)).map((p, k) => ({ ...p, x: undefined, y: undefined, id: `s-${fresh[k]!.id}`.slice(0, 24) }));
+  const pages = withFrames([...mine, ...more], d.width, d.height).slice(0, DESIGN_LIMITS.pages);
+  const bySlide = new Map(slides.map((s) => [s.id, s.words]));
+  return { pages, words: pages.map((p) => (p.block ? bySlide.get(p.block) : undefined)) };
 }
 
-/** What an AI is given to design from: the size, the fonts, the pictures, the person's looks in their own words, each page with its words, and how layers are written. */
-async function forAi(user: AuthVars["user"], d: Design) {
-  const { pages, words } = await pagesForAi(user, d);
+/** What an AI is given to design from: each frame with its size, its words and its layers, the fonts, the pictures, the person's looks in their own words (a look's pictures when one is asked for by name), and how a design is changed. */
+async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | undefined) {
+  const { pages, words } = await framesForAi(user, d);
+  const styles = animationStyles(d.owner);
+  const style = lookNamed ? styles.find((s) => s.id === lookNamed || s.name.toLowerCase() === lookNamed.toLowerCase()) : undefined;
+  const shown = style ? await stylePictures(d.owner, style, LOOK_PICTURES) : null;
   return {
     id: d.id,
     name: d.name,
-    kind: d.kind,
-    width: d.width,
-    height: d.height,
     fonts: DESIGN_FONTS.map((f) => f.family),
-    pictures: d.pictures.map((id) => ({ id, what: "version" in (d.from ?? {}) && id === d.pictures[0] ? "the video's own frame" : "a picture the author added" })),
-    // a look is its pictures first, and those are not sent here: its name and brief are what words can carry
-    looks: animationStyles(d.owner)
-      .filter((s) => s.brief.trim())
-      .slice(0, 12)
-      .map((s) => ({ name: s.name, brief: s.brief.trim().slice(0, 600) })),
-    pages: pages.map((p, k) => ({ page: k + 1, ...(words ? { words: words[k] } : {}), background: p.background, layers: p.layers })),
-    how: `${DESIGN_LAYERS}\n\n${words ? `${AUTHORS_WORDS} Each page's own are its "words"; to change them, change the piece's slide first.` : "Write only words the user asked for or agreed to. A page numbered one past the last is added."}\n\nTo change pages, give them as [{"page":1,"background":"#rrggbb","layers":[…]}]: each page given is replaced whole, the others stay. After a read or a write you are shown the pages as they are drawn, and told when words do not fit their box (nothing said: they fit). Look, and fix what does not sit right.`,
+    pictures: d.pictures.map((id) => ({ id, what: d.from && "version" in d.from && id === d.pictures[0] ? "the video's own frame" : "a picture added to this design" })),
+    // a look is its pictures first: its name and brief are what words carry, and its pictures come when it is asked for
+    looks: styles.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, 600) } : {}), pictures: s.pictures.length })),
+    ...(lookNamed && !style ? { look: `There is no look called ${lookNamed}` } : {}),
+    ...(style && shown ? { look: { name: style.name, pictures: shown.images.map((i, n) => ({ what: n < shown.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpegBase64 })) } } : {}),
+    frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, layers: p.layers })),
+    how: HOW,
   };
 }
 
-/** An AI's pages onto the design: each page named is replaced whole, checked as the design call's answer is. */
-async function writeForAi(user: AuthVars["user"], d: Design, given: unknown): Promise<DesignAnswer> {
-  if (!Array.isArray(given) || !given.length) throw new DesignError('Give the pages to replace: [{"page":1,"background":"#rrggbb","layers":[…]}]');
-  const { pages, words } = await pagesForAi(user, d);
-  const next = [...pages];
+type Raw = Record<string, unknown>;
+const raw = (v: unknown): Raw | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Raw) : null);
+
+/**
+ * An AI's changes onto the design: whole frames (`frames`) and single layers (`changes`). Every frame they touch
+ * goes through the same check as anything else that is saved, with its slide's words held. The answer names what
+ * was left out and why, and the frames that changed.
+ */
+async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }> {
+  const frames = Array.isArray(body.frames) ? body.frames.map(raw) : [];
+  const changes = Array.isArray(body.changes) ? body.changes.map(raw) : [];
+  if (!frames.length && !changes.length) throw new DesignError('Give "frames" (whole frames) or "changes" (single layers): design_get says how each is written');
+  const start = await framesForAi(user, d);
+  const next = [...start.pages];
+  const words = [...start.words];
   const notes: string[] = [];
-  let drawn = 0;
-  for (const raw of given.slice(0, DESIGN_LIMITS.pages) as Array<Record<string, unknown> | null>) {
-    const n = Number.isInteger(raw?.page) ? (raw!.page as number) : 0;
-    // a page one past the last is a new page, where the pages are not a piece's slides and there is room
-    const was = next[n - 1] ?? (!words && n === next.length + 1 && n <= DESIGN_LIMITS.pages ? { id: `p${Date.now().toString(36)}${n}`, background: "#ffffff", layers: [] } : undefined);
-    if (!was) {
-      notes.push(`There is no page ${String(raw?.page)}: this design has ${next.length}`);
+  /** each touched frame as it will be checked: its raw layers, and what else of it was given */
+  const todo = new Map<string, { layers: unknown[]; more: Raw; isNew: boolean; gave: boolean; whole: boolean; set: string[] }>();
+  const open = (p: DesignPage) => todo.get(p.id) ?? todo.set(p.id, { layers: [...p.layers], more: {}, isNew: false, gave: false, whole: false, set: [] }).get(p.id)!;
+
+  for (const f of frames.slice(0, DESIGN_LIMITS.pages)) {
+    if (!f) continue;
+    let page = typeof f.id === "string" ? next.find((p) => p.id === f.id) : undefined;
+    if (typeof f.id === "string" && !page) {
+      notes.push(`There is no frame ${f.id}: this design's are ${next.map((p) => p.id).join(", ")}`);
       continue;
     }
-    const made = cleanPages([raw], { w: d.width, h: d.height, pictures: d.pictures, ...(words ? { words: [words[n - 1] ?? ""] } : {}) });
-    notes.push(...made.notes.map((note) => note.replace(/^Page 1:/, `Page ${n}:`)));
-    const page = made.pages[0];
-    if (!page?.layers.length) {
-      notes.push(`Page ${n}: nothing given could be drawn, so it is as it was`);
-      continue;
+    if (!page) {
+      if (next.length >= DESIGN_LIMITS.pages) {
+        notes.push(`A design holds at most ${DESIGN_LIMITS.pages} frames: the new one was not added`);
+        continue;
+      }
+      page = { id: `f${Date.now().toString(36)}${next.length}`, background: "#ffffff", layers: [] };
+      next.push(page);
+      words.push(undefined);
+      open(page).isNew = true;
     }
-    // the page keeps its id and name, and its colour when none is given
-    next[n - 1] = { ...page, id: was.id, ...(was.name ? { name: was.name } : {}), background: typeof raw?.background === "string" ? page.background : was.background };
-    drawn++;
+    const t = open(page);
+    if (Array.isArray(f.layers)) {
+      t.layers = f.layers;
+      t.gave = f.layers.length > 0;
+      t.whole = true;
+    }
+    t.more = { ...t.more, ...f };
   }
-  if (!drawn) throw new DesignError(`Nothing given could be drawn${notes.length ? ` (${notes.slice(0, 3).join("; ")})` : ""}`);
-  return { design: await save({ ...d, pages: next, updatedAt: Date.now() }), notes };
+
+  for (const c of changes.slice(0, 200)) {
+    const page = c && next.find((p) => p.id === c.frame);
+    if (!c || !page) {
+      notes.push(`A change names no frame of this design (${String(c?.frame)}): its frames are ${next.map((p) => p.id).join(", ")}`);
+      continue;
+    }
+    const t = open(page);
+    const add = raw(c.add);
+    if (add) {
+      // an id of its own before the frame is checked, so the layers that were there keep theirs
+      const ids = new Set(t.layers.map((l) => String(raw(l)?.id)));
+      let id = typeof add.id === "string" && !ids.has(add.id) ? add.id : "";
+      for (let n = t.layers.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
+      t.layers = c.at === "back" ? [{ ...add, id }, ...t.layers] : [...t.layers, { ...add, id }];
+      t.set.push(id);
+      continue;
+    }
+    const at = t.layers.findIndex((l) => raw(l)?.id === c.layer);
+    if (at < 0) {
+      notes.push(`${frameLabel(page, next.indexOf(page))} has no layer ${String(c.layer)}`);
+      continue;
+    }
+    const [layer] = t.layers.splice(at, 1);
+    if (c.remove === true) continue;
+    t.set.push(String(c.layer));
+    const changed = raw(c.set) ? { ...(layer as Raw), ...(c.set as Raw), id: (layer as Raw).id } : layer;
+    if (c.order === "front") t.layers.push(changed);
+    else if (c.order === "back") t.layers.unshift(changed);
+    else t.layers.splice(at, 0, changed);
+  }
+
+  const touched: string[] = [];
+  const wrote: { frame: string; isNew: boolean; layers: string[] }[] = [];
+  for (const [id, t] of todo) {
+    const k = next.findIndex((p) => p.id === id);
+    const was = next[k]!;
+    const label = frameLabel(was, k);
+    const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, name: t.more.name ?? was.name }], {
+      w: d.width,
+      h: d.height,
+      pictures: d.pictures,
+      words: [words[k]],
+    });
+    notes.push(...made.notes.map((note) => note.replace(/^Page 1:/, `${label}:`)));
+    const page = made.pages[0]!;
+    // layers were given and none of them could be drawn: the frame is as it was (a new one stays, empty)
+    if (t.gave && !page.layers.length && !t.isNew) {
+      notes.push(`${label}: nothing given could be drawn, so it is as it was`);
+      continue;
+    }
+    // its place on the canvas and its slide are not the AI's to move
+    next[k] = { ...page, ...(was.x !== undefined ? { x: was.x, y: was.y } : {}), ...(was.block ? { block: was.block } : {}) };
+    touched.push(id);
+    // the layers this wrote: all of a frame given whole, else the ones set and the ones added
+    const had = new Set(was.layers.map((l) => l.id));
+    wrote.push({ frame: id, isNew: t.isNew, layers: page.layers.filter((l) => t.whole || t.isNew || t.set.includes(l.id) || !had.has(l.id)).map((l) => l.id) });
+  }
+  if (!touched.length) throw new DesignError(`Nothing was changed${notes.length ? `: ${notes.slice(0, 4).join("; ")}` : ""}`);
+  // onto the design as it is now on disk: a frame this did not touch is as the person has it, and one they moved
+  // meanwhile keeps the place they gave it
+  const now = (await read(d.owner, d.id)) ?? d;
+  const pages = withFrames(
+    next.map((p) => {
+      const there = now.pages.find((x) => x.id === p.id);
+      if (!there) return p;
+      return touched.includes(p.id) ? { ...p, x: there.x, y: there.y } : there;
+    }),
+    d.width,
+    d.height,
+  );
+  return { design: await save({ ...now, pages, updatedAt: stamp(now) }), notes, touched, wrote };
 }
 
 /* ---- routes ---- */
@@ -288,10 +320,11 @@ const answer = async (c: C, run: () => Promise<object>) => {
     return c.json(await run());
   } catch (e) {
     if (e instanceof DesignError) return c.json({ error: e.message }, e.status);
+    if (e instanceof Changed) return c.json({ error: e.message, design: e.design }, 409);
     throw e;
   }
 };
-const body = async (c: C) => ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+const body = async (c: C) => ((await c.req.json().catch(() => null)) ?? {}) as Raw;
 const mine = async (c: C): Promise<Design> => {
   const d = await read(c.get("user").username, c.req.param("id") ?? "");
   if (!d) throw new DesignError("Not found", 404);
@@ -305,7 +338,7 @@ designsApp.get("/", (c) =>
     const all = (await Promise.all(names.filter((n) => n.endsWith(".json")).map((n) => read(owner, n.slice(0, -5))))).filter((d): d is Design => !!d);
     const { session, doc } = c.req.query();
     return all
-      .filter((d) => !session || !doc || ("session" in (d.from ?? {}) && (d.from as { session: string; doc: string }).session === session && (d.from as { doc: string }).doc === doc))
+      .filter((d) => !session || !doc || (pieceOf(d)?.session === session && pieceOf(d)?.doc === doc))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map(summaryOf);
   }),
@@ -327,28 +360,19 @@ designsApp.post("/", (c) =>
       const { title, slides } = await slidesOf(user, b.session, b.doc);
       d.name = named || title.slice(0, DESIGN_LIMITS.name) || d.name;
       d.from = { session: b.session, doc: b.doc };
-      d.pages = plainPages(slides, d.width, d.height);
+      d.pages = plainPages(slides.map((s) => s.words), d.width, d.height, slides.map((s) => s.id));
     } else if (typeof b.version === "string" && typeof b.t === "number" && Number.isFinite(b.t) && b.t >= 0) {
       if (format.kind === "carousel") throw new DesignError("A video's frame takes the cover or the thumbnail size");
-      // the frame is copied in: the design keeps what it shows, whatever happens to the video
-      if (!sourcesWorkspace(user.username, [b.version])) throw new DesignError("Not found", 404);
-      const row = libraryDb().prepare("SELECT v.source_key, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(b.version) as { source_key: string; title: string } | undefined;
-      if (!row) throw new DesignError("Not found", 404);
-      let frame: Buffer;
-      try {
-        frame = await extractClipJpegFrame({ src: await blobs.localCopy(row.source_key), cacheDir: path.join(dirOf(user.username), ".frames"), atMs: Math.round(b.t * 1000) });
-      } catch (e) {
-        throw new DesignError(`That moment of the video could not be read (${e instanceof Error ? e.message : String(e)})`, 502);
-      }
+      const { frame, title: videoTitle } = await videoFrame(user.username, b.version, b.t);
       const title = typeof b.title === "string" ? b.title : "";
-      d.name = named || (title.trim() || row.title).slice(0, DESIGN_LIMITS.name);
+      d.name = named || (title.trim() || videoTitle).slice(0, DESIGN_LIMITS.name);
       d.from = { version: b.version, t: b.t };
       d.pages = [coverPage(await addPicture(d, frame, "jpg"), title, d.width, d.height)];
     } else if (b.blank === true) {
-      // a design of its own: empty pages to draw on
+      // a design of its own: empty frames to draw on
       const count = Number.isInteger(b.pages) ? Math.min(DESIGN_LIMITS.pages, Math.max(1, b.pages as number)) : 1;
       d.name = named || d.name;
-      d.pages = Array.from({ length: count }, (_, k) => ({ id: `p${k + 1}`, background: "#ffffff", layers: [] }));
+      d.pages = withFrames(Array.from({ length: count }, (_, k) => ({ id: `p${k + 1}`, background: "#ffffff", layers: [] })), d.width, d.height);
     } else throw new DesignError("Say what the design is of: a carousel piece (session and doc), a video's moment (version and t), or blank: true");
     return save(d);
   }),
@@ -361,10 +385,19 @@ designsApp.put("/:id", (c) =>
     const d = await mine(c);
     const b = await body(c);
     const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, DESIGN_LIMITS.name) : d.name;
-    // the person's own changes: checked for what a page can hold, never for whose words they are
-    const pages = Array.isArray(b.pages) ? cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures }).pages : d.pages;
-    if (!pages.length) throw new DesignError("A design keeps at least one page");
-    return save({ ...d, name, pages, updatedAt: Date.now() });
+    if (!Array.isArray(b.pages)) return save({ ...d, name, updatedAt: stamp(d) });
+    // `since`: the design's last change this window knows of. One made after it (an AI's frames, written while this
+    // save was on its way) would be written over by frames that never saw it: the window puts its own changes onto
+    // the design as it is now, and saves again
+    if (typeof b.since === "number" && d.updatedAt > b.since) throw new Changed(d);
+    // the person's own changes: checked for what a frame can hold, never for whose words they are. A frame sent
+    // without its place (a window opened before frames had one) keeps the place and the slide it has
+    const piece = pieceOf(d);
+    // a design made before frames knew their slides: each frame is its slide's by the order the design was in
+    const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
+    const pages = withFrames(cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures }).pages, d.width, d.height, was);
+    if (!pages.length) throw new DesignError("A design keeps at least one frame");
+    return save({ ...d, name, pages, updatedAt: stamp(d) });
   }),
 );
 
@@ -377,18 +410,16 @@ designsApp.delete("/:id", (c) =>
   }),
 );
 
-designsApp.post("/:id/design", (c) => answer(c, async () => designPages(c.get("user"), await mine(c), await body(c))));
-
-// an AI that designs the pages itself: what it reads, and what it writes
-designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c))));
-designsApp.post("/:id/pages", (c) => answer(c, async () => writeForAi(c.get("user"), await mine(c), (await body(c)).pages)));
-// what it made, to look at: the pages numbered in ?pages=1,2 (else the first ones) as small pictures, with the words that do not fit
+// an AI that designs: what it reads (?look=<a look's name> adds that look's pictures), and what it writes
+designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c), c.req.query("look")?.trim() || undefined)));
+designsApp.post("/:id/pages", (c) => answer(c, async () => writeForAi(c.get("user"), await mine(c), await body(c))));
+// what it made, to look at: the frames named in ?frames=<id>,<id> (else the first ones) as small pictures, with the words that do not fit
 designsApp.get("/:id/look", (c) =>
   answer(c, async () => {
     const d = await mine(c);
-    const { pages } = await pagesForAi(c.get("user"), d);
-    const asked = (c.req.query("pages") ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= pages.length);
-    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.map((_, k) => k + 1))].slice(0, LOOK_PAGES), picturesOf(d.owner, d.id));
+    const { pages } = await framesForAi(c.get("user"), d);
+    const asked = (c.req.query("frames") ?? "").split(",").map((id) => pages.findIndex((p) => p.id === id) + 1).filter((n) => n > 0);
+    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.map((_, k) => k + 1))].slice(0, LOOK_FRAMES), picturesOf(d.owner, d.id));
   }),
 );
 
@@ -396,14 +427,21 @@ designsApp.post("/:id/pictures", (c) =>
   answer(c, async () => {
     const d = await mine(c);
     if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
-    let sent: ReturnType<typeof parsePictureUpload>;
-    try {
-      sent = parsePictureUpload(await body(c));
-    } catch (e) {
-      throw new DesignError(e instanceof Error ? e.message : String(e));
+    const b = await body(c);
+    let id: string;
+    if (typeof b.version === "string" && typeof b.t === "number" && Number.isFinite(b.t) && b.t >= 0) {
+      // a moment of a library video (an AI that designs has no file to send): copied in like any other picture
+      id = await addPicture(d, (await videoFrame(d.owner, b.version, b.t)).frame, "jpg");
+    } else {
+      let sent: ReturnType<typeof parsePictureUpload>;
+      try {
+        sent = parsePictureUpload(b);
+      } catch (e) {
+        throw new DesignError(e instanceof Error ? e.message : String(e));
+      }
+      id = await addPicture(d, sent.bytes, PICTURE_EXT[sent.type]);
     }
-    const id = await addPicture(d, sent.bytes, PICTURE_EXT[sent.type]);
-    await save({ ...d, updatedAt: Date.now() });
+    await save({ ...d, updatedAt: stamp(d) });
     return { id };
   }),
 );

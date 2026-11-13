@@ -1,4 +1,4 @@
-import { DESIGN_LIMITS, type DesignPage, type Layer } from "../../contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
@@ -107,15 +107,17 @@ export function safeSvg(svg: unknown): string | null {
 }
 
 export interface PageRules {
+  /** a frame's size when it gives none of its own */
   w: number;
   h: number;
   /** the pictures a layer may show: the ids in the design's folder */
   pictures: readonly string[];
   /**
-   * For an AI's answer: each page's own words (the slide's text, a cover's title). A text layer that says anything
-   * else is left out: where the words go and how they look is the design, what they are is the author's.
+   * For an AI's answer: each frame's own words (its slide's text), in the frames' order. A text layer that says
+   * anything else is left out: where the words go and how they look is the design, what they are is the author's.
+   * A frame with none here (undefined: it is no slide) may say anything.
    */
-  words?: readonly string[];
+  words?: readonly (string | undefined)[];
 }
 
 /** A layer without its id, kind by kind (Omit over the whole union would keep only what every kind has). */
@@ -212,8 +214,16 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     const ids = new Set<string>();
     const layers: Layer[] = [];
+    // a frame's own size, when it has one (a width and a height): its layers are held to it
+    const sized = typeof p.w === "number" && typeof p.h === "number";
+    const size = sized ? { w: Math.round(num(p.w, DESIGN_LIMITS.frameMin, DESIGN_LIMITS.frameMax, r.w)), h: Math.round(num(p.h, DESIGN_LIMITS.frameMin, DESIGN_LIMITS.frameMax, r.h)) } : { w: r.w, h: r.h };
+    const place = {
+      ...(typeof p.x === "number" && typeof p.y === "number" ? { x: Math.round(num(p.x, -DESIGN_LIMITS.canvas, DESIGN_LIMITS.canvas, 0)), y: Math.round(num(p.y, -DESIGN_LIMITS.canvas, DESIGN_LIMITS.canvas, 0)) } : {}),
+      ...(sized ? size : {}),
+      ...(typeof p.block === "string" && ID.test(p.block) ? { block: p.block } : {}),
+    };
     for (const l of (Array.isArray(p.layers) ? p.layers : []).slice(0, DESIGN_LIMITS.layers)) {
-      const clean = cleanLayer(l, r, (why) => notes.push(`Page ${k + 1}: ${why}`), r.words ? (r.words[k] ?? "") : undefined);
+      const clean = cleanLayer(l, { ...r, ...size }, (why) => notes.push(`Page ${k + 1}: ${why}`), r.words ? r.words[k] : undefined);
       if (!clean) continue;
       const given = obj(l) && typeof l.id === "string" && ID.test(l.id) && !ids.has(l.id) ? l.id : "";
       let id = given;
@@ -223,7 +233,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
     // on it is said so by whoever asked for it)
-    if (r.words && layers.length) {
+    if (r.words?.[k] !== undefined && layers.length) {
       const left = plainWords(r.words[k] ?? "").split(" ").filter(Boolean);
       for (const word of plainWords(layers.flatMap((l) => (l.type === "text" ? [l.text] : [])).join(" ")).split(" ")) {
         const at = left.indexOf(word);
@@ -231,16 +241,39 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       }
       if (left.length) notes.push(`Page ${k + 1}: these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`);
     }
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), background: color(p.background, "#ffffff"), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...place, background: color(p.background, "#ffffff"), layers });
   }
   return { pages, notes };
+}
+
+/**
+ * Every frame with a place and a size on the canvas. One that has none takes the place it had before (`was`: the
+ * same frame as the design holds it, so a save from a window that knows nothing of places moves nothing), and its
+ * slide with it. One that is new goes beside the rightmost frame; a design none of whose frames has a place yet
+ * (saved before frames had one) gets them in a row, each the design's size.
+ */
+export function withFrames(pages: readonly DesignPage[], w: number, h: number, was: readonly DesignPage[] = []): DesignPage[] {
+  const kept = pages.map((p) => {
+    const old = was.find((x) => x.id === p.id);
+    return { ...p, ...(p.x === undefined && old?.x !== undefined ? { x: old.x, y: old.y } : {}), ...(p.w === undefined && old?.w !== undefined ? { w: old.w, h: old.h } : {}), ...(p.block === undefined && old?.block ? { block: old.block } : {}) };
+  });
+  const placed = kept.filter((p) => p.x !== undefined);
+  let right = placed.length ? Math.max(...placed.map((p) => p.x! + (p.w ?? w))) + DESIGN_GAP : 0;
+  const top = placed.length ? Math.min(...placed.map((p) => p.y!)) : 0;
+  return kept.map((p) => {
+    const size = { w: p.w ?? w, h: p.h ?? h };
+    if (p.x !== undefined) return { ...p, ...size };
+    const x = right;
+    right += size.w + DESIGN_GAP;
+    return { ...p, x, y: top, ...size };
+  });
 }
 
 /**
  * A carousel's pages before anyone has designed them: each slide's first part as its headline and the rest under it,
  * black on white. Only a place to start from: the person's AI designs the pages (api/designs.ts), or the person does.
  */
-export function plainPages(slides: readonly string[], w: number, h: number): DesignPage[] {
+export function plainPages(slides: readonly string[], w: number, h: number, blocks: readonly string[] = []): DesignPage[] {
   const m = Math.round(w * 0.09);
   const k = w / 1080;
   return slides.map((slide, n) => {
@@ -250,7 +283,7 @@ export function plainPages(slides: readonly string[], w: number, h: number): Des
     const layers: Layer[] = [];
     if (head) layers.push({ id: "l1", type: "text", text: head, font: "Montserrat ExtraBold", size, color: "#111111", align: "left", x: m, w: w - 2 * m, ...(body ? { y: m, h: Math.round(h * 0.44) - m, valign: "bottom" as const } : { y: Math.round(h * 0.2), h: Math.round(h * 0.6), valign: "middle" as const }) });
     if (body) layers.push({ id: "l2", type: "text", text: body.slice(0, DESIGN_LIMITS.text), font: DEFAULT_FONT, size: Math.round(44 * k), color: "#333333", align: "left", lineHeight: 1.3, x: m, y: Math.round(h * 0.48), w: w - 2 * m, h: Math.round(h * 0.44) });
-    return { id: `p${n + 1}`, background: "#ffffff", layers };
+    return { id: `p${n + 1}`, x: n * (w + DESIGN_GAP), y: 0, w, h, ...(blocks[n] ? { block: blocks[n] } : {}), background: "#ffffff", layers };
   });
 }
 
@@ -261,5 +294,5 @@ export function coverPage(picture: string, title: string, w: number, h: number):
   if (text) {
     layers.push({ id: "l2", type: "text", text, font: "Anton", size: Math.round(Math.min(w, h) * 0.13), color: "#ffffff", align: "center", valign: "middle", upper: true, lineHeight: 1.05, outline: { color: "#000000", width: Math.round(Math.min(w, h) * 0.012) }, x: Math.round(w * 0.07), y: Math.round(h * 0.58), w: Math.round(w * 0.86), h: Math.round(h * 0.3) });
   }
-  return { id: "p1", background: "#000000", layers };
+  return { id: "p1", x: 0, y: 0, w, h, background: "#000000", layers };
 }

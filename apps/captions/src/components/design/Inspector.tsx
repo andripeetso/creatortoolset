@@ -23,19 +23,19 @@ import {
   Unlink2,
 } from "lucide-react";
 import type { Design, DesignPage, Layer } from "@contracts/design";
-import { DESIGN_FORMATS } from "@contracts/design";
+import { DESIGN_FORMATS, DESIGN_LIMITS } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { typedHex } from "@/lib/design/colour";
-import { boundsOf, pageName, resizeAll, type Align } from "@/lib/design/hands";
+import { boundsOf, frameOf, pageName, resizeAll, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
 
 /**
- * The properties of what is picked: where it is, its size, how it looks, its fill and line, its type. Nothing picked:
- * the page's own. A number is typed (Enter or leaving the field sets it, the arrows step it, Shift by ten) or dragged
+ * The properties of what is picked: where it is, its size, how it looks, its fill and line, its type. No layer picked:
+ * the frame's own (its name, its place on the canvas, its size, its colour). A number is typed (Enter or leaving the field sets it, the arrows step it, Shift by ten) or dragged
  * by its label; while it is dragged the canvas shows it, and it is one step to undo when let go. A choice made in a
  * menu here gives the keys back to the canvas at once: ⌘Z right after picking a font undoes the font.
  */
@@ -203,6 +203,7 @@ export function Inspector({
   onPreview,
   onPatch,
   onPage,
+  onPagePreview,
   onAlign,
   onDistribute,
   zoom,
@@ -214,7 +215,7 @@ export function Inspector({
   design: Design;
   page: DesignPage;
   at: number;
-  /** how many pages the design has */
+  /** how many frames the design has */
   count: number;
   /** the picked layers of the page, as the canvas shows them */
   picked: Layer[];
@@ -222,13 +223,15 @@ export function Inspector({
   onPreview: (fn: ((l: Layer) => Layer) | null) => void;
   /** every picked layer through `fn`: one step to undo (`merge`: joined to the step before it of the same name) */
   onPatch: (fn: (l: Layer) => Layer, merge?: string) => void;
-  /** the page's own name and background (`merge` as above) */
+  /** the frame's own name, place, size and background (`merge` as above) */
   onPage: (page: DesignPage, merge?: string) => void;
+  /** the frame as the canvas shows it while one of its numbers is dragged; null: back to what is saved */
+  onPagePreview: (page: DesignPage | null) => void;
   onAlign: (how: Align) => void;
   onDistribute: (axis: "x" | "y") => void;
   zoom: number;
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
-  /** every page, or the one at this place */
+  /** every frame, or the one at this place */
   onExport: (only?: number) => void;
   /** the colours the design already uses, for the picker */
   colours: readonly string[];
@@ -257,12 +260,18 @@ export function Inspector({
   const hasLine = picked.some((l) => (l.type === "shape" && l.stroke) || (l.type === "text" && l.outline));
   const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" ? { ...l, stroke: v } : l.type === "text" ? { ...l, outline: v } : l);
   const lineOf = (l: Layer) => (l.type === "shape" ? l.stroke : l.type === "text" ? l.outline : undefined);
-  const format = DESIGN_FORMATS.find((f) => f.id === design.format);
+  const frame = frameOf(page, at, design.width, design.height);
+  /** A number field of the frame itself. */
+  const fnum = (label: string, title: string, value: number, set: (n: number) => Partial<DesignPage>, more: { min: number; max: number }) => (
+    <Num label={label} title={title} value={value} {...more} onLive={(n) => onPagePreview(n === null ? null : { ...page, ...set(n) })} onCommit={(n) => onPage({ ...page, ...set(n) })} />
+  );
+  const far = { min: -DESIGN_LIMITS.canvas, max: DESIGN_LIMITS.canvas };
+  const big = { min: DESIGN_LIMITS.frameMin, max: DESIGN_LIMITS.frameMax };
 
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? `${picked.length} selected` : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.shape === "ellipse" ? "Ellipse" : "Rectangle") : "Design"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? `${picked.length} selected` : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.shape === "ellipse" ? "Ellipse" : "Rectangle") : "Frame"}</h2>
         <DropdownMenu>
           <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
             {Math.round(zoom * 100)}%
@@ -293,23 +302,42 @@ export function Inspector({
 
       {!box && (
         <>
-          <Section title="Page">
+          <Section title="Frame">
             <input
               key={`${page.id}:${page.name ?? ""}`}
-              aria-label="The page's name"
+              aria-label="The frame's name"
               defaultValue={pageName(page, at)}
               maxLength={60}
               onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
               onBlur={(e) => e.currentTarget.value.trim() !== pageName(page, at) && onPage({ ...page, name: e.currentTarget.value.trim() || undefined })}
               className={cn(FIELD, "outline-none")}
             />
-            <p className={DIM}>
-              {design.width} × {design.height} px{format ? ` · ${format.name}` : ""}
-            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {fnum("X", "X", frame.x, (n) => ({ x: n, y: frame.y }), far)}
+              {fnum("Y", "Y", frame.y, (n) => ({ x: frame.x, y: n }), far)}
+              {fnum("W", "Width", frame.w, (n) => ({ w: n, h: frame.h }), big)}
+              {fnum("H", "Height", frame.h, (n) => ({ w: frame.w, h: n }), big)}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger aria-label="Frame size" className={cn(FIELD, "w-full justify-between outline-none")}>
+                <span className="truncate">{DESIGN_FORMATS.find((f) => f.w === frame.w && f.h === frame.h)?.name ?? "Own size"}</span>
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                {DESIGN_FORMATS.map((f) => (
+                  <DropdownMenuItem key={f.id} onSelect={() => onPage({ ...page, w: f.w, h: f.h })} className="flex justify-between gap-4">
+                    {f.name}
+                    <span className={DIM}>
+                      {f.w} × {f.h}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </Section>
           <Section title="Fill">
             <div className="flex">
-              <Colour title="The page's colour" value={page.background} colours={colours} onDropper={onDropper} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
+              <Colour title="The frame's colour" value={page.background} colours={colours} onDropper={onDropper} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
             </div>
           </Section>
         </>
@@ -503,7 +531,7 @@ export function Inspector({
         </button>
         {count > 1 && (
           <button type="button" onClick={() => onExport()} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
-            Export all {count} pages
+            Export all {count} frames
           </button>
         )}
       </Section>

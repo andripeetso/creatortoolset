@@ -1,10 +1,20 @@
-import type { Design, DesignAnswer, DesignPage, DesignSummary, NewDesign } from "@contracts/design";
+import type { Design, DesignPage, DesignSummary, NewDesign } from "@contracts/design";
 
 /** The designer's calls to api/designs.ts. */
 
+/** A save the server did not take, because the design was changed somewhere else since this window last read it: `design` is how it is now. */
+export class DesignChanged extends Error {
+  design: Design;
+  constructor(design: Design) {
+    super("The design was changed somewhere else");
+    this.design = design;
+  }
+}
+
 async function send<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const r = await fetch(url, { method, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
-  const out = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const out = (await r.json().catch(() => ({}))) as T & { error?: string; design?: Design };
+  if (r.status === 409 && out.design) throw new DesignChanged(out.design);
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
   return out;
 }
@@ -15,10 +25,9 @@ const base = (id: string) => `/api/designs/${id}`;
 export const listDesigns = (piece?: { session: string; doc: string }) => send<DesignSummary[]>(`/api/designs${piece ? `?session=${encodeURIComponent(piece.session)}&doc=${encodeURIComponent(piece.doc)}` : ""}`);
 export const createDesign = (d: NewDesign) => send<Design>("/api/designs", "POST", d);
 export const getDesign = (id: string) => send<Design>(base(id));
-export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[] }) => send<Design>(base(id), "PUT", body);
+/** `since`: the design's last change this window knows of (its updatedAt). Changed after it: DesignChanged, and nothing was saved. */
+export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number }) => send<Design>(base(id), "PUT", body);
 export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE");
-/** The person's AI designs the pages: `look` is an animation style's id (null: none), `notes` what they ask for this time. */
-export const designWithAi = (id: string, body: { look?: string | null; notes?: string }) => send<DesignAnswer>(`${base(id)}/design`, "POST", body);
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;
 
 /** A picture from this computer into the design's own folder, as it is (no shrinking, transparency kept); answers its id. */

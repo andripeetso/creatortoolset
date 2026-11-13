@@ -179,7 +179,8 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
     { what: "An API key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
   stories: [],
-  design: [{ what: "An AI provider: designs the pages", anyOf: ["ai"], form: "ai", optional: true }],
+  // the app asks no AI anything here: the person's AI designs through the assistant's tools
+  design: [],
   notes: [
     { what: "A Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
     { what: "An AI provider", anyOf: ["ai"], form: "ai" },
