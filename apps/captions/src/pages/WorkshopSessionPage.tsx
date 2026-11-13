@@ -1107,7 +1107,7 @@ export default function WorkshopSessionPage() {
       </AppBar>
 
       <div className="flex min-h-0 flex-1">
-      {!chatMode && <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />}
+      {!chatMode && !desk.focus && <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />}
       {pageError ? (
         <p className="p-6 text-sm text-red-300">{pageError}</p>
       ) : (
