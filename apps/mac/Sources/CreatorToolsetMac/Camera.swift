@@ -36,6 +36,10 @@ final class CameraSession: @unchecked Sendable {
 
     let device: AVCaptureDevice
     let session = AVCaptureSession()
+    /// The frames for a recording (CameraRecorder sets itself as their delegate while it records). It is in the session
+    /// from the start: adding it to a session that was already showing the camera made the session reconfigure, and the
+    /// bubble went black for about a second as a recording started.
+    let output = AVCaptureVideoDataOutput()
     private var holders = 0   // guarded by lock
 
     /// The session for this camera, shared with the holder already using it.
@@ -61,6 +65,8 @@ final class CameraSession: @unchecked Sendable {
             throw CameraError.noInput
         }
         session.addInput(input)
+        output.alwaysDiscardsLateVideoFrames = true
+        if session.canAddOutput(output) { session.addOutput(output) }
         session.commitConfiguration()
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
@@ -129,7 +135,6 @@ enum CameraTiming {
 final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.creatortoolset.camera")
     private let camera: CameraSession
-    private let output = AVCaptureVideoDataOutput()
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private var startHost: CMTime?
@@ -160,16 +165,12 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
         writer.add(input)
         super.init()
-        output.alwaysDiscardsLateVideoFrames = true
-        camera.session.beginConfiguration()
-        guard camera.session.canAddOutput(output) else {
-            camera.session.commitConfiguration()
+        // the session's own output, there since the camera opened: nothing about the running camera changes
+        guard camera.session.outputs.contains(camera.output) else {
             camera.release()
             throw CameraError.noInput
         }
-        camera.session.addOutput(output)
-        camera.session.commitConfiguration()
-        output.setSampleBufferDelegate(self, queue: queue)
+        camera.output.setSampleBufferDelegate(self, queue: queue)
     }
 
     /// Starts the camera. Frames are dropped until begin(atHost:).
@@ -237,12 +238,10 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
     }
 
-    /// Runs on `queue`: no more frames, the output leaves the session, and this recorder's hold on the camera ends.
+    /// Runs on `queue`: no more frames for this recorder, and its hold on the camera ends. The output stays in the
+    /// session (removing it would reconfigure a camera the bubble may still show).
     private func detach() {
-        output.setSampleBufferDelegate(nil, queue: nil)
-        camera.session.beginConfiguration()
-        camera.session.removeOutput(output)
-        camera.session.commitConfiguration()
+        camera.output.setSampleBufferDelegate(nil, queue: nil)
         camera.release()
     }
 

@@ -381,6 +381,9 @@ private final class PickerView: NSView {
     let topLeft: CGRect
     /// The picked window's corners: the wash, its border and the hole in the dim are all cut the same.
     private static let corner: CGFloat = 10
+    private let shade = ShadeView()
+    /// What the overlay last showed: a pointer move that changes nothing on this screen does no work.
+    private var shown = ""
 
     private let card = NSStackView()
     private let iconView = NSImageView()
@@ -399,6 +402,10 @@ private final class PickerView: NSView {
         self.topLeft = topLeft
         super.init(frame: NSRect(origin: .zero, size: screenFrame.size))
         autoresizingMask = [.width, .height]
+        wantsLayer = true
+        shade.frame = bounds
+        shade.autoresizingMask = [.width, .height]
+        addSubview(shade)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .mouseMoved, .inVisibleRect],
                                        owner: self, userInfo: nil))
 
@@ -509,6 +516,12 @@ private final class PickerView: NSView {
     func update() {
         guard let s = session else { return }
         let active = s.activeDisplayID == displayID
+        // the picker updates on every pointer move, on every screen: on a 6K screen a repaint of the whole overlay
+        // cost about a third of a second, which left the toolbar's buttons waiting (measured 11-13)
+        let key = "\(s.kind)|\(active)|\(s.hovered.map { "\($0.id)\($0.frame)" } ?? "")|\(s.selection.map { "\($0)" } ?? "")|\(bounds.size)"
+        guard key != shown else { return }
+        shown = key
+        shade.parts = parts(s)
         nameLabel.isHidden = true
         iconView.isHidden = true
         appLabel.isHidden = true
@@ -551,7 +564,6 @@ private final class PickerView: NSView {
             let size = card.fittingSize
             card.frame = NSRect(x: c.x - size.width / 2, y: c.y - size.height / 2, width: size.width, height: size.height)
         }
-        needsDisplay = true
     }
 
     private func setChip(_ text: String, pill: Bool = false) {
@@ -560,71 +572,105 @@ private final class PickerView: NSView {
         chipBox.isHidden = false
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let s = session else { return }
+    /// What the overlay paints for the picker's state, as shapes for `shade`: the tint (with a hole where the picked
+    /// window or area is), the picked window's wash and border or the active screen's, and the area's handles.
+    private func parts(_ s: PickerSession) -> [ShadeView.Part] {
         let accent = NSColor.controlAccentColor
         let dim = NSColor.black.withAlphaComponent(0.45)
+        let tint = { (hole: CGPath?) -> ShadeView.Part in
+            let path = CGMutablePath()
+            path.addRect(self.bounds)
+            if let hole { path.addPath(hole) }
+            return ShadeView.Part(path: path, fill: dim, evenOdd: true)
+        }
         switch s.kind {
         case .display:
-            if s.activeDisplayID == displayID {
-                accent.withAlphaComponent(0.18).setFill()
-                bounds.fill()
-                stroke(bounds, accent)
-            } else {
-                dim.setFill()
-                bounds.fill()
-            }
+            guard s.activeDisplayID == displayID else { return [tint(nil)] }
+            return [ShadeView.Part(path: CGPath(rect: bounds.insetBy(dx: 1, dy: 1), transform: nil), fill: accent.withAlphaComponent(0.18), stroke: accent, width: 2)]
         case .window:
-            let hole = s.hovered.map { PickerGeometry.viewRect($0.frame, screenTopLeft: topLeft) }
-            dimmed(except: hole, dim, radius: Self.corner)
-            if let h = hole { highlight(h, accent) }
+            guard let h = s.hovered.map({ PickerGeometry.viewRect($0.frame, screenTopLeft: topLeft) }) else { return [tint(nil)] }
+            let c = Self.corner
+            let width: CGFloat = 3
+            // the picked window, washed in the accent colour inside a rounded border: on a large screen a thin outline
+            // around a clear window is easy to miss
+            return [
+                tint(CGPath(roundedRect: h, cornerWidth: c, cornerHeight: c, transform: nil)),
+                ShadeView.Part(path: CGPath(roundedRect: h, cornerWidth: c, cornerHeight: c, transform: nil), fill: accent.withAlphaComponent(0.28)),
+                ShadeView.Part(path: CGPath(roundedRect: h.insetBy(dx: width / 2, dy: width / 2), cornerWidth: c - width / 2, cornerHeight: c - width / 2, transform: nil), stroke: accent, width: width),
+            ]
         case .area:
-            guard s.activeDisplayID == displayID, let sel = s.selection else {
-                dim.setFill()
-                bounds.fill()
-                return
-            }
-            dimmed(except: sel, dim)
-            stroke(sel, accent)
+            guard s.activeDisplayID == displayID, let sel = s.selection else { return [tint(nil)] }
+            let handles = CGMutablePath()
             for h in ResizeHandle.allCases {
                 let c = h.point(in: sel)
-                let box = NSBezierPath(rect: NSRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8))
-                NSColor.white.setFill()
-                box.fill()
-                accent.setStroke()
-                box.lineWidth = 1
-                box.stroke()
+                handles.addRect(CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8))
             }
+            return [
+                tint(CGPath(rect: sel, transform: nil)),
+                ShadeView.Part(path: CGPath(rect: sel.insetBy(dx: 1, dy: 1), transform: nil), stroke: accent, width: 2),
+                ShadeView.Part(path: handles, fill: .white, stroke: accent, width: 1),
+            ]
         case .device:
-            break
+            return []
+        }
+    }
+}
+
+/// The picker's tint and highlights as shape layers: the graphics card draws and redraws them, so moving the pointer over
+/// a large screen costs the app nothing. `draw(_:)` paints the same shapes, for SourcePicker.picture (a drawing, not a
+/// window).
+private final class ShadeView: NSView {
+    struct Part {
+        var path: CGPath
+        var fill: NSColor? = nil
+        var stroke: NSColor? = nil
+        var width: CGFloat = 0
+        var evenOdd = false
+    }
+
+    var parts: [Part] = [] { didSet { needsDisplay = true } }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        guard let layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        var shapes = (layer.sublayers ?? []).compactMap { $0 as? CAShapeLayer }
+        while shapes.count < parts.count {
+            let shape = CAShapeLayer()
+            layer.addSublayer(shape)
+            shapes.append(shape)
+        }
+        for (i, shape) in shapes.enumerated() {
+            guard i < parts.count else { shape.path = nil; continue }
+            let p = parts[i]
+            shape.frame = layer.bounds
+            shape.path = p.path
+            shape.fillColor = p.fill?.cgColor ?? NSColor.clear.cgColor
+            shape.fillRule = p.evenOdd ? .evenOdd : .nonZero
+            shape.strokeColor = p.stroke?.cgColor
+            shape.lineWidth = p.width
+        }
+        CATransaction.commit()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        for p in parts {
+            if let fill = p.fill {
+                ctx.addPath(p.path)
+                ctx.setFillColor(fill.cgColor)
+                ctx.fillPath(using: p.evenOdd ? .evenOdd : .winding)
+            }
+            if let stroke = p.stroke, p.width > 0 {
+                ctx.addPath(p.path)
+                ctx.setStrokeColor(stroke.cgColor)
+                ctx.setLineWidth(p.width)
+                ctx.strokePath()
+            }
         }
     }
 
-    private func dimmed(except hole: CGRect?, _ color: NSColor, radius: CGFloat = 0) {
-        let path = NSBezierPath(rect: bounds)
-        if let h = hole { path.appendRoundedRect(h, xRadius: radius, yRadius: radius) }
-        path.windingRule = .evenOdd
-        color.setFill()
-        path.fill()
-    }
-
-    /// The picked window, washed in the accent colour inside a rounded border: on a large screen a thin outline
-    /// around a clear window is easy to miss.
-    private func highlight(_ r: CGRect, _ accent: NSColor) {
-        accent.withAlphaComponent(0.28).setFill()
-        NSBezierPath(roundedRect: r, xRadius: Self.corner, yRadius: Self.corner).fill()
-        let width: CGFloat = 3
-        let border = NSBezierPath(roundedRect: r.insetBy(dx: width / 2, dy: width / 2),
-                                  xRadius: Self.corner - width / 2, yRadius: Self.corner - width / 2)
-        border.lineWidth = width
-        accent.setStroke()
-        border.stroke()
-    }
-
-    private func stroke(_ r: CGRect, _ color: NSColor) {
-        let p = NSBezierPath(rect: r.insetBy(dx: 1, dy: 1))
-        p.lineWidth = 2
-        color.setStroke()
-        p.stroke()
-    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
