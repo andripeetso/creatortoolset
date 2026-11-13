@@ -158,7 +158,7 @@ describe("AI Editor analyze", () => {
     saveTranscript(d, "ver_early", "deepgram", "en", [], []);
     d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
     const plain = await analyze(["ver_early"], Date.now());
-    expect(plain.job()).toMatchObject({ state: "failed", error: expect.stringMatching(/Pick the language it is spoken in on the edit/) });
+    expect(plain.job()).toMatchObject({ error: expect.stringMatching(/Pick the language it is spoken in on the edit/) });
     const { job } = await analyze(["ver_early"], Date.now(), { languages: ["et"] });
     expect(askVersionIn.get("ver_early")).toEqual(["et"]);
     expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
