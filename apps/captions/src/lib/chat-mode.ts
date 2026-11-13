@@ -220,10 +220,8 @@ const WASH_SMALL = 520;
 const RIM = 220;
 /** How strong the light on the front is, 0 (none) to 1. Quiet by choice: it was turned up once and read as a toy. */
 const LIGHT = 0.5;
-/** How far a thing is from its place when the front shows it (px, right next to the button), toward the button. */
-const DRAWN = 8;
-/** How long it takes to come to rest (ms). */
-const SETTLE = 520;
+/** How much larger than life the new screen is as the front first shows it; it settles to its size, toward the button. */
+const DRAWN = 1.012;
 /** How far across its reach the front is (0 to 1) at `t` (0 to 1): it takes a moment to get going and finishes fast. */
 export const frontAt = (t: number): number => t ** 2;
 /** When (0 to 1) the front is `d` of its reach away from the button: frontAt the other way round. */
@@ -232,15 +230,11 @@ export const frontReaches = (d: number): number => Math.min(1, Math.max(0, d)) *
 /** The switch on its way and what it changes. */
 let washing: { skipTransition(): void } | null = null;
 let washingTo: Partial<Stored> = {};
-/** What the front showed and is still coming to rest. */
-let settling: Animation[] = [];
 
-/** A switch cut short by another one: its light and what was still coming to rest go at once, with it. */
+/** A switch cut short by another one: its light goes at once, with it. */
 function cutShort(): void {
   washing?.skipTransition();
   for (const el of document.querySelectorAll(".chat-wash-light")) el.remove();
-  for (const a of settling) a.cancel();
-  settling = [];
 }
 
 /** The middle of `el`, or of the chat-mode button on screen. */
@@ -254,8 +248,8 @@ function middleOf(el?: Element | null): { x: number; y: number } | null {
  * changes in the same breath (the chat on show).
  *
  * The screen as it was stays where it is and the new one washes over it from the button outwards, through a wide soft
- * rim, in one movement that takes a moment to get going and finishes fast. Each thing the front shows is a few pixels
- * toward the button and comes to rest, once. With `light` (the chat-mode switch itself) a soft band of light in the
+ * rim, in one movement that takes a moment to get going and finishes fast. The new screen settles to its size as one,
+ * toward the button: nothing in it moves on its own. With `light` (the chat-mode switch itself) a soft band of light in the
  * project's colour rides on the front; the smaller switches, which happen all day, have none. With no button (⌘J on a
  * screen whose bar has none) it starts where the button stands. Changed again while it runs, or where motion is
  * turned down, the new screen is there at once.
@@ -307,12 +301,10 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
   });
 }
 
-const MOVED = "[data-appbar] > *, [data-chat-panel] li, [data-chat-panel] header > *, #root :is(section, article, li, h1, h2, img, video, [data-tile])";
-
 /**
- * The front from (x, y), crossing the window in `duration`, and what it shows coming to rest behind it. `picture`: the
- * pseudo-element that holds the new screen, shown through a round mask that grows (index.css gives it the mask; its
- * size and place are animated here); null where there is no such picture, and the chats alone are shown from the
+ * The front from (x, y), crossing the window in `duration`. `picture`: the pseudo-element that holds the new screen,
+ * shown through a round mask that grows (index.css gives it the mask; its size and place are animated here) while the
+ * whole of it settles to its size; null where there is no such picture, and the chats alone are shown from the
  * button. `light`: the band of light on the front (index.css .chat-wash-light), which leaves the window after the
  * front has, fading.
  */
@@ -329,6 +321,16 @@ function wash(x: number, y: number, picture: string | null, duration: number, li
       return { maskSize: `${s} ${s}`, maskPosition: p, webkitMaskSize: `${s} ${s}`, webkitMaskPosition: p };
     });
     document.documentElement.animate(frames, { duration, pseudoElement: picture, fill: "both" });
+    // the new screen as one, a touch large at first and settling toward the button. Not each thing by itself: things
+    // moved one by one go out of line with their neighbours
+    const origin = `${x}px ${y}px`;
+    document.documentElement.animate(
+      [
+        { transform: `scale(${DRAWN})`, transformOrigin: origin },
+        { transform: "scale(1)", transformOrigin: origin },
+      ],
+      { duration, pseudoElement: picture, easing: "cubic-bezier(.2,.6,.2,1)", fill: "both" },
+    );
   } else {
     const panel = document.querySelector<HTMLElement>("[data-chat-panel]");
     const px = x - (panel?.getBoundingClientRect().left ?? 0);
@@ -360,26 +362,4 @@ function wash(x: number, y: number, picture: string | null, duration: number, li
         () => el.remove(),
       );
   }
-  // with no picture of the old screen everything is in plain sight already: nothing is moved
-  if (!picture) return;
-  // what is on screen and not most of it (a whole panel does not move: what is in it does)
-  const things = [...document.querySelectorAll<HTMLElement>(MOVED)]
-    .map((el) => ({ el, r: el.getBoundingClientRect() }))
-    .filter(({ r }) => r.width > 8 && r.height > 8 && r.width * r.height < innerWidth * innerHeight * 0.4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth);
-  settling = things
-    // the outermost of those: a thing inside one that moves would move twice as far
-    .filter(({ el }) => !things.some((o) => o.el !== el && o.el.contains(el)))
-    .slice(0, 160)
-    .map(({ el, r }) => {
-      const dx = r.left + r.width / 2 - x;
-      const dy = r.top + r.height / 2 - y;
-      const d = Math.hypot(dx, dy) || 1;
-      const k = DRAWN * (1 - 0.5 * Math.min(1, d / far));
-      return el.animate(
-        // one movement, no going past: it is toward the button as the front shows it, and comes to rest
-        [{ transform: `translate(${(-dx / d) * k}px, ${(-dy / d) * k}px)` }, { transform: "translate(0, 0)" }],
-        // added to whatever transform the element has of its own (a centred dialog, a hover lift), never replacing it
-        { duration: SETTLE, delay: duration * frontReaches(d / reach), easing: "cubic-bezier(.2,.7,.2,1)", composite: "add", fill: "backwards" },
-      );
-    });
 }
