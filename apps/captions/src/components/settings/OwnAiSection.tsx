@@ -48,6 +48,9 @@ export const WEB_APPS = [
     ],
   },
 ] as const;
+/** The steps a row shows. Through Connect the sign-in at the end is the person's Creator Toolset account, not this computer. Pure, so it is tested. */
+export const stepsOf = (app: (typeof WEB_APPS)[number], via: "connect" | "web"): readonly string[] =>
+  via === "connect" ? [...app.steps.slice(0, -1), `${app.name} sends you to your Creator Toolset account: sign in and press Allow.`] : app.steps;
 const onTheWeb = () => typeof window !== "undefined" && window.location.protocol === "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
 /**
@@ -366,7 +369,7 @@ function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
       {open && (via === "connect" || !aiKey) && (
         <div className="px-3 pb-3 sm:px-4">
           <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-            {app.steps.map((step, i) => (
+            {stepsOf(app, via).map((step, i) => (
               <li key={i}>
                 {step}
                 {i === 1 && (

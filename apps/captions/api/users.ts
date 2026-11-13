@@ -376,6 +376,12 @@ export function dropAiKey(user: UserRecord, id: string): void {
   persist();
 }
 
+/** Whether this key is one an AI app got by signing in (api/oauth.ts) or through Connect (api/connect/routes.ts). Such a key speaks MCP only (auth.ts getApiKeyUser). */
+export const isAiAppKey = (key: string): boolean => {
+  const hash = sha256(key);
+  return users.some((u) => u.aiKeys?.some((k) => k.hash === hash && k.oauth));
+};
+
 /** The AI apps' keys as the page lists them: never the hash. */
 export const aiKeysOf = (user: UserRecord) => (user.aiKeys ?? []).map(({ hash: _hash, ...k }) => k);
 

@@ -114,10 +114,10 @@ describe("an AI app through the Connect broker to this computer", () => {
     const tools = ((await (await mcp(token, "tools/list")).json()) as { result: { tools: { name: string; _meta?: unknown }[] } }).result.tools;
     expect(tools.find((t) => t.name === "media_search")?._meta).toBeDefined();
 
-    // a tool that writes: the session is made in this app, as the owner, and its card opens it on the computer's address
+    // a tool that writes: the session is made in this app, as the owner, and its card opens it through the broker's address
     const made = (await (await mcp(token, "tools/call", { name: "workshop_new_session", arguments: { title: "Tiny tumbles" } })).json()) as { result: { content: { text: string }[]; _meta: { card: { kind: string; href: string } } } };
     const session = JSON.parse(made.result.content[0]!.text) as { id: string };
-    expect(made.result._meta.card).toMatchObject({ kind: "script", href: `https://${HOST}/workshop/sessions/${session.id}` });
+    expect(made.result._meta.card).toMatchObject({ kind: "script", href: `${BROKER}/open/${id}/workshop/sessions/${session.id}` });
     expect(((await (await asOwner("/api/workshop/sessions", "GET")).json()) as { id: string }[]).some((s) => s.id === session.id)).toBe(true);
 
     // the card's page may load pictures from the broker only

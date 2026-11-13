@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LocalAiRow } from "@contracts/local-ai";
-import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome, webRowsFor } from "./OwnAiSection";
+import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome, webRowsFor, stepsOf, WEB_APPS } from "./OwnAiSection";
 
 it("ChatGPT and Claude rows: on a linked computer they use the broker's address; on the web this server's; else hidden", () => {
   const origin = "https://studio.example.com";
@@ -60,4 +60,11 @@ describe("how Install ends on a server that is not this computer", () => {
     expect(installOutcome(undefined, { macApp: false, commands: true })).toBe("command");
     expect(installOutcome(undefined, { macApp: false, commands: false })).toEqual({ failed: NEEDS_MAC_APP });
   });
+});
+
+it("through Connect the last step sends the person to their Creator Toolset account; on the web, to this server", () => {
+  const chatgpt = WEB_APPS[0];
+  expect(stepsOf(chatgpt, "web").at(-1)).toBe("ChatGPT sends you here: sign in and press Allow.");
+  expect(stepsOf(chatgpt, "connect").at(-1)).toBe("ChatGPT sends you to your Creator Toolset account: sign in and press Allow.");
+  expect(stepsOf(chatgpt, "connect").slice(0, -1)).toEqual(chatgpt.steps.slice(0, -1));
 });

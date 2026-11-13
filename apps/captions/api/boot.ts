@@ -288,7 +288,7 @@ app.use("/api/*", async (c, next) => {
   const signedIn = getSessionUser(c.req.header("cookie")) ??
     (FULL_KEY_NEVER.test(c.req.path)
       ? null
-      : getApiKeyUser(c.req.header("authorization"), "full") ??
+      : getApiKeyUser(c.req.header("authorization"), "full", c.req.path) ??
         (c.req.path === "/api/mcp" ? jobTokenUser(c.req.header("authorization")) : null) ??
         innerCall.getStore() ?? null);
   // view-as (hosted): a platform admin reads the app as another account, read-only. The admin's own routes and the
@@ -325,7 +325,7 @@ app.use("/api/*", async (c, next) => {
   if (!user) {
     // an AI access key: KEY_ROUTES only (review.ts refuses text edits from it)
     const keyUser = keyRoute(KEY_ROUTES, c.req.method, c.req.path)
-      ? getApiKeyUser(c.req.header("authorization"))
+      ? getApiKeyUser(c.req.header("authorization"), "review", c.req.path)
       : null;
     if (!keyUser) {
       // an AI app reads where to sign in from this header (oauth.ts)
