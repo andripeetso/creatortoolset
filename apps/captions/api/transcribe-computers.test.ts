@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +15,8 @@ const app = (await import("./boot")).default;
 const { LOCAL_USER } = await import("./users");
 const { pairDevice, touchDevice } = await import("./lib/devices");
 const { writeVoicePrefs } = await import("./lib/speech");
-const { CAPTION_LIMITS, ComputerBusy, transcribeOnComputer } = await import("./lib/computer-transcribe");
+const { CAPTION_LIMITS, ComputerBusy, MIC_LIMITS, transcribeOnComputer } = await import("./lib/computer-transcribe");
+const { ffmpegCommand } = await import("./ffmpeg-runtime");
 const { STYLE_PRESETS } = await import("../src/lib/types");
 
 const me = LOCAL_USER.username;
@@ -174,5 +176,112 @@ describe("captions on the person's own computers", () => {
     expect(asked).toHaveLength(1);
     expect(await (await app.request("/api/transcribe/available")).json()).toEqual({ available: true, allowed: true });
     writeVoicePrefs(me, { stt: { per: { captions: { engine: "local", model: "whisper-large-v3-turbo" } } } });
+  });
+});
+
+/** What the phone sends: a second of AAC in m4a, 16 kHz mono. */
+const m4a = path.join(dir, "phone.m4a");
+execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=duration=1", "-ac", "1", "-ar", "16000", "-c:a", "aac", m4a]);
+const say = () => app.request("/api/transcribe/mic", { method: "POST", headers: { "content-type": "audio/mp4" }, body: readFileSync(m4a) });
+
+/** Deepgram and OpenAI as they answer; the addresses asked. */
+function keyEngines() {
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", async (url: string) => {
+    asked.push(String(url));
+    if (String(url).includes("deepgram")) return Response.json({ results: { channels: [{ alternatives: [{ words: [{ word: "hello", punctuated_word: "Hello.", start: 0.1, end: 0.5 }] }] }] } });
+    return Response.json({ language: "en", segments: [{ start: 0, end: 1, text: " From OpenAI." }], words: [] });
+  });
+  return asked;
+}
+const keys = (deepgram: string, openai: string) => {
+  vi.stubEnv("DEEPGRAM_API_KEY", deepgram);
+  vi.stubEnv("OPENAI_API_KEY", openai);
+};
+
+describe("talking to the assistant on the person's own computers", () => {
+  const onComputers = () => writeVoicePrefs(me, { stt: { per: { mic: { engine: "local", model: "whisper-large-v3-turbo" } } } });
+
+  it("a computer that is on writes it down, and nothing goes to a service", async () => {
+    onComputers();
+    keys("dg-test", "sk-test");
+    const asked = keyEngines();
+    await claim();
+    const answer = say();
+    const job = await claimJob();
+    await app.request(`/api/devices/relay/transcribe/${job.id}`, json({ words: fromComputer, language: "et" }, pc.token));
+    const res = await answer;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ text: "Tere tulemast", language: "et" });
+    expect(asked).toEqual([]);
+  });
+
+  it("the computer fails: the person's Deepgram key writes it, with a note", async () => {
+    onComputers();
+    keys("dg-test", "");
+    const asked = keyEngines();
+    const answer = say();
+    const job = await claimJob();
+    await app.request(`/api/devices/relay/transcribe/${job.id}/fail`, json({ error: "Out of memory" }, pc.token));
+    expect(await (await answer).json()).toEqual({ text: "Hello.", language: "en", note: "Your computers could not do it: written by Deepgram" });
+    expect(asked).toHaveLength(1);
+  });
+
+  it("on but busy: no computer takes it in a few seconds, and OpenAI writes it", async () => {
+    onComputers();
+    keys("", "sk-test");
+    const asked = keyEngines();
+    await claim(); // on; and nothing claims the recording
+    const t0 = Date.now();
+    const got = (await (await say()).json()) as { text: string; note: string };
+    expect(Date.now() - t0).toBeLessThan(MIC_LIMITS.claimMs + 3_000);
+    expect(got).toMatchObject({ text: "From OpenAI.", note: "Your computers are busy: written by OpenAI" });
+    expect(asked).toEqual([expect.stringMatching(/\/audio\/transcriptions$/)]);
+  }, 20_000);
+
+  it("computers off: the key at once; with no key, the plain need (the phone) that the dock writes in the browser", async () => {
+    onComputers();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 10 * 60_000); // the PC has not been heard from in ten minutes
+      keys("dg-test", "");
+      keyEngines();
+      expect(((await (await say()).json()) as { note: string }).note).toBe("Your computers are off: written by Deepgram");
+      keys("", "");
+      const asked = keyEngines();
+      const res = await say();
+      expect(res.status).toBe(402);
+      expect(await res.json()).toEqual({ error: "Your computers are off. Needs a Deepgram key", code: "NEEDS_KEY", chosen: false, why: "Your computers are off" });
+      expect(asked).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a mic set to Deepgram never goes to a computer", async () => {
+    writeVoicePrefs(me, { stt: { per: { mic: { engine: "deepgram" } } } });
+    keys("dg-test", "");
+    const asked = keyEngines();
+    await claim();
+    expect(await (await say()).json()).toEqual({ text: "Hello.", language: "en" });
+    expect((await claim()).job).toBeNull();
+    expect(asked).toHaveLength(1);
+  });
+
+  it("a computer is handed the mic first, then captions, then library transcripts", async () => {
+    await claim();
+    const audio = path.join(dir, "q.wav");
+    writeFileSync(audio, wav);
+    const asked = [
+      transcribeOnComputer(me, "whisper-large-v3-turbo", [], audio, {}),
+      transcribeOnComputer(me, "whisper-large-v3-turbo", [], audio, CAPTION_LIMITS),
+      transcribeOnComputer(me, "whisper-large-v3-turbo", [], audio, MIC_LIMITS),
+    ];
+    for (const said of ["mic", "captions", "library"]) {
+      const job = (await claim()).job!;
+      await app.request(`/api/devices/relay/transcribe/${job.id}`, json({ words: [{ text: said, start: 0, end: 1 }], language: "en" }, pc.token));
+    }
+    const heard = await Promise.all(asked);
+    expect(heard.map((h) => h.words[0]!.text)).toEqual(["library", "captions", "mic"]);
   });
 });

@@ -93,7 +93,7 @@ const NEEDS: Record<Engine, string> = {
 };
 const KEY: Partial<Record<Engine, "DEEPGRAM_API_KEY" | "OPENAI_API_KEY">> = { deepgram: "DEEPGRAM_API_KEY", openai: "OPENAI_API_KEY" };
 /** A use that does not route to computers yet, asked to run on one (COMPUTER_USES). */
-const COMPUTERS_ONLY_FOR = "Speech models on your computers do captions and Media Library transcripts only";
+const COMPUTERS_ONLY_FOR = "Speech models on your computers do captions, Media Library transcripts and the assistant's mic only";
 
 /** `on`: a local model runs on the server itself (lib/device-transcribe.ts) or on the person's computers (lib/computer-transcribe.ts). */
 export type Speech =
