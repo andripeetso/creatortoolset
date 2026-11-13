@@ -10,7 +10,8 @@ export function peaks(url: string): Promise<Float32Array> {
   let p = cache.get(url);
   if (!p) {
     p = (async () => {
-      const res = await fetch(url, { credentials: "include" });
+      // the Mac app's local files answer any page (Access-Control-Allow-Origin *), which WebKit refuses with credentials
+      const res = await fetch(url, { credentials: url.startsWith("ctlocal:") ? "omit" : "include" });
       if (!res.ok) throw new Error(`${res.status}`);
       const audio = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(await res.arrayBuffer());
       return peaksOf(Array.from({ length: audio.numberOfChannels }, (_, c) => audio.getChannelData(c)), audio.sampleRate);

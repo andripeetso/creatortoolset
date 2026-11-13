@@ -27,7 +27,7 @@ const MAX_ITEMS = 5000;
 export class TimelineError extends Error {}
 
 /** `path` = the source file as the timeline names it; `ins` = seconds into it; `before`/`after` = its frames past each end. */
-type Clip = { rec: number; len: number; label: string; detail?: string; path?: string; ins?: number; before?: number; after?: number };
+type Clip = { rec: number; len: number; label: string; detail?: string; path?: string; ins?: number; before?: number; after?: number; off?: boolean };
 type Lane = { kind: "V" | "A"; name: string; clips: Clip[] };
 type Parsed = {
   name: string;
@@ -81,6 +81,7 @@ function finish(p: Parsed, fileName: string): { view: TimelineView; sources: Rec
         label: c.label.slice(0, 120) || "clip",
         ...(c.detail ? { detail: c.detail.slice(0, 200) } : {}),
         ...(c.path ? { src: keyOf(c.path) } : {}),
+        ...(c.off ? { off: true } : {}),
         ...(c.ins !== undefined && Number.isFinite(c.ins) && c.ins >= 0 ? { ins: Math.round(c.ins * 1000) / 1000 } : {}),
         ...(whole(c.before) !== undefined ? { before: whole(c.before) } : {}),
         ...(whole(c.after) !== undefined ? { after: whole(c.after) } : {}),
@@ -191,8 +192,9 @@ function otio(text: string): Parsed {
           const length = secs(media?.duration);
           clips.push({
             rec: Math.round(at * fps), len: Math.round(dur * fps), label: String(name),
-            detail: [Number.isFinite(start) && `source ${tc(start * fps, fps)}`, c.enabled === false && "disabled"]
+            detail: [Number.isFinite(start) && `source ${tc(start * fps, fps)}`, (c.enabled === false || t.enabled === false) && "disabled"]
               .filter(Boolean).join(" · "),
+            ...(c.enabled === false || t.enabled === false ? { off: true } : {}),
             path: String(r.OTIO_SCHEMA).startsWith("ExternalReference") ? filePath(r.target_url) : undefined,
             ...(Number.isFinite(ins) ? { ins } : {}),
             ...(length > 0 && Number.isFinite(ins) ? { before: ins * fps, after: (length - ins - dur) * fps } : {}),
@@ -321,6 +323,7 @@ function fcpxml(root: X): Parsed {
     byLane.get(key)!.clips.push({
       rec, len, label: name,
       detail: [`source ${tc(start * fps, fps)}`, el.attrs.enabled === "0" && "disabled"].filter(Boolean).join(" · "),
+      ...(el.attrs.enabled === "0" ? { off: true } : {}),
       ...(asset ? {
         path: filePath((reps.find((r) => r.attrs.kind === "original-media") ?? reps[0])?.attrs.src ?? asset.attrs.src),
         ins,
@@ -403,8 +406,9 @@ function fcp7(root: X): Parsed {
       return [{
         rec: start, len: end - start,
         label: text(kid(ci, "name")) || text(kid(f, "name")) || "clip",
-        detail: [`source ${tc(src, srcFps)}`, text(kid(ci, "enabled")).toUpperCase() === "FALSE" && "disabled"]
+        detail: [`source ${tc(src, srcFps)}`, (text(kid(ci, "enabled")).toUpperCase() === "FALSE" || text(kid(track, "enabled")).toUpperCase() === "FALSE") && "disabled"]
           .filter(Boolean).join(" · "),
+        ...(text(kid(ci, "enabled")).toUpperCase() === "FALSE" || text(kid(track, "enabled")).toUpperCase() === "FALSE" ? { off: true } : {}),
         path: filePath(text(kid(f, "pathurl"))),
         ...(inn >= 0 ? { ins: inn / srcFps, before: (inn / srcFps) * fps } : {}),
         ...(inn >= 0 && length > 0 ? { after: ((length - out) / srcFps) * fps } : {}),

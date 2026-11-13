@@ -80,4 +80,20 @@ describe("playing the edit from its originals", () => {
       ["V1:226", 236, 59, 3.24, 1], // made 5 frames longer at its start: the take's 5 frames before it, then the shot
     ]);
   });
+
+  it("the picture is the topmost switched-on clip, from its file: a talent copy over a switched-off take plays and runs on past its cut", () => {
+    const layered: TimelineView = { ...view, tracks: [
+      { id: "V1", name: "TALENT (original)", items: [{ key: "V1:0", track: "V1", rec: 0, len: 100, label: "take", src: "raw", ins: 0, off: true }] },
+      { id: "V2", name: "TALENT", items: [{ key: "V2:0", track: "V2", rec: 0, len: 100, label: "copy", src: "copy", ins: 1 }] },
+      { id: "V3", name: "CARDS", items: [{ key: "V3:40", track: "V3", rec: 40, len: 20, label: "title" }] },
+    ] };
+    const edits = [e("V2:0", { tail: 10 })];
+    const plan = playPlan(layered, edits);
+    const got = picturePieces(splitView(layered, edits), edits, plan).map(({ key, at, frames, offset }) => [key, at, frames, offset]);
+    // the card (no file) hides the copy under it: the render shows it there; the switched-off take never shows
+    expect(got).toEqual([["V2:0", 0, 40, 1], ["V2:0", 60, 50, 3.4]]);
+    // a clip whose file can't be played gives nothing, and doesn't let the layer under it show through
+    expect(picturePieces(splitView(layered, edits), edits, plan, (s) => s !== "copy")).toEqual([]);
+  });
 });
+
