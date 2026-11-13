@@ -51,21 +51,23 @@ function Status({ status }: { status: AssistantWork["status"] }) {
   return <Check className="size-4 shrink-0 text-emerald-500" aria-label="Done" />;
 }
 
-const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+/** "35s", "1m 3s", "1h 2m 5s": how long a reply worked, zero parts left out. */
+export function duration(ms: number) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  if (t < 60) return `${t}s`;
+  const parts = [Math.floor(t / 3600), Math.floor((t % 3600) / 60), t % 60];
+  return parts.flatMap((n, i) => (n ? [`${n}${"hms"[i]}`] : [])).join(" ");
+}
 
-/** "Working · 1:23" once a reply has taken more than ten seconds, so a long wait never looks frozen. */
-export function Elapsed({ since }: { since: number }) {
+/** How long it has been working, ticking: "1m 3s" at the top of a reply, `compact` "57s", "4m", "1h 5m" in Earlier chats. */
+export function WorkingFor({ since, compact = false }: { since: number; compact?: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
   // the server's clock and this one can differ: never below zero
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  if (s < 10) return null;
-  return (
-    <p className="mb-1 text-xs text-muted-foreground tabular-nums motion-safe:animate-in motion-safe:fade-in">
-      Working · {clock(s)}
-    </p>
-  );
+  const ms = Math.max(0, now - since);
+  const m = Math.floor(ms / 60_000);
+  return <>{!compact || m < 1 ? duration(ms) : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`}</>;
 }

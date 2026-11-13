@@ -34,7 +34,7 @@ import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
-import { Elapsed, WorkCards } from "./WorkCards";
+import { duration, WorkCards, WorkingFor } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { ConfirmCards } from "./ConfirmCards";
@@ -941,9 +941,14 @@ export function Message({
   if (working && !m.text)
     return (
       <div className="space-y-1">
-        <Steps steps={steps} working />
-        {/* a reply waiting for its videos or its turn isn't working yet: its wait line says what it waits for */}
-        {!m.wait && <Elapsed since={m.at} />}
+        {/* a reply waiting for its videos or its turn, or sending a file, isn't working yet: its own line says so */}
+        {!m.wait && !(m.send && sending) && (
+          // before the first step this line is all there is: the light runs through it
+          <p className={cn("w-fit text-xs text-muted-foreground tabular-nums", !steps.length && "ct-shimmer")}>
+            Working for <WorkingFor since={m.started ?? m.at} />
+          </p>
+        )}
+        <Steps steps={steps} working={!m.wait && !(m.send && sending)} />
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
@@ -958,9 +963,8 @@ export function Message({
             </button>
           </p>
         ) : (
-          m.wait && <p className="text-xs text-muted-foreground">{m.wait.text}</p>
+          m.wait && <p className="ct-shimmer w-fit text-xs text-muted-foreground">{m.wait.text}</p>
         )}
-        <Dots />
       </div>
     );
   const again = onRetry && (
@@ -986,8 +990,12 @@ export function Message({
     );
   return (
     <div className={cn("group/msg max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
-      <Steps steps={steps} working={working} />
-      {working && <Elapsed since={m.at} />}
+      {working && (
+        <p className="text-xs text-muted-foreground tabular-nums">
+          Working for <WorkingFor since={m.started ?? m.at} />
+        </p>
+      )}
+      <Steps steps={steps} working={working && !!steps.length} took={m.took} />
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
@@ -1075,8 +1083,9 @@ function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; o
               title="Open this chat"
             >
               <span className="min-w-0 flex-1 truncate">{p.title}</span>
-              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-label="Still answering" />}
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{ago(p.at)}</span>
+              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-hidden />}
+              {/* a working chat's last message is the reply it is writing: its time is when the work started */}
+              <span className={cn("shrink-0 text-xs tabular-nums", p.working ? "text-[var(--tint)]" : "text-muted-foreground")}>{p.working ? <>Working <WorkingFor since={p.at} compact /></> : ago(p.at)}</span>
             </button>
             {(p.settled || !p.working) && (
               <button
@@ -1126,19 +1135,22 @@ function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; o
   );
 }
 
-/** What the reply did on the way, one line per tool; while it works, the newest one pulses. */
-/** What the AI did, folded into one row: the step it is on while it works ("N steps" once done), opening to the whole list. */
-function Steps({ steps, working = false }: { steps: string[]; working?: boolean }) {
+/** What the AI did, folded into one row. While it works: the step it is on, a light running through it (the time is
+    the "Working for" line above). Once done: "Worked for 1m 12s" (or "N steps" for a reply from before that was kept), opening to the list. */
+function Steps({ steps, working = false, took }: { steps: string[]; working?: boolean; took?: number }) {
   if (!steps.length) return null;
   const last = steps[steps.length - 1];
+  const label = working ? `${last}…` : took !== undefined ? `Worked for ${duration(took)}` : steps.length === 1 ? last : `${steps.length} steps`;
+  const opens = steps.length > 1 || (!working && took !== undefined);
   return (
     <details className="group mt-1 mb-1.5 text-xs text-muted-foreground">
-      <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", steps.length > 1 && "cursor-pointer hover:text-foreground")}>
-        {working && <span className="size-1.5 shrink-0 rounded-full bg-[var(--tint)] motion-safe:animate-pulse" aria-hidden />}
-        <span className={cn("truncate", working && "text-foreground")}>{working ? `${last}…` : steps.length === 1 ? last : `${steps.length} steps`}</span>
-        {steps.length > 1 && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
+      <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", opens && "cursor-pointer hover:text-foreground")}>
+        <span className={cn("truncate", working && "ct-shimmer")} role={working ? "status" : undefined}>
+          {label}
+        </span>
+        {opens && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
       </summary>
-      {steps.length > 1 && (
+      {opens && (
         <ul className="mt-1 ml-0.5 space-y-0.5 border-l border-border pl-2.5">
           {steps.map((s, i) => (
             <li key={i}>{s}</li>

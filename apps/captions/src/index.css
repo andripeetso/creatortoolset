@@ -389,6 +389,17 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
+/* a working line: a light runs through the words (the assistant's step row); still for reduced motion */
+@media (prefers-reduced-motion: no-preference) {
+  .ct-shimmer {
+    color: transparent;
+    background: linear-gradient(90deg, hsl(var(--muted-foreground)) 40%, hsl(var(--foreground)) 50%, hsl(var(--muted-foreground)) 60%) 0 0 / 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: ct-shimmer 2.4s linear infinite;
+  }
+}
+@keyframes ct-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 /* the home hub (pages/ToolsetHome.tsx): the glow breathes, a light walks the arrows while scripts wait to be made, and a
    stage with work running in it pulses its edge. All off for reduced motion; the running
