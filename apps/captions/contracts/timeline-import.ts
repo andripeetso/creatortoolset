@@ -64,7 +64,8 @@ function finish(p: Parsed, fileName: string): { view: TimelineView; sources: Rec
   const tracks: TimelineView["tracks"] = [];
   const keys = new Map<string, string>(); // path -> "s1", in order of first use
   const keyOf = (path: string) => keys.get(path) ?? keys.set(path, `s${keys.size + 1}`).get(path)!;
-  const whole = (n: number | undefined) => (n !== undefined && Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined);
+  // none past an end the file says is shorter than the clip (a still, a retimed clip): its edges stay free to drag
+  const whole = (n: number | undefined) => (n !== undefined && Number.isFinite(n) && Math.round(n) >= 0 ? Math.round(n) + 0 : undefined);
   let total = 0;
   for (const kind of ["V", "A"] as const) {
     let n = 0;
@@ -456,14 +457,14 @@ export function tcFrames(s: string, fps: number): number {
 }
 
 function edl(text: string, hint?: number): Parsed {
-  const events: { track: string; src: string; rin: string; rout: string; name: string; path?: string }[] = [];
+  const events: { track: string; src: string; rin: string; rout: string; name: string; clipName?: boolean; path?: string }[] = [];
   let title = "";
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     const t = /^TITLE:\s*(.*)$/i.exec(line);
     if (t) title = t[1].trim();
     const name = /^\*\s*FROM CLIP NAME:\s*(.*)$/i.exec(line);
-    if (name && events.length) events[events.length - 1].name = name[1].trim();
+    if (name && events.length) Object.assign(events[events.length - 1], { name: name[1].trim(), clipName: true });
     // the file, where the editor wrote it: "* SOURCE FILE: /path", "* FROM CLIP: /path" (or a path as the clip name)
     const file = /^\*\s*(?:SOURCE FILE|FROM CLIP(?: NAME)?):\s*(.*)$/i.exec(line);
     const path = file && filePath(file[1]);
@@ -482,13 +483,14 @@ function edl(text: string, hint?: number): Parsed {
   const hour = Math.round(fps) * 3600;
   const zero = Math.floor(first / hour) * hour; // the timeline starts on the hour (00:00:00:00 or 01:00:00:00)
   const lanes = new Map<string, Lane>();
-  // an event without a file comment plays the file another event of the same clip names
-  const named = new Map(events.filter((e) => e.path).map((e) => [e.name, e.path!]));
+  // an event without a file comment plays the file another event of the same clip names (by its clip name: reels are
+  // often all "AX")
+  const named = new Map(events.filter((e) => e.path && e.clipName).map((e) => [e.name, e.path!]));
   for (const e of events) {
     const id = /V/i.test(e.track) ? "V1" : `A${/\d+/.exec(e.track)?.[0] ?? 1}`;
     if (!lanes.has(id)) lanes.set(id, { kind: id[0] as "V" | "A", name: "", clips: [] });
     const rec = tcFrames(e.rin, fps) - zero;
-    const path = e.path ?? named.get(e.name);
+    const path = e.path ?? (e.clipName ? named.get(e.name) : undefined);
     // ponytail: an EDL doesn't say where its file's timecode starts: taken as 00:00:00:00 (a file that starts later
     // plays silent from here, past its end); the file's first timecode from the file itself if that matters
     lanes.get(id)!.clips.push({

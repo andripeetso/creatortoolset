@@ -252,6 +252,19 @@ describe("timeline import: source files", () => {
     expect(strip(items(importTimeline("T.edl", edlFile, 25)))).toEqual({ V1: [{ src: "s1", ins: 0.4 }, {}], A1: [{ src: "s1", ins: 0.4 }] });
   });
 
+  it("no media room past an end the file says is shorter; an EDL lends a file by clip name, never by reel", () => {
+    const still = JSON.stringify({ OTIO_SCHEMA: "Timeline.1", name: "T", tracks: { OTIO_SCHEMA: "Stack.1", children: [
+      track("Video", "V", [at(ext(url(TAKE), range(0, 1)), 0, 50)]),
+    ] } });
+    expect(strip(items(importTimeline("T.otio", still)))).toEqual({ V1: [{ src: "s1", ins: 0, before: 0 }] });
+    const reels = `TITLE: T
+001  AX  V  C  00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00
+* SOURCE FILE: ${TAKE}
+002  AX  V  C  00:00:00:00 00:00:01:00 01:00:01:00 01:00:02:00
+`;
+    expect(strip(items(importTimeline("T.edl", reels, 25)))).toEqual({ V1: [{ src: "s1", ins: 0 }, {}] });
+  });
+
   it("the paths come only from timelineSources, decoded; the view stays path-free", () => {
     for (const [name, file] of [["T.otio", otioFile], ["T.xml", fcp7File], ["T.fcpxml", fcpxmlFile]]) {
       expect(timelineSources(name, file), name).toEqual({ s1: TAKE, s2: ROLL });

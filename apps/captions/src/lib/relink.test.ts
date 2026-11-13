@@ -58,6 +58,9 @@ describe("finding a timeline's files in another folder", () => {
     expect(o).toMatchObject({ found: { s2: "/Users/tiny/Moved/b.mov" }, folders: ["/Users/tiny/Moved"], tried: true });
     vi.mocked(askMediaFolder).mockResolvedValueOnce([OLD.normalize("NFD"), "/Users/tiny/Moved"]);
     expect((await findOriginals(before, "a1.1", exists)).found).toEqual({ s1: `${OLD}/a.mov`, s2: "/Users/tiny/Moved/b.mov" });
+    // the folder picked was allowed before: looked in all the same
+    vi.mocked(askMediaFolder).mockResolvedValueOnce(["/Users/tiny/Moved"]);
+    expect((await findOriginals({ ...before, folders: ["/Users/tiny/Moved"] }, "a1.1", exists)).found).toEqual({ s2: "/Users/tiny/Moved/b.mov" });
     // cancelled: nothing changes
     vi.mocked(askMediaFolder).mockResolvedValueOnce([]);
     expect(await findOriginals(before, "a1.1", exists)).toBe(before);

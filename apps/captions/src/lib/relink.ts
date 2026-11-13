@@ -91,7 +91,9 @@ export async function findOriginals(o: Originals, store: string, exists = onDisk
   if (!folders.length) return o; // cancelled
   const moved = stored(store);
   const found = await look(o.paths, folders, moved, exists);
-  for (const folder of folders.filter((f) => !o.folders.includes(f))) {
+  // under the folder just allowed; one allowed before when it was picked again
+  const fresh = folders.filter((f) => !o.folders.includes(f));
+  for (const folder of fresh.length ? fresh : folders) {
     const missing = Object.keys(o.paths).filter((s) => !found[s]);
     if (!missing.length) break;
     const got = await relink(missing.map((s) => o.paths[s]), folder, exists);
