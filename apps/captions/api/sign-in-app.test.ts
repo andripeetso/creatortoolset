@@ -190,9 +190,12 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
       expect(res.headers.get("location")).toBeNull();
       expect(await res.json()).toEqual({ error: "The app's sign-in challenge is missing" });
     }
-    // `app` without `for=site` is not this module's sign-in: nothing starts here
+    // `app` without `for=site` is the Mac app's own sign-in: a hosted plug-in answers that path (when mounted), and
+    // this module must not have started it. A redirect here is fine only if its state is not one this module kept.
     const other = await app.request(`/api/account/login/github?${APP}`);
-    expect(other.headers.get("location")).toBeNull();
+    const otherState = new URL(other.headers.get("location") ?? "http://none.test/").searchParams.get("state");
+    const kept = otherState ? (JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "sign-ins-in-progress.json"), "utf8")) as Record<string, unknown>) : {};
+    expect(otherState ? kept[otherState] : undefined).toBeUndefined();
   });
 
   it("works through the sign-in service too: the app's challenge stays here, and the code comes from this server", async () => {
