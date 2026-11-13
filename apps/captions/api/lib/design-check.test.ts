@@ -279,6 +279,24 @@ describe("an AI's words on the page", () => {
   });
 });
 
+describe("the finish: a frame's grain and vignette, a layer's blur", () => {
+  const box = { id: "s", type: "shape", shape: "ellipse", fill: "#ffcc66", x: 100, y: 100, w: 300, h: 300 };
+  it("a frame keeps a grain and a vignette as whole numbers in their ranges, and none of either when it is 0 or not a number", () => {
+    const [soft, loud, plain] = cleanPages([{ grain: 30.4, vignette: -45.6, layers: [] }, { grain: 900, vignette: 900, layers: [] }, { grain: 0, vignette: "dark", layers: [] }], rules).pages;
+    expect([soft!.grain, soft!.vignette]).toEqual([30, -46]);
+    expect([loud!.grain, loud!.vignette]).toEqual([100, 100]);
+    expect(plain).not.toHaveProperty("grain");
+    expect(plain).not.toHaveProperty("vignette");
+  });
+  it("any layer keeps a blur up to 200 pixels; a picture's is one of its adjustments, kept once", () => {
+    const [glow, far, sharp, photo] = cleanPages([{ layers: [{ ...box, blur: 40.4 }, { ...box, id: "t", blur: 5000 }, { ...box, id: "u", blur: 0 }, { id: "i", type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 500, h: 500, blur: 12 }] }], rules).pages[0]!.layers;
+    expect(glow!.blur).toBe(40);
+    expect(far!.blur).toBe(200);
+    expect(sharp).not.toHaveProperty("blur");
+    expect(photo).toMatchObject({ type: "image", blur: 12 });
+  });
+});
+
 describe("frames on a canvas", () => {
   const frame = (id: string, more: object = {}) => ({ id, background: "#ffffff", layers: [], ...more });
   it("gives every frame a place and a size: none placed yet, in a row; a new one beside the rightmost; one sent without its place where it was", () => {

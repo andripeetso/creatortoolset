@@ -1,7 +1,7 @@
 import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, Stroke, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
 import { onPath, tracePath } from "./path";
-import { retouch, retouches } from "./retouch";
+import { blurPixels, retouch, retouches } from "./retouch";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
@@ -321,7 +321,104 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
     ctx.restore();
   }
   if (l.blend) ctx.globalCompositeOperation = l.blend;
-  paintLayer(ctx, l, loaded, false, frame, exact);
+  if (l.blur && l.type !== "image" && !softLayer(ctx, l, loaded, frame, exact)) paintLayer(ctx, l, loaded, false, frame, exact);
+  else if (!l.blur || l.type === "image") paintLayer(ctx, l, loaded, false, frame, exact);
+  ctx.restore();
+}
+
+/** The pixels a blurred layer is worked at (a blur has nothing fine in it, so a big one is worked smaller), and the blurred layers kept. */
+const SOFT_PIXELS = 1_500_000;
+const soft = new WeakMap<Layer, { key: string; canvas: Canvas; margin: number }>();
+const newCanvas = (w: number, h: number): Canvas | null =>
+  typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : typeof document !== "undefined" ? Object.assign(document.createElement("canvas"), { width: w, height: h }) : null;
+
+/**
+ * A layer that is not a picture, drawn blurred (its `blur`): painted into a box of its own with room around it for
+ * what the blur spreads, blurred there (retouch.ts blurPixels: the same in every browser, where a canvas's own blur is
+ * not), and laid in place. Kept while the layer is the same one, drawn at the same scale: a layer is a new object
+ * whenever anything of it changes. False when no canvas can be made (the layer is then drawn sharp).
+ */
+function softLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean): boolean {
+  const blur = Math.min(200, l.blur ?? 0);
+  const t = ctx.getTransform();
+  // what the blur spreads past the box, in design pixels
+  const m = Math.ceil(blur * 3);
+  const bw = l.w + 2 * m;
+  const bh = l.h + 2 * m;
+  let scale = Math.hypot(t.a, t.b);
+  if (bw * bh * scale * scale > SOFT_PIXELS) scale = Math.sqrt(SOFT_PIXELS / (bw * bh));
+  // a drawing that has not loaded yet is a grey box: it is blurred again once it is there
+  const src = sourceOf(l);
+  const key = `${scale}|${src ? !!loaded.get(src)?.width : ""}`;
+  let kept = soft.get(l);
+  if (kept?.key !== key) {
+    const w = Math.max(1, Math.ceil(bw * scale));
+    const h = Math.max(1, Math.ceil(bh * scale));
+    const canvas = newCanvas(w, h);
+    const g = canvas?.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+    if (!canvas || !g) return false;
+    g.setTransform(scale, 0, 0, scale, m * scale, m * scale);
+    paintLayer(g, l, loaded, false, frame, exact);
+    const pixels = g.getImageData(0, 0, w, h);
+    blurPixels(pixels.data, w, h, blur * scale);
+    g.putImageData(pixels, 0, 0);
+    kept = { key, canvas, margin: m };
+    soft.set(l, kept);
+  }
+  ctx.drawImage(kept.canvas as CanvasImageSource, -m, -m, bw, bh);
+  return true;
+}
+
+/** A square of film grain, the same on every machine and at every drawing: one grey value a grain. */
+const GRAIN_SIDE = 128;
+let grainTile: Canvas | null | undefined;
+function grainOf(): Canvas | null {
+  if (grainTile !== undefined) return grainTile;
+  const canvas = newCanvas(GRAIN_SIDE, GRAIN_SIDE);
+  const g = canvas?.getContext("2d") as CanvasRenderingContext2D | null;
+  if (!canvas || !g) return (grainTile = null);
+  const pixels = g.createImageData(GRAIN_SIDE, GRAIN_SIDE);
+  let seed = 0x2f6e2b1;
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = seed >>> 24;
+    pixels.data[i + 3] = 255;
+  }
+  g.putImageData(pixels, 0, 0);
+  return (grainTile = canvas);
+}
+
+/**
+ * A frame's finish, over everything on it: its edges darkened or lightened (nothing inside the middle third, all of it
+ * at the corners, as a picture's own vignette), and a film grain two design pixels a grain, strongest in the middle
+ * greys. Both are drawn, not worked pixel by pixel, so they are the same at every zoom and cost next to nothing.
+ */
+function finishFrame(ctx: Ctx, page: Pick<DesignPage, "grain" | "vignette">, w: number, h: number): void {
+  const edge = Math.min(100, Math.max(-100, page.vignette ?? 0)) / 100;
+  if (edge) {
+    const far = Math.hypot(w, h) / 2;
+    const fade = ctx.createRadialGradient(w / 2, h / 2, far * 0.35, w / 2, h / 2, far);
+    const tone = edge > 0 ? "0,0,0" : "255,255,255";
+    const most = Math.abs(edge) * 0.85;
+    fade.addColorStop(0, `rgba(${tone},0)`);
+    fade.addColorStop(0.5, `rgba(${tone},${(most * 0.5).toFixed(3)})`);
+    fade.addColorStop(1, `rgba(${tone},${most.toFixed(3)})`);
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const grain = Math.min(100, Math.max(0, page.grain ?? 0)) / 100;
+  const tile = grain ? grainOf() : null;
+  const pattern = tile ? ctx.createPattern(tile as CanvasImageSource, "repeat") : null;
+  if (!pattern) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "overlay";
+  ctx.globalAlpha = grain * 0.4;
+  // a grain a screen pixel or more across is drawn crisp; smaller (zoomed far out), the grains run together as they would to the eye
+  const t = ctx.getTransform();
+  ctx.imageSmoothingEnabled = 2 * Math.hypot(t.a, t.b) < 1;
+  ctx.scale(2, 2);
+  ctx.fillStyle = pattern;
+  ctx.fillRect(0, 0, w / 2, h / 2);
   ctx.restore();
 }
 
@@ -404,6 +501,7 @@ export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loade
   ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
   ctx.fillRect(0, 0, w, h);
   for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact);
+  finishFrame(ctx, page, w, h);
 }
 
 /** A point of the page in a layer's own box (its rotation taken out): inside when 0..w and 0..h. */
