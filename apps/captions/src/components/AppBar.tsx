@@ -61,7 +61,8 @@ export function AppBar({
         className,
       )}
     >
-      {/* in chat mode it stands at the top of the chats instead, with the name and the account (index.css hides these while they show) */}
+      {/* in chat mode it stands at the top of the chats instead, with the name; the project, Activity and the account
+          stand under them (index.css hides a page's own while they show) */}
       {account && me && !isPhoneHub() && <ChatModeButton className="-mr-1" />}
       <HomeLink onClick={onHome} />
       <HistoryArrows />

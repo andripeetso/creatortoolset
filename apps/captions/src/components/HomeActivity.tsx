@@ -228,6 +228,8 @@ function ActivityButton({ me }: { me: Me }) {
     <Popover onOpenChange={(open) => open && (refresh(), void server.refresh().catch(() => {}))}>
       <PopoverTrigger asChild>
         <button
+          // in chat mode it stands under the chats, so Home's own bar leaves it out (index.css)
+          data-activity
           title="Activity"
           aria-label={label}
           className="relative rounded-lg p-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent"

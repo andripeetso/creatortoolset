@@ -1,8 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { PanelLeft, PanelRight, PanelRightClose, SquarePen, X } from "lucide-react";
 import type { AssistantChat } from "@contracts/assistant";
+import { HomeActivity } from "@/components/HomeActivity";
 import { HomeLink } from "@/components/HomeLink";
+import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
+import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
+import { canUse, useMe } from "@/lib/auth";
 import { LIST_W, MIN_PAGE, previewChatWidth, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./ChatList";
@@ -19,7 +23,7 @@ function NewChatButton({ onNew, disabled }: { onNew: () => void; disabled: boole
 }
 
 /**
- * The left column of chat mode: the app's name (the way Home), every chat, the account. It stands beside the open chat
+ * The left column of chat mode: the app's name (the way Home), every chat, then the project, the account and Activity. It stands beside the open chat
  * while there is room; narrower, it opens over the chat from the list button (`onClose` then closes it again).
  */
 export function ChatsAside({
@@ -38,6 +42,9 @@ export function ChatsAside({
   reload: () => void;
   onClose?: () => void;
 }) {
+  const me = useMe();
+  // the same people Home's bar shows the project to
+  const projects = canUse(me, "instagram") || canUse(me, "workshop");
   const pick = <A extends unknown[]>(fn: (...a: A) => Promise<unknown> | void) => (...a: A) => {
     onClose?.();
     return fn(...a);
@@ -66,8 +73,19 @@ export function ChatsAside({
           )}
         </header>
         <ChatList chats={chats} onOpen={pick(onOpen)} onNew={onNew} reload={reload} />
-        <footer className="flex h-12 shrink-0 items-center border-t px-3">
-          <UserMenu />
+        {/* what belongs to the whole app, not to the page beside the chats: the plan warning while there is one, the
+            project, then the account and Activity. The project's row keeps its height while the projects load */}
+        <footer className="flex shrink-0 flex-col gap-1.5 border-t px-3 py-2">
+          <PlanLimitPill />
+          {projects && (
+            <div className="flex h-7 items-center">
+              <ProjectSwitcher frame />
+            </div>
+          )}
+          <div className="flex h-8 items-center justify-between gap-2">
+            <UserMenu />
+            <HomeActivity />
+          </div>
         </footer>
       </aside>
     </>
