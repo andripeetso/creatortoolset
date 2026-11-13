@@ -55,7 +55,7 @@ describe("a restart of the server while the Mac writes a reply", () => {
     expect(kept).not.toContain(job.mcp.token);
     expect(kept).not.toContain("What failed?");
     // a deploy needn't wait for this reply: a restart doesn't lose it
-    expect(await (await before.app.request("/api/health")).json()).toMatchObject({ answering: 0 });
+    expect(await (await before.app.request("/api/health")).json()).toMatchObject({ answering: 0, working: 0 });
     await tick(1100); // the old process's last save of the chat
 
     const after = await boot();

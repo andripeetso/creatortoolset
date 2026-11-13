@@ -8,9 +8,9 @@ import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
 import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
-import { enhanceApp } from "./enhance";
+import { enhanceApp, enhancesAtRisk } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
-import { exportsApp } from "./exports";
+import { exportsApp, exportsAtRisk } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
@@ -44,6 +44,7 @@ import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
 import { answersAtRisk } from "./lib/mac-claude";
+import { captionJobsAtRisk } from "./captions-job";
 import { sweepAll, uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
@@ -237,8 +238,10 @@ app.get("/api/health", (c) =>
     ok: true,
     environment: environmentOf(),
     uptimeSec: Math.round(process.uptime()),
-    // AI answers a restart now would lose: a deploy waits for 0 (lib/mac-claude.ts)
+    // what a restart now would end, for a deploy to wait on: AI answers that stream straight to an open page (the
+    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances and caption jobs
     answering: answersAtRisk(),
+    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk(),
     rssMb: Math.round(process.memoryUsage().rss / 1048576),
   }),
 );
