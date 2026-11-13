@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CliId, LocalAiRow, LocalAiView } from "@contracts/local-ai";
 import { Check, Copy, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,31 @@ export const WEB_APPS = [
   },
 ] as const;
 const onTheWeb = () => typeof window !== "undefined" && window.location.protocol === "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
+/**
+ * The ChatGPT and Claude rows: shown on the web or on a computer linked through Connect, and the address they use. A
+ * linked computer's address is the broker's (`connectAi`, GET /api/connect); on the web it is this server's. Pure, so it is tested.
+ */
+export function webRowsFor(o: { onWeb: boolean; connectAi: string | null; origin: string }): { show: boolean; url: string; via: "connect" | "web" } {
+  if (o.connectAi) return { show: true, url: o.connectAi, via: "connect" };
+  return { show: o.onWeb, url: `${o.origin}/api/mcp`, via: "web" };
+}
+
+/** The broker's address for AI apps when this computer is linked through Connect, else null. */
+function useConnectAi(): string | null {
+  const [ai, setAi] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/connect")
+      .then((r) => (r.ok ? (r.json() as Promise<{ ai?: string | null }>) : null))
+      .then((j) => live && setAi(j?.ai ?? null))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  return ai;
+}
 
 const NAME = "creator-toolset";
 
@@ -120,9 +145,14 @@ export function OwnAiSection() {
   const { keys, local, error, load, disconnect } = useOwnAi();
 
   const here = local?.local ? connectableRows(local) : [];
+  const connectAi = useConnectAi();
+  const webRows = webRowsFor({ onWeb: onTheWeb(), connectAi, origin: typeof window === "undefined" ? "" : window.location.origin });
+  const web = webRows.show ? WEB_APPS : [];
   // the apps with a row of their own above are not listed again under Installed in
-  const web = onTheWeb() ? WEB_APPS : [];
   const rowed = [...(local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name)), ...web.map((a) => a.name)];
+  const webRow = (a: (typeof WEB_APPS)[number]) => (
+    <WebAppRow key={a.name} app={a} url={webRows.url} via={webRows.via} aiKey={newest(keys ?? [], a.name)} onDone={load} onDisconnect={disconnect} />
+  );
   const listed = (keys ?? []).filter((k) => !rowed.includes(k.name));
 
   return (
@@ -138,9 +168,7 @@ export function OwnAiSection() {
             {here.map((r) => (
               <LocalAppRow key={r.id} row={r} aiKey={keys.find((k) => k.name === r.name)} onDone={load} onDisconnect={disconnect} />
             ))}
-            {web.map((a) => (
-              <WebAppRow key={a.name} app={a} aiKey={newest(keys, a.name)} onDisconnect={disconnect} />
-            ))}
+            {web.map(webRow)}
             <OtherAppRow onMade={load} />
           </Card>
         ) : (
@@ -148,9 +176,7 @@ export function OwnAiSection() {
             {REMOTE_APPS.map((a) => (
               <RemoteAppRow key={a} app={a} aiKey={keys.find((k) => k.name === APPS[a].name)} onDone={load} onDisconnect={disconnect} />
             ))}
-            {web.map((a) => (
-              <WebAppRow key={a.name} app={a} aiKey={newest(keys, a.name)} onDisconnect={disconnect} />
-            ))}
+            {web.map(webRow)}
             <OtherAppRow onMade={load} />
           </Card>
         )}
@@ -278,22 +304,56 @@ const newest = (keys: AiKeyInfo[], name: string) => keys.filter((k) => k.name ==
 /**
  * ChatGPT or Claude. Neither takes a server from a link, so Install opens the steps in the row: what to press there,
  * the address with Copy, and a button that opens the right page. The row says Installed once the app has its key.
+ * On a computer linked through Connect, Install first asks the broker for the app (POST /api/connect/ai), then shows
+ * the same steps with the broker's address; Remove there takes the app's grant back.
  */
-function WebAppRow({ app, aiKey, onDisconnect }: { app: (typeof WEB_APPS)[number]; aiKey?: AiKeyInfo; onDisconnect: (id: string) => Promise<unknown> }) {
+function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
+  app: (typeof WEB_APPS)[number];
+  url: string;
+  via: "connect" | "web";
+  aiKey?: AiKeyInfo;
+  onDone: () => void;
+  onDisconnect: (id: string) => Promise<unknown>;
+}) {
   const [open, setOpen] = useState(false);
-  const url = `${window.location.origin}/api/mcp`;
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const setGrant = (on: boolean) =>
+    fetch("/api/connect/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ app: app.name, on }) }).then((r) => json<{ ok: boolean }>(r));
+  const install = async () => {
+    setBusy(true);
+    setFailed(null);
+    try {
+      await setGrant(true);
+      setOpen(true);
+    } catch (e) {
+      setFailed(msg(e));
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  };
+  const remove = (id: string) => {
+    setOpen(false);
+    return via === "connect" ? setGrant(false).catch((e) => saveFailed(msg(e))).finally(onDone) : onDisconnect(id);
+  };
   return (
     <div>
       <ListRow
         icon={<ProviderLogo driver={app.logo} className="size-4" />}
         title={app.name}
         subtitle={aiKey ? usedText(aiKey) : undefined}
+        status={failed ? <Status tone="broken">{failed}</Status> : undefined}
         actions={
           aiKey ? (
             <>
               <InUse>Installed</InUse>
-              <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
+              <DisconnectMenu k={aiKey} onDisconnect={remove} />
             </>
+          ) : via === "connect" ? (
+            <Button size="sm" disabled={busy} onClick={() => void install()}>
+              {busy ? "Installing…" : failed ? "Try again" : "Install"}
+            </Button>
           ) : (
             !open && (
               <Button size="sm" onClick={() => setOpen(true)}>
@@ -303,7 +363,7 @@ function WebAppRow({ app, aiKey, onDisconnect }: { app: (typeof WEB_APPS)[number
           )
         }
       />
-      {open && !aiKey && (
+      {open && (via === "connect" || !aiKey) && (
         <div className="px-3 pb-3 sm:px-4">
           <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
             {app.steps.map((step, i) => (

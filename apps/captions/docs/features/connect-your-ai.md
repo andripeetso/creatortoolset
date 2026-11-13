@@ -20,6 +20,13 @@ Either app then sends you to Creator Toolset: sign in, check the app's name and 
 The row then says Installed. **Remove** in its menu ends the connection at once; connecting again replaces the old
 one. Allow gives the app what your account can do, except your AI providers, paired computers and keys.
 
+## ChatGPT and Claude through your Creator Toolset account
+
+On a computer linked through Connect, the same rows show, and their address is the Connect service's `/mcp`, not the
+computer's. **Install** asks the Connect service to allow the app (only then, on that press), shows the same steps with
+that address, and the row says Installed. **Remove** takes the allowance back at once; a computer that can't reach the
+service still removes the app's key on its own. The app then signs in to your account, not to this computer.
+
 ## Claude Code, Codex and scripts
 
 Settings → Headless access → **Install** on the Claude Code or Codex row adds it on your Mac. Any other app or script:

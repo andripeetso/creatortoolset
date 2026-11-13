@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { hostname } from "node:os";
 import { env } from "../lib/env";
-import { findUser, type SessionUser } from "../users";
+import { dropAiKey, findUser, newAiKey, type SessionUser } from "../users";
 import type { AuthVars } from "../auth";
-import { BrokerError, accountOfToken, linkThisComputer, pollDeviceGrant, startDeviceGrant } from "./broker";
+import { BrokerError, accountOfToken, linkThisComputer, pollDeviceGrant, sendAiGrant, startDeviceGrant } from "./broker";
 import { startConnector } from "./connector";
 import { connectState } from "./state";
 
@@ -28,6 +28,8 @@ connectApp.get("/", (c) => {
     name: s?.name ?? hostname(),
     hostname: s?.hostname ?? null,
     brokerConfigured: !!brokerUrl(),
+    // the one address an AI app connects to, through the broker (sendAiGrant in broker.ts)
+    ai: s ? new URL("/mcp", s.brokerUrl).href : null,
   });
 });
 
@@ -74,4 +76,37 @@ connectApp.post("/poll", async (c) => {
   } catch (e) {
     return c.json({ status: "failed", error: e instanceof BrokerError ? e.code : "link_failed" });
   }
+});
+
+const AI_APPS = ["ChatGPT", "Claude"] as const;
+
+// Install / Remove for ChatGPT and Claude on this computer. The broker is asked only on this press: the signed grant
+// says which app and key the computer allows, and a removal sends null so the broker drops the app's connection too.
+connectApp.post("/ai", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { app?: unknown; on?: unknown } | null;
+  const app = AI_APPS.find((a) => a === body?.app);
+  if (!app || typeof body?.on !== "boolean") return c.json({ error: "Unknown AI app" }, 400);
+  const s = connectState();
+  if (!s) return c.json({ error: "This computer isn't linked to your account yet" }, 400);
+  const user = findUser(c.get("user").username);
+  if (!user) return c.json({ error: "Only the owner can connect this computer" }, 403);
+
+  if (!body.on) {
+    // removed here first: a broker that can't be reached must not keep the key working on this computer
+    for (const k of (user.aiKeys ?? []).filter((k) => k.name === app && k.oauth)) dropAiKey(user, k.id);
+    await sendAiGrant(s, app, null).catch(() => {});
+    return c.json({ ok: true });
+  }
+
+  // the key is made here and the broker is told; if the broker refuses, this key is taken back, so none works unannounced
+  const made = newAiKey(user, app, true);
+  try {
+    await sendAiGrant(s, app, made.key);
+  } catch (e) {
+    dropAiKey(user, made.id);
+    if (e instanceof BrokerError && e.code === "unknown_computer") return c.json({ error: "This computer isn't linked to your account any more. Link it again." }, 502);
+    if (e instanceof BrokerError && e.status === 404) return c.json({ error: "The Connect service doesn't take AI apps yet." }, 502);
+    return c.json({ error: "The Connect service couldn't take it right now. Try again." }, 502);
+  }
+  return c.json({ ok: true });
 });

@@ -116,3 +116,21 @@ export function accountOfToken(token: string): string {
   if (typeof sub !== "string" || !sub) throw new BrokerError(502, "broker_error");
   return sub;
 }
+
+/**
+ * Tells the broker which AI app this computer allows ahead of the app's sign-in (`key`: the key the computer made for
+ * it), or takes that back (`key` null). Signed like renewTunnel, with this computer's key. The broker answers
+ * BrokerError(404, "unknown_computer") when the account no longer has this computer, and 404 "not_found" on a broker
+ * that does not take AI apps yet.
+ */
+export async function sendAiGrant(s: ConnectState, app: string, key: string | null): Promise<void> {
+  const k = computerKey();
+  const payload = JSON.stringify({ purpose: "ai-grant", computer_id: s.computerId, at: Math.floor(Date.now() / 1000), app, key });
+  await call(s.brokerUrl, `/v1/computers/${s.computerId}/ai-grant`, {
+    body: {
+      public_key: k.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
+      payload,
+      signature: sign(null, Buffer.from(payload), k.privateKey).toString("base64"),
+    },
+  });
+}

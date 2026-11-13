@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { LocalAiRow } from "@contracts/local-ai";
-import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome } from "./OwnAiSection";
+import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome, webRowsFor } from "./OwnAiSection";
+
+it("ChatGPT and Claude rows: on a linked computer they use the broker's address; on the web this server's; else hidden", () => {
+  const origin = "https://studio.example.com";
+  // a linked computer (its own tunnel is https, so it is on the web too): the broker wins
+  expect(webRowsFor({ onWeb: true, connectAi: "https://broker.example.com/mcp", origin })).toEqual({ show: true, url: "https://broker.example.com/mcp", via: "connect" });
+  expect(webRowsFor({ onWeb: false, connectAi: "https://broker.example.com/mcp", origin: "http://localhost:43127" })).toEqual({ show: true, url: "https://broker.example.com/mcp", via: "connect" });
+  // not linked, on the web: as today
+  expect(webRowsFor({ onWeb: true, connectAi: null, origin })).toEqual({ show: true, url: `${origin}/api/mcp`, via: "web" });
+  // neither linked nor on the web: hidden
+  expect(webRowsFor({ onWeb: false, connectAi: null, origin: "http://localhost:43127" }).show).toBe(false);
+});
 
 const url = "https://studio.example.com/api/mcp";
 const key = "ctk_" + "a".repeat(48);
