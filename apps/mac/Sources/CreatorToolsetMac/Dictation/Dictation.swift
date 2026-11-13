@@ -685,6 +685,14 @@ final class Dictation: ObservableObject {
         if modelOnDisk { warm() } else { fetch(model) }
     }
 
+    /// Stops `id`'s download if it is the one running (the setup page left without Get Started); what came of it is
+    /// removed (`fetch`).
+    func cancelDownload(_ id: String) {
+        guard download?.id == id else { return }
+        DictationLog.info("download of \(id) stopped: the setup page was left")
+        fetching?.cancel()
+    }
+
     /// The guide's Allow for the microphone: the system's question the first time, then its Settings pane.
     func allowMicrophone() {
         if MicrophoneAccess.status == .notDetermined {
@@ -825,6 +833,8 @@ final class Dictation: ObservableObject {
                 } else {
                     try await ParakeetFiles.download(m, progress: progress)
                 }
+                // stopped while the files were still coming, and the download finished anyway: not kept
+                try Task.checkCancellation()
                 DictationLog.info("downloaded \(m.id)")
                 download = nil
                 fetching = nil
@@ -836,6 +846,11 @@ final class Dictation: ObservableObject {
                 }
             } catch {
                 DictationLog.error("download of \(m.id) stopped: \(error)")
+                // stopped on purpose (the setup page left, dictation switched off): what came down goes, so a
+                // part of a 1.6 GB model never sits on the disk unasked; it downloads whole the next time
+                if Task.isCancelled {
+                    if let variant = m.whisperKitID { ModelFiles.remove(variant) } else { ParakeetFiles.remove(m) }
+                }
                 download = nil
                 fetching = nil
                 SpeechModels.shared.finished(m.id, ok: false)

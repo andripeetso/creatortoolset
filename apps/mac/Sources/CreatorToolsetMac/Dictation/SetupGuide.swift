@@ -212,6 +212,31 @@ struct SetupOfferView: View {
     }
 }
 
+/// The setup page's own model download. Opening the page starts it (so the model is ready by Get Started); leaving
+/// without Get Started (Not now, Esc, the close button, ⌘W) stops it, and nothing starts once the page is gone. A download
+/// that was already running, or one started from Settings, is not the page's and goes on.
+struct SetupDownload: Equatable {
+    private(set) var open = false
+    /// the model id whose download this opening of the page started
+    private(set) var started: String?
+
+    mutating func opened() { open = true; started = nil }
+
+    /// Whether the page may start a download now: only while it is open (the server's languages can answer late).
+    var mayPrepare: Bool { open }
+
+    /// After a prepare: a download running now that was not before is the page's own.
+    mutating func prepared(before: String?, after: String?) {
+        if open, before == nil, let after { started = after }
+    }
+
+    /// The page goes: the download to stop, if it is still the page's own and the person did not press Get Started.
+    mutating func closed(gotStarted: Bool, running: String?) -> String? {
+        defer { open = false; started = nil }
+        return !gotStarted && running != nil && running == started ? started : nil
+    }
+}
+
 /// A capsule with a light fill, with a chevron when it opens a list.
 struct PillLabel: View {
     let title: String
@@ -315,6 +340,9 @@ final class SetupGuide: ObservableObject {
     /// A language was ticked or unticked since the page opened: the server's answer doesn't replace the ticks.
     private var touched = false
     private var tick: Timer?
+    private var own = SetupDownload()
+    /// Get Started was pressed: the page's download goes on after it closes.
+    private var gotStarted = false
 
     static var isOpen: Bool { window?.isVisible == true || sheet != nil }
 
@@ -395,14 +423,15 @@ final class SetupGuide: ObservableObject {
             touched = true
             if let at = languages.firstIndex(of: code) { languages.remove(at: at) } else { languages.append(code) }
             d.setLanguages(languages, defaults: defaults)
-            d.prepareModel()  // the languages may choose another default model
+            prepare()  // the languages may choose another default model
         case .allowMicrophone: d.allowMicrophone()
         case .allowAccessibility: d.allowAccessibility()
         case .model(let id):
             d.command("model", id)
-            d.prepareModel()
+            prepare()
         case .getStarted:
             if !d.prefs.on { d.command("on", "1") }  // opened from the site's mic while dictation was off
+            gotStarted = true
             Self.done()
             if let sheet = Self.sheet { sheet.sheetParent?.endSheet(sheet) } else { Self.window?.close() }
         }
@@ -420,7 +449,20 @@ final class SetupGuide: ObservableObject {
         if new != facts { facts = new }
     }
 
+    /// The model loads, or downloads when it isn't here: only while the page is open, and a download it starts is its own.
+    private func prepare() {
+        guard own.mayPrepare else { return }
+        let d = Dictation.shared
+        let before = d.download?.id
+        d.prepareModel()
+        own.prepared(before: before, after: d.download?.id)
+    }
+
     private func start() {
+        if !own.open {
+            own.opened()
+            gotStarted = false
+        }
         refresh()
         if tick == nil {
             tick = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -435,13 +477,17 @@ final class SetupGuide: ObservableObject {
         Task {
             defaults = await Dictation.shared.defaultLanguages()
             if !touched { languages = Dictation.shared.prefs.languages ?? defaults }
-            // once the languages are known, which choose the default model
-            Dictation.shared.prepareModel()
+            // once the languages are known, which choose the default model; not if the page has gone meanwhile
+            prepare()
             refresh()
         }
     }
 
     fileprivate func stop() {
+        if let id = own.closed(gotStarted: gotStarted, running: Dictation.shared.download?.id) {
+            Dictation.shared.cancelDownload(id)
+        }
+        gotStarted = false
         tick?.invalidate()
         tick = nil
         KeyPicker.close()
