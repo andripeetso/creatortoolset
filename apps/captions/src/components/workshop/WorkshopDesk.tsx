@@ -186,6 +186,14 @@ export function WorkshopDesk({
     return () => window.removeEventListener("keydown", onKey);
   }, [layout.focus, onChange]);
 
+  // Going into Focus or out of it, the new layout comes in softly (SHIFT) instead of at once; not when the page opens
+  const [focusWas, setFocusWas] = useState(layout.focus);
+  const [shifts, setShifts] = useState(0);
+  if (focusWas !== layout.focus) {
+    setFocusWas(layout.focus);
+    setShifts((n) => n + 1);
+  }
+
   const wrap = (id: IslandId) => {
     const slot = islands[id];
     return (
@@ -202,7 +210,7 @@ export function WorkshopDesk({
   const board = (layout: DeskLayout) => {
     const vis = visibleIslands(layout);
     // Focus is a column at reading width in the middle of the window (the page leaves out its sidebar too), not the piece stretched across it
-    if (layout.focus) return <div className={`${DESK} mx-auto max-w-4xl`}>{wrap(vis[0]!)}</div>;
+    if (layout.focus) return <div className={`${DESK} mx-auto max-w-5xl`}>{wrap(vis[0]!)}</div>;
     if (vis.length === 1) {
       return <div className={DESK}>{wrap(vis[0]!)}</div>;
     }
@@ -256,13 +264,13 @@ export function WorkshopDesk({
   const over = overlay ? <div className="absolute inset-0 z-30">{overlay}</div> : null;
   if (!drawer)
     return (
-      <div className="relative h-full min-h-0">
+      <div key={shifts} className={`relative h-full min-h-0 ${shifts ? SHIFT : ""}`}>
         {board(layout)}
         {over}
       </div>
     );
   return (
-    <div className="flex h-full min-h-0">
+    <div key={shifts} className={`flex h-full min-h-0 ${shifts ? SHIFT : ""}`}>
       <div className="relative min-w-0 flex-1">
         {board(hideIsland(layout, "content"))}
         {over}
@@ -285,6 +293,7 @@ export function WorkshopDesk({
 
 /** The panels stop above a strip at the bottom, where Update sits (CornerNav), so nothing covers a panel. */
 const DESK = "h-full min-h-0 px-2 pt-2 pb-10";
+const SHIFT = "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-[0.985] motion-safe:duration-300 motion-safe:ease-out";
 
 function Split({
   id,
