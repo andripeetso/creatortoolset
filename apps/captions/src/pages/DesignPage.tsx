@@ -82,6 +82,8 @@ function DesignPage({ id }: { id: string }) {
   const [at, setAt] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [framed, setFramed] = useState(false);
+  /** The other frames picked with the one at `at`, by id (a box drawn round several, or Shift on a name). */
+  const [others, setOthers] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   /** The picture layer being moved inside its box, and whether a picture's background is being cut away. */
   const [cropping, setCropping] = useState<string | null>(null);
@@ -150,6 +152,9 @@ function DesignPage({ id }: { id: string }) {
   const mine = base ? base.layers.filter((l) => selected.includes(l.id)) : [];
   const colours = useMemo(() => coloursOn(pages), [pages]);
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
+  /** Every frame that is picked, by id: the one at `at` first. A frame that is gone (deleted somewhere else) is not among them. */
+  const framedIds = useMemo(() => (framed && base ? [base.id, ...others.filter((id) => id !== base.id && pages.some((p) => p.id === id))] : []), [framed, base, others, pages]);
+  const framedAt = framedIds.map((id) => pages.findIndex((p) => p.id === id));
 
   // every picture and drawing the pages show, loaded once each
   useEffect(() => {
@@ -257,11 +262,12 @@ function DesignPage({ id }: { id: string }) {
   /** Frames changed in one step: each takes the place of the one with its id. */
   const setPages = useCallback((next: readonly Page[], merge?: string) => change((all) => all.map((p) => next.find((n) => n.id === p.id) ?? p), merge), [change]);
   const setPage = useCallback((next: Page, merge?: string) => setPages([next], merge), [setPages]);
-  const pick = useCallback((to: number, ids: string[], frame = false) => {
+  const pick = useCallback((to: number, ids: string[], frame = false, all: string[] = []) => {
     merging.current = null;
     setAt(to);
     setSelected(ids);
     setFramed(frame);
+    setOthers(frame ? all : []);
     setCropping((id) => (id && ids.length === 1 && ids[0] === id ? id : null));
     setShaping((s) => (s && ids.length === 1 && ids[0] === s.id ? s : null));
     setError(null);
@@ -360,13 +366,27 @@ function DesignPage({ id }: { id: string }) {
     if (mine.length && base) {
       setPage({ ...base, layers: base.layers.filter((l) => !selected.includes(l.id)) });
       setSelected([]);
-    } else if (framed && pages.length > 1) {
-      change((all) => all.filter((_, n) => n !== k));
-      pick(Math.max(0, k - 1), [], true);
+    } else if (framed && pages.length > framedIds.length) {
+      // every picked frame goes; one frame always stays
+      change((all) => all.filter((p) => !framedIds.includes(p.id)));
+      pick(Math.max(0, Math.min(...framedAt) - 1), [], true);
     }
   };
+  /** A copy of every picked frame, each beside the rightmost frame and level with the one it copies; the copies are picked. */
+  const copyFrames = () => {
+    if (pages.length + framedIds.length > DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
+    const taken = [...frames];
+    const fresh = framedAt.map((n, m): Page => {
+      const r = besideFrames(taken, frames[n]!, frames[n]!);
+      taken.push(r);
+      // a copy is a frame of its own: the carousel slide its original draws stays the original's
+      return { ...pages[n]!, block: undefined, id: `p${Date.now().toString(36)}${m}`, x: r.x, y: r.y, w: r.w, h: r.h };
+    });
+    change((all) => [...all, ...fresh]);
+    pick(pages.length, [], true, fresh.map((p) => p.id));
+  };
   // a copy lies on what it copies, picked: the next drag takes it away
-  const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framed && base ? addFrame(base) : undefined);
+  const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framedIds.length > 1 ? copyFrames() : framed && base ? addFrame(base) : undefined);
   const order = (front: boolean) => {
     if (!base || !mine.length) return;
     const rest = base.layers.filter((l) => !selected.includes(l.id));
@@ -537,7 +557,7 @@ function DesignPage({ id }: { id: string }) {
       const by = ARROWS[e.key];
       const far = e.shiftKey ? 10 : 1;
       // the frame itself is picked: the arrows move it
-      if (by && !has && framed) return run(() => setPage({ ...base, x: here.x + by[0] * far, y: here.y + by[1] * far }));
+      if (by && !has && framed) return run(() => setPages(framedAt.map((n) => ({ ...pages[n]!, x: frames[n]!.x + by[0] * far, y: frames[n]!.y + by[1] * far }))));
       if (!has) return;
       if (by) run(() => patch((l) => ({ ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "text") run(() => setEditing(mine[0]!.id));
@@ -567,14 +587,14 @@ function DesignPage({ id }: { id: string }) {
     };
   });
 
-  const exportPngs = async (only?: number, as: ExportAs = { jpeg: false, scale: 1 }) => {
+  const exportPngs = async (only?: number | readonly number[], as: ExportAs = { jpeg: false, scale: 1 }) => {
     if (!design) return;
     setError(null);
     const type = as.jpeg ? "image/jpeg" : "image/png";
     try {
       const files: { name: string; data: Uint8Array }[] = [];
       for (const [n, p] of pages.entries()) {
-        if (only !== undefined && n !== only) continue;
+        if (only !== undefined && !(typeof only === "number" ? n === only : only.includes(n))) continue;
         // every picture and drawing of the frame is there first: a frame is never saved with a grey box where one goes
         for (const l of p.layers) {
           const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
@@ -648,12 +668,12 @@ function DesignPage({ id }: { id: string }) {
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
 
       <div className="flex min-h-0 flex-1">
-        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
+        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
 
         <div ref={frame} className="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]">
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           <h3 data-picked className="sr-only">
-            Picked: frame {pageName(page, k)} (id {page.id})
+            Picked: {framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : `frame ${pageName(page, k)} (id ${page.id})`}
             {picked.length > 0 &&
               `, ${picked.length === 1 ? "layer" : "layers"} ${picked
                 .slice(0, 8)
@@ -672,6 +692,7 @@ function DesignPage({ id }: { id: string }) {
               version={version}
               selected={selected}
               framed={framed}
+              framedIds={framedIds}
               onPick={pick}
               onLive={setLive}
               onCommit={setPages}
@@ -701,7 +722,7 @@ function DesignPage({ id }: { id: string }) {
                   {item(mine.length && mine.every((l) => l.hidden) ? "Show" : "Hide", "⇧⌘H", () => toggle("hidden"), none)}
                   {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
                   <ContextMenuSeparator />
-                  {item("Delete", "⌫", remove, none && !(framed && pages.length > 1))}
+                  {item("Delete", "⌫", remove, none && !(framed && pages.length > framedIds.length))}
                 </ContextMenuContent>
               }
             />
@@ -742,6 +763,7 @@ function DesignPage({ id }: { id: string }) {
           onDistribute={(axis) => arrange(distribute(mine, axis))}
           view={view}
           onZoom={zoom}
+          framesPicked={framedAt}
           onExport={(only, as) => void exportPngs(only, as)}
           cropping={!!cropping}
           onCrop={(on) => setCropping(on && mine.length === 1 ? mine[0]!.id : null)}

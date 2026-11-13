@@ -25,6 +25,7 @@ export function LayersPanel({
   at,
   selected,
   framed,
+  framedIds,
   onPick,
   onPoint,
   onPage,
@@ -35,7 +36,9 @@ export function LayersPanel({
   at: number;
   selected: string[];
   framed: boolean;
-  onPick: (at: number, ids: string[], framed?: boolean) => void;
+  /** every picked frame, by id */
+  framedIds: readonly string[];
+  onPick: (at: number, ids: string[], framed?: boolean, frames?: string[]) => void;
   /** the layer the pointer is on, for the canvas to outline */
   onPoint: (id: string | null) => void;
   /** a frame with a layer renamed, hidden, locked or moved (one step to undo) */
@@ -130,7 +133,7 @@ export function LayersPanel({
                 data-row={pageKey}
                 aria-label={pageName(p, k)}
                 aria-expanded={open}
-                aria-selected={k === at && framed}
+                aria-selected={(k === at && framed) || framedIds.includes(p.id)}
                 onPointerDown={(e) =>
                   dragRow(
                     e,
@@ -141,9 +144,17 @@ export function LayersPanel({
                     },
                   )
                 }
-                onClick={() => !dragging.current && onPick(k, [], true)}
+                onClick={(e) => {
+                  if (dragging.current) return;
+                  // Shift, ⌘ or Ctrl: this frame joins the picked ones, or leaves them
+                  if (!(e.shiftKey || e.metaKey || e.ctrlKey) || !framedIds.length) return onPick(k, [], true);
+                  const next = framedIds.includes(p.id) ? framedIds.filter((id) => id !== p.id) : [...framedIds, p.id];
+                  const first = pages.findIndex((x) => x.id === next[0]);
+                  if (first < 0) onPick(k, []);
+                  else onPick(first, [], true, next);
+                }}
                 onDoubleClick={() => setRenaming(pageKey)}
-                className={cn(ROW, "pl-1 font-semibold", k === at && framed ? ON : "hover:bg-zinc-500/10")}
+                className={cn(ROW, "pl-1 font-semibold", (k === at && framed) || framedIds.includes(p.id) ? ON : "hover:bg-zinc-500/10")}
               >
                 <button type="button" aria-label={open ? "Close" : "Open"} onClick={(e) => (e.stopPropagation(), setShut((s) => (open ? [...s, p.id] : s.filter((id) => id !== p.id))))} className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 dark:text-[#b3b3b3]">
                   {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}

@@ -329,6 +329,7 @@ export function Inspector({
   onDistribute,
   view,
   onZoom,
+  framesPicked,
   onExport,
   cropping,
   onCrop,
@@ -360,7 +361,9 @@ export function Inspector({
   view: ViewStore;
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
   /** every frame, or the one at this place, saved as said */
-  onExport: (only: number | undefined, as: ExportAs) => void;
+  /** the frames that are picked, by their place in the list (none when layers are) */
+  framesPicked: readonly number[];
+  onExport: (only: number | readonly number[] | undefined, as: ExportAs) => void;
   /** the picked picture is being moved inside its box (the canvas's crop), and the switch for it */
   cropping: boolean;
   onCrop: (on: boolean) => void;
@@ -447,7 +450,7 @@ export function Inspector({
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? `Group of ${picked.length}` : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : SHAPE_NAMES[one.shape]) : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? `Group of ${picked.length}` : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
         <div className="flex items-center">
           {picked.some((l) => l.group && page.layers.filter((x) => x.group === l.group).length > 1) && (
             <Tap label="Ungroup" onClick={onUngroup}>
@@ -488,7 +491,8 @@ export function Inspector({
         </div>
       </div>
 
-      {!box && (
+      {/* several frames picked: what one frame is (its name, place, size and fill) is not shown for them all */}
+      {!box && framesPicked.length < 2 && (
         <>
           <Section title="Frame">
             <input
@@ -872,8 +876,8 @@ export function Inspector({
           <Choice label="File type" value={as.jpeg ? "jpeg" : "png"} options={[["png", "PNG"], ["jpeg", "JPG"]] as const} onPick={(t) => setAs({ ...as, jpeg: t === "jpeg" })} />
           <Choice label="Size" value={as.scale} options={[[1, "1×"], [2, "2×"]] as const} onPick={(scale) => setAs({ ...as, scale })} />
         </div>
-        <button type="button" onClick={() => onExport(at, as)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
-          Export {pageName(page, at)}
+        <button type="button" onClick={() => onExport(framesPicked.length > 1 ? framesPicked : at, as)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
+          {framesPicked.length > 1 ? `Export the ${framesPicked.length} picked frames` : `Export ${pageName(page, at)}`}
         </button>
         {count > 1 && (
           <button type="button" onClick={() => onExport(undefined, as)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
