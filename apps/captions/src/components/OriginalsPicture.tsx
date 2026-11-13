@@ -32,6 +32,13 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
     const fps = plan.fps || 25;
     const clock = editedClock(el, plan, hold);
     const loaded: (Piece | null)[] = [null, null];
+    // a file that won't play (missing, not allowed, a decode error) is left to the render from then on; a player whose
+    // picture stops moving while the clock runs (a stall) shows the render until it moves again
+    const bad = new Set<string>();
+    const failed = (k: 0 | 1) => () => loaded[k] && bad.add(loaded[k]!.src);
+    const onError = [failed(0), failed(1)];
+    players.forEach((v, k) => v!.addEventListener("error", onError[k]));
+    let moved = { el: -1, t: -1, at: 0 };
     const load = (k: 0 | 1, p: Piece, at: number) => {
       const v = players[k]!;
       if (loaded[k]?.src !== p.src) v.src = p.src;
@@ -44,8 +51,8 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
       frame = requestAnimationFrame(tick);
       const c = clock();
       const f = c.t * fps;
-      const now = list.find((p) => f >= p.at && f < p.at + p.frames);
-      const next = list.find((p) => p.at > f);
+      const now = list.find((p) => f >= p.at && f < p.at + p.frames && !bad.has(p.src));
+      const next = list.find((p) => p.at > f && !bad.has(p.src));
       let on: 0 | 1 | null = null;
       if (now) {
         const want = now.offset + (c.t - now.at / fps);
@@ -63,7 +70,13 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
         load(spare, next, next.offset);
         players[spare]!.pause();
       }
-      const ready = on !== null && players[on]!.readyState >= 2;
+      let ready = on !== null && players[on]!.readyState >= 2;
+      if (on !== null) { // stalled: running, yet its picture hasn't moved for half a second
+        const v = players[on]!;
+        const ms = performance.now();
+        if (moved.el !== on || Math.abs(v.currentTime - moved.t) > 1e-3 || !c.run) moved = { el: on, t: v.currentTime, at: ms };
+        else if (ms - moved.at > 500) ready = false;
+      }
       const show = now && ready && on !== null ? { el: on, piece: now } : null;
       if (show?.el !== last?.el || show?.piece !== last?.piece) setShown(show);
       last = show;
@@ -71,6 +84,7 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
     frame = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(frame);
+      players.forEach((v, k) => v!.removeEventListener("error", onError[k]));
       for (const v of players) {
         v!.pause();
         v!.removeAttribute("src");

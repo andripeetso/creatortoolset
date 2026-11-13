@@ -213,7 +213,12 @@ export function useEditSound(video: RefObject<HTMLVideoElement | null>, plan: Re
     if (!key || !el || !plan?.sound) return void setState({ live: false, error: "" });
     const fps = plan.fps || 25;
     const clock = editedClock(el, plan, hold);
-    const s = new SyncedSound(el, clock);
+    let s: SyncedSound;
+    try {
+      s = new SyncedSound(el, clock);
+    } catch (e) { // no sound engine here (or the browser refused one): the video's own sound plays, as before
+      return void setState({ live: false, error: (e as Error).message || "No sound engine" });
+    }
     let gone = false;
     setState({ live: false, error: "" });
     s.load(plan.sound.map((p) => ({ file: p.src, at: p.at / fps, offset: p.offset, dur: p.frames / fps })), (f) => f).then(
