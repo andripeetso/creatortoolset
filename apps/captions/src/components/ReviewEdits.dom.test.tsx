@@ -487,6 +487,88 @@ describe("a cut the app's own AI Editor made", () => {
   });
 });
 
+describe("a plug-in's AI edit whose plug-in can make the cut (ReviewTimelineSlot.next)", () => {
+  const turn = () => act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  it("Make the next version hands it the timeline's edits, says what its maker is doing and takes the next version in", async () => {
+    let done!: () => void;
+    let say!: (line: string) => void;
+    const next = vi.fn((_e: unknown, _cut: unknown, on: { progress: (line: string) => void }) => {
+      say = on.progress;
+      return new Promise<void>((r) => (done = r));
+    });
+    const { ctx, bridge } = await mount([], undefined, undefined, { next });
+    expect(button("Make the next version")).toBeUndefined(); // nothing edited yet
+    await act(async () => button("stub remove")!.click());
+    await act(async () => button("Make the next version")!.click());
+    expect(next).toHaveBeenCalledWith(edit, { asset: "rev-1", n: 1, edits: [expect.objectContaining({ key: "V1:0", remove: true })] },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(host.textContent).toContain("Making the next version…");
+    expect(button("Make the next version")).toBeUndefined(); // one at a time
+    await act(async () => say("Rendering a preview"));
+    expect(host.textContent).toContain("Making the next version: Rendering a preview. It shows up here when it is ready.");
+    done();
+    await turn();
+    expect(ctx.reload).toHaveBeenCalledTimes(1);
+    expect(bridge.pendingLabels()).toEqual([]);
+    expect(host.textContent).not.toContain("Making the next version");
+  });
+
+  it("what could not be made is said in its words, the edits stay and it can be asked again", async () => {
+    const next = vi.fn(async () => {
+      throw new Error("“Shot one” (V1:0) is not on this draft's timeline");
+    });
+    const { ctx, bridge } = await mount([], undefined, undefined, { next });
+    await act(async () => button("stub remove")!.click());
+    await act(async () => button("Make the next version")!.click());
+    await turn();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("The next version wasn't made: “Shot one” (V1:0) is not on this draft's timeline");
+    expect(ctx.reload).not.toHaveBeenCalled();
+    expect(bridge.pendingLabels()).toHaveLength(1);
+    expect(button("Make the next version")).toBeDefined();
+  });
+
+  it("the edits that open comments already sent go with it: the cut is what the timeline shows", async () => {
+    const next = vi.fn((_e: unknown, _cut: unknown) => new Promise<void>(() => {}));
+    await mount([{ id: "c1", data: { edits: [{ key: "V1:100", label: "Shot two", remove: true }] } }], undefined, undefined, { next });
+    await act(async () => button("Make the next version")!.click());
+    expect(next.mock.calls[0][1]).toEqual({ asset: "rev-1", n: 1, edits: [expect.objectContaining({ key: "V1:100", remove: true })] });
+  });
+
+  it("leaving the page ends the wait, and nothing is drawn after it", async () => {
+    let signal!: AbortSignal;
+    let fail!: (e: Error) => void;
+    const next = vi.fn((_e: unknown, _cut: unknown, on: { signal: AbortSignal }) => {
+      signal = on.signal;
+      return new Promise<void>((_, no) => (fail = no));
+    });
+    await mount([], undefined, undefined, { next });
+    await act(async () => button("stub remove")!.click());
+    await act(async () => button("Make the next version")!.click());
+    await act(async () => root.unmount());
+    expect(signal.aborted).toBe(true);
+    fail(new Error("stopped"));
+    await turn();
+    root = createRoot(host);
+  });
+
+  it("a plug-in that does not make cuts, an imported timeline and a viewer get no button", async () => {
+    await mount([], undefined, undefined, { camera: async () => "cam.mp4" });
+    await act(async () => button("stub remove")!.click());
+    expect(button("Make the next version")).toBeUndefined();
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    const next = vi.fn(async () => {});
+    await mount([], { n: 1, fps: 25, timeline: true }, undefined, { next }); // an imported timeline: no AI edit behind it
+    await act(async () => button("stub remove")!.click());
+    expect(button("Make the next version")).toBeUndefined();
+    expect(host.textContent).toContain("sent with your next comment");
+  });
+});
+
 describe("Face (the face refinement strength)", () => {
   it("a ?face= link opens it paused on that frame, fades over the video and keeps a new strength", async () => {
     const stage = document.createElement("div");

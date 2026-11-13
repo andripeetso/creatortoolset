@@ -51,6 +51,8 @@ import {
 // Everyone who can watch the version sees it and can pin a comment to a clip (`pin`, from the page); the edit tools
 // are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
+// A plug-in's AI edit gets the same button where the plug-in can make such a cut (`hooks.next`): the panel hands it the
+// edits, says what its maker is doing, and takes the next version in when it is filed.
 // On a cut the app's own AI Editor made (`version.draft`), Make the next version cuts the edits into it as they are,
 // with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_CUT_RULES). The panel follows that
 // edit's steps for this version: it says while the next version is being made, takes it in when it is filed, and shows
@@ -82,6 +84,8 @@ export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTim
   return <Edits key={version.n} {...ctx} hooks={ctx.hooks ?? {}} edit={version.edit} />;
 }
 
+/** What the maker of the next version is doing, after "Making the next version": its line as a clause that ends, or just "…". */
+const doing = (line?: string) => (line ? `: ${line}${/[.…!?]$/.test(line) ? "" : "."}` : "…");
 const framingOf = (i: TimelineItem): Framing => ({ zoom: i.zoom ?? 1, pan: i.pan ?? 0, tilt: i.tilt ?? 0 });
 const secs = (s: number) => `${s.toFixed(1)}s`;
 // the SVG filter id of a grade span, by its place in the plan (the plan is rebuilt on each render, so an index is stable)
@@ -115,6 +119,12 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   const ownJobs = own ? (ownEdit.data?.jobs ?? []).filter((j) => j.variant === own.name) : [];
   const working = ownJobs.find((j) => j.state === "running") ?? ownJobs.find((j) => j.state === "queued");
   const failed = working ? undefined : ownJobs.find((j) => (j.state === "failed" || j.state === "needs_key") && j.error !== "Stopped");
+  // a plug-in's AI edit whose plug-in makes such a cut (ReviewTimelineSlot.next): what its maker says while it is being
+  // made, or why it was not; leaving the page ends the wait, not the making
+  const theirs = manage && edit ? hooks.next : undefined;
+  const [their, setTheir] = useState<{ line: string } | { error: string } | null>(null);
+  const theirAsk = useRef<AbortController | null>(null);
+  useEffect(() => () => theirAsk.current?.abort(), []);
   // the version that was being made is filed: the page takes it in
   const wasWorking = useRef(false);
   useEffect(() => {
@@ -239,6 +249,19 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   const undo = () => setHist(histUndo);
   const redo = () => setHist(histRedo);
   const makeNext = () => {
+    if (theirs && edit) {
+      const ctl = (theirAsk.current = new AbortController());
+      setTheir({ line: "" });
+      theirs(edit, { asset: asset.id, n: version.n, edits: planEdits }, { signal: ctl.signal, progress: (line) => !ctl.signal.aborted && setTheir({ line }) })
+        .then(async () => {
+          if (ctl.signal.aborted) return;
+          setHist(freshHist(EMPTY_PENDING));
+          setCrop(null);
+          await reload(); // the next version: the panel starts again on it
+          setTheir(null);
+        }, (e: Error) => !ctl.signal.aborted && setTheir({ error: e.message || "Couldn't make the next version" }));
+      return;
+    }
     if (!own) return;
     setMaking(true);
     makeCut(own.edit, own.name, { asset: asset.id, n: version.n, edits: planEdits })
@@ -405,7 +428,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-          {own ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
+          {own || theirs ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
           {originals && voiceFiles.length > 0 && !originalsOn && (
             <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
               title="Your edits play with the real sound from the original recordings: allow their folder, or the folder they are in now">
@@ -415,7 +438,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           )}
           {originals?.tried && !originalsOn && voiceFiles.length > 0 && <span>{filesFound} of {voiceFiles.length} files found</span>}
         </div>
-        {own && ownEdit.data && !working && planEdits.length > 0 && !crop && (
+        {((own && ownEdit.data && !working) || (theirs && !(their && "line" in their))) && planEdits.length > 0 && !crop && (
           <button type="button" disabled={making || !!hole} onClick={makeNext}
             title={hole ? "A placeholder goes with a comment: send it or drop it first" : "Cut the next version from these timeline edits as you made them, with no AI"}
             className="ml-auto rounded-full bg-violet-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-violet-500 disabled:opacity-40">
@@ -431,7 +454,13 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
         )}
       </div>
       {own && working && (
-        <div className="text-[11px] text-violet-300">Making the next version{working.line ? `: ${working.line}` : "…"} It shows up here when it is ready.</div>
+        <div className="text-[11px] text-violet-300">Making the next version{doing(working.line)} It shows up here when it is ready.</div>
+      )}
+      {their && "line" in their && (
+        <div className="text-[11px] text-violet-300">Making the next version{doing(their.line)} It shows up here when it is ready.</div>
+      )}
+      {their && "error" in their && (
+        <div role="alert" className="text-[11px] text-rose-400">The next version wasn't made: {their.error}</div>
       )}
       {own && failed && (
         <div className="flex items-center gap-2 text-[11px] text-rose-400">

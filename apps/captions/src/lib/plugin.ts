@@ -6,6 +6,7 @@ import { canUse, type Me } from "./auth";
 import type { ReviewAsset, ReviewVersion } from "./review";
 import type { reviewApi } from "./review";
 import type { Still } from "./grade-look";
+import type { ItemEdit } from "@contracts/edit-timeline";
 
 // Browser half of a plug-in (plugins/<id>/web.tsx). Core code imports this file and never the generated
 // registry (src/plugins.gen.ts), so the registry can import plug-ins without an import cycle.
@@ -222,6 +223,12 @@ export type ReviewEditRef = { project: string; draft: string };
  * - `sources`: on an AI edit, where its recordings are on the person's own computer: source key (TimelineItem.src) to
  *   the file's full path. With the Mac app's say (a folder the person allows there), the timeline plays the edit from
  *   them: a voice pulled out or moved plays its real words. Managers only: the originals aren't blurred.
+ * - `next`: on an AI edit, makes the timeline edits into its next version as they are, with no AI (a cut of the app's
+ *   own AI Editor has this built in). `cut.edits` is what the timeline shows: the edits being made over the ones open
+ *   comments already sent. It resolves once the next version is filed in Review (the page then loads it) and rejects
+ *   with what could not be made, in words the panel shows; `on.progress` gets what its maker is doing meanwhile, and
+ *   `on.signal` ends the wait (leaving the page), not the making. Make the next version is offered on an AI edit only
+ *   where this is set.
  */
 export interface ReviewTimelineSlot {
   clipSrc?: (clip: number) => string;
@@ -237,6 +244,8 @@ export interface ReviewTimelineSlot {
     save: (edit: ReviewEditRef, strength: number) => Promise<void>;
   };
   sources?: (edit: ReviewEditRef, signal: AbortSignal) => Promise<Record<string, string>>;
+  next?: (edit: ReviewEditRef, cut: { asset: string; n: number; edits: ItemEdit[] },
+    on: { signal: AbortSignal; progress: (line: string) => void }) => Promise<void>;
 }
 
 /**
@@ -279,7 +288,11 @@ export type ReviewActionEntry = ReviewActionSlot & { key: string; pluginId: stri
 /** The timeline editor's plug-in parts: each one from the first plug-in that gives it (see ReviewTimelineSlot). */
 export function reviewTimelineOf(plugins: WebPlugin[]): ReviewTimelineSlot {
   const pick = <K extends keyof ReviewTimelineSlot>(k: K) => plugins.find((p) => p.review?.timeline?.[k])?.review?.timeline?.[k];
-  return { clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look"), face: pick("face"), sources: pick("sources") };
+  // every part by name: one added to ReviewTimelineSlot and left out here does not compile (it would never reach the panel)
+  const all: { [K in keyof Required<ReviewTimelineSlot>]: ReviewTimelineSlot[K] } = {
+    clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look"), face: pick("face"), sources: pick("sources"), next: pick("next"),
+  };
+  return all;
 }
 
 /** The Review panels and toolbar buttons this account may see: a gated one is left out while its gate is off (canUse). */
