@@ -79,6 +79,7 @@ const NEEDS: Record<Engine, string> = {
   openai: "Needs an OpenAI key",
   local: "Runs only on a server on your own computer",
 };
+const KEY: Partial<Record<Engine, "DEEPGRAM_API_KEY" | "OPENAI_API_KEY">> = { deepgram: "DEEPGRAM_API_KEY", openai: "OPENAI_API_KEY" };
 
 export type Speech =
   | { engine: "deepgram" | "openai"; model: string; key: string; languages: string[] }
@@ -89,23 +90,25 @@ export type Speech =
  * (Deepgram, OpenAI, this computer). `languages` (a project's or an edit's) win over the person's. Null + why when
  * nothing can serve them.
  */
-export function speechFor(actor: Actor, use: SpeechUse, languages?: string[]): Speech | { needs: string } {
+export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: string[]): Speech | { needs: string; key?: "DEEPGRAM_API_KEY" | "OPENAI_API_KEY" } {
   const prefs = readVoicePrefs(userOf(actor));
-  const choice = prefs.stt.per[use] ?? prefs.stt.default;
+  const choice = (use !== "default" && prefs.stt.per[use]) || prefs.stt.default;
   const langs = languages?.length ? languages : prefs.languages;
   const can = availableEngines(actor);
   const engine = choice.engine === "auto" ? can[0] : choice.engine;
-  if (!engine) return { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys" };
-  if (!can.includes(engine)) return { needs: NEEDS[engine] };
+  if (!engine) return { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" };
+  if (!can.includes(engine)) return { needs: NEEDS[engine], ...(KEY[engine] ? { key: KEY[engine] } : {}) };
   const model = (choice.engine === engine && choice.model) || STT_MODELS.find((m) => m.engine === engine)!.id;
   if (engine === "local") return { engine, model, languages: langs };
   const name = engine === "deepgram" ? "DEEPGRAM_API_KEY" : "OPENAI_API_KEY";
   return { engine, model, key: keyFor(actor, name).key, languages: langs };
 }
 
+/** One use (or the default) as it resolves now, for the Voice page. */
+export function resolvedOne(actor: Actor, use: SpeechUse | "default"): SttResolved {
+  const s = speechFor(actor, use);
+  return "needs" in s ? { use, ...s } : { use, engine: s.engine, model: s.model };
+}
+
 /** Every use as it resolves now, for the Voice page. */
-export const resolvedFor = (actor: Actor): SttResolved[] =>
-  SPEECH_USES.map((use) => {
-    const s = speechFor(actor, use);
-    return "needs" in s ? { use, needs: s.needs } : { use, engine: s.engine, model: s.model };
-  });
+export const resolvedFor = (actor: Actor): SttResolved[] => SPEECH_USES.map((use) => resolvedOne(actor, use));
