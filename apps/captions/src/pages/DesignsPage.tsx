@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Pencil, PenTool, Plus, Trash2 } from "lucide-react";
-import type { DesignListed } from "@contracts/design";
+import { DESIGN_LIMITS, type DesignListed } from "@contracts/design";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { askRename } from "@/components/browse/browse";
@@ -11,7 +11,7 @@ import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/comp
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { DesignThumb } from "@/components/design/DesignThumb";
 import { Button } from "@/components/ui/button";
-import { createDesign, deleteDesign, listDesigns, saveDesign } from "@/lib/designs";
+import { addPicture, createDesign, deleteDesign, isPicture, listDesigns, pictureFrames, pictureSize, saveDesign } from "@/lib/designs";
 import { confirmDialog } from "@/lib/dialogs";
 import { timeAgo } from "@/lib/exports";
 import { useToolFolders } from "@/lib/folders";
@@ -27,6 +27,7 @@ import { useWorkspace } from "@/lib/workspace";
  * video in Finals: both are listed here too, each with the script or the video it was made from (the script's name
  * opens it), and a search finds a design by that name too. With more than one brand project, each design says which
  * it is in. A design made or changed somewhere else (the assistant, another window) shows without a reload.
+ * Pictures dropped on the page start a canvas of their own: a frame each, the picture's size, and it opens.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -89,6 +90,24 @@ export default function DesignsPage() {
       setError(message(e));
     }
   };
+  /** Pictures dropped on the page: a new canvas named after the first, a frame for each (the picture's size, the picture filling it), opened. */
+  const [dropping, setDropping] = useState(false);
+  const hasFiles = (e: React.DragEvent) => [...e.dataTransfer.types].includes("Files");
+  const fromPictures = async (given: readonly File[]) => {
+    const files = given.filter(isPicture).slice(0, DESIGN_LIMITS.pages);
+    if (!files.length) return setError("Only JPEG, PNG and WebP pictures can start a canvas");
+    try {
+      const name = files[0]!.name.replace(/\.[^.]+$/, "").trim().slice(0, DESIGN_LIMITS.name) || "Untitled canvas";
+      const d = await createDesign({ format: "portrait", blank: true, pages: 0, name, project: useWorkspace.getState().currentProjectId ?? undefined });
+      const got: { picture: string; w: number; h: number }[] = [];
+      for (const file of files) got.push({ ...(await pictureSize(file)), picture: await addPicture(d.id, file) });
+      await saveDesign(d.id, { pages: pictureFrames(got, 0, 0, got.map((_, n) => `p${n + 1}`)) });
+      if (folders.open) await folders.move([d.id], folders.open, false).catch(() => {});
+      navigate(`/design/${d.id}`);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
   const rename = async (d: DesignListed) => {
     const name = await askRename("Rename", d.name);
     if (name && name !== d.name) await saveDesign(d.id, { name }).then(load, (e) => setError(message(e)));
@@ -111,7 +130,24 @@ export default function DesignsPage() {
   );
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div
+      data-dropping={dropping || undefined}
+      className={`flex min-h-screen flex-col ${dropping ? "ring-2 ring-inset ring-violet-500" : ""}`}
+      // a file held over the page is the page's to take: without this the window would open the file instead
+      onDragOver={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!dropping) setDropping(true);
+      }}
+      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        setDropping(false);
+        void fromPictures([...e.dataTransfer.files]);
+      }}
+    >
       <AppBar tool="Designer">
         {!!designs?.length && <NewFolderButton onClick={() => void folders.newFolder()} />}
         <Button size="sm" onClick={() => void start()}>
