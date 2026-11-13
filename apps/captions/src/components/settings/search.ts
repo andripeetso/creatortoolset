@@ -13,6 +13,8 @@ import type { SettingsPageId } from "./nav";
 
 export interface SearchRow {
   section: SettingsPageId;
+  /** The page under the section the row is on (a tool's page under Tools: "record"). */
+  sub?: string;
   id: string;
   title: string;
   description?: string;
@@ -32,6 +34,9 @@ const STATIC_ROWS = [
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "ask-fit", title: "Ask when dropped footage doesn't fit the open project", keywords: ["assistant", "drop", "footage", "project", "ask"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
+  { section: "tools", sub: "record", id: "recorder-streams", title: "Save the streams separately", description: "Screen, camera, voice and Mac sound as their own files (Screen Recorder)", keywords: ["record", "screen recorder", "camera", "streams", "separate", "files", "ai", "mac app"], needs: "mac" },
+  { section: "tools", sub: "record", id: "recorder-screen-quality", title: "Screen quality", description: "How sharp the Screen Recorder records the screen", keywords: ["record", "screen recorder", "quality", "resolution", "4k", "1080p", "size", "mac app"], needs: "mac" },
+  { section: "tools", sub: "record", id: "recorder-camera-quality", title: "Camera quality", description: "How sharp the Screen Recorder records the camera", keywords: ["record", "screen recorder", "camera", "webcam", "quality", "resolution", "4k", "1080p", "720p", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation", title: "Dictation", description: "Talk, and the words go where the cursor is (Mac app)", keywords: ["dictate", "dictation", "speech", "voice", "talk", "transcribe", "whisper", "set up", "setup", "guide", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation-key-talk", title: "Talk key", description: "Tap to start and stop, or hold a key like fn while you talk", keywords: ["dictation", "fn", "globe", "option", "hold", "key", "shortcut", "push to talk", "f13", "mac app"], needs: "mac" },
     { section: "voice", id: "dictation-key-cancel", title: "Cancel key", keywords: ["dictation", "cancel", "key", "shortcut", "f16", "mac app"], needs: "mac" },
@@ -152,6 +157,7 @@ export interface SearchHit {
   /** The row's id, or undefined for a whole section (a plug-in section, or a built-in one by its title). */
   id?: string;
   section: SettingsPageId | string;
+  sub?: string;
   title: string;
   sectionTitle: string;
 }
@@ -190,7 +196,7 @@ export function searchSettings(
     const rank =
       title === q ? 5 : title.startsWith(q) ? 4 : title.includes(q) ? 3 : tokens.every((t) => title.includes(t)) ? 2 : all.includes(q) ? 1 : 0;
     scored.push({
-      hit: { id: r.id || undefined, section: r.section, title: r.title, sectionTitle: r.sectionTitle },
+      hit: { id: r.id || undefined, section: r.section, ...(r.sub ? { sub: r.sub } : {}), title: r.title, sectionTitle: r.sectionTitle },
       rank,
       at,
     });

@@ -33,6 +33,62 @@ enum ShareDestination: String { case review, notes, guide }
 /// writer fed made-up frames in real time: with reordering between 2 of 24 and 12 of 16 takes failed, batch by
 /// batch (none of 54 under 8 s); without it none of 177 (10 to 21 s, also at 2826×2934, also with a screen that
 /// stands still).
+/// Settings → Tools → Screen Recorder, kept in UserDefaults: how sharp the screen and the camera are recorded, and
+/// whether Save and Send hand the streams over as separate files too (the camera, each sound track), so an AI or
+/// another editor can work with each one. The page sets them with `thismac-recorder:<what>:<value>`.
+enum RecordPrefs {
+    private static let keepKey = "recordKeepStreams", screenKey = "recordScreenLong", cameraKey = "recordCameraHeight"
+    static let screenSides = [3840, 2560, 1920]
+    static let cameraHeights = [720, 1080, 2160]
+
+    static var keepStreams: Bool { UserDefaults.standard.bool(forKey: keepKey) }
+    /// The longest side the screen is recorded at, in pixels (4K, 1440p, 1080p). Without a choice: 3840.
+    static var screenLongSide: Int { screenSides.first { $0 == UserDefaults.standard.integer(forKey: screenKey) } ?? 3840 }
+    /// The camera's height, in pixels, when the camera has such a format. Without a choice: 720.
+    static var cameraHeight: Int { cameraHeights.first { $0 == UserDefaults.standard.integer(forKey: cameraKey) } ?? 720 }
+
+    /// keep:1|0, screen:<long side>, camera:<height>.
+    static func command(_ what: String, _ value: String) {
+        switch what {
+        case "keep": UserDefaults.standard.set(value == "1", forKey: keepKey)
+        case "screen": if let v = Int(value), screenSides.contains(v) { UserDefaults.standard.set(v, forKey: screenKey) }
+        case "camera": if let v = Int(value), cameraHeights.contains(v) { UserDefaults.standard.set(v, forKey: cameraKey) }
+        default: break
+        }
+    }
+
+    static func bridgeState() -> [String: Any] {
+        ["keep": keepStreams, "screen": screenLongSide, "camera": cameraHeight]
+    }
+}
+
+/// Each sound track of `video` as its own .m4a at `url(name)`, the AAC copied as it is and in step with the video (a
+/// track that starts late keeps its silence at the start); `names` are the tracks' names in file order
+/// (ScreenEvents.audio: "mic", "system", "device"). An export session refused these files (-12780).
+func saveSoundTracks(of video: URL, names: [String], to url: (String) -> URL) async throws {
+    let asset = AVURLAsset(url: video)
+    for (i, track) in try await asset.loadTracks(withMediaType: .audio).enumerated() {
+        let out = url(i < names.count ? names[i] : (i == 0 ? "mic" : "system"))
+        try? FileManager.default.removeItem(at: out)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        // written as MPEG-4 (an .m4a is one): the .m4a writer dropped the silence before a late start (0.4 s measured)
+        let writer = try AVAssetWriter(outputURL: out, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: try await track.load(.formatDescriptions).first)
+        writer.add(input)
+        guard reader.startReading(), writer.startWriting() else { throw writer.error ?? reader.error ?? CocoaError(.fileWriteUnknown) }
+        writer.startSession(atSourceTime: .zero)
+        while let buffer = output.copyNextSampleBuffer() {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            guard input.append(buffer) else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        if writer.status != .completed { throw writer.error ?? reader.error ?? CocoaError(.fileWriteUnknown) }
+    }
+}
+
 func recorderVideoSettings(width: Int, height: Int, bitRate: Int, frameRate: Int) -> [String: Any] {
     [
         AVVideoCodecKey: AVVideoCodecType.h264,

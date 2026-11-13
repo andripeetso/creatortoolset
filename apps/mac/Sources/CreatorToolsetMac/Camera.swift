@@ -64,22 +64,23 @@ final class CameraSession: @unchecked Sendable {
         session.commitConfiguration()
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
-        if let format = Self.preferredFormat(in: device.formats) {
+        if let format = Self.preferredFormat(in: device.formats, height: RecordPrefs.cameraHeight) {
             device.activeFormat = format
             device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
             device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
         }
     }
 
-    /// 1280×720 when the camera has it, else the largest format up to 1080p that runs at 30 fps.
-    static func preferredFormat(in formats: [AVCaptureDevice.Format]) -> AVCaptureDevice.Format? {
+    /// The 16:9 format `height` pixels tall (Settings → Tools → Screen Recorder: 720, 1080 or 2160) when the camera has
+    /// it, else the largest one up to that size, that runs at 30 fps.
+    static func preferredFormat(in formats: [AVCaptureDevice.Format], height: Int = 720) -> AVCaptureDevice.Format? {
         let candidates: [(format: AVCaptureDevice.Format, rank: (Int, Int))] = formats.compactMap { format in
             let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            guard size.width <= 1920, size.height <= 1080,
+            guard Int(size.width) <= height * 16 / 9, Int(size.height) <= height,
                   format.videoSupportedFrameRateRanges.contains(where: { $0.minFrameRate <= 30 && 30 <= $0.maxFrameRate })
             else { return nil }
-            let is720 = size.width == 1280 && size.height == 720 ? 1 : 0
-            return (format, (is720, Int(size.width) * Int(size.height)))
+            let exact = Int(size.width) == height * 16 / 9 && Int(size.height) == height ? 1 : 0
+            return (format, (exact, Int(size.width) * Int(size.height)))
         }
         return candidates.max { $0.rank < $1.rank }?.format
     }
@@ -151,7 +152,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)   // a crash leaves a playable file
         input = AVAssetWriterInput(mediaType: .video, outputSettings: recorderVideoSettings(
-            width: Int(size.width), height: Int(size.height), bitRate: 6_000_000, frameRate: 30))
+            width: Int(size.width), height: Int(size.height), bitRate: max(6_000_000, Int(size.width) * Int(size.height) * 3), frameRate: 30))
         input.expectsMediaDataInRealTime = true
         guard writer.canAdd(input) else {
             camera.release()

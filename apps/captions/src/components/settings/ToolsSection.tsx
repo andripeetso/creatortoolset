@@ -18,6 +18,7 @@ import { PackRow } from "@/components/community/PacksInstalled";
 import { SkillsView } from "@/components/community/SkillsView";
 import { ToolPlugins, stepsFor, useSteps, type Steps } from "@/components/community/PluginsCatalog";
 import { hasThisMac } from "./ThisMacSection";
+import { RecorderSettings } from "./RecorderSettings";
 import { toolSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { PublishButton } from "@/components/community/PublishDialog";
@@ -75,7 +76,7 @@ function useHomeSwitches() {
 export const skillPlacesOf = (t: HomeTile): SkillPlace[] => SKILL_PLACES.filter((p): p is PackSkillSlot | "workshop.write" => p !== "assistant" && SLOT_TOOL[p] === t);
 
 /** A tool has a page when something can be added to it: packs and skills have a place in it, or a plug-in names it. */
-export const hasToolPage = (t: HomeTile, steps: StepsView | null): boolean => PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
+export const hasToolPage = (t: HomeTile, steps: StepsView | null): boolean => (t === "record" && hasThisMac()) || PACK_TOOLS.includes(t) || stepsFor(steps, t).length > 0 || toolSectionsFor(null, webPlugins, t).length > 0;
 
 /**
  * What the person has added to each tool and is using: installed packs that reach it and are on (not off everywhere, not
@@ -193,6 +194,11 @@ function ToolPage({ tile, steps }: { tile: HomeTile; steps: Steps }) {
       <Section title="Shown on Home">
         <Card>{view ? <TileRow tile={tile} have={view.have} shown={!hidden.includes(tile)} onChange={(on) => set(tile, on)} head={<div className="min-w-0 flex-1 text-sm text-muted-foreground">{HOME_TILE_LINES[tile]}</div>} /> : <LoadingRow />}</Card>
       </Section>
+      {tile === "record" && hasThisMac() && (
+        <Section title="Recording">
+          <RecorderSettings />
+        </Section>
+      )}
       <ToolPlugins steps={steps} tool={tile} inSettings switches={tile === "editor" && hasThisMac() && !hosted} />
       {toolSectionsFor(me, webPlugins, tile).map((s) => (
         <Section key={s.id} title={s.title}>

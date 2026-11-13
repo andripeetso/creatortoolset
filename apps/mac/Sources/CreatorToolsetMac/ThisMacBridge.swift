@@ -118,6 +118,8 @@ extension Shell {
         case "limits": UserDefaults.standard.set(arg == "on", forKey: limitsReadingKey)
         // dictation:<what>:<value> (Dictation.swift `command`)
         case "dictation": Dictation.shared.command(arg, parts.count > 2 ? parts[2] : "")
+        // recorder:<what>:<value> (Settings → Tools → Screen Recorder, RecordTypes.swift RecordPrefs)
+        case "recorder": RecordPrefs.command(arg, parts.count > 2 ? parts[2] : "")
         default: break
         }
         pushThisMac(problem: problem)
@@ -194,6 +196,8 @@ extension Shell {
             "version": appVersion,
             // Settings → General → Dictation (Dictation.swift)
             "dictation": Dictation.shared.bridgeState(),
+            // Settings → Tools → Screen Recorder
+            "recorder": RecordPrefs.bridgeState(),
         ]
     }
 }
