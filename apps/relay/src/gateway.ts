@@ -40,8 +40,12 @@ export interface GatewayDeps {
 /** Where the AI app reaches this broker. */
 const self = (gw: GatewayDeps) => gw.selfUrl || gw.publicUrl;
 const REQ_TTL = 600;
-/** Sign-ins kept working per connection (account, computer, AI app). */
-const TOKENS_KEPT = 5; // seconds a sign-in may take, from the AI app's redirect to the approval
+/**
+ * Sign-ins kept working per connection (account, computer, AI app). One account can be signed in from many places at
+ * once: a store's scanner and each of its reviewers share the demo account, and with 5 the fourth new sign-in would
+ * have signed the scanner out. The oldest go past this.
+ */
+const TOKENS_KEPT = 100;
 const CODE_TTL = 300;
 const MEDIA_MAX = 5 * 1024 * 1024;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
