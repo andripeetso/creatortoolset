@@ -3,6 +3,7 @@ import type { ReviewEditRef, ReviewPlayCard, ReviewPlayPlan, ReviewSlotContext, 
 import { CameraView, RecropBox } from "@/components/RecropBox";
 import { EditTimeline, type Placeholder } from "@/components/EditTimeline";
 import { GradeFilter, GradePanel } from "@/components/GradePanel";
+import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
 import { loudest, peaks } from "@/lib/waveform";
 import {
@@ -60,7 +61,7 @@ export interface TimelinePins {
   onClearRange?: () => void;
 }
 
-export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTimelineSlot; pin?: TimelinePins }) {
+export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
   const { version } = ctx;
   if (!version.timeline) return null;
   // a new version starts clean: the panel remounts per version
@@ -86,7 +87,7 @@ const toCard = (c: PlayCard, manage: boolean, clipSrc?: (clip: number) => string
   ...(manage && clipSrc && c.clip !== undefined ? { src: clipSrc(c.clip), at: c.at } : {}),
 });
 
-function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks, pin }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins }) {
+function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
@@ -96,6 +97,8 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   // the talent shot being graded (the colour panel, opened from the timeline's Color) and the grade it shows while you work
   const [colour, setColour] = useState<TimelineItem | null>(null);
   const [liveGrade, setLiveGrade] = useState<Grade | null>(null);
+  // the talent shot Face is open on (the face refinement strength, from a plug-in that renders it)
+  const [face, setFace] = useState<TimelineItem | null>(null);
   // the comment box's text: a placeholder's words are its label on the picture (the page's own text, as typed)
   const [text, setText] = useState("");
   const [time, setTime] = useState(0);
@@ -234,6 +237,21 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the JSON, so a rebuilt object does not resend
   }, [playJson]);
 
+  // a link with ?face=<frame> (the assistant's "refine my face") opens Face on the talent shot at that frame, once
+  const faceOpened = useRef(false);
+  useEffect(() => {
+    if (!view || faceAt == null || faceOpened.current || !manage || !edit || !hooks.face) return;
+    faceOpened.current = true;
+    const f = faceAt;
+    const shots = view.tracks.flatMap((t) => t.items).filter((i) => i.track === "V1");
+    const it = shots.find((i) => f >= i.rec && f < i.rec + i.len) ?? shots[0];
+    if (!it) return;
+    slots.current.player.pause();
+    slots.current.player.seek((f >= it.rec && f < it.rec + it.len ? f : it.rec + Math.floor(it.len / 2)) / (view.fps || version.fps || 25));
+    setFace(it);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per link, when the timeline is there
+  }, [view, faceAt]);
+
   if (!view) return null;
   const fps = view.fps || version.fps || 25;
   const w = view.width;
@@ -241,12 +259,22 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   const shown = splitView(view, planEdits);
 
   // the reframe window opens on the shot as it is now, or as a pending reframe left it
+  // Face: paused on the shot (its middle, when the playhead is elsewhere); Color and Reframe close
+  const openFace = (item: TimelineItem) => {
+    slots.current.player.pause();
+    setCrop(null);
+    setColour(null);
+    const f = time * fps;
+    if (f < item.rec || f >= item.rec + item.len) slots.current.player.seek((item.rec + Math.floor(item.len / 2)) / fps);
+    setFace(item);
+  };
   const reframe = (item: TimelineItem) => {
     const f0 = framingOf(item);
     const e = handEdits.find((x) => x.key === item.key);
     const box = e?.zoom !== undefined
       ? framingToCrop(f0, { zoom: e.zoom, pan: e.pan ?? 0, tilt: e.tilt ?? 0 }, w, h)
       : { x: 0, y: 0, k: 1 };
+    setFace(null);
     setCrop({ item, box: clampCrop(f0, box, w, h) });
     askCamera();
   };
@@ -331,6 +359,9 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
           )}
         </div>
       )}
+      {face && edit && hooks.face && (
+        <FacePanel slot={hooks.face} edit={edit} item={face} fps={fps} video={video} onClose={() => setFace(null)} />
+      )}
       {colour && (
         <GradePanel view={view} item={colour} video={video} edit={edit} look={hooks.look}
           pending={planEdits.find((e) => e.key === colour.key)?.grade}
@@ -367,8 +398,10 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
             setCrop(null);
             const f = time * fps;
             if (f < item.rec || f >= item.rec + item.len) slots.current.player.seek((item.rec + Math.min(item.len - 1, Math.floor(item.len / 2))) / fps);
+            setFace(null);
             setColour(item);
           },
+          onFace: edit && hooks.face ? (item: TimelineItem) => openFace(item) : undefined,
           history: { back: hist.past.length, ahead: hist.future.length, undo, redo },
         } : {})}
       />
