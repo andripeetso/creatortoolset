@@ -65,6 +65,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // Publish to Community with this Mac's account (src/lib/pack-catalog.ts publishFromMac): the pack as JSON text,
         // answered with { state } once this app's own alert is answered (Account.swift publish)
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "publishPack")
+        // The folders whose original video and sound files ctlocal://media/ may serve (src/lib/local-files.ts
+        // askMediaFolder): { ask: folder } opens this app's open panel, { list: true }, { remove: folder };
+        // answered with { granted: [folders] }
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "mediaAccess")
         installScripts()
     }
 
@@ -147,12 +151,15 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var onPublishPack: ((String, @escaping (AccountReply) -> Void) -> Void)?
     /// The site the window shows (Shell sets it): only its own pages may ask for a screenshot.
     var site: (() -> URL)?
+    /// A mediaAccess open panel is showing: a second ask while it is gets { granted: [] }.
+    fileprivate var mediaPanelOpen = false
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         if message.name == "snapshot" { return snapshot(message, replyHandler) }
         if message.name == "thisMac" { return thisMac(message, replyHandler) }
         if message.name == "publishPack" { return publishPack(message, replyHandler) }
+        if message.name == "mediaAccess" { return mediaAccess(message, replyHandler) }
         guard let ask = accountAsk(message.body, mainFrame: message.frameInfo.isMainFrame), let onAccount else { return replyHandler(["state": "off"], nil) }
         onAccount(ask) { replyHandler($0, nil) }
     }
@@ -276,9 +283,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // a download named "….ctalpha.mp4" becomes a see-through video (AlphaVideo.swift): the editor offers no
         // background only where this is set (mac-record.ts)
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecordAlpha = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // ctlocal:// takes several requests at once from this version on (ProjectScheme.swift); in an older app the
-        // page reads a recording's files one after another instead (src/lib/local-files.ts)
-        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // ctlocal:// takes several requests at once from '2' on (ProjectScheme.swift); in an older app the page reads a
+        // recording's files one after another instead. '3': it also serves ctlocal://media/ (an edit's originals from
+        // the granted folders, MediaFiles.swift). src/lib/local-files.ts
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '3';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)
@@ -330,6 +338,34 @@ extension AppWebView {
             return replyHandler(["state": "off"], nil)
         }
         onPublishPack(text) { replyHandler($0, nil) }
+    }
+
+    /// "mediaAccess": only the open server's own main frame may ask. The page's folder is only where the panel starts:
+    /// what is kept is the folder chosen in the panel, which may be a higher one. Cancelled, or a panel already open:
+    /// { granted: [] }.
+    fileprivate func mediaAccess(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
+              let body = message.body as? [String: Any] else {
+            return replyHandler(["granted": [String]()], nil)
+        }
+        if let folder = body["remove"] as? String { MediaFiles.remove(folder) }
+        guard let ask = body["ask"] as? String else { return replyHandler(["granted": MediaFiles.granted], nil) }
+        guard !mediaPanelOpen, let window else { return replyHandler(["granted": [String]()], nil) }
+        mediaPanelOpen = true
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: MediaFiles.nearestExisting(ask.hasPrefix("/") ? ask : "/"), isDirectory: true)
+        panel.title = "Play original files from this folder?"
+        panel.message = "Play original files from this folder? The edit's original files are here. Creator Toolset only reads video and sound files from the folder you choose."
+        panel.prompt = "Allow"
+        panel.beginSheetModal(for: window) { [weak self] answer in
+            self?.mediaPanelOpen = false
+            guard answer == .OK, let chosen = panel.url else { return replyHandler(["granted": [String]()], nil) }
+            MediaFiles.add(chosen.path)
+            replyHandler(["granted": MediaFiles.granted], nil)
+        }
     }
 
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".

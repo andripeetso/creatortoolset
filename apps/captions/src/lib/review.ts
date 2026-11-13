@@ -43,6 +43,8 @@ export interface ReviewVersion {
   timeline?: boolean;
   /** (managers) the AI Editor draft it previews: its timeline, camera view and grade come from the editor. */
   edit?: { project: string; draft: string };
+  /** (managers) the app's own AI Editor draft it was rendered from: its timeline edits can be made into the next version. */
+  draft?: { edit: string; name: string };
   /** (managers) a link back to what made it (a plug-in's own page). */
   source?: { kind: string; id: string; label: string; href: string };
   /** Its sound in parts (v<n>/stems/): the player's voice controls. */
@@ -429,6 +431,8 @@ export function reviewApi(base: string) {
     stem: (v: FileRef, file: string) => mediaUrl(base, v, `stems/${file}`),
     /** The version's timeline (tracks, clips, markers), or 404 when it has none. */
     timeline: (n: number) => call<TimelineView>(`${base}/v/${n}/timeline`),
+    /** (managers) Where an imported timeline's files are on the editor's computer: { [src]: path }, or 404. */
+    timelineSources: (n: number) => call<Record<string, string>>(`${base}/v/${n}/timeline/sources`),
     comment: (body: {
       version: number;
       text: string;

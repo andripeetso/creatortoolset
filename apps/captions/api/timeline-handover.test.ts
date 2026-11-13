@@ -74,3 +74,15 @@ describe("hand-over packages through Review's timeline import", () => {
     expect(() => importTimeline("notes.txt", "hello")).toThrow(TimelineError);
   });
 });
+
+// The packages name their files relative to the package (media/talk.mp4): no file to play, but where each clip starts in
+// it and its media room are there, the same in every format (talk.mp4 at in 10 of 500 frames, 100 long).
+it("hand-over packages: the talent clip's place in its file, in every format", () => {
+  for (const [name, rel] of [["Tiny_V1A_D1.otio", "otio-resolve"], ["Tiny_V1A_D1.xml", "fcp7-premiere"], ["Tiny_V1A_D1.fcpxml", "fcpx-final-cut"]]) {
+    const v = importTimeline(name, read(`${rel}/${name}`));
+    const first = (id: string) => v.tracks.find((t) => t.id === id)!.items[0];
+    expect(first("V1"), name).toMatchObject({ ins: 0.4, before: 10, after: 390 });
+    expect(first("V1").src, name).toBeUndefined();
+    expect(first("A1").ins, name).toBe(0.4);
+  }
+});

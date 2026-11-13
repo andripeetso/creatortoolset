@@ -1,7 +1,9 @@
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Item, Timeline } from "../../contracts/editor";
-import { addVersion, readMeta, toLibrary } from "../review";
+import { addVersion, fileTimelineView, readMeta, toLibrary } from "../review";
+import { wordsOf } from "../library/transcribe";
+import { draftView } from "./edits";
 import { blobs, libraryDb } from "../library/db";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
@@ -9,12 +11,13 @@ import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
-import { editDir, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveStep } from "./store";
+import { editDir, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
  * The AI Editor's preview: a draft rendered by the server's own ffmpeg into a watchable video, filed in Review as a
- * new version of the draft's own Review video (the first preview makes it), so reviewers comment on it there. Each
+ * new version of the draft's own Review video (the first preview makes it), so reviewers comment on it there. The draft's
+ * timeline goes with it (Review draws it under the player, and its hand edits can be cut into the next version). Each
  * speaker shot is rendered on its own (its zoom and tilt), then joined without encoding the picture again, with the
  * sound brought to -14 LUFS. The `file` step then marks the Review video's library version as made from the footage
  * (derived_from).
@@ -179,12 +182,20 @@ export async function previewStep({ edit, variant, signal }: StepContext): Promi
   await mkdir(path.dirname(out), { recursive: true });
   await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
   if (signal.aborted) return;
-  const v = { owner: edit.createdBy, name: `${edit.name} ${variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size };
+  const v = { owner: edit.createdBy, name: `${edit.name} ${variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant } };
   const place = (dest: string) => rename(out, dest);
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
   if (!added) throw new Error("Review did not take the preview");
+  // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)
+  await saveFiled(edit.id, added.meta.id, added.n, { variant, timeline: d.timeline });
+  const db = libraryDb();
+  const words = Object.fromEntries(Object.keys(d.timeline.sources).flatMap((id) => {
+    const w = d.timeline.sources[id]!.file ? null : wordsOf(db, id);
+    return w ? [[id, w]] : [];
+  }));
+  await fileTimelineView(added.meta.id, added.n, `${variant}-${added.n}.view.json`, draftView(d.timeline, words));
   await saveStep(edit.id, "review", { ...filed, [variant]: { assetId: added.meta.id, n: added.n } });
 }
 
