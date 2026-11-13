@@ -406,3 +406,14 @@ final class EarlierAppTests: XCTestCase {
         XCTAssertFalse(Dictation.keysLive(on: false, paused: false, earlierAppOpen: false))
     }
 }
+
+/// The settings answer the page reads: built from a dictionary literal, where a key written twice stops the app.
+@MainActor
+final class DictationBridgeStateTests: XCTestCase {
+    func testTheSettingsAnswerBuildsWithEveryField() {
+        let state = Dictation.shared.bridgeState()
+        for key in ["on", "keys", "picking", "paused", "engine", "model", "models", "keep", "sounds", "needs"] {
+            XCTAssertNotNil(state[key], "missing \(key)")
+        }
+    }
+}
