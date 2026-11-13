@@ -4,7 +4,7 @@ import { SPOKEN_LANGUAGES, languageName } from "@contracts/voice";
  * The language spoken in a project's or an edit's videos: one code, or "" for the person's own languages (Settings → AI
  * → Voice). Saved as `languages: [code]` (none: []).
  */
-export function LanguageSelect({ id, value, onChange, disabled, className, placeholder = "My languages (Settings → Voice)" }: {
+export function LanguageSelect({ id, value, onChange, disabled, className, placeholder = "My languages (Settings → AI → Voice)" }: {
   id?: string;
   /** the label of "" */
   placeholder?: string;

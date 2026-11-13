@@ -163,6 +163,9 @@ describe("AI Editor analyze", () => {
     expect(askVersionIn.get("ver_early")).toEqual(["et"]);
     expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
     expect(job()).toMatchObject({ state: "queued" });
+    // the next look, while that transcript is still to come: it waits, it does not fail on the old silence
+    await tick(Date.now() + 60_000);
+    expect(job()).toMatchObject({ state: "queued" });
     d.prepare("DELETE FROM edit_jobs").run();
   });
 });

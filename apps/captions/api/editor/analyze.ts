@@ -159,17 +159,25 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
     }
     const languages = edit.languages?.length ? edit.languages : undefined;
     if (languages) askVersionIn.set(row.id, languages);
+    else askVersionIn.delete(row.id);
     const words = wordsOf(db, row.id);
     // a take heard as silence (asked in another language) is heard once more in the language the edit names
-    const again = `${row.id}|${languages?.join(",")}`;
-    if (words && !(languages && !words.length && !askedAgain.has(again))) {
-      ready.push({ row, probe, words });
-      continue;
+    if (words && languages && !words.length) {
+      const again = `${row.id}|${languages.join(",")}`;
+      if (!askedAgain.has(again)) {
+        askedAgain.add(again);
+        enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
+        wait = true;
+        continue;
+      }
+      const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as { state: string } | undefined;
+      if (t?.state === "queued" || t?.state === "running") {
+        wait = true;
+        continue;
+      }
     }
     if (words) {
-      askedAgain.add(again);
-      enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
-      wait = true;
+      ready.push({ row, probe, words });
       continue;
     }
     prepareFirst(row.id); // the edit waits on its transcript: before the library's other clips
