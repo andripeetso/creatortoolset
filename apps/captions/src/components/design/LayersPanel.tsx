@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
-import { layerName, pageName } from "@/lib/design/hands";
+import { groupName, layerName, pageName } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
@@ -178,9 +178,10 @@ export function LayersPanel({
                   return (
                     <div key={l.id}>
                     {heads && (
-                      <div role="treeitem" aria-label="Group" aria-selected={allOn} onClick={() => !dragging.current && onPick(k, members)} className={cn(ROW, "pl-9", allOn ? ON : "hover:bg-zinc-500/10")}>
+                      <div role="treeitem" data-group={l.group} aria-label={groupName(l.group) ?? "Group"} aria-selected={allOn} onClick={() => !dragging.current && onPick(k, members)} className={cn(ROW, "pl-9", allOn ? ON : "hover:bg-zinc-500/10")}>
                         <Group className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
-                        <span className="min-w-0 flex-1 truncate">Group</span>
+                        {/* the name its maker gave the group (an AI names its groups: "Palm trees"); one made by hand is a Group */}
+                        <span className="min-w-0 flex-1 truncate">{groupName(l.group) ?? "Group"}</span>
                       </div>
                     )}
                     <div

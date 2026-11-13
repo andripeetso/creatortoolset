@@ -37,7 +37,7 @@ import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHA
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { typedHex } from "@/lib/design/colour";
-import { boundsOf, frameOf, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
+import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { useZoom, type ViewStore } from "@/lib/design/view";
 import { ColourPicker } from "./ColourPicker";
@@ -482,7 +482,7 @@ export function Inspector({
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? `Group of ${picked.length}` : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? (groupName(picked[0]!.group) ?? `Group of ${picked.length}`) : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
         <div className="flex items-center">
           {picked.some((l) => l.group && page.layers.filter((x) => x.group === l.group).length > 1) && (
             <Tap label="Ungroup" onClick={onUngroup}>
