@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_MOMENTS, MAX_VERSIONS } from "@contracts/editor";
@@ -62,7 +62,9 @@ export default function EditorPage() {
   const error = edits ? null : list.error || null;
   // /editor?new=1&folder=<Media Library folder id>&name=<name>: New edit opens with them (the assistant's "Change the setup")
   const [params, setParams] = useSearchParams();
-  const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "" } : undefined;
+  // a page that hands clips over (the Screen Recorder's Send to AI Editor) puts them in the navigation's state: picked
+  const handed = (useLocation().state as { pick?: Picked[] } | null)?.pick;
+  const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "", pick: handed } : undefined;
   const [creating, setCreating] = useState(!!start);
   const [view, setView] = useBrowseView("editor");
   const [find, setFind] = useState("");
@@ -242,7 +244,10 @@ export default function EditorPage() {
  * none and "How do you like to work?" not answered yet, the sheet asks that first (FirstWay), and `onStyles` reads the
  * styles again once it is answered.
  */
-export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string }; styles?: EditingStylesView | null; onStyles?: () => Promise<unknown> }) {
+/** A Media Library clip picked for a new edit: its version and its title. */
+export type Picked = { versionId: string; title: string };
+
+export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string; pick?: Picked[] }; styles?: EditingStylesView | null; onStyles?: () => Promise<unknown> }) {
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [libId, setLibId] = useState("");
@@ -252,7 +257,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
   const [term, setTerm] = useState("");
   const [items, setItems] = useState<AssetCard[]>([]);
   const [next, setNext] = useState<string | undefined>();
-  const [picked, setPicked] = useState<Map<string, string>>(new Map()); // version id → title, in the order picked
+  const [picked, setPicked] = useState<Map<string, string>>(() => new Map(start?.pick?.map((p) => [p.versionId, p.title]))); // version id → title, in the order picked
   const [name, setName] = useState(start?.name ?? "");
   const [brief, setBrief] = useState("");
   const [script, setScript] = useState("");

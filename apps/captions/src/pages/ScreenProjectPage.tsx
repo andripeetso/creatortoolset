@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
-import { ChevronDown, FolderOpen, Layers, Send, Trash2 } from "lucide-react";
+import { ChevronDown, Clapperboard, FolderOpen, Layers, Loader2, Send, Trash2 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,11 @@ import {
 import { ScreenRecordingEditor, type EditorAction } from "@/components/ScreenRecordingEditor";
 import { canRecordScreen, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
 import { uploadReviewFile } from "@/lib/review";
+import { canUse, useMe } from "@/lib/auth";
+import { alertDialog } from "@/lib/dialogs";
+import { footageTarget } from "@/lib/editor";
+import { changeFolderItems, getAsset, uploadFile } from "@/lib/library";
+import type { Picked } from "@/pages/EditorPage";
 import { openLocalRecording } from "@/lib/screen-source";
 import { useMacRecorder } from "@/components/settings/ThisMacSection";
 
@@ -64,6 +69,9 @@ export default function ScreenProjectPage() {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   // Save the streams… only where the Mac app does it (0.15.38 and later)
   const streams = useMacRecorder() === true;
+  const me = useMe();
+  // Send to AI Editor: how far the upload is (0–100), null when none runs
+  const [toEditor, setToEditor] = useState<number | null>(null);
 
   // thrown away from here: once the app's list no longer has it, back to the recordings
   const [leaving, setLeaving] = useState(false);
@@ -81,6 +89,39 @@ export default function ScreenProjectPage() {
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
+  /**
+   * Send to AI Editor: the screen (with the voice) and the camera, each filed in the library as its own clip in the AI
+   * Editor's footage folder, then New edit opens with both picked. The page reads the files itself, so any Mac app does it.
+   */
+  const sendToEditor = async () => {
+    if (!rec || !source || toEditor !== null) return;
+    setToEditor(0);
+    try {
+      const read = (blob: Blob | undefined, url: string) => (blob ? Promise.resolve(blob) : fetch(url).then((r) => r.blob()));
+      const parts = [{ blob: await read(source.file, source.url), name: `${rec.name} (screen).mp4` }];
+      if (source.cameraUrl) parts.push({ blob: await read(source.cameraFile, source.cameraUrl), name: `${rec.name} (camera).mp4` });
+      const total = parts.reduce((n, p) => n + p.blob.size, 0) || 1;
+      const target = await footageTarget();
+      const pick: Picked[] = [];
+      let done = 0;
+      for (const p of parts) {
+        const file = new File([p.blob], p.name, { type: "video/mp4" });
+        const up = await uploadFile(target.libraryId, file, (sent) => setToEditor(Math.round(((done + sent) / total) * 100)), target.collectionId);
+        const assetId = up.assetId ?? up.duplicateOf;
+        if (!assetId) throw new Error(`${p.name} was not filed in the library`);
+        await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
+        const asset = await getAsset(target.libraryId, assetId);
+        pick.push({ versionId: asset.versionId, title: asset.title });
+        done += p.blob.size;
+      }
+      navigate(`/editor?new=1&name=${encodeURIComponent(rec.name)}`, { state: { pick } });
+    } catch (e) {
+      await alertDialog({ title: "Couldn't send it to the AI Editor", body: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setToEditor(null);
+    }
+  };
+
   const actions: EditorAction[] = [
     {
       label: "Save video…",
@@ -133,8 +174,16 @@ export default function ScreenProjectPage() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="outline">
-                  <Send /> Send <ChevronDown className="opacity-60" />
+                <Button size="sm" variant="outline" disabled={toEditor !== null}>
+                  {toEditor !== null ? (
+                    <>
+                      <Loader2 className="animate-spin" /> To the AI Editor {toEditor}%
+                    </>
+                  ) : (
+                    <>
+                      <Send /> Send <ChevronDown className="opacity-60" />
+                    </>
+                  )}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -144,6 +193,11 @@ export default function ScreenProjectPage() {
                     {s.label}
                   </DropdownMenuItem>
                 ))}
+                {canUse(me, "editor") && (
+                  <DropdownMenuItem onSelect={() => void sendToEditor()}>
+                    <Clapperboard /> Send to AI Editor
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 {streams && (
                   <DropdownMenuItem onSelect={() => tellRecorder(`streams:${rec.id}`)}>
