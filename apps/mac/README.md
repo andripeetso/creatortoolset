@@ -446,6 +446,29 @@ this macOS has it, but nothing here can watch a lookup); the proxy for a bare ad
 would be real traffic; a name goes to the proxy); a script that takes memory without end (the limit and the end of
 its process stop it, after up to 20 s). See also "Not checked yet".
 
+## Dictation
+
+Talk, and the words are pasted where the cursor is, in any app (`Dictation/`). On for everyone from the first launch,
+but nothing asks for a permission and nothing downloads until the first press of a talk key.
+
+- **F13** starts and stops. **Holding fn** (or the key chosen in Settings, or Off) talks while it is held; a tap
+  shorter than 0.3 s, or a hold with another key, does nothing. **F14** opens History (the last recordings: copy a
+  transcript, transcribe a failed one again), **F15** Transcribe a file (audio or video, on this Mac), **F16** cancels
+  the recording or the transcription in progress (nothing is pasted; History still gets it). F13–F16 are taken from
+  macOS, so its own brightness keys don't also act on them.
+- The first press: the pill at the bottom of the screen says what to allow (Microphone, then Accessibility, with the
+  System Settings pane) and the speech model downloads with its size and progress there. Before Accessibility no key
+  tap can exist, so F13 is a Carbon hotkey and the hold key is read from the modifier state ten times a second.
+- Speech becomes text on this Mac with Whisper (WhisperKit, Core ML); the default model is Whisper Large v3 Turbo
+  (1.6 GB) in `~/Library/Application Support/Creator Toolset/dictation/models`. A complete copy in the earlier
+  dictation app's models folder is loaded where it is, never downloaded again or removed. Whisper is told the languages from the server's Voice settings (`GET /api/voice-prefs`) when it has
+  them, else it chooses among the Mac's own languages.
+- The text is pasted with ⌘V through the clipboard, which is put back once the app has read it; a password field
+  gets nothing. Recordings and transcripts are kept in `dictation/recordings` (the last 10 by default).
+- Settings → General → Dictation on the site shows and sets it (`thismac-dictation:<what>:<value>`,
+  `Dictation.bridgeState`); the app keeps the values in `UserDefaults` (`dictation.*`). The earlier dictation app's
+  choices are taken over once (its F13 means hold to talk is Off here).
+
 ## Notifications and the Dock badge
 
 Every 30 s the app asks `GET /api/review/notifications`. Each new unread item becomes a banner
@@ -504,6 +527,9 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   the owner's password, data location).
 - `Sources/CreatorToolsetMac/Plugins.swift`: plug-ins (the asks, Switch on's alert, the record in the Keychain, the
   paused flag, the server's environment and the five-crash rule).
+- `Sources/CreatorToolsetMac/Dictation/`: dictation (`Dictation.swift` the settings, the first press and the keys'
+  routing; `Keys.swift` the taps; `Audio.swift`, `HALInput.swift` the microphone; `Whisper.swift` the model;
+  `Controller.swift` the loop; `Paste.swift` the paste; `Pill.swift`; `History.swift` History and Transcribe a file).
 - `Sources/CreatorToolsetMac/Logic.swift`: the pure helpers the tests cover.
 - `Tests/CreatorToolsetMacTests/LogicTests.swift`: the pure helpers (site address, cookies, downloads, notes).
 - `Tests/CreatorToolsetMacTests/AlphaVideoTests.swift`: the see-through video (the packed download's name and

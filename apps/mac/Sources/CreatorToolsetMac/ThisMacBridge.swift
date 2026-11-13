@@ -82,9 +82,19 @@ func installInAI(app: String, name: String = "creator-toolset", url: String, key
     }
 }
 
+/// GET /api/voice-prefs' languages, the ones the person speaks (Settings → AI → Voice), for dictation's language
+/// hint. A server without that page answers with an error, and dictation then chooses among the Mac's own languages.
+struct VoiceLanguages: Decodable { let languages: [String] }
+
 extension Shell {
+    func voiceLanguages() async -> [String]? {
+        guard let reply: VoiceLanguages = try? await client().get("/api/voice-prefs") else { return nil }
+        return reply.languages.isEmpty ? nil : reply.languages
+    }
+
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,
-    /// shortcut (opens the recording shortcut's chooser, RecordShortcut.swift), limits:on|off (Plan limits reading).
+    /// shortcut (opens the recording shortcut's chooser, RecordShortcut.swift), limits:on|off (Plan limits reading),
+    /// dictation:<what>:<value> (Settings → General → Dictation).
     func thisMacCommand(_ what: String) {
         let parts = what.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
         let arg = parts.count > 1 ? parts[1] : ""
@@ -99,6 +109,8 @@ extension Shell {
         case "forget": forgetThisMac()
         case "shortcut": RecordShortcut.shared.choose()
         case "limits": UserDefaults.standard.set(arg == "on", forKey: limitsReadingKey)
+        // dictation:<what>:<value> (Dictation.swift `command`)
+        case "dictation": Dictation.shared.command(arg, parts.count > 2 ? parts[2] : "")
         default: break
         }
         pushThisMac(problem: problem)
@@ -173,6 +185,8 @@ extension Shell {
             "limits": limitsReadingOn(),
             // Settings → General → Version
             "version": appVersion,
+            // Settings → General → Dictation (Dictation.swift)
+            "dictation": Dictation.shared.bridgeState(),
         ]
     }
 }

@@ -48,6 +48,7 @@ final class RecordShortcut: ObservableObject {
         didSet { UserDefaults.standard.set(showsButton, forKey: "recordMenuBarButton"); applyButton() }
     }
 
+    nonisolated static let signature = OSType(0x4354_5243)   // "CTRC"
     private weak var recorder: Recorder?
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
@@ -71,7 +72,12 @@ final class RecordShortcut: ObservableObject {
     func install(_ recorder: Recorder) {
         self.recorder = recorder
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            // only its own hotkey: dictation registers F13 on the same target
+            var id = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &id)
+            guard id.signature == RecordShortcut.signature else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async { MainActor.assumeIsolated { RecordShortcut.shared.recorder?.toggle() } }
             return noErr
         }, 1, &spec, nil, &handler)
@@ -92,7 +98,7 @@ final class RecordShortcut: ObservableObject {
         if let hotKey { UnregisterEventHotKey(hotKey) }
         hotKey = nil
         guard let shortcut else { return }
-        let id = EventHotKeyID(signature: OSType(0x4354_5243), id: 1)   // "CTRC"
+        let id = EventHotKeyID(signature: Self.signature, id: 1)
         let status = RegisterEventHotKey(shortcut.keyCode, shortcut.carbonModifiers, id, GetApplicationEventTarget(), 0, &hotKey)
         if status != noErr { AppLog.write("recording shortcut \(shortcut.display) not available (\(status)): another app has it") }
     }
