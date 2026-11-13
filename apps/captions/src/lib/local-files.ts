@@ -34,9 +34,9 @@ export const askMediaFolder = (folder: string): Promise<string[]> => mediaAccess
 /** The folders the Mac app lets the page play original files from ([] outside the app). */
 export const listMediaFolders = (): Promise<string[]> => mediaAccess({ list: true });
 
-/** Whether the Mac app's granted folders hold every one of these paths. */
+/** Whether the Mac app's granted folders hold every one of these paths (in one Unicode form: a name may be stored decomposed). */
 export const allGranted = (paths: string[], folders: string[]) =>
-  paths.every((p) => folders.some((f) => p.startsWith(f.endsWith("/") ? f : `${f}/`)));
+  paths.every((p) => folders.some((f) => p.normalize("NFC").startsWith((f.endsWith("/") ? f : `${f}/`).normalize("NFC"))));
 
 /** The deepest folder that holds every one of these paths ("/" at worst). */
 export function commonFolder(paths: string[]): string {

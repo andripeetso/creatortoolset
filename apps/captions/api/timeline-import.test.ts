@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importTimeline, rational, tcFrames, TimelineError } from "../contracts/timeline-import";
+import { filePath, importTimeline, rational, tcFrames, TimelineError, timelineSources } from "../contracts/timeline-import";
 
 // One small cut, 25 fps, starting at 01:00:00:00, written the way Resolve 21.1
 // exports it in each format (checked against its real exports of a 90 s reel):
@@ -186,5 +186,89 @@ describe("timeline import", () => {
     expect(() => importTimeline("notes.xml", "<html><body>hi</body></html>")).toThrow(TimelineError);
     expect(() => importTimeline("x.otio", "{ nope")).toThrow(/valid JSON/);
     expect(() => importTimeline("x.xml", "<xmeml><sequence><rate><timebase>25</timebase></rate></sequence></xmeml>")).toThrow(/no clips/);
+  });
+});
+
+// One take on V1 with its sound on A1 (in at 10 of 250 frames, 25 fps) and a B-roll file, its folder named with spaces
+// and Estonian letters, the way each format writes the files: what Review plays from the person's own computer.
+describe("timeline import: source files", () => {
+  const TAKE = "/Volumes/Tiny Drive/Süvi lõik/Tiny take.MP4";
+  const ROLL = "/Volumes/Tiny Drive/b roll.mov";
+  const url = (p: string) => `file://${encodeURI(p)}`;
+  const take = { src: "s1", ins: 0.4, before: 10, after: 190 };
+  const items = (v: ReturnType<typeof importTimeline>) =>
+    Object.fromEntries(v.tracks.map((t) => [t.id, t.items.map(({ src, ins, before, after }) => ({ src, ins, before, after }))]));
+  const strip = (o: Record<string, unknown>) => JSON.parse(JSON.stringify(o));
+
+  const ext = (target_url: string, available_range?: unknown) => ({ OTIO_SCHEMA: "ExternalReference.1", target_url, available_range });
+  const at = (ref: unknown, start: number, len: number) => ({ OTIO_SCHEMA: "Clip.2", name: "c", source_range: range(start, len), media_reference: ref });
+  const otioFile = JSON.stringify({
+    OTIO_SCHEMA: "Timeline.1", name: "T",
+    tracks: { OTIO_SCHEMA: "Stack.1", children: [
+      track("Video", "V", [at(ext(url(TAKE), range(0, 250)), 10, 50)]),
+      track("Video", "B", [at(ext(ROLL), 25, 25)]),
+      track("Audio", "A", [at(ext(url(TAKE), range(0, 250)), 10, 50)]),
+    ] },
+  });
+  const fcp7File = `<xmeml version="5"><sequence><name>T</name><rate><timebase>25</timebase></rate><media>
+    <video>
+      <track><clipitem id="c1"><name>Tiny take</name><start>0</start><end>50</end><in>10</in><out>60</out>
+        <file id="f1"><name>Tiny take.MP4</name><pathurl>file://localhost${encodeURI(TAKE)}</pathurl><duration>250</duration></file>
+      </clipitem></track>
+      <track><clipitem id="c2"><name>b roll</name><start>0</start><end>25</end><in>25</in><out>50</out>
+        <file id="f2"><name>b roll.mov</name><pathurl>${url(ROLL)}</pathurl></file>
+      </clipitem></track>
+    </video>
+    <audio><track><clipitem id="c3"><name>Tiny take</name><start>0</start><end>50</end><in>10</in><out>60</out><file id="f1"/></clipitem></track></audio>
+  </media></sequence></xmeml>`;
+  const fcpxmlFile = `<fcpxml version="1.10"><resources>
+    <format id="r0" frameDuration="1/25s" width="1080" height="1920"/>
+    <asset id="r1" name="Tiny take.MP4" start="3600s" duration="10s" hasVideo="1" hasAudio="1" format="r0">
+      <media-rep kind="original-media" src="${url(TAKE)}"/>
+    </asset>
+    <asset id="r2" name="b roll.mov" src="${url(ROLL)}" start="0s" hasVideo="1" format="r0"/>
+  </resources><library><event><project name="T"><sequence format="r0" tcStart="0s"><spine>
+    <asset-clip ref="r1" offset="0s" start="90010/25s" duration="2s">
+      <asset-clip ref="r2" lane="1" offset="90010/25s" start="1s" duration="1s"/>
+      <audio ref="r1" lane="-1" offset="90010/25s" start="90010/25s" duration="2s"/>
+    </asset-clip>
+  </spine></sequence></project></event></library></fcpxml>`;
+  const edlFile = `TITLE: T
+001  TAKE     V     C        00:00:00:10 00:00:02:10 01:00:00:00 01:00:02:00
+* FROM CLIP NAME: Tiny take.MP4
+* SOURCE FILE: ${TAKE}
+002  TAKE     A     C        00:00:00:10 00:00:02:10 01:00:00:00 01:00:02:00
+* FROM CLIP NAME: Tiny take.MP4
+003  ROLL     V     C        00:00:01:00 00:00:02:00 01:00:02:00 01:00:03:00
+* FROM CLIP NAME: b roll.mov
+`;
+
+  it("each format gives every clip its file's key, where it starts in it and the media past its ends", () => {
+    const roll = { src: "s2", ins: 1 };
+    expect(strip(items(importTimeline("T.otio", otioFile)))).toEqual({ V2: [roll], V1: [take], A1: [take] });
+    expect(strip(items(importTimeline("T.xml", fcp7File)))).toEqual({ V2: [{ ...roll, before: 25 }], V1: [take], A1: [take] });
+    expect(strip(items(importTimeline("T.fcpxml", fcpxmlFile)))).toEqual({ V2: [{ ...roll, before: 25 }], V1: [take], A1: [take] });
+    // an EDL says no length (and no file for the B-roll, which has no file comment)
+    expect(strip(items(importTimeline("T.edl", edlFile, 25)))).toEqual({ V1: [{ src: "s1", ins: 0.4 }, {}], A1: [{ src: "s1", ins: 0.4 }] });
+  });
+
+  it("the paths come only from timelineSources, decoded; the view stays path-free", () => {
+    for (const [name, file] of [["T.otio", otioFile], ["T.xml", fcp7File], ["T.fcpxml", fcpxmlFile]]) {
+      expect(timelineSources(name, file), name).toEqual({ s1: TAKE, s2: ROLL });
+      expect(JSON.stringify(importTimeline(name, file)), name).not.toMatch(/Volumes|Tiny Drive/);
+    }
+    expect(timelineSources("T.edl", edlFile, 25)).toEqual({ s1: TAKE });
+    expect(JSON.stringify(importTimeline("T.edl", edlFile, 25))).not.toContain("Volumes");
+  });
+
+  it("a file's path: URLs decoded, Windows paths, nothing for a relative or broken one", () => {
+    expect(filePath("file://localhost/Volumes/A%20B/%C3%A4.mov")).toBe("/Volumes/A B/ä.mov");
+    expect(filePath("/Volumes/x/g_%05d.png")).toBe("/Volumes/x/g_%05d.png");
+    expect(filePath("file:///Volumes/x/g_%2505d.png")).toBe("/Volumes/x/g_%05d.png");
+    expect(filePath("file:///C:/Users/tiny/a.mov")).toBe("C:/Users/tiny/a.mov");
+    expect(filePath("D:\\footage\\a.mov")).toBe("D:/footage/a.mov");
+    expect(filePath("media/talk.mp4")).toBeUndefined();
+    expect(filePath("file:///bad%E0.mov")).toBeUndefined();
+    expect(filePath("https://example.com/a.mov")).toBeUndefined();
   });
 });

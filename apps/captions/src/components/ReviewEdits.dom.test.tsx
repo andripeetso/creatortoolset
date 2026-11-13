@@ -105,6 +105,7 @@ async function mount(
   const bridge = new ReviewSlotBridge();
   const bound = bridge.bind("tl");
   const ctx = {
+    asset: { id: "a1" },
     version,
     api,
     player: { video: () => null, seek: () => {}, pause: () => {} },
@@ -314,6 +315,8 @@ describe("ReviewEdits panel", () => {
     });
     (window as unknown as { webkit: object }).webkit = { messageHandlers: { mediaAccess: { postMessage: post } } };
     document.documentElement.dataset.macLocalFiles = "3";
+    // the Mac app answers a one-byte read of a file in a granted folder
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { status: 206 })));
     try {
       const sources = vi.fn(async () => ({ vo: "/Volumes/Shoot/VO/take 1.wav" }));
       const longer = { id: "c1", data: { edits: [{ key: "A1:0", label: "Voice", tail: 25 }, { key: "V1:100", label: "Shot two", tail: 25 }] } };
@@ -329,6 +332,7 @@ describe("ReviewEdits panel", () => {
       ]);
       expect(button("Play edits from the originals")).toBeUndefined();
     } finally {
+      vi.unstubAllGlobals();
       delete (window as unknown as { webkit?: object }).webkit;
       delete document.documentElement.dataset.macLocalFiles;
     }

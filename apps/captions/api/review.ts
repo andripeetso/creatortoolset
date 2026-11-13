@@ -37,7 +37,7 @@ import { deleteAssets } from "./library/trash";
 import { emitEvent } from "./lib/events";
 import { announceSoon } from "./lib/announce-soon";
 import { announce } from "./lib/sync";
-import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, type TimelineView } from "../contracts/timeline-import";
+import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
 
 export { sendFile };
@@ -1347,6 +1347,20 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   await rename(tmp, timelinePath(v.meta.id, n));
   const meta = await setVersion(v.meta.id, n, { timelineFile: name });
   return meta ? c.json(publicAsset(meta, true)) : c.json({ error: "Not found" }, 404);
+});
+
+/** Where an imported timeline's files are on the editor's computer ({ [src]: path }): managers only, never on a link
+ *  (the paths are private). Review plays the edits from them in the Mac app. 404 without an imported timeline. */
+reviewApp.get("/assets/:id/v/:n/timeline/sources", async (c) => {
+  const v = await viewer(c);
+  const version = v?.manage ? v.meta.versions.find((x) => x.n === Number(c.req.param("n"))) : undefined;
+  if (!v || !version?.timelineFile || version.edit || VIEW_FILE.test(version.timelineFile)) return c.json({ error: "Not found" }, 404);
+  try {
+    const text = await readFile(timelinePath(v.meta.id, version.n), "utf-8");
+    return c.json(timelineSources(version.timelineFile, text, version.fps || undefined), 200, { "Cache-Control": "no-store" });
+  } catch {
+    return c.json({ error: "Not found" }, 404);
+  }
 });
 
 /** A screen recording's pointer log (`events`, once, from the Mac app) or the look picked for it (`look`, on every change). */

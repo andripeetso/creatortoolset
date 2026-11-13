@@ -6,7 +6,8 @@ import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
 import { loudest, peaks } from "@/lib/waveform";
-import { allGranted, askMediaFolder, commonFolder, listMediaFolders, localMediaFiles, localMediaUrl } from "@/lib/local-files";
+import { allGranted, localMediaFiles, localMediaUrl } from "@/lib/local-files";
+import { findOriginals, openOriginals, type Originals } from "@/lib/relink";
 import {
   cameraIn,
   clampCrop,
@@ -90,7 +91,7 @@ const toCard = (c: PlayCard, manage: boolean, clipSrc?: (clip: number) => string
   ...(manage && clipSrc && c.clip !== undefined ? { src: clipSrc(c.clip), at: c.at } : {}),
 });
 
-function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
+function Edits({ asset, version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
@@ -114,26 +115,25 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   // the colour panel's video: read on each use, so a remounted player element is the one it grades
   const video = useMemo(() => ({ get current() { return slots.current.player.video(); } }), []);
   useEffect(() => () => camAsk.current?.abort(), []);
-  // the edit's recordings on this computer (source key to path, from the plug-in, managers only) and whether the Mac
-  // app lets the page play them: then the timeline's edits play with their real sound (a voice pulled out plays its words)
-  const [originals, setOriginals] = useState<{ paths: Record<string, string>; folder: string; on: boolean } | null>(null);
+  // the edit's recordings on this computer (source key to path: an AI edit's from the plug-in, an imported timeline's
+  // from its file; managers only) and the ones the Mac app plays (lib/relink.ts): with every voice clip's file found,
+  // the timeline's edits play with their real sound (a voice pulled out plays its words)
+  const [originals, setOriginals] = useState<Originals | null>(null);
+  const store = () => `${asset.id}.${version.n}`; // what was found here, per version
   useEffect(() => {
-    const sources = hooks.sources;
-    if (!manage || !edit || !sources || !localMediaFiles()) return;
+    const sources = edit ? hooks.sources && ((s: AbortSignal) => hooks.sources!(edit, s)) : () => api.timelineSources(version.n);
+    if (!manage || !sources || !localMediaFiles()) return;
     const ctl = new AbortController();
-    sources(edit, ctl.signal).then(async (paths) => {
-      const list = Object.values(paths);
-      if (!list.length || ctl.signal.aborted) return;
-      const on = allGranted(list, await listMediaFolders());
-      if (!ctl.signal.aborted) setOriginals({ paths, folder: commonFolder(list), on });
+    sources(ctl.signal).then(async (paths) => {
+      if (!Object.keys(paths).length || ctl.signal.aborted) return;
+      const o = await openOriginals(paths, store());
+      if (!ctl.signal.aborted) setOriginals(o);
     }, () => {});
     return () => ctl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per edit
   }, [edit?.project, edit?.draft, manage]);
   const allowOriginals = async () => {
-    if (!originals) return;
-    const granted = await askMediaFolder(originals.folder);
-    setOriginals({ ...originals, on: allGranted(Object.values(originals.paths), granted) });
+    if (originals) setOriginals(await findOriginals(originals, store()));
   };
   const { edits: handEdits, hole } = hist.now;
   const { edits: sentEdits, holes: sentHoles } = sentOf(sent);
@@ -237,9 +237,13 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
     : null;
   // played from the originals: each voice clip from its recording, the rest of the sound (music, effects) from the cut's
   // own stem between the skips and holds; only while there are edits (else the cut plays as rendered, its voice controls on)
-  const sound = view && plan && originals?.on && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
+  // the voice clips' files: all found = played from them; else the header offers to find them
+  const voiceFiles = [...new Set((view?.tracks.find((t) => t.id === "A1")?.items ?? []).flatMap((i) => i.src && originals?.paths[i.src] ? [i.src] : []))];
+  const filesFound = voiceFiles.filter((s) => originals?.found[s]).length;
+  const originalsOn = voiceFiles.length > 0 && filesFound === voiceFiles.length;
+  const sound = view && plan && originals && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
     ...voicePieces(splitView(view, playEdits), playEdits, plan)
-      .filter((p) => originals.paths[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.paths[p.src]) })),
+      .filter((p) => originals.found[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.found[p.src]) })),
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
   ] : null;
   const planned = !!plan && (plan.skips.length + plan.mutes.length + plan.holds.length + plan.cards.length + plan.frames.length + plan.grades.length > 0);
@@ -331,12 +335,14 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] text-zinc-500">
           {manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
-          {originals && !originals.on && (
+          {originals && voiceFiles.length > 0 && !originalsOn && (
             <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
-              title={`Your edits play with the real sound from the original recordings in ${originals.folder}`}>
-              Play edits from the originals
+              title="Your edits play with the real sound from the original recordings: allow their folder, or the folder they are in now">
+              {originals.tried || voiceFiles.some((s) => allGranted([originals.paths[s]], originals.folders))
+                ? "Find the original files" : "Play edits from the originals"}
             </button>
           )}
+          {originals?.tried && !originalsOn && voiceFiles.length > 0 && <span>{filesFound} of {voiceFiles.length} files found</span>}
         </div>
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}

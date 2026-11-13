@@ -4,13 +4,16 @@
  * Editor drafts). OTIO (Resolve), FCP7 XML (Premiere, Resolve), FCPXML (Final
  * Cut, Resolve) and CMX3600 EDL (every app). Positions are frames from the
  * timeline's first frame, so they line up with a render of the whole timeline.
- * Clip names only, never paths. api/review.ts keeps the file as sent and reads
- * it on each GET (an EDL needs the video's frame rate, known once processed).
+ * The view has clip names only, never paths (share-link reviewers see it): each
+ * file is a key (`src`, "s1", "s2"...) with where the item starts in it (`ins`)
+ * and its media room; timelineSources gives the keys' paths, for managers.
+ * api/review.ts keeps the file as sent and reads it on each GET (an EDL needs
+ * the video's frame rate, known once processed).
  */
 
 import type { TimelineItem, TimelineView } from "./edit-timeline";
 
-// the view this parser fills (a subset: no framing, grades or media room), the one Review's timeline draws
+// the view this parser fills (a subset: no framing or grades), the one Review's timeline draws
 export type { TimelineItem, TimelineView };
 
 export const TIMELINE_ACCEPT = ".otio,.xml,.fcpxml,.edl";
@@ -23,7 +26,8 @@ const MAX_ITEMS = 5000;
 
 export class TimelineError extends Error {}
 
-type Clip = { rec: number; len: number; label: string; detail?: string };
+/** `path` = the source file as the timeline names it; `ins` = seconds into it; `before`/`after` = its frames past each end. */
+type Clip = { rec: number; len: number; label: string; detail?: string; path?: string; ins?: number; before?: number; after?: number };
 type Lane = { kind: "V" | "A"; name: string; clips: Clip[] };
 type Parsed = {
   name: string;
@@ -35,7 +39,13 @@ type Parsed = {
 };
 
 /** `fps` = the video's, for an EDL (EDLs don't say theirs). */
-export function importTimeline(fileName: string, text: string, fps?: number): TimelineView {
+export const importTimeline = (fileName: string, text: string, fps?: number): TimelineView => read(fileName, text, fps).view;
+
+/** The source files of importTimeline's view: { [src]: absolute path } (managers only: paths are private). */
+export const timelineSources = (fileName: string, text: string, fps?: number): Record<string, string> =>
+  read(fileName, text, fps).sources;
+
+function read(fileName: string, text: string, fps?: number) {
   const head = text.slice(0, 4000);
   const parsed = /^\s*\{/.test(head) ? otio(text)
     : /<fcpxml[\s>]/.test(head) ? fcpxml(xml(text))
@@ -49,9 +59,12 @@ export function importTimeline(fileName: string, text: string, fps?: number): Ti
 }
 
 /** Tracks as Review draws them (V3 V2 V1, then A1 A2), clips in order, no overlaps per key. */
-function finish(p: Parsed, fileName: string): TimelineView {
+function finish(p: Parsed, fileName: string): { view: TimelineView; sources: Record<string, string> } {
   if (!(p.fps >= 1 && p.fps <= 240)) throw new TimelineError(`${fileName}: no frame rate in the file`);
   const tracks: TimelineView["tracks"] = [];
+  const keys = new Map<string, string>(); // path -> "s1", in order of first use
+  const keyOf = (path: string) => keys.get(path) ?? keys.set(path, `s${keys.size + 1}`).get(path)!;
+  const whole = (n: number | undefined) => (n !== undefined && Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined);
   let total = 0;
   for (const kind of ["V", "A"] as const) {
     let n = 0;
@@ -66,6 +79,10 @@ function finish(p: Parsed, fileName: string): TimelineView {
         key: `${id}:${c.rec}`, track: id, rec: c.rec, len: c.len,
         label: c.label.slice(0, 120) || "clip",
         ...(c.detail ? { detail: c.detail.slice(0, 200) } : {}),
+        ...(c.path ? { src: keyOf(c.path) } : {}),
+        ...(c.ins !== undefined && Number.isFinite(c.ins) && c.ins >= 0 ? { ins: Math.round(c.ins * 1000) / 1000 } : {}),
+        ...(whole(c.before) !== undefined ? { before: whole(c.before) } : {}),
+        ...(whole(c.after) !== undefined ? { after: whole(c.after) } : {}),
       }));
       total += items.length;
       tracks.push({ id, name: lane.name.slice(0, 40), items });
@@ -74,7 +91,7 @@ function finish(p: Parsed, fileName: string): TimelineView {
   if (!tracks.length) throw new TimelineError(`${fileName}: no clips on its timeline`);
   const v = tracks.filter((t) => t.id[0] === "V").reverse();
   const duration = Math.max(...tracks.flatMap((t) => t.items.map((i) => i.rec + i.len)));
-  return {
+  const view: TimelineView = {
     name: (p.name || fileName.replace(/\.[^.]+$/, "")).slice(0, 160),
     fps: p.fps,
     duration,
@@ -88,10 +105,29 @@ function finish(p: Parsed, fileName: string): TimelineView {
     words: [],
     flags: [],
   };
+  return { view, sources: Object.fromEntries([...keys].map(([path, key]) => [key, path])) };
 }
 
 const fps3 = (f: number) => Math.round(f * 1000) / 1000;
 const baseName = (p: string) => decodeURIComponent(p.split(/[/\\]/).pop() ?? p);
+/**
+ * A source file as an absolute path: file:// URLs decoded (file://localhost/ too), Windows' backslashes as slashes.
+ * Relative paths (a package's media/clip.mov) and anything else give nothing: there's no file to play there.
+ */
+export function filePath(v: unknown): string | undefined {
+  if (typeof v !== "string" || !v.trim()) return undefined;
+  let p = v.trim();
+  if (/^file:/i.test(p)) {
+    try {
+      p = decodeURIComponent(p.replace(/^file:(\/\/(localhost)?)?/i, ""));
+    } catch {
+      return undefined;
+    }
+    if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1); // file:///C:/x
+  }
+  p = p.replace(/\\/g, "/");
+  return /^(\/|[A-Za-z]:\/)/.test(p) && !p.endsWith("/") ? p : undefined;
+}
 /** Source timecode for the hover text. */
 function tc(frames: number, fps: number) {
   const tb = Math.round(fps) || 25;
@@ -147,10 +183,18 @@ function otio(text: string): Parsed {
           const r = ref(c);
           const name = c.name || r.name || baseName(String(r.target_url ?? r.target_url_base ?? ""));
           const start = secs(range?.start_time);
+          // seconds into the file: from its own first frame (a file whose range the reference doesn't say starts at 0)
+          const media = r.available_range;
+          const first = secs(media?.start_time);
+          const ins = start - (Number.isFinite(first) ? first : 0);
+          const length = secs(media?.duration);
           clips.push({
             rec: Math.round(at * fps), len: Math.round(dur * fps), label: String(name),
             detail: [Number.isFinite(start) && `source ${tc(start * fps, fps)}`, c.enabled === false && "disabled"]
               .filter(Boolean).join(" · "),
+            path: String(r.OTIO_SCHEMA).startsWith("ExternalReference") ? filePath(r.target_url) : undefined,
+            ...(Number.isFinite(ins) ? { ins } : {}),
+            ...(length > 0 && Number.isFinite(ins) ? { before: ins * fps, after: (length - ins - dur) * fps } : {}),
           });
         }
         at += dur;
@@ -250,6 +294,15 @@ function fcpxml(root: X): Parsed {
     if (el.tag === "clip") return kid(el, "video") || !kid(el, "audio") ? "V" : "A";
     return "V";
   };
+  /** The file an element plays, and its start there (seconds into the file): an asset-clip or a lane's video/audio
+   *  names its asset; Resolve's clip wraps a video or audio that does, in the clip's own time. */
+  const mediaOf = (el: X, start: number): { asset?: X; at: number } => {
+    if (el.tag === "asset-clip" || el.tag === "video" || el.tag === "audio") return { asset: res.get(el.attrs.ref), at: start };
+    const inner = el.tag === "clip" ? [kid(el, "video"), kid(el, "audio")].find((k) => k?.attrs.ref) : undefined;
+    return inner
+      ? { asset: res.get(inner.attrs.ref), at: rational(inner.attrs.start) + start - rational(inner.attrs.offset) }
+      : { at: start };
+  };
   const put = (el: X, lane: number, rec: number, len: number, start: number) => {
     const kind = kindOf(el);
     const key = `${kind}${lane}`;
@@ -260,9 +313,19 @@ function fcpxml(root: X): Parsed {
       });
     }
     const name = el.attrs.name || res.get(el.attrs.ref)?.attrs.name || el.tag;
+    const { asset, at } = mediaOf(el, start);
+    const reps = kids(asset, "media-rep");
+    const ins = at - rational(asset?.attrs.start);
+    const length = rational(asset?.attrs.duration);
     byLane.get(key)!.clips.push({
       rec, len, label: name,
       detail: [`source ${tc(start * fps, fps)}`, el.attrs.enabled === "0" && "disabled"].filter(Boolean).join(" · "),
+      ...(asset ? {
+        path: filePath((reps.find((r) => r.attrs.kind === "original-media") ?? reps[0])?.attrs.src ?? asset.attrs.src),
+        ins,
+        before: ins * fps,
+        ...(length > 0 ? { after: (length - ins) * fps - len } : {}),
+      } : {}),
     });
   };
   /** `map`: this container's time -> timeline seconds. In a spine every child is on the spine's lane; in a clip only children with a lane are (the rest is the clip's own media). */
@@ -334,11 +397,16 @@ function fcp7(root: X): Parsed {
       const fileTc = text(kid(kid(f, "timecode"), "string"));
       const srcFps = rateOf(ci) || fps;
       const src = (/^\d+:\d+:\d+[:;]\d+$/.test(fileTc) ? tcFrames(fileTc, srcFps) : 0) + (inn >= 0 ? inn : 0);
+      // in/out are the clip's frames from its file's first frame; the file's length is its duration
+      const length = num(f, "duration") || num(ci, "duration");
       return [{
         rec: start, len: end - start,
         label: text(kid(ci, "name")) || text(kid(f, "name")) || "clip",
         detail: [`source ${tc(src, srcFps)}`, text(kid(ci, "enabled")).toUpperCase() === "FALSE" && "disabled"]
           .filter(Boolean).join(" · "),
+        path: filePath(text(kid(f, "pathurl"))),
+        ...(inn >= 0 ? { ins: inn / srcFps, before: (inn / srcFps) * fps } : {}),
+        ...(inn >= 0 && length > 0 ? { after: ((length - out) / srcFps) * fps } : {}),
       }];
     }),
   });
@@ -353,7 +421,13 @@ function fcp7(root: X): Parsed {
       clips: l.clips.flatMap((c) => {
         const a = Math.max(c.rec, inn);
         const b = Math.min(c.rec + c.len, out);
-        return b > a ? [{ ...c, rec: a - inn, len: b - a }] : [];
+        // what the range cuts off a clip is media past its ends now
+        return b > a ? [{
+          ...c, rec: a - inn, len: b - a,
+          ...(c.ins !== undefined ? { ins: c.ins + (a - c.rec) / fps } : {}),
+          ...(c.before !== undefined ? { before: c.before + a - c.rec } : {}),
+          ...(c.after !== undefined ? { after: c.after + c.rec + c.len - b } : {}),
+        }] : [];
       }),
     }));
     markers = markers.map((m) => ({ ...m, frame: m.frame - inn }));
@@ -382,7 +456,7 @@ export function tcFrames(s: string, fps: number): number {
 }
 
 function edl(text: string, hint?: number): Parsed {
-  const events: { track: string; src: string; rin: string; rout: string; name: string }[] = [];
+  const events: { track: string; src: string; rin: string; rout: string; name: string; path?: string }[] = [];
   let title = "";
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -390,6 +464,10 @@ function edl(text: string, hint?: number): Parsed {
     if (t) title = t[1].trim();
     const name = /^\*\s*FROM CLIP NAME:\s*(.*)$/i.exec(line);
     if (name && events.length) events[events.length - 1].name = name[1].trim();
+    // the file, where the editor wrote it: "* SOURCE FILE: /path", "* FROM CLIP: /path" (or a path as the clip name)
+    const file = /^\*\s*(?:SOURCE FILE|FROM CLIP(?: NAME)?):\s*(.*)$/i.exec(line);
+    const path = file && filePath(file[1]);
+    if (path && events.length) events[events.length - 1].path = path;
     const tok = line.split(/\s+/);
     const tcs = tok.filter((x) => /^\d\d:\d\d:\d\d[:;.]\d\d$/.test(x));
     if (/^\d{1,6}$/.test(tok[0]) && tcs.length === 4) {
@@ -404,11 +482,19 @@ function edl(text: string, hint?: number): Parsed {
   const hour = Math.round(fps) * 3600;
   const zero = Math.floor(first / hour) * hour; // the timeline starts on the hour (00:00:00:00 or 01:00:00:00)
   const lanes = new Map<string, Lane>();
+  // an event without a file comment plays the file another event of the same clip names
+  const named = new Map(events.filter((e) => e.path).map((e) => [e.name, e.path!]));
   for (const e of events) {
     const id = /V/i.test(e.track) ? "V1" : `A${/\d+/.exec(e.track)?.[0] ?? 1}`;
     if (!lanes.has(id)) lanes.set(id, { kind: id[0] as "V" | "A", name: "", clips: [] });
     const rec = tcFrames(e.rin, fps) - zero;
-    lanes.get(id)!.clips.push({ rec, len: tcFrames(e.rout, fps) - zero - rec, label: e.name, detail: `source ${e.src}` });
+    const path = e.path ?? named.get(e.name);
+    // ponytail: an EDL doesn't say where its file's timecode starts: taken as 00:00:00:00 (a file that starts later
+    // plays silent from here, past its end); the file's first timecode from the file itself if that matters
+    lanes.get(id)!.clips.push({
+      rec, len: tcFrames(e.rout, fps) - zero - rec, label: e.name, detail: `source ${e.src}`,
+      ...(path ? { path, ins: tcFrames(e.src, fps) / fps } : {}),
+    });
   }
   return {
     name: title,
