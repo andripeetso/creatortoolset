@@ -96,8 +96,8 @@ export function useMacRecorderState(): NonNullable<ThisMacState["recorder"]> | f
 
 /**
  * What a message box's mic does in this window: `record` as on the web (a browser, a Mac app without dictation or too
- * old to say whether it is set up, or one that has not answered yet), `none` when the Mac's dictation is set up and on (or the earlier dictation app types for
- * them) so the talk key does it, `setup` when a click opens dictation's setup page. After that click, `watch()` asks the
+ * old to say whether it is set up, or one that has not answered yet), `none` when the Mac's dictation is set up and on,
+ * so the talk key does it, `setup` when a click opens dictation's setup page. After that click, `watch()` asks the
  * app again every 3 s until it is set up.
  */
 export function useMicMode(): { mic: "record" | "none" | "setup"; watch: () => void } {
@@ -112,7 +112,7 @@ export function useMicMode(): { mic: "record" | "none" | "setup"; watch: () => v
     return () => window.removeEventListener("mac-this", handle);
   }, []);
   // an older Mac app (no setUp) still has the four-step guide: its mic records as before
-  const mic = !d || d.setUp === undefined ? "record" : d.paused || (d.on && d.setUp) ? "none" : "setup";
+  const mic = !d || d.setUp === undefined ? "record" : d.on && d.setUp ? "none" : "setup";
   useEffect(() => {
     if (!watching || mic !== "setup") return;
     const timer = setInterval(() => tell("state"), 3000);

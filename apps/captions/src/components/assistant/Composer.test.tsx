@@ -58,10 +58,11 @@ it("in a Mac app too old to say whether dictation is set up, the mic records, as
 it("in the Mac app with dictation set up and on, there is no mic: the talk key types into the box", () => {
   render({ setUp: true });
   expect(mic()).toBeNull();
-  // the earlier dictation app is open and types for them
-  act(() => root!.unmount());
+});
+
+it("in the Mac app not set up while the earlier dictation app is open, the mic still opens dictation's setup", () => {
   render({ setUp: false, paused: "Off while your earlier dictation app is open" });
-  expect(mic()).toBeNull();
+  expect(mic()?.getAttribute("aria-label")).toBe("Dictation, in any app");
 });
 
 it("in the Mac app not set up (or switched off), a click opens dictation's setup", () => {

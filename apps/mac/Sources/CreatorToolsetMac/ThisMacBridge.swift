@@ -94,7 +94,6 @@ extension Shell {
 
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,
     /// shortcut (opens the recording shortcut's chooser, RecordShortcut.swift), limits:on|off (Plan limits reading),
-    /// page:calm|busy (SetupGuide.page),
     /// dictation:<what>:<value> (Settings → AI → Voice → Dictation).
     func thisMacCommand(_ what: String) {
         let parts = what.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
@@ -110,8 +109,7 @@ extension Shell {
         case "forget": forgetThisMac()
         case "shortcut": RecordShortcut.shared.choose()
         case "limits": UserDefaults.standard.set(arg == "on", forKey: limitsReadingKey)
-        // page:calm|busy: the site's own setup and welcome are done (or back), for dictation's one-time offer
-        case "page": SetupGuide.page(calm: arg == "calm")
+        case "page": break  // an older page's page:calm|busy: nothing opens by itself
         // dictation:<what>:<value> (Dictation.swift `command`)
         case "dictation": Dictation.shared.command(arg, parts.count > 2 ? parts[2] : "")
         // recorder:<what>:<value> (Settings → Tools → Screen Recorder, RecordTypes.swift RecordPrefs)
