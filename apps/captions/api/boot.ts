@@ -59,6 +59,7 @@ import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
 import { setupApp } from "./setup";
 import { workPrefsApp } from "./work-prefs";
+import { voicePrefsApp } from "./voice-prefs";
 import { captionLayoutApp } from "./caption-layout";
 import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPluginsList, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
 import { serverPlugins } from "./plugins.gen";
@@ -363,6 +364,8 @@ app.route("/api/my-keys", myKeysApp);
 app.route("/api/setup", setupApp);
 // how a person wants to work: in the app, in their own AI, or both (contracts/work-prefs.ts)
 app.route("/api/work-prefs", workPrefsApp);
+// Settings → AI → Voice: languages and the speech-to-text engine per use (contracts/voice.ts)
+app.route("/api/voice-prefs", voicePrefsApp);
 app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init)), serverPlugins));

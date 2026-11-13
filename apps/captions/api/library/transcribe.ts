@@ -3,7 +3,8 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
-import { deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
+import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
+import { speechFor } from "../lib/speech";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
 import { ffmpegTo } from "./media/run";
@@ -44,12 +45,9 @@ export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]
 
 /** What transcribes for `actor`: their key, else this computer when the server is on it. Throws NeedsKey when there is neither. */
 export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; key: string } | { provider: "device" } {
-  const dg = keyFor(actor, "DEEPGRAM_API_KEY");
-  if (!dg.missing) return { provider: "deepgram", ...dg };
-  const oa = keyFor(actor, "OPENAI_API_KEY");
-  if (!oa.missing) return { provider: "openai", ...oa };
-  if (deviceTranscribes()) return { provider: "device" };
-  throw new NeedsKey("Add your Deepgram (or OpenAI) key in Settings → API keys");
+  const s = speechFor(actor, "transcripts");
+  if ("needs" in s) throw new NeedsKey(s.needs);
+  return s.engine === "local" ? { provider: "device" } : { provider: s.engine, key: s.key };
 }
 
 /** Words into segments: one per utterance when Deepgram marks them, else a new one after a pause or 30 words. */

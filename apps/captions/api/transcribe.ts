@@ -4,6 +4,7 @@ import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
+import { readVoicePrefs } from "./lib/speech";
 import { captioning } from "./projects";
 
 /**
@@ -112,27 +113,34 @@ export function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
 const DG_URL = "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&utterances=true";
 
 /**
- * Asked in English first; a window English hears next to nothing of (under `SPARSE_WPS` words a second) is asked again
- * with the language detected, and keeps whichever heard more. Estonian asked as English came back as no words at all;
- * detection alone called a quiet English clip Spanish, so it is never the first ask.
+ * Asked first in the person's language (Settings → AI → Voice: their one language, else English when it is one of theirs
+ * or none is set, else detected); a window that ask hears next to nothing of (under `SPARSE_WPS` words a second) is asked
+ * again with the language detected, and keeps whichever heard more. Estonian asked as English came back as no words at
+ * all; detection alone called a quiet English clip Spanish, so it is not the first ask while English may be spoken.
  */
 export const SPARSE_WPS = 0.5;
 
 type Heard = { words: Word[]; language: string } | { error: string; status: number };
 
-/** `fillers`: keep "um", "uh". The language is the one heard ("en" unless detection heard more). */
-async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false): Promise<Heard> {
-  const english = await deepgramAsk(key, audio, fillers, false);
-  if ("error" in english) return english;
+/** The first ask for these languages: a code, or "detect". */
+export const firstAsk = (languages: string[]): string =>
+  languages.length === 1 ? languages[0] : !languages.length || languages.includes("en") ? "en" : "detect";
+
+/** `fillers`: keep "um", "uh". The language is the one heard. */
+async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false, languages: string[] = []): Promise<Heard> {
+  const ask = firstAsk(languages);
+  const first = await deepgramAsk(key, audio, fillers, ask);
+  if ("error" in first || ask === "detect") return first;
   const wav = parseWav(new Uint8Array(audio));
   const seconds = wav ? wav.pcm.length / (wav.sampleRate * 2) : Math.max(0, audio.byteLength - 44) / 32000;
-  if (english.words.length >= seconds * SPARSE_WPS) return english;
-  const other = await deepgramAsk(key, audio, fillers, true);
-  return "error" in other || other.words.length <= english.words.length ? english : other;
+  if (first.words.length >= seconds * SPARSE_WPS) return first;
+  const other = await deepgramAsk(key, audio, fillers, "detect");
+  return "error" in other || other.words.length <= first.words.length ? first : other;
 }
 
-async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, detect: boolean): Promise<Heard> {
-  const url = DG_URL + (detect ? "&detect_language=true" : "&language=en") + (fillers ? "&filler_words=true" : "");
+async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, ask: string): Promise<Heard> {
+  const detect = ask === "detect";
+  const url = DG_URL + (detect ? "&detect_language=true" : `&language=${ask}`) + (fillers ? "&filler_words=true" : "");
   const resp = await fetch(url, {
     method: "POST",
     headers: {
@@ -180,7 +188,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
       data.results?.channels?.[0]?.alternatives?.[0]?.words ?? [],
       data.results?.utterances,
     ),
-    language: (detect && data.results?.channels?.[0]?.detected_language) || "en",
+    language: detect ? data.results?.channels?.[0]?.detected_language || "en" : ask,
   };
 }
 
@@ -269,8 +277,9 @@ export function mergeOverlappingWindows(
 export async function transcribeWav(
   audio: Uint8Array | ArrayBuffer,
   user: SessionUser,
-  { fillers = false }: { fillers?: boolean } = {},
+  { fillers = false, languages }: { fillers?: boolean; languages?: string[] } = {},
 ): Promise<TranscriptionResult> {
+  const langs = languages?.length ? languages : readVoicePrefs(user.username).languages;
   const route = keyFor(user, "DEEPGRAM_API_KEY");
   if (route.missing) return { error: route.missing, status: 402 };
   const wav = parseWav(new Uint8Array(audio));
@@ -292,7 +301,7 @@ export async function transcribeWav(
       });
     }
     const results = await Promise.all(
-      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers)),
+      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers, langs)),
     );
     const heard: { words: Word[]; language: string }[] = [];
     for (const r of results) {
@@ -305,7 +314,7 @@ export async function transcribeWav(
     for (const h of heard) count.set(h.language, (count.get(h.language) ?? 0) + h.words.length);
     language = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "en";
   } else {
-    const r = await deepgramWords(route.key, audio, fillers);
+    const r = await deepgramWords(route.key, audio, fillers, langs);
     if ("error" in r) return { error: r.error, status: 502 };
     words = r.words;
     language = r.language;
