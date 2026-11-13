@@ -449,6 +449,7 @@ final class SetupGuide: ObservableObject {
             d.command("model", id)
             d.prepareModel()
         case .getStarted:
+            if !d.prefs.on { d.command("on", "1") }  // opened from the site's mic while dictation was off
             Self.done()
             if let sheet = Self.sheet { sheet.sheetParent?.endSheet(sheet) } else { Self.window?.close() }
         }
