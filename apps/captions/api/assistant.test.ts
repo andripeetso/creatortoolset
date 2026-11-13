@@ -10,7 +10,7 @@ process.env.APP_SECRET = "assistant-test-secret";
 
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
-const { mintJobToken, jobTokenUser, revokeJobToken, JOB_TOKEN_MS } = await import("./auth");
+const { mintJobToken, jobTokenUser, revokeJobTokens, JOB_TOKEN_MS } = await import("./auth");
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
@@ -68,7 +68,7 @@ describe("the assistant's job token", () => {
     expect((await app.request("/api/devices", { headers: { authorization: job } })).status).toBe(401);
     expect((await app.request("/api/my-keys/DEEPGRAM_API_KEY", { method: "PUT", ...json({ value: "x" }, { authorization: job }) })).status).toBe(401);
     expect((await app.request("/api/assistant", { headers: { authorization: job } })).status).toBe(401);
-    revokeJobToken(token);
+    revokeJobTokens("turn-1");
   });
 
   it("is refused once it expires or is revoked, and a Full key still works", async () => {
@@ -80,7 +80,7 @@ describe("the assistant's job token", () => {
     expect((await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: `Bearer ${token}` }) })).status).toBe(401);
     vi.useRealTimers();
     const live = mintJobToken("ana", "turn-3");
-    revokeJobToken(live);
+    revokeJobTokens("turn-3");
     expect(jobTokenUser(`Bearer ${live}`)).toBeNull();
     expect((await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: fullKey }) })).status).toBe(200);
   });
@@ -283,7 +283,7 @@ describe("ask_secret and navigate", () => {
     const onDisk = readFileSync(path.join(process.env.DATA_DIR!, "assistant", "ana.json"), "utf-8");
     expect(onDisk).not.toContain("LEAK");
     expect(onDisk).not.toContain("SAVED-key");
-    revokeJobToken(token);
+    revokeJobTokens("turn-secret");
   });
 
   it("navigate takes only a relative path of this app", async () => {
@@ -298,7 +298,7 @@ describe("ask_secret and navigate", () => {
     expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { navigate: string }).navigate).toBe("/workshop/sessions/abc?tab=1");
     await app.request("/api/assistant/navigated", { method: "POST", headers: { cookie } });
     expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { navigate: string | null }).navigate).toBeNull();
-    revokeJobToken(token);
+    revokeJobTokens("turn-nav");
   });
 });
 
@@ -464,7 +464,7 @@ describe("show_video", () => {
 
     const nico = mintJobToken("nico", "turn-show");
     expect(await toolOf(nico, "show_video", { link: id })).toEqual({ error: true, text: "Not found, or not this account's." });
-    revokeJobToken(nico);
+    revokeJobTokens("turn-show");
     expect(await toolOf(newApiKey(ana, "full"), "show_video", { link: id })).toEqual({ error: true, text: "show_video is for the assistant only." });
   });
 });
@@ -593,7 +593,7 @@ describe("a video dropped in the chat", () => {
     // another account's job can't reach ana's file
     const other = mintJobToken("nico", "turn-nico");
     expect((await toolOf(other, "use_file", { file: file.id, to: "review" })).text).toMatch(/isn't here/);
-    revokeJobToken(other);
+    revokeJobTokens("turn-nico");
   });
 
   // with a plug-in loaded that IS the Media Library (LibrarySource.main) the drop is refused by design: assistant-core.test.ts has that case
@@ -620,7 +620,7 @@ describe("a video dropped in the chat", () => {
     expect(again.said).toBe("1 clip added: 1 A-roll");
     // a file on this computer is never copied in: its folder is read in place
     expect((await toolOf(token, "use_file", { path: "/Users/tiny/Movies/take.mov", to: "library" })).text).toMatch(/media_import_folder/);
-    revokeJobToken(token);
+    revokeJobTokens("turn-library");
     SORT_WAIT_S.added = 10;
   });
 });
@@ -648,10 +648,10 @@ describe("a file on this computer, by its path", () => {
     expect((await toNotes()).needs?.some((n) => n.ask_secret?.join() === "DEEPGRAM_API_KEY")).toBe(true);
     delete process.env.CT_MODE;
     const taken = await toNotes();
-    revokeJobToken(nico);
+    revokeJobTokens("turn-nico-path");
     expect(taken.needs).toBeUndefined();
     expect(taken.href).toMatch(/^\//);
     delete process.env.CT_LOCAL;
-    revokeJobToken(token);
+    revokeJobTokens("turn-path");
   });
 });

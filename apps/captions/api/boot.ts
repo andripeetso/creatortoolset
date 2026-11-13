@@ -8,9 +8,9 @@ import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
 import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
-import { enhanceApp } from "./enhance";
+import { enhanceApp, enhancesAtRisk } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
-import { exportsApp } from "./exports";
+import { exportsApp, exportsAtRisk } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
@@ -43,6 +43,8 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
+import { answersAtRisk, leave } from "./lib/mac-claude";
+import { captionJobsAtRisk } from "./captions-job";
 import { sweepAll, uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
@@ -237,6 +239,10 @@ app.get("/api/health", (c) =>
     ok: true,
     environment: environmentOf(),
     uptimeSec: Math.round(process.uptime()),
+    // what a restart now would end, for a deploy to wait on: AI answers that stream straight to an open page (the
+    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances and caption jobs
+    answering: answersAtRisk(),
+    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk(),
     rssMb: Math.round(process.memoryUsage().rss / 1048576),
   }),
 );
@@ -535,5 +541,15 @@ if (env.isProduction) {
   if ("requestTimeout" in server) disableRequestTimeouts(server);
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
-  if (process.env.pm_id !== undefined) process.once("SIGINT", () => server.close(() => process.exit(0)));
+  // The computers' polls end at once and they ask the new process (lib/mac-claude.ts leave).
+  if (process.env.pm_id !== undefined)
+    process.once("SIGINT", () => {
+      leave();
+      server.close(() => process.exit(0));
+    });
+  // A container stop sends SIGTERM, and the first process of a container ignores it unless it handles it: the stop
+  // then waits its 10 s and kills, with the app still taking work it can't finish, and the server is away that much
+  // longer (the computers' relays retry a finished answer for about 20 s). Leave at once: what a restart must not lose
+  // is on disk already (upload parts, replies being written).
+  process.once("SIGTERM", () => process.exit(0));
 }
