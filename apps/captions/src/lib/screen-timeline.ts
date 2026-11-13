@@ -54,14 +54,5 @@ export function dragTrim(trim: { start: number; end: number }, grip: "start" | "
     : { start: trim.start, end: ms(clamp(t, trim.start + 0.5, duration)) };
 }
 
-/** Seconds between the ruler's marks, so that they stand at least 64 px apart. */
-export function rulerStep(pxPerSecond: number): number {
-  return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => s * pxPerSecond >= 64) ?? 1200;
-}
-
-/** m:ss, with tenths when `fine`. */
-export function clock(t: number, fine = false): string {
-  const s = Math.max(0, t);
-  const whole = `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-  return fine ? `${whole}.${Math.floor((s % 1) * 10)}` : whole;
-}
+// the ruler's marks and the clock are the shared time axis's (lib/time-axis.ts)
+export { clock, rulerStep } from "./time-axis";

@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, X } from "lucide-react";
+import { useTimeAxis } from "@/lib/use-time-axis";
 import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
 import {
   editedSpan,
@@ -130,8 +131,6 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(600);
-  const [zoom, setZoom] = useState(1);
   const [editing, setEditing] = useState(false);
   // Slip (Y): drag a clip to play another part of it where it is
   const [tool, setTool] = useState<"select" | "placeholder" | "blade" | "slip">("select");
@@ -159,19 +158,13 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     dragRef.current = d;
     setDragState(d);
   };
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
   const { fps } = view;
   const seconds = Math.max(view.duration / fps, 0.1);
-  const base = Math.max(1, (width - LABEL_W - RIGHT) / seconds);
-  const maxZoom = Math.max(1, (fps * 16) / base); // 16 px a frame at most
-  const pps = base * zoom;
+  // the time axis the app's timelines share (lib/use-time-axis.ts): zoom about the playhead, the wheel and the pinch;
+  // a frame gets 16 px at most
+  const timeNow = useRef(time);
+  timeNow.current = time;
+  const { zoom, maxZoom, pps, zoomTo, zoomBy, follow } = useTimeAxis({ scroller, seconds, left: LABEL_W, right: RIGHT, maxPps: fps * 16, now: () => timeNow.current });
   const x = (frames: number) => (frames / fps) * pps;
   const edit = editing && !!onEdit;
   const editOf = Object.fromEntries((edits ?? []).map((e) => [e.key, e]));
@@ -195,59 +188,13 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     .sort((a, b) => rank(a) - rank(b))
     .map((id) => ({ id, name: view.tracks.find((t) => t.id === id)?.name ?? "NEW LAYER" }));
 
-  // zoom about the playhead, or the middle when it's out of view;
-  // several wheel events can land before a render, so the latest zoom and scroll live in refs
-  const live = useRef({ zoom: 1, base, scroll: null as number | null });
-  const zoomTo = (target: number) => {
-    const el = scroller.current;
-    if (!el) return;
-    const l = live.current;
-    const z = Math.min(Math.max(1, target), Math.max(1, (fps * 16) / l.base));
-    const left = l.scroll ?? el.scrollLeft;
-    const px = LABEL_W + time * l.base * l.zoom - left;
-    const off = px >= LABEL_W && px <= el.clientWidth - 8 ? px : LABEL_W + (el.clientWidth - LABEL_W) / 2;
-    l.scroll = Math.max(0, time * l.base * z - off + LABEL_W);
-    l.zoom = z;
-    setZoom(z);
-  };
-  const zoomBy = (factor: number) => zoomTo(live.current.zoom * factor);
-  const zoomRef = useRef(zoomBy);
-  useLayoutEffect(() => {
-    live.current.base = base;
-    zoomRef.current = zoomBy;
-  });
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (el && live.current.scroll !== null) el.scrollLeft = live.current.scroll;
-    live.current.scroll = null;
-  }, [zoom]);
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    const wheel = (e: WheelEvent) => {
-      if (e.altKey || (e.ctrlKey && !e.metaKey)) { // ⌥ + scroll, or a pinch (the browser sends it as Ctrl)
-        e.preventDefault();
-        zoomRef.current(Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) * 0.006));
-      } else if (e.metaKey) { // ⌘ + scroll: left and right
-        e.preventDefault();
-        el.scrollLeft += e.deltaY + e.deltaX;
-      }
-    };
-    el.addEventListener("wheel", wheel, { passive: false });
-    return () => el.removeEventListener("wheel", wheel);
-  }, []);
-
   // keep the playhead in view while it plays past the edge (only when it moves: a zoom keeps its own spot)
   const lastTime = useRef(time);
   useEffect(() => {
-    const el = scroller.current;
     if (lastTime.current === time) return;
     lastTime.current = time;
-    if (!el || zoom <= 1 || drag) return;
-    const px = LABEL_W + time * pps;
-    if (px < el.scrollLeft + LABEL_W || px > el.scrollLeft + el.clientWidth - 24) {
-      el.scrollLeft = Math.max(0, px - LABEL_W - el.clientWidth / 3);
-    }
+    if (zoom > 1 && !drag) follow(time);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follow reads the axis as it is now
   }, [time, pps, zoom, drag]);
 
   const removeToggle = (list: TimelineItem[]) => {

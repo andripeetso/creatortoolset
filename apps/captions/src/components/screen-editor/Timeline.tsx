@@ -4,6 +4,8 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { trimOf, type ScreenEvents, type ScreenLook, type Zoom } from "@/lib/screen-recording";
 import { clock, dragTrim, dragZoom, rulerStep, zoomSlot, type ZoomGrip } from "@/lib/screen-timeline";
+import { sliderToZoom, zoomToSlider } from "@/lib/time-axis";
+import { useTimeAxis } from "@/lib/use-time-axis";
 import type { Player } from "./usePlayer";
 
 /** Follows a press until it lifts: `move` gets the distance from where it began, `end` whether it moved at all. */
@@ -33,7 +35,11 @@ function drag(e: ReactPointerEvent<HTMLElement>, move: (dx: number, clientX: num
  * Under the picture: play, the clock, undo, and the recording as two tracks. The top one is the recording itself:
  * drag anywhere on it to move through it, drag its ends to cut the start and the end off. The lower one holds the
  * zooms: press an empty stretch to add one, drag one to move it, drag its ends to make it longer or shorter.
+ * The time axis is the one Review's timeline has (lib/use-time-axis.ts): the whole recording fits at first; the slider,
+ * = and -, ⌥ + scroll and a pinch zoom about the playhead, ⌘ + scroll goes left and right, \ fits it again.
  */
+/** The scroller's padding each side of the tracks (px-1.5). */
+const PAD = 6;
 export function Timeline({
   player,
   duration,
@@ -68,28 +74,22 @@ export function Timeline({
   const inner = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);
   const label = useRef<HTMLSpanElement>(null);
-  const [width, setWidth] = useState(0);
-  const [base, setBase] = useState(0);
-  const [factor, setFactor] = useState(1);
   const [ghost, setGhost] = useState<{ start: number; end: number } | null>(null);
   const trim = trimOf(look, duration);
-  const perSecond = duration > 0 ? width / duration : 0;
+  // a second gets 240 px at most; zooming is only offered when it can get wider than it already is
+  const axis = useTimeAxis({ scroller, seconds: duration, left: PAD, right: PAD, maxPps: 240, now: player.time });
+  const perSecond = duration > 0 ? axis.pps : 0;
   const x = (t: number) => t * perSecond;
-  // stretching the timeline is only offered when a second can get wider than it already is
-  const maxFactor = base > 0 && duration > 0 ? Math.min(40, (240 * duration) / base) : 1;
 
+  // = and - zoom, \ fits the recording again; a box being typed in keeps its keys
   useEffect(() => {
-    const el = inner.current;
-    const outer = scroller.current;
-    if (!el || !outer) return;
-    const watch = new ResizeObserver(() => {
-      setWidth(el.clientWidth);
-      setBase(outer.clientWidth - 12);
-    });
-    watch.observe(el);
-    watch.observe(outer);
-    return () => watch.disconnect();
-  }, []);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable=true]")) return;
+      if (axis.key(e)) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   // the playhead and the clock follow the player without a render
   useEffect(() => {
@@ -97,16 +97,13 @@ export function Timeline({
       if (head.current) head.current.style.transform = `translateX(${t * perSecond}px)`;
       const text = `${clock(t, duration < 60)} / ${clock(duration, duration < 60)}`;
       if (label.current && label.current.textContent !== text) label.current.textContent = text;
-      // a stretched timeline scrolls along while it plays
-      const box = scroller.current;
-      if (box && player.playing && box.scrollWidth > box.clientWidth) {
-        const at = t * perSecond;
-        if (at < box.scrollLeft || at > box.scrollLeft + box.clientWidth - 40) box.scrollLeft = Math.max(0, at - 80);
-      }
+      // a zoomed timeline scrolls along while it plays
+      if (player.playing && axis.zoom > 1) axis.follow(t);
     };
     show(player.time());
     return player.onTime(show);
-  }, [player, perSecond, duration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follow reads the axis as it is now
+  }, [player, perSecond, duration, axis.zoom]);
 
   const timeAt = (clientX: number) => {
     const r = inner.current?.getBoundingClientRect();
@@ -180,16 +177,16 @@ export function Timeline({
           </button>
         </div>
         <div className="flex items-center justify-end gap-2">
-          {maxFactor > 1.5 && <MoveHorizontal className="h-3.5 w-3.5 text-zinc-500" aria-hidden />}
-          {maxFactor > 1.5 && (
+          {axis.maxZoom > 1.5 && <MoveHorizontal className="h-3.5 w-3.5 text-zinc-500" aria-hidden />}
+          {axis.maxZoom > 1.5 && (
             <Slider
-              aria-label="Stretch the timeline"
-              title="Stretch the timeline"
-              value={[factor]}
-              min={1}
-              max={maxFactor}
-              step={0.1}
-              onValueChange={([v]) => setFactor(v)}
+              aria-label="Zoom the timeline"
+              title="Zoom the timeline (= and -, ⌥ + scroll or a pinch; \ fits the recording)"
+              value={[zoomToSlider(axis.zoom, axis.maxZoom)]}
+              min={0}
+              max={1000}
+              step={1}
+              onValueChange={([v]) => axis.zoomTo(sliderToZoom(v, axis.maxZoom))}
               className="w-28 [&_[data-slot=slider-range]]:bg-zinc-500 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-zinc-400 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-zinc-800"
             />
           )}
@@ -228,7 +225,7 @@ export function Timeline({
         </div>
 
         <div ref={scroller} className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden px-1.5">
-          <div ref={inner} className="relative" style={{ width: `${factor * 100}%` }}>
+          <div ref={inner} className="relative" style={{ width: duration > 0 ? duration * axis.pps : "100%" }}>
             {/* the ruler: press or drag to move through the recording */}
             <div className="relative h-5 cursor-pointer overflow-hidden" onPointerDown={scrub}>
               {marks.at.map((t) => (
