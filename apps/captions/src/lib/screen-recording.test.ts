@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { cameraCut, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -348,13 +348,27 @@ describe("screen recording", () => {
   });
 
   it("puts a narrow window right beside the camera, the pair centred, the camera as tall as the window", () => {
-    const { screen, camera } = sideRects(1920, 1080, 54, 0.38, 1);
+    const { screen, camera } = sideRects(1920, 1080, 54, { split: 0.38 }, 1);
     expect(screen.w).toBeCloseTo(1080 - 108);
     expect(camera.x - (screen.x + screen.w)).toBeCloseTo(54);
     expect(screen.x - 0).toBeCloseTo(1920 - (camera.x + camera.w));
     expect(camera.h).toBeCloseTo(screen.h);
     // a wider camera takes more of the width
-    expect(sideRects(1920, 1080, 54, 0.5, 1).camera.w).toBeGreaterThan(camera.w);
+    expect(sideRects(1920, 1080, 54, { split: 0.5 }, 1).camera.w).toBeGreaterThan(camera.w);
+    // closer, and the camera on the left
+    const near = sideRects(1920, 1080, 54, { gap: 0.01, left: true }, 1);
+    expect(near.screen.x - (near.camera.x + near.camera.w)).toBeCloseTo(10.8);
+    expect(near.camera.x).toBeLessThan(near.screen.x);
+  });
+
+  it("cuts the camera where it is aimed, inside the picture, mirrored as seen", () => {
+    const tall = { x: 0, y: 0, w: 500, h: 1000 };
+    const cam = { ...defaultCamera(), x: 0 };
+    expect(cameraCut(1920, 1080, tall, cam, false).sx).toBe(0);
+    expect(cameraCut(1920, 1080, tall, cam, true).sx).toBeCloseTo(1920 - 540);
+    const close = cameraCut(1920, 1080, tall, { ...cam, x: 0.5, zoom: 2 }, false);
+    expect(close.sw).toBeCloseTo(270);
+    expect(close.sx).toBeCloseTo(960 - 135);
   });
 
   it("draws no camera when the layout is hidden", () => {

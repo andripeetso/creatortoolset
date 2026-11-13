@@ -91,6 +91,10 @@ export type CameraLook = {
   /** Where in the camera's picture the cut is centred, 0–1, as seen (a mirrored camera's left is its left). Without it: the middle. */
   x?: number;
   y?: number;
+  /** Beside the screen: the space between the two, as a part of the frame's short side (0–0.1). Without it: the padding, at least 1.2%. */
+  gap?: number;
+  /** Beside the screen: the camera on the left. */
+  left?: boolean;
 };
 
 export function defaultCamera(): CameraLook {
@@ -474,7 +478,7 @@ const stops = new WeakMap<Zoom[], { key: string; clicks: ScreenEvents["clicks"];
  * What one view holds is worked out on the frame an export has, so a preview of any size moves at the same presses.
  */
 function viewStops(look: ScreenLook, clicks: ScreenEvents["clicks"], g: Geometry): Stop[] {
-  const key = [look.follow, look.zoomFit, look.fill, look.shape, look.padding, g.srcW / g.srcH, g.camera?.layout === "side" && (g.camera.split ?? 0.38)].join();
+  const key = [look.follow, look.zoomFit, look.fill, look.shape, look.padding, g.srcW / g.srcH, g.camera?.layout === "side" && [g.camera.split, g.camera.gap, g.camera.left].join("/")].join();
   const had = stops.get(look.zooms);
   if (had && had.key === key && had.clicks === clicks) return had.stops;
   const out = outputSize(look.shape, g.srcW, g.srcH, false);
@@ -576,21 +580,30 @@ export function outputSize(shape: FrameShape, srcW: number, srcH: number, uhd: b
 export type Rect = { x: number; y: number; w: number; h: number };
 
 /**
- * Side by side: the screen on the left, the camera on the right taking `split` of the width (less the gap). With the
- * screen's shape (`srcRatio`) the screen is fitted into its part, the camera gets the same height, and the two are
- * centred together, so they sit a gap apart whatever the window's shape; without it (a frame filled by the screen)
- * both take the full height.
+ * Side by side: the screen on one side, the camera on the other (right unless `left`) taking `split` of the width (less
+ * the gap). With the screen's shape (`srcRatio`) the screen is fitted into its part, the camera gets the same height,
+ * and the two are centred together, so they sit a gap apart whatever the window's shape; without it (a frame filled by
+ * the screen) both take the full height.
  */
-export function sideRects(outW: number, outH: number, pad: number, split = 0.38, srcRatio?: number): { screen: Rect; camera: Rect } {
-  const gap = Math.max(pad, Math.min(outW, outH) * 0.012);
+export function sideRects(
+  outW: number,
+  outH: number,
+  pad: number,
+  cam: Pick<CameraLook, "split" | "gap" | "left"> = {},
+  srcRatio?: number,
+): { screen: Rect; camera: Rect } {
+  const short = Math.min(outW, outH);
+  const gap = cam.gap !== undefined ? Math.min(0.1, Math.max(0, cam.gap)) * short : Math.max(pad, short * 0.012);
   const W = outW - 2 * pad - gap;
   const H = outH - 2 * pad;
-  const cw = W * split;
+  const cw = W * (cam.split ?? 0.38);
   const w = srcRatio ? Math.min(W - cw, H * srcRatio) : W - cw;
   const h = srcRatio ? w / srcRatio : H;
   const x = (outW - w - gap - cw) / 2;
   const y = (outH - h) / 2;
-  return { screen: { x, y, w, h }, camera: { x: x + w + gap, y, w: cw, h } };
+  return cam.left
+    ? { camera: { x, y, w: cw, h }, screen: { x: x + cw + gap, y, w, h } }
+    : { screen: { x, y, w, h }, camera: { x: x + w + gap, y, w: cw, h } };
 }
 
 /** The bubble's square, in its corner with a margin of 4% of the short side. */
@@ -717,7 +730,7 @@ function restBox(look: ScreenLook, srcRatio: number, outW: number, outH: number,
   const filled = look.fill && look.shape !== "source";
   const inner: Rect =
     camera?.layout === "side"
-      ? sideRects(outW, outH, pad, camera.split, filled ? undefined : srcRatio).screen
+      ? sideRects(outW, outH, pad, camera, filled ? undefined : srcRatio).screen
       : { x: pad, y: pad, w: outW - 2 * pad, h: outH - 2 * pad };
   if (look.fill && look.shape !== "source") return { inner, box: inner };
   const w = Math.min(inner.w, inner.h * srcRatio);
@@ -838,6 +851,39 @@ function drawShadow(ctx: CanvasRenderingContext2D, r: Rect, exact: number, blur:
 }
 
 /**
+ * The part of a camera picture `camW`×`camH` shown in `r`: the most of it in r's shape, `cam.zoom` closer, centred where
+ * `cam.x`/`cam.y` aim and kept inside the picture. x is as seen, so a mirrored camera is cut from the other side.
+ */
+export function cameraCut(camW: number, camH: number, r: Rect, cam: CameraLook | undefined, mirror: boolean) {
+  const ratio = r.w / r.h;
+  const zoom = Math.min(3, Math.max(1, cam?.zoom ?? 1));
+  const sw = Math.min(camW, camH * ratio) / zoom;
+  const sh = sw / ratio;
+  const fx = cam?.x ?? 0.5;
+  const sx = Math.min(camW - sw, Math.max(0, (mirror ? 1 - fx : fx) * camW - sw / 2));
+  const sy = Math.min(camH - sh, Math.max(0, (cam?.y ?? 0.5) * camH - sh / 2));
+  return { sx, sy, sw, sh };
+}
+
+/**
+ * Where the camera is drawn in the output, or null where it is not (hidden). `srcRatio` is the recording's width over
+ * its height. The bubble's corner rounding comes with it.
+ */
+export function cameraPlace(look: ScreenLook, cam: CameraLook, outW: number, outH: number, srcRatio: number): { r: Rect; radius: number } | null {
+  const short = Math.min(outW, outH);
+  if (cam.layout === "only") return { r: { x: 0, y: 0, w: outW, h: outH }, radius: 0 };
+  if (cam.layout === "side") {
+    const filled = look.fill && look.shape !== "source";
+    return { r: sideRects(outW, outH, look.padding * short, cam, filled ? undefined : srcRatio).camera, radius: look.radius * short };
+  }
+  if (cam.layout === "bubble") {
+    const r = bubbleRect(cam, outW, outH);
+    return { r, radius: cam.shape === "circle" ? r.w / 2 : r.w * 0.2 };
+  }
+  return null;
+}
+
+/**
  * The camera in a rect: the centred crop that fills it (aspect fill), clipped to a rounded rect (a radius of half the
  * side makes a circle), optionally mirrored, with a soft shadow and a thin light border.
  */
@@ -847,14 +893,7 @@ function drawCamera(
   r: Rect,
   o: { radius: number; mirror: boolean; short: number; shadow: boolean; border: boolean; cam?: CameraLook },
 ) {
-  const ratio = r.w / r.h;
-  const zoom = Math.min(3, Math.max(1, o.cam?.zoom ?? 1));
-  const sw = Math.min(camera.width, camera.height * ratio) / zoom;
-  const sh = sw / ratio;
-  // the cut, where it is aimed; x is as seen, so a mirrored camera is cut from the other side
-  const fx = o.cam?.x ?? 0.5;
-  const sx = Math.min(camera.width - sw, Math.max(0, (o.mirror ? 1 - fx : fx) * camera.width - sw / 2));
-  const sy = Math.min(camera.height - sh, Math.max(0, (o.cam?.y ?? 0.5) * camera.height - sh / 2));
+  const { sx, sy, sw, sh } = cameraCut(camera.width, camera.height, r, o.cam, o.mirror);
   if (o.shadow) {
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.45)";
@@ -914,7 +953,6 @@ export function drawFrame(
 ) {
   const { width: outW, height: outH } = ctx.canvas;
   const short = Math.min(outW, outH);
-  const pad = look.padding * short;
   const cam = camera ? (look.camera ?? defaultCamera()) : null;
   if (look.background !== "none") {
     const [from, to] = backgroundStops(look);
@@ -996,14 +1034,7 @@ export function drawFrame(
   ctx.restore();
 
   if (camera && cam && (cam.layout === "bubble" || cam.layout === "side")) {
-    if (cam.layout === "side") {
-      const filled = look.fill && look.shape !== "source";
-      const r = sideRects(outW, outH, pad, cam.split, filled ? undefined : srcW / srcH).camera;
-      drawCamera(ctx, camera, r, { radius: look.radius * short, mirror: cam.mirror, short, shadow: true, border: true, cam });
-    } else {
-      const r = bubbleRect(cam, outW, outH);
-      const round = cam.shape === "circle" ? r.w / 2 : r.w * 0.2;
-      drawCamera(ctx, camera, r, { radius: round, mirror: cam.mirror, short, shadow: true, border: true, cam });
-    }
+    const at = cameraPlace(look, cam, outW, outH, srcW / srcH);
+    if (at) drawCamera(ctx, camera, at.r, { radius: at.radius, mirror: cam.mirror, short, shadow: true, border: true, cam });
   }
 }
