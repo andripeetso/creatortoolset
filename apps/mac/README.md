@@ -326,6 +326,11 @@ one at most once a minute). A crash of the app itself is macOS's report in
   where it goes and everything is written in that folder; the page hears how far it is (`mac-alpha` events) and its
   Stop ends it (`record-alpha-stop`). `target=_blank`, `window.open` and links to other sites open in the default
   browser.
+- **Local files** (`ctlocal://`, `ProjectScheme.swift`): `ctlocal://<recording>/<file>` serves a screen recording's
+  files to its editor, with ranges, several requests at once. `ctlocal://media/<base64url of a path>` serves an edit's
+  original video and sound files (mov, mp4, m4v, mxf, wav, aif, aiff, m4a, mp3, flac, caf) to Review's player, but
+  only from folders you chose in the app's own open panel, which the page asks for with `{ask: folder}` on its
+  `mediaAccess` message handler; any other path gets 403, 404 or 415 and no contents (`MediaFiles.swift`).
 - Drag and drop: a drop zone on the page gets the files as on the web. A file dropped
   anywhere else is ignored, so it can't replace the page.
 - The site's `confirm` and `prompt` show as Mac dialogs; WebKit would otherwise show nothing.
@@ -502,7 +507,8 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 - The site's API, with the window's own cookies from WebKit's store. The app reads them to
   make the request and does not keep them.
 - `UserDefaults`: the servers and the one open, the server's port, the AI-on flag, this Mac's device
-  id per site, and the ids of notes already shown (random ids, no content).
+  id per site, the ids of notes already shown (random ids, no content), and the folders whose original media files
+  the page may play (`mediaFolders`).
 - With the server: its data folder and log (see "The server on this Mac"), its `APP_SECRET` and, once you set one,
   the owner's password in the Keychain; the data folder's path, the old copy after a move, and whether other
   devices may connect, in `UserDefaults`.

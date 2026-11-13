@@ -160,6 +160,8 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
 
 /** Who each running job is for and its project's name, for Home (api/activity.ts). */
 const started = new Map<string, { owner: string; name: string }>();
+/** Caption jobs a restart of the server would drop: a deploy waits for 0 (/api/health). */
+export const captionJobsAtRisk = (): number => started.size;
 export const captioningWork = (username: string) => [...started].filter(([, j]) => j.owner === username).map(([id, j]) => ({ id, name: j.name }));
 
 /** Starts the captions for a project just made from a file; the chat hears how it ended. `name` is the project's. */

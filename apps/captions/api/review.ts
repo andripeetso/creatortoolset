@@ -37,7 +37,7 @@ import { deleteAssets } from "./library/trash";
 import { emitEvent } from "./lib/events";
 import { announceSoon } from "./lib/announce-soon";
 import { announce } from "./lib/sync";
-import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, type TimelineView } from "../contracts/timeline-import";
+import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
 
 export { sendFile };
@@ -132,6 +132,8 @@ interface Version {
   timelineFile?: string;
   /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. */
   edit?: { project: string; draft: string };
+  /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. */
+  draft?: { edit: string; name: string };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
@@ -907,6 +909,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       timeline: !!v.timelineFile,
       ...(manage && v.timelineFile ? { timelineFile: v.timelineFile } : {}),
       ...(manage && v.edit ? { edit: v.edit } : {}),
+      ...(manage && v.draft ? { draft: v.draft } : {}),
       ...(manage && v.source ? { source: v.source } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
@@ -1028,7 +1031,7 @@ export function fileVideo(id: string, projectId: string): Promise<Meta | null> {
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; edit?: { project: string; draft: string }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1067,6 +1070,7 @@ export async function addVersion(
       progress: 0.02,
       ...(options.relay ? { relay: { ...options.relay, bytes: v.bytes } } : {}),
       ...(v.edit ? { edit: v.edit } : {}),
+      ...(v.draft ? { draft: v.draft } : {}),
       ...(v.source ? { source: v.source } : {}),
       createdAt: now,
     });
@@ -1329,7 +1333,7 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   const n = Number(c.req.param("n"));
   const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
   if (!v || !version) return c.json({ error: "Not found" }, 404);
-  if (version.edit) return c.json({ error: "An AI edit has its own timeline" }, 409);
+  if (version.edit || version.draft) return c.json({ error: "An AI edit has its own timeline" }, 409);
   const name = cleanText(c.req.query("name"), 160) || "timeline";
   // refuse on the declared length before any of the body is read
   if (Number(c.req.header("content-length") ?? 0) > MAX_TIMELINE_BYTES) {
@@ -1347,6 +1351,20 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   await rename(tmp, timelinePath(v.meta.id, n));
   const meta = await setVersion(v.meta.id, n, { timelineFile: name });
   return meta ? c.json(publicAsset(meta, true)) : c.json({ error: "Not found" }, 404);
+});
+
+/** Where an imported timeline's files are on the editor's computer ({ [src]: path }): managers only, never on a link
+ *  (the paths are private). Review plays the edits from them in the Mac app. 404 without an imported timeline. */
+reviewApp.get("/assets/:id/v/:n/timeline/sources", async (c) => {
+  const v = await viewer(c);
+  const version = v?.manage ? v.meta.versions.find((x) => x.n === Number(c.req.param("n"))) : undefined;
+  if (!v || !version?.timelineFile || version.edit || VIEW_FILE.test(version.timelineFile)) return c.json({ error: "Not found" }, 404);
+  try {
+    const text = await readFile(timelinePath(v.meta.id, version.n), "utf-8");
+    return c.json(timelineSources(version.timelineFile, text, version.fps || undefined), 200, { "Cache-Control": "no-store" });
+  } catch {
+    return c.json({ error: "Not found" }, 404);
+  }
 });
 
 /** A screen recording's pointer log (`events`, once, from the Mac app) or the look picked for it (`look`, on every change). */

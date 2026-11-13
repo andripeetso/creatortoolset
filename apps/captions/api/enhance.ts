@@ -154,6 +154,8 @@ const apiCalls = new Map<string, AbortController>();
 export const cancelled = new Set<string>();
 const queue: string[] = [];
 let running = 0;
+/** Runs a restart of the server would end (reconcileInterrupted fails them): a deploy waits for 0 (/api/health). */
+export const enhancesAtRisk = (): number => running + queue.length;
 /** A plug-in engine's passes waiting for or on its own worker (out of `active`), as their saves say. ponytail: a restart forgets them until they next save. */
 const away = new Map<string, Meta>();
 /** This account's files being enhanced, here or by a plug-in engine's worker, for Home (api/activity.ts). */

@@ -148,6 +148,31 @@ export async function saveDraft(id: string, name: string, d: DraftFile): Promise
   await writeJsonAtomic(cur, d);
 }
 
+/**
+ * The timeline a Review version was rendered from (filed/<video>.<n>.json): what that version's timeline in Review
+ * names with its keys, so edits made there are cut into this timeline and no later one.
+ */
+export interface FiledCut {
+  variant: string;
+  timeline: Timeline;
+}
+const filedPath = (id: string, assetId: string, n: number) => path.join(editDir(id), "filed", `${assetId}.${n}.json`);
+const FILED_ASSET = /^[\w-]{1,64}$/;
+
+export async function saveFiled(id: string, assetId: string, n: number, cut: FiledCut): Promise<void> {
+  await mkdir(path.dirname(filedPath(id, assetId, n)), { recursive: true });
+  await writeJsonAtomic(filedPath(id, assetId, n), cut);
+}
+
+export function readFiled(id: string, assetId: string, n: number): FiledCut | null {
+  if (!FILED_ASSET.test(assetId) || !Number.isInteger(n) || n < 1) return null;
+  try {
+    return JSON.parse(readFileSync(filedPath(id, assetId, n), "utf8")) as FiledCut;
+  } catch {
+    return null;
+  }
+}
+
 /** The names of the edit's drafts, in order. */
 export function draftNames(id: string): string[] {
   try {

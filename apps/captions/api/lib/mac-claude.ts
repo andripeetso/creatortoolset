@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
 import { EDITOR_HINT } from "../../contracts/devices";
 import { limitLine, limitMessage } from "../../contracts/plans";
-import { env } from "./env";
+import { env, keepsOverRestart } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
 import { noteCallOutcome } from "./providers";
@@ -20,6 +21,13 @@ import { noteCallOutcome } from "./providers";
  * it has polled in the last 40 s (paused = it stops). What a person waits on goes
  * first; background work (deep research) waits up to 10 min and takes at most 2
  * of a Mac's 4.
+ *
+ * A restart of this server (a deploy) must not lose an answer the Mac is still writing. A caller that can take its
+ * answer up again says so (MacOpts.keep): its request is then also kept on disk from the moment a Mac claims it
+ * (DATA_DIR/mac-claude-open, never the prompt, a file or a token). The next process gives it back to that caller
+ * (onAdopt) when the Mac's next post about it arrives (adoptKept), not at boot: a deploy's reload runs the old and
+ * the new process side by side for some seconds, and the old one may still be answering it. The Mac notices nothing.
+ * A request nobody keeps is gone with the process, as before: the Mac's next post gets 404 and it stops.
  */
 
 export interface MacUsage {
@@ -81,7 +89,12 @@ export interface MacOpts {
    * seconds (/:id/ask) until the answer is no longer "waiting"; anything but "allowed" is a no.
    */
   onAsk?: (ask: MacAsk) => MacAskStatus;
+  /** The caller can take this answer up again after a restart of the server: what it needs for that (onAdopt). */
+  keep?: Kept;
 }
+
+/** What a caller keeps with its request to take the answer up again after a restart; `kind` names the caller. Never a prompt, a file or a token. */
+export type Kept = { kind: string } & Record<string, string | number | boolean>;
 
 /** A permission question from Claude on the Mac: the tool, Claude's own words for it and the exact command or path. */
 export interface MacAsk {
@@ -166,6 +179,7 @@ interface Req {
   session?: MacOpts["session"];
   mcp?: MacOpts["mcp"];
   onAsk?: MacOpts["onAsk"];
+  keep?: Kept;
   claimed: boolean;
   /** when the 20-minute clock started; moved on by the time a permission question waits for a person (/:id/ask) */
   claimedAt: number;
@@ -182,7 +196,7 @@ interface Req {
 
 const reqs = new Map<string, Req>();
 /** the polls waiting for a request, each for its device; `step` asks again whether the hint is due (a poll that listed editor kinds) */
-let waiters: Array<{ device: string; fn: (r: Req | "hint") => void; step?: () => Promise<boolean> }> = [];
+let waiters: Array<{ device: string; fn: (r: Req | "hint" | null) => void; step?: () => Promise<boolean> }> = [];
 
 /** A step a device may claim was queued (a cut-out, lib/cutouts.ts): each held poll that listed editor kinds is asked again and answered with the hint when it is due. */
 export async function wakeEditorPolls(): Promise<void> {
@@ -193,20 +207,32 @@ export async function wakeEditorPolls(): Promise<void> {
   }
 }
 
-/** how long a request waits for the Mac before its caller falls back; longer while the Mac is on but every slot runs */
-const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000 };
+/**
+ * How many answers a restart of this server would lose right now: every request but those a Mac is writing for a
+ * caller that takes them up again (MacOpts.keep). /api/health says it, and a deploy waits for 0 before it restarts.
+ */
+export const answersAtRisk = (): number => [...reqs.values()].filter((r) => !(r.claimed && r.keep)).length;
+
+/**
+ * how long a request waits for the Mac before its caller falls back; longer while the Mac is on but every slot runs.
+ * afterStart: a restart of this server cuts every Mac's poll off, and a relay then waits up to 30 s before it polls
+ * again (its own back-off), so a request made in this process's first 45 s waits that long.
+ */
+const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000, afterStart: 45_000 };
+const startedAt = Date.now();
 export const BACKGROUND_SLOTS = 2;
 /** the Mac runs this many Claude calls at once (the Mac relay SLOTS) */
 const MAC_SLOTS = 4;
 /** the Mac posts at least every 20 s while Claude thinks */
-const SILENT_MS = 60_000;
+export const SILENT_MS = 60_000;
 const TOTAL_MS = 20 * 60_000;
 
 const macFull = (device: string) => [...reqs.values()].filter((r) => r.claimed && r.device === device).length >= MAC_SLOTS;
 
 /** How long a request waits: the Mac on but full is working, so a person waits longer for it than for a silent Mac. */
-export function patienceMs(background: boolean, busy: boolean): number {
-  return background ? PATIENCE_MS.background : busy ? PATIENCE_MS.busy : PATIENCE_MS.now;
+export function patienceMs(background: boolean, busy: boolean, sinceStart = Infinity): number {
+  const usual = background ? PATIENCE_MS.background : busy ? PATIENCE_MS.busy : PATIENCE_MS.now;
+  return sinceStart < PATIENCE_MS.afterStart ? Math.max(usual, PATIENCE_MS.afterStart) : usual;
 }
 
 /** The next request for a device: what a person waits on first, background only while one of its slots is free. */
@@ -219,7 +245,113 @@ function next(device: string): Req | undefined {
 function claim(r: Req): Req {
   r.claimed = true;
   r.claimedAt = r.seen = Date.now();
+  keepOpen(r);
   return r;
+}
+
+/* ---- claimed requests kept on disk, so a restart doesn't lose their answers ---- */
+
+/** What the file holds: who runs it and for whom. The Mac already has the prompt, the files and the token. */
+type Saved = Pick<Req, "id" | "device" | "web" | "background" | "label" | "model" | "provider" | "session"> & { keep: Kept };
+const openDir = () => path.join(env.dataDir, "mac-claude-open");
+const openFile = (id: string) => path.join(openDir(), `${id}.json`);
+
+function keepOpen(r: Req): void {
+  if (!r.keep || !keepsOverRestart()) return;
+  const saved: Saved = { id: r.id, device: r.device, web: r.web, background: r.background, label: r.label, model: r.model, provider: r.provider, session: r.session, keep: r.keep };
+  try {
+    mkdirSync(openDir(), { recursive: true, mode: 0o700 });
+    const tmp = `${openFile(r.id)}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(saved), { mode: 0o600 });
+    renameSync(tmp, openFile(r.id));
+  } catch (e) {
+    // the answer still arrives while this process lives
+    console.warn(`[mac-claude] request not kept for a restart: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+const dropOpen = (name: string): void => rmSync(path.join(openDir(), name), { force: true });
+
+function readOpen(id: string): Saved | null {
+  try {
+    const s = JSON.parse(readFileSync(openFile(id), "utf-8")) as Saved;
+    return s.id === id && typeof s.device === "string" && typeof s.keep?.kind === "string" ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An answer a restart left running on a Mac: its request's id and what its caller kept. */
+export interface Open {
+  id: string;
+  keep: Kept;
+}
+const adopters = new Map<string, (open: Open[]) => void>();
+/**
+ * A caller that can take its answers up again says so once, when it loads. `take` gets several at once (it may have to
+ * know them all before it reads its own data) and calls adoptMacClaude for each, or leaves one (it is then dropped).
+ */
+export const onAdopt = (kind: string, take: (open: Open[]) => void): void => void adopters.set(kind, take);
+
+/**
+ * The answers kept on disk that this process isn't running: left by the process before it. That one may still be
+ * alive and answering them (a deploy's reload runs the old and the new side by side for some seconds), so nothing is
+ * taken up just because it is here. Never on a dev server (keepsOverRestart).
+ */
+export function keptOpen(): Open[] {
+  if (!keepsOverRestart()) return [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(openDir());
+  } catch {
+    return []; // nothing was ever kept
+  }
+  return names.flatMap((name) => {
+    const id = name.replace(/\.json$/, "");
+    const saved = name.endsWith(".json") && !reqs.has(id) ? readOpen(id) : null;
+    return saved ? [{ id, keep: saved.keep }] : [];
+  });
+}
+
+/**
+ * The kept answers `pick` chooses go back to their callers, and one nobody takes is dropped (its Mac's next post gets
+ * 404 and it stops). When: a Mac posts about one (relayRoutes), its person stops it, or it has been silent for a
+ * minute after the restart (the callers ask).
+ */
+export function adoptKept(pick: (open: Open) => boolean): void {
+  const found = keptOpen().filter(pick);
+  for (const [kind, take] of adopters) {
+    const mine = found.filter((o) => o.keep.kind === kind);
+    try {
+      if (mine.length) take(mine);
+    } catch (e) {
+      console.warn(`[mac-claude] ${kind}: answers not taken up after the restart: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  for (const o of found) if (!reqs.has(o.id)) dropOpen(`${o.id}.json`);
+}
+
+/** At boot: answers kept for a caller that no longer takes them are dropped. */
+export const dropUnowned = (): void => adoptKept((o) => !adopters.has(o.keep.kind));
+
+let leaving = false;
+/**
+ * This process is on its way out: a deploy's reload has the next one listening already. The polls it holds end now,
+ * so each computer asks again at once and reaches the next process (a poll cut off by the kill makes the relay wait
+ * 30 s), and a post about a running answer is turned away with 503: the relay sends it again, to the next process.
+ */
+export function leave(): void {
+  leaving = true;
+  for (const w of waiters.splice(0)) w.fn(null);
+}
+
+/**
+ * Takes up an answer a restart left running: the promise streamMacClaude would have given, fed by the same Mac. Its
+ * 20 minutes start again (the time a permission question waited isn't kept). null = no such answer.
+ */
+export function adoptMacClaude(id: string, cancel: AbortSignal | undefined, onDelta: (text: string) => Promise<void> | void, hooks: Hooks = {}): Promise<string> | null {
+  const saved = reqs.has(id) ? null : readOpen(id);
+  return saved && wait({ ...saved, system: "", user: "" }, true, cancel, onDelta, undefined, hooks);
 }
 
 /** Hand waiting requests to the polls of the devices they are for. */
@@ -247,25 +379,29 @@ export function streamMacClaude(
 ): Promise<string> {
   // ponytail: no device = nothing to run it: an unclaimed miss, so an API-key fallback may still answer
   if (!opts.provider?.device) return Promise.reject(new MacClaudeError("No Mac runs this provider: pick one in Settings → Providers", "unclaimed"));
+  return wait(
+    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, model: opts.model, provider: opts.provider, session: opts.session, mcp: opts.mcp, keep: opts.keep },
+    false,
+    cancel,
+    onDelta,
+    onUsage,
+    opts,
+  );
+}
+
+type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "model" | "provider" | "session" | "mcp" | "keep">;
+type Hooks = Pick<MacOpts, "onStep" | "onAsk" | "onSession">;
+
+/** The promise of one request's answer: a new one waits for its Mac, one taken up after a restart (`claimed`) is already with it. */
+function wait(asked: Asked, claimed: boolean, cancel: AbortSignal | undefined, onDelta: (text: string) => Promise<void> | void, onUsage: ((u: MacUsage) => void) | undefined, hooks: Hooks): Promise<string> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const r: Req = {
-      id: randomUUID(),
-      device: opts.provider!.device!,
-      system,
-      user,
-      web: !!opts.web,
-      background: !!opts.background,
-      label: opts.label ?? "other",
-      files: opts.files,
-      model: opts.model,
-      provider: opts.provider,
-      onStep: opts.onStep,
-      session: opts.session,
-      mcp: opts.mcp,
-      onAsk: opts.onAsk,
-      claimed: false,
-      claimedAt: 0,
+      ...asked,
+      onStep: hooks.onStep,
+      onAsk: hooks.onAsk,
+      claimed,
+      claimedAt: claimed ? started : 0,
       text: "",
       seen: started,
       chain: Promise.resolve(),
@@ -277,7 +413,7 @@ export function streamMacClaude(
           void recordUsage(r.label, usage, r.provider?.instance, r.provider?.scope);
           onUsage?.(usage);
         }
-        if (session) opts.onSession?.(session);
+        if (session) hooks.onSession?.(session);
         if (text.trim()) {
           noteOutcome(true);
           resolve(text);
@@ -297,14 +433,17 @@ export function streamMacClaude(
     };
     // the instance this call went through, if any: its outcome is recorded as that instance's check
     const noteOutcome = (ok: boolean, error?: string, note?: string) => {
-      const p = opts.provider;
+      const p = r.provider;
       if (p?.scope && p.instance) void noteCallOutcome(p.scope, p.instance, ok, error, note).catch(() => {});
     };
     const onAbort = () => r.fail(new MacClaudeError("Stopped", "stopped"));
     const check = setInterval(() => {
+      // on its way out: its answers are the next process's now (their posts are turned away here), so nothing is failed for silence
+      if (leaving) return;
       const now = Date.now();
       const on = isOnline(r.device);
-      if (!r.claimed && now - started > patienceMs(r.background, on && macFull(r.device)))
+      // only a real server gives the time after its start: under tests and on a dev server the Macs' polls were never cut
+      if (!r.claimed && now - started > patienceMs(r.background, on && macFull(r.device), env.isProduction ? started - startedAt : Infinity))
         r.fail(new MacClaudeError(unclaimedMessage(r.device, on), "unclaimed"));
       else if (r.claimed && now - r.seen > SILENT_MS) r.fail(new MacClaudeError("The Mac stopped answering", "failed"));
       else if (r.claimed && now - r.claimedAt > TOTAL_MS) r.fail(new MacClaudeError("Claude took over 20 minutes", "timeout"));
@@ -312,6 +451,7 @@ export function streamMacClaude(
     function end() {
       clearInterval(check);
       reqs.delete(r.id);
+      if (r.keep) dropOpen(`${r.id}.json`);
       cancel?.removeEventListener("abort", onAbort);
       pump(); // a background slot may be free now
     }
@@ -337,11 +477,14 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     if (!device) return c.json({ error: "Unauthorized" }, 401);
     c.set("device", device);
     touchDevice(device);
+    // on its way out (leave): a post about a running answer goes to the next process (the relay sends it again on 503)
+    if (leaving && /\/(text|step|ask|done|fail)$/.test(c.req.path)) return c.json({ error: "Restarting" }, 503);
     await next();
   });
 
   /** A waiting request for this device, or 204 after 25 s. A relay that sends {blobs: true} keeps big files itself (packFor). */
   app.post("/wait", async (c) => {
+    if (leaving) return c.body(null, 204); // ask again: the next process answers
     const device = c.get("device");
     const b = await body(c);
     const keeps = b.blobs === true;
@@ -355,7 +498,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
       const w = {
         device,
         ...("editor" in b && editorWaits ? { step: () => editorWaits(device, b.editor) } : {}),
-        fn: (r: Req | "hint") => {
+        fn: (r: Req | "hint" | null) => {
           clearTimeout(timer);
           resolve(r);
         },
@@ -377,7 +520,10 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
 
   /** The request this device runs (another device's is not its own: 404). */
   const mine = (c: Context): Req | undefined => {
-    const r = reqs.get(c.req.param("id") ?? "");
+    const id = c.req.param("id") ?? "";
+    // kept by the process before this one: its Mac is posting here now, so it goes back to its caller
+    if (!reqs.has(id)) adoptKept((o) => o.id === id);
+    const r = reqs.get(id);
     return r && r.device === c.get("device") ? r : undefined;
   };
 

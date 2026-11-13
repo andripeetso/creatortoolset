@@ -266,12 +266,25 @@ Check the backup: `tar tzf /opt/backups/data-*.tgz | head` lists files, and the 
 cd /opt/creator-toolset
 git pull
 cd apps/captions
-docker compose up -d --build
+docker compose build
+# wait while work is running that the restart would end (below)
+until docker compose exec -T app node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>r.json()).then(h=>process.exit((h.answering||0)+(h.working||0)?1:0),()=>process.exit(0))"; do sleep 15; done
+docker compose up -d
 docker compose exec app node scripts/doctor.mjs
 ```
 
 Read what is coming before you update: `git fetch && git log --oneline HEAD..origin/main` lists the new commits.
-Back up first (step 9). To go back, check out the previous commit and run the same `up -d --build`.
+Back up first (step 9). To go back, check out the previous commit and run the same `build` and `up -d`.
+
+An update restarts the app. What that does to work in progress:
+
+- **Goes on by itself:** uploads (they resume), and an assistant reply or a scheduled task that a computer is still
+  writing. The app keeps what it needs for that in the data folder (`mac-claude-open/`, `job-tokens/`).
+- **Is ended:** an AI answer that streams straight to an open page (the Workshop's chat, a script check), and
+  renders, voice enhances and caption jobs. The page says so and the person starts it again.
+
+The app counts the second kind in `/api/health`: `answering` and `working`. The `until` line above waits for both to
+be 0, so the restart ends nothing. On an app older than this guide the fields are missing and the line does not wait.
 
 ## 11. When something is wrong
 

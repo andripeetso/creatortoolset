@@ -1,18 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewEditRef, ReviewPlayCard, ReviewPlayPlan, ReviewSlotContext, ReviewTimelineSlot } from "@/lib/plugin";
 import { CameraView, RecropBox } from "@/components/RecropBox";
-import { EditTimeline, type Placeholder } from "@/components/EditTimeline";
+import { toast } from "sonner";
+import { EditTimeline, type Placeholder, type TimelineRules } from "@/components/EditTimeline";
+import { getEdit, makeCut, retryJob } from "@/lib/editor";
+import { useCachedLoad } from "@/lib/local-cache";
+import type { Edit } from "@contracts/editor";
 import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
 import { loudest, peaks } from "@/lib/waveform";
+import { allGranted, localMediaFiles, localMediaUrl } from "@/lib/local-files";
+import { findOriginals, openOriginals, type Originals } from "@/lib/relink";
 import {
   cameraIn,
   clampCrop,
   cropToFraming,
   framingToCrop,
   PLACEHOLDER_LOOKS,
+  picturePieces,
   playPlan,
+  renderPieces,
+  soundPieces,
   type PlayCard,
   splitView,
   stackEdits,
@@ -42,6 +51,10 @@ import {
 // Everyone who can watch the version sees it and can pin a comment to a clip (`pin`, from the page); the edit tools
 // are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
+// On a cut the app's own AI Editor made (`version.draft`), Make the next version cuts the edits into it as they are,
+// with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_RULES). The panel follows that
+// edit's steps for this version: it says while the next version is being made, takes it in when it is filed, and shows
+// a step that failed with Try again. The edit loads for its creator only, so nobody else gets the button.
 
 /** The id the editor's data goes under on a comment (`plugins[id]`); no plug-in may take it. */
 export const REVIEW_TIMELINE_ID = "timeline-edits";
@@ -53,7 +66,8 @@ export interface TimelinePins {
   marked?: string[];
   pins: Record<string, number>;
   /** a click on a clip (Shift/⌘-click: `group` is every clip picked) */
-  onSelect: (item: TimelineItem | null, group?: TimelineItem[]) => void;
+  /** `editing`: picked in the timeline's Edit mode, where the keys stay the timeline's (Delete, Q / W, the nudges) */
+  onSelect: (item: TimelineItem | null, group?: TimelineItem[], editing?: boolean) => void;
   onPin: (key: string) => void;
   /** the comment's time range (seconds); a drag across empty lane space sets it */
   range?: [number, number] | null;
@@ -67,6 +81,9 @@ export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTim
   // a new version starts clean: the panel remounts per version
   return <Edits key={version.n} {...ctx} hooks={ctx.hooks ?? {}} edit={version.edit} />;
 }
+
+/** What the app's own AI Editor cuts into a version: a voice stays with its picture (cut, pulled in or taken out), the layers stay as they are. */
+const OWN_RULES: TimelineRules = { can: (it, mode) => it.track !== "A1" || mode === "head" || mode === "tail", layers: false };
 
 const framingOf = (i: TimelineItem): Framing => ({ zoom: i.zoom ?? 1, pan: i.pan ?? 0, tilt: i.tilt ?? 0 });
 const secs = (s: number) => `${s.toFixed(1)}s`;
@@ -87,13 +104,27 @@ const toCard = (c: PlayCard, manage: boolean, clipSrc?: (clip: number) => string
   ...(manage && clipSrc && c.clip !== undefined ? { src: clipSrc(c.clip), at: c.at } : {}),
 });
 
-function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
+function Edits({ asset, version, api, reload, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
   // the edit being dragged (an edge or a slip plays as it goes), and the preview: the planned edits play over the old cut
   const [live, setLive] = useState<[TimelineItem, Partial<ItemEdit>][] | null>(null);
   const [previewOn, setPreviewOn] = useState(true);
+  // a cut of the app's own AI Editor: its timeline edits can be made into the next version, and it is being asked for
+  const own = manage ? version.draft : undefined;
+  const [making, setMaking] = useState(false);
+  const ownEdit = useCachedLoad<Edit>(own ? `/api/editor/${own.edit}` : null, () => getEdit(own!.edit));
+  const ownJobs = own ? (ownEdit.data?.jobs ?? []).filter((j) => j.variant === own.name) : [];
+  const working = ownJobs.find((j) => j.state === "running") ?? ownJobs.find((j) => j.state === "queued");
+  const failed = working ? undefined : ownJobs.find((j) => (j.state === "failed" || j.state === "needs_key") && j.error !== "Stopped");
+  // the version that was being made is filed: the page takes it in
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (wasWorking.current && !working && !failed) void reload();
+    wasWorking.current = !!working;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when the steps start, end or fail
+  }, [!!working, !!failed]);
   // the talent shot being graded (the colour panel, opened from the timeline's Color) and the grade it shows while you work
   const [colour, setColour] = useState<TimelineItem | null>(null);
   const [liveGrade, setLiveGrade] = useState<Grade | null>(null);
@@ -111,6 +142,26 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   // the colour panel's video: read on each use, so a remounted player element is the one it grades
   const video = useMemo(() => ({ get current() { return slots.current.player.video(); } }), []);
   useEffect(() => () => camAsk.current?.abort(), []);
+  // the edit's recordings on this computer (source key to path: an AI edit's from the plug-in, an imported timeline's
+  // from its file; managers only) and the ones the Mac app plays (lib/relink.ts): with every voice clip's file found,
+  // the timeline's edits play with their real sound (a voice pulled out plays its words)
+  const [originals, setOriginals] = useState<Originals | null>(null);
+  const store = () => `${asset.id}.${version.n}`; // what was found here, per version
+  useEffect(() => {
+    const sources = edit ? hooks.sources && ((s: AbortSignal) => hooks.sources!(edit, s)) : () => api.timelineSources(version.n);
+    if (!manage || !sources || !localMediaFiles()) return;
+    const ctl = new AbortController();
+    sources(ctl.signal).then(async (paths) => {
+      if (!Object.keys(paths).length || ctl.signal.aborted) return;
+      const o = await openOriginals(paths, store());
+      if (!ctl.signal.aborted) setOriginals(o);
+    }, () => {});
+    return () => ctl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per edit
+  }, [edit?.project, edit?.draft, manage]);
+  const allowOriginals = async () => {
+    if (originals) setOriginals(await findOriginals(originals, store()));
+  };
   const { edits: handEdits, hole } = hist.now;
   const { edits: sentEdits, holes: sentHoles } = sentOf(sent);
   const planEdits = stackEdits([sentEdits, handEdits]);
@@ -130,6 +181,7 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   // the audio lanes' waveforms: the voice on A1 and the rest of the sound on the others (the
   // version's stems), else the video's own sound on every one (an imported timeline)
   const [waves, setWaves] = useState<Record<string, Float32Array> | null>(null);
+  const [clipWaves, setClipWaves] = useState<Record<string, Float32Array> | null>(null);
   const stems = version.stems;
   useEffect(() => {
     setWaves(null);
@@ -189,6 +241,17 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   const setHole = (v: Placeholder | null) => change((p) => ({ ...p, hole: v }));
   const undo = () => setHist(histUndo);
   const redo = () => setHist(histRedo);
+  const makeNext = () => {
+    if (!own) return;
+    setMaking(true);
+    makeCut(own.edit, own.name, { asset: asset.id, n: version.n, edits: planEdits })
+      .then((e) => {
+        ownEdit.set(e);
+        setHist(freshHist(EMPTY_PENDING));
+        setCrop(null);
+      }, (e: Error) => toast.error(e.message || "Couldn't make the next version"))
+      .finally(() => setMaking(false));
+  };
 
   // the camera frame from the plug-in (it may have to make it first); a newer ask or leaving the page stops the last one
   const askCamera = () => {
@@ -211,6 +274,51 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   const plan = view && previewOn
     ? playPlan(splitView(view, playEdits), playEdits, [...sentHoles, ...(hole ? [{ ...hole, text: text.trim() || hole.text }] : [])])
     : null;
+  // played from the originals, only while there are edits (else the cut plays as rendered, its voice controls on): each
+  // voice clip from its recording and the rest of the sound (music, effects) from the cut's own stem between the skips
+  // and holds; a version without stems (an imported timeline) plays every audio lane from its files
+  const soundLanes = version.stems ? ["A1"] : (view?.tracks ?? []).filter((t) => t.id[0] === "A").map((t) => t.id);
+  // the voice clips' files: all found = played from them; else the header offers to find them
+  const voiceFiles = [...new Set((view?.tracks.find((t) => t.id === "A1")?.items ?? []).flatMap((i) => i.src && originals?.paths[i.src] ? [i.src] : []))];
+  const filesFound = voiceFiles.filter((s) => originals?.found[s]).length;
+  const originalsOn = voiceFiles.length > 0 && filesFound === voiceFiles.length;
+  const sound = view && plan && originals && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
+    ...soundPieces(splitView(view, playEdits), playEdits, plan, soundLanes)
+      .filter((p) => originals.found[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.found[p.src]) })),
+    ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
+  ] : null;
+  // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
+  const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!)
+    .filter((p) => originals!.found[p.src])
+    .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
+      const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
+      return { src: localMediaUrl(originals!.found[src]), at, frames, offset, x: box.x, y: box.y, s: box.s };
+    }) : null;
+  // each sound clip's own waveform from its file, once the files are found: the timeline draws a clip and what its
+  // edges are pulled out to from it (`waves[item.key]`, the file from its first second), so a stretched edge shows the
+  // words that are really there. Sound files only: a camera file would be decoded whole for its sound.
+  const audioFile = (p: string) => /\.(wav|aif|aiff|m4a|mp3|flac|caf)$/i.test(p);
+  const waveFiles = originalsOn && originals ? Object.entries(originals.found).filter(([, p]) => audioFile(p)) : [];
+  const waveKey = JSON.stringify(waveFiles);
+  useEffect(() => {
+    if (!waveFiles.length || !view) return void setClipWaves(null);
+    let gone = false;
+    Promise.all(waveFiles.map(([src, p]) => peaks(localMediaUrl(p)).then((d): [string, Float32Array] => [src, d], () => null)))
+      .then((got) => {
+        if (gone) return;
+        const bySrc = Object.fromEntries(got.filter((g): g is [string, Float32Array] => !!g));
+        const out: Record<string, Float32Array> = {};
+        for (const t of view.tracks) {
+          if (t.id[0] !== "A") continue;
+          for (const it of t.items) if (it.src && bySrc[it.src]) out[it.key] = bySrc[it.src];
+        }
+        setClipWaves(Object.keys(out).length ? out : null);
+      });
+    return () => {
+      gone = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per set of found files
+  }, [waveKey, view]);
   const planned = !!plan && (plan.skips.length + plan.mutes.length + plan.holds.length + plan.cards.length + plan.frames.length + plan.grades.length > 0);
   // the shot being graded plays the panel's grade over its whole span while the panel is open, in place of the shot's
   // planned grades (while the reframe window is open the picture takes no look)
@@ -229,6 +337,8 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       ...grades.map((g, i) => ({ from: g.from, to: g.to, filter: `url(#${gradeId(i)})` })),
       ...(shotLook ? [{ from: shotLook.from, to: shotLook.to, filter: `url(#${LIVE_GRADE})` }] : []),
     ],
+    ...(sound ? { sound } : {}),
+    ...(picture?.length ? { picture } : {}),
   } : null;
   const playJson = JSON.stringify(play);
   // a new plan goes to the player; the page compares it with the last one, so a same plan costs nothing
@@ -297,7 +407,24 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       {grades.map((g, i) => <GradeFilter key={gradeId(i)} id={gradeId(i)} from={g.was} to={g.grade} />)}
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] text-zinc-500">{manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}</div>
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+          {own ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
+          {originals && voiceFiles.length > 0 && !originalsOn && (
+            <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
+              title="Your edits play with the real sound from the original recordings: allow their folder, or the folder they are in now">
+              {originals.tried || voiceFiles.some((s) => allGranted([originals.paths[s]], originals.folders))
+                ? "Find the original files" : "Play edits from the originals"}
+            </button>
+          )}
+          {originals?.tried && !originalsOn && voiceFiles.length > 0 && <span>{filesFound} of {voiceFiles.length} files found</span>}
+        </div>
+        {own && ownEdit.data && !working && planEdits.length > 0 && !crop && (
+          <button type="button" disabled={making || !!hole} onClick={makeNext}
+            title={hole ? "A placeholder goes with a comment: send it or drop it first" : "Cut the next version from these timeline edits as you made them, with no AI"}
+            className="ml-auto rounded-full bg-violet-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-violet-500 disabled:opacity-40">
+            {making ? "Starting…" : "Make the next version"}
+          </button>
+        )}
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}
             title="Play your timeline edits and placeholders on this cut (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
@@ -306,6 +433,18 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
           </button>
         )}
       </div>
+      {own && working && (
+        <div className="text-[11px] text-violet-300">Making the next version{working.line ? `: ${working.line}` : "…"} It shows up here when it is ready.</div>
+      )}
+      {own && failed && (
+        <div className="flex items-center gap-2 text-[11px] text-rose-400">
+          <span className="min-w-0 flex-1">The next version wasn't made: {failed.error}</span>
+          <button type="button" onClick={() => retryJob(own.edit, failed.id).then(ownEdit.set, (e: Error) => toast.error(e.message))}
+            className="shrink-0 rounded border border-rose-400/50 px-1.5 py-0.5 text-rose-200 hover:bg-rose-950">
+            Try again
+          </button>
+        </div>
+      )}
       {sentEdits.length > 0 && (
         <div className="text-[11px] text-zinc-500">
           {sentEdits.length} edit{sentEdits.length === 1 ? "" : "s"} already sent with an open comment, shown until it is resolved
@@ -372,13 +511,13 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
         time={time}
         onSeek={(t) => slots.current.player.seek(t)}
         edits={planEdits}
-        waves={waves}
+        waves={clipWaves ? { ...waves, ...clipWaves } : waves}
         placeholders={[...sentHoles, ...(hole ? [hole] : [])]}
         selected={pin?.selected}
         marked={pin?.marked}
         pins={pin?.pins}
-        onSelect={pin ? (item, _editing, group) => {
-          pin.onSelect(item ?? null, group);
+        onSelect={pin ? (item, editing, group) => {
+          pin.onSelect(item ?? null, group, editing);
           if (item) slots.current.player.pause();
         } : undefined}
         onPin={pin?.onPin}
@@ -393,7 +532,8 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
             slots.current.player.pause();
           },
           onReframe: edit && hooks.camera && w && h ? reframe : undefined,
-          onColor: (item: TimelineItem) => {
+          // a per-shot grade is not something the app's own AI Editor cuts in: not offered on its cuts
+          onColor: own ? undefined : (item: TimelineItem) => {
             slots.current.player.pause();
             setCrop(null);
             const f = time * fps;
@@ -403,6 +543,7 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
           },
           onFace: edit && hooks.face ? (item: TimelineItem) => openFace(item) : undefined,
           history: { back: hist.past.length, ahead: hist.future.length, undo, redo },
+          rules: own ? OWN_RULES : undefined,
         } : {})}
       />
     </div>

@@ -14,6 +14,26 @@ vi.mock("@/lib/waveform", () => ({
   loudest: vi.fn(() => new Float32Array([0.7])),
 }));
 
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+// The saved copy that follows the server (lib/local-cache) is a stand-in: it loads once, and `followed.set` is the
+// server saying the edit's steps moved.
+const followed = vi.hoisted(() => ({ set: (_: unknown) => {} }));
+vi.mock("@/lib/local-cache", async () => {
+  const { useEffect, useState } = await vi.importActual<typeof import("react")>("react");
+  return {
+    useCachedLoad: (url: string | null, load: () => Promise<unknown>) => {
+      const [data, set] = useState<unknown>(null);
+      useEffect(() => {
+        if (url) void load().then(set, () => set(null));
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- once per address
+      }, [url]);
+      followed.set = set;
+      return { data, error: null, refresh: async () => {}, set };
+    },
+  };
+});
+
 // The Review panel in a DOM: its gate, the sent edits it shows on the timeline, the preview toggle and the plan it sends
 // the player, and the bridge's ⌘Z and sent wiring. Typing chips and dragging a shot need the timeline's own pointer
 // work, so those stay in edit-history.test.ts.
@@ -32,6 +52,7 @@ vi.mock("./EditTimeline", async () => {
       onPlaceholder: (h: object | null) => void;
       onColor?: (item: unknown) => void;
       onReframe?: (item: unknown) => void;
+      onSelect?: (item: unknown, editing?: boolean, group?: unknown[]) => void;
     }) => {
       const first = p.view.tracks[0].items[0];
       return createElement("div", null,
@@ -40,6 +61,8 @@ vi.mock("./EditTimeline", async () => {
         createElement("button", { onClick: () => p.onEdit([[first, { remove: true }]]) }, "stub remove"),
         createElement("button", { onClick: () => p.onPlaceholder({ id: "h1", track: "V2", rec: 10, len: 20 }) }, "stub hole"),
         createElement("button", { onClick: () => p.onPlaceholder(null) }, "stub clear hole"),
+        createElement("button", { onClick: () => p.onSelect?.(first, true) }, "stub pick in Edit mode"),
+        createElement("button", { onClick: () => p.onSelect?.(first, false) }, "stub pick to comment"),
         createElement("button", { onClick: () => p.onColor?.(first) }, "stub colour"));
     },
   };
@@ -101,10 +124,13 @@ async function mount(
   version: object = { n: 1, fps: 25, timeline: true, edit },
   api: object = { timeline: async () => view },
   hooks?: ReviewTimelineSlot,
+  pin?: object,
 ) {
   const bridge = new ReviewSlotBridge();
   const bound = bridge.bind("tl");
   const ctx = {
+    asset: { id: "rev-1" },
+    reload: vi.fn(async () => {}),
     version,
     api,
     player: { video: () => null, seek: () => {}, pause: () => {} },
@@ -113,7 +139,7 @@ async function mount(
     ...bound,
     preview: { setPlan: vi.fn(bound.preview.setPlan) },
   } as unknown as ReviewSlotContext;
-  await act(async () => root.render(<ReviewEdits {...ctx} hooks={hooks} />));
+  await act(async () => root.render(<ReviewEdits {...ctx} hooks={hooks} pin={pin as never} />));
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
@@ -302,12 +328,160 @@ describe("ReviewEdits panel", () => {
     expect(added).toMatchObject({ src: "/clips/7" });
   });
 
+  it("in the Mac app, a stretched voice plays its words from the original recording once its folder is allowed", async () => {
+    const voiced: TimelineView = { ...view, tracks: [
+      { ...view.tracks[0], items: view.tracks[0].items.map((i) => ({ ...i, src: "cam", ins: 2 + i.rec / 25, zoom: 1.25 })) },
+      { id: "A1", name: "A1", items: [{ key: "A1:0", track: "A1", rec: 0, len: 200, label: "Voice", src: "vo", ins: 2 }] },
+    ] };
+    let granted: string[] = [];
+    const post = vi.fn(async (b: { ask?: string; list?: boolean }) => {
+      if (b.ask) granted = [b.ask];
+      return { granted };
+    });
+    (window as unknown as { webkit: object }).webkit = { messageHandlers: { mediaAccess: { postMessage: post } } };
+    document.documentElement.dataset.macLocalFiles = "3";
+    // the Mac app answers a one-byte read of a file in a granted folder
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { status: 206 })));
+    try {
+      const sources = vi.fn(async () => ({ vo: "/Volumes/Shoot/VO/take 1.wav", cam: "/Volumes/Shoot/A001.mov" }));
+      const longer = { id: "c1", data: { edits: [{ key: "A1:0", label: "Voice", tail: 25 }, { key: "V1:100", label: "Shot two", tail: 25 }] } };
+      const { bridge } = await mount([longer], undefined, { timeline: async () => voiced }, { sources });
+      expect(sources).toHaveBeenCalledWith(edit, expect.any(AbortSignal));
+      // not allowed yet: the cut plays as before, and the timeline offers the originals
+      expect((bridge.plan() as ReviewPlayPlan).sound).toBeUndefined();
+      await act(async () => button("Play edits from the originals")!.click());
+      expect(post).toHaveBeenCalledWith({ ask: "/Volumes/Shoot" });
+      // allowed: the voice plays from its recording, 25 frames longer, into the hold the longer shot makes
+      expect((bridge.plan() as ReviewPlayPlan).sound).toEqual([
+        { src: `ctlocal://media/${btoa("/Volumes/Shoot/VO/take 1.wav").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")}`, at: 0, frames: 225, offset: 2 },
+      ]);
+      // and the shots from their camera original, the second 25 frames past the cut, framed as cut (1.25x, centred)
+      const cam = `ctlocal://media/${btoa("/Volumes/Shoot/A001.mov").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+      expect((bridge.plan() as ReviewPlayPlan).picture).toEqual([
+        { src: cam, at: 0, frames: 100, offset: 2, x: -0.125, y: -0.125, s: 1.25 },
+        { src: cam, at: 100, frames: 125, offset: 6, x: -0.125, y: -0.125, s: 1.25 },
+      ]);
+      expect(button("Play edits from the originals")).toBeUndefined();
+      // the voice clip's waveform comes from its recording (the timeline draws its pulled-out edge from it)
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(host.querySelector('[data-testid="lanes"]')!.textContent).toContain("A1:0");
+    } finally {
+      vi.unstubAllGlobals();
+      delete (window as unknown as { webkit?: object }).webkit;
+      delete document.documentElement.dataset.macLocalFiles;
+    }
+  });
+
   it("unmounting clears the plan the player follows", async () => {
     const { bridge } = await mount([{ id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } }]);
     expect(bridge.plan()).not.toBeNull();
     await act(async () => root.unmount());
     expect(bridge.plan()).toBeNull();
     root = createRoot(host);
+  });
+});
+
+describe("picking a clip", () => {
+  it("tells the page whether it was picked in Edit mode, where the keys stay the timeline's and the comment box is left alone", async () => {
+    const onSelect = vi.fn();
+    await mount([], undefined, undefined, undefined, { selected: null, pins: {}, onSelect, onPin: () => {} });
+    await act(async () => button("stub pick in Edit mode")!.click());
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ key: "V1:0" }), undefined, true);
+    await act(async () => button("stub pick to comment")!.click());
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ key: "V1:0" }), undefined, false);
+  });
+});
+
+describe("a cut the app's own AI Editor made", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const own = { n: 3, fps: 25, timeline: true, draft: { edit: "e1", name: "v1" } };
+  const job = (j: object) => ({ id: 7, kind: "post", variant: "v1", state: "queued", attempts: 0, error: null, ...j });
+  /** The edit's own route and what is posted to it: `jobs` is what the edit says of its steps, `posted` what each POST answers. */
+  function server(jobs: object[], posted: (url: string) => Response) {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET") return new Response(JSON.stringify({ id: "e1", jobs }), { status: 200 });
+      calls.push({ url, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      return posted(url);
+    }));
+    return calls;
+  }
+  const settle = () => act(async () => {
+    await new Promise((r) => setTimeout(r, 0)); // a request, its answer and what the panel draws from it
+  });
+
+  it("Make the next version sends the timeline edits to be cut in, starts clean and says the version is being made; a placeholder holds it back; Color is not offered", async () => {
+    const calls = server([], () => new Response(JSON.stringify({ id: "e1", jobs: [job({})] }), { status: 200 }));
+    const { bridge } = await mount([], own);
+    await settle();
+    expect(button("Make the next version")).toBeUndefined(); // nothing edited yet
+    await act(async () => button("stub colour")!.click());
+    expect(host.querySelector('[data-testid="grade-panel"]')).toBeNull();
+
+    await act(async () => button("stub remove")!.click());
+    await act(async () => button("stub hole")!.click());
+    expect(button("Make the next version")!.disabled).toBe(true);
+    await act(async () => button("stub clear hole")!.click());
+    await act(async () => button("Make the next version")!.click());
+    await settle();
+    expect(calls).toEqual([{ url: "/api/editor/e1/drafts/v1/cut", body: { asset: "rev-1", n: 3, edits: [expect.objectContaining({ key: "V1:0", remove: true })] } }]);
+    expect(bridge.pendingLabels()).toEqual([]);
+    expect(host.textContent).toContain("Making the next version");
+    // while it is being made, a new edit gets no button
+    await act(async () => button("stub remove")!.click());
+    expect(button("Make the next version")).toBeUndefined();
+  });
+
+  it("a refusal says why and keeps the edits", async () => {
+    server([], () => new Response(JSON.stringify({ error: "Shot one: its footage has no more there" }), { status: 400 }));
+    const { toast } = await import("sonner");
+    const { bridge } = await mount([], own);
+    await settle();
+    await act(async () => button("stub remove")!.click());
+    await act(async () => button("Make the next version")!.click());
+    await settle();
+    expect(toast.error).toHaveBeenCalledWith("Shot one: its footage has no more there");
+    expect(bridge.pendingLabels().length).toBeGreaterThan(0);
+  });
+
+  it("a step that failed shows with its reason and Try again", async () => {
+    const calls = server([job({ id: 9, kind: "preview", state: "failed", error: "Some footage is gone from the library" })],
+      () => new Response(JSON.stringify({ id: "e1", jobs: [job({ id: 9, kind: "preview" })] }), { status: 200 }));
+    await mount([], own);
+    await settle();
+    expect(host.textContent).toContain("The next version wasn't made: Some footage is gone from the library");
+    await act(async () => button("Try again")!.click());
+    await settle();
+    expect(calls).toEqual([{ url: "/api/editor/e1/jobs/9/retry", body: undefined }]);
+    expect(host.textContent).toContain("Making the next version");
+    expect(host.textContent).not.toContain("wasn't made");
+  });
+
+  it("the page takes the next version in when its steps end", async () => {
+    server([job({ state: "running", line: "Rendering" })], () => new Response("{}", { status: 200 }));
+    const { ctx } = await mount([], own);
+    await settle();
+    expect(host.textContent).toContain("Making the next version: Rendering");
+    expect(ctx.reload).not.toHaveBeenCalled();
+    await act(async () => followed.set({ id: "e1", jobs: [job({ state: "done" })] }));
+    expect(ctx.reload).toHaveBeenCalledTimes(1);
+    expect(host.textContent).not.toContain("Making the next version");
+  });
+
+  it("someone the edit is not theirs gets no button, and any other version has none", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Not found" }), { status: 404 })));
+    await mount([], own);
+    await settle();
+    await act(async () => button("stub remove")!.click());
+    expect(button("Make the next version")).toBeUndefined();
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await mount([]);
+    await act(async () => button("stub remove")!.click());
+    expect(button("Make the next version")).toBeUndefined();
   });
 });
 
