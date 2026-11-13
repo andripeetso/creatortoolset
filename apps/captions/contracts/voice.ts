@@ -52,9 +52,17 @@ export interface SttModel {
    * conversion of the model on `page` for the runtime that runs it (faster-whisper, onnx-asr), under the same licence.
    */
   download?: string;
+  /**
+   * The Mac's own version of it (the Mac app runs Core ML through WhisperKit): the folder name under
+   * argmaxinc/whisperkit-coreml. apps/mac Dictation/Whisper.swift ModelRegistry keeps the same ids and folders.
+   */
+  coreml?: string;
   /** Download size, for a local model. */
   mb?: number;
-  /** A local model one of the person's computers downloads (Download, contracts/devices.ts TRANSCRIBE_KIND); absent = the server's own (whisper-base). */
+  /**
+   * A local model one of the person's computers downloads (Download, contracts/devices.ts TRANSCRIBE_KIND): a Linux
+   * helper from `download`, a Mac from `coreml` (`runsOn`). Absent = the server's own (whisper-base).
+   */
   computer?: true;
   /** Languages it hears ("many" = 90 and more), from its model card. */
   languages: "many" | string[];
@@ -72,7 +80,7 @@ export const STT_MODELS: SttModel[] = [
     page: "https://platform.openai.com/docs/guides/speech-to-text", licence: "Paid API, your own key", languages: "many" },
   // the first a computer has is the one used when no model is chosen (api/lib/speech.ts localFor): turbo is the default
   { id: "whisper-large-v3-turbo", engine: "local", name: "Whisper large-v3 turbo", by: "OpenAI", about: "As close as large-v3 on Estonian, twice as fast with half the memory",
-    page: "https://huggingface.co/openai/whisper-large-v3-turbo", licence: "MIT", download: "deepdml/faster-whisper-large-v3-turbo-ct2", mb: 1621, languages: "many", computer: true },
+    page: "https://huggingface.co/openai/whisper-large-v3-turbo", licence: "MIT", download: "deepdml/faster-whisper-large-v3-turbo-ct2", coreml: "openai_whisper-large-v3-v20240930_turbo", mb: 1621, languages: "many", computer: true },
   { id: "whisper-large-v3", engine: "local", name: "Whisper large-v3", by: "OpenAI", about: "The closest a free model came to Deepgram on Estonian (30% words wrong), best with a graphics card",
     page: "https://huggingface.co/openai/whisper-large-v3", licence: "Apache-2.0", download: "Systran/faster-whisper-large-v3", mb: 3090, languages: "many", computer: true },
   // its card lists 25 languages; on Estonian it got nearly half the words wrong, so it is offered for English only
@@ -80,7 +88,17 @@ export const STT_MODELS: SttModel[] = [
     page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", mb: 2550, languages: ["en"], computer: true },
   { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Small and quick, the one the browser already uses",
     page: "https://huggingface.co/openai/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
+  // a Mac's smaller ones (Dictation on a Mac): after the others, so none of them is a computer's default
+  { id: "whisper-small", engine: "local", name: "Whisper small", by: "OpenAI", about: "Quicker than turbo on a Mac, less exact",
+    page: "https://huggingface.co/openai/whisper-small", licence: "Apache-2.0", coreml: "openai_whisper-small", mb: 490, languages: "many", computer: true },
+  { id: "whisper-small.en", engine: "local", name: "Whisper small (English)", by: "OpenAI", about: "English only, quicker than turbo on a Mac",
+    page: "https://huggingface.co/openai/whisper-small.en", licence: "Apache-2.0", coreml: "openai_whisper-small.en", mb: 488, languages: ["en"], computer: true },
+  { id: "whisper-base.en", engine: "local", name: "Whisper base (English)", by: "OpenAI", about: "English only, the smallest and quickest",
+    page: "https://huggingface.co/openai/whisper-base.en", licence: "Apache-2.0", coreml: "openai_whisper-base.en", mb: 145, languages: ["en"], computer: true },
 ];
+
+/** Whether a computer of this kind (its report's `os`) can download `m`: a Mac its `coreml`, any other its `download`. */
+export const runsOn = (m: SttModel, os: string | undefined): boolean => (os === "mac" ? !!m.coreml : !!m.download);
 
 export interface VoicePrefs {
   /** ISO 639-1 codes, the ones spoken in this person's videos; empty = detect it each time. */
@@ -120,6 +138,8 @@ export interface SttComputer {
   id: string;
   name: string;
   online: boolean;
+  /** what it is (its report): which models it can download (`runsOn`) */
+  os?: "mac" | "linux" | "windows";
   /** ready: downloaded; downloading: under way; asked: Download was pressed, the computer has not started (it is off) */
   models: { id: string; state: "ready" | "downloading" | "asked" }[];
 }

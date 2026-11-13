@@ -10,7 +10,7 @@ const KEEP = [5, 10, 25, 50, 100];
  * Dictation on this Mac (apps/mac Dictation.swift): shown only where the app reports it. The app keeps every value; each
  * change goes to it as `dictation:<what>:<value>` and comes back in its next answer.
  */
-export function Dictation({ mac }: { mac: ThisMacState | null }) {
+export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serverNeeds?: string }) {
   const d = mac?.dictation;
   if (!d) return null;
   const set = (what: string, value = "") => tell(`dictation:${what}:${value}`);
@@ -27,10 +27,10 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
           id="dictation"
           title="Dictation"
           description="Talk, and the words go where the cursor is. F13 starts and stops, F16 cancels."
-          status={d.on && d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
+          status={d.paused ?? (d.on && d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined)}
           control={
             <>
-              {d.on && d.needs && <Button size="sm" variant="outline" onClick={() => set("setup")}>Allow</Button>}
+              {d.on && d.needs && !d.paused && <Button size="sm" variant="outline" onClick={() => set("setup")}>Allow</Button>}
               <Switch checked={d.on} aria-label="Dictation" onCheckedChange={(on) => set("on", on ? "1" : "0")} />
             </>
           }
@@ -49,7 +49,23 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
                 />
               }
             />
-            <Row
+            {d.engine && (
+              <Row
+                id="dictation-engine"
+                title="Engine"
+                description={d.engine === "server" ? "Your Deepgram or OpenAI key, as Talking to the assistant uses them." : undefined}
+                status={d.engine === "server" && serverNeeds ? <Status tone="attention">{serverNeeds}</Status> : undefined}
+                control={
+                  <SettingsSelect
+                    label="Engine"
+                    value={d.engine}
+                    onValueChange={(v) => set("engine", v)}
+                    options={[{ value: "mac", label: "This Mac" }, { value: "server", label: "Your server" }]}
+                  />
+                }
+              />
+            )}
+            {d.engine !== "server" && <Row
               id="dictation-model"
               title="Speech model"
               status={model && model.progress !== null ? `Downloading · ${Math.round(model.progress * 100)}%` : undefined}
@@ -65,7 +81,7 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
                   />
                 </>
               }
-            />
+            />}
             <Row
               id="dictation-history"
               title="History"

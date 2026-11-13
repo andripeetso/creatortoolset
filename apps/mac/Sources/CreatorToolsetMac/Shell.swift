@@ -131,6 +131,9 @@ final class Shell: NSObject, ObservableObject {
         if Recorder.available { RecordShortcut.shared.install(recorder) }
         // after the recording shortcut: its F13 handler runs first and passes on every other hotkey
         Dictation.shared.languages = { [weak self] in await self?.voiceLanguages() }
+        Dictation.shared.site = { [weak self] in self?.hasServer == true ? await self?.client() : nil }
+        // this Mac's dictation models are its speech models on the Voice page: a change here is claimed at once
+        SpeechModels.shared.onChange = { [weak self] in self?.runner?.modelsChanged() }
         Dictation.shared.start()
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
@@ -691,7 +694,7 @@ final class Shell: NSObject, ObservableObject {
         let id = UUID()
         let work = relayFolder(for: base, localData: runsHere ? server?.dataDir : nil)
         let relay = RelayRunner(base: base, token: token, work: work,
-            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }),
+            prompt: windowConsentPrompt(window: { [weak self] in self?.webView.window }), speech: SpeechModels.link,
             onStatus: { [weak self] status in
                 Task { @MainActor in
                     guard let self, self.runnerID == id else { return }

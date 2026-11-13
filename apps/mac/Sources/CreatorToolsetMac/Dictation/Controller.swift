@@ -201,6 +201,8 @@ final class DictationController {
         do {
             return try await local.transcribe(samples, context: context)
         } catch {
+            // the server's engine is not asked twice: a second wait on the network would double the first
+            if local is ServerTranscriber { throw error }
             DictationLog.error("transcription failed: \(error), retrying on-device")
             return try await local.transcribe(samples, context: context)
         }

@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { ExternalLink, X } from "lucide-react";
-import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
+import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, runsOn, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
@@ -123,7 +123,7 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
 
       <OnMyComputers computers={view.computers} want={want} />
 
-      <Dictation mac={mac} />
+      <Dictation mac={mac} serverNeeds={needsOf(view.resolved.find((r) => r.use === "mic"))} />
 
       <TextToSpeech />
     </div>
@@ -140,7 +140,7 @@ function Origin({ m }: { m: SttModel }) {
       {m.by ? `By ${m.by}` : null}
       {m.by ? " · " : null}
       {m.licence}
-      {m.mb ? ` · ${(m.mb / 1000).toFixed(1)} GB` : null} ·{" "}
+      {m.mb ? ` · ${m.mb >= 1000 ? `${(m.mb / 1000).toFixed(1)} GB` : `${m.mb} MB`}` : null} ·{" "}
       <a href={m.page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
         Model page
         <ExternalLink className="size-3" aria-hidden />
@@ -160,7 +160,7 @@ function OnMyComputers({ computers, want }: { computers: SttComputer[]; want: (c
         computers.map((c) => (
           <Card key={c.id}>
             <Row title={c.name} status={c.online ? undefined : "Off"} />
-            {COMPUTER_MODELS.map((m) => {
+            {COMPUTER_MODELS.filter((m) => runsOn(m, c.os) || c.models.some((x) => x.id === m.id)).map((m) => {
               const has = c.models.find((x) => x.id === m.id);
               return (
                 <Row
@@ -249,3 +249,6 @@ export function TextToSpeech() {
     </Section>
   );
 }
+
+/** What a use still needs to run ("Needs a Deepgram key"), or undefined when it runs. */
+const needsOf = (r: SttResolved | undefined) => (r && "needs" in r ? r.needs : undefined);

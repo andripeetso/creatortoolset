@@ -99,7 +99,8 @@ struct TranscriptionFailed: UserFacingError {
     let saved: URL?
 
     var userMessage: String {
-        saved == nil ? "Transcription failed" : "Transcription failed · saved in History"
+        let what = (underlying as? UserFacingError)?.userMessage ?? "Transcription failed"
+        return saved == nil ? what : "\(what) · saved in History"
     }
 }
 

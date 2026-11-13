@@ -190,11 +190,19 @@ final class RelayRunner {
     private let onRevoked: () -> Void
     /// What this server may make this Mac do past the app's defaults (Consent.swift).
     private let consent: Consent
+    /// This Mac's speech models (TranscribeJob.swift); nil: it takes no transcript.
+    private let speech: SpeechLink?
+    /// under `lock`: the server is to hear of this Mac's models with a claim of its own (at start, after a change here)
+    private var announce = false
+    /// one claim at a time: one the server hinted at, and one that says what changed here
+    private let claiming = NSLock()
 
     init(base: URL, token: String, work: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser,
-         prompt: @escaping ConsentPrompt = { _, _, _, _ in false },
+         prompt: @escaping ConsentPrompt = { _, _, _, _ in false }, speech: SpeechLink? = nil,
          onStatus: @escaping (AIStatus) -> Void, onRevoked: @escaping () -> Void) {
         api = DeviceAPI(base: base, token: token)
+        self.speech = speech
+        announce = speech != nil
         consent = Consent(host: [base.host, base.port.map(String.init)].compactMap { $0 }.joined(separator: ":"), prompt: prompt)
         self.home = home
         self.work = work
@@ -245,6 +253,10 @@ final class RelayRunner {
         var pollFailed = false   // a poll's error clears once a poll goes through again (the menu bar's problem dot)
         while !isStopped {
             slots.wait()
+            if takeAnnounce(), let step = claimStep(hinted: false) {
+                DispatchQueue.global(qos: .utility).async { [self] in runSteps(step) }   // runSteps() releases the slot
+                continue
+            }
             let listed = editorKinds()
             let reply: DeviceReply
             do {
@@ -298,8 +310,31 @@ final class RelayRunner {
         return drawing || now < quietUntil ? nil : takes
     }
 
-    /// The kinds this Mac takes, under `lock`: a cut-out on any Mac, cards on one that can shut a card's script in.
-    private var takes: [String] { cannotDraw ? [cutoutKind] : [cardsKind, cutoutKind] }
+    /// The kinds this Mac takes, under `lock`: a cut-out on any Mac, cards on one that can shut a card's script in, a
+    /// transcript with a speech model when it has the link to them.
+    private var takes: [String] { (cannotDraw ? [cutoutKind] : [cardsKind, cutoutKind]) + (speech == nil ? [] : [transcribeKind]) }
+
+    private func takeAnnounce() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let was = announce
+        announce = false
+        return was
+    }
+
+    /// This Mac's models changed (a download started or ended, one went): a claim says so now, so the Voice page shows
+    /// it and the server stops or starts asking. While a step runs, the claim waits for the next poll.
+    func modelsChanged() {
+        guard speech != nil else { return }
+        lock.lock()
+        announce = true
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).async { [self] in
+            guard !isStopped, slots.wait(timeout: .now()) == .success else { return }
+            guard takeAnnounce(), let step = claimStep(hinted: false) else { slots.signal(); return }
+            runSteps(step)
+        }
+    }
 
     /// The long poll's body: big files come as hashes, and the editor kinds this Mac would take now, if any are to be said.
     func waitBody(listing kinds: [String]?) -> [String: Any] {
@@ -316,11 +351,30 @@ final class RelayRunner {
     /// Takes the editor step a hint spoke of (serve() calls it with a free slot in hand, and only after a hint). When
     /// there is none after all, this Mac lists no kind for a while (`quietAfterNothing`), and nothing shows in the menu
     /// or the log.
-    func claimStep(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> EditorJob? {
+    /// `hinted` false: a claim of this Mac's own, to say what speech models it has; with no step it changes nothing, and
+    /// while a step runs it is left for later.
+    func claimStep(now: TimeInterval = ProcessInfo.processInfo.systemUptime, hinted: Bool = true) -> EditorJob? {
+        claiming.lock()
+        defer { claiming.unlock() }
         lock.lock()
         let kinds = takes
+        let busy = drawing
+        if !hinted && busy { announce = true }
         lock.unlock()
-        let reply = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": kinds], tries: 1, timeout: 10)
+        if !hinted && busy { return nil }
+        var reply: DeviceReply?
+        // the server's wishes for its models: done, then said again (as the helper does), at most three times
+        for _ in 0..<3 {
+            var body: [String: Any] = ["kinds": kinds]
+            let models = kinds.contains(transcribeKind) ? speech?.claim() ?? [:] : [:]
+            body.merge(models) { $1 }
+            reply = try? api.call("POST", "/api/devices/relay/editor/claim", body, tries: 1, timeout: 10)
+            guard let reply, reply.status == 200, let speech, !models.isEmpty,
+                  let wanted = ((try? JSONSerialization.jsonObject(with: reply.data)) as? [String: Any])?["models"] as? [String]
+            else { break }
+            // an older server says nothing of models: nothing here is removed
+            if !speech.answered(models, wanted) || EditorJob(claim: reply.data) != nil { break }
+        }
         if let reply, reply.status == 200, let step = EditorJob(claim: reply.data) {
             if kinds.contains(step.kind) {
                 lock.lock()
@@ -331,6 +385,7 @@ final class RelayRunner {
             // not a kind this Mac listed: back in the site's queue
             _ = try? api.call("POST", "/api/devices/relay/editor/job/\(step.id)/fail", ["error": "This Mac has no \(step.kind) step"], tries: 2)
         }
+        guard hinted else { return nil }
         let refused = reply.map { (400..<500).contains($0.status) } ?? false
         lock.lock()
         quietUntil = now + (refused ? Self.quietAfterRefusal : Self.quietAfterNothing)
@@ -351,12 +406,14 @@ final class RelayRunner {
             let end: CardJob.End, more: Bool
             if step.kind == cutoutKind {
                 (end, more) = CutoutJob(api: api, id: step.id).run()
+            } else if step.kind == transcribeKind, let speech {
+                (end, more) = TranscribeJob(api: api, step: step, speech: speech).run()
             } else {
                 if !shown { shown = true; publish { $0.drawing = true } }
                 (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                                       stopped: { [weak self] in self?.isStopped ?? true }).run()
             }
-            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : "cards"): step \(step.id) failed: \(why)") }
+            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == transcribeKind ? "transcript" : "cards"): step \(step.id) failed: \(why)") }
             if case .cannot = end { cannot = true }
             // without that word from the site the next step is seen on a later poll (the one in flight listed no kind)
             next = more && !cannot && !isStopped ? claimStep() : nil
