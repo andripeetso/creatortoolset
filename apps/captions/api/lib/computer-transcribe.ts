@@ -53,15 +53,18 @@ export function strongest(devices: Device[], weights: Balance["weights"]): Devic
 export function declareModels(d: Device, held: string[], getting: string[], asked: string[] = []): void {
   const s = d.stt;
   const gone = s?.claimed ? s.held.filter((m) => !held.includes(m) && !getting.includes(m)) : [];
-  const want = [...new Set([...(s?.want ?? []), ...(s?.claimed ? [] : held), ...asked])].filter((m) => !gone.includes(m));
+  const want = [...new Set([...(s?.want ?? []), ...(s?.claimed ? [] : held), ...asked])].filter((m) => !gone.includes(m) && (held.includes(m) || fillable(d, m)));
   setDeviceStt(d.id, { want, held, getting, claimed: true });
 }
 
-/** Whether the models its owner wants differ from what the computer said: then it is hinted, claims, and is told. */
+/**
+ * Whether the models its owner wants differ from what the computer said: then it is hinted, claims, and is told. A wish
+ * it can't fill (an older Mac app and a Parakeet: `fillable`) does not count, or it would be told to claim for ever.
+ */
 export function modelsOutOfStep(d: Device): boolean {
   const s = d.stt;
   if (!s) return false;
-  return s.want.some((m) => !s.held.includes(m) && !s.getting.includes(m)) || s.held.some((m) => !s.want.includes(m));
+  return s.want.some((m) => fillable(d, m) && !s.held.includes(m) && !s.getting.includes(m)) || s.held.some((m) => !s.want.includes(m));
 }
 
 /** Download (keep) or Remove `model` on the account's own computer. The reason it can't, or null. */
@@ -70,7 +73,7 @@ export function wantModel(owner: string, id: string, model: string, keep: boolea
   if (d?.owner !== owner || !d.kinds?.includes(TRANSCRIBE_KIND)) return "Not one of your computers that run speech models";
   const m = STT_MODELS.find((x) => x.id === model && x.computer);
   if (!m) return `${model} is not a model a computer downloads`;
-  if (keep && !runsOn(m, d.report?.machine?.os)) return `${m.name} does not run on ${d.name}`;
+  if (keep && !runsOn(m, d.report?.machine?.os, d.version)) return `${m.name} does not run on ${d.name}`;
   const want = (d.stt?.want ?? d.stt?.held ?? []).filter((m) => m !== model);
   setDeviceStt(id, { held: [], getting: [], ...d.stt, want: keep ? [...want, model] : want });
   void wakeEditorPolls();
@@ -106,9 +109,17 @@ export const COMPUTER_LIMITS = { checkMs: 15_000, unclaimedMs: 5 * 60_000, takeM
 
 /**
  * The AI Editor cuts at "um" and restarts, which only Parakeet on a Linux helper is measured to keep; a Mac's Core ML
- * Parakeet (Dictation) dropped one, so the editor's transcripts never go to a Mac (`noMac`).
+ * Parakeet (Dictation) dropped one, so the editor's transcripts never go to a Mac (`noMac`). A computer that has not said
+ * what it is counts as one: only one that said it is not a Mac gets them.
  */
-export const isMac = (d: Device) => d.report?.machine?.os === "mac";
+export const isMac = (d: Device) => (d.report?.machine?.os ?? "mac") === "mac";
+
+/** Whether this computer can get `model` (`runsOn`); one that has not said what it is is not judged here. */
+function fillable(d: Device, model: string): boolean {
+  const m = STT_MODELS.find((x) => x.id === model);
+  const os = d.report?.machine?.os;
+  return !m || !os || runsOn(m, os, d.version);
+}
 const onlineHolders = (owner: string, model: string, noMac = false) =>
   speechComputers(owner).filter((d) => holds(d, model) && isOnline(d.id) && !(noMac && isMac(d)));
 const offLine = (model: string) => `Waits for a computer with ${nameOf(model)} to be on`;

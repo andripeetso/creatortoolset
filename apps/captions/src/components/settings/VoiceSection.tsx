@@ -163,7 +163,7 @@ function OnMyComputers({ computers, want }: { computers: SttComputer[]; want: (c
         computers.map((c) => (
           <Card key={c.id}>
             <Row title={c.name} status={c.online ? undefined : "Off"} />
-            {COMPUTER_MODELS.filter((m) => runsOn(m, c.os) || c.models.some((x) => x.id === m.id)).map((m) => {
+            {COMPUTER_MODELS.filter((m) => runsOn(m, c.os, c.version) || c.models.some((x) => x.id === m.id)).map((m) => {
               const has = c.models.find((x) => x.id === m.id);
               return (
                 <Row

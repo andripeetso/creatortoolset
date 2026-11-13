@@ -12,7 +12,7 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
 const { deviceOf, pairDevice, setDeviceKinds, setDeviceStt, touchDevice } = await import("./devices");
-const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS, EDITOR_LIMITS } = await import("./computer-transcribe");
+const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS, EDITOR_LIMITS, isMac, modelsOutOfStep } = await import("./computer-transcribe");
 const { availableEngines, resolvedOne, speechFor, speechJob, writeVoicePrefs } = await import("./speech");
 const { editorWordsFromComputer } = await import("../transcribe");
 const { saveMyKey } = await import("../my-keys");
@@ -86,7 +86,7 @@ describe("a transcript never waits for ever", () => {
     writeFileSync(f, Buffer.alloc(32_000 * 60)); // a minute of audio
     return f;
   };
-  const tick = (ms: number, keep: string[] = []) => vi.advanceTimersByTimeAsync(ms).then(() => keep.forEach(touchDevice));
+  const tick = (ms: number, keep: string[] = []) => vi.advanceTimersByTimeAsync(ms).then(() => keep.forEach((id) => touchDevice(id)));
 
   it("its computer goes off: it waits and says so", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
@@ -267,5 +267,37 @@ describe("Download and Remove", () => {
     // the page offers it the Mac's models only
     const shown = (await voice()).computers.find((c) => c.name === "Tiny Studio Mac") as { os?: string } | undefined;
     expect(shown?.os).toBe("mac");
+  });
+
+  // Parakeet on a Mac needs the app that runs it (macSince): every call from the Mac app names its version
+  it("an older Mac app is never offered Parakeet, and a wish it can't fill doesn't keep it claiming", async () => {
+    const old = pairDevice("ana", "Tiny Old Mac");
+    await report(old.token, { os: "mac", cpus: 10, memGb: 16, freeGb: 8 });
+    setDeviceKinds(old.device.id, [TRANSCRIBE_KIND]);
+    const claimAs = async (ua: string, models: string[]) =>
+      (await (await app.request("/api/devices/relay/editor/claim", json({ kinds: [TRANSCRIBE_KIND], models, getting: [], asked: [] }, { ...as(old.token), "user-agent": ua }))).json()) as { models: string[] };
+    await claimAs("CreatorToolsetMac/0.15.37", ["whisper-large-v3-turbo"]);
+    expect((await want(old.device.id, "parakeet-tdt-0.6b-v3", true)).status).toBe(400);
+    expect((await want(old.device.id, "parakeet-tdt-0.6b-v2", true)).status).toBe(400);
+    expect((await want(old.device.id, "whisper-small", true)).status).toBe(200);
+    expect((await voice()).computers.find((c) => c.name === "Tiny Old Mac")).toMatchObject({ version: "0.15.37" });
+    // a wish from before (pressed while the server let it): dropped, so the Mac is not told to claim again and again
+    setDeviceStt(old.device.id, { ...deviceOf(old.device.id)!.stt!, want: ["whisper-large-v3-turbo", "whisper-small", "parakeet-tdt-0.6b-v3"] });
+    expect(modelsOutOfStep(deviceOf(old.device.id)!)).toBe(true);   // whisper-small is still to come
+    expect((await claimAs("CreatorToolsetMac/0.15.37", ["whisper-large-v3-turbo", "whisper-small"])).models).toEqual(["whisper-large-v3-turbo", "whisper-small"]);
+    expect(modelsOutOfStep(deviceOf(old.device.id)!)).toBe(false);
+    // the same Mac after its update: offered, and taken
+    await claimAs("CreatorToolsetMac/0.15.38", ["whisper-large-v3-turbo", "whisper-small"]);
+    expect((await want(old.device.id, "parakeet-tdt-0.6b-v3", true)).status).toBe(200);
+  });
+
+  it("a computer that has not said what it is gets no AI Editor transcript: only one that said it is not a Mac", async () => {
+    const quiet = pairDevice("ana", "Tiny Quiet Box");
+    setDeviceKinds(quiet.device.id, [TRANSCRIBE_KIND]);
+    setDeviceStt(quiet.device.id, { want: ["parakeet-tdt-0.6b-v3"], held: ["parakeet-tdt-0.6b-v3"], getting: [], claimed: true });
+    touchDevice(quiet.device.id);
+    expect(isMac(deviceOf(quiet.device.id)!)).toBe(true);
+    expect(isMac(deviceOf(pc.device.id)!)).toBe(false);
+    await expect(transcribeOnComputer("ana", "parakeet-tdt-0.6b-v3", ["en"], "x.wav", EDITOR_LIMITS)).rejects.toBeInstanceOf(ComputerOff);
   });
 });

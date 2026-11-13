@@ -85,9 +85,18 @@ const goingOff = new Map<string, ReturnType<typeof setTimeout>>();
  * open windows (the admins', for the team's own computer) hear "devices" when it comes online and when it goes quiet,
  * never on each call.
  */
-export function touchDevice(id: string): void {
+/**
+ * A call from the device: it is on. `userAgent`: the Mac app names its version in every call ("CreatorToolsetMac/0.15.38"),
+ * kept as the device's version (which models it runs: contracts/voice.ts macSince).
+ */
+export function touchDevice(id: string, userAgent?: string): void {
   const d = find(id);
   if (!d) return;
+  const version = userAgent?.match(/^CreatorToolsetMac\/(\S{1,40})/)?.[1];
+  if (version && version !== d.version) {
+    d.version = version;
+    persist();
+  }
   if (!isOnline(id)) tell(d.owner);
   d.lastSeen = Date.now();
   if (d.lastSeen - persistedAt > 60_000) persist();
