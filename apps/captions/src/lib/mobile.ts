@@ -26,6 +26,9 @@ export function isPhoneHub(): boolean {
   return isMobileDevice() && !prefersDesktop();
 }
 
+/** A phone screen's own route: /m and what is under it. Not a page whose name only starts with m (a plug-in's /media). */
+export const isPhonePath = (pathname: string): boolean => pathname === "/m" || pathname.startsWith("/m/");
+
 export function toolsetHomePath(): string {
   return isPhoneHub() ? "/m" : "/";
 }
