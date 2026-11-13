@@ -80,7 +80,7 @@ function parseWav(
   return null;
 }
 
-function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
+export function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
   const out = new Uint8Array(44 + pcm.length);
   const v = new DataView(out.buffer);
   const wstr = (o: number, s: string) => {
@@ -109,16 +109,30 @@ function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
  * months" came back as "these 18," with "months" gone. punctuate gives
  * the same words, punctuation and capitals, with numbers spelled out.
  */
-const DG_URL =
-  "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&utterances=true&language=en";
+const DG_URL = "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&utterances=true";
 
-/** `fillers`: keep "um", "uh". */
-async function deepgramWords(
-  key: string,
-  audio: Uint8Array | ArrayBuffer,
-  fillers = false,
-): Promise<{ words: Word[] } | { error: string; status: number }> {
-  const url = DG_URL + (fillers ? "&filler_words=true" : "");
+/**
+ * Asked in English first; a window English hears next to nothing of (under `SPARSE_WPS` words a second) is asked again
+ * with the language detected, and keeps whichever heard more. Estonian asked as English came back as no words at all;
+ * detection alone called a quiet English clip Spanish, so it is never the first ask.
+ */
+export const SPARSE_WPS = 0.5;
+
+type Heard = { words: Word[]; language: string } | { error: string; status: number };
+
+/** `fillers`: keep "um", "uh". The language is the one heard ("en" unless detection heard more). */
+async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false): Promise<Heard> {
+  const english = await deepgramAsk(key, audio, fillers, false);
+  if ("error" in english) return english;
+  const wav = parseWav(new Uint8Array(audio));
+  const seconds = wav ? wav.pcm.length / (wav.sampleRate * 2) : Math.max(0, audio.byteLength - 44) / 32000;
+  if (english.words.length >= seconds * SPARSE_WPS) return english;
+  const other = await deepgramAsk(key, audio, fillers, true);
+  return "error" in other || other.words.length <= english.words.length ? english : other;
+}
+
+async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, detect: boolean): Promise<Heard> {
+  const url = DG_URL + (detect ? "&detect_language=true" : "&language=en") + (fillers ? "&filler_words=true" : "");
   const resp = await fetch(url, {
     method: "POST",
     headers: {
@@ -145,7 +159,7 @@ async function deepgramWords(
     err_code?: string;
     err_msg?: string;
     results?: {
-      channels?: { alternatives?: { words?: DgWord[] }[] }[];
+      channels?: { alternatives?: { words?: DgWord[] }[]; detected_language?: string }[];
       utterances?: DgUtterance[];
     };
   };
@@ -166,6 +180,7 @@ async function deepgramWords(
       data.results?.channels?.[0]?.alternatives?.[0]?.words ?? [],
       data.results?.utterances,
     ),
+    language: (detect && data.results?.channels?.[0]?.detected_language) || "en",
   };
 }
 
@@ -179,7 +194,7 @@ type Word = {
 };
 
 type TranscriptionResult =
-  | { words: Word[] }
+  | { words: Word[]; language: string }
   | { error: string; status: 402 | 502 };
 
 function fromDg(w: DgWord, start: number, end: number, utterance?: number): Word {
@@ -264,6 +279,7 @@ export async function transcribeWav(
 
   // long file → overlapping windows (see note above); short → one shot
   let words: Word[] = [];
+  let language = "en";
   if (wav && durationS > CHUNK_S + OVERLAP_S) {
     const stepS = CHUNK_S - OVERLAP_S;
     const stepBytes = Math.floor(stepS * bytesPerSec) & ~1;
@@ -278,19 +294,21 @@ export async function transcribeWav(
     const results = await Promise.all(
       chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers)),
     );
+    const heard: { words: Word[]; language: string }[] = [];
     for (const r of results) {
       if ("error" in r) return { error: r.error, status: 502 };
+      heard.push(r);
     }
-    words = mergeOverlappingWindows(
-      chunks.map((ch, k) => ({
-        offsetS: ch.offsetS,
-        words: (results[k] as { words: Word[] }).words,
-      })),
-    );
+    words = mergeOverlappingWindows(chunks.map((ch, k) => ({ offsetS: ch.offsetS, words: heard[k].words })));
+    // the file's language: the one most of its words were heard in
+    const count = new Map<string, number>();
+    for (const h of heard) count.set(h.language, (count.get(h.language) ?? 0) + h.words.length);
+    language = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "en";
   } else {
     const r = await deepgramWords(route.key, audio, fillers);
     if ("error" in r) return { error: r.error, status: 502 };
     words = r.words;
+    language = r.language;
   }
 
   // usage: audio length ≈ last word end; fall back to the WAV byte
@@ -301,7 +319,7 @@ export async function transcribeWav(
       : Math.max(0, audio.byteLength - 44) / 32000,
   );
   bumpUsage(user.username, { cloudRuns: 1, cloudSeconds: seconds });
-  return { words };
+  return { words, language };
 }
 
 transcribeApp.post("/", async (c) => {

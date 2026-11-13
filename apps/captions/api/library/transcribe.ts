@@ -106,7 +106,7 @@ async function deepgram(file: string, actor: string): Promise<Transcribed> {
   const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers: true });
   if ("error" in r) throw new Error(r.error);
   const words = r.words.map((w) => ({ w: w.text, s: w.start, e: w.end, ...(w.confidence !== undefined ? { c: w.confidence } : {}) }));
-  return { segments: wordsToSegments(r.words), words, language: "en" };
+  return { segments: wordsToSegments(r.words), words, language: r.language };
 }
 
 // ponytail: OpenAI's endpoint takes 25 MB, about 100 minutes of the 32 kbps audio sent here; longer files need chunks
