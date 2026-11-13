@@ -25,8 +25,9 @@ async function toPcm16k(blob: Blob): Promise<Float32Array> {
 async function writeDown(recording: Blob, onProgress: (p: number) => void): Promise<string> {
   const res = await fetch("/api/transcribe/mic", { method: "POST", headers: { "Content-Type": recording.type || "application/octet-stream" }, body: recording });
   if (res.ok) return ((await res.json()) as { text: string }).text;
-  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-  if (e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") throw new Error(e.error || `Couldn't write that down (${res.status})`);
+  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; chosen?: boolean };
+  // an engine the person picked that can't run says so; only Automatic falls back to the browser's model
+  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Couldn't write that down (${res.status})`);
   // no engine on the server for this account: the captions' local model, else the first
   const engine = storedEngine();
   // ponytail: a new worker loads the model (from the browser cache) on every message; keep one alive if that's slow

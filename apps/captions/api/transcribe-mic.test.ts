@@ -82,7 +82,7 @@ describe("POST /api/transcribe/mic: talking to the assistant", () => {
     const asked = engines();
     const res = await say();
     expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ error: "Needs a Deepgram key", code: "NEEDS_KEY" });
+    expect(await res.json()).toEqual({ error: "Needs a Deepgram key", code: "NEEDS_KEY", chosen: true });
     expect(asked).toEqual([]);
   });
 });

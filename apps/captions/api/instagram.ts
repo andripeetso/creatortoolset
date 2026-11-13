@@ -4126,8 +4126,11 @@ export async function transcribeForUser(ids: string[], user: SessionUser, waitMs
     (m): m is PostMeta => !!m && !isJobDone(m.jobs, "transcript"),
   );
   if (!metas.length || !(await ingestGate(user.username)).ok) return;
+  // a project's language is the person's own speech: another creator's reel added as a source keeps its own (detected)
+  const links = languages?.length ? await accountProjects(user.username) : new Map<string, string>();
+  const own = languages?.length ? (await allAccounts()).filter((a) => a.owner === user.username && isMine(a, links)) : [];
   for (const meta of metas) {
-    if (languages?.length) askIn.set(meta.id, languages);
+    if (languages?.length && own.some((a) => accountOwnsPost(a, meta))) askIn.set(meta.id, languages);
     meta.jobs = patchJob(meta.jobs, "transcript", { status: "pending" });
     queueOrFollowUp(meta, user, ["transcript"], {});
     await persist(meta);

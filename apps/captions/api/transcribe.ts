@@ -367,7 +367,13 @@ const MIC_MAX_BYTES = 10 * 1024 * 1024;
 transcribeApp.post("/mic", async (c) => {
   const user = c.get("user");
   const s = speechFor(user, "mic");
-  if ("needs" in s) return c.json({ error: s.needs, code: "NEEDS_KEY" }, 402);
+  if ("needs" in s) {
+    // `chosen`: the person picked this engine (Settings → AI → Voice), so a page says what it needs instead of
+    // quietly writing it down another way; on Automatic it may still use a model in the browser
+    const prefs = readVoicePrefs(user.username);
+    const chosen = (prefs.stt.per.mic ?? prefs.stt.default).engine !== "auto";
+    return c.json({ error: s.needs, code: "NEEDS_KEY", chosen }, 402);
+  }
   if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Cloud transcription is locked for your account", code: "CLOUD_LOCKED" }, 403);
   if (Number(c.req.header("content-length") ?? 0) > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
   const audio = new Uint8Array(await c.req.arrayBuffer());
