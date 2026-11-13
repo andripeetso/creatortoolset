@@ -1,4 +1,4 @@
-import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
 import { retouch, retouches } from "./retouch";
 
@@ -40,15 +40,33 @@ export const sourceOf = (l: Layer): string | null => (l.type === "image" ? l.pic
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 export type Loaded = Map<string, CanvasImageSource & { width: number; height: number }>;
 
-function roundedRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: number) {
-  const k = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + k, y);
-  ctx.arcTo(x + w, y, x + w, y + h, k);
-  ctx.arcTo(x + w, y + h, x, y + h, k);
-  ctx.arcTo(x, y + h, x, y, k);
-  ctx.arcTo(x, y, x + w, y, k);
+/** A corner's radius, held to half the box: the top left, top right, bottom right and bottom left. */
+export const cornersOf = (r: Radius | undefined, w: number, h: number): [number, number, number, number] =>
+  (typeof r === "object" ? r : [r ?? 0, r ?? 0, r ?? 0, r ?? 0]).map((n) => Math.max(0, Math.min(n, w / 2, h / 2))) as [number, number, number, number];
+
+/** A box with rounded corners, added to the path under way (the caller begins it). */
+function roundedRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: Radius | undefined) {
+  const [tl, tr, br, bl] = cornersOf(r, w, h);
+  ctx.moveTo(x + tl, y);
+  ctx.arcTo(x + w, y, x + w, y + h, tr);
+  ctx.arcTo(x + w, y + h, x, y + h, br);
+  ctx.arcTo(x, y + h, x, y, bl);
+  ctx.arcTo(x, y, x + w, y, tl);
   ctx.closePath();
+}
+
+/** A shape's outline in its own box, added to the path under way. */
+function shapePath(ctx: Ctx, l: ShapeLayer) {
+  if (l.shape === "ellipse") {
+    // begun where the ellipse starts, so no line is drawn to it from whatever the path held before
+    ctx.moveTo(l.w, l.h / 2);
+    ctx.ellipse(l.w / 2, l.h / 2, l.w / 2, l.h / 2, 0, 0, Math.PI * 2);
+    ctx.closePath();
+  } else if (l.shape === "rect") roundedRect(ctx, 0, 0, l.w, l.h, l.radius);
+  else {
+    shapePoints(l.shape, l.w, l.h).forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+  }
 }
 
 /** A fill for a w × h box: the colour, or its gradient across the box, as long as the box is along the gradient's angle. */
@@ -56,8 +74,10 @@ function fillOf(ctx: Ctx, color: string, g: Gradient | undefined, w: number, h: 
   if (!g) return color;
   const a = (g.angle * Math.PI) / 180;
   const half = (Math.abs(Math.cos(a)) * w + Math.abs(Math.sin(a)) * h) / 2;
-  const grad = ctx.createLinearGradient(w / 2 - Math.cos(a) * half, h / 2 - Math.sin(a) * half, w / 2 + Math.cos(a) * half, h / 2 + Math.sin(a) * half);
+  // radial: from the middle out to the corners
+  const grad = g.kind === "radial" ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.hypot(w, h) / 2) : ctx.createLinearGradient(w / 2 - Math.cos(a) * half, h / 2 - Math.sin(a) * half, w / 2 + Math.cos(a) * half, h / 2 + Math.sin(a) * half);
   grad.addColorStop(0, color);
+  if (g.via) grad.addColorStop(0.5, g.via);
   grad.addColorStop(1, g.to);
   return grad;
 }
@@ -308,29 +328,46 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
 function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
   if (l.type === "text") drawText(ctx, l);
   else if (l.type === "shape") {
-    if (l.shape === "ellipse") {
-      ctx.beginPath();
-      ctx.ellipse(l.w / 2, l.h / 2, l.w / 2, l.h / 2, 0, 0, Math.PI * 2);
-    } else if (l.shape === "rect") roundedRect(ctx, 0, 0, l.w, l.h, l.radius ?? 0);
-    else {
-      ctx.beginPath();
-      shapePoints(l.shape, l.w, l.h).forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-      ctx.closePath();
-    }
+    ctx.beginPath();
+    shapePath(ctx, l);
     ctx.fillStyle = fillOf(ctx, l.fill, l.gradient, l.w, l.h);
     ctx.fill();
-    if (l.stroke) {
+    const s = l.stroke;
+    if (s) {
       // a rectangle keeps its square corners; a star's or an arrow's points are rounded off, or a wide line would spike far out of them
       ctx.lineJoin = l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round";
-      ctx.lineWidth = l.stroke.width;
-      ctx.strokeStyle = l.stroke.color;
-      ctx.stroke();
+      ctx.strokeStyle = s.color;
+      if (s.dash) {
+        ctx.setLineDash(s.dash);
+        ctx.lineCap = s.round ? "round" : "butt";
+      }
+      if (!s.side) {
+        ctx.lineWidth = s.width;
+        ctx.stroke();
+      } else {
+        // on one side of the edge: a line twice as wide along the edge, with the half on the other side cut away
+        // (inside: only what is in the shape is drawn; outside: only what is in a box round it and not in the shape)
+        ctx.save();
+        if (s.side === "outside") {
+          const far = 2 * s.width + 10;
+          ctx.beginPath();
+          ctx.rect(-far, -far, l.w + 2 * far, l.h + 2 * far);
+          shapePath(ctx, l);
+          ctx.clip("evenodd");
+        } else ctx.clip();
+        ctx.beginPath();
+        shapePath(ctx, l);
+        ctx.lineWidth = s.width * 2;
+        ctx.stroke();
+        ctx.restore();
+      }
     }
   } else {
     const pic = loaded.get(sourceOf(l)!);
     if (pic && pic.width && pic.height) {
       if (l.type === "image") {
-        roundedRect(ctx, 0, 0, l.w, l.h, l.radius ?? 0);
+        ctx.beginPath();
+        roundedRect(ctx, 0, 0, l.w, l.h, l.radius);
         if (cast) {
           ctx.fillStyle = "#000000";
           return void ctx.fill();

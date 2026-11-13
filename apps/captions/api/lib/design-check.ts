@@ -1,4 +1,4 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
@@ -26,7 +26,27 @@ const round = (n: number) => Math.round(n * 100) / 100;
 const named = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, DESIGN_LIMITS.layerName) : "");
 
 /** A gradient as it may be saved (its colour "#rrggbb", its angle in a full turn), or nothing when it is none. */
-const gradient = (v: unknown): { gradient?: Gradient } => (obj(v) && typeof v.to === "string" && COLOR.test(v.to.trim()) ? { gradient: { to: sixDigits(color(v.to, "#000000")), angle: round(num(v.angle, -360, 360, 90)) } } : {});
+const gradient = (v: unknown): { gradient?: Gradient } =>
+  obj(v) && typeof v.to === "string" && COLOR.test(v.to.trim())
+    ? { gradient: { to: sixDigits(color(v.to, "#000000")), angle: round(num(v.angle, -360, 360, 90)), ...(v.kind === "radial" ? { kind: "radial" as const } : {}), ...(typeof v.via === "string" && COLOR.test(v.via.trim()) ? { via: sixDigits(color(v.via, "#000000")) } : {}) } }
+    : {};
+
+/** A corner radius as it may be saved: one number, or four (one a corner) when they differ; nothing when it is none. */
+const corners = (v: unknown): { radius?: Radius } => {
+  if (Array.isArray(v) && v.length === 4) {
+    const r = v.map((n) => round(num(n, 0, 2000, 0))) as [number, number, number, number];
+    return r.every((n) => n === r[0]) ? (r[0] ? { radius: r[0] } : {}) : { radius: r };
+  }
+  const r = round(num(v, 0, 2000, 0));
+  return r ? { radius: r } : {};
+};
+
+/** What a shape's line has beside its colour and width: dashes (with a gap, or they are none), round ends, a side. */
+const strokeMore = (v: unknown): Partial<Stroke> => {
+  if (!obj(v)) return {};
+  const dash = Array.isArray(v.dash) && v.dash.length === 2 ? ([round(num(v.dash[0], 0, 2000, 0)), round(num(v.dash[1], 0, 2000, 0))] as [number, number]) : null;
+  return { ...(dash && dash[1] > 0 ? { dash } : {}), ...(v.round === true ? { round: true } : {}), ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}) };
+};
 
 /** A picture's colour changes as they may be saved: each one named, a whole number in its range, and none at all when every one is 0. */
 function retouched(raw: Record<string, unknown>): Pick<ImageLayer, "adjust" | "duotone" | "vignette" | "grain" | "blur"> {
@@ -216,7 +236,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...retouched(raw),
       // the picture it was cut out of: one of this design's own, and not itself
       ...(typeof raw.uncut === "string" && raw.uncut !== raw.picture && r.pictures.includes(raw.uncut) ? { uncut: raw.uncut } : {}),
-      ...(num(raw.radius, 0, 2000, 0) ? { radius: round(num(raw.radius, 0, 2000, 0)) } : {}),
+      ...corners(raw.radius),
     };
   }
   if (raw.type === "shape") {
@@ -227,8 +247,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       shape: oneOf(raw.shape, DESIGN_SHAPES, "rect"),
       fill: color(raw.fill, "#dddddd"),
       ...gradient(raw.gradient),
-      ...(num(raw.radius, 0, 2000, 0) ? { radius: round(num(raw.radius, 0, 2000, 0)) } : {}),
-      ...(stroke ? { stroke } : {}),
+      ...corners(raw.radius),
+      ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : {}),
     };
   }
   if (raw.type === "drawing") {

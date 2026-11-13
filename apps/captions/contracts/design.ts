@@ -52,7 +52,24 @@ export type DesignShape = (typeof DESIGN_SHAPES)[number];
 export interface Gradient {
   to: string;
   angle: number;
+  /** "radial": from the middle (the own colour) out to the corners (`to`), whatever the angle; absent = along the angle */
+  kind?: "radial";
+  /** a colour it passes through half-way */
+  via?: string;
 }
+/** A line round a shape. */
+export interface Stroke {
+  color: string;
+  width: number;
+  /** dashes: how long each is and the gap after it, in pixels; absent = an unbroken line */
+  dash?: [number, number];
+  /** round ends on the dashes (a dash of 0 with round ends is a dot) */
+  round?: boolean;
+  /** the side of the shape's edge the line lies on; absent = half on each */
+  side?: "inside" | "outside";
+}
+/** A corner radius in pixels: one for every corner, or one each for the top left, top right, bottom right and bottom left. */
+export type Radius = number | [number, number, number, number];
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
@@ -129,8 +146,7 @@ export interface ImageLayer extends Box {
   blur?: number;
   /** the picture this one was cut out of (its background taken away): kept, so the background can be put back */
   uncut?: string;
-  /** corner radius in pixels */
-  radius?: number;
+  radius?: Radius;
 }
 
 export interface ShapeLayer extends Box {
@@ -138,8 +154,8 @@ export interface ShapeLayer extends Box {
   shape: DesignShape;
   fill: string;
   gradient?: Gradient;
-  radius?: number;
-  stroke?: { color: string; width: number };
+  radius?: Radius;
+  stroke?: Stroke;
 }
 
 /** A drawing the AI made: SVG markup with a viewBox and no text, no script, no link and nothing from outside it. */

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Film, MoveHorizontal, Pause, Play, Plus, Redo2, Repeat, SkipBack, SkipForward, Undo2, Volume2, VolumeX, ZoomIn } from "lucide-react";
+import { Film, Magnet, MoveHorizontal, Pause, Play, Plus, Redo2, Repeat, SkipBack, SkipForward, Undo2, Volume2, VolumeX, ZoomIn } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { trimOf, type ScreenEvents, type ScreenLook, type Zoom } from "@/lib/screen-recording";
 import { clock, dragTrim, dragZoom, rulerStep, zoomSlot, type ZoomGrip } from "@/lib/screen-timeline";
+import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { sliderToZoom, zoomToSlider } from "@/lib/time-axis";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import type { Player } from "./usePlayer";
@@ -37,6 +38,8 @@ function drag(e: ReactPointerEvent<HTMLElement>, move: (dx: number, clientX: num
  * zooms: press an empty stretch to add one, drag one to move it, drag its ends to make it longer or shorter.
  * The time axis is the one Review's timeline has (lib/use-time-axis.ts): the whole recording fits at first; the slider,
  * = and -, ⌥ + scroll and a pinch zoom about the playhead, ⌘ + scroll goes left and right, \ fits it again.
+ * A dragged zoom or end lands on what is near it, as a clip does on Review's timeline (lib/clip-drag.ts): the playhead,
+ * a click, another zoom's end, the ends of the kept part. The magnet (N) turns that off.
  */
 /** The scroller's padding each side of the tracks (px-1.5). */
 const PAD = 6;
@@ -75,6 +78,7 @@ export function Timeline({
   const head = useRef<HTMLDivElement>(null);
   const label = useRef<HTMLSpanElement>(null);
   const [ghost, setGhost] = useState<{ start: number; end: number } | null>(null);
+  const [snapOn, setSnapOn] = useState(true);
   const trim = trimOf(look, duration);
   // a second gets 240 px at most; zooming is only offered when it can get wider than it already is
   const axis = useTimeAxis({ scroller, seconds: duration, left: PAD, right: PAD, maxPps: 240, now: player.time });
@@ -85,7 +89,9 @@ export function Timeline({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable=true]")) return;
-      if (axis.key(e)) e.preventDefault();
+      if (e.key.toLowerCase() === "n") setSnapOn((v) => !v);
+      else if (!axis.key(e)) return;
+      e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -115,7 +121,13 @@ export function Timeline({
     drag(e, (_dx, clientX) => player.seek(timeAt(clientX)));
   };
 
-  const setTrim = (grip: "start" | "end", t: number) => {
+  /** What a dragged edge lands on, in seconds: the playhead, the clicks, the zooms' ends (not `but`'s own) and the kept part's. */
+  const landings = (but?: number) => [player.time(), ...clicks.map(([t]) => t), ...look.zooms.flatMap((z, i) => (i === but ? [] : [z.start, z.end])), trim.start, trim.end];
+  const near = perSecond > 0 && snapOn ? SNAP_PX / perSecond : 0;
+
+  const setTrim = (grip: "start" | "end", at: number) => {
+    // its own two ends are not somewhere to land
+    const t = at + snapDelta([at], 0, landings().slice(0, -2), near);
     const next = dragTrim(trim, grip, t, duration);
     change({ trim: next.start <= 0.001 && next.end >= duration - 0.001 ? undefined : next });
     player.seek(grip === "start" ? next.start : next.end);
@@ -124,8 +136,11 @@ export function Timeline({
   const grabZoom = (e: ReactPointerEvent<HTMLElement>, index: number, grip: ZoomGrip) => {
     e.stopPropagation();
     const before = look.zooms;
+    const z = before[index];
+    const edges = !z ? [] : grip === "body" ? [z.start, z.end] : [grip === "start" ? z.start : z.end];
+    const at = landings(index);
     onPick(index);
-    drag(e, (dx) => perSecond > 0 && change({ zooms: dragZoom(before, index, grip, dx / perSecond, duration) }));
+    drag(e, (dx) => perSecond > 0 && change({ zooms: dragZoom(before, index, grip, snapDelta(edges, dx / perSecond, at, near), duration) }));
   };
 
   const addZoom = (slot: { start: number; end: number }) => {
@@ -190,6 +205,16 @@ export function Timeline({
               className="w-28 [&_[data-slot=slider-range]]:bg-zinc-500 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-zinc-400 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-zinc-800"
             />
           )}
+          <button
+            type="button"
+            className={cn(icon, snapOn && "text-violet-300")}
+            onClick={() => setSnapOn(!snapOn)}
+            aria-pressed={snapOn}
+            aria-label="Snapping"
+            title={`Snapping ${snapOn ? "on" : "off"} (N): a dragged zoom or end lands on the playhead, a click or another zoom's end`}
+          >
+            <Magnet />
+          </button>
           <button
             type="button"
             className={cn(icon, player.loop && "bg-zinc-800 text-zinc-50")}
