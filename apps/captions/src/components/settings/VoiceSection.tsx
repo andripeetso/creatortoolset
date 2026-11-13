@@ -105,8 +105,9 @@ export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; sa
                 key={use}
                 id={`stt-use-${use}`}
                 title={SPEECH_USE_NAMES[use]}
-                // a use that follows the Default shares its need: the Default's row says it once
-                status={r && (own || !("needs" in r)) && <Runs r={r} full={!!own} />}
+                // a use that follows the Default shares its need: the Default's row says it once; a need of its own
+                // (the Default runs on a computer, this use can't) is said here
+                status={r && (own || !("needs" in r) || !("needs" in view.resolvedDefault)) && <Runs r={r} full={!!own} />}
                 control={
                   <SettingsSelect label={`${SPEECH_USE_NAMES[use]}: engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view.availableFor[use], own?.engine, false)} />
                 }

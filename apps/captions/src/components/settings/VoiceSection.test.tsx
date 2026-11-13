@@ -56,6 +56,17 @@ describe("the Voice page", () => {
   });
 });
 
+describe("a use's own need", () => {
+  it("shows on its row when the Default it follows can run", () => {
+    const out = html(view({
+      stt: { default: { engine: "auto" }, per: {} },
+      resolvedDefault: { use: "default", engine: "local", model: "whisper-large-v3-turbo" },
+      resolved: [{ use: "captions", needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" }],
+    }));
+    expect(out).toContain("Needs a Deepgram key");
+  });
+});
+
 describe("models on your computers", () => {
   it("with none, offers to add a computer; with one, each model can be downloaded, and one it has removed", () => {
     expect(html(view())).toContain('href="/settings/devices"');
