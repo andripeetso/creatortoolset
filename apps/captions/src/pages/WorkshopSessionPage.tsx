@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { createDesign, listDesigns } from "@/lib/designs";
 import { Eye, Loader2, X } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
@@ -117,35 +117,7 @@ function Ghost({ className }: { className: string }) {
   return <span aria-hidden className={`block shrink-0 rounded-md bg-muted/50 ${className}`} />;
 }
 
-/** When a session page last left the screen: one that opens right after it comes from the desk, not from another page. */
-let leftDeskAt = -1e9;
-/** The timer that ends "the next page starts from the grey": one at a time, so an earlier leave can't cut a later one short. */
-let fromDeskTimer = 0;
-
 export default function WorkshopSessionPage() {
-  // The desk's grey comes in softly when this page is reached from an ordinary page: not on the app's first page, and
-  // not from another session (the sidebar builds this page anew, and the desk is already grey). The page after it
-  // starts from the grey (index.css --desk-now, html[data-from-desk]).
-  const firstPage = useLocation().key === "default";
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    window.clearTimeout(fromDeskTimer);
-    root.removeAttribute("data-from-desk");
-    if (!firstPage && performance.now() - leftDeskAt > 200) {
-      root.style.transition = "none";
-      root.style.setProperty("--desk-t", "0");
-      void root.offsetWidth; // the start is taken in before the transition is switched back on
-      root.style.transition = "";
-      root.style.removeProperty("--desk-t");
-    }
-    return () => {
-      leftDeskAt = performance.now();
-      root.setAttribute("data-from-desk", "");
-      window.clearTimeout(fromDeskTimer);
-      fromDeskTimer = window.setTimeout(() => root.removeAttribute("data-from-desk"), 400);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const { sessionId = "" } = useParams();
   const me = useMe();
   // buttons a plug-in puts on a session (itemActions.session in its web.tsx), gated per account
@@ -1047,11 +1019,10 @@ export default function WorkshopSessionPage() {
   if (!allowed) return null;
 
   return (
-    <div data-fills-window className="flex h-dvh flex-col bg-[var(--desk-now)] text-foreground">
+    <div data-fills-window className="flex h-dvh flex-col bg-zinc-950 text-foreground">
       <AppBar
         tool="Content Workshop"
         to={WORKSHOP_HOME}
-        className="bg-[var(--desk-now)]"
         trail={
         // as wide as the title (an invisible copy sizes it), so the rest of the bar stays free to drag the Mac window
         <span className="inline-grid min-w-0">
@@ -1159,7 +1130,7 @@ export default function WorkshopSessionPage() {
                   className="flex h-full items-center justify-center bg-black/60 p-6 backdrop-blur-[2px] animate-in fade-in-0"
                   onMouseDown={(e) => e.target === e.currentTarget && setPeek(null)}
                 >
-                <div className="flex h-[min(100%,820px)] w-[min(100%,1120px)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-[var(--desk-page)] shadow-2xl animate-in zoom-in-95 fade-in-0">
+                <div className="flex h-[min(100%,820px)] w-[min(100%,1120px)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-zinc-950 shadow-2xl animate-in zoom-in-95 fade-in-0">
                   <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-[12px] text-muted-foreground">
                     <span className="font-medium text-foreground">{peekInSession ? "This session’s sources" : "From Browse"}</span>
                     {peekAt >= 0 ? <span className="tabular-nums">{peekAt + 1} / {peekList.length}</span> : null}

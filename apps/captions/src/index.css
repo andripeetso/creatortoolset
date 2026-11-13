@@ -42,7 +42,6 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
-    --desk-page: #e4e4e7;
     --desk-writing: #ffffff;
     --desk-cowork: #f4f4f5;
     --desk-content: #f4f4f5;
@@ -78,7 +77,6 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
-    --desk-page: #09090b;
     --desk-writing: #2c2c33;
     --desk-cowork: #141416;
     --desk-content: #141416;
@@ -182,24 +180,6 @@ html { scroll-padding-top: var(--bar-h); }
 @keyframes bar-fade { to { opacity: 1; } }
 @supports (animation-timeline: scroll()) {
   [data-appbar-fade] { animation: bar-fade linear both; animation-timeline: scroll(root block); animation-range: 0 24px; }
-}
-
-/* A Workshop session is white panels on a grey desk; every other page is the plain page colour. Going in, the grey comes
-   in softly rather than at once: the session page paints with --desk-now, the desk's colour mixed in by --desk-t, which
-   the page sets to 0 and lets run to 1 as it opens (the mix lives on the root, so parts of the page that are built a
-   moment later join it mid-way instead of starting over). Going out, the next page starts from the grey and settles to
-   its own colour (html[data-from-desk], set for a moment by the session page as it leaves). */
-@property --desk-t { syntax: "<number>"; inherits: true; initial-value: 1; }
-:root {
-  --desk-t: 1;
-  --desk-now: color-mix(in srgb, var(--desk-page) calc(var(--desk-t) * 100%), rgb(var(--zinc-950)));
-  transition: --desk-t 320ms ease-out;
-}
-@keyframes desk-out { from { background-color: var(--desk-page); } }
-html[data-from-desk] :has(> [data-appbar]) { animation: desk-out 320ms ease-out; }
-@media (prefers-reduced-motion: reduce) {
-  :root { transition: none; }
-  html[data-from-desk] :has(> [data-appbar]) { animation: none; }
 }
 
 /* mobile PWA: no rubber-band scroll past the app, no flash on taps */
