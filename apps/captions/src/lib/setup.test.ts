@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
@@ -308,5 +308,23 @@ describe("What do you want to do first?", () => {
     expect(toolsWithJob(["workshop"], null, mine)).toEqual(["workshop"]);
     expect(toolsWithJob(["workshop"], "look", mine)).toEqual(["workshop"]);
     expect(toolsWithJob([], "captions", ["workshop"])).toEqual([]); // not a tool this account may use
+  });
+});
+
+describe("openSetupAt", () => {
+  const at = (href: string) => {
+    const w = { location: { href }, history: { state: null, pushState: vi.fn((_s: unknown, _t: string, u: URL) => (w.location.href = String(u))) }, dispatchEvent: vi.fn() };
+    vi.stubGlobal("window", w);
+    vi.stubGlobal("PopStateEvent", class {});
+    return w;
+  };
+
+  it("opens one screen alone for a button that asks for one thing, and the whole path otherwise", () => {
+    const w = at("https://x.test/review?a=1");
+    openSetupAt("agents", true);
+    expect(w.location.href).toBe("https://x.test/review?a=1&setup=agents&alone=1");
+    openSetupAt("theme");
+    expect(w.location.href).toBe("https://x.test/review?a=1&setup=theme");
+    expect(w.dispatchEvent).toHaveBeenCalledTimes(2);
   });
 });

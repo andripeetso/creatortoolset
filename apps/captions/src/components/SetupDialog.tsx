@@ -106,7 +106,8 @@ const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hov
  * "Both" get one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
  * last screen saves `done`; no job to do is asked of her. Not now (the X, the footer link, Escape) hides it for this
  * browser and remembers the screen; Home's card brings it back. A click outside never closes it. Never shown on a
- * phone. The other screens (`?setup=connect`, `folders`, `own`) open alone and close with Done.
+ * phone. The other screens (`?setup=connect`, `folders`, `own`) open alone and close with Done, and so does any path
+ * screen opened with `&alone=1` (the assistant's and a tool's Connect your AI open just that one).
  */
 export function SetupDialog() {
   const me = useMe();
@@ -188,10 +189,10 @@ export function SetupDialog() {
   const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
   const path = stepsFor(prefs.talk, accountStep);
   const at = path.indexOf(step);
-  const side = at < 0;
+  const side = at < 0 || params.has("alone"); // `&alone=1` (openSetupAt): a path screen shown on its own
   const connected = view.have.includes("ai");
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
-  const leave = () => setParams((p) => (p.delete("setup"), p), { replace: true });
+  const leave = () => setParams((p) => (p.delete("setup"), p.delete("alone"), p), { replace: true });
 
   /** Whether leaving setup now plays Home's welcome (lib/setup.ts introPlays). */
   const welcomes = () => introPlays({ finishedBefore: setupFinished(view), seen: introSeen(), phone: isPhoneHub(), still: stillMotion() });
@@ -260,7 +261,7 @@ export function SetupDialog() {
   const closeLabel = side ? "Close" : "Not now";
   const { hint } = STEP[step];
   // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
-  const skips = (step === "agents" && !connected) || (step === "job" && !prefs.job) || (at >= 0 && step === "account" && account.account.state !== "signedIn");
+  const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
 
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -360,7 +361,7 @@ export function SetupDialog() {
             <span />
           )}
           <div className="flex items-center gap-2">
-            {at > 0 && (
+            {!side && at > 0 && (
               <Button variant="ghost" onClick={() => void back()}>
                 Back
               </Button>
