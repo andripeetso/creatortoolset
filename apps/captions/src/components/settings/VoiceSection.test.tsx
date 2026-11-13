@@ -36,6 +36,13 @@ describe("the Voice page", () => {
     expect(out).toContain("Needs an OpenAI key");
     expect(out).toContain('href="/settings/keys#api-key-OPENAI_API_KEY"');
   });
+
+  it("with no key at all the need is said once, on the Default, not again on each use that follows it", () => {
+    const need = "Add your Deepgram (or OpenAI) key in Settings → API keys";
+    const out = html(view({ available: [], stt: { default: { engine: "auto" }, per: {} }, resolved: (["captions", "transcripts", "editor", "mic"] as const).map((use) => ({ use, needs: need })) }));
+    expect(out.split(need).length - 1).toBe(1);
+    expect(out).toContain('href="/settings/keys#api-key-DEEPGRAM_API_KEY"');
+  });
 });
 
 describe("the engine choices", () => {

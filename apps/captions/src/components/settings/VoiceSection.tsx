@@ -93,7 +93,8 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
                 key={use}
                 id={`stt-use-${use}`}
                 title={SPEECH_USE_NAMES[use]}
-                status={r && <Runs r={r} engine={own?.engine ?? view.stt.default.engine} full={!!own} />}
+                // a use that follows the Default shares its need: the Default's row says it once
+                status={r && (own || !("needs" in r)) && <Runs r={r} engine={own?.engine ?? view.stt.default.engine} full={!!own} />}
                 control={
                   <SettingsSelect label={`${SPEECH_USE_NAMES[use]}: engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view, own?.engine, false)} />
                 }
