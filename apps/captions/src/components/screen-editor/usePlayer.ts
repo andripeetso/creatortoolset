@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { drawFrame, outputSize, trimOf, type CameraImage, type FaceAim, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
+import { drawFrame, outputSize, trimOf, type CameraImage, type CursorImages, type FaceAim, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
 import { frameReader, type FrameReader } from "@/lib/frame-reader";
 import { soundTracks } from "@/lib/screen-sound";
 import { Deck } from "./deck";
@@ -103,6 +103,8 @@ export function usePlayer(o: {
   height: number;
   /** Where the camera's cut follows the face (faceFollower), for a look whose camera has `follow`. */
   faces?: FaceAim | null;
+  /** The recording's cursors as images (events.cursors' order), for the pointer as it really looked. */
+  cursors?: CursorImages;
 }): Player {
   const holder = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -341,7 +343,7 @@ export function usePlayer(o: {
         const cam: CameraImage | null = s.camFrame
           ? { image: s.camFrame, width: s.camFrame.width, height: s.camFrame.height, aim: live.current.faces?.(t) }
           : liveCamera;
-        drawFrame(ctx, s.frame, s.frame.width, s.frame.height, t, look, path, events.clicks, cam);
+        drawFrame(ctx, s.frame, s.frame.width, s.frame.height, t, look, path, events.clicks, cam, { pointer: { events, images: live.current.cursors } });
         return true;
       }
       const reader = s.reader;
@@ -354,6 +356,7 @@ export function usePlayer(o: {
       const W = v.videoWidth;
       const H = v.videoHeight;
       drawFrame(ctx, v, W, H, t, look, path, events.clicks, liveCamera, {
+        pointer: { events, images: live.current.cursors },
         // without the reader the video is drawn itself: carefully when it stands still, cheaply while it moves
         quality: careful ? "high" : "low",
         picture: careful || !reader ? undefined : (src, w, h) => reader.part(src, W, H, w, h),

@@ -17,6 +17,8 @@ export type ScreenSource = {
   load(): Promise<{ events: ScreenEvents | null; look: ScreenLook | null }>;
   /** Keeps the look. The caller debounces. */
   saveLook(look: ScreenLook): void;
+  /** The address of the recording's cursor image `i` (events.cursors), where the recording keeps them (a local recording). */
+  cursor?(i: number): string;
   /** Where the face is in the camera file, when it was found before (a local recording); null when not. */
   faces?(): Promise<FaceTrack | null>;
   /** Has the Mac app find the face in the camera file (a local recording, an app that reports `faces`); `part` hears 0–1. */
@@ -57,6 +59,7 @@ export function localSource(rec: LocalRecording): ScreenSource {
     },
     saveLook: (look) => postToApp(`record-look:${rec.id}:${JSON.stringify(look)}`),
     faces,
+    cursor: (i) => file(`cursor-${i}.png`),
     findFaces(part) {
       // the app answers with 'mac-faces' events for this recording: "making" with how far, then "done" or "failed"
       return new Promise((resolve, reject) => {
