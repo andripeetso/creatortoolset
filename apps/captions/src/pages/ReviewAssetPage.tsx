@@ -183,6 +183,7 @@ export default function ReviewAssetPage() {
       api={api}
       n={version.n}
       focusId={params.get("c")}
+      faceAt={params.get("face") === null ? null : Number(params.get("face"))}
       pickVersion={(n) => setPicked({ n, search: params.toString() })}
       reload={load}
     />
@@ -197,6 +198,7 @@ function Review({
   api,
   n,
   focusId,
+  faceAt,
   pickVersion,
   reload,
 }: {
@@ -206,6 +208,8 @@ function Review({
   n: number;
   /** Comment to open on arrival. */
   focusId: string | null;
+  /** ?face=<frame>: open the timeline's Face on that frame (the assistant's "refine my face") */
+  faceAt?: number | null;
   pickVersion: (n: number) => void;
   reload: () => Promise<void>;
 }) {
@@ -752,7 +756,7 @@ function Review({
       />
       {/* the timeline on a version with a timeline (everyone; its edit tools are the managers'), then the plug-ins' panels */}
       {version.status === "ready" && !version.removed && (
-        <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} />
+        <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} faceAt={faceAt} />
       )}
       <ReviewPanelSlots slots={slots.panels} ctx={slotCtx} bind={bindSlot} />
       {comparing && (

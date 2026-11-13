@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, SquareDashed, Trash2, Undo2, X } from "lucide-react";
+import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, X } from "lucide-react";
 import { wavePath } from "@/lib/waveform";
 import {
   editedSpan,
@@ -63,7 +63,7 @@ type Drag =
   | { kind: "hole"; ph: Placeholder; mode: Mode | "draw"; x0: number; f0: number; df: number; moved: boolean };
 
 export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true,
-  edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, range, onRange, onClearRange, waves, history, onLive, marked, onPin }: {
+  edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin }: {
   view: TimelineView;
   /** seconds */
   time: number;
@@ -91,6 +91,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   onReframe?: (item: TimelineItem) => void;
   /** a talent shot's grade (GradePanel) */
   onColor?: (item: TimelineItem) => void;
+  /** Face: the face refinement strength on this talent shot, at the playhead (a plug-in that renders it, ReviewTimelineSlot) */
+  onFace?: (item: TimelineItem) => void;
   /** the comment's range to draw (seconds, either order) */
   range?: [number, number] | null;
   /** set = a drag across empty lane space draws a range (from where it was pressed to the playhead) */
@@ -706,6 +708,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                       <Palette className="h-3 w-3" /> Color
                     </button>
                   )}
+                  {sel.track === "V1" && onFace && (
+                    <button onClick={() => onFace(sel)} title="Face: how strong the face refinement is, on this frame" className={tbtn}>
+                      <Smile className="h-3 w-3" /> Face
+                    </button>
+                  )}
                   <button onClick={() => removeToggle(group.length ? group : [sel])} title={editOf[sel.key]?.remove ? "Put it back" : "Take it out (Delete)"} className={tbtn}>
                     {editOf[sel.key]?.remove ? <Undo2 className="h-3 w-3" /> : <Trash2 className="h-3 w-3" />}
                     {editOf[sel.key]?.remove ? "Put back" : group.length > 1 ? `Delete ${group.length}` : "Delete"}
@@ -1012,6 +1019,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 )}
                 {it.track === "V1" && onReframe && <button className={row} onClick={act(() => { setEditing(true); onReframe(it); })}>Reframe…</button>}
                 {it.track === "V1" && onColor && <button className={row} onClick={act(() => { setEditing(true); onColor(it); })}>Color…</button>}
+                {it.track === "V1" && onFace && <button className={row} onClick={act(() => { setEditing(true); onFace(it); })}>Face…</button>}
               </>
             )}
             {it && may && (
