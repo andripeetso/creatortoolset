@@ -71,12 +71,15 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = { languages: [], stt: { default: 
 
 /** What one use runs on now, for the page: the engine that will be asked, or why none can be. */
 export type SttResolved =
-  | { use: SpeechUse; engine: Exclude<SttEngine, "auto">; model: string }
-  | { use: SpeechUse; needs: string };
+  | { use: SpeechUse | "default"; engine: Exclude<SttEngine, "auto">; model: string }
+  /** `key`: the key that would serve it (its button opens that row of API keys); none for a local engine. */
+  | { use: SpeechUse | "default"; needs: string; key?: "DEEPGRAM_API_KEY" | "OPENAI_API_KEY" };
 
 export interface VoiceView extends VoicePrefs {
   /** Each use as it resolves for this account right now. */
   resolved: SttResolved[];
+  /** The default choice as it resolves now (`use: "default"`). */
+  resolvedDefault: SttResolved;
   /** Engines that can serve this account now (a key, or this computer), so the page offers only those. */
   available: Exclude<SttEngine, "auto">[];
 }

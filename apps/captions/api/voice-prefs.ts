@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AuthVars } from "./auth";
-import { availableEngines, readVoicePrefs, resolvedFor, writeVoicePrefs } from "./lib/speech";
+import { availableEngines, readVoicePrefs, resolvedFor, resolvedOne, writeVoicePrefs } from "./lib/speech";
 import type { VoiceView } from "../contracts/voice";
 
 /** Settings → AI → Voice (contracts/voice.ts). Accounts only: a share-link visitor has none. */
@@ -11,6 +11,7 @@ voicePrefsApp.use("*", async (c, next) => (c.get("user").role === "visitor" ? c.
 const view = (user: AuthVars["user"]): VoiceView => ({
   ...readVoicePrefs(user.username),
   resolved: resolvedFor(user),
+  resolvedDefault: resolvedOne(user, "default"),
   available: availableEngines(user),
 });
 
