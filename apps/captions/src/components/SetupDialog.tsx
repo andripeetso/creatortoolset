@@ -285,7 +285,8 @@ export function SetupDialog() {
         className={cn(
           // as tall as the screen allows (680px at most): the header and footer stay put and only the body scrolls,
           // so a small window shows a usable step rather than a thin strip
-          "flex h-[min(680px,calc(100dvh-2rem))] w-[min(820px,calc(100vw-3rem))] max-w-none flex-col gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl shadow-black/40 sm:max-w-none",
+          // text-pretty: no word left alone on a line anywhere in setup (owner, 11-13: "I don't like the hanging words")
+          "flex h-[min(680px,calc(100dvh-2rem))] w-[min(820px,calc(100vw-3rem))] max-w-none flex-col gap-0 overflow-hidden rounded-2xl p-0 text-pretty shadow-2xl shadow-black/40 sm:max-w-none",
           "max-sm:h-dvh max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]",
         )}
       >

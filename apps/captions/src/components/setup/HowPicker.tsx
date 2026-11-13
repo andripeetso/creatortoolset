@@ -51,7 +51,7 @@ export function PictureCard({ on, onClick, art, name, what }: { on: boolean; onC
       </span>
       <span className={cn("flex flex-1 flex-col items-center px-4 pb-4 pt-3.5", on && "bg-[color-mix(in_srgb,var(--tint)_4%,transparent)]")}>
         <span className="text-[15px] font-semibold text-foreground">{name}</span>
-        {what && <span className="mt-1 max-w-[17rem] text-[13px] leading-snug text-muted-foreground">{what}</span>}
+        {what && <span className="mt-1 max-w-[17rem] text-balance text-[13px] leading-snug text-muted-foreground">{what}</span>}
       </span>
       <span
         aria-hidden
