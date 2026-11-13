@@ -186,6 +186,62 @@ export function measurer(font: string): (s: string) => number {
   };
 }
 
+/**
+ * Where a text's highlighter strokes go, in its box: for each mark, a box on every line its words are on (a phrase
+ * that wraps gets one a line, and every place the phrase is in the text gets its own); a mark without words, a box
+ * behind each line. `lines` are the lines as they are set, `left` a line's left edge and `width` a string's width as it
+ * is drawn. A stroke runs from just over the letters' tops to just under their feet, and a little past the words:
+ * `ink` is how far the text's letters reach over and under the line they stand on, as its font draws them (tall
+ * capitals reach higher than a round book face, and capitals alone reach nowhere under it), so every stroke of one text
+ * is as high as the others. Without it, what most faces come to.
+ */
+export function markBoxes(
+  marks: TextLayer["marks"],
+  lines: readonly string[],
+  size: number,
+  lh: number,
+  top: number,
+  left: (line: string) => number,
+  width: (s: string) => number,
+  ink: { up: number; down: number } = { up: size * 0.72, down: size * 0.2 },
+): { x: number; y: number; w: number; h: number; color: string }[] {
+  const out: { x: number; y: number; w: number; h: number; color: string }[] = [];
+  const pad = size * 0.14;
+  const over = size * 0.06;
+  const box = (k: number, from: number, to: number, color: string) => {
+    const line = lines[k]!;
+    if (to <= from || !line.slice(from, to).trim()) return;
+    // the words' left end is where their last letter ends, less their own width: right with letters spaced apart too,
+    // where the width of what stands before them is one space between letters short
+    const wide = width(line.slice(from, to));
+    // the line the letters stand on is where drawText puts it: 0.8 of the size under the top of the letters' own room
+    const foot = top + k * lh + (lh - size) / 2 + size * 0.8;
+    out.push({ x: left(line) + width(line.slice(0, to)) - wide - pad, y: foot - ink.up - over, w: wide + 2 * pad, h: ink.up + ink.down + 2 * over, color });
+  };
+  // the lines end to end with one space between them: where a phrase is found there says which lines it is on
+  // ponytail: found by its small letters, place for place. A letter whose small form is longer (the Turkish İ) moves
+  // the stroke by a letter, and in capitals a phrase with ß (set as SS) is not found; match by Intl.Collator when
+  // someone highlights such words
+  const starts: number[] = [];
+  let all = "";
+  for (const line of lines) {
+    starts.push(all.length + (all ? 1 : 0));
+    all += (all ? " " : "") + line.toLowerCase();
+  }
+  for (const m of marks ?? []) {
+    const words = m.words?.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!words) {
+      lines.forEach((line, k) => box(k, 0, line.length, m.color));
+      continue;
+    }
+    for (let at = all.indexOf(words); at >= 0; at = all.indexOf(words, at + words.length)) {
+      const end = at + words.length;
+      lines.forEach((line, k) => box(k, Math.max(0, at - starts[k]!), Math.min(line.length, end - starts[k]!), m.color));
+    }
+  }
+  return out;
+}
+
 function drawText(ctx: Ctx, given: TextLayer) {
   ctx.font = fontOf(given);
   ctx.textBaseline = "alphabetic";
@@ -197,6 +253,16 @@ function drawText(ctx: Ctx, given: TextLayer) {
   const lines = set.lines;
   const lh = lineHeightOf(l);
   const top = l.valign === "middle" ? (l.h - lines.length * lh) / 2 : l.valign === "bottom" ? l.h - lines.length * lh : 0;
+  // the highlighter's strokes lie under the words, as high as this text's own letters are drawn
+  const drawn = l.marks?.length ? lines.map((line) => ctx.measureText(line)) : [];
+  const up = Math.max(0, ...drawn.map((m) => m.actualBoundingBoxAscent));
+  const down = Math.max(0, ...drawn.map((m) => m.actualBoundingBoxDescent));
+  for (const b of markBoxes(l.marks, lines, l.size, lh, top, (line) => (l.align === "center" ? (l.w - textWidth(l, line, measure)) / 2 : l.align === "right" ? l.w - textWidth(l, line, measure) : 0), (s) => textWidth(l, s, measure), up > 0 ? { up, down } : undefined)) {
+    ctx.beginPath();
+    roundedRect(ctx, b.x, b.y, b.w, b.h, l.size * 0.07);
+    ctx.fillStyle = b.color;
+    ctx.fill();
+  }
   const fill = fillOf(ctx, l.color, l.gradient, l.w, l.h);
   if (l.outline) {
     ctx.lineJoin = "round";

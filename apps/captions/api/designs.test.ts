@@ -306,6 +306,19 @@ describe("designs: an AI that designs", () => {
     expect([off.vignette, off.layers.length]).toEqual([40, 1]);
   });
 
+  it("an AI lays a highlighter stroke behind words of a text, is told how, and takes it off again", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const line = { id: "line", type: "text", text: "They need the floor.", font: "Inter", size: 80, color: "#14181c", align: "left", x: 80, y: 80, w: 900, h: 300 };
+    const out = (await write(d.id, { frames: [{ id: "p1", background: "#f6f1e7", layers: [{ ...line, marks: [{ words: "the floor", color: "#F2B63C" }] }] }] })).body;
+    expect(out.design.pages[0]!.layers[0]).toMatchObject({ id: "line", marks: [{ words: "the floor", color: "#f2b63c" }] });
+    const got = await read(d.id);
+    expect(got.frames[0]!.layers[0]).toMatchObject({ marks: [{ words: "the floor", color: "#f2b63c" }] });
+    expect(got.how).toContain('"marks":[{"words":"the floor","color":"#f2b63c"}] lays a highlighter stroke behind those words');
+    const off = (await write(d.id, { changes: [{ frame: "p1", layer: "line", set: { marks: [] } }] })).body.design.pages[0]!.layers[0]!;
+    expect(off).not.toHaveProperty("marks");
+    expect(off).toMatchObject({ text: "They need the floor." });
+  });
+
   it("adds a frame of any size beside the rightmost, free to say what was asked for; never more than a design holds", async () => {
     const d = await fromPiece();
     const out = (await write(d.id, { frames: [{ name: "Thumbnail", w: 1280, h: 720, background: "#111111", layers: [{ ...text, text: "3 MISTAKES", w: 1100 }] }] })).body;

@@ -790,6 +790,37 @@ export function Inspector({
               </div>
             </Section>
           )}
+          {text && (
+            <Section
+              title="Highlight"
+              action={addOrRemove(
+                picked.some((l) => l.type === "text" && !!l.marks?.length),
+                "highlight",
+                () => onPatch((l) => (l.type === "text" ? { ...l, marks: [{ color: "#f2b63c" }] } : l)),
+                () => onPatch((l) => (l.type === "text" ? { ...l, marks: undefined } : l)),
+              )}
+            >
+              {/* ponytail: the panel edits a text's first stroke; an AI may give it up to six, and those are kept as they are */}
+              {one?.type === "text" && one.marks?.[0] && (
+                <>
+                  <div className="flex">{colour("The highlighter's colour", one.marks[0].color, (c) => (l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, color: c }, ...l.marks.slice(1)] } : l))}</div>
+                  <input
+                    key={`${one.id}:${one.marks[0].words ?? ""}`}
+                    aria-label="The words it goes behind"
+                    placeholder="Every line"
+                    defaultValue={one.marks[0].words ?? ""}
+                    maxLength={200}
+                    onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
+                    onBlur={(e) => {
+                      const words = e.currentTarget.value.replace(/\s+/g, " ").trim();
+                      if (words !== (one.marks?.[0]?.words ?? "")) onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ color: l.marks[0]!.color, ...(words ? { words } : {}) }, ...l.marks.slice(1)] } : l));
+                    }}
+                    className={cn(FIELD, "w-full text-[11px] outline-none placeholder:text-zinc-400")}
+                  />
+                </>
+              )}
+            </Section>
+          )}
           <Section
             title="Effects"
             action={addOrRemove(picked.some((l) => l.shadow), "shadow", () => onPatch((l) => ({ ...l, shadow: SHADOW })), () => onPatch((l) => ({ ...l, shadow: undefined })))}

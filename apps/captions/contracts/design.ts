@@ -40,7 +40,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, pictures: 60, pictureBytes: 8_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -124,6 +124,11 @@ export interface TextLayer extends Box {
   upper?: boolean;
   /** a line round each letter (sticker letters): its colour and its width in pixels */
   outline?: { color: string; width: number };
+  /**
+   * highlighter strokes behind its words: each a phrase of the text (every place it is in, wherever it wraps) and the
+   * stroke's colour; one without `words` goes behind every line
+   */
+  marks?: { color: string; words?: string }[];
 }
 
 export interface ImageLayer extends Box {

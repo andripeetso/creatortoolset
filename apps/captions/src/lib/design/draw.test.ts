@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { cornersOf, drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
+import { markBoxes, cornersOf, drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -156,5 +156,42 @@ describe("drawing a design", () => {
     expect(sourceOf({ id: "i", type: "image", picture: "ab12cd34.jpg", fit: "cover", x: 0, y: 0, w: 1, h: 1 })).toBe("ab12cd34.jpg");
     expect(sourceOf(box())).toBeNull();
     expect(drawingUrl('<svg viewBox="0 0 1 1"><rect fill="#f90"/></svg>')).toBe("data:image/svg+xml;charset=utf-8,%3Csvg%20viewBox%3D%220%200%201%201%22%3E%3Crect%20fill%3D%22%23f90%22%2F%3E%3C%2Fsvg%3E");
+  });
+});
+
+describe("a text's highlighter strokes", () => {
+  // every letter 10 wide at size 20; lines 30 high; the text starts 5 down its box
+  const width = (s: string) => s.length * 10;
+  const boxes = (marks: Parameters<typeof markBoxes>[0], lines: string[], left: (line: string) => number = () => 0) => markBoxes(marks, lines, 20, 30, 5, left, width).map((b) => [Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10, Math.round(b.w * 10) / 10, Math.round(b.h * 10) / 10, b.color]);
+  const lines = ["Small ones hardly need", "a walker. They need", "the floor."];
+
+  it("a phrase gets a stroke behind its own words, a little wider than them, from just over the letters to just under", () => {
+    // "the floor." is the third line whole: 10 letters = 100 wide, 2.8 past each end. Its letters stand on 5 + 2 lines
+    // + (30 - 20) / 2 + 16 = 86, reach 14.4 over that and 4 under, and the stroke 1.2 past both
+    expect(boxes([{ words: "the floor.", color: "#f2b63c" }], lines)).toEqual([[-2.8, 70.4, 105.6, 20.8, "#f2b63c"]]);
+    // in the middle of a line: after "a walker. " (10 letters)
+    expect(boxes([{ words: "They need", color: "#f2b63c" }], lines)).toEqual([[97.2, 40.4, 95.6, 20.8, "#f2b63c"]]);
+  });
+  it("a phrase that wraps gets a stroke on each line it is on; capitals do not matter", () => {
+    expect(boxes([{ words: "THEY NEED the floor", color: "#ffcc00" }], lines)).toEqual([[97.2, 40.4, 95.6, 20.8, "#ffcc00"], [-2.8, 70.4, 95.6, 20.8, "#ffcc00"]]);
+  });
+  it("every place a phrase is in gets its own stroke; a phrase that is not there gets none", () => {
+    expect(boxes([{ words: "need", color: "#f2b63c" }], lines).map((b) => [b[0], b[1]])).toEqual([[177.2, 10.4], [147.2, 40.4]]);
+    expect(boxes([{ words: "crawling", color: "#f2b63c" }], lines)).toEqual([]);
+  });
+  it("letters spaced apart: the stroke starts where the words' first letter is drawn, with the same room past both ends", () => {
+    // every letter 10 wide and 10 more between letters: letter 10 of the line is drawn at 200, and "They need" is 9 letters and 8 gaps
+    const spaced = (s: string) => textWidth({ spacing: 10 }, s, width);
+    const [b] = markBoxes([{ words: "They need", color: "#f2b63c" }], lines, 20, 30, 5, () => 0, spaced);
+    expect([Math.round(b!.x * 10) / 10, Math.round(b!.w * 10) / 10]).toEqual([197.2, 175.6]);
+  });
+  it("a stroke is as high as the text's own letters are drawn: tall capitals that reach 17 over their line and nothing under it", () => {
+    // the first line's letters stand on 26: from 26 - 17 - 1.2 to 26 + 1.2
+    const [b] = markBoxes([{ words: "Small ones", color: "#f2b63c" }], lines, 20, 30, 5, () => 0, width, { up: 17, down: 0 });
+    expect([Math.round(b!.y * 10) / 10, Math.round(b!.h * 10) / 10]).toEqual([7.8, 19.4]);
+  });
+  it("without words, a stroke behind every line, each as wide as its line and where the line is set", () => {
+    const centred = (line: string) => (300 - width(line)) / 2;
+    expect(boxes([{ color: "#f2b63c" }], lines, centred).map((b) => [b[0], b[2]])).toEqual([[37.2, 225.6], [52.2, 195.6], [97.2, 105.6]]);
   });
 });

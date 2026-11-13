@@ -297,6 +297,29 @@ describe("the finish: a frame's grain and vignette, a layer's blur", () => {
   });
 });
 
+describe("a text's highlighter strokes", () => {
+  it("keeps each stroke's colour and words, a stroke without words as one behind every line, and no more than a text may have", () => {
+    const [l, many, none, shape] = cleanPages(
+      [
+        {
+          layers: [
+            text({ marks: [{ words: "  the   mat ", color: "#FC0" }, { color: "yellow" }, { words: 7 }, "a stroke", { words: "x".repeat(900), color: "#abcdef" }] }),
+            text({ marks: Array.from({ length: 30 }, () => ({ words: "mat", color: "#ffcc00" })) }),
+            text({ marks: [] }),
+            { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, marks: [{ color: "#ffcc00" }] },
+          ],
+        },
+      ],
+      rules,
+    ).pages[0]!.layers;
+    expect(l).toMatchObject({ marks: [{ words: "the mat", color: "#ffcc00" }, { color: "#f2b63c" }, { color: "#f2b63c" }, { words: "x".repeat(200), color: "#abcdef" }] });
+    expect(many).toMatchObject({ type: "text" });
+    expect((many as { marks: unknown[] }).marks).toHaveLength(DESIGN_LIMITS.marks);
+    expect(none).not.toHaveProperty("marks");
+    expect(shape).not.toHaveProperty("marks");
+  });
+});
+
 describe("frames on a canvas", () => {
   const frame = (id: string, more: object = {}) => ({ id, background: "#ffffff", layers: [], ...more });
   it("gives every frame a place and a size: none placed yet, in a row; a new one beside the rightmost; one sent without its place where it was", () => {

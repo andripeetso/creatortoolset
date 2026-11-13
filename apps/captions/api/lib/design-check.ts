@@ -48,6 +48,18 @@ const strokeMore = (v: unknown): Partial<Stroke> => {
   return { ...(dash && dash[1] > 0 ? { dash } : {}), ...(v.round === true ? { round: true } : {}), ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}) };
 };
 
+/** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
+function marks(v: unknown): { marks?: { color: string; words?: string }[] } {
+  const list = (Array.isArray(v) ? v : [])
+    .filter(obj)
+    .slice(0, DESIGN_LIMITS.marks)
+    .map((m) => {
+      const words = typeof m.words === "string" ? m.words.replace(/\s+/g, " ").trim().slice(0, 200) : "";
+      return { color: sixDigits(color(m.color, "#f2b63c")), ...(words ? { words } : {}) };
+    });
+  return list.length ? { marks: list } : {};
+}
+
 /** A frame's finish as it may be saved: a whole number each in its range, and none when it is 0. */
 function finish(raw: Record<string, unknown>): Pick<DesignPage, "grain" | "vignette"> {
   const grain = Math.round(num(raw.grain, 0, 100, 0));
@@ -222,6 +234,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...gradient(raw.gradient),
       ...(typeof raw.spacing === "number" && num(raw.spacing, -20, 200, 0) ? { spacing: round(num(raw.spacing, -20, 200, 0)) } : {}),
       ...(raw.fit === "shrink" ? { fit: "shrink" as const } : {}),
+      ...marks(raw.marks),
       ...(raw.balance === true ? { balance: true } : {}),
       align: oneOf(raw.align, ["left", "center", "right"] as const, "left"),
       ...(raw.valign === "middle" || raw.valign === "bottom" ? { valign: raw.valign } : {}),
