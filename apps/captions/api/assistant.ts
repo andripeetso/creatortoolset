@@ -908,6 +908,12 @@ const running = new Map<string, Map<string, AbortController>>();
 const runsOf = (username: string) => running.get(username) ?? running.set(username, new Map()).get(username)!;
 /** Replies sent from the Mac app (their page context said so) while they are written: their open panel can choose a folder (askFolder). */
 const fromMac = new Set<string>();
+/**
+ * The long texts pasted with the message a reply answers, while that reply is being written (pastedInChat).
+ * ponytail: kept in this process only, so a reply that carries on after a restart has none (a style's words are then
+ * taken from what was typed alone, as before pastes counted); keep them with the reply when that matters.
+ */
+const pastedFor = new Map<string, { ask: string; texts: string[] }>();
 
 /**
  * Each reply being written has a place 0..MAX_RUNNING-1 of its own: the Mac writes every reply's pictures and pastes in
@@ -992,6 +998,7 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     sayLater(username, replyId);
     runsOf(username).delete(replyId);
     fromMac.delete(replyId);
+    pastedFor.delete(replyId);
     places.delete(replyId);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
@@ -1218,6 +1225,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   const uploading = (asked.files ?? []).filter((f) => f.uploading).map(({ id, name }) => ({ id, name }));
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
+  if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
   void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
   return true;
 }
@@ -1317,6 +1325,25 @@ export function saidInChat(username: string, turn: string): Array<{ id: string; 
   const typed = (m: AssistantMessage, i: number) => m.role === "user" && !m.task && !sent[i - 1]?.choices?.includes(m.text);
   return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
 }
+/**
+ * The long texts the person pasted into the box with the message a reply answers (each went beside the message as a
+ * file, never in its text), while that reply is being written. A style's own words may be taken from one, word for
+ * word (api/editor/own-words.ts), and nothing else may: a quote to remember is checked against saidInChat alone. The
+ * message is held to what typed words are held to: the person's own, in the chat the reply is written in, not a
+ * scheduled task's prompt and not an answer button. A paste of an earlier message or of another chat is not here: the
+ * texts are kept for the one reply they came with. null as saidInChat; empty when the message carried none.
+ */
+export function pastedInChat(username: string, turn: string): string[] | null {
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn && m.status === "thinking"));
+  if (!list || unattended(username, turn)) return null;
+  const kept = pastedFor.get(turn);
+  const sent = list.filter((m) => m.status !== "thinking");
+  const i = sent.findIndex((m) => m.id === kept?.ask);
+  const asked = sent[i];
+  if (!kept || !asked || asked.role !== "user" || asked.task || sent[i - 1]?.choices?.includes(asked.text)) return [];
+  return kept.texts;
+}
+
 /**
  * The pictures the person sent in the chat a reply is being written in, oldest first: each one's id and its file. Null
  * when that reply is not being written, or nobody is there (a scheduled run). The assistant's animation_style_save

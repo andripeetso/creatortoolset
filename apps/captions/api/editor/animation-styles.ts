@@ -35,7 +35,7 @@ const USER = /^[a-zA-Z0-9_-]{1,64}$/;
 const UPLOAD_MAX = 20 * 1024 * 1024;
 
 /** What a save from the assistant's reply is told when the brief is not the person's own words (own-words.ts). */
-export const BRIEF_NOT_TYPED = "The description was not saved: it is not the user's own words in this chat. Send a whole phrase they typed themselves, word for word, or leave brief out: they write it on the style's sheet (AI Editor, Animation styles).";
+export const BRIEF_NOT_TYPED = "The description was not saved: it is not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave brief out: they write it on the style's sheet (AI Editor, Animation styles).";
 const FULL = `A style keeps ${MAX_INSPIRATIONS} inspirations. Take one out first.`;
 
 const dirOf = (username: string, styleId: string) => path.join(env.dataDir, "editor-styles", username, styleId);

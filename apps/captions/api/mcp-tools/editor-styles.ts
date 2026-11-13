@@ -1,5 +1,6 @@
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStylesView } from "../../contracts/editor-styles";
 import { BRIEF_NOT_TYPED } from "../editor/animation-styles";
+import { WORDS_FROM } from "../editor/own-words";
 import { stylesView } from "../editor/styles";
 import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } from "./types";
 
@@ -16,6 +17,8 @@ import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } fr
 // the same check, and its pictures are ones they sent in the chat, found by the reply itself and never by a path. A
 // brief that is not their words does not stop the style: it is made without one, and its sheet opens for them to
 // write it there. After a save in the app's own chat the style's sheet opens (ctx.open), so they see what was made.
+// Words taken from a long text they pasted with the message (own-words.ts) are theirs too: the answer then says so,
+// for the AI to tell them in a line.
 
 /** editor_style_use is listed only for an account that has a style (api/mcp.ts, tools/list). */
 export const hasStyle = (username: string): boolean => stylesView(username).styles.length > 0;
@@ -28,6 +31,12 @@ const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions
 /** The tool's size, "1080x1920" or "footage" (the footage's own) → the route's. */
 const sizeOf = (v: unknown) => (v === "footage" ? null : { w: Number(String(v).split("x")[0]), h: Number(String(v).split("x")[1]) });
 const sheet = (ctx: ToolContext) => `${ctx.origin}/editor?tab=styles`;
+/** A save through a style's route: what it answers, and whether the style's words were taken from the person's pasted text. */
+async function saved<S>(ctx: ToolContext, route: string, method: string, body: Args): Promise<{ style: S; pasted: boolean }> {
+  const res = await ctx.api(route, method, body);
+  return { style: (await res.json()) as S, pasted: res.headers.get(WORDS_FROM) === "pasted" };
+}
+const FROM_PASTE = (what: string) => `${what} taken word for word from the text the user pasted: tell them so in one short line.`;
 /** A style's own sheet: its tab with the style named, which the page opens (src/pages/EditorPage.tsx). */
 const sheetOf = (tab: "styles" | "animation", id: string) => `/editor?tab=${tab}&style=${id}`;
 
@@ -69,16 +78,17 @@ export const editorStyleTools: ToolModule = {
       const notes = typeof a.notes === "string" ? a.notes.trim() : "";
       if (a.id == null) {
         if (!body.name) throw new ToolError("Give the new style a name.");
-        const made = await ctx.json<EditingStyle>("/api/editor/styles", "POST", { ...body, ...(notes ? { notes } : {}), ...(a.from_edit != null ? { fromEdit: String(a.from_edit) } : {}) });
+        const { style: made, pasted } = await saved<EditingStyle>(ctx, "/api/editor/styles", "POST", { ...body, ...(notes ? { notes } : {}), ...(a.from_edit != null ? { fromEdit: String(a.from_edit) } : {}) });
         await ctx.open?.(sheetOf("styles", made.id));
-        return { ...out(made), made: true, link: `${ctx.origin}${sheetOf("styles", made.id)}` };
+        return { ...out(made), made: true, ...(pasted ? { note: FROM_PASTE("The notes were") } : {}), link: `${ctx.origin}${sheetOf("styles", made.id)}` };
       }
       if (a.from_edit != null) throw new ToolError("from_edit makes a new style: leave id out.");
       if (!Object.keys(body).length && !notes) throw new ToolError(`Nothing to change: give ${Object.keys(FIELDS).join(", ")}, size or notes.`);
       const s = one(await styles(ctx), a.id);
-      const saved = await ctx.json<EditingStyle>(`/api/editor/styles/${s.id}`, "PUT", { ...body, ...(notes ? { addNotes: notes } : {}) });
-      await ctx.open?.(sheetOf("styles", saved.id));
-      return { ...out(saved), ...(notes ? { note: "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." } : {}), link: `${ctx.origin}${sheetOf("styles", saved.id)}` };
+      const { style: now, pasted } = await saved<EditingStyle>(ctx, `/api/editor/styles/${s.id}`, "PUT", { ...body, ...(notes ? { addNotes: notes } : {}) });
+      await ctx.open?.(sheetOf("styles", now.id));
+      const note = [notes ? "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." : "", pasted ? FROM_PASTE("They were") : ""].filter(Boolean).join(" ");
+      return { ...out(now), ...(note ? { note } : {}), link: `${ctx.origin}${sheetOf("styles", now.id)}` };
     },
     animation_style_save: async (a, ctx) => {
       const at = "/api/editor/animation-styles";
@@ -88,7 +98,12 @@ export const editorStyleTools: ToolModule = {
       const was = a.id == null ? null : one((await ctx.json<AnimationStylesView>(at)).styles, a.id, "animation", "animation_style_save");
       if (!was && !name) throw new ToolError("Give the new style a name.");
       if (was && name === undefined && !brief && !pictures) throw new ToolError("Nothing to change: give name, brief or pictures.");
-      const save = (body: Args) => ctx.json<AnimationStyle>(was ? `${at}/${was.id}` : at, was ? "PUT" : "POST", body);
+      let pasted = false;
+      const save = async (body: Args) => {
+        const r = await saved<AnimationStyle>(ctx, was ? `${at}/${was.id}` : at, was ? "PUT" : "POST", body);
+        pasted ||= r.pasted;
+        return r.style;
+      };
       // a brief that is not the person's words never stops the style: the rest is saved and they write it on its sheet.
       // On a change the words are added under the brief it has and never replace it
       let unsaid = false;
@@ -106,7 +121,8 @@ export const editorStyleTools: ToolModule = {
       }
       await ctx.open?.(sheetOf("animation", s.id));
       const notes = [
-        unsaid ? "The description was not saved: it is not a whole phrase the user typed in this chat. They write or paste it on the style's sheet." : "",
+        unsaid ? "The description was not saved: it is not a whole phrase the user typed in this chat, or a passage of a text they pasted with this message. They write or paste it on the style's sheet." : "",
+        pasted ? FROM_PASTE("The description was") : "",
         added !== undefined && added < pictures ? (full ? "The style holds all the pictures it keeps: the rest were not added." : "Fewer pictures were added than asked: the others are already in the style, are not in this chat, or could not be read.") : "",
         ctx.open ? "Its sheet is open for the user." : "",
       ].filter(Boolean);

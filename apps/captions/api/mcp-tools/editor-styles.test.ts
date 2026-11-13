@@ -80,7 +80,7 @@ const turn = async (text: string) => {
 const newChat = async () => expect((await site("/api/assistant", "DELETE")).status).toBe(200);
 
 const NOT_TYPED =
-  "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
+  "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
 const SHEET = "http://localhost/editor?tab=styles";
 
 describe.skipIf(rootReplaced)("who is offered the style tools", () => {
