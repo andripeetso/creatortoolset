@@ -759,10 +759,7 @@ function Review({
         slotCtx={slotCtx}
         bind={bindSlot}
       />
-      {/* the timeline on a version with a timeline (everyone; its edit tools are the managers'), then the plug-ins' panels */}
-      {version.status === "ready" && !version.removed && (
-        <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} faceAt={faceAt} />
-      )}
+      {/* the plug-ins' panels */}
       <ReviewPanelSlots slots={slots.panels} ctx={slotCtx} bind={bindSlot} />
       {comparing && (
         <ReviewCompare
@@ -952,9 +949,10 @@ function Review({
             onPick={focusComment}
           />
 
-
-
-
+          {/* the timeline on a version with a timeline, between the scrub bar and play/pause, as it always was (everyone; its edit tools are the managers') */}
+          {version.status === "ready" && !version.removed && (
+            <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} faceAt={faceAt} />
+          )}
 
           <div className="flex items-center gap-1 px-3 pb-2 text-zinc-300">
             <IconBtn label={playing ? "Pause (space)" : "Play (space)"} onClick={toggle}>
@@ -1016,6 +1014,7 @@ function Review({
                 () => "Kept for this edit: the AI Editor cuts it again with this voice, back here as the next version.") : undefined}
             />
           )}
+
         </div>
 
         {/* ---------- comments ---------- */}
