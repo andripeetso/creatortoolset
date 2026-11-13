@@ -11,6 +11,7 @@ process.env.APP_SECRET = "assistant-test-secret";
 vi.setConfig({ testTimeout: 30_000 }); // each test loads the whole server twice and waits a second for a save
 
 type View = import("../contracts/assistant").AssistantView;
+type Automation = import("../contracts/automations").Automation;
 type Job = { id: string; user: string; asks?: boolean; mcp: { token: string } };
 const json = (body: unknown, extra: Record<string, string> = {}) => ({ method: "POST", headers: { "content-type": "application/json", ...extra }, body: JSON.stringify(body) });
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
@@ -21,7 +22,8 @@ async function boot() {
   const app = (await import("./boot")).default;
   const assistant = await import("./assistant");
   assistant.resumeFromDisk(); // what boot.ts does before it listens (not under tests)
-  return { app, ...(await import("./users")), ...(await import("./lib/devices")), ...(await import("./lib/providers")), ...(await import("./lib/mac-claude")), ...(await import("../contracts/providers")) };
+  const { runAutomation } = await import("./automations");
+  return { app, routeOf: assistant.routeOf, runAutomation, ...(await import("./users")), ...(await import("./lib/devices")), ...(await import("./lib/providers")), ...(await import("./lib/mac-claude")), ...(await import("../contracts/providers")) };
 }
 type Server = Awaited<ReturnType<typeof boot>>;
 
@@ -40,6 +42,13 @@ async function person(s: Server, name: string) {
     relay: (id: string, what: string, body: unknown) => on.app.request(`/api/devices/relay/${id}/${what}`, json(body, device)),
     tools: (token: string) => on.app.request("/api/mcp", json({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: `Bearer ${token}` })),
     reply: async () => ((await (await on.app.request("/api/assistant", { headers: { cookie } })).json()) as View).messages.at(-1)!,
+    // one chat among several, by its id
+    make: async () => ((await (await on.app.request("/api/assistant/chats", { method: "POST", headers: { cookie } })).json()) as { id: string }).id,
+    sendTo: (chat: string, text: string) => on.app.request(`/api/assistant/chats/${chat}/turn`, json({ text }, { cookie })),
+    replyIn: async (chat: string) => ((await (await on.app.request(`/api/assistant/chats/${chat}`, { headers: { cookie } })).json()) as View).messages.at(-1)!,
+    // scheduled tasks
+    task: async (body: unknown) => (await (await on.app.request("/api/automations", json(body, { cookie }))).json()) as Automation,
+    tasks: async () => ((await (await on.app.request("/api/automations", { headers: { cookie } })).json()) as { items: Automation[] }).items,
   });
 }
 
@@ -91,6 +100,42 @@ describe("a restart of the server while the Mac writes a reply", () => {
     await tick();
     expect(await ben(after).reply()).toMatchObject({ status: "done", text: "*Stopped.*" });
     expect((await ben(after).relay(job.id, "text", { text: "late" })).status).toBe(404); // the Mac stops
+  });
+
+  it("two chats of one account being written at once both go on", async () => {
+    const before = await boot();
+    const dan = await person(before, "dan");
+    const [a, b] = [await dan(before).make(), await dan(before).make()];
+    await dan(before).sendTo(a, "First chat");
+    await dan(before).sendTo(b, "Second chat");
+    const jobs = [await dan(before).claim(), await dan(before).claim()];
+    const [one, two] = [jobs.find((j) => j.user.includes("First chat"))!, jobs.find((j) => j.user.includes("Second chat"))!];
+    await tick(1100);
+
+    const after = await boot();
+    expect(await dan(after).replyIn(a)).toMatchObject({ status: "thinking" });
+    expect(await dan(after).replyIn(b)).toMatchObject({ status: "thinking" });
+    expect((await dan(after).relay(two.id, "done", { text: "Two." })).status).toBe(200);
+    expect((await dan(after).relay(one.id, "done", { text: "One." })).status).toBe(200);
+    await tick();
+    expect(await dan(after).replyIn(a)).toMatchObject({ status: "done", text: "One." });
+    expect(await dan(after).replyIn(b)).toMatchObject({ status: "done", text: "Two." });
+  });
+
+  it("a scheduled run goes on too, and its task records the result", async () => {
+    const before = await boot();
+    const eve = await person(before, "eve");
+    const made = await eve(before).task({ name: "Hook ideas", schedule: { kind: "interval", everyMinutes: 60 }, prompt: "Write three hooks" });
+    void before.runAutomation("eve", made, { route: before.routeOf("eve", false)!, url: "http://localhost/api/mcp" });
+    const job = await eve(before).claim();
+    expect(job.user).toContain("Write three hooks");
+    await eve(before).relay(job.id, "text", { text: "Hook one" });
+    await tick(1100);
+
+    const after = await boot();
+    expect((await eve(after).relay(job.id, "done", { text: "Three hooks." })).status).toBe(200);
+    await tick(50);
+    expect((await eve(after).tasks()).find((t) => t.id === made.id)?.lastResult).toMatchObject({ status: "done", text: "Three hooks." });
   });
 
   it("a reply no Mac had started on says the server restarted, in words", async () => {

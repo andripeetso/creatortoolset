@@ -890,20 +890,24 @@ export const setRunEnded = (fn: RunEnded): void => void (runEnded = fn);
  * After a restart of the server: a reply the Mac is still writing goes on where it was, with its Stop, its place, its
  * approvals and its tools (lib/mac-claude.ts adoptOpen, at boot). A scheduled run's reply too.
  */
-onAdopt("assistant", ({ id, keep }) => {
-  const [username, turn] = [String(keep.username), String(keep.turn)];
-  places.set(turn, Number(keep.place) || 0);
-  if (keep.mac) fromMac.add(turn);
-  void runReply(username, turn, (run) =>
-    ended(turn, (async () => {
-      const answer = messageOf(username, turn)?.status === "thinking" ? adoptMacClaude(id, run.cancel, run.onDelta, hooksFor(username, turn, keep.asks ? run.onAsk : undefined)) : null;
-      if (!answer) throw new Error(RESTARTED);
-      return answer;
-    })()),
-  ).then(() => {
-    const [task, m] = [taskOf(username, turn), messageOf(username, turn)];
-    if (task && m) runEnded?.(username, task.id, { status: m.status === "error" ? "error" : "done", text: m.text, chat: chatOfTurn(username, turn) ?? undefined });
-  });
+onAdopt("assistant", (open) => {
+  // every reply first: reading an account's chats (load) ends the replies in them that aren't running
+  for (const { keep } of open) runsOf(String(keep.username)).set(String(keep.turn), new AbortController());
+  for (const { id, keep } of open) {
+    const [username, turn] = [String(keep.username), String(keep.turn)];
+    places.set(turn, Number(keep.place) || 0);
+    if (keep.mac) fromMac.add(turn);
+    void runReply(username, turn, (run) =>
+      ended(turn, (async () => {
+        const answer = messageOf(username, turn)?.status === "thinking" ? adoptMacClaude(id, run.cancel, run.onDelta, hooksFor(username, turn, keep.asks ? run.onAsk : undefined)) : null;
+        if (!answer) throw new Error(RESTARTED);
+        return answer;
+      })()),
+    ).then(() => {
+      const [task, m] = [taskOf(username, turn), messageOf(username, turn)];
+      if (task && m) runEnded?.(username, task.id, { status: m.status === "error" ? "error" : "done", text: m.text, chat: chatOfTurn(username, turn) ?? undefined });
+    });
+  }
 });
 
 /** A reply being written: it fills in as its answer streams, then its status says how it ended. */
@@ -1204,7 +1208,7 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
 
 /** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */
 export function resumeFromDisk(): void {
-  // first: a reply the Mac is still writing has to be running again before its chat is read (load would end it)
+  // first: a reply a computer is still writing has to be running again before its chat is read (load would end it)
   adoptOpen();
   let names: string[] = [];
   try {

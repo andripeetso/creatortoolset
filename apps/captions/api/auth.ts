@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createSocket } from "node:dgram";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { env, hostedMode } from "./lib/env";
+import { env, hostedMode, keepsOverRestart } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
@@ -124,14 +124,16 @@ const jobsFile = () => path.join(env.dataDir, "job-tokens.json");
 let jobsRead: Map<string, Job> | undefined;
 function jobs(): Map<string, Job> {
   if (jobsRead) return jobsRead;
+  jobsRead = new Map();
   try {
-    jobsRead = new Map(Object.entries(JSON.parse(readFileSync(jobsFile(), "utf-8")) as Record<string, Job>));
+    if (keepsOverRestart()) jobsRead = new Map(Object.entries(JSON.parse(readFileSync(jobsFile(), "utf-8")) as Record<string, Job>));
   } catch {
-    jobsRead = new Map(); // none kept
+    // none kept
   }
   return jobsRead;
 }
 function saveJobs(): void {
+  if (!keepsOverRestart()) return;
   try {
     mkdirSync(env.dataDir, { recursive: true });
     const tmp = `${jobsFile()}.tmp-${process.pid}`;

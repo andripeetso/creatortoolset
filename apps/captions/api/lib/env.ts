@@ -34,3 +34,10 @@ export const env = {
 export function hostedMode(): boolean {
   return process.env.CT_MODE?.trim() === "hosted";
 }
+
+/**
+ * Whether this process keeps what a restart must not lose (AI answers being written: lib/mac-claude.ts, their job
+ * tokens: auth.ts) and takes it up again at boot: a real server, and tests. Never a dev server: it shares its data
+ * folder with one, and would take over, or write over, what that server is running.
+ */
+export const keepsOverRestart = (): boolean => process.env.NODE_ENV === "production" || process.env.NODE_ENV === "test";

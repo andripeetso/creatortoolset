@@ -6,7 +6,7 @@ import path from "node:path";
 import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
 import { EDITOR_HINT } from "../../contracts/devices";
 import { limitLine, limitMessage } from "../../contracts/plans";
-import { env } from "./env";
+import { env, keepsOverRestart } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
 import { noteCallOutcome } from "./providers";
@@ -250,7 +250,7 @@ const openDir = () => path.join(env.dataDir, "mac-claude-open");
 const openFile = (id: string) => path.join(openDir(), `${id}.json`);
 
 function keepOpen(r: Req): void {
-  if (!r.keep) return;
+  if (!r.keep || !keepsOverRestart()) return;
   const saved: Saved = { id: r.id, device: r.device, web: r.web, background: r.background, label: r.label, model: r.model, provider: r.provider, session: r.session, keep: r.keep };
   try {
     mkdirSync(openDir(), { recursive: true, mode: 0o700 });
@@ -279,32 +279,39 @@ export interface Open {
   id: string;
   keep: Kept;
 }
-const adopters = new Map<string, (open: Open) => void>();
-/** A caller that can take its answers up again says so once, when it loads: `take` calls adoptMacClaude, or leaves the answer (it is then dropped). */
-export const onAdopt = (kind: string, take: (open: Open) => void): void => void adopters.set(kind, take);
+const adopters = new Map<string, (open: Open[]) => void>();
+/**
+ * A caller that can take its answers up again says so once, when it loads. `take` gets all of its kind at once (it may
+ * have to know them all before it reads its own data) and calls adoptMacClaude for each, or leaves one (it is then dropped).
+ */
+export const onAdopt = (kind: string, take: (open: Open[]) => void): void => void adopters.set(kind, take);
 
 /**
  * At boot, before the server listens: every answer a restart left running goes back to its caller. One nobody takes
- * is dropped, so the Mac's next post gets 404 and it stops.
+ * is dropped, so the Mac's next post gets 404 and it stops. Never on a dev server (keepsOverRestart).
  */
 export function adoptOpen(): void {
+  if (!keepsOverRestart()) return;
   let names: string[] = [];
   try {
     names = readdirSync(openDir());
   } catch {
     return; // nothing was ever kept
   }
-  for (const name of names) {
+  const found = names.flatMap((name) => {
     const id = name.replace(/\.json$/, "");
-    if (reqs.has(id)) continue;
-    const saved = name.endsWith(".json") ? readOpen(id) : null;
+    const saved = name.endsWith(".json") && !reqs.has(id) ? readOpen(id) : null;
+    return saved ? [{ id, keep: saved.keep }] : [];
+  });
+  for (const [kind, take] of adopters) {
+    const mine = found.filter((o) => o.keep.kind === kind);
     try {
-      if (saved) adopters.get(saved.keep.kind)?.({ id, keep: saved.keep });
+      if (mine.length) take(mine);
     } catch (e) {
-      console.warn(`[mac-claude] ${saved?.label ?? "an answer"} not taken up after the restart: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[mac-claude] ${kind}: answers not taken up after the restart: ${e instanceof Error ? e.message : e}`);
     }
-    if (!reqs.has(id)) dropOpen(name);
   }
+  for (const name of names) if (!reqs.has(name.replace(/\.json$/, ""))) dropOpen(name);
 }
 
 /**
