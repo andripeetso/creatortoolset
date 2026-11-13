@@ -14,9 +14,10 @@ const view = (over: Partial<VoiceView> = {}): VoiceView => ({
   resolved: [
     { use: "captions", engine: "deepgram", model: "nova-3" },
     { use: "transcripts", engine: "deepgram", model: "nova-3" },
-    { use: "editor", needs: "Needs an OpenAI key" },
+    { use: "editor", needs: "Needs an OpenAI key", key: "OPENAI_API_KEY" },
     { use: "mic", engine: "deepgram", model: "nova-3" },
   ],
+  resolvedDefault: { use: "default", engine: "deepgram", model: "nova-3" },
   available: ["deepgram"],
   stt: { default: { engine: "auto" }, per: { editor: { engine: "openai" } } },
   ...over,
@@ -42,9 +43,13 @@ describe("the Voice page", () => {
   });
 
   it("with no key at all the need is said once, on the Default, not again on each use that follows it", () => {
-    const need = "Add your Deepgram (or OpenAI) key in Settings → API keys";
-    const out = html(view({ available: [], stt: { default: { engine: "auto" }, per: {} }, resolved: (["captions", "transcripts", "editor", "mic"] as const).map((use) => ({ use, needs: need })) }));
-    expect(out.split(need).length - 1).toBe(1);
+    const need = { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" as const };
+    const out = html(view({
+      available: [], stt: { default: { engine: "auto" }, per: {} },
+      resolved: (["captions", "transcripts", "editor", "mic"] as const).map((use) => ({ use, ...need })),
+      resolvedDefault: { use: "default", ...need },
+    }));
+    expect(out.split("Needs a Deepgram key").length - 1).toBe(1);
     expect(out).toContain('href="/settings/keys#api-key-DEEPGRAM_API_KEY"');
   });
 });
@@ -75,9 +80,9 @@ describe("the engine choices", () => {
   });
 
   it("a key need goes to that key's row; a local engine has no key", () => {
-    expect(keyFix("auto")).toBe("/settings/keys#api-key-DEEPGRAM_API_KEY");
-    expect(keyFix("openai")).toBe("/settings/keys#api-key-OPENAI_API_KEY");
-    expect(keyFix("local")).toBeNull();
+    expect(keyFix("DEEPGRAM_API_KEY")).toBe("/settings/keys#api-key-DEEPGRAM_API_KEY");
+    expect(keyFix("OPENAI_API_KEY")).toBe("/settings/keys#api-key-OPENAI_API_KEY");
+    expect(keyFix(undefined)).toBeNull();
   });
 });
 

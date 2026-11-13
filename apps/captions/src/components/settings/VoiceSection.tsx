@@ -4,7 +4,7 @@ import { SPEECH_USES, SPEECH_USE_NAMES, type SpeechUse, type SttEngine, type Stt
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
-import { LANGUAGES, SAME, engineOptions, keyFix, languageName, modelOf, putVoice, useVoice, withLanguage } from "@/lib/voice";
+import { LANGUAGES, SAME, engineOptions, keyFix, languageName, modelOf, needWords, putVoice, useVoice, withLanguage } from "@/lib/voice";
 import { Card, ErrorRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
 
@@ -49,8 +49,6 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
     else per[use] = { engine: value as SttEngine };
     save({ stt: { per: { [use]: value === SAME ? null : { engine: value } } } }, { ...view, stt: { ...view.stt, per } });
   };
-  // the Default's model: what a use that follows it runs on now
-  const followsDefault = view.resolved.find((r) => !view.stt.per[r.use]);
   const unused = LANGUAGES.filter((c) => !view.languages.includes(c));
 
   return (
@@ -89,7 +87,7 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
           <Row
             id="stt-default"
             title="Default"
-            status={followsDefault && <Runs r={followsDefault} engine={view.stt.default.engine} full />}
+            status={<Runs r={view.resolvedDefault} full />}
             control={<SettingsSelect label="Default: engine" value={view.stt.default.engine} onValueChange={(v) => setChoice("default", v)} options={engineOptions(view, view.stt.default.engine, true)} />}
           />
           {SPEECH_USES.map((use) => {
@@ -101,7 +99,7 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
                 id={`stt-use-${use}`}
                 title={SPEECH_USE_NAMES[use]}
                 // a use that follows the Default shares its need: the Default's row says it once
-                status={r && (own || !("needs" in r)) && <Runs r={r} engine={own?.engine ?? view.stt.default.engine} full={!!own} />}
+                status={r && (own || !("needs" in r)) && <Runs r={r} full={!!own} />}
                 control={
                   <SettingsSelect label={`${SPEECH_USE_NAMES[use]}: engine`} value={own?.engine ?? SAME} onValueChange={(v) => setChoice(use, v)} options={engineOptions(view, own?.engine, false)} />
                 }
@@ -120,12 +118,12 @@ export function VoiceBody({ view, save }: { view: VoiceView; save: (body: Body, 
  * What a row runs on now: the model (its name; with `full` also what it is good at, its licence and its page), or
  * what it needs with the button that fixes it.
  */
-function Runs({ r, engine, full }: { r: SttResolved; engine: SttEngine; full?: boolean }) {
+function Runs({ r, full }: { r: SttResolved; full?: boolean }) {
   if ("needs" in r) {
-    const to = keyFix(engine);
+    const to = keyFix(r.key);
     return (
       <span className="flex flex-wrap items-center gap-2">
-        <Status tone="attention">{r.needs}</Status>
+        <Status tone="attention">{needWords(r)}</Status>
         {to && (
           <Button asChild size="sm" variant="outline">
             <Link to={to}>Add key</Link>

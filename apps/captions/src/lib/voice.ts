@@ -1,4 +1,4 @@
-import { STT_MODELS, type SpeechUse, type SttChoice, type SttEngine, type SttModel, type VoicePrefs, type VoiceView } from "@contracts/voice";
+import { STT_MODELS, type SpeechUse, type SttChoice, type SttEngine, type SttModel, type SttResolved, type VoicePrefs, type VoiceView } from "@contracts/voice";
 import { useCachedLoad } from "./local-cache";
 
 /** Settings → AI → Voice's calls (api/voice-prefs.ts, contracts/voice.ts). */
@@ -36,10 +36,14 @@ export function engineOptions(view: Pick<VoiceView, "available">, current: SttEn
 
 export const modelOf = (id: string): SttModel | undefined => STT_MODELS.find((m) => m.id === id);
 
-/** Where a need is fixed: the API key the chosen engine asks for (auto asks Deepgram first). A local engine has no key. */
-export function keyFix(engine: SttEngine): string | null {
-  if (engine === "local") return null;
-  return `/settings/keys#api-key-${engine === "openai" ? "OPENAI_API_KEY" : "DEEPGRAM_API_KEY"}`;
+/** Where a need is fixed: the row of API keys the server named (none for a local engine). */
+export const keyFix = (key: string | undefined): string | null => (key ? `/settings/keys#api-key-${key}` : null);
+
+/** A need in the app's one wording ("Needs a Deepgram key"); one without a key as the server says it. */
+export function needWords(r: Extract<SttResolved, { needs: string }>): string {
+  if (r.key === "DEEPGRAM_API_KEY") return "Needs a Deepgram key";
+  if (r.key === "OPENAI_API_KEY") return "Needs an OpenAI key";
+  return r.needs;
 }
 
 /** The languages the picker offers (ISO 639-1), shown by name; the ones the speech engines here hear well. */
