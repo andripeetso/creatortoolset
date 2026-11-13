@@ -48,6 +48,13 @@ const strokeMore = (v: unknown): Partial<Stroke> => {
   return { ...(dash && dash[1] > 0 ? { dash } : {}), ...(v.round === true ? { round: true } : {}), ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}) };
 };
 
+/** A frame's finish as it may be saved: a whole number each in its range, and none when it is 0. */
+function finish(raw: Record<string, unknown>): Pick<DesignPage, "grain" | "vignette"> {
+  const grain = Math.round(num(raw.grain, 0, 100, 0));
+  const vignette = Math.round(num(raw.vignette, -100, 100, 0));
+  return { ...(grain ? { grain } : {}), ...(vignette ? { vignette } : {}) };
+}
+
 /** A picture's colour changes as they may be saved: each one named, a whole number in its range, and none at all when every one is 0. */
 function retouched(raw: Record<string, unknown>): Pick<ImageLayer, "adjust" | "duotone" | "vignette" | "grain" | "blur"> {
   const whole = (v: unknown, lo: number, hi: number) => Math.round(num(v, lo, hi, 0));
@@ -176,6 +183,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
       : {}),
     ...(DESIGN_BLENDS.includes(raw.blend as never) ? { blend: raw.blend as (typeof DESIGN_BLENDS)[number] } : {}),
+    // a picture's blur is one of its adjustments (retouched, below); any other layer's is its own
+    ...(raw.type !== "image" && Math.round(num(raw.blur, 0, 200, 0)) ? { blur: Math.round(num(raw.blur, 0, 200, 0)) } : {}),
     ...(raw.flipX === true ? { flipX: true } : {}),
     ...(raw.flipY === true ? { flipY: true } : {}),
     ...(groupId(raw.group) ? { group: groupId(raw.group) } : {}),
@@ -329,7 +338,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       }
       if (left.length) notes.push(`Page ${k + 1}: these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`);
     }
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
   }
   return { pages, notes };
 }

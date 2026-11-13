@@ -291,6 +291,21 @@ describe("designs: an AI that designs", () => {
     expect(out.design.pages[0]).toMatchObject({ name: "Cover", x: 0, y: 0, w: 1080, h: 1920, layers: [{ type: "text", text: "FLOOR TIME" }] });
   });
 
+  it("an AI gives a frame its finish without sending its layers again, reads it back, and blurs a layer with a change", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    await write(d.id, { frames: [{ id: "p1", background: "#1a0b2e", layers: [{ id: "sun", type: "shape", shape: "ellipse", fill: "#ffcc66", x: 300, y: 300, w: 400, h: 400 }] }] });
+    const out = (await write(d.id, { frames: [{ id: "p1", grain: 35, vignette: 40 }], changes: [{ frame: "p1", layer: "sun", set: { blur: 60 } }] })).body;
+    expect(out.design.pages[0]).toMatchObject({ background: "#1a0b2e", grain: 35, vignette: 40, layers: [{ id: "sun", blur: 60, fill: "#ffcc66" }] });
+    const got = await read(d.id);
+    expect(got.frames[0]).toMatchObject({ grain: 35, vignette: 40 });
+    expect(got.how).toContain('"grain" (0 to 100) lays a film grain over the whole frame');
+    expect(got.how).toContain('"blur" (pixels, up to 200');
+    // taken off again with 0, and the layers stay
+    const off = (await write(d.id, { frames: [{ id: "p1", grain: 0 }] })).body.design.pages[0]!;
+    expect(off).not.toHaveProperty("grain");
+    expect([off.vignette, off.layers.length]).toEqual([40, 1]);
+  });
+
   it("adds a frame of any size beside the rightmost, free to say what was asked for; never more than a design holds", async () => {
     const d = await fromPiece();
     const out = (await write(d.id, { frames: [{ name: "Thumbnail", w: 1280, h: 720, background: "#111111", layers: [{ ...text, text: "3 MISTAKES", w: 1100 }] }] })).body;

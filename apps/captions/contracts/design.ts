@@ -88,6 +88,8 @@ interface Box {
   /** mirrored left to right, top to bottom */
   flipX?: boolean;
   flipY?: boolean;
+  /** blurred by this many pixels, 1 to 200: a glow, a haze, something out of focus (absent = sharp) */
+  blur?: number;
   /** layers of a frame with the same group are picked and moved as one (a badge and its words) */
   group?: string;
   /** what the layers list calls it; absent = what it is (a text's own words, "Rectangle", "Picture", "Drawing") */
@@ -204,6 +206,10 @@ export interface DesignPage {
   /** "#rrggbb" */
   background: string;
   gradient?: Gradient;
+  /** the frame's finish, over everything on it: a film grain, 1 to 100 (absent = none) */
+  grain?: number;
+  /** and its edges darkened (1 to 100) or lightened (-1 to -100), the middle left as it is */
+  vignette?: number;
   /** bottom first: a later layer is drawn over an earlier one */
   layers: Layer[];
 }
