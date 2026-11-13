@@ -55,7 +55,7 @@ describe("the dictation group", () => {
 
   it("names what the keys do and shows each setting", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />);
-    for (const text of ["Talk", "Hold fn", "F16", ">Choose key</button>", "Transcribe a file", ">Set up</button>", "Speech model", "Sounds when it starts and stops", ">Open</button>"]) {
+    for (const text of ["Talk", "Hold fn", "F16", ">Choose key</button>", "Transcribe a file", ">Open setup</button>", "Speech model", "Sounds when it starts and stops", ">Open</button>"]) {
       expect(html).toContain(text);
     }
     // a model already on this Mac that this app did not download: neither Download nor Remove
@@ -76,7 +76,7 @@ describe("the dictation group", () => {
   it("says which permission is missing, next to Set up", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility" }) })} />);
     expect(html).toContain("Needs Accessibility");
-    expect(html).toContain(">Set up</button>");
+    expect(html).toContain(">Open setup</button>");
   });
 
   it("says in one line why the keys are off while another dictation app is open", () => {

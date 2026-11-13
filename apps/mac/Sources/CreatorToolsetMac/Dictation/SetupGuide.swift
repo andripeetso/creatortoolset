@@ -71,6 +71,9 @@ struct SetupPageView: View {
             Text("Dictation")
                 .font(.system(size: 24, weight: .semibold))
                 .padding(.top, 16)
+            // what it is for, before how: someone offered it has never heard of it
+            Text("Talk instead of typing, in any app. Free.")
+                .padding(.top, 6)
             Text(facts.line)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
