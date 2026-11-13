@@ -1,9 +1,13 @@
+// @vitest-environment happy-dom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { useAuth } from "@/lib/auth";
 import { DEFAULT_VOICE_PREFS, isLanguage, type VoiceView } from "@contracts/voice";
 import { LANGUAGES, engineOptions, keyFix, languageName } from "@/lib/voice";
-import { VoiceBody } from "./VoiceSection";
+import { VoiceBody, VoiceSection } from "./VoiceSection";
 
 const view = (over: Partial<VoiceView> = {}): VoiceView => ({
   ...structuredClone(DEFAULT_VOICE_PREFS),
@@ -42,6 +46,24 @@ describe("the Voice page", () => {
     const out = html(view({ available: [], stt: { default: { engine: "auto" }, per: {} }, resolved: (["captions", "transcripts", "editor", "mic"] as const).map((use) => ({ use, needs: need })) }));
     expect(out.split(need).length - 1).toBe(1);
     expect(out).toContain('href="/settings/keys#api-key-DEEPGRAM_API_KEY"');
+  });
+});
+
+describe("read-aloud", () => {
+  it("is there even when the voice settings can't load: it is kept in this browser", async () => {
+    useAuth.setState({ required: true, me: { username: "sam", role: "admin", cloud: false, off: [] } });
+    vi.stubGlobal("Worker", class {});
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "Sign in with an account" }), { status: 403 }));
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => {
+      root.render(<MemoryRouter><VoiceSection /></MemoryRouter>);
+      await new Promise((done) => setTimeout(done, 0));
+    });
+    expect(document.body.textContent).toContain("Could not load the voice settings");
+    expect(document.body.textContent).toContain("Read the assistant's replies aloud");
+    act(() => root.unmount());
+    document.body.innerHTML = "";
+    vi.unstubAllGlobals();
   });
 });
 

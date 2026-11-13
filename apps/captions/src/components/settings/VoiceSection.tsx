@@ -17,7 +17,14 @@ type Body = Parameters<typeof putVoice>[0];
  */
 export function VoiceSection() {
   const { data, error, refresh, set } = useVoice();
-  if (!data) return <Card>{error ? <ErrorRow title="Could not load the voice settings" detail={error} retry={() => void refresh().catch(() => {})} /> : <LoadingRow />}</Card>;
+  // read-aloud is kept in this browser: it never waits for (or fails with) the server's voice settings
+  if (!data)
+    return (
+      <div className="space-y-8">
+        <Card>{error ? <ErrorRow title="Could not load the voice settings" detail={error} retry={() => void refresh().catch(() => {})} /> : <LoadingRow />}</Card>
+        <TextToSpeech />
+      </div>
+    );
   const save = async (body: Body, shown: VoiceView) => {
     set(shown);
     try {
@@ -142,7 +149,7 @@ function Runs({ r, engine, full }: { r: SttResolved; engine: SttEngine; full?: b
 }
 
 /** The assistant's read-aloud add-on (lib/read-aloud.ts): off until switched on here; the voice downloads then. */
-function TextToSpeech() {
+export function TextToSpeech() {
   const { on, loading, toggle } = useReadAloud();
   if (!canSpeak()) return null;
   return (
