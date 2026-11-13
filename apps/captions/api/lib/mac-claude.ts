@@ -432,6 +432,8 @@ function wait(asked: Asked, claimed: boolean, cancel: AbortSignal | undefined, o
     };
     const onAbort = () => r.fail(new MacClaudeError("Stopped", "stopped"));
     const check = setInterval(() => {
+      // on its way out: its answers are the next process's now (their posts are turned away here), so nothing is failed for silence
+      if (leaving) return;
       const now = Date.now();
       const on = isOnline(r.device);
       if (!r.claimed && now - started > patienceMs(r.background, on && macFull(r.device)))
