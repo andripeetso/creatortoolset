@@ -83,7 +83,7 @@ struct SetupGuideView: View {
             if facts.serverOffered {
                 Picker("", selection: Binding(get: { facts.engine }, set: { act(.engine($0)) })) {
                     Text("This Mac").tag(DictationEngine.thisMac)
-                    Text("Your server's engine").tag(DictationEngine.server)
+                    Text("Deepgram or OpenAI (your key)").tag(DictationEngine.server)
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()

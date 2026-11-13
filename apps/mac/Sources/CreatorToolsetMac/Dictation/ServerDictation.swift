@@ -43,9 +43,9 @@ struct ServerTranscriber: Transcriber {
         return Transcript(text: try Self.text(status: status, data: data))
     }
 
-    /// The longest the words may take: no longer than the recording itself, and at least 3 s, the time a short one
-    /// needs to reach the server and come back.
-    static func timeout(seconds: TimeInterval) -> TimeInterval { max(3, seconds) }
+    /// The longest the words may take: no longer than the recording itself, and at least 5 s, the time a short one
+    /// needs to reach the server and come back on a slow connection (3 s cut short ones off).
+    static func timeout(seconds: TimeInterval) -> TimeInterval { max(5, seconds) }
 
     /// The words from the server's answer, or what to tell the person. Pure, so it is tested.
     static func text(status: Int, data: Data) throws -> String {

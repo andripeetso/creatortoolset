@@ -56,7 +56,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                     label="Engine"
                     value={d.engine}
                     onValueChange={(v) => set("engine", v)}
-                    options={[{ value: "mac", label: "This Mac" }, { value: "server", label: "Your server" }]}
+                    options={[{ value: "mac", label: "This Mac" }, { value: "server", label: "Deepgram or OpenAI (your key)" }]}
                   />
                 }
               />
