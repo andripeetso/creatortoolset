@@ -18,8 +18,9 @@ struct SpeechLink {
     /// The server answered a claim that carried `sent` with the models its owner wants here. True when this Mac changed
     /// something at once (then it claims again, so the server sees it).
     var answered: (_ sent: [String: Any], _ wanted: [String]) -> Bool
-    /// The words in 16 kHz mono samples, heard by `model` (a model this Mac has) among `languages` (none: any).
-    var transcribe: (_ model: String, _ languages: [String], _ samples: [Float]) throws -> (words: [HeardWord], language: String?)
+    /// The words in 16 kHz mono samples, heard by `model` (a model this Mac has) among `languages` (none: any). `soon`:
+    /// someone waits on it (the mic), so only a model already loaded hears it.
+    var transcribe: (_ model: String, _ languages: [String], _ samples: [Float], _ soon: Bool) throws -> (words: [HeardWord], language: String?)
 }
 
 /// Why a transcript can't be made, in words for the person.
@@ -41,7 +42,7 @@ struct TranscribeJob {
             if audio.status == 401 { return (.gone, false) }
             guard audio.status == 200 else { throw TranscribeRefused(why: "The recording could not be read from the server (HTTP \(audio.status)).") }
             let samples = try WAVReader.samples(audio.data)
-            let heard = try speech.transcribe(step.model ?? "", step.languages, samples)
+            let heard = try speech.transcribe(step.model ?? "", step.languages, samples, step.soon)
             let reply = try api.call("POST", base, Self.body(heard.words, language: heard.language), tries: 3, timeout: 300)
             if reply.status == 200 { return (.done, RelayRunner.editorWaits(reply.data)) }
             // no longer this Mac's (it took too long, or the Mac was removed): nothing more to say

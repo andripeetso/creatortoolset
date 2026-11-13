@@ -12,7 +12,7 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
 const { deviceOf, pairDevice, setDeviceKinds, setDeviceStt, touchDevice } = await import("./devices");
-const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS, EDITOR_LIMITS, isMac, modelsOutOfStep } = await import("./computer-transcribe");
+const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS, EDITOR_LIMITS, MIC_LIMITS, isMac, modelsOutOfStep } = await import("./computer-transcribe");
 const { availableEngines, resolvedOne, speechFor, speechJob, writeVoicePrefs } = await import("./speech");
 const { editorWordsFromComputer } = await import("../transcribe");
 const { saveMyKey } = await import("../my-keys");
@@ -52,6 +52,7 @@ describe("which computer gets a transcript", () => {
     expect((await claim(mac.token, ["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"])).job).toBeNull();
     const got = (await claim(pc.token, ["whisper-large-v3-turbo"])).job!;
     expect(got).toMatchObject({ kind: TRANSCRIBE_KIND, model: "whisper-large-v3-turbo", languages: ["en"] });
+    expect(got).not.toHaveProperty("soon");
     // the audio only to the computer that holds it
     expect((await app.request(`/api/devices/relay/transcribe/${got.id}`, { headers: as(mac.token) })).status).toBe(404);
     expect(await (await app.request(`/api/devices/relay/transcribe/${got.id}`, { headers: as(pc.token) })).text()).toBe("RIFF-tiny");
@@ -72,6 +73,13 @@ describe("which computer gets a transcript", () => {
     await expect(transcribeOnComputer("ana", "parakeet-tdt-0.6b-v3", ["en"], audio, EDITOR_LIMITS)).rejects.toBeInstanceOf(ComputerOff);
     expect(availableEngines("ana", "editor")).not.toContain("local");
     expect(availableEngines("ana", "captions")).toContain("local");
+    // a mic recording tells the computer someone waits on it (it answers with a model it has loaded, or refuses at once)
+    const mic = transcribeOnComputer("ana", "whisper-large-v3-turbo", ["en"], audio, MIC_LIMITS);
+    const micRefused = expect(mic).rejects.toThrow("isn't loaded");
+    const mj = (await claim(pc.token, ["whisper-large-v3-turbo"])).job as { id: number; soon?: boolean };
+    expect(mj.soon).toBe(true);
+    await app.request(`/api/devices/relay/transcribe/${mj.id}/fail`, json({ error: "Whisper large-v3 turbo isn't loaded on this Mac yet." }, as(pc.token)));
+    await micRefused;
   });
 
   it("with no computer that has the model on, it waits and says for what", async () => {

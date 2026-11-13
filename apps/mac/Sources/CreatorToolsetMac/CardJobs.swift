@@ -24,6 +24,8 @@ struct EditorJob: Equatable {
     /// a transcript (TranscribeJob.swift): the model to run, and the languages spoken (empty: hear which)
     var model: String? = nil
     var languages: [String] = []
+    /// a recording someone waits on (the mic): heard at once by a model already loaded, or refused at once
+    var soon = false
 }
 
 extension EditorJob {
@@ -31,7 +33,8 @@ extension EditorJob {
     init?(claim data: Data) {
         guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let job = answer["job"] as? [String: Any],
               let id = job["id"] as? Int, id > 0, let kind = job["kind"] as? String else { return nil }
-        self.init(id: id, kind: kind, model: job["model"] as? String, languages: job["languages"] as? [String] ?? [])
+        self.init(id: id, kind: kind, model: job["model"] as? String, languages: job["languages"] as? [String] ?? [],
+                  soon: job["soon"] as? Bool ?? false)
     }
 }
 
