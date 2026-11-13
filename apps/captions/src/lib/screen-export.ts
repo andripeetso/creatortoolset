@@ -2,7 +2,7 @@ import { ALL_FORMATS, AudioSample, BlobSource, BufferTarget, Conversion, Input, 
 import { VideoSample, VideoSampleSink } from "mediabunny";
 import { VoiceMono, heardTracks, stereoMix, type TrackReader } from "./screen-sound";
 import { openTrackReader } from "./screen-sound-reader";
-import { alphaPacking, drawFrame, pointerPath, type CameraImage, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { alphaPacking, drawFrame, pointerPath, type CameraImage, type FaceAim, type ScreenEvents, type ScreenLook } from "./screen-recording";
 import { allowHighH264 } from "./h264-level";
 import { frameReader } from "./frame-reader";
 
@@ -22,6 +22,8 @@ export async function renderScreenVideo(opts: {
   /** The same files already in the page (an older Mac app's recordings are read whole first): read instead of the URLs. */
   file?: Blob;
   cameraFile?: Blob;
+  /** Where the camera's cut follows the face (faceFollower), for a look whose camera has `follow`. */
+  faces?: FaceAim | null;
   events: ScreenEvents;
   look: ScreenLook;
   width: number;
@@ -115,7 +117,7 @@ export async function renderScreenVideo(opts: {
           const camFrame = cam?.toCanvasImageSource();
           const camWhole = camFrame instanceof VideoFrame ? await createImageBitmap(camFrame) : null;
           const camImage: CameraImage | null =
-            cam && camFrame ? { image: camWhole ?? camFrame, width: cam.displayWidth, height: cam.displayHeight } : null;
+            cam && camFrame ? { image: camWhole ?? camFrame, width: cam.displayWidth, height: cam.displayHeight, aim: opts.faces?.(t) } : null;
           clear?.clearRect(0, 0, width, height);
           drawFrame(clear ?? ctx, whole ?? frame, W, H, t, look, path, events.clicks, camImage, {
             picture: read ? (src, w, h) => reader?.part(src, W, H, w, h) ?? null : undefined,

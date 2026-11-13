@@ -74,6 +74,8 @@ final class Shell: NSObject, ObservableObject {
     private var plainDownloads: [WKDownload: URL] = [:]
     /// The see-through video being made; the page's Stop ends it ("record-alpha-stop").
     private var alphaTask: Task<Void, Never>?
+    /// Recordings whose camera file is being searched for the face (findFaces).
+    private var facesRunning = Set<String>()
 
     override init() {
         AppLog.trim()
@@ -503,6 +505,7 @@ final class Shell: NSObject, ObservableObject {
             }
         case "reveal": if let project { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) }
         case "streams": if let project { recorder.saveStreams(project) }   // Save the streams…
+        case "faces": if let project { findFaces(project) }   // the editor's Follow my face
         case "trash": if let project { recorder.delete(project) }   // the page has asked
         case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
         case "alpha-stop": alphaTask?.cancel()   // the editor's Stop while its see-through video is made
@@ -529,6 +532,35 @@ final class Shell: NSObject, ObservableObject {
 
     /// How the see-through video stands, for the editor that waits on it ('mac-alpha'): "making" (`part` 0 to 1),
     /// then "done", "failed" or "cancelled".
+    /// The face in a recording's camera file (CameraFaces.swift), once at a time per recording; the editor follows it
+    /// with 'mac-faces' events: "making" (`part` 0 to 1), then "done" or "failed".
+    private func findFaces(_ project: LocalProject) {
+        let id = project.id
+        guard facesRunning.insert(id).inserted else { return }
+        let push = { [weak self] (state: String, part: Double) in
+            guard let data = try? JSONSerialization.data(withJSONObject: ["id": id, "state": state, "part": part]),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            self?.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-faces', {detail: \(json)}))")
+        }
+        var last = -1.0
+        Task { @MainActor in
+            do {
+                try await CameraFaces.make(project) { part in
+                    Task { @MainActor in
+                        guard part - last >= 0.02 else { return }
+                        last = part
+                        push("making", part)
+                    }
+                }
+                push("done", 1)
+            } catch {
+                AppLog.write("faces not found in \(id): \(error.localizedDescription)")
+                push("failed", 0)
+            }
+            facesRunning.remove(id)
+        }
+    }
+
     private func pushAlpha(_ state: String, part: Double = 0) {
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-alpha', {detail: {state: '\(state)', part: \(part)}}))")
     }

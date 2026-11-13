@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { drawFrame, outputSize, trimOf, type CameraImage, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
+import { drawFrame, outputSize, trimOf, type CameraImage, type FaceAim, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
 import { frameReader, type FrameReader } from "@/lib/frame-reader";
 import { soundTracks } from "@/lib/screen-sound";
 import { Deck } from "./deck";
@@ -101,6 +101,8 @@ export function usePlayer(o: {
   duration: number;
   width: number;
   height: number;
+  /** Where the camera's cut follows the face (faceFollower), for a look whose camera has `follow`. */
+  faces?: FaceAim | null;
 }): Player {
   const holder = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -334,9 +336,11 @@ export function usePlayer(o: {
       }
       const camEl = camera.current?.el;
       const liveCamera: CameraImage | null =
-        camEl && camEl.readyState >= 2 ? { image: camEl, width: camEl.videoWidth, height: camEl.videoHeight } : null;
+        camEl && camEl.readyState >= 2 ? { image: camEl, width: camEl.videoWidth, height: camEl.videoHeight, aim: live.current.faces?.(t) } : null;
       if (careful && s.frame && !s.direct) {
-        const cam: CameraImage | null = s.camFrame ? { image: s.camFrame, width: s.camFrame.width, height: s.camFrame.height } : liveCamera;
+        const cam: CameraImage | null = s.camFrame
+          ? { image: s.camFrame, width: s.camFrame.width, height: s.camFrame.height, aim: live.current.faces?.(t) }
+          : liveCamera;
         drawFrame(ctx, s.frame, s.frame.width, s.frame.height, t, look, path, events.clicks, cam);
         return true;
       }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cameraCut, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { cameraCut, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -359,6 +359,26 @@ describe("screen recording", () => {
     const near = sideRects(1920, 1080, 54, { gap: 0.01, left: true }, 1);
     expect(near.screen.x - (near.camera.x + near.camera.w)).toBeCloseTo(10.8);
     expect(near.camera.x).toBeLessThan(near.screen.x);
+  });
+
+  it("follows the face: still for small moves, a smooth move with no overshoot for a big one", () => {
+    expect(faceFollower(null)).toBeNull();
+    expect(faceFollower({ v: 1, samples: [] })).toBeNull();
+    // five looks a second: the face wobbles by 3% for 4 s, then is 40% further right from then on
+    const samples: [number, number, number, number][] = [];
+    for (let t = 0; t <= 10; t += 0.2) samples.push([t, t < 4 ? 0.3 + (Math.round(t * 5) % 2) * 0.03 : 0.7, 0.4, 0.2]);
+    const aim = faceFollower({ v: 1, samples })!;
+    // the wobble moves nothing
+    expect(aim(1).x).toBeCloseTo(aim(2.2).x, 6);
+    // the face sits a little above the middle
+    expect(aim(1).y).toBeCloseTo(0.43, 6);
+    // the move eases in and out around the jump, starts before it, and never passes the face
+    const xs = Array.from({ length: 101 }, (_, i) => aim(i * 0.1).x);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThanOrEqual(xs[i - 1] - 1e-9);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(0.7 + 1e-9);
+    expect(aim(3.5).x).toBeGreaterThan(aim(1).x + 0.01);
+    expect(aim(4).x).toBeCloseTo(0.5, 1);
+    expect(aim(8).x).toBeCloseTo(0.7, 3);
   });
 
   it("cuts the camera where it is aimed, inside the picture, mirrored as seen", () => {

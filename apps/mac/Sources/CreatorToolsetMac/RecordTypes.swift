@@ -58,7 +58,8 @@ enum RecordPrefs {
     }
 
     static func bridgeState() -> [String: Any] {
-        ["keep": keepStreams, "screen": screenLongSide, "camera": cameraHeight]
+        // faces: this app finds the face in a camera file for the editor's Follow my face (record-faces:<id>)
+        ["keep": keepStreams, "screen": screenLongSide, "camera": cameraHeight, "faces": true]
     }
 }
 

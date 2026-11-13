@@ -28,7 +28,7 @@ export type ThisMacState = {
   /** Settings → General → Dictation (apps/mac Dictation.swift `bridgeState`); missing in older Mac apps */
   dictation?: DictationState;
   /** Settings → Tools → Screen Recorder (apps/mac RecordTypes.swift `RecordPrefs`): streams saved separately, the screen's longest side, the camera's height; missing in older Mac apps */
-  recorder?: { keep: boolean; screen: number; camera: number };
+  recorder?: { keep: boolean; screen: number; camera: number; faces?: boolean };
   /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
   version?: string;
   /** the app's last answer, kept on this device: it has not answered in this window yet */
@@ -71,14 +71,20 @@ export const tell = (what: string) => postToApp(`thismac-${what}`);
  * app. Asks the app once, without polling; its last answer on this device counts at once.
  */
 export function useMacRecorder(): boolean | null {
+  const r = useMacRecorderState();
+  return r === null ? null : !!r;
+}
+
+/** What the Mac app says of its Screen Recorder (`recorder`: its settings and what it can do), false where it says nothing, null until it answers. */
+export function useMacRecorderState(): NonNullable<ThisMacState["recorder"]> | false | null {
   const user = useAuth((s) => s.me?.username ?? null);
-  const [has, setHas] = useState<boolean | null>(() => {
+  const [has, setHas] = useState<NonNullable<ThisMacState["recorder"]> | false | null>(() => {
     if (!hasThisMac()) return false;
-    return readCached<ThisMacState>(user, SAVED)?.recorder ? true : null;
+    return readCached<ThisMacState>(user, SAVED)?.recorder ?? null;
   });
   useEffect(() => {
     if (!hasThisMac()) return;
-    const handle = (e: Event) => setHas(!!(e as CustomEvent<ThisMacState>).detail?.recorder);
+    const handle = (e: Event) => setHas((e as CustomEvent<ThisMacState>).detail?.recorder ?? false);
     window.addEventListener("mac-this", handle);
     tell("state");
     return () => window.removeEventListener("mac-this", handle);

@@ -42,6 +42,7 @@ export function Inspector({
   player,
   aim,
   hasCamera,
+  faces,
   canClear,
   floor,
 }: {
@@ -58,6 +59,8 @@ export function Inspector({
   player: Player;
   aim: (t: number) => { x: number; y: number };
   hasCamera: boolean;
+  /** Follow my face: whether the face was found in the camera, looked for at all, can be looked for here, how far a search is (0–100). */
+  faces: FaceState;
   /** A see-through video can be made here: the background can be None. */
   canClear: boolean;
   /** The least depth a zoom is seen at (lib/screen-recording.ts zoomFloor, in tenths): above 1 where zooms fill the whole frame. */
@@ -104,7 +107,7 @@ export function Inspector({
           <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
         {shown === "sound" && <SoundTab look={look} change={change} events={events} />}
-        {shown === "camera" && <CameraTab look={look} change={change} />}
+        {shown === "camera" && <CameraTab look={look} change={change} faces={faces} />}
       </div>
     </aside>
   );
@@ -475,9 +478,13 @@ const CORNERS: { id: CameraLook["corner"]; label: string }[] = [
   { id: "br", label: "Bottom right" },
 ];
 
-function CameraTab({ look, change }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void }) {
+export type FaceState = { found: boolean; tried: boolean; can: boolean; finding: number | null; find: () => void };
+
+function CameraTab({ look, change, faces }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; faces: FaceState }) {
   const cam = look.camera ?? defaultCamera();
   const set = (patch: Partial<CameraLook>) => change({ camera: { ...cam, ...patch } });
+  // the face decides where the cut looks: Left – right and Up – down would do nothing
+  const following = !!cam.follow && faces.found;
   return (
     <>
       <Group>
@@ -533,10 +540,33 @@ function CameraTab({ look, change }: { look: ScreenLook; change: (patch: Partial
       </Group>
       {cam.layout !== "hidden" && (
         <Group title="Framing">
-          <p className="text-xs text-zinc-400">Or drag the camera in the picture, and scroll over it to go closer.</p>
+          {(faces.found || faces.can) && (
+            <SwitchRow
+              label="Follow my face"
+              checked={!!cam.follow && (faces.found || faces.finding !== null)}
+              onChange={(follow) => {
+                set({ follow });
+                if (follow && !faces.found) faces.find();
+              }}
+            />
+          )}
+          {faces.finding !== null ? (
+            <p className="text-xs tabular-nums text-zinc-400">Finding your face… {faces.finding}%</p>
+          ) : cam.follow && faces.tried && !faces.found ? (
+            <p className="text-xs text-zinc-400">No face was found in the camera.</p>
+          ) : null}
+          {following ? (
+            <p className="text-xs text-zinc-400">It moves only when your face does, and slowly. Scroll over the camera in the picture to go closer.</p>
+          ) : (
+            <p className="text-xs text-zinc-400">Or drag the camera in the picture, and scroll over it to go closer.</p>
+          )}
           <SliderRow label="Zoom" value={cam.zoom ?? 1} min={1} max={3} step={0.05} format={(v) => `${v.toFixed(1)}×`} initial={1} onChange={(zoom) => set({ zoom })} />
-          <SliderRow label="Left – right" value={cam.x ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(x) => set({ x })} />
-          <SliderRow label="Up – down" value={cam.y ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(y) => set({ y })} />
+          {!following && (
+            <>
+              <SliderRow label="Left – right" value={cam.x ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(x) => set({ x })} />
+              <SliderRow label="Up – down" value={cam.y ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(y) => set({ y })} />
+            </>
+          )}
         </Group>
       )}
     </>

@@ -1,7 +1,7 @@
 import { getScreenRecording, reviewApi, saveScreenLook, type ReviewVersion } from "./review";
 import { postToApp, type LocalRecording } from "./mac-record";
 import { localFileUrl, localFilesOverlap, readLocalFile } from "./local-files";
-import type { ScreenEvents, ScreenLook } from "./screen-recording";
+import type { FaceTrack, ScreenEvents, ScreenLook } from "./screen-recording";
 
 /** Where the screen recorder editor gets its recording: a Review video version, or a local recording on this Mac. */
 export type ScreenSource = {
@@ -17,6 +17,10 @@ export type ScreenSource = {
   load(): Promise<{ events: ScreenEvents | null; look: ScreenLook | null }>;
   /** Keeps the look. The caller debounces. */
   saveLook(look: ScreenLook): void;
+  /** Where the face is in the camera file, when it was found before (a local recording); null when not. */
+  faces?(): Promise<FaceTrack | null>;
+  /** Has the Mac app find the face in the camera file (a local recording, an app that reports `faces`); `part` hears 0–1. */
+  findFaces?(part: (p: number) => void): Promise<FaceTrack | null>;
 };
 
 /** A Review video version: the play URL, the pointer log and look kept on the server. */
@@ -33,6 +37,10 @@ export function reviewSource(assetId: string, version: ReviewVersion): ScreenSou
 /** A local recording on this Mac, read from the app's ctlocal:// scheme; the look goes back to the app. */
 export function localSource(rec: LocalRecording): ScreenSource {
   const file = (name: string) => `ctlocal://${rec.id}/${name}`;
+  const faces = () =>
+    fetch(file("camera-faces.json"))
+      .then((r) => (r.ok ? (r.json() as Promise<FaceTrack>) : null))
+      .catch(() => null);
   return {
     url: file("screen.mp4"),
     cameraUrl: rec.camera ? file("camera.mp4") : null,
@@ -48,6 +56,22 @@ export function localSource(rec: LocalRecording): ScreenSource {
       return { events, look };
     },
     saveLook: (look) => postToApp(`record-look:${rec.id}:${JSON.stringify(look)}`),
+    faces,
+    findFaces(part) {
+      // the app answers with 'mac-faces' events for this recording: "making" with how far, then "done" or "failed"
+      return new Promise((resolve, reject) => {
+        const on = (e: Event) => {
+          const d = (e as CustomEvent<{ id: string; state: string; part: number }>).detail;
+          if (d?.id !== rec.id) return;
+          if (d.state === "making") return part(d.part);
+          window.removeEventListener("mac-faces", on);
+          if (d.state === "done") resolve(faces());
+          else reject(new Error("The face could not be found in the camera"));
+        };
+        window.addEventListener("mac-faces", on);
+        postToApp(`record-faces:${rec.id}`);
+      });
+    },
   };
 }
 

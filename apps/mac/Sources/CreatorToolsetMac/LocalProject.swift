@@ -48,6 +48,8 @@ struct LocalProject {
     var screenURL: URL { folder.appendingPathComponent("screen.mp4") }
     var eventsURL: URL { folder.appendingPathComponent("screen-events.json") }
     var cameraURL: URL { folder.appendingPathComponent("camera.mp4") }
+    /// Where the face is in the camera file, for the editor's Follow my face (CameraFaces.swift).
+    var facesURL: URL { folder.appendingPathComponent("camera-faces.json") }
     var thumbURL: URL { folder.appendingPathComponent("thumb.jpg") }
     var lookURL: URL { folder.appendingPathComponent("screen-look.json") }
     private var metaURL: URL { folder.appendingPathComponent("project.json") }

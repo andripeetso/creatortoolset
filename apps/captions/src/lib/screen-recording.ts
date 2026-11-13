@@ -95,14 +95,75 @@ export type CameraLook = {
   gap?: number;
   /** Beside the screen: the camera on the left. */
   left?: boolean;
+  /** The cut follows the face (the Mac app's camera-faces.json, `faceFollower`) instead of `x` and `y`. */
+  follow?: boolean;
 };
+
+/** Where the face is in the camera file (the Mac app's camera-faces.json): [t, x, y, h] each, 0–1 of the picture as filmed. */
+export type FaceTrack = { v: 1; samples: [number, number, number, number][] };
+
+/** Where a face-following cut looks at t, 0–1 of the camera's picture as filmed. */
+export type FaceAim = (t: number) => { x: number; y: number };
+
+/**
+ * Where the camera's cut looks to follow the face, by time, or null with no face found. It stays still while the face
+ * moves a little: only a face that leaves a box around where it looks (6% of the picture each way) moves it, and then
+ * all the way to the face. Those steps are smoothed over about two seconds (a Gaussian, σ 0.6 s), worked out for the
+ * whole recording at once, so a move starts before the face gets there, eases in and out, and never overshoots or
+ * lags. The face sits a little above the middle (headroom).
+ */
+export function faceFollower(track: FaceTrack | null | undefined): FaceAim | null {
+  const s = (track?.samples ?? []).filter((p) => Array.isArray(p) && p.length >= 4 && p.every(Number.isFinite));
+  if (!s.length) return null;
+  const STEP = 0.1;
+  const DEAD = 0.06;
+  const SIGMA = 6; // steps
+  const n = Math.ceil(s[s.length - 1][0] / STEP) + 1;
+  const held: [number, number][] = [];
+  let j = 0;
+  let aim: [number, number] = [s[0][1], s[0][2] + s[0][3] * 0.15];
+  for (let i = 0; i < n; i++) {
+    while (j + 1 < s.length && s[j + 1][0] <= i * STEP) j++;
+    const [, x, y, h] = s[j];
+    const face: [number, number] = [x, y + h * 0.15];
+    if (Math.abs(face[0] - aim[0]) > DEAD || Math.abs(face[1] - aim[1]) > DEAD) aim = face;
+    held.push(aim);
+  }
+  const reach = SIGMA * 3;
+  const w = Array.from({ length: 2 * reach + 1 }, (_, k) => Math.exp(-((k - reach) ** 2) / (2 * SIGMA * SIGMA)));
+  const total = w.reduce((a, b) => a + b, 0);
+  const smooth = held.map((_, i) => {
+    let x = 0;
+    let y = 0;
+    for (let k = -reach; k <= reach; k++) {
+      const [hx, hy] = held[Math.min(n - 1, Math.max(0, i + k))];
+      x += hx * w[k + reach];
+      y += hy * w[k + reach];
+    }
+    return [x / total, y / total] as const;
+  });
+  return (t) => {
+    const at = Math.min(n - 1, Math.max(0, t / STEP));
+    const i = Math.floor(at);
+    const a = smooth[i];
+    const b = smooth[Math.min(n - 1, i + 1)];
+    const f = at - i;
+    return { x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f };
+  };
+}
 
 export function defaultCamera(): CameraLook {
   return { layout: "bubble", size: 0.24, corner: "br", shape: "circle", mirror: false };
 }
 
 /** A decoded camera frame for drawFrame. */
-export type CameraImage = { image: CanvasImageSource; width: number; height: number };
+export type CameraImage = {
+  image: CanvasImageSource;
+  width: number;
+  height: number;
+  /** Where the face is followed to at this frame (FaceAim), as filmed: used where the look's camera has `follow`. */
+  aim?: { x: number; y: number };
+};
 
 export const BACKGROUNDS: { id: string; label: string; stops: [string, string] }[] = [
   { id: "violet", label: "Violet", stops: ["#7c3aed", "#db2777"] },
@@ -953,7 +1014,9 @@ export function drawFrame(
 ) {
   const { width: outW, height: outH } = ctx.canvas;
   const short = Math.min(outW, outH);
-  const cam = camera ? (look.camera ?? defaultCamera()) : null;
+  const set = camera ? (look.camera ?? defaultCamera()) : null;
+  // following the face: the cut looks where the face is at this frame (x as seen, so mirrored for a mirrored camera)
+  const cam = set?.follow && camera?.aim ? { ...set, x: set.mirror ? 1 - camera.aim.x : camera.aim.x, y: camera.aim.y } : set;
   if (look.background !== "none") {
     const [from, to] = backgroundStops(look);
     if (from === to) ctx.fillStyle = from;
