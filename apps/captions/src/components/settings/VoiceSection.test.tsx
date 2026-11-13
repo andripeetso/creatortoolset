@@ -152,9 +152,10 @@ describe("dictation and the models on a Mac", () => {
   it("a Mac is offered the Mac's models, a Linux computer the others", () => {
     const out = html(view({ computers: [{ id: "m", name: "Tiny Mac", online: true, os: "mac", models: [] }] }));
     expect(out).toContain("Whisper small (English)");
-    expect(out).not.toContain("Parakeet");
+    expect(out).toContain("Parakeet TDT 0.6B v2");
     const pc = html(view({ computers: [{ id: "p", name: "Tiny PC", online: true, os: "linux", models: [] }] }));
-    expect(pc).toContain("Parakeet");
+    expect(pc).toContain("Parakeet TDT 0.6B v3");
+    expect(pc).not.toContain("Parakeet TDT 0.6B v2");
     expect(pc).not.toContain("Whisper small (English)");
   });
 
