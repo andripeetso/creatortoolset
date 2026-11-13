@@ -14,7 +14,7 @@ const KEY = "ct-chat-mode";
 /** The chats list beside the open chat. */
 export const LIST_W = 280;
 /** The open chat's column at its narrowest. */
-export const MIN_CHAT = 360;
+export const MIN_CHAT = 340;
 /** The page at its narrowest: narrower, and the chats take the whole window. */
 export const MIN_PAGE = 360;
 /** The breakpoints the page's layouts are written for (tailwind's own). */
