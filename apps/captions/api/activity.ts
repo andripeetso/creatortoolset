@@ -24,7 +24,7 @@ export type { ActivityAction, ActivityRow, ActivityState, AgentRun } from "../co
 
 export type ActivityFn = (user: SessionUser) => ActivityRow[] | Promise<ActivityRow[]>;
 
-// A Mac menu item a plug-in adds to the Go and gear menus (GET /api/activity/menu). `href` is an app path, as for rows.
+// A Mac menu item a plug-in adds to the Go menu and the menu bar panel's Settings & More (GET /api/activity/menu). `href` is an app path, as for rows.
 export interface MenuItem {
   id: string;
   title: string;
@@ -123,7 +123,7 @@ export async function pluginActivity(plugins: ServerPlugin[], user: SessionUser,
 }
 
 /**
- * Every plug-in's Mac menu items for this account (the Go and gear menus). Same gating and timeout as the rows; an item
+ * Every plug-in's Mac menu items for this account (the Go menu and the menu bar panel's Settings & More). Same gating and timeout as the rows; an item
  * needs a title and an app path. Ids gain the plug-in's id as a prefix.
  */
 export async function pluginMenu(plugins: ServerPlugin[], user: SessionUser, timeoutMs = 3000): Promise<MenuItem[]> {

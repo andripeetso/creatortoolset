@@ -17,7 +17,7 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var sessions: [SessionRow] = []
     /// The rows the server's plug-ins add (GET /api/activity), shown with the sessions.
     @Published private(set) var pluginRows: [PluginRow] = []
-    /// The menu items the server's plug-ins add (GET /api/activity/menu): the Go and gear menus (PluginMenu.swift).
+    /// The menu items the server's plug-ins add (GET /api/activity/menu): the Go menu and Settings & More (PluginMenu.swift).
     @Published private(set) var pluginMenu: [PluginMenuItem] = []
     /// How many plug-ins the person has switched on (Plugins.swift, the record in the Keychain): This Mac's Plug-ins row.
     @Published internal(set) var pluginCount = 0

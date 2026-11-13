@@ -1,7 +1,7 @@
 // The menu bar panel: what is running right now and what waits on you, one row each, the state on the right in
 // colour. Rows come from the open server's Workshop sessions (GET /api/workshop/sessions/summary), its own background
 // work and its plug-ins' rows (GET /api/activity: the Media Library, edits, exports; no Swift in a plug-in) and this app's
-// AI runner; the rest of the old menu sits behind a gear.
+// AI runner. Under them, menu rows: open the window, record the screen, and the rest of the old menu behind Settings & More.
 import ServiceManagement
 import SwiftUI
 
@@ -93,78 +93,103 @@ extension PluginRow {
 
 struct ActivityPanel: View {
     @ObservedObject var shell: Shell
+    @ObservedObject private var recorder: Recorder
+    @ObservedObject private var quick = RecordShortcut.shared
     let checkForUpdates: () -> Void
+
+    init(shell: Shell, checkForUpdates: @escaping () -> Void) {
+        self.shell = shell
+        self.recorder = shell.recorder
+        self.checkForUpdates = checkForUpdates
+    }
 
     var body: some View {
         let rows = shell.rows
-        VStack(alignment: .leading, spacing: 0) {
-            Text(rows.active.isEmpty ? "Nothing running" : "\(rows.active.count) running")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
-
-            // ponytail: 12 rows a section, no scrolling; the window's pages hold the rest
-            ForEach(rows.active.prefix(12)) { RowView(row: $0, shell: shell) }
-            if !rows.forYou.isEmpty {
-                Text("Waiting on you").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 14).padding(.top, rows.active.isEmpty ? 2 : 10).padding(.bottom, 2)
-                ForEach(rows.forYou.prefix(12)) { RowView(row: $0, shell: shell) }
+        let lastError = shell.ai.lastError
+        let live = recorder.phase == .recording || recorder.phase == .paused
+        PanelBody(
+            active: rows.active, forYou: rows.forYou,
+            // the plan's usage limit is a state, not an error: said on its own line, or by the row whose work it holds back
+            limit: panelLimitLine(lastError: lastError, rows: rows.active),
+            empty: shell.hasServer ? "Nothing running or waiting" : "Pick a server in the window to see your work",
+            warnings: [lastError.flatMap(plainLimitLine) == nil ? lastError.map { "Last AI error: \($0)" } : nil,
+                       shell.notice, shell.spaceLine].compactMap { $0 },
+            open: { row in if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() } },
+            run: { shell.runAgent($0) }
+        ) {
+            PanelMenuRow(title: "Open Creator Toolset") { shell.showWindow() }
+            if Recorder.available {
+                PanelMenuRow(title: live ? "Stop Recording" : "Record Screen", shortcut: quick.shortcut?.display) { recorder.toggle() }
+                    .disabled(recorder.phase == .saving)
             }
-            // the plan's usage limit is a state, not an error: said on its own line, in place of "Nothing waits for you.",
-            // or by the row whose work it holds back
-            let limit = panelLimitLine(lastError: shell.ai.lastError, rows: rows.active)
+            PanelMoreRow { MoreMenu(shell: shell, checkForUpdates: checkForUpdates) }
+        }
+        .onAppear { Task { await shell.refresh() } }
+    }
+}
+
+/// The panel's look from plain values (the screenshot test renders it with fixture rows): the rows under Running and
+/// Waiting on you (a label only for a part with rows), one quiet line when both are empty, then the menu rows.
+struct PanelBody<Rows: View>: View {
+    let active: [ActivityRow]
+    let forYou: [ActivityRow]
+    var limit: String? = nil
+    var empty = "Nothing running or waiting"
+    var warnings: [String] = []
+    var open: (ActivityRow) -> Void = { _ in }
+    var run: (PluginAction) -> Void = { _ in }
+    @ViewBuilder let menu: () -> Rows
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // ponytail: 12 rows a part, no scrolling; the window's pages hold the rest
+            part("Running", active, top: 4)
+            part("Waiting on you", forYou, top: active.isEmpty ? 4 : 10)
             if let limit {
                 Text(limit).font(.system(size: 12, weight: .medium)).foregroundStyle(.orange)
                     .padding(.horizontal, 14).padding(.vertical, 6)
-            } else if rows.active.isEmpty && rows.forYou.isEmpty {
-                Text(shell.hasServer ? "Nothing waits for you." : "Pick a server in the window to see your work.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 6)
+            } else if active.isEmpty && forYou.isEmpty {
+                Text(empty).font(.system(size: 13)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
             }
-            ForEach([shell.ai.lastError.flatMap(plainLimitLine) == nil ? shell.ai.lastError.map { "Last AI error: \($0)" } : nil, shell.notice, shell.spaceLine].compactMap { $0 }, id: \.self) {
-                Text($0).font(.system(size: 11)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.top, 4)
+            ForEach(warnings, id: \.self) {
+                Text($0).font(.system(size: 11)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.vertical, 2)
             }
-
-            Divider().padding(.top, 6)
-            HStack {
-                Button("Open Creator Toolset") { shell.showWindow() }
-                if Recorder.available {
-                    RecordScreenButton(recorder: shell.recorder)
-                }
-                Spacer()
-                Menu {
-                    MoreMenu(shell: shell, checkForUpdates: checkForUpdates)
-                } label: {
-                    Image(systemName: "gearshape")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-            }
-            .buttonStyle(.borderless)
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            Divider().padding(.horizontal, 14).padding(.vertical, 5)
+            menu()
         }
+        .padding(.vertical, 5)
         .frame(width: 380)
-        .onAppear { Task { await shell.refresh() } }
+    }
+
+    @ViewBuilder private func part(_ label: String, _ rows: [ActivityRow], top: CGFloat) -> some View {
+        if !rows.isEmpty {
+            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 14).padding(.top, top).padding(.bottom, 2)
+            ForEach(rows.prefix(12)) { RowView(row: $0, open: open, run: run) }
+        }
     }
 }
 
 private struct RowView: View {
     let row: ActivityRow
-    let shell: Shell
+    let open: (ActivityRow) -> Void
+    let run: (PluginAction) -> Void
     @State private var hover = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Button {
-                if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() }
-            } label: {
+            Button { open(row) } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         Text(row.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         Spacer(minLength: 8)
-                        Text(row.word).font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(row.reason != nil ? .secondary : row.state == .working ? Color(red: 0.45, green: 0.72, blue: 1) : Color(red: 0.20, green: 0.83, blue: 0.60))
+                        // a row with a button says what to do with it; a state word beside it would be one word too many
+                        if row.actions.isEmpty {
+                            Text(row.word).font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(row.reason != nil ? .secondary : row.state == .working ? Color(red: 0.45, green: 0.72, blue: 1) : Color(red: 0.20, green: 0.83, blue: 0.60))
+                        }
                     }
                     if let reason = row.reason {
                         Text(reason).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
@@ -177,18 +202,78 @@ private struct RowView: View {
             .buttonStyle(.plain)
             // a plug-in's buttons (LaunchAgent.swift): run in the background, the panel says what failed
             ForEach(row.actions) { action in
-                Button(action.title) { shell.runAgent(action) }
+                Button(action.title) { run(action) }
                     .controlSize(.small)
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(hover ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .background(hover ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 4))
         .onHover { hover = $0 }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 5)
     }
 }
 
-/// The gear: this Mac's AI, the server here, servers, logs, the app.
+/// One menu-style row at the bottom of the panel: a title on the left, its key in grey on the right, the accent highlight
+/// under the pointer, as a menu item has. Another action (a key it answers to on the right) is one more of these.
+struct PanelMenuRow: View {
+    let title: String
+    var shortcut: String? = nil
+    /// shown highlighted from the start (the screenshot test)
+    var highlighted = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            PanelMenuLabel(title: title, trailing: shortcut.map { Text($0) }, highlighted: highlighted)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The last row: the old gear menu (this Mac's AI, servers, settings, logs, Quit) behind one row.
+struct PanelMoreRow<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            PanelMenuLabel(title: "Settings & More", trailing: Text(Image(systemName: "chevron.right")).font(.system(size: 11, weight: .semibold)))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+    }
+}
+
+private struct PanelMenuLabel: View {
+    let title: String
+    let trailing: Text?
+    @Environment(\.isEnabled) private var enabled
+    @State private var hover: Bool
+
+    init(title: String, trailing: Text?, highlighted: Bool = false) {
+        self.title = title
+        self.trailing = trailing
+        _hover = State(initialValue: highlighted)
+    }
+
+    var body: some View {
+        let lit = hover && enabled
+        HStack {
+            Text(title)
+            Spacer(minLength: 12)
+            trailing?.foregroundStyle(lit ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.tertiary))
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(lit ? AnyShapeStyle(.white) : enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+        .padding(.horizontal, 9).frame(height: 22)
+        .background(lit ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .padding(.horizontal, 5)
+    }
+}
+
+/// Settings & More: this Mac's AI, the server here, servers, logs, the app.
 private struct MoreMenu: View {
     @ObservedObject var shell: Shell
     let checkForUpdates: () -> Void
@@ -246,7 +331,7 @@ enum LoginItem {
     }
 }
 
-/// Screen recording's own settings (the menu bar's gear menu and the app's Record menu): the shortcut, the menu bar
+/// Screen recording's own settings (the menu bar panel's Settings & More and the app's Record menu): the shortcut, the menu bar
 /// button, the folder. What a recording hears is chosen on the recording toolbar (RecordToolbar.swift).
 struct RecordingMenu: View {
     let recorder: Recorder
@@ -260,23 +345,5 @@ struct RecordingMenu: View {
         Divider()
         Button("Recordings Folder…") { recorder.pickFolder() }
         Button("Show Recordings") { recorder.showFolder() }
-    }
-}
-
-/// The menu bar panel's Record screen, with the shortcut beside it.
-private struct RecordScreenButton: View {
-    @ObservedObject var recorder: Recorder
-    @ObservedObject private var quick = RecordShortcut.shared
-
-    var body: some View {
-        Button {
-            recorder.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Text(recorder.phase == .recording || recorder.phase == .paused ? "Stop recording" : "Record screen")
-                if let key = quick.shortcut?.display { Text(key).foregroundStyle(.tertiary) }
-            }
-        }
-        .disabled(recorder.phase == .saving)
     }
 }

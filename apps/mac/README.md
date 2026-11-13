@@ -168,7 +168,7 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
   (the last row of the Plug-ins list) is off. Every 5 s the app stats the folders the plug-ins were switched on from.
   A folder that is the same at two looks in a row is sent to the server's prepare (a copy and a test build; nothing
   runs). A copy that builds waits until the server has nothing running, then the record takes its fingerprint and the
-  server restarts; the window goes back to the page it was on. "Nothing running" is: no row in the menu bar's Active
+  server restarts; the window goes back to the page it was on. "Nothing running" is: no row in the menu bar's Running
   list (a Workshop reply being written, a plug-in's work, an AI request on this Mac), the recorder closed, and no
   program started by the server still running (ffmpeg, a build). It does not see an upload in flight or work inside
   the server that starts no program. A version that doesn't build is left out and its row says why. A plug-in taken
@@ -339,15 +339,19 @@ failed, the last AI job or poll failed, or the data disk is nearly full (`menuSt
 colour image, not a template, with a light rim so it reads on light and dark menu bars. A count between the mark and
 the dot says how many things wait for you. A click opens a panel (`Activity.swift`):
 
-- **Active**: Workshop replies being written and this Mac's AI requests, each with "Working" on the right;
-- **For you**: Workshop sessions with a new reply ("Ready"); a row opens its page in the window;
+- **Running**: Workshop replies being written, plug-in work and this Mac's AI requests, each with "Working" on the right;
+- **Waiting on you**: Workshop sessions with a new reply ("Ready") and plug-in items waiting; a row opens its page in
+  the window. A part shows its label only when it has rows; with neither, one quiet line says so;
 - the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
-- **Open Creator Toolset**, and a gear with "AI on this Mac: …", "Server on this Mac: …", **Use this Mac for my
-  AI**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings, **Open at login**,
-  **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
+- menu rows (`PanelMenuRow`: a title, its key in grey on the right): **Open Creator Toolset**, **Record Screen**
+  (**Stop Recording** while it records) and **Settings & More**, which holds "AI on this Mac: …", "Server on this
+  Mac: …", **Use this Mac for my AI**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings,
+  **Open at login**, **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
+
+`PANEL_SHOTS=<folder> swift test --filter PanelShotsTests` draws the panel with sample rows, light and dark, to PNGs.
 
 Closing the last window takes the app out of the Dock and the app switcher; it stays in the menu bar. A copy in
-/Applications opens at login (on once by default; the gear's switch turns it off).
+/Applications opens at login (on once by default; the switch in Settings & More turns it off).
 
 ## Runs your AI
 
