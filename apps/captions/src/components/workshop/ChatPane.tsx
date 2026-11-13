@@ -560,7 +560,7 @@ export function ChatPane({
                       <ReplyText text={m.text} />
                     </div>
                     {m.notes?.length ? (
-                      <ul className="mt-1 flex flex-col gap-0.5 text-[11px] leading-snug text-muted-foreground/80">
+                      <ul className="mt-1 flex flex-col gap-0.5 text-[12px] leading-snug text-muted-foreground">
                         {m.notes.map((n, i) => (
                           <li key={i}>{n}</li>
                         ))}
