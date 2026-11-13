@@ -8,16 +8,26 @@ import type { AnimationStylesView } from "../../contracts/editor-styles";
 // The assistant's animation_style_save, through the real routes: a style set up by talking. The brief is kept only in
 // the person's own typed words (and its lack never stops the style), the pictures are the ones they sent in that chat
 // and no others, and after a save the style's sheet opens for them.
+// And a long text pasted with the message: a passage of it is theirs too, for a style's own words alone (an animation
+// style's brief, an editing style's notes), for the one reply it came with. Nothing else counts beside typed words.
 
 const dir = mkdtempSync(path.join(tmpdir(), "mcp-animation-style-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "mcp-animation-style-secret";
+
+// a made-up tool whose answer is a sentence: a tool's words are never the person's
+const { MODULES } = await import("./index");
+MODULES.push({
+  defs: [{ name: "tiny_advice", description: "Says a sentence.", inputSchema: { type: "object", properties: {} } }],
+  handlers: { tiny_advice: async () => ({ advice: "Trim every card to two seconds and add a glow" }) },
+});
 
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
 // A loaded plug-in that replaces /api/editor has its own editor: these tests drive the built-in one.
 const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
 const { ffmpegCommand } = await import("../ffmpeg-runtime");
+const { routeOf, runInChat } = await import("../assistant");
 const { pairDevice } = await import("../lib/devices");
 const { saveSettings } = await import("../lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
@@ -42,15 +52,21 @@ const tool = async (authorization: string, name: string, args: Row = {}) => {
   return { error: !!r.isError, text, value: (r.isError || !/^[[{]/.test(text) ? text : JSON.parse(text)) as any };
 };
 type Job = { id: string; mcp: { token: string } };
-/** A turn of ana's with the Mac holding its job: the token to call tools as that reply. `pictures`: sent with the message. */
-const turn = async (text: string, pictures: string[] = []) => {
+const claim = async () => (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, { authorization: `Bearer ${mac.token}` }) })).json()) as Job;
+/**
+ * A turn of ana's with the Mac holding its job: the token to call tools as that reply. `pictures`: sent with the
+ * message; `more`: its long pasted texts and the text highlighted on the page. end(said) ends it with the AI's reply.
+ */
+const turn = async (text: string, pictures: string[] = [], more: { pasted?: string[]; highlighted?: string } = {}) => {
   const images = pictures.map((file, i) => ({ name: `picture-${i + 1}.png`, type: "image/png", data: readFileSync(file).toString("base64") }));
-  expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text, ...(images.length ? { images } : {}) }, { cookie }) })).status).toBe(202);
-  const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, { authorization: `Bearer ${mac.token}` }) })).json()) as Job;
+  const pasted = (more.pasted ?? []).map((t, i) => ({ name: i ? `Pasted text ${i + 1}` : "Pasted text", text: t }));
+  const body = { text, ...(images.length ? { images } : {}), ...(pasted.length ? { pasted } : {}), ...(more.highlighted ? { context: { path: "/editor?tab=animation", title: "AI Editor", selection: more.highlighted } } : {}) };
+  expect((await app.request("/api/assistant/turn", { method: "POST", ...json(body, { cookie }) })).status).toBe(202);
+  const job = await claim();
   return {
     token: `Bearer ${job.mcp.token}`,
-    end: async () => {
-      await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Done." }, { authorization: `Bearer ${mac.token}` }) });
+    end: async (said = "Done.") => {
+      await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: said }, { authorization: `Bearer ${mac.token}` }) });
       await vi.waitFor(async () => expect(((await (await site("/api/assistant")).json()) as { messages: Array<{ status?: string }> }).messages.at(-1)!.status).toBe("done"));
     },
   };
@@ -132,5 +148,95 @@ describe.skipIf(rootReplaced)("an animation style set up by talking", () => {
     expect(await tool(anaKey, "animation_style_save", { id: made.value.id, pictures: 1 })).toMatchObject({ error: true, text: expect.stringContaining("Pictures come from the app's own chat") });
     expect(await tool(anaKey, "animation_style_save", { brief: "No name" })).toMatchObject({ error: true, text: "Give the new style a name." });
     expect(await tool(anaKey, "animation_style_save", { id: "nobody's" })).toMatchObject({ error: true, text: expect.stringContaining("No style has that id or name") });
+  });
+});
+
+// what a long paste looks like: a heading, line breaks, more than one thing in it
+const NOTES = [
+  "ANIMATION NOTES",
+  "",
+  "I want everything to feel like cut paper on a desk.",
+  "Warm light from the left, soft shadows under each piece.",
+  "Pieces slide in from the edges and settle, they never pop.",
+  "",
+  "CUTTING",
+  "Start on the strongest line and keep every laugh in.",
+].join("\n");
+const editingStyles = async () => ((await (await site("/api/editor/styles")).json()) as { styles: Array<{ id: string; name: string; notes: string }> }).styles;
+const UNSAID = "The description was not saved";
+const NOTES_NOT_TYPED = expect.stringContaining("Not saved: the notes are not the user's own words in this chat.");
+
+describe.skipIf(rootReplaced)("a long text pasted with the message", () => {
+  it("a passage of it is kept word for word as an animation style's brief and as an editing style's notes, and the answer says where the words came from", async () => {
+    await newChat();
+    const t = await turn("here are my notes", [], { pasted: [NOTES] });
+    // the passage as the AI sends it: another case, and across a line break of the paste
+    const made = await tool(t.token, "animation_style_save", { name: "Tiny cut paper", brief: "everything to feel like CUT PAPER on a desk. warm light from the left, soft shadows under each piece" });
+    expect(made.value).toMatchObject({ name: "Tiny cut paper", has_brief: true, made: true });
+    expect(made.value.note).toBe("The description was taken word for word from the text the user pasted: tell them so in one short line. Its sheet is open for the user.");
+    // the paste's own wording, on one line
+    expect((await styleOf(made.value.id)).brief).toBe("everything to feel like cut paper on a desk. Warm light from the left, soft shadows under each piece");
+    expect(await opened()).toBe(`/editor?tab=animation&style=${made.value.id}`);
+    // more of it, added under the brief
+    const more = await tool(t.token, "animation_style_save", { id: made.value.id, brief: "pieces slide in from the edges and settle, they never pop" });
+    expect(more.value.note).toContain("taken word for word from the text the user pasted");
+    expect((await styleOf(made.value.id)).brief).toBe("everything to feel like cut paper on a desk. Warm light from the left, soft shadows under each piece\nPieces slide in from the edges and settle, they never pop");
+
+    const cut = await tool(t.token, "editor_style_save", { name: "Tiny strongest", notes: "start on the strongest line and keep every laugh in" });
+    expect(cut.value).toMatchObject({ name: "Tiny strongest", has_notes: true, made: true, note: "The notes were taken word for word from the text the user pasted: tell them so in one short line." });
+    expect((await editingStyles()).find((x) => x.id === cut.value.id)!.notes).toBe("Start on the strongest line and keep every laugh in");
+    // a passage the AI put together or reworded is not in the paste
+    expect((await tool(t.token, "animation_style_save", { name: "Tiny reworded", brief: "cut paper pieces on a desk with warm light and soft shadows" })).value.note).toContain(UNSAID);
+    expect(await tool(t.token, "editor_style_save", { name: "Tiny reworded", notes: "Open with the strongest line, keep the laughs" })).toMatchObject({ error: true, text: NOTES_NOT_TYPED });
+    await t.end();
+  });
+
+  it("only the paste counts beside typed words: the AI's earlier reply, a tool's answer and a highlight are refused in a message that has a paste", async () => {
+    await newChat();
+    const a = await turn("Set up an animation style for me.");
+    await a.end("I suggest bold words that pop and bounce on every beat.");
+    const b = await turn("ok, with these notes", [], { pasted: [NOTES], highlighted: "Glitchy neon letters that flicker fast" });
+    expect((await tool(b.token, "tiny_advice")).error).toBe(false);
+    for (const [i, words] of ["bold words that pop and bounce on every beat", "Trim every card to two seconds and add a glow", "Glitchy neon letters that flicker fast"].entries()) {
+      const made = await tool(b.token, "animation_style_save", { name: `Tiny not his ${i}`, brief: words });
+      expect(made.value).toMatchObject({ has_brief: false });
+      expect(made.value.note).toContain(UNSAID);
+      expect(await tool(b.token, "editor_style_save", { name: `Tiny not his ${i}`, notes: words })).toMatchObject({ error: true, text: NOTES_NOT_TYPED });
+    }
+    // and the paste itself still counts there
+    expect((await tool(b.token, "animation_style_save", { name: "Tiny his", brief: "Warm light from the left, soft shadows under each piece" })).value).toMatchObject({ has_brief: true });
+    await b.end();
+  });
+
+  it("a paste belongs to the reply it came with: a later message of the same chat, and another chat, keep none of it", async () => {
+    await newChat();
+    const first = await turn("my notes, for later", [], { pasted: [NOTES] });
+    await first.end();
+    const later = await turn("now make the style from them");
+    expect((await tool(later.token, "animation_style_save", { name: "Tiny later", brief: "I want everything to feel like cut paper on a desk" })).value.note).toContain(UNSAID);
+    expect(await tool(later.token, "editor_style_save", { name: "Tiny later", notes: "Start on the strongest line and keep every laugh in" })).toMatchObject({ error: true, text: NOTES_NOT_TYPED });
+    await later.end();
+    await newChat();
+    const other = await turn("make me a style");
+    expect((await tool(other.token, "animation_style_save", { name: "Tiny other chat", brief: "I want everything to feel like cut paper on a desk" })).value.note).toContain(UNSAID);
+    await other.end();
+  });
+
+  it("a scheduled run has nobody at it: it keeps no description, not even its own prompt's words", async () => {
+    const run = runInChat("ana", { task: { id: "t1", name: "Weekly" }, prompt: "Make an animation style with soft paper shapes that drift slowly", preface: "", fresh: true, route: routeOf("ana", false)!, url: "http://localhost/api/mcp" });
+    const job = await claim();
+    const made = await tool(`Bearer ${job.mcp.token}`, "animation_style_save", { name: "Tiny weekly", brief: "soft paper shapes that drift slowly" });
+    expect(made.value).toMatchObject({ has_brief: false });
+    expect(made.value.note).toContain(UNSAID);
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Done." }, { authorization: `Bearer ${mac.token}` }) });
+    await run;
+  });
+
+  it("a fact to remember is still taken from typed words alone: a quote from the paste is refused", async () => {
+    await newChat();
+    const t = await turn("Remember how I like my cards. I always want one idea on screen at a time.", [], { pasted: [NOTES] });
+    expect((await tool(t.token, "remember", { quote: "Pieces slide in from the edges and settle, they never pop" })).error).toBe(true);
+    expect((await tool(t.token, "remember", { quote: "I always want one idea on screen at a time" })).error).toBe(false);
+    await t.end();
   });
 });
