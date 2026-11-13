@@ -56,8 +56,12 @@ enum MediaFiles {
         let parts = path.split(separator: "/")
         guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return .status(403) }
         guard type(of: path) != nil else { return .status(415) }
-        let folders = granted.compactMap(realPath)
-        let inside = { (p: String) in folders.contains { p == $0 || p.hasPrefix($0 == "/" ? "/" : $0 + "/") } }
+        // compared in one Unicode form (a folder's name may be stored decomposed); the file is opened as realpath named it
+        let folders = granted.compactMap(realPath).map(\.precomposedStringWithCanonicalMapping)
+        let inside = { (p: String) in
+            let p = p.precomposedStringWithCanonicalMapping
+            return folders.contains { p == $0 || p.hasPrefix($0 == "/" ? "/" : $0 + "/") }
+        }
         guard let real = realPath(path) else {
             return .status(realPath(nearestExisting(path)).map(inside) == true ? 404 : 403)
         }
@@ -77,10 +81,10 @@ enum MediaFiles {
 
     private static func type(of path: String) -> String? { types[(path as NSString).pathExtension.lowercased()] }
 
-    /// Symlinks and `/private` resolved, in one Unicode form (a folder's name may be stored decomposed); nil when missing.
+    /// Symlinks, `..` and `/private` resolved; nil when missing.
     private static func realPath(_ path: String) -> String? {
         guard let r = realpath(path, nil) else { return nil }
         defer { free(r) }
-        return String(cString: r).precomposedStringWithCanonicalMapping
+        return String(cString: r)
     }
 }
