@@ -274,6 +274,38 @@ function Slide({ label, value, min, max, onLive, onCommit }: { label: string; va
 /** The zoom as a percentage. It reads the view itself: a wheel on the canvas draws this number again and nothing else of the panel. */
 const ZoomNumber = ({ view }: { view: ViewStore }) => <>{Math.round(useZoom(view) * 100)}%</>;
 
+/** The zoom's number and its menu (in, out, fit, selection, 50, 100, 200 %). */
+export function ZoomMenu({ view, onZoom }: { view: ViewStore; onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
+        <ZoomNumber view={view} />
+        <ChevronDown className="h-3 w-3" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onSelect={() => onZoom("in")}>
+          Zoom in<DropdownMenuShortcut>+</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onZoom("out")}>
+          Zoom out<DropdownMenuShortcut>−</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onZoom("fit")}>
+          Zoom to fit<DropdownMenuShortcut>⇧1</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onZoom("selection")}>
+          Zoom to selection<DropdownMenuShortcut>⇧2</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => onZoom(0.5)}>Zoom to 50%</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onZoom(1)}>
+          Zoom to 100%<DropdownMenuShortcut>⇧0</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onZoom(2)}>Zoom to 200%</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function Choice<V extends string | number>({ label, value, options, onPick }: { label: string; value: V | null; options: readonly (readonly [V, string])[]; onPick: (v: V) => void }) {
   return (
     <div role="group" aria-label={label} className="grid gap-1 rounded-[5px] bg-[#f5f5f5] p-0.5 dark:bg-[#383838]" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
@@ -462,32 +494,7 @@ export function Inspector({
               <Group className="h-3.5 w-3.5" />
             </Tap>
           )}
-        <DropdownMenu>
-          <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
-            <ZoomNumber view={view} />
-            <ChevronDown className="h-3 w-3" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuItem onSelect={() => onZoom("in")}>
-              Zoom in<DropdownMenuShortcut>+</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onZoom("out")}>
-              Zoom out<DropdownMenuShortcut>−</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onZoom("fit")}>
-              Zoom to fit<DropdownMenuShortcut>⇧1</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onZoom("selection")}>
-              Zoom to selection<DropdownMenuShortcut>⇧2</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onZoom(0.5)}>Zoom to 50%</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onZoom(1)}>
-              Zoom to 100%<DropdownMenuShortcut>⇧0</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onZoom(2)}>Zoom to 200%</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ZoomMenu view={view} onZoom={onZoom} />
         </div>
       </div>
 

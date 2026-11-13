@@ -93,8 +93,15 @@ describe("designs: made from a carousel piece", () => {
     expect(body.pages).toHaveLength(1);
     expect(body.pages[0]).toMatchObject({ id: "p1", background: "#ffe08a" });
     expect(body.pages[0]!.layers).toMatchObject([{ id: "l1", type: "text", text: "My own new words", x: -20, size: 600 }, { type: "shape", fill: "#111111" }]);
-    expect((await call("PUT", `/api/designs/${d.id}`, { pages: [] })).body).toEqual({ error: "A design keeps at least one frame" });
+    // frames sent of which none can be kept save nothing over what is there
+    expect((await call("PUT", `/api/designs/${d.id}`, { pages: ["not a frame", 7] })).body).toEqual({ error: "None of the frames sent could be kept" });
+    // and a save that sends no list of frames changes none of them
+    expect((await call<Design>("PUT", `/api/designs/${d.id}`, { pages: "none" })).body.pages).toHaveLength(1);
     expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages[0]!.background).toBe("#ffe08a");
+    // every frame deleted by hand: the piece's design is an empty canvas, and a later save does not bring its slides' frames back
+    expect((await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [] })).body.pages).toEqual([]);
+    expect((await call<Design>("PUT", `/api/designs/${d.id}`, { name: "Emptied" })).body).toMatchObject({ name: "Emptied", pages: [] });
+    expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages).toEqual([]);
   });
 
   it("takes a picture into its own folder and serves it back; a layer may then show it, and only it", async () => {
@@ -260,6 +267,28 @@ describe("designs: an AI that designs", () => {
     const held = (await write(piece.id, { changes: [{ frame: "p3", layer: "l1", set: { text: "Buy now" } }, { frame: "p3", add: { ...text, text: "Try it today" } }] })).body;
     expect(held.design.pages[2]!.layers.map((l) => l.type === "text" && l.text)).toEqual(["Try it today"]);
     expect(held.notes).toEqual(["Frame 3: “Buy now” is not in its own words: left out"]);
+  });
+
+  it("an empty canvas: started with no frame, emptied by deleting the last one, and given its first frame by hand or by an AI", async () => {
+    const { status, body: d } = await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, pages: 0, name: "Untitled canvas" });
+    expect(status).toBe(200);
+    expect(d).toMatchObject({ name: "Untitled canvas", width: 1080, height: 1350, pages: [] });
+    expect((await call<DesignSummary[]>("GET", "/api/designs")).body.find((x) => x.id === d.id)).toMatchObject({ pages: 0 });
+    // read by an AI: no frames, and how a design is changed
+    const empty = await read(d.id);
+    expect(empty.frames).toEqual([]);
+    expect(empty.how).toContain("A design is a canvas of frames");
+    // its first frame by hand, where the person put it
+    const one = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ id: "pa", x: 300, y: -200, w: 1080, h: 1080, background: "#ffffff", layers: [] }] })).body;
+    expect(one.pages).toEqual([{ id: "pa", x: 300, y: -200, w: 1080, h: 1080, background: "#ffffff", layers: [] }]);
+    // the last frame deleted: an empty canvas again
+    const none = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [] });
+    expect(none.status).toBe(200);
+    expect(none.body.pages).toEqual([]);
+    // an AI gives it its first frame
+    const out = (await write(d.id, { frames: [{ name: "Cover", w: 1080, h: 1920, background: "#111111", layers: [{ ...text, text: "FLOOR TIME" }] }] })).body;
+    expect(out.design.pages).toHaveLength(1);
+    expect(out.design.pages[0]).toMatchObject({ name: "Cover", x: 0, y: 0, w: 1080, h: 1920, layers: [{ type: "text", text: "FLOOR TIME" }] });
   });
 
   it("adds a frame of any size beside the rightmost, free to say what was asked for; never more than a design holds", async () => {

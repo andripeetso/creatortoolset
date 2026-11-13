@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { AppBar } from "@/components/AppBar";
+import { FramePresets } from "@/components/design/FramePresets";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
 import { usePageNeeds } from "@/lib/chat-mode";
 import { LayersPanel } from "@/components/design/LayersPanel";
@@ -54,6 +55,8 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["pen", "Pen", "P", PenTool],
   ["text", "Text", "T", Type],
 ];
+/** The tools that work on a canvas with no frame yet: the others draw a layer, and a layer lies on a frame. */
+const NEED_NO_FRAME: readonly Tool[] = ["move", "hand", "frame"];
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text", KeyP: "pen" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -103,6 +106,8 @@ function DesignPage({ id }: { id: string }) {
   const frame = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState<{ w: number; h: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const roomNow = useRef(room);
+  useEffect(() => void (roomNow.current = room), [room]);
 
   useEffect(() => {
     getDesign(id).then(
@@ -110,6 +115,8 @@ function DesignPage({ id }: { id: string }) {
         server.current = { pages: d.pages, at: d.updatedAt };
         setDesign(d);
         setHist(freshHist(d.pages));
+        // a canvas with no frame yet opens with the frame tool out: its sizes are in the panel, and a drag draws one
+        if (!d.pages.length) setTool("frame");
       },
       (e) => setError(message(e)),
     );
@@ -134,8 +141,10 @@ function DesignPage({ id }: { id: string }) {
   // opened on its first frame, whole
   const placed = useRef(false);
   useEffect(() => {
-    if (placed.current || !design || !room || !design.pages[0]) return;
+    if (placed.current || !design || !room) return;
     placed.current = true;
+    // a canvas with no frame yet stays where it is: its first frame is put in the middle of it
+    if (!design.pages[0]) return;
     // no closer than its own pixels: a small frame is not blown up to fill the window
     view.set(fitView(frameOf(design.pages[0], 0, design.width, design.height), room, 56, 1));
   }, [design, room, view]);
@@ -305,10 +314,16 @@ function DesignPage({ id }: { id: string }) {
       // at once for whatever is sent before the canvas is drawn again
       latest.current = merged;
       change(() => merged);
+      // frames arriving on a canvas that had none (the assistant designing it): shown whole, no closer than their own
+      // pixels, and the frame tool (out on an empty canvas) put away
+      if (!had.length && merged.length) {
+        setTool("move");
+        if (roomNow.current) view.glide(fitView(boundsOf(merged.map((p, n) => frameOf(p, n, d.width, d.height))), roomNow.current, 56, 1));
+      }
       return true;
     };
     return onTopic("designs", () => void getDesign(id).then((d) => remote.current(d), () => {}));
-  }, [id, change]);
+  }, [id, change, view]);
 
   /** The saved page with every picked layer through `fn`. */
   const through = (fn: (l: Layer) => Layer): Page | null => (base ? { ...base, layers: base.layers.map((l) => (selected.includes(l.id) ? fn(l) : l)) } : null);
@@ -333,25 +348,37 @@ function DesignPage({ id }: { id: string }) {
   const textLayer = (id: string, text: string, r: Rect, width: number): Layer => ({ id, type: "text", text, font: "Inter", size: Math.round(width * 0.06), color: "#111111", align: "left", ...r });
 
   /**
-   * A new frame, picked. `like`: a copy of that frame. `rect`: where the frame tool drew it; without one it goes beside
-   * the rightmost frame, the size of the frame it was made from, and the canvas moves to show it.
+   * A new frame, picked. `like`: a copy of that frame. `rect`: where the frame tool drew it. `size`: one of the picture
+   * sizes, picked from the panel. Without a `rect` it goes beside the rightmost frame (on a canvas with no frame yet,
+   * in the middle of what is in view), the size given or that of the frame it was made from, and the canvas moves to
+   * show it: a size picked from the panel fills the view, no closer than its own pixels. `layers`: what the new frame
+   * starts with (a picture or words that arrived on a canvas with no frame). Answers the frame, or nothing when the
+   * canvas is full.
    */
-  const addFrame = (like?: Page, rect?: Rect) => {
-    if (!base || !here) return;
-    if (pages.length >= DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
-    const r = rect ?? besideFrames(frames, here, here);
+  const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }, layers?: (f: { w: number; h: number }) => Layer[]): Page | undefined => {
+    if (!design) return undefined;
+    if (pages.length >= DESIGN_LIMITS.pages) return void setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
+    const dims = size ?? here ?? { w: design.width, h: design.height };
+    const v = view.aim();
+    const r = rect ?? (frames.length ? besideFrames(frames, here, dims) : { x: Math.round(((room?.w ?? 0) / 2 - v.x) / v.z - dims.w / 2), y: Math.round(((room?.h ?? 0) / 2 - v.y) / v.z - dims.h / 2), w: dims.w, h: dims.h });
     // a copy is a frame of its own: the carousel slide its original draws stays the original's
-    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base.background, layers: [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
+    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base?.background ?? "#ffffff", layers: layers?.(r) ?? [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
     change((all) => [...all, fresh]);
-    pick(pages.length, [], true);
-    if (!rect && room) view.glide({ ...view.aim(), x: room.w / 2 - (r.x + r.w / 2) * view.aim().z, y: room.h / 2 - (r.y + r.h / 2) * view.aim().z });
+    // a canvas's first frame is there: the frame tool (out on an empty canvas) is put away
+    if (!frames.length) setTool("move");
+    pick(pages.length, fresh.layers.length && layers ? fresh.layers.map((l) => l.id) : [], !layers);
+    // a size picked from the panel, and a canvas's first frame: it fills the view; else the canvas moves to show it
+    if ((size || !frames.length) && !rect && room) view.glide(fitView(r, room, 56, 1));
+    else if (!rect && room) view.glide({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z });
+    return fresh;
   };
-  /** A box drawn with the frame tool: a click makes a frame the size of the current one, a drag the size drawn. */
+  /** A box drawn with the frame tool: a click makes a frame the size of the current one (the first frame of a canvas: the design's own size), a drag the size drawn. */
   const makeFrame = (r: Rect, dragged: boolean) => {
     setTool("move");
-    if (!here) return;
+    if (!design) return;
+    const like = here ?? { w: design.width, h: design.height };
     const fit = (n: number) => Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(n)));
-    addFrame(undefined, { x: Math.round(r.x), y: Math.round(r.y), w: dragged ? fit(r.w) : here.w, h: dragged ? fit(r.h) : here.h });
+    addFrame(undefined, { x: Math.round(r.x), y: Math.round(r.y), w: dragged ? fit(r.w) : like.w, h: dragged ? fit(r.h) : like.h });
   };
   const movePage = (from: number, to: number) => {
     if (from === to) return;
@@ -366,10 +393,10 @@ function DesignPage({ id }: { id: string }) {
     if (mine.length && base) {
       setPage({ ...base, layers: base.layers.filter((l) => !selected.includes(l.id)) });
       setSelected([]);
-    } else if (framed && pages.length > framedIds.length) {
-      // every picked frame goes; one frame always stays
+    } else if (framed && framedIds.length) {
+      // every picked frame goes: the last one too, and the canvas is empty again
       change((all) => all.filter((p) => !framedIds.includes(p.id)));
-      pick(Math.max(0, Math.min(...framedAt) - 1), [], true);
+      pick(Math.max(0, Math.min(...framedAt) - 1), [], pages.length > framedIds.length);
     }
   };
   /** A copy of every picked frame, each beside the rightmost frame and level with the one it copies; the copies are picked. */
@@ -423,14 +450,18 @@ function DesignPage({ id }: { id: string }) {
   /** The copied layers onto this frame, where they were on theirs. A picture this design does not have stays behind. */
   const paste = () => {
     const layers = (clip?.layers ?? []).filter((l) => l.type !== "image" || design?.pictures.includes(l.picture));
+    // a canvas with no frame yet: its first frame, with the layers on it
+    if (!here) return void (layers.length && addFrame(undefined, undefined, undefined, () => layers.map((l, n) => ({ ...l, id: `l${n + 1}` }))));
     put(k, layers.length, (ids) => layers.map((l, n) => ({ ...l, id: ids[n]! })));
   };
 
   const zoom = (to: "in" | "out" | "fit" | "selection" | number) => {
-    if (!room || !here) return;
-    // fit: every frame of the canvas
-    if (to === "fit") return view.glide(fitView(boundsOf(frames), room));
-    if (to === "selection") {
+    if (!room) return;
+    if (to === "fit" || to === "selection") {
+      // a canvas with no frame has nothing to fit
+      if (!here) return;
+      // fit: every frame of the canvas
+      if (to === "fit") return view.glide(fitView(boundsOf(frames), room));
       const b = mine.length ? boundsOf(mine) : null;
       return view.glide(fitView(b ? { ...b, x: b.x + here.x, y: b.y + here.y } : here, room));
     }
@@ -441,9 +472,12 @@ function DesignPage({ id }: { id: string }) {
   };
 
   const fromComputer = async (files: readonly File[]) => {
-    if (!design || !base || !here || !files.length) return;
-    const onto = base.id;
-    const f = here;
+    if (!design || !files.length) return;
+    // a canvas with no frame yet gets its first one for the pictures (the design's own size, in the middle of what is in view)
+    const first = base && here ? undefined : addFrame();
+    const onto = base?.id ?? first?.id;
+    const f = here ?? (first ? { w: first.w!, h: first.h! } : undefined);
+    if (!onto || !f) return;
     setError(null);
     try {
       const made: { picture: string; w: number; h: number }[] = [];
@@ -521,11 +555,21 @@ function DesignPage({ id }: { id: string }) {
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (typingIn(e.target) || !base || !design || !here) return;
+      if (typingIn(e.target) || !design) return;
       const mod = e.metaKey || e.ctrlKey;
       const c = e.code;
       const has = mine.length > 0;
       const run = (fn: () => unknown) => (e.preventDefault(), void fn());
+      // a canvas with no frame yet: the zoom, the tools and undo, nothing else
+      if (!base || !here) {
+        if (mod && c === "KeyZ") run(() => step(!e.shiftKey));
+        else if (!e.altKey && (e.key === "+" || e.key === "=")) run(() => zoom("in"));
+        else if (!e.altKey && e.key === "-") run(() => zoom("out"));
+        else if (!e.altKey && (mod || e.shiftKey) && c === "Digit0") run(() => zoom(1));
+        else if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[c] && NEED_NO_FRAME.includes(TOOL_KEYS[c]!)) run(() => setTool(TOOL_KEYS[c]!));
+        else if (e.key === "Escape") run(() => setTool("move"));
+        return;
+      }
       if (mod) {
         if (c === "KeyZ") run(() => step(!e.shiftKey));
         else if (e.key === "+" || e.key === "=") run(() => zoom("in"));
@@ -569,13 +613,18 @@ function DesignPage({ id }: { id: string }) {
       else if (!e.shiftKey && /^Digit\d$/.test(c)) run(() => patch((l) => ({ ...l, opacity: c === "Digit0" ? undefined : Number(c.slice(5)) / 10 })));
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (typingIn(e.target) || !design || !here) return;
+      if (typingIn(e.target) || !design) return;
       const text = e.clipboardData?.getData("text/plain") ?? "";
       const files = [...(e.clipboardData?.files ?? [])].filter((f) => /^image\/(jpeg|png|webp)$/.test(f.type));
       if (clip && (!clip.wrote || text === clip.text)) paste();
       else if (files.length) void fromComputer(files);
       // words copied somewhere else become a text layer in the middle of the frame
-      else if (text.trim()) put(k, 1, ([id]) => [textLayer(id!, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(here.w / 4), y: Math.round(here.h * 0.4), w: Math.round(here.w / 2), h: Math.round(here.h * 0.2) }, here.w)]);
+      else if (text.trim()) {
+        const words = (id: string, f: { w: number; h: number }) => [textLayer(id, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(f.w / 4), y: Math.round(f.h * 0.4), w: Math.round(f.w / 2), h: Math.round(f.h * 0.2) }, f.w)];
+        // on a canvas with no frame yet: its first frame, with the words on it
+        if (here) put(k, 1, ([id]) => words(id!, here));
+        else addFrame(undefined, undefined, undefined, (f) => words("l1", f));
+      }
       else return;
       e.preventDefault();
     };
@@ -625,7 +674,7 @@ function DesignPage({ id }: { id: string }) {
     }
   };
 
-  if (!design || !hist || !base || !page || !here) {
+  if (!design || !hist) {
     return (
       <div className="flex min-h-screen flex-col">
         <AppBar tool="Designer" />
@@ -660,7 +709,7 @@ function DesignPage({ id }: { id: string }) {
         <Button size="icon" variant="ghost" aria-label="Redo" disabled={!hist.future.length} onClick={() => step(false)}>
           <Redo2 className="h-4 w-4" />
         </Button>
-        <Button size="sm" onClick={() => void exportPngs()}>
+        <Button size="sm" disabled={!pages.length} onClick={() => void exportPngs()}>
           <Download className="h-4 w-4" />
           {pages.length === 1 ? "Export PNG" : `Export ${pages.length} PNGs`}
         </Button>
@@ -673,7 +722,7 @@ function DesignPage({ id }: { id: string }) {
         <div ref={frame} className="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]">
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           <h3 data-picked className="sr-only">
-            Picked: {framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : `frame ${pageName(page, k)} (id ${page.id})`}
+            Picked: {framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
             {picked.length > 0 &&
               `, ${picked.length === 1 ? "layer" : "layers"} ${picked
                 .slice(0, 8)
@@ -714,7 +763,7 @@ function DesignPage({ id }: { id: string }) {
                   {item("Paste here", "⌘V", paste, !clip)}
                   {item("Duplicate", "⌘D", duplicate, none && !framed)}
                   {item("Group", "⌘G", group, mine.length < 2)}
-                  {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => l.group && base.layers.filter((x) => x.group === l.group).length > 1))}
+                  {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1))}
                   <ContextMenuSeparator />
                   {item("Bring to front", "]", () => order(true), none)}
                   {item("Send to back", "[", () => order(false), none)}
@@ -722,7 +771,7 @@ function DesignPage({ id }: { id: string }) {
                   {item(mine.length && mine.every((l) => l.hidden) ? "Show" : "Hide", "⇧⌘H", () => toggle("hidden"), none)}
                   {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
                   <ContextMenuSeparator />
-                  {item("Delete", "⌫", remove, none && !(framed && pages.length > framedIds.length))}
+                  {item("Delete", "⌫", remove, none && !framed)}
                 </ContextMenuContent>
               }
             />
@@ -732,7 +781,7 @@ function DesignPage({ id }: { id: string }) {
             {TOOLS.map(([t, label, keys, Icon]) => (
               // the button lets the keys go again, so Space still drags the canvas after a click here
               <Tip key={t} label={label} keys={keys}>
-              <button type="button" aria-label={label} aria-pressed={tool === t} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md", tool === t ? "bg-[#0d99ff] text-white" : "hover:bg-zinc-500/15")}>
+              <button type="button" aria-label={label} aria-pressed={tool === t} disabled={!pages.length && !NEED_NO_FRAME.includes(t)} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
                 <Icon className="h-4 w-4" />
               </button>
               </Tip>
@@ -746,6 +795,10 @@ function DesignPage({ id }: { id: string }) {
           </div>
         </div>
 
+        {/* the frame tool out, or no frame yet: the sizes a frame can be made in; else what is picked */}
+        {tool === "frame" || !page || !here ? (
+          <FramePresets view={view} onZoom={zoom} onAdd={(size) => (setTool("move"), addFrame(undefined, undefined, size))} />
+        ) : (
         <Inspector
           design={design}
           page={page}
@@ -774,6 +827,7 @@ function DesignPage({ id }: { id: string }) {
           colours={colours}
           onDropper={(take) => setDropper({ take })}
         />
+        )}
       </div>
     </div>
   );
