@@ -29,6 +29,8 @@ import { writeJsonAtomic } from "../library/media/run";
 export interface EditMeta extends EditBrief {
   id: string;
   workspaceId: string;
+  /** the project (the brand) it was made in; one made before edits had one is the first brand's (lib/project-of.ts) */
+  projectId?: string;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -415,7 +417,7 @@ export function uploadFinished(uploadId: string, versionId: string): Promise<voi
 }
 
 /** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
-export async function createEdit(username: string, body: Record<string, unknown>, tool = false): Promise<EditMeta | null> {
+export async function createEdit(username: string, body: Record<string, unknown>, tool = false, projectId?: string): Promise<EditMeta | null> {
   const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
   const sources = ids(body.sources);
   const uploads = sources.length ? [] : ids(body.uploads);
@@ -430,6 +432,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
   const e: EditMeta = {
     id: randomUUID(),
     workspaceId: ws,
+    ...(projectId ? { projectId } : {}),
     createdBy: username,
     createdAt: now,
     updatedAt: now,

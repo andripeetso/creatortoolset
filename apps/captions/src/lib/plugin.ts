@@ -76,8 +76,9 @@ export interface PluginWork {
   kind: string;
   icon: LucideIcon;
   gate?: PluginGateId;
-  // Each with its page (`to`) and when it was last worked on (`at`, ms).
-  list: () => Promise<Array<{ id: string; title: string; to: string; at: number; busy?: boolean }>>;
+  // Each with its page (`to`) and when it was last worked on (`at`, ms). Only those of the project given (the one the
+  // person is in; null when they have none): a project keeps its own work apart.
+  list: (projectId: string | null) => Promise<Array<{ id: string; title: string; to: string; at: number; busy?: boolean }>>;
 }
 
 export interface PluginReplacements {
