@@ -34,12 +34,12 @@ func normalizedPointer(_ location: CGPoint, display: CGRect, mainHeight: CGFloat
     return (round((location.x - display.minX) / display.width), round((mainHeight - location.y - display.minY) / display.height))
 }
 
-/// The capture size: the display's pixels, scaled down to fit 3840 on the long side and 4K's pixel count in all,
-/// which keeps the file at H.264 level 5.2 (a 3008×3130 window at full sharpness comes out as level 6.0, which
-/// fewer players and web views take), even numbers for the encoder.
-func captureSize(points: CGSize, scale: CGFloat) -> (width: Int, height: Int) {
+/// The capture size: the display's pixels, scaled down to fit `long` on the long side (3840 unless Settings says less)
+/// and that size's 16:9 pixel count in all, which keeps a 4K file at H.264 level 5.2 (a 3008×3130 window at full
+/// sharpness comes out as level 6.0, which fewer players and web views take), even numbers for the encoder.
+func captureSize(points: CGSize, scale: CGFloat, long: CGFloat = 3840) -> (width: Int, height: Int) {
     let w = points.width * scale, h = points.height * scale
-    let k = min(1, 3840 / max(w, h), (3840 * 2160 / (w * h)).squareRoot())
+    let k = min(1, long / max(w, h), (long * long * 9 / 16 / (w * h)).squareRoot())
     let even = { (v: CGFloat) in max(2, Int((v * scale * k) / 2) * 2) }
     return (even(points.width), even(points.height))
 }
@@ -720,7 +720,7 @@ final class Recorder: ObservableObject {
         case .device:
             throw RecorderError.noDisplay   // not on the Mac's screen: begin() records it from its session
         }
-        let size = captureSize(points: rect.size, scale: windowScale ?? screen.backingScaleFactor)
+        let size = captureSize(points: rect.size, scale: windowScale ?? screen.backingScaleFactor, long: CGFloat(RecordPrefs.screenLongSide))
         config.width = size.width
         config.height = size.height
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
@@ -894,18 +894,37 @@ final class Recorder: ObservableObject {
             discard: { [weak self] in self?.delete(project) }))
     }
 
-    /// The original file, saved where you choose.
+    /// The original file, saved where you choose. With "Save the streams separately" on (Settings), the camera and
+    /// each sound track go beside it as their own files: "<name> (camera).mp4", "<name> (voice).m4a", "<name> (Mac sound).m4a".
     func save(_ project: LocalProject) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(project.name).mp4"
         panel.allowedContentTypes = [.mpeg4Movie]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
-            try FileManager.default.copyItem(at: project.screenURL, to: url)
+            try replace(url, with: project.screenURL)
         } catch {
-            alert("Couldn't save the video", error.localizedDescription)
+            return alert("Couldn't save the video", error.localizedDescription)
         }
+        guard RecordPrefs.keepStreams else { return }
+        let base = url.deletingPathExtension()
+        let beside = { (part: String, ext: String) in URL(fileURLWithPath: "\(base.path) (\(part)).\(ext)") }
+        Task {
+            do {
+                if FileManager.default.fileExists(atPath: project.cameraURL.path) { try replace(beside("camera", "mp4"), with: project.cameraURL) }
+                let names = (try? JSONDecoder().decode(ScreenEvents.self, from: Data(contentsOf: project.eventsURL)))?.audio ?? []
+                try await saveSoundTracks(of: project.screenURL, names: names) { name in
+                    beside(name == "mic" ? "voice" : name == "device" ? "device sound" : "Mac sound", "m4a")
+                }
+            } catch {
+                alert("Couldn't save the separate streams", error.localizedDescription)
+            }
+        }
+    }
+
+    private func replace(_ url: URL, with source: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        try FileManager.default.copyItem(at: source, to: url)
     }
 
     /// The original file to Review, Video Notes or a new guide (a Video Notes clip the guide is made from).
@@ -1180,6 +1199,20 @@ extension Site {
         if done == nil { done = try await direct(file, name: name, size: size, review: review, progress: progress) }
         let finished = done ?? [:]
         guard let asset = finished["id"] as? String else { throw SiteError.status(0) }
+        // "Save the streams separately" (Settings): the camera goes too, as its own video beside the recording. The
+        // recording is in: a camera that fails is written down, not a reason to upload the recording again.
+        let camera = project.cameraURL
+        if RecordPrefs.keepStreams, destination != .guide, FileManager.default.fileExists(atPath: camera.path) {
+            let camSize = (try? FileManager.default.attributesOfItem(atPath: camera.path)[.size] as? NSNumber)?.intValue ?? 0
+            let camName = "\(project.name) (camera).mp4"
+            do {
+                if try await (review ? viaRelay(camera, name: camName, size: camSize, progress: progress) : nil) == nil {
+                    _ = try await direct(camera, name: camName, size: camSize, review: review, progress: progress)
+                }
+            } catch {
+                AppLog.write("recording camera not sent: \(error.localizedDescription)")
+            }
+        }
         switch destination {
         case .notes: return "/clips/\(asset)"
         case .guide: return "/guides?clip=\(asset)"

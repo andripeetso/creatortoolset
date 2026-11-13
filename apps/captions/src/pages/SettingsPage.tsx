@@ -113,7 +113,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     setQuery("");
     setRailOpen(false);
     setActive(0);
-    navigate({ pathname: `/settings/${hit.section}`, hash: hit.id ? `#${hit.id}` : "" }, { replace: true });
+    navigate({ pathname: `/settings/${hit.section}${hit.sub ? `/${hit.sub}` : ""}`, hash: hit.id ? `#${hit.id}` : "" }, { replace: true });
   };
 
   const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
