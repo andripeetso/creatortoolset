@@ -171,9 +171,14 @@ app.get("/sessions/:id", async (c) => {
   const user = c.get("user");
   const meta = await ownedSession(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
+  // A compare can end while the file is being read: the read then holds its "writing" sides, but by the time it lands
+  // the compare is no longer running, and those sides would show as cut off by a restart. So it counts as running if it
+  // was running when the read began or is running when it ends.
+  const key = `${user.username}:${meta.id}`;
+  const wasRunning = running.has(key);
   const found = (await read(user.username)).compares.find((x) => x.sessionId === meta.id);
   c.header("Cache-Control", "no-store");
-  return c.json({ compare: found ? view(found, running.has(`${user.username}:${meta.id}`)) : null });
+  return c.json({ compare: found ? view(found, wasRunning || running.has(key)) : null });
 });
 
 /** Body: { a, b } (two of the person's AIs, as Selection) and what Generate draft takes (kind, prompt, sourceIds…). */
