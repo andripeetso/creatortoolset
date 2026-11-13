@@ -294,6 +294,9 @@ struct ChatComposer<Leading: View>: View {
     var onStop: (() -> Void)?
     @ViewBuilder var leading: () -> Leading
     @FocusState private var focused: Bool
+    /// A new text field after Send: one that held dictated or half-typed words kept showing them though the box
+    /// was empty (owner, 2026-11-12: the sent message stayed in the box for a while).
+    @State private var field = 0
 
     private var empty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasAttachment }
     private var stops: Bool { working && empty && onStop != nil }
@@ -320,8 +323,9 @@ struct ChatComposer<Leading: View>: View {
                 .lineLimit(1...6)
                 .focused($focused)
                 .padding(.vertical, 11)
+                .id(field)
             Button {
-                if stops { onStop?() } else { onSend() }
+                if stops { onStop?() } else { send() }
             } label: {
                 Image(systemName: stops ? "stop.fill" : "arrow.up")
                     .font(.system(size: 15, weight: .bold))
@@ -335,6 +339,16 @@ struct ChatComposer<Leading: View>: View {
             .disabled(sending || (empty && !stops))
             .accessibilityLabel(stops ? "Stop" : "Send")
         }
+    }
+}
+
+extension ChatComposer {
+    fileprivate func send() {
+        onSend()
+        guard text.isEmpty else { return }
+        let typing = focused
+        field += 1
+        if typing { DispatchQueue.main.async { focused = true } }
     }
 }
 

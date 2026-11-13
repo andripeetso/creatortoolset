@@ -1,5 +1,7 @@
 import AVKit
+import NaturalLanguage
 import SwiftUI
+import UserNotifications
 
 // What the assistant's feed is made of: his message with what he sent along, a reply with what
 // it did, its cards, its videos and what it asks to do on the Mac, and a message that waits to go.
@@ -103,6 +105,7 @@ struct AssistantReply: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if !message.text.isEmpty {
                 MarkdownText(text: message.text)
+                if message.status == "done" { ReadAloudButton(id: message.id, text: message.text) }
             }
             ForEach(message.work ?? []) { AssistantWorkCard(work: $0) }
             ForEach(message.media ?? []) { AssistantVideoCard(media: $0) }
@@ -126,6 +129,13 @@ struct AssistantWorkCard: View {
     let work: AssistantWork
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            card
+            if work.kind == "edit", work.status == "running" { LeaveItNote() }
+        }
+    }
+
+    private var card: some View {
         Button {
             AppNavigator.shared.open(href: work.href)
         } label: {
@@ -412,5 +422,117 @@ struct AssistantVideoChip: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
         .padding(.leading, 48)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Under an edit at work: he can put the phone away, and is told when it needs him (a push, or the phone's own look).
+/// Without notifications allowed it offers to turn them on; once refused, iOS's Settings is the only way back.
+private struct LeaveItNote: View {
+    @State private var status: UNAuthorizationStatus?
+
+    var body: some View {
+        // a stack, not a Group: a Group of nothing never runs its .task
+        VStack(alignment: .leading) {
+            switch status {
+            case .authorized?, .provisional?, .ephemeral?:
+                Text("You can leave this now. You'll get a notification when it needs you.")
+            case .notDetermined?, .denied?:
+                Button(action: turnOn) {
+                    Text("You can leave this now. ") + Text("Turn on notifications").foregroundColor(Color("AccentColor"))
+                        + Text(" to hear when it needs you.")
+                }
+                .buttonStyle(.plain)
+            default:
+                EmptyView()
+            }
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 4)
+        .task { await look() }
+    }
+
+    private func look() async {
+        status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    private func turnOn() {
+        Task {
+            if status == .denied, let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                await UIApplication.shared.open(url)
+                return
+            }
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+            await look()
+            if status == .authorized { UIApplication.shared.registerForRemoteNotifications() }
+        }
+    }
+}
+
+/// Reads a reply out loud in the phone's own voice, in the reply's language when the phone has a voice for it.
+@MainActor
+final class ReadAloud: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+    static let shared = ReadAloud()
+    private let voice = AVSpeechSynthesizer()
+    /// The reply being read.
+    @Published private(set) var reading: String?
+
+    override init() {
+        super.init()
+        voice.delegate = self
+    }
+
+    /// Starts this reply, or stops it when it is the one being read.
+    func toggle(_ id: String, _ markdown: String) {
+        let again = reading == id
+        voice.stopSpeaking(at: .immediate)
+        reading = nil
+        guard !again else { return }
+        // the silent switch does not mute it, and other sound ducks under it
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        let text = Self.plain(markdown)
+        let utterance = AVSpeechUtterance(string: text)
+        if let language = NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue {
+            utterance.voice = AVSpeechSynthesisVoice(language: language)
+        }
+        reading = id
+        voice.speak(utterance)
+    }
+
+    /// Markdown as it is said: link words without their address, no marks.
+    nonisolated static func plain(_ markdown: String) -> String {
+        markdown
+            .replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"[*_`#>|]+"#, with: "", options: .regularExpression)
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            guard !self.voice.isSpeaking else { return }
+            self.reading = nil
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+}
+
+private struct ReadAloudButton: View {
+    let id: String
+    let text: String
+    @ObservedObject private var aloud = ReadAloud.shared
+
+    var body: some View {
+        let on = aloud.reading == id
+        Button { aloud.toggle(id, text) } label: {
+            Image(systemName: on ? "stop.circle" : "speaker.wave.2")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, -12)
+        .padding(.vertical, -6)
+        .accessibilityLabel(on ? "Stop reading" : "Read aloud")
     }
 }
