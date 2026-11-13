@@ -225,6 +225,13 @@ struct SetupDownload: Equatable {
     /// Whether the page may start a download now: only while it is open (the server's languages can answer late).
     var mayPrepare: Bool { open }
 
+    /// What a prepare got for the page: the download it started, or the model it brought back with none (one set aside
+    /// in the earlier app's folder, used again: `SpeechModels.restore`). Both are the page's own: kept while it is open,
+    /// asked for at Get Started.
+    static func pagesModel(download: String?, wasHere: Bool, isHere: Bool, model: String) -> String? {
+        download ?? (!wasHere && isHere ? model : nil)
+    }
+
     /// After a prepare: a download running now that was not before is the page's own.
     mutating func prepared(before: String?, after: String?) {
         if open, before == nil, let after { started = after }
@@ -461,9 +468,11 @@ final class SetupGuide: ObservableObject {
         guard own.mayPrepare else { return }
         let d = Dictation.shared
         let before = d.download?.id
+        let wasHere = d.modelOnDisk
         // not a wish yet: only Get Started makes it one, so a page left with Not now leaves none behind
         d.prepareModel(asked: false)
-        own.prepared(before: before, after: d.download?.id)
+        own.prepared(before: before, after: SetupDownload.pagesModel(download: d.download?.id, wasHere: wasHere,
+                                                                     isHere: d.modelOnDisk, model: d.model.id))
         if let id = own.started { SpeechModels.shared.pageHolds = id }
     }
 

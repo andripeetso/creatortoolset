@@ -278,6 +278,26 @@ final class SetupPageWishTests: XCTestCase {
         XCTAssertEqual(later.queue, [])
     }
 
+    func testAModelThePageBringsBackWithNoDownloadIsItsOwnLikeADownload() {
+        // set aside earlier (Remove on the earlier app's copy), back on disk when the page prepared it: the page's own
+        XCTAssertEqual(SetupDownload.pagesModel(download: nil, wasHere: false, isHere: true, model: "whisper-large-v3-turbo"),
+                       "whisper-large-v3-turbo")
+        XCTAssertEqual(SetupDownload.pagesModel(download: "parakeet-tdt-0.6b-v3", wasHere: false, isHere: false, model: "parakeet-tdt-0.6b-v3"),
+                       "parakeet-tdt-0.6b-v3")
+        // here before the page opened (loaded only), or still missing with no download: nothing of the page's
+        XCTAssertNil(SetupDownload.pagesModel(download: nil, wasHere: true, isHere: true, model: "whisper-large-v3-turbo"))
+        XCTAssertNil(SetupDownload.pagesModel(download: nil, wasHere: false, isHere: false, model: "whisper-large-v3-turbo"))
+        // so it is kept while the page is open, asked for at Get Started, and Not now stops nothing (it is no download)
+        var page = SetupDownload()
+        page.opened()
+        page.prepared(before: nil, after: "whisper-large-v3-turbo")
+        XCTAssertEqual(page.wish, "whisper-large-v3-turbo")
+        let open = SpeechModels.plan(wanted: [], held: ["whisper-large-v3-turbo"], downloading: nil, queue: [], failed: [:], now: Date(),
+                                     keep: ["whisper-large-v3-turbo"])
+        XCTAssertEqual(open.remove, [])
+        XCTAssertNil(page.closed(gotStarted: false, running: nil))
+    }
+
     func testGetStartedKeepsThePagesDownloadAsAWishAndNotNowDoesNot() {
         var page = SetupDownload()
         page.opened()
