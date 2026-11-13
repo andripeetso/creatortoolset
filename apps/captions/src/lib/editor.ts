@@ -1,7 +1,7 @@
 import type { StepsView } from "@contracts/editor-steps";
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { ItemEdit } from "@contracts/edit-timeline";
-import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
+import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionPlan, VoicesView } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
 
@@ -21,6 +21,9 @@ const base = (id: string) => `/api/editor/${id}`;
 export const listEdits = () => send<EditSummary[]>("/api/editor");
 export const footageTarget = () => send<FootageTarget>("/api/editor/footage-target", "GET");
 export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "POST", e);
+/** The voices of the person's ElevenLabs account, and a voice made from text: saved in the Media Library as a take. */
+export const listVoices = () => send<VoicesView>("/api/editor/voice");
+export const makeVoice = (v: NewVoice) => send<MadeVoice>("/api/editor/voice", "POST", v);
 export const getEdit = (id: string) => send<Edit>(base(id));
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");

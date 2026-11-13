@@ -98,6 +98,25 @@ describe("AI Editor preview", () => {
     expect(frame(out, 5).equals(frame(out, 20))).toBe(false);
   }, 60_000);
 
+  it("a take with no picture renders black under its voice, and a cutaway over it shows", async () => {
+    const voice = path.join(dir, "Tiny Acrobatics voice.wav");
+    execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", voice]);
+    const t = timeline();
+    t.sources = { voice: { versionId: "voice", name: "Voice", fps: 30, tc: 0, dur: 90, w: 0, h: 0 }, ver_b: { versionId: "ver_b", name: "Cover", fps: 30, tc: 0, dur: 90, w: 360, h: 640 } };
+    t.tracks.V1.items = [{ src: "voice", in: 0, len: 30, rec: 0, link: "c1" }];
+    t.tracks.A1.items = [{ src: "voice", in: 0, len: 30, rec: 0, link: "c1" }];
+    t.tracks.V2.items = [{ src: "ver_b", in: 0, len: 15, rec: 15 }];
+    const out = path.join(dir, "no-picture.mp4");
+    await renderPreview(t, { voice, ver_b: blue }, out);
+    expect(Number(ffprobe(out, "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"))).toBe(30);
+    expect(ffprobe(out, "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0")).toBe("360,640");
+    const audioS = Number(ffprobe(out, "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0"));
+    expect(Math.abs(audioS - 1)).toBeLessThanOrEqual(1 / 30 + 0.025);
+    // black where nothing lies over the voice (grey 16 is video black), the blue clip where the cutaway is
+    expect(frame(out, 5).every((b) => b <= 20)).toBe(true);
+    expect(frame(out, 25).every((b) => b > 20)).toBe(true);
+  }, 60_000);
+
   it("splits a shot where a cutaway lies over it, and trims a cutaway to the shot", () => {
     const shot = { src: "A", in: 0, len: 30, rec: 0 };
     expect(piecesOf(shot, [])).toEqual([{ at: 0, frames: 30 }]);

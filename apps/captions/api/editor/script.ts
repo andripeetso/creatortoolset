@@ -8,6 +8,7 @@ import { NeedsKey } from "../library/transcribe";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
 import { finishedBlock } from "./finished";
+import { momentMap, momentsPrompt, parseMoments, type RawMoment } from "./moments";
 import { readStep, saveStep, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
@@ -179,6 +180,34 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   if (!analysis) throw new Error("Analyze the footage first");
   const route = aiFor(whoFor(job.actor!), "editor", "AI Editor script");
   if (route.off) throw new NeedsKey(route.off);
+  // short videos from a long recording: the AI finds the parts that stand alone, and each is a version of one line (moments.ts)
+  if (edit.moments) {
+    const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: styleBlock(edit.style) });
+    let found: RawMoment[];
+    try {
+      // ponytail: the whole transcript in one request (measured: 31.5 minutes of talk, 467 sentences, is a request of 16,600 tokens,
+      // so an hour is about 32,000); a model whose context is shorter refuses in words (ai-complete.ts). Windows when recordings outgrow people's AIs
+      found = await completeWithFallback(asked.system, asked.user, signal, parseMoments, route);
+    } catch (e) {
+      const away = macAway(e);
+      if (away) throw new NeedsKey(away.message);
+      throw e;
+    }
+    const made = momentMap(found, analysis.sentences, edit.moments, edit.targetS);
+    if (!made.plans.length) throw new Error(`The AI found no part of the recording that can stand alone (${made.notes.slice(0, 3).join("; ") || "it named none"})`);
+    // found again: m1 is a rank, not a part. A name that now means other sentences lets go of its Review video, so the
+    // new cut is filed as a video of its own and never as the next version of another moment's
+    const before = readStep(edit.id, "plan");
+    const filed = readStep(edit.id, "review");
+    if (before && filed) {
+      const part = (plans: VersionPlan[], name: string) => plans.find((p) => p.name === name)?.lines.map((l) => `${l.take.first}-${l.take.last}`).join();
+      const same = Object.fromEntries(Object.entries(filed).filter(([name]) => part(made.plans, name) !== undefined && part(made.plans, name) === part(before.plans, name)));
+      if (Object.keys(same).length !== Object.keys(filed).length) await saveStep(edit.id, "review", same);
+    }
+    await saveStep(edit.id, "first", { plans: made.plans.map((p) => ({ name: p.name, lines: p.lines })) });
+    await saveStep(edit.id, "plan", made);
+    return;
+  }
   const { system, user } = scriptPrompt({
     sentences: analysis.sentences,
     titles: titlesOf(edit, analysis.sentences),

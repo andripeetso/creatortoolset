@@ -508,6 +508,8 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 15445 -> 15465: finals_link_session says its piece id comes from finals_pieces
     // 15465 -> 15810: upload_file (the user's own AI on a computer the server isn't on sends a file there with curl)
     // 15810 -> 15932: editor_create takes languages (what is spoken in the footage, when not the person's usual)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15932);
+    // 15932 -> 16151: editor_create's moments (short videos from a long recording: up to that many stand-alone parts,
+    // each cut as a video of its own; its 190-byte sentence and the field)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(16151);
   });
 });

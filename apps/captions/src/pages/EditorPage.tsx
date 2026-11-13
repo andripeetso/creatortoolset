@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
-import { MAX_VERSIONS } from "@contracts/editor";
+import { MAX_MOMENTS, MAX_VERSIONS } from "@contracts/editor";
 import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
@@ -13,13 +13,14 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, runEdit } from "@/lib/editor";
+import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
+import { Picture } from "@/components/Picture";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
 import { useToolFolders } from "@/lib/folders";
@@ -28,6 +29,7 @@ import { byName, matches, persistSort, storedSort, useBrowseView } from "@/compo
 import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
 import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
 import { FirstWay } from "./editor/FirstWay";
+import { FromScript } from "./editor/FromScript";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -207,7 +209,10 @@ export default function EditorPage() {
                 <Link to={`/editor/${e.id}`} {...folders.drag(e.id)} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
                   <div className="flex shrink-0 -space-x-3">
                     {e.sources.slice(0, 3).map((v) => (
-                      <img key={v} src={thumb(v)} alt="" className="h-10 w-16 rounded-md border border-zinc-500/30 bg-zinc-800 object-cover" />
+                      // a take with no picture (a voice recording) has no thumbnail: the box stays, with no broken-image icon
+                      <span key={v} className="h-10 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-500/30 bg-zinc-800">
+                        <Picture src={thumb(v)} alt="" className="h-full w-full object-cover" />
+                      </span>
                     ))}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -254,6 +259,13 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
   const [versions, setVersions] = useState(1);
   const [targetS, setTargetS] = useState("");
   const [styleId, setStyleId] = useState<string | null>(null); // null: nothing picked here yet; "": None
+  // nothing filmed: the script is spoken by a voice and the whole picture comes from B-roll (editor/FromScript.tsx)
+  // and a long recording (a podcast, a talk): the AI finds the parts that stand on their own, each cut as its own short video
+  const [from, setFrom] = useState<"footage" | "script" | "long">("footage");
+  const filmed = from !== "script";
+  const [moments, setMoments] = useState(10);
+  const [voice, setVoice] = useState("");
+  const [broll, setBroll] = useState(""); // a folder's id; "": all the B-roll
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -291,7 +303,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
     return () => clearTimeout(t);
   }, [q]);
 
-  const query = { q: term || undefined, kind: ["video" as const], collectionId: folder || undefined };
+  // a long recording can be sound only (a podcast): those are listed there too, beside the videos
+  const kinds: ("video" | "audio")[] = from === "long" ? ["video", "audio"] : ["video"];
+  const query = { q: term || undefined, kind: kinds, collectionId: folder || undefined };
   useEffect(() => {
     if (!libId || !open) return;
     let live = true;
@@ -307,7 +321,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libId, term, folder, open]);
+  }, [libId, term, folder, open, from === "long"]);
 
   const ready = (a: AssetCard) => a.state === "ready";
   const toggle = (a: AssetCard) =>
@@ -368,13 +382,20 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
     setBusy(true);
     setError(null);
     try {
+      // nothing filmed: the script is spoken first, and that recording is the edit's one take
+      const spoken = filmed ? null : await makeVoice({ text: script, voice, name: name.trim() || undefined });
       const { id } = await createEdit({
-        sources: [...picked.keys()],
+        sources: spoken ? [spoken.versionId] : [...picked.keys()],
         name: name.trim() || undefined,
         brief,
-        script,
-        versions,
-        targetS: Number(targetS) || 0,
+        script: from === "long" ? "" : script,
+        // one voice says the script once: one version, as long as the voice, whatever the style says. No folder chosen
+        // says nothing, so the style's own B-roll folder stands (with none: all their B-roll)
+        ...(spoken
+          ? { versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) }
+          : from === "long"
+            ? { moments, targetS: Number(targetS) || 0 }
+            : { versions, targetS: Number(targetS) || 0 }),
         // only an account with styles says anything about one: its pick, or null for None
         ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
       });
@@ -402,10 +423,30 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
           <div>
             <SheetTitle className="text-base">New edit</SheetTitle>
             <SheetDescription className="text-xs text-zinc-500">
-              Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI.
+              {from === "long"
+                ? "Pick a long recording from your Media Library. The AI finds the parts that stand on their own and cuts each as its own short video, in the recording's own shape."
+                : filmed
+                  ? "Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI."
+                  : "A voice reads your script and the picture is cut from your B-roll. The voice runs on your own ElevenLabs key."}
             </SheetDescription>
           </div>
 
+          <div role="group" aria-label="What the edit is made from" className="flex flex-wrap gap-1.5">
+            <Button type="button" size="sm" variant={from === "footage" ? "default" : "outline"} onClick={() => setFrom("footage")}>
+              My footage
+            </Button>
+            <Button type="button" size="sm" variant={from === "script" ? "default" : "outline"} onClick={() => setFrom("script")}>
+              A script, nothing filmed
+            </Button>
+            <Button type="button" size="sm" variant={from === "long" ? "default" : "outline"} onClick={() => setFrom("long")}>
+              Short videos from a long recording
+            </Button>
+          </div>
+
+          {!filmed && (
+            <FromScript script={script} onScript={setScript} voice={voice} onVoice={setVoice} folders={folders} broll={broll} onBroll={setBroll} styleFolder={styles?.styles.find((x) => x.id === styleId)?.brollCollectionId ?? null} />
+          )}
+          {filmed && (
           <section aria-label="Footage" className="flex flex-col gap-2">
             {libId && items.length === 0 && !term && !folder && <FootageFolderCard libraryId={libId} />}
             <div className="flex flex-wrap items-center gap-2">
@@ -476,7 +517,10 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                           on ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-500/20 hover:border-zinc-500/50",
                         )}
                       >
-                        <img src={a.thumbUrl ?? thumb(a.versionId)} alt="" className="aspect-video w-full bg-zinc-800 object-cover" />
+                        {/* a sound-only recording has no picture: its box stays, with no broken-image icon */}
+                        <span className="block aspect-video w-full bg-zinc-800">
+                          <Picture src={a.thumbUrl ?? thumb(a.versionId)} alt="" className="h-full w-full object-cover" />
+                        </span>
                         <span className="truncate px-2 py-1 text-xs">{a.title}</span>
                         {on && (
                           <span className="absolute right-1.5 top-1.5 rounded-full bg-violet-500 p-0.5 text-white">
@@ -521,6 +565,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
               )}
             </div>
           </section>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-name">Name</Label>
@@ -540,14 +585,35 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             </div>
           )}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit-brief">What is the video?</Label>
-            <Textarea id="edit-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} placeholder="A 45-second reel for new parents: the hook, three tips, the call to action." />
+            <Label htmlFor="edit-brief">{from === "long" ? "What should the short videos be about?" : "What is the video?"}</Label>
+            <Textarea
+              id="edit-brief"
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              rows={3}
+              placeholder={from === "long" ? "The clearest advice and the best stories, for new parents." : "A 45-second reel for new parents: the hook, three tips, the call to action."}
+            />
           </div>
+          {from === "footage" && (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-script">Script (optional)</Label>
             <Textarea id="edit-script" value={script} onChange={(e) => setScript(e.target.value)} rows={3} placeholder="The text the takes were read from" />
           </div>
-          <div className="flex flex-wrap gap-4">
+          )}
+          {/* one voice says the script once: there is one version, as long as the voice */}
+          <div className={cn("flex flex-wrap gap-4", !filmed && "hidden")}>
+            {from === "long" ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="edit-moments">How many, at most</Label>
+                <select id="edit-moments" value={moments} onChange={(e) => setMoments(Number(e.target.value))} className="h-9 w-24 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
+                  {[3, 5, 10, 15, MAX_MOMENTS].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-versions">Versions</Label>
               <select id="edit-versions" value={versions} onChange={(e) => setVersions(Number(e.target.value))} className="h-9 w-24 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
@@ -558,15 +624,16 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                 ))}
               </select>
             </div>
+            )}
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit-target">Target length (s)</Label>
+              <Label htmlFor="edit-target">{from === "long" ? "About how long each (s)" : "Target length (s)"}</Label>
               <Input id="edit-target" type="number" min={0} max={3600} value={targetS} onChange={(e) => setTargetS(e.target.value)} placeholder="Any" className="w-28" />
             </div>
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <Button type="submit" disabled={busy || picked.size === 0} className="self-start">
+          <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            Create and run
+            {filmed || !busy ? "Create and run" : "Making the voice"}
           </Button>
         </form>
         )}

@@ -97,7 +97,8 @@ export function toOtio(tl: Timeline, files: Record<string, string>, grade?: Cdl)
       const src = tl.sources[i.src];
       const file = files[i.src];
       if (!src || !file) throw new Error(`${id}: no media for ${i.src}`);
-      children.push(clip(tl, i, src, file, video, linkIds, id === "V1" ? grade : undefined));
+      // a take with no picture (a voice recording) is sound only: its place on the video track is a gap, its voice is on A1
+      children.push(video && !src.w ? gap(i.len, tl.fps) : clip(tl, i, src, file, video, linkIds, id === "V1" ? grade : undefined));
       at = i.rec + i.len;
     }
     return {

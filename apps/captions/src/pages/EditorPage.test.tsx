@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { VoicesView } from "@contracts/editor";
 import type { EditingStyle, EditingStylesView } from "@contracts/editor-styles";
 import { NewEditSheet } from "./EditorPage";
 
@@ -17,6 +18,10 @@ vi.mock("@/components/FootageFolderCard", () => ({ FootageFolderCard: () => null
 let posted: Record<string, unknown>[];
 let calls: { url: string; body: Record<string, unknown> }[];
 let installed: { folders: object[]; steps: object[] };
+/** Every listing of the library's clips the sheet asked for, by its address. */
+let listed: string[];
+/** The person's ElevenLabs voices as GET /api/editor/voice answers; null: no key yet. */
+let voices: VoicesView | null;
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 const flush = () => act(async () => new Promise<void>((done) => setTimeout(done, 0)));
@@ -29,11 +34,19 @@ beforeEach(() => {
   posted = [];
   calls = [];
   installed = { folders: [], steps: [] };
+  listed = [];
+  voices = { voices: [{ id: "v_mine", name: "Jordan", own: true }, { id: "v_stock", name: "Sam", own: false, preview: "https://example.com/sam.mp3" }], last: null };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
     if (init?.method === "POST" && url === "/api/editor") {
       posted.push(JSON.parse(init.body as string));
       return reply({ id: "edit_1" });
+    }
+    if (url === "/api/editor/voice") {
+      if (voices === null) return new Response(JSON.stringify({ error: "Add your ElevenLabs key in Settings → API keys" }), { status: 400 });
+      if (init?.method !== "POST") return reply(voices);
+      calls.push({ url, body: JSON.parse(init.body as string) });
+      return reply({ versionId: "ver_voice", assetId: "ast_voice", libraryId: "lib_1", name: "Voice", voice: { id: "v_mine", name: "Jordan" } });
     }
     if (init?.method === "POST") {
       calls.push({ url, body: JSON.parse((init.body as string) ?? "{}") });
@@ -42,6 +55,7 @@ beforeEach(() => {
     if (url === "/api/library") return reply({ libraries: [{ id: "lib_1", name: "Tiny Acrobatics" }] });
     if (url.includes("/collections")) return reply({ collections: installed.folders });
     if (url === "/api/edit-steps") return reply({ steps: installed.steps, canAdd: false });
+    listed.push(url);
     return reply({ items: [{ id: "ast_1", versionId: "ver_1", title: "Take one", state: "ready", thumbUrl: null }] });
   });
 });
@@ -181,5 +195,129 @@ describe("New edit: How do you like to work?", () => {
     await press("Not now");
     expect(calls).toEqual([{ url: "/api/editor/styles/asked", body: {} }]);
     expect(done).toHaveBeenCalledOnce();
+  });
+});
+
+describe("New edit: a script, nothing filmed", () => {
+  const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text)!;
+  async function scriptMode() {
+    await open(null);
+    act(() => button("A script, nothing filmed").click());
+    await flush();
+    await flush();
+  }
+  async function type(id: string, value: string) {
+    const el = field<HTMLTextAreaElement>(id)!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+  }
+  const submit = async () => {
+    act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await flush();
+    await flush();
+  };
+
+  it("My footage is as it was; the script start has no clip picker, no optional script box and no versions", async () => {
+    await open(null);
+    expect(field("edit-spoken")).toBeNull();
+    expect(document.querySelector('[aria-label="Footage"]')).not.toBeNull();
+    act(() => button("A script, nothing filmed").click());
+    await flush();
+    expect(document.querySelector('[aria-label="Footage"]')).toBeNull();
+    expect(field("edit-script")).toBeNull();
+    expect(field("edit-versions")!.closest(".hidden")).not.toBeNull();
+    act(() => button("My footage").click());
+    await flush();
+    expect(document.querySelector('[aria-label="Footage"]')).not.toBeNull();
+    expect(field("edit-versions")!.closest(".hidden")).toBeNull();
+  });
+
+  it("opens on their own voice, waits for a script, speaks it first, and makes the edit from that recording with all their B-roll", async () => {
+    await scriptMode();
+    expect(field<HTMLSelectElement>("edit-voice")!.value).toBe("v_mine");
+    expect([...document.querySelectorAll("#edit-voice optgroup")].map((g) => g.getAttribute("label"))).toEqual(["Your voices", "ElevenLabs voices"]);
+    expect(button("Create and run").disabled).toBe(true);
+    await type("edit-spoken", "Roll the mat out.");
+    expect(button("Create and run").disabled).toBe(false);
+    await submit();
+    expect(calls.find((c) => c.url === "/api/editor/voice")!.body).toEqual({ text: "Roll the mat out.", voice: "v_mine" });
+    // one version, as long as the voice; no folder named, so all their B-roll
+    expect(posted.at(-1)).toEqual({ sources: ["ver_voice"], brief: "", script: "Roll the mat out.", versions: 1, targetS: 0 });
+    expect(calls.at(-1)!.url).toBe("/api/editor/edit_1/run");
+  });
+
+  it("opens on the voice used last; a voice with a sample can be listened to; a folder chosen is the edit's B-roll folder", async () => {
+    voices = { ...voices!, last: "v_stock" };
+    installed.folders = [{ id: "col_1", name: "Tumbling", kind: "manual" }];
+    await scriptMode();
+    expect(field<HTMLSelectElement>("edit-voice")!.value).toBe("v_stock");
+    expect(document.querySelector("audio")!.getAttribute("src")).toBe("https://example.com/sam.mp3");
+    await choose("edit-voice", "v_mine");
+    expect(document.querySelector("audio")).toBeNull();
+    await choose("edit-broll", "col_1");
+    await type("edit-spoken", "Try it today.");
+    await submit();
+    expect(posted.at(-1)).toMatchObject({ sources: ["ver_voice"], brollCollectionId: "col_1" });
+  });
+
+  it("with a style: still one version of the voice's own length, and the style's B-roll folder unless another is chosen", async () => {
+    installed.folders = [{ id: "col_1", name: "Tumbling", kind: "manual" }, { id: "col_2", name: "Outdoors", kind: "manual" }];
+    await open({ styles: [style("st_1", "Fast and warm", { versions: 3, targetS: 30, brollCollectionId: "col_1" })], last: "st_1" });
+    act(() => button("A script, nothing filmed").click());
+    await flush();
+    await flush();
+    // the style's folder is what "nothing chosen" means, by its name, and it is not listed twice
+    expect([...field<HTMLSelectElement>("edit-broll")!.options].map((o) => [o.value, o.textContent])).toEqual([["", "Tumbling"], ["col_2", "Outdoors"]]);
+    await type("edit-spoken", "Roll the mat out.");
+    await submit();
+    expect(posted.at(-1)).toEqual({ sources: ["ver_voice"], brief: "", script: "Roll the mat out.", versions: 1, targetS: 0, style: "st_1" });
+    await choose("edit-broll", "col_2");
+    await submit();
+    expect(posted.at(-1)).toMatchObject({ versions: 1, style: "st_1", brollCollectionId: "col_2" });
+  });
+
+  it("with no ElevenLabs key it says where to add one, and nothing can be made", async () => {
+    voices = null;
+    await scriptMode();
+    expect(field("edit-voice")).toBeNull();
+    const link = [...document.querySelectorAll("a")].find((a) => a.textContent === "Add key")!;
+    expect(link.getAttribute("href")).toBe("/settings/keys#api-key-ELEVENLABS_API_KEY");
+    expect(link.parentElement!.textContent).toContain("Add your ElevenLabs key in Settings → API keys");
+    await type("edit-spoken", "Roll the mat out.");
+    expect(button("Create and run").disabled).toBe(true);
+  });
+});
+
+describe("New edit: short videos from a long recording", () => {
+  const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text)!;
+
+  it("picks the recording as any footage is picked, asks how many and about how long, and sends moments in place of versions", async () => {
+    await open(null);
+    act(() => button("Short videos from a long recording").click());
+    await flush();
+    // the clip picker stays; the script box and the versions go; how many opens on 10
+    expect(document.querySelector('[aria-label="Footage"]')).not.toBeNull();
+    expect(field("edit-script")).toBeNull();
+    expect(field("edit-versions")).toBeNull();
+    expect([...field<HTMLSelectElement>("edit-moments")!.options].map((o) => o.value)).toEqual(["3", "5", "10", "15", "20"]);
+    expect(field<HTMLSelectElement>("edit-moments")!.value).toBe("10");
+    expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("About how long each (s)");
+    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("What should the short videos be about?");
+    // a long recording can be sound only: the picker asks the library for videos and recordings there, videos alone elsewhere
+    expect(listed.at(-1)).toContain("kind=video%2Caudio");
+    expect(listed.find((u) => u.includes("kind="))).toMatch(/kind=video(&|$)/);
+    await choose("edit-moments", "5");
+    expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", moments: 5, targetS: 0 });
+    // back to My footage: versions again, and no moments sent
+    act(() => button("My footage").click());
+    await flush();
+    expect(field("edit-moments")).toBeNull();
+    act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await flush();
+    await flush();
+    expect(posted.at(-1)).toEqual({ sources: ["ver_1"], brief: "", script: "", versions: 1, targetS: 0 });
   });
 });

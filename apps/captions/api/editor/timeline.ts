@@ -8,7 +8,7 @@ import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
-import { clearPasses } from "./passes";
+import { clearPasses, markPasses } from "./passes";
 import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -42,15 +42,16 @@ export function timecodeFrames(tc: string | undefined, fps: number): number {
 export function sourceOf(versionId: string, name: string, p: ProbeSummary): TimelineSource {
   const fps = p.fps || 30;
   const turned = p.rotation === 90 || p.rotation === 270;
-  return {
-    versionId,
-    name,
-    fps,
-    tc: timecodeFrames(p.timecode, fps),
-    dur: Math.round(p.duration * fps),
-    w: turned ? p.height : p.width,
-    h: turned ? p.width : p.height,
-  };
+  // a recording whose only picture is its cover art is sound only: a cover is not a picture to show
+  const [w, h] = p.cover ? [0, 0] : turned ? [p.height, p.width] : [p.width, p.height];
+  return { versionId, name, fps, tc: timecodeFrames(p.timecode, fps), dur: Math.round(p.duration * fps), w, h };
+}
+
+/** A cut whose takes have no picture: nothing to cut away from, so the B-roll is the whole picture. */
+export function noPicture(tl: Timeline): boolean {
+  // only a take the cut knows to be sound only (w 0): a source it has no record of is not one
+  const items = tl.tracks?.V1?.items ?? [];
+  return items.length > 0 && items.every((i) => tl.sources?.[i.src]?.w === 0);
 }
 
 export const emptyTracks = (): Timeline["tracks"] => Object.fromEntries(TRACKS.map((t) => [t, { name: TRACK_NAMES[t], items: [] as Item[] }])) as Timeline["tracks"];
@@ -103,7 +104,8 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
       const len = Math.round(((e - s) * fps) / src.fps);
       if (len <= 0) continue;
       const link = `c${shot + 1}`;
-      tl.tracks.V1.items.push({ src: a.src, in: s, len, rec, link, ...framingOf(shot, src, W, H, i.punch, i.eyeline[a.src] ?? DEFAULT_EYELINE) });
+      // a take with no picture (a voice recording) has nothing to punch in on
+      tl.tracks.V1.items.push({ src: a.src, in: s, len, rec, link, ...(src.w ? framingOf(shot, src, W, H, i.punch, i.eyeline[a.src] ?? DEFAULT_EYELINE) : {}) });
       tl.tracks.A1.items.push({ src: a.src, in: s, len, rec, link });
       rec += len;
       shot++;
@@ -165,9 +167,12 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     punch: edit.framing.punch,
     eyeline: { ...analysis.eyeline, ...edit.eyeline },
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
-    size: edit.size,
+    // a moment of a long recording keeps the recording's own shape: fitted into another frame it would be a small picture between bars
+    size: edit.moments && Object.values(sources).some((x) => x.w > 0) ? null : edit.size,
   });
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
   await saveDraft(edit.id, version.name, { timeline, notes });
   await clearPasses(edit.id, version.name); // cut again: its passes start over
+  // a cut with no picture: its B-roll is its picture, laid with the first cut and never a pass to wait for (engine.ts nextFor)
+  if (edit.style?.passes && noPicture(timeline)) await markPasses(edit.id, { [version.name]: "broll" });
 }

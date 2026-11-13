@@ -24,7 +24,12 @@
  *   GET    /api/editor/:id/cards/:variant/:card/still   a card's middle frame, as the Mac drew it (PNG)
  *   POST   /api/editor/:id/cards/:variant/:card/like    its still goes into the animation style's Made & liked → Edit
  *   POST   /api/editor/:id/cards/:variant/again         the version's cards are made again from nothing → Edit
+ *   GET    /api/editor/voice               → VoicesView (the voices of the person's ElevenLabs account)
+ *   POST   /api/editor/voice               NewVoice → MadeVoice: text spoken by one of them, saved in the Media Library as a take
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
+ *
+ * A take with no picture (a voice recording, or a voice made from the script) makes a video with nothing filmed: its
+ * whole picture comes from the B-roll folder, or from every clip sorted B-roll when the edit names none (api/editor/broll.ts).
  */
 
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
@@ -33,6 +38,8 @@ export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
 
 export const MAX_VERSIONS = 5;
+/** The most short videos one long recording is cut into (EditBrief.moments). */
+export const MAX_MOMENTS = 20;
 
 /** What the user says about the video. */
 export interface EditBrief {
@@ -42,8 +49,13 @@ export interface EditBrief {
   script: string;
   /** how many versions to cut, 1-5 */
   versions: number;
-  /** target length in seconds, 0 = none */
+  /** target length in seconds, 0 = none (with `moments`: about how long each one is) */
   targetS: number;
+  /**
+   * Short videos from a long recording: the AI finds up to this many parts that stand on their own (1 to MAX_MOMENTS)
+   * and each is cut as a version of its own, named m1, m2, … (api/editor/moments.ts). Absent: an edit as it always was.
+   */
+  moments?: number;
   /** a library collection to take B-roll from, or none */
   brollCollectionId: string | null;
   /** punch-in zoom on jump cuts */
@@ -271,6 +283,37 @@ export interface Draft {
   /** what the cut skipped (a take with no speech found…) */
   notes: string[];
   qa: QaReport;
+}
+
+/** A voice of the person's ElevenLabs account. `own`: one they made or cloned, not one given to everyone. */
+export interface Voice {
+  id: string;
+  name: string;
+  own: boolean;
+  /** a short sample to listen to, when the voice has one */
+  preview?: string;
+}
+
+/** The voices to choose from, the account's own first, and the id of the one used last (null: none yet). */
+export interface VoicesView {
+  voices: Voice[];
+  last: string | null;
+}
+
+/** `voice`: a voice's id or name; left out, the one used last. `name`: the recording's title in the library. */
+export interface NewVoice {
+  text: string;
+  voice?: string;
+  name?: string;
+}
+
+/** The recording as saved in the Media Library: `versionId` is a source for a new edit. */
+export interface MadeVoice {
+  versionId: string;
+  assetId: string;
+  libraryId: string;
+  name: string;
+  voice: Pick<Voice, "id" | "name">;
 }
 
 /** Where footage picked from this computer goes in the Media Library (the A-roll folder unless a plug-in says otherwise). */

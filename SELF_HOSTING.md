@@ -100,7 +100,7 @@ Set these in `.env` (edit the file, or use `sed`):
 Optional, now or later (see step 4 and `.env.example` for every variable):
 
 - `DEEPGRAM_API_KEY`: cloud transcription.
-- `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`: the Audio Enhancer's engines, for you.
+- `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`: the Audio Enhancer's engines, for you. The ElevenLabs key also makes the voice of an AI Editor video with nothing filmed.
 - `PERPLEXITY_API_KEY`: the Content Workshop's accuracy check, for you.
 
 These are the server's keys, for you. For AI, add your own Anthropic key in Settings → API keys (step 8).

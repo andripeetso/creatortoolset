@@ -38,6 +38,8 @@ export interface Saved {
   /** New edit's "How do you like to work?" was answered */
   asked?: true;
   editing: EditingStyle[];
+  /** the ElevenLabs voice used last, by id (voice.ts) */
+  voice?: string;
   /** the person's animation styles (animation-styles.ts) */
   animation?: AnimationStyle[];
   [other: string]: unknown;

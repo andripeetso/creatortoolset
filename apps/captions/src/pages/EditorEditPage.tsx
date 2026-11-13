@@ -37,6 +37,8 @@ export default function EditorEditPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState<string | null>(null); // a take's play URL
+  // takes with no picture to draw a line on (a voice recording): they have no eye line, and an edit of only those has no Eye line section
+  const [blind, setBlind] = useState<string[]>([]);
   const busy = !!edit?.jobs.some((j) => j.state === "queued" || j.state === "running");
 
   const act = (p: Promise<Edit>) =>
@@ -157,7 +159,7 @@ export default function EditorEditPage() {
                 {j.error && j.error !== "Stopped" && (
                   <span className="min-w-0 flex-1 text-xs text-zinc-500">
                     {j.error}
-                    {j.state === "needs_key" && (
+                    {j.state === "needs_key" && /Settings →/.test(j.error) && (
                       <>
                         {" "}
                         <Link to={settingFor(j.error)} className="underline">
@@ -184,7 +186,7 @@ export default function EditorEditPage() {
           )}
         </section>
 
-        <section aria-label="Eye line" className="flex flex-col gap-2">
+        <section aria-label="Eye line" className={cn("flex flex-col gap-2", edit.sources.every((v) => blind.includes(v)) && "hidden")}>
           <h2 className="text-sm font-semibold">Eye line</h2>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. Punch-ins keep the eyes at that height. Change it, then draft again (no AI).</p>
@@ -202,12 +204,14 @@ export default function EditorEditPage() {
                 y={edit.eyeline[v] ?? edit.eyelineFound?.[v] ?? DEFAULT_EYELINE}
                 note={edit.eyeline[v] !== undefined ? "Set by you" : edit.eyelineFound?.[v] !== undefined ? "Found" : undefined}
                 onSet={(y) => void act(setEyeline(id, v, y))}
+                onNoPicture={() => setBlind((b) => (b.includes(v) ? b : [...b, v]))}
               />
             ))}
           </div>
         </section>
 
-        {edit.plans.length > 0 && (
+        {/* an edit of moments has one line a version: the versions below are the whole list, each under its own title */}
+        {edit.plans.length > 0 && !edit.moments && (
           <section aria-label="Script" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">Script</h2>
             {playing && (
@@ -282,7 +286,7 @@ export default function EditorEditPage() {
 
         {edit.drafts.length > 0 && (
           <section aria-label="Versions" className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">Versions</h2>
+            <h2 className="text-sm font-semibold">{edit.moments ? "Short videos" : "Versions"}</h2>
             {edit.passes?.waiting && edit.passes.next && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted px-3 py-2">
                 {/* N = 1 + the passes done: the cards come second when there is a B-roll pass before them */}
@@ -382,14 +386,16 @@ export default function EditorEditPage() {
 }
 
 /** A clip's frame with its eye line: drag (or click) to move it; it is saved when let go. */
-function EyeLine({ versionId, y, note, onSet }: { versionId: string; y: number; note?: string; onSet: (y: number) => void }) {
+function EyeLine({ versionId, y, note, onSet, onNoPicture }: { versionId: string; y: number; note?: string; onSet: (y: number) => void; onNoPicture: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
+  const [gone, setGone] = useState(false);
   const at = (e: React.PointerEvent) => {
     const r = box.current!.getBoundingClientRect();
     return Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
   };
   const shown = drag ?? y;
+  if (gone) return null;
   return (
     <div
       ref={box}
@@ -416,7 +422,16 @@ function EyeLine({ versionId, y, note, onSet }: { versionId: string; y: number; 
       }}
       className="relative w-40 cursor-ns-resize touch-none select-none overflow-hidden rounded-lg bg-zinc-800"
     >
-      <img src={thumb(versionId)} alt="" draggable={false} className="block min-h-16 w-full" />
+      <img
+        src={thumb(versionId)}
+        alt=""
+        draggable={false}
+        className="block min-h-16 w-full"
+        onError={() => {
+          setGone(true);
+          onNoPicture();
+        }}
+      />
       <div className="pointer-events-none absolute inset-x-0 border-t-2 border-violet-400 shadow-[0_0_0_1px_rgba(0,0,0,0.4)]" style={{ top: `${shown * 100}%` }} />
       {note && <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[11px] text-white">{note}</span>}
     </div>

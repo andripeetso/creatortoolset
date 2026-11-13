@@ -11,7 +11,8 @@ export type Pass = "broll" | "cards";
 
 /** The passes after the first cut, in order: B-roll when the edit has a folder, cards when its style names an animation style. */
 const passesOf = (e: EditMeta): Pass[] =>
-  e.style?.passes ? [...(e.brollCollectionId ? (["broll"] as const) : []), ...(e.style.animation ? (["cards"] as const) : [])] : [];
+  // an edit of moments has no pass after its first cut: a one-line cut takes no cutaway and no card (broll.ts, cards/place.ts)
+  e.style?.passes && !e.moments ? [...(e.brollCollectionId ? (["broll"] as const) : []), ...(e.style.animation ? (["cards"] as const) : [])] : [];
 
 export const passesDone = (id: string, variant: string): string[] => readStep(id, "passes")?.[variant] ?? [];
 

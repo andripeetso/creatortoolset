@@ -74,6 +74,15 @@ const FINALS_GUIDE = `Finals: the finished pieces the user keeps. A piece holds 
 sets the winner, orders its versions and writes a version's name or post description, finals_piece_trash moves one to
 the trash or back. A version's id is the one finals_pieces gives.`;
 
+/** The built-in AI Editor's recipes, said only where its tools are (voice_make, editor_create's moments): not on an install whose plug-in answers /api/editor. */
+const NOTHING_FILMED_GUIDE = `A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
+as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
+picture gets its whole picture from B-roll: the edit's broll_folder, or every clip sorted B-roll when it names none.
+
+Short videos from a long recording (a podcast, a talk): editor_create with moments finds the parts that stand on their
+own and cuts each as a video of its own; editor_get then lists them with each one's title and what is said in it. A
+script from each is a Workshop piece: workshop_new_session, then workshop_new_piece (kind reel) with those words.`;
+
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
 Content Workshop: the same projects, sessions, pieces and chat the user sees on the site and the iPhone app, so whatever
@@ -233,10 +242,10 @@ export const TOOLS = [
   {
     name: "editor_create",
     description:
-      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
     inputSchema: {
       type: "object",
-      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
+      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
       required: ["sources"],
     },
   },
@@ -826,6 +835,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const jobs = (e.jobs as Args[] | undefined) ?? [];
       const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
       const titles = (e.plans as Args[] | undefined) ?? [];
+      // a moment of a long recording is one line: what is said in it, for the AI to write a script or a post from
+      const words = new Map(((e.lines as Args[] | undefined) ?? []).map((l) => [String(l.id), String(l.text ?? "")]));
+      const saidIn = (plan: Args | undefined) => (e.moments && plan ? (words.get(String(((plan.lines as Args[] | undefined) ?? [])[0]?.line)) ?? "") : "");
       return {
         ...pick(e, ["id", "name", "brief", "script", "versions", "notes"]),
         // each draft with where its preview is: "in Review" plays with show_video (edit + draft) and opens at review
@@ -833,7 +845,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           const own = jobs.filter((j) => j.variant === name);
           const p = previews[name];
           const preview = own.some((j) => j.state === "queued" || j.state === "running") ? "being made" : own.some((j) => j.state === "failed" || j.state === "needs_key") ? "failed" : p ? "in Review" : "none";
-          return { name, ...pick(titles.find((x) => x.name === name) ?? {}, ["title"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
+          const plan = titles.find((x) => x.name === name);
+          return { name, ...pick(plan ?? {}, ["title"]), ...pick({ said: saidIn(plan) }, ["said"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
         }),
         ...(Object.keys((e.flags as Args | undefined) ?? {}).length ? { flags: e.flags } : {}),
         link: `${origin}/editor/${e.id}`,
@@ -854,7 +867,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     editor_create: async (a) => {
       const sources = Array.isArray(a.sources) ? a.sources.map(String) : [];
       if (!sources.length) throw new ToolError("Give sources: the takes' version_id (media_search or media_import_folder).");
-      const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages"]) };
+      const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages", "moments"]) };
       if (a.target_s != null) body.targetS = a.target_s;
       if (a.broll_folder) body.brollCollectionId = a.broll_folder;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
@@ -1354,7 +1367,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
@@ -1394,7 +1407,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  */
 const READS = new Set("captions_get captions_list design_get editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait navigate show_video offer_choices".split(" "));
 const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_sources workshop_update_session".split(" "));
-const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_retry editor_run editor_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project".split(" "));
+const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_retry editor_run editor_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
 const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
 export const annotationsOf = (name: string) => ({

@@ -17,6 +17,7 @@ import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNam
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
+import { voiceApp } from "./voice";
 import { cardsApp } from "./cards/routes";
 import { markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
@@ -168,6 +169,8 @@ editorApp.delete("/styles/:id/finished/:editId", async (c) =>
 
 // the person's animation styles and their pictures (animation-styles.ts); before /:id, as the styles are
 editorApp.route("/animation-styles", animationApp);
+// a voice made from text, saved in the Media Library as a take (voice.ts); before /:id too
+editorApp.route("/voice", voiceApp);
 // a version's cards on the edit page: a still, the 👍, Make cards again (cards/routes.ts)
 editorApp.route("/", cardsApp);
 
