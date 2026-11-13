@@ -4,13 +4,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
-import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
+import { mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
 import { routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import type { Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
-import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
+import { adoptMacClaude, adoptOpen, onAdopt, streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
 import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
@@ -27,9 +27,11 @@ import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile,
  * The in-app assistant (the dock, src/components/assistant): an account's chats (the dock's open one and the earlier
  * ones, each also by its id: /chats) in $DATA_DIR/assistant/<user>.json (0600). A turn runs on the account's own Claude Code on a paired Mac, never on an
  * API key, and only once an AI is connected (no model call before that, nor any paid call). The Mac runs it with
- * this server's MCP tools (mcp.ts) under a job token that lives in memory for that turn (auth.ts). Nothing here
+ * this server's MCP tools (mcp.ts) under a job token that lives for that turn (auth.ts). Nothing here
  * stores or forwards a token, and no key value the user types ever passes through this file (saved in the dock
  * straight to /api/my-keys/:env; /saved only records the last four digits).
+ * A restart of this server (a deploy) doesn't end a reply the Mac is still writing: it goes on in the new process
+ * (lib/mac-claude.ts keeps its request, onAdopt below takes it up).
  */
 
 export const assistantApp = new Hono<{ Variables: AuthVars }>();
@@ -317,10 +319,10 @@ function load(username: string): Conv {
     /* no conversation yet */
   }
   conv.id ??= randomUUID();
-  // a reply the server stopped in the middle of: it can't finish any more
-  // and it can't do what it asked
-  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id]) {
-    m.status = "error";
+  // a reply a restart of the server ended (one the Mac is still writing is running again by now: resumeFromDisk):
+  // it can't finish any more and it can't do what it asked. Said in words: the dock shows a failed reply without any as "That didn't work."
+  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id] && !runsOf(username).has(m.id)) {
+    Object.assign(m, { status: "error", text: RESTARTED });
     expireApprovals(m, 0);
   }
   cache.set(username, conv);
@@ -461,18 +463,23 @@ const answering = new Set<string>();
 let installGuide = "";
 export const setInstallGuide = (text: string): void => void (installGuide = text ? `\n\n${text}` : "");
 
-/** The reply belongs to a scheduled run: nobody is at the screen (api/automations.ts posts the prompt with its task). */
-export function unattended(username: string, turn: string): boolean {
+/** The scheduled task a reply is a run of (api/automations.ts posts the prompt with its task). */
+function taskOf(username: string, turn: string): AssistantMessage["task"] {
   for (const list of everyChat(load(username))) {
     const i = list.findIndex((m) => m.id === turn);
-    if (i >= 0) return !!list[i - 1]?.task;
+    if (i >= 0) return list[i - 1]?.task;
   }
-  return false;
+  return undefined;
 }
+/** The reply belongs to a scheduled run: nobody is at the screen. */
+export const unattended = (username: string, turn: string): boolean => !!taskOf(username, turn);
 
 /* ---- work the assistant started has ended: its cards finish, and the chat says so ---- */
 
-/** Lines waiting for a reply that is still being written in their chat, by that reply's id (said when it ends). */
+/**
+ * Lines waiting for a reply that is still being written in their chat, by that reply's id (said when it ends).
+ * ponytail: in memory, so a line waiting for a reply that goes on after a restart is never said; the work's own card still shows its end. Kept in the conversation file if that is missed.
+ */
 const later = new Map<string, Array<{ line: AssistantMessage; idStart: string }>>();
 const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(`${idStart}:`);
 
@@ -797,31 +804,45 @@ export async function answerWithTools(
   let system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
   // only where the reply has the tool that opens a skill
   if (token && opts.skills) system += `\n\n${opts.skills}`;
-  try {
-    return await streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
+  const asks = claude ? opts.onAsk : undefined;
+  return ended(
+    opts.turn,
+    streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
       provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope, ...runFields(route.instance) },
       mcp: token ? { url, token } : undefined,
       files: opts.files,
-      // a turn waiting for an approval isn't counted toward its time limit (mac-claude.ts), so its token waits too
-      onAsk: claude ? opts.onAsk && ((ask) => {
-        const status = opts.onAsk!(ask);
-        if (status === "waiting" && token) touchJobToken(token);
-        return status;
-      }) : undefined,
-      // Claude's own reads and searches; its MCP calls are noted by mcp.ts already, and "Thinking" is the reply's own status
-      onStep: (label) => {
-        if (label !== "Thinking" && !label.startsWith("mcp__")) noteStep(username, opts.turn, label);
-      },
-    });
+      // what the reply needs to go on after a restart of the server (onAdopt below)
+      keep: { kind: "assistant", username, turn: opts.turn, asks: !!asks, mac: fromMac.has(opts.turn), place: places.get(opts.turn) ?? 0 },
+      ...hooksFor(username, opts.turn, asks),
+    }),
+  );
+}
+
+/** What a reply hears from the Mac's run, the same for a new answer and for one taken up after a restart. */
+const hooksFor = (username: string, turn: string, onAsk?: (ask: MacAsk) => MacAskStatus) => ({
+  // a turn waiting for an approval isn't counted toward its time limit (mac-claude.ts), so its token waits too
+  onAsk: onAsk && ((ask: MacAsk) => {
+    const status = onAsk(ask);
+    if (status === "waiting") touchJobTokens(turn);
+    return status;
+  }),
+  // Claude's own reads and searches; its MCP calls are noted by mcp.ts already, and "Thinking" is the reply's own status
+  onStep: (label: string) => {
+    if (label !== "Thinking" && !label.startsWith("mcp__")) noteStep(username, turn, label);
+  },
+});
+
+/** An answer's end, either way: its token stops working, and never goes into a stored reply. */
+async function ended(turn: string, answer: Promise<string>): Promise<string> {
+  try {
+    return await answer;
   } catch (e) {
-    // the token never goes into a stored reply
-    const text = e instanceof Error ? e.message : String(e);
-    throw new Error(token ? text.split(token).join("") : text);
+    throw new Error((e instanceof Error ? e.message : String(e)).replace(/ctj_[a-f0-9]{48}/g, ""));
   } finally {
-    if (token) revokeJobToken(token);
+    revokeJobTokens(turn);
   }
 }
 
@@ -853,20 +874,47 @@ function placeOf(username: string, reply: string): string {
   return n ? `place-${n}/` : "";
 }
 
-/** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
-async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
+/** One turn of the dock. */
+const runTurn = (username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> =>
+  runReply(username, replyId, (run) => answerWithTools(username, route, url, prompt, { label: "Assistant", turn: replyId, files, memory, skills, ...run }));
+
+/** The server restarted under a reply and it could not go on (nothing was running on the Mac yet, or the Mac is gone too). */
+const RESTARTED = "The server restarted while this was being written. Send your message again.";
+
+/** A scheduled run whose reply went on after a restart has ended: api/automations.ts records it (this file can't import that one). */
+type RunEnded = (username: string, task: string, result: { status: "done" | "error"; text: string; chat?: string }) => void;
+let runEnded: RunEnded | undefined;
+export const setRunEnded = (fn: RunEnded): void => void (runEnded = fn);
+
+/**
+ * After a restart of the server: a reply the Mac is still writing goes on where it was, with its Stop, its place, its
+ * approvals and its tools (lib/mac-claude.ts adoptOpen, at boot). A scheduled run's reply too.
+ */
+onAdopt("assistant", ({ id, keep }) => {
+  const [username, turn] = [String(keep.username), String(keep.turn)];
+  places.set(turn, Number(keep.place) || 0);
+  if (keep.mac) fromMac.add(turn);
+  void runReply(username, turn, (run) =>
+    ended(turn, (async () => {
+      const answer = messageOf(username, turn)?.status === "thinking" ? adoptMacClaude(id, run.cancel, run.onDelta, hooksFor(username, turn, keep.asks ? run.onAsk : undefined)) : null;
+      if (!answer) throw new Error(RESTARTED);
+      return answer;
+    })()),
+  ).then(() => {
+    const [task, m] = [taskOf(username, turn), messageOf(username, turn)];
+    if (task && m) runEnded?.(username, task.id, { status: m.status === "error" ? "error" : "done", text: m.text, chat: chatOfTurn(username, turn) ?? undefined });
+  });
+});
+
+/** A reply being written: it fills in as its answer streams, then its status says how it ended. */
+async function runReply(username: string, replyId: string, answer: (run: { cancel: AbortSignal; onAsk: (ask: MacAsk) => MacAskStatus; onDelta: (text: string) => void }) => Promise<string>): Promise<void> {
   const stop = new AbortController();
   runsOf(username).set(replyId, stop);
   const started = Date.now();
   Object.assign(messageOf(username, replyId) ?? {}, { started });
   try {
-    const text = await answerWithTools(username, route, url, prompt, {
-      label: "Assistant",
-      turn: replyId,
+    const text = await answer({
       cancel: stop.signal,
-      files,
-      memory,
-      skills,
       onAsk: (ask) => approvalFor(username, replyId, ask),
       onDelta: (t) => {
         const m = messageOf(username, replyId);
@@ -1156,6 +1204,8 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
 
 /** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */
 export function resumeFromDisk(): void {
+  // first: a reply the Mac is still writing has to be running again before its chat is read (load would end it)
+  adoptOpen();
   let names: string[] = [];
   try {
     names = readdirSync(dirOf()).filter((f) => f.endsWith(".json"));

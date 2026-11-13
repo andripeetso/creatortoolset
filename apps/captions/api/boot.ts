@@ -43,6 +43,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
+import { answersAtRisk } from "./lib/mac-claude";
 import { sweepAll, uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
@@ -236,6 +237,8 @@ app.get("/api/health", (c) =>
     ok: true,
     environment: environmentOf(),
     uptimeSec: Math.round(process.uptime()),
+    // AI answers a restart now would lose: a deploy waits for 0 (lib/mac-claude.ts)
+    answering: answersAtRisk(),
     rssMb: Math.round(process.memoryUsage().rss / 1048576),
   }),
 );
