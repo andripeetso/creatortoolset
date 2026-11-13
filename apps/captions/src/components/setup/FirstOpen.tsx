@@ -76,7 +76,7 @@ export function FirstOpen() {
   };
   const connectAi = () => {
     close();
-    openSetupAt("agents");
+    openSetupAt("agents", true);
   };
 
   return (

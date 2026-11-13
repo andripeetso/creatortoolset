@@ -173,10 +173,16 @@ export async function shareDownload(nav: Pick<Navigator, "share" | "clipboard"> 
   return "shown";
 }
 
-/** Opens setup at a step from anywhere (Home, Settings): sets `?setup=` and tells the router the address changed. */
-export function openSetupAt(step: SetupStep): void {
+/**
+ * Opens setup at a step from anywhere (Home, Settings): sets `?setup=` and tells the router the address changed.
+ * `alone` opens just that screen, with only Done (`&alone=1`): a button that asks for one thing, like the assistant's
+ * Connect your AI, never walks the rest of setup again.
+ */
+export function openSetupAt(step: SetupStep, alone = false): void {
   const url = new URL(window.location.href);
   url.searchParams.set("setup", step);
+  if (alone) url.searchParams.set("alone", "1");
+  else url.searchParams.delete("alone");
   window.history.pushState(window.history.state, "", url);
   window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
 }

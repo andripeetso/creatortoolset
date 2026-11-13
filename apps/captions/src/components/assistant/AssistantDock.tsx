@@ -844,7 +844,7 @@ export function AssistantDock() {
               <p className="text-base font-semibold">The assistant needs your AI connected first.</p>
             )}
             {(!welcome.showing || welcome.stage === "ready") && (
-              <Button size="sm" onClick={() => openSetupAt("agents")}>
+              <Button size="sm" onClick={() => openSetupAt("agents", true)}>
                 Connect your AI
               </Button>
             )}
