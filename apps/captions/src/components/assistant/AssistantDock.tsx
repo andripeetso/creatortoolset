@@ -151,9 +151,13 @@ export function AssistantDock() {
   const chipPath = pageHidden ? "/" : pathname;
   const popped = usePopIn(suggestionsFor(chipPath).length, (!collapsed || useChatMode.getState().on) && !!view && welcome.stage !== "typing");
 
+  // a chat opened or started here goes on screen with its layout in one wash (land, below): a re-read that comes back
+  // in between would put the chat up first, in the old layout, so it waits
+  const landing = useRef({ on: false, missed: false });
   const load = useCallback(async () => {
     const r = await getAssistant();
     if (!r.ok) return;
+    if (landing.current.on) return void (landing.current.missed = true);
     setView(r.data);
     useAssistant.getState().set({ connected: r.data.provider !== "none" });
     setSeenId((s) => (s === undefined ? (r.data.messages.at(-1)?.id ?? null) : s));
@@ -260,7 +264,10 @@ export function AssistantDock() {
     const another = chatWas.current !== undefined && chatWas.current !== view.id;
     chatWas.current = view.id;
     const bare = bareNow(cm.bare, { chatMode: showChatMode, another, unsent });
-    if (bare !== cm.bare) cm.set({ bare });
+    if (bare === cm.bare) return;
+    // another chat put on show from elsewhere (another device, a link to a chat): the layout follows with the wash
+    if (showChatMode && another) washTo({ bare });
+    else cm.set({ bare });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showChatMode, view?.id, unsent]);
   // the page is not on show (only chats, or a new chat's start) and a link is followed (a card, the app's name, a page
@@ -633,30 +640,39 @@ export function AssistantDock() {
     );
   }
 
+  /** Put a chat that was just started or opened on screen; with `layout`, in one wash with that change to the layout. */
+  const land = (v: AssistantView, seen: string | null, layout: Parameters<typeof washTo>[0] | null) => {
+    const show = () => {
+      landing.current.on = false;
+      setView(v);
+      setSeenId(seen);
+      if (landing.current.missed) {
+        landing.current.missed = false;
+        void load();
+      }
+    };
+    if (layout) washTo(layout, null, show);
+    else show();
+  };
   const newChat = async () => {
     stopSpeaking();
+    landing.current.on = true;
     const r = await startOver();
-    if (!r.ok) return;
-    const show = () => {
-      setView(r.data);
-      setSeenId(null);
-    };
+    if (!r.ok) return void (landing.current.on = false);
     // in chat mode a new chat is its own screen: no page beside it yet
-    if (useChatMode.getState().on) washTo({ bare: true }, null, show);
-    else show();
+    land(r.data, null, useChatMode.getState().on ? { bare: true } : null);
   };
   const openChat = async (id: string) => {
     if (id === view?.id) return;
+    landing.current.on = true;
     const r = await openPast(id);
-    if (!r.ok) return setError(r.error);
-    const show = () => {
-      setView(r.data);
-      setSeenId(r.data.messages.at(-1)?.id ?? null);
-    };
+    if (!r.ok) {
+      landing.current.on = false;
+      return setError(r.error);
+    }
     // from the new-chat screen to a chat that was started: its page comes back beside it
     const cm = useChatMode.getState();
-    if (cm.on && cm.bare && r.data.messages.length) washTo({ bare: false }, null, show);
-    else show();
+    land(r.data, r.data.messages.at(-1)?.id ?? null, cm.on && cm.bare && r.data.messages.length ? { bare: false } : null);
   };
   /** The queued messages written in the chat on screen (one from before chats were told apart shows everywhere). */
   const shownQueue = queue.filter((q) => !q.chat || q.chat === view?.id);

@@ -163,6 +163,8 @@ export function useChatModeLayout(active: boolean): ChatLayout {
     if (!active) return;
     const root = document.documentElement;
     root.dataset.chatMode = layout.full ? "full" : "";
+    // a page that is not drawn is not heard either
+    if (layout.full) for (const m of document.querySelectorAll<HTMLMediaElement>("main video, main audio")) m.pause();
     // the list beside the chat carries the app's name and the account (index.css)
     root.toggleAttribute("data-chat-list", layout.list);
     root.style.setProperty("--chat-w", `${layout.chat}px`);
@@ -223,8 +225,9 @@ export const frontAt = (t: number): number => 1 - (1 - t) ** 1.35;
 /** When (0 to 1 of the wash) the front is `d` of its reach away from the button: frontAt the other way round. */
 export const frontReaches = (d: number): number => 1 - (1 - Math.min(1, Math.max(0, d))) ** (1 / 1.35);
 
-/** The wash on screen now, if one is. */
+/** The wash on screen now, if one is, and what it changes. */
 let washing: { skipTransition(): void } | null = null;
+let washingTo: Partial<Stored> = {};
 
 /** The middle of `el`, or of the chat-mode button on screen. */
 function middleOf(el?: Element | null): { x: number; y: number } | null {
@@ -247,6 +250,8 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, also?: () 
     also?.();
     set(patch);
   };
+  // asked for twice (a page opened by two things at once): the wash on its way is the answer
+  if (washing && !also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return;
   if (washing || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
     washing?.skipTransition();
     return change();
@@ -269,12 +274,14 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, also?: () 
   // layout effect, so one synchronous render does it)
   const t = document.startViewTransition(() => flushSync(change));
   washing = t;
+  washingTo = patch;
   t.ready.then(
     () => go("::view-transition-new(root)"),
     () => {},
   );
   void t.finished.finally(() => {
     washing = null;
+    washingTo = {};
     root.classList.remove("chat-wash");
     // the mask's and the old picture's animations hold their last frame: they go with the pictures
     for (const a of document.getAnimations()) if ((a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition")) a.cancel();
