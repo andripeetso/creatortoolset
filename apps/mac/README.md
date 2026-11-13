@@ -608,6 +608,8 @@ while a person uses the app or records (each frame is taken on the main thread, 
 The app has not been launched on a Mac in this build (so far it has been built and unit-tested). The plug-ins'
 alert, the record's Keychain path on a signed build, the restart's page reload and the five-crash pause have not
 been run on a Mac either.
+Dictation's one-time setup sheet has run only as a drawing in the tests: the real sheet on the window, Esc, the
+popovers and the key picker over it, and the page's `page:calm` reaching the app have not been seen in a launched app.
 Drag-and-drop, the notification banners and the menu bar item still need
 a manual check by the owner. The device runner has run one real Claude call and a full job against a
 local stand-in for the site's routes; pairing against the real site and the Keychain prompt on first
