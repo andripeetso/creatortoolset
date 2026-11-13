@@ -625,3 +625,42 @@ final class DictationBridgeStateTests: XCTestCase {
         }
     }
 }
+
+/// The setup page's own model download (SetupGuide `SetupDownload`): the page leaves no download behind it was not asked for.
+final class SetupDownloadTests: XCTestCase {
+    func testLeavingWithoutGetStartedStopsOnlyThePagesOwnDownload() {
+        var page = SetupDownload()
+        page.opened()
+        page.prepared(before: nil, after: "whisper-large-v3-turbo")
+        // Not now, Esc, the close button, ⌘W: stopped
+        XCTAssertEqual(page.closed(gotStarted: false, running: "whisper-large-v3-turbo"), "whisper-large-v3-turbo")
+        // Get Started: it goes on
+        page.opened()
+        page.prepared(before: nil, after: "whisper-large-v3-turbo")
+        XCTAssertNil(page.closed(gotStarted: true, running: "whisper-large-v3-turbo"))
+        // one that was running before the page opened (Settings' Download) is not the page's
+        page.opened()
+        page.prepared(before: "parakeet-tdt-0.6b-v3", after: "parakeet-tdt-0.6b-v3")
+        XCTAssertNil(page.closed(gotStarted: false, running: "parakeet-tdt-0.6b-v3"))
+        // the page's own one already finished, another one runs now: that one goes on
+        page.opened()
+        page.prepared(before: nil, after: "whisper-large-v3-turbo")
+        XCTAssertNil(page.closed(gotStarted: false, running: "whisper-small"))
+        // a model already here: nothing downloads, nothing to stop
+        page.opened()
+        page.prepared(before: nil, after: nil)
+        XCTAssertNil(page.closed(gotStarted: false, running: nil))
+    }
+
+    func testNothingStartsOnceThePageHasGone() {
+        var page = SetupDownload()
+        XCTAssertFalse(page.mayPrepare)
+        page.opened()
+        XCTAssertTrue(page.mayPrepare)
+        XCTAssertNil(page.closed(gotStarted: false, running: nil))
+        // the server's languages answer after Not now: no download may start, and none would count as the page's
+        XCTAssertFalse(page.mayPrepare)
+        page.prepared(before: nil, after: "whisper-large-v3-turbo")
+        XCTAssertNil(page.started)
+    }
+}
