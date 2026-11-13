@@ -113,7 +113,7 @@ describe("a message sent while its video uploads", () => {
     expect(during.messages.at(-2)!.files).toEqual([{ id: clip.id, name: "Beach.mov" }]);
     expect(during.messages.at(-1)!.wait).toBeUndefined();
     await p.answer(got.id, "Captioned.");
-    expect((await settled(p)).messages.at(-1)).toMatchObject({ text: "Captioned.", status: "done" });
+    expect((await settled(p)).messages.at(-1)).toMatchObject({ text: "Captioned.", status: "done", started: expect.any(Number), took: expect.any(Number) });
   });
 
   it("with two videos, runs once both are in, however close together they finish", async () => {

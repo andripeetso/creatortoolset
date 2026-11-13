@@ -857,6 +857,8 @@ function placeOf(username: string, reply: string): string {
 async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
   const stop = new AbortController();
   runsOf(username).set(replyId, stop);
+  const started = Date.now();
+  Object.assign(messageOf(username, replyId) ?? {}, { started });
   try {
     const text = await answerWithTools(username, route, url, prompt, {
       label: "Assistant",
@@ -881,7 +883,10 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
   } finally {
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
-    if (m) expireApprovals(m, 0);
+    if (m) {
+      expireApprovals(m, 0);
+      m.took = Date.now() - started;
+    }
     sayLater(username, replyId);
     runsOf(username).delete(replyId);
     fromMac.delete(replyId);
@@ -1246,6 +1251,7 @@ export async function runInChat(
     Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
     throw new Error(why);
   } finally {
+    Object.assign(messageOf(username, reply.id) ?? {}, { took: Date.now() - reply.at });
     sayLater(username, reply.id);
     runsOf(username).delete(reply.id);
     const t = pendingSave.get(username);

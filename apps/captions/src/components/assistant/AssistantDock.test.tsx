@@ -19,8 +19,7 @@ it("a reply that waits says what it waits for, not that it is working", () => {
   const waiting = html({ ...reply, wait: { for: "videos", videos: 1, text: "Waiting for a video to upload" } });
   expect(waiting).toContain("Waiting for a video to upload");
   expect(waiting).not.toContain("Working");
-  expect(html(reply)).toContain("Working");
-  expect(html(reply)).not.toContain("1:00");
+  expect(html(reply)).toContain("Working for 1m");
 });
 
 it("folds the steps into one row: the current step while working, the count once done", () => {
@@ -32,4 +31,5 @@ it("folds the steps into one row: the current step while working, the count once
   expect(live).not.toContain("Checking what&#x27;s set up…");
   const done = html({ id: "r", role: "assistant", text: "Done.", at: Date.now(), status: "done", steps } as AssistantMessage);
   expect(done).toContain("3 steps");
+  expect(html({ id: "r", role: "assistant", text: "Done.", at: Date.now(), status: "done", steps, took: 72_400 } as AssistantMessage)).toContain("Worked for 1m 12s");
 });

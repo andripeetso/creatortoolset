@@ -51,15 +51,23 @@ function Status({ status }: { status: AssistantWork["status"] }) {
   return <Check className="size-4 shrink-0 text-emerald-500" aria-label="Done" />;
 }
 
-/** How long a chat has been working, "57s", "4m", "1h 5m", ticking: the Earlier chats list shows it in place of the time. */
-export function WorkingFor({ since }: { since: number }) {
+/** "35s", "1m 3s", "1h 2m 5s": how long a reply worked, zero parts left out. */
+export function duration(ms: number) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  if (t < 60) return `${t}s`;
+  const parts = [Math.floor(t / 3600), Math.floor((t % 3600) / 60), t % 60];
+  return parts.flatMap((n, i) => (n ? [`${n}${"hms"[i]}`] : [])).join(" ");
+}
+
+/** How long it has been working, ticking: "1m 3s" at the top of a reply, `compact` "57s", "4m", "1h 5m" in Earlier chats. */
+export function WorkingFor({ since, compact = false }: { since: number; compact?: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
   // the server's clock and this one can differ: never below zero
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  const m = Math.floor(s / 60);
-  return <>Working {s < 60 ? `${s}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`}</>;
+  const ms = Math.max(0, now - since);
+  const m = Math.floor(ms / 60_000);
+  return <>{!compact || m < 1 ? duration(ms) : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`}</>;
 }
