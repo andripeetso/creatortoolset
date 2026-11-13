@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, X } from "lucide-react";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
+import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
 import {
@@ -622,8 +623,6 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     else setLayers((l) => l.filter((x) => x !== id));
   };
 
-  const step = pps > 60 ? 1 : pps > 25 ? 2 : pps > 10 ? 5 : 10;
-  const ticks = Array.from({ length: Math.floor(seconds / step) + 1 }, (_, i) => i * step);
   const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   const btn = "rounded p-1 hover:bg-zinc-900 disabled:opacity-30";
   const tbtn = "flex items-center gap-1 rounded px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-900";
@@ -747,13 +746,16 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
             className="w-8 rounded text-center tabular-nums hover:bg-zinc-900">{zoom < 10 ? zoom.toFixed(1).replace(/\.0$/, "") : Math.round(zoom)}×</button>
         </div>
       </div>
-      <div ref={scroller} className="relative overflow-x-auto [contain:inline-size]" onMouseDown={(e) => e.button === 1 && e.preventDefault()}>
-        <div ref={inner} className={`relative ${tool === "placeholder" && edit ? "cursor-crosshair" : drag?.kind === "pan" ? "cursor-grabbing" : ""}`}
-          style={{ width: LABEL_W + seconds * pps + RIGHT }}
-          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setDrag(null)} onContextMenu={onContext}>
-          {/* ruler: seconds, line markers, QA flags */}
-          <div className="flex h-7">
-            <div className="sticky left-0 z-40 flex shrink-0 items-center bg-zinc-950 px-1" style={{ width: LABEL_W }}>
+      {/* the frame the app's timelines share: the scroller, the content at the axis's width, the ruler's marks.
+          On the ruler here: the Layer button, line markers, QA flags */}
+      <TimelineFrame scroller={scroller} inner={inner} seconds={seconds} pps={pps} labelWidth={LABEL_W} right={RIGHT} rulerHeight={28} className="[contain:inline-size]"
+        content={{
+          className: tool === "placeholder" && edit ? "cursor-crosshair" : drag?.kind === "pan" ? "cursor-grabbing" : "",
+          onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: () => setDrag(null), onContextMenu: onContext,
+        }}
+        ruler={{ className: "cursor-ew-resize" }}
+        rulerLabel={(
+            <>
               {edit && layered && (
                 <button data-menu onPointerDown={(e) => e.stopPropagation()} onClick={() => setLayerMenu((v) => !v)}
                   title="Add a video or audio layer"
@@ -770,12 +772,10 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                   ))}
                 </div>
               )}
-            </div>
-            <div className="relative flex-1 cursor-ew-resize overflow-hidden">
-              {ticks.map((s) => (
-                <span key={s} className="absolute top-0 h-2 border-l border-zinc-700 pl-0.5 text-[9px] leading-none text-zinc-600"
-                  style={{ left: s * pps }}>{clock(s)}</span>
-              ))}
+            </>
+        )}
+        rulerChildren={(
+            <>
               {view.markers.map((m) => (
                 <span key={`${m.frame}-${m.name}`} title={m.name}
                   className="absolute bottom-0 flex h-3.5 max-w-[140px] items-center truncate rounded-sm px-1 text-[9px] font-medium text-black"
@@ -787,8 +787,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 <span key={i} title={`${f.check}: ${f.what}`} className="absolute top-2 h-2 rounded-full bg-red-500"
                   style={{ left: x(f.rec), width: Math.max(4, x(f.len ?? 1)) }} />
               ))}
-            </div>
-          </div>
+            </>
+        )}>
           {lanes.map((t) => (
             <div key={t.id} className="group/lane flex border-t border-zinc-900/80" style={{ height: heights[t.id] ?? 28 }}>
               <div className="sticky left-0 z-20 flex shrink-0 items-center gap-1 bg-zinc-950 px-1.5 text-zinc-500"
@@ -958,8 +958,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
             style={{ left: LABEL_W + time * pps }}>
             <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-red-400" />
           </div>
-        </div>
-      </div>
+      </TimelineFrame>
       {menu && (() => {
         const it = menu.it;
         const may = !!it;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampZoom, fitPps, maxZoomOf, scrollForZoom, scrollToFollow, sliderToZoom, zoomToSlider } from "./time-axis";
+import { clampZoom, fitPps, maxZoomOf, rulerMarks, scrollForZoom, scrollToFollow, sliderToZoom, zoomToSlider } from "./time-axis";
 
 describe("the timelines' time axis", () => {
   it("fits the whole length into the scroller, less what stands before 0:00 and after the end", () => {
@@ -40,6 +40,18 @@ describe("the timelines' time axis", () => {
     expect(scrollToFollow(v, 100, 8.8)).toBeCloseTo(680, 6); // 880 px, past 300 + 600 - 24
     expect(scrollToFollow(v, 100, 2)).toBe(0); // 200 px, before the view: 200 - 200
     expect(scrollToFollow({ ...v, left: 72 }, 100, 3.5)).toBeNull(); // 72 + 350 is right of the label column
+  });
+
+  it("the ruler's marks stand at least 64 px apart, and only the ones near what shows are listed", () => {
+    // 20 px a second: a mark every 5 s (100 px), to the end
+    expect(rulerMarks(20, 24)).toEqual({ step: 5, at: [0, 5, 10, 15, 20] });
+    // 400 px a second: every 0.2 s; of a 60 s length only what lies between 1000 and 1500 px
+    expect(rulerMarks(400, 60, 1000, 1500)).toEqual({ step: 0.2, at: [2.4, 2.6, 2.8, 3, 3.2, 3.4, 3.6, 3.8] });
+    // before the start and past the end
+    expect(rulerMarks(100, 3, -500, 5000).at).toEqual([0, 1, 2, 3]);
+    expect(rulerMarks(0, 10).at).toEqual([]); // no length on screen yet
+    // a ten-minute cut at its widest lists a few marks, not thousands
+    expect(rulerMarks(480, 600, 20000, 21500).at.length).toBeLessThan(30);
   });
 
   it("the zoom slider moves by the same share at each step and comes back to the same zoom", () => {
