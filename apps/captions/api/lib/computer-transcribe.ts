@@ -50,11 +50,11 @@ export function strongest(devices: Device[], weights: Balance["weights"]): Devic
  * what it has (a model put there before is never deleted unasked), the asked ones are added, and one that went from it
  * (removed there) is dropped, so it is not downloaded again.
  */
-export function declareModels(d: Device, held: string[], getting: string[], asked: string[] = []): void {
+export function declareModels(d: Device, held: string[], getting: string[], asked: string[] = [], ready?: string[]): void {
   const s = d.stt;
   const gone = s?.claimed ? s.held.filter((m) => !held.includes(m) && !getting.includes(m)) : [];
   const want = [...new Set([...(s?.want ?? []), ...(s?.claimed ? [] : held), ...asked])].filter((m) => !gone.includes(m) && (held.includes(m) || fillable(d, m)));
-  setDeviceStt(d.id, { want, held, getting, claimed: true });
+  setDeviceStt(d.id, { want, held, getting, claimed: true, ...(ready ? { ready } : {}) });
 }
 
 /**
@@ -122,8 +122,14 @@ function fillable(d: Device, model: string): boolean {
   const os = d.report?.machine?.os;
   return !m || !os || runsOn(m, os, d.version);
 }
-const onlineHolders = (owner: string, model: string, noMac = false) =>
-  speechComputers(owner).filter((d) => holds(d, model) && isOnline(d.id) && !(noMac && isMac(d)));
+/**
+ * Whether this computer can hear `model` for someone who waits on it (the mic, at once): a Mac only with the model loaded
+ * (it says so: `stt.ready`; it refuses the rest at once rather than load one), any other as before, and so does a Mac that
+ * does not say (an older app).
+ */
+export const servesSoon = (d: Device, model: string) => !isMac(d) || !d.stt?.ready || d.stt.ready.includes(model);
+const onlineHolders = (owner: string, model: string, noMac = false, soon = false) =>
+  speechComputers(owner).filter((d) => holds(d, model) && isOnline(d.id) && !(noMac && isMac(d)) && (!soon || servesSoon(d, model)));
 const offLine = (model: string) => `Waits for a computer with ${nameOf(model)} to be on`;
 
 /** Throws ComputerOff when no computer of `owner` that has `model` is on: checked before the audio is cut. */
@@ -167,7 +173,7 @@ export function transcribeOnComputer(
   owner: string, model: string, languages: string[], audio: string,
   limits: Limits = {},
 ): Promise<TranscribeResult> {
-  if (!onlineHolders(owner, model, !!limits.noMac).length) return Promise.reject(new ComputerOff(offLine(model)));
+  if (!onlineHolders(owner, model, !!limits.noMac, !!limits.soon).length) return Promise.reject(new ComputerOff(offLine(model)));
   // 16 kHz mono 16-bit: 32,000 bytes a second; `exact`: no longer for a longer recording
   const least = limits.takeMs ?? COMPUTER_LIMITS.takeMs;
   const takeMs = limits.exact ? least : Math.max(least, (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32 * 3);
@@ -187,7 +193,7 @@ export function transcribeOnComputer(
       }
       if (!j.device && limits.claimMs && now - j.since > limits.claimMs) return end(new ComputerBusy(`No computer with ${nameOf(model)} took it in time.`));
       const working = [...jobs.values()].some((x) => x.owner === owner && x.device);
-      if (!j.device && (!onlineHolders(owner, model, !!limits.noMac).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
+      if (!j.device && (!onlineHolders(owner, model, !!limits.noMac, !!limits.soon).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
     }, limits.checkMs ?? COMPUTER_LIMITS.checkMs);
     check.unref();
     const end = (r: TranscribeResult | Error) => {
@@ -210,9 +216,9 @@ export function transcribeOnComputer(
  */
 function nextFor(d: Device, balance: Balance): Job | undefined {
   for (const j of [...jobs.values()].sort((a, b) => b.rank - a.rank)) {
-    if (j.owner !== d.owner || j.device || !holds(d, j.model) || (j.noMac && isMac(d))) continue;
+    if (j.owner !== d.owner || j.device || !holds(d, j.model) || (j.noMac && isMac(d)) || (j.soon && !servesSoon(d, j.model))) continue;
     if (!balance.on) return j;
-    const best = strongest(onlineHolders(d.owner, j.model, j.noMac).concat(isOnline(d.id) ? [] : [d]), balance.weights)[0];
+    const best = strongest(onlineHolders(d.owner, j.model, j.noMac, j.soon).concat(isOnline(d.id) ? [] : [d]), balance.weights)[0];
     if (best?.id === d.id) return j;
   }
   return undefined;

@@ -3,8 +3,9 @@ import path from "node:path";
 import { env } from "./env";
 import { keyFor } from "../my-keys";
 import { deviceTranscribes } from "./device-transcribe";
-import { isMac, speechComputers } from "./computer-transcribe";
+import { isMac, servesSoon, speechComputers } from "./computer-transcribe";
 import { isOnline } from "./devices";
+import type { Device } from "../../contracts/providers";
 import {
   DEFAULT_VOICE_PREFS, EDITOR_COMPUTER_MODEL, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
   type SpeechUse, type SttChoice, type SttEngine, type SttResolved, type VoicePrefs,
@@ -74,6 +75,9 @@ function computersFor(actor: Actor, use: SpeechUse | undefined) {
   return use === "editor" ? mine.filter((d) => d.stt?.held.includes(EDITOR_COMPUTER_MODEL) && !isMac(d)) : mine;
 }
 
+/** The models a computer offers `use`: the mic only the ones it hears at once (a Mac's loaded one: servesSoon). */
+const heldFor = (d: Device, use: SpeechUse | undefined) => (d.stt?.held ?? []).filter((m) => use !== "mic" || servesSoon(d, m));
+
 /**
  * Engines that can serve `use` for this account now: a key it has, the server itself (not the AI Editor), or a computer
  * of its own with a speech model (computersFor). No use: the ones every use can run.
@@ -82,7 +86,7 @@ export function availableEngines(actor: Actor, use?: SpeechUse): Engine[] {
   const out: Engine[] = [];
   if (!keyFor(actor, "DEEPGRAM_API_KEY").missing) out.push("deepgram");
   if (!keyFor(actor, "OPENAI_API_KEY").missing) out.push("openai");
-  if ((use !== "editor" && deviceTranscribes()) || computersFor(actor, use).some((d) => d.stt?.held.length)) out.push("local");
+  if ((use !== "editor" && deviceTranscribes()) || computersFor(actor, use).some((d) => heldFor(d, use).length)) out.push("local");
   return out;
 }
 
@@ -115,11 +119,14 @@ export type Speech =
  */
 function localFor(actor: Actor, use: SpeechUse, chosen: string | undefined, langs: string[]): { model: string; on: "server" | "computers" } | { needs: string } {
   const mine = computersFor(actor, use);
-  const kept = (id: string) => mine.filter((d) => d.stt?.held.includes(id));
+  const kept = (id: string) => mine.filter((d) => heldFor(d, use).includes(id));
   if (chosen) {
     const m = STT_MODELS.find((x) => x.id === chosen)!;
     if (!m.computer) return deviceTranscribes() ? { model: chosen, on: "server" } : { needs: NEEDS.local };
-    return kept(chosen).length ? { model: chosen, on: "computers" } : { needs: `Needs ${m.name} on one of your computers` };
+    if (kept(chosen).length) return { model: chosen, on: "computers" };
+    // the mic on a Mac that has it but not loaded (its dictation off, or on another model or engine): says why
+    const notLoaded = use === "mic" && mine.some((d) => d.stt?.held.includes(chosen));
+    return { needs: notLoaded ? `Needs dictation on with ${m.name} on your Mac` : `Needs ${m.name} on one of your computers` };
   }
   const hears = (m: (typeof STT_MODELS)[number]) => m.languages === "many" || (langs.length > 0 && langs.every((l) => m.languages.includes(l)));
   const fit = STT_MODELS.filter((m) => m.computer && hears(m) && kept(m.id).length);
@@ -159,7 +166,8 @@ export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: 
     const l = localFor(actor, use, EDITOR_COMPUTER_MODEL, langs);
     return "needs" in l ? l : { engine, ...l, languages: langs };
   }
-  if (!can.includes(engine)) return { needs: NEEDS[engine], ...(KEY[engine] ? { key: KEY[engine] } : {}) };
+  // the mic on its own computers says which one it needs (a Mac's model loaded: localFor), not only that one is needed
+  if (!can.includes(engine) && !(engine === "local" && as === "mic" && chosen)) return { needs: NEEDS[engine], ...(KEY[engine] ? { key: KEY[engine] } : {}) };
   if (engine === "local") {
     const l = localFor(actor, as, chosen, langs);
     return "needs" in l ? l : { engine, ...l, languages: langs };

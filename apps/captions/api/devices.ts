@@ -62,11 +62,13 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const held = parseModels(b?.models, isComputerModel);
   const getting = parseModels(b?.getting, isComputerModel);
   const asked = parseModels(b?.asked, isComputerModel);
-  if (!held || !getting || !asked) return c.json({ error: "models, getting, asked: lists of model ids" }, 400);
+  // a Mac says which models it has loaded (a recording someone waits on goes only to one that has: `servesSoon`)
+  const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
+  if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
   if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimForDevice(d, k) } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
-  declareModels(d, held, getting, asked);
+  declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
   const job = claimCutout(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k);
   return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
