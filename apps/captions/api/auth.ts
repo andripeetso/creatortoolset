@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createSocket } from "node:dgram";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env, hostedMode, keepsOverRestart } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
@@ -115,78 +115,94 @@ export const sessionOf = (user: UserRecord): SessionUser => ({
  * The assistant's job tokens (api/assistant.ts): one per turn, `ctj_…`, 30 min, revoked when its turn ends. Accepted
  * by boot.ts on /api/mcp alone; the tools it reaches run as its account through `innerCall`. Never a Full key:
  * rotating that would break the account's claude.ai connector.
- * Kept by their SHA-256 in DATA_DIR/job-tokens.json, so an answer still being written when the server restarts keeps
- * its tools (lib/mac-claude.ts adoptOpen). The file never holds a token that works.
+ * A real server keeps each in its own file, DATA_DIR/job-tokens/<the token's SHA-256>.json, and reads it there: an
+ * answer still being written when the server restarts keeps its tools (lib/mac-claude.ts), and the two processes of
+ * a deploy's reload see the same tokens and never write over each other. No file holds a token that works. A dev
+ * server keeps them in memory (it shares its data folder with a real one: keepsOverRestart).
  */
 export const JOB_TOKEN_MS = 30 * 60_000;
 type Job = { username: string; turn: string; expires: number };
-const jobsFile = () => path.join(env.dataDir, "job-tokens.json");
-let jobsRead: Map<string, Job> | undefined;
-function jobs(): Map<string, Job> {
-  if (jobsRead) return jobsRead;
-  jobsRead = new Map();
-  try {
-    if (keepsOverRestart()) jobsRead = new Map(Object.entries(JSON.parse(readFileSync(jobsFile(), "utf-8")) as Record<string, Job>));
-  } catch {
-    // none kept
-  }
-  return jobsRead;
-}
-function saveJobs(): void {
-  if (!keepsOverRestart()) return;
-  try {
-    mkdirSync(env.dataDir, { recursive: true });
-    const tmp = `${jobsFile()}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(jobs())), { mode: 0o600 });
-    renameSync(tmp, jobsFile());
-  } catch (e) {
-    // the tokens still work while this process lives
-    console.warn(`[auth] job tokens not kept for a restart: ${e instanceof Error ? e.message : e}`);
-  }
-}
+const inMemory = new Map<string, Job>();
+const jobsDir = () => path.join(env.dataDir, "job-tokens");
+const jobFile = (key: string) => path.join(jobsDir(), `${key}.json`);
 const jobKey = (authorization: string | undefined): string | null => {
   const token = /^Bearer (ctj_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1];
   return token ? createHash("sha256").update(token).digest("hex") : null;
 };
+const readJob = (file: string): Job | undefined => {
+  try {
+    return JSON.parse(readFileSync(file, "utf-8")) as Job;
+  } catch {
+    return undefined; // no such token
+  }
+};
+
+function setJob(key: string, job: Job): void {
+  if (!keepsOverRestart()) return void inMemory.set(key, job);
+  mkdirSync(jobsDir(), { recursive: true, mode: 0o700 });
+  const tmp = `${jobFile(key)}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(job), { mode: 0o600 });
+  renameSync(tmp, jobFile(key));
+}
+function dropJob(key: string): void {
+  inMemory.delete(key);
+  if (!keepsOverRestart()) return;
+  try {
+    unlinkSync(jobFile(key));
+  } catch {
+    // gone already: another process of this server ended the same turn
+  }
+}
+/** Every token there is, by its key. */
+function allJobs(): Array<[string, Job]> {
+  if (!keepsOverRestart()) return [...inMemory];
+  let names: string[] = [];
+  try {
+    names = readdirSync(jobsDir());
+  } catch {
+    return []; // none was ever made
+  }
+  return names.flatMap((name) => {
+    const job = /^[a-f0-9]{64}\.json$/.test(name) ? readJob(path.join(jobsDir(), name)) : undefined;
+    return job ? [[name.slice(0, 64), job] as [string, Job]] : [];
+  });
+}
+/** The token's job while it lasts. */
+function jobOf(authorization: string | undefined): Job | undefined {
+  const key = jobKey(authorization);
+  const job = !key ? undefined : keepsOverRestart() ? readJob(jobFile(key)) : inMemory.get(key);
+  return job && job.expires > Date.now() ? job : undefined;
+}
 
 export function mintJobToken(username: string, turn: string): string {
   const now = Date.now();
-  for (const [k, v] of jobs()) if (v.expires <= now) jobs().delete(k);
+  for (const [k, v] of allJobs()) if (v.expires <= now) dropJob(k);
   const token = `ctj_${randomBytes(24).toString("hex")}`;
-  jobs().set(jobKey(`Bearer ${token}`)!, { username, turn, expires: now + JOB_TOKEN_MS });
-  saveJobs();
+  setJob(jobKey(`Bearer ${token}`)!, { username, turn, expires: now + JOB_TOKEN_MS });
   return token;
 }
 
 /** The turn ended: its token stops working. By turn, since after a restart nothing here knows the token itself. */
 export function revokeJobTokens(turn: string): void {
-  let had = false;
-  for (const [k, v] of jobs()) if (v.turn === turn) had = jobs().delete(k);
-  if (had) saveJobs();
+  touched.delete(turn);
+  for (const [k, v] of allJobs()) if (v.turn === turn) dropJob(k);
 }
 
-/** A turn waiting for its person (an approval) keeps its token: JOB_TOKEN_MS from now. Asked every few seconds, saved once a minute. */
+/** A turn waiting for its person (an approval) keeps its token: JOB_TOKEN_MS from now. Asked every few seconds, written once a minute. */
+const touched = new Map<string, number>();
 export function touchJobTokens(turn: string): void {
-  const until = Date.now() + JOB_TOKEN_MS;
-  let late = false;
-  for (const v of jobs().values()) if (v.turn === turn && v.expires < until) {
-    late ||= until - v.expires > 60_000;
-    v.expires = until;
-  }
-  if (late) saveJobs();
+  const now = Date.now();
+  if (now - (touched.get(turn) ?? 0) < 60_000) return;
+  touched.set(turn, now);
+  for (const [k, v] of allJobs()) if (v.turn === turn) setJob(k, { ...v, expires: now + JOB_TOKEN_MS });
 }
 
 /** The turn a job token was made for: the assistant's reply id (a scheduled run's reply too). */
-export const jobTurn = (authorization: string | undefined): string | null => jobs().get(jobKey(authorization) ?? "")?.turn ?? null;
+export const jobTurn = (authorization: string | undefined): string | null => jobOf(authorization)?.turn ?? null;
 
 export function jobTokenUser(authorization: string | undefined): SessionUser | null {
-  const key = jobKey(authorization);
-  const job = key ? jobs().get(key) : undefined;
-  if (!key || !job) return null;
-  if (job.expires <= Date.now()) {
-    jobs().delete(key);
-    return null;
-  }
+  const job = jobOf(authorization);
+  if (!job) return null;
   const user = findUser(job.username);
   return user ? sessionOf(user) : null;
 }

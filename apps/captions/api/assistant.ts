@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
@@ -10,7 +10,7 @@ import { env } from "./lib/env";
 import { routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import type { Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
-import { adoptMacClaude, adoptOpen, onAdopt, streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
+import { adoptKept, adoptMacClaude, dropUnowned, keptOpen, onAdopt, SILENT_MS, streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
 import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
@@ -31,7 +31,7 @@ import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile,
  * stores or forwards a token, and no key value the user types ever passes through this file (saved in the dock
  * straight to /api/my-keys/:env; /saved only records the last four digits).
  * A restart of this server (a deploy) doesn't end a reply the Mac is still writing: it goes on in the new process
- * (lib/mac-claude.ts keeps its request, onAdopt below takes it up).
+ * (lib/mac-claude.ts keeps its request; onAdopt below takes it up when the Mac's next post arrives).
  */
 
 export const assistantApp = new Hono<{ Variables: AuthVars }>();
@@ -309,9 +309,25 @@ function filesFor(input: TurnInput): Record<string, string> | undefined {
   return Object.keys(files).length ? files : undefined;
 }
 
+/**
+ * Each chat file's time as this process last read or wrote it. One that differs was written by another process of
+ * this server (a deploy's reload runs the old and the new side by side for some seconds) and is read again, so
+ * neither writes over what the other just saved.
+ */
+const stamps = new Map<string, number>();
+const stampOf = (username: string): number => {
+  try {
+    return statSync(fileOf(username)).mtimeMs;
+  } catch {
+    return 0; // no conversation yet
+  }
+};
+
 function load(username: string): Conv {
   const hit = cache.get(username);
-  if (hit) return hit;
+  const stamp = stampOf(username); // before the read: a write that lands after it is seen at the next load
+  if (hit && stamp === stamps.get(username)) return hit;
+  stamps.set(username, stamp);
   let conv: Conv = { messages: [] };
   try {
     conv = JSON.parse(readFileSync(fileOf(username), "utf-8")) as Conv;
@@ -319,15 +335,21 @@ function load(username: string): Conv {
     /* no conversation yet */
   }
   conv.id ??= randomUUID();
-  // a reply a restart of the server ended (one the Mac is still writing is running again by now: resumeFromDisk):
-  // it can't finish any more and it can't do what it asked. Said in words: the dock shows a failed reply without any as "That didn't work."
+  // a reply a restart of the server ended: it can't finish any more and it can't do what it asked. Said in words: the
+  // dock shows a failed reply without any as "That didn't work." Not one a computer is still writing (kept: it goes on
+  // when that computer's next post arrives) or one running here.
+  let kept: Set<string> | undefined;
   for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id] && !runsOf(username).has(m.id)) {
+    if ((kept ??= keptTurns()).has(m.id)) continue;
     Object.assign(m, { status: "error", text: RESTARTED });
     expireApprovals(m, 0);
   }
   cache.set(username, conv);
   return conv;
 }
+
+/** The replies a computer was writing when the process before this one stopped, and nothing here runs yet (lib/mac-claude.ts keptOpen). */
+const keptTurns = () => new Set(keptOpen().filter((o) => o.keep.kind === "assistant").map((o) => String(o.keep.turn)));
 
 function save(username: string): void {
   const conv = cache.get(username);
@@ -337,6 +359,7 @@ function save(username: string): void {
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(conv), { mode: 0o600 });
   renameSync(tmp, file);
+  stamps.set(username, stampOf(username));
 }
 
 /**
@@ -888,7 +911,8 @@ export const setRunEnded = (fn: RunEnded): void => void (runEnded = fn);
 
 /**
  * After a restart of the server: a reply the Mac is still writing goes on where it was, with its Stop, its place, its
- * approvals and its tools (lib/mac-claude.ts adoptOpen, at boot). A scheduled run's reply too.
+ * approvals and its tools. A scheduled run's reply too. When: the Mac's next post about it arrives, its person
+ * presses Stop, or a minute after boot (lib/mac-claude.ts adoptKept).
  */
 onAdopt("assistant", (open) => {
   // every reply first: reading an account's chats (load) ends the replies in them that aren't running
@@ -1206,10 +1230,27 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
   return name;
 }
 
+/**
+ * A minute after boot, when the process before this one is surely gone and every computer has posted about what it is
+ * writing: a kept reply nobody posted about is taken up anyway (it then ends as "The Mac stopped answering" unless a
+ * post comes), and a chat read while that process still answered is read again, since a reply may have ended there.
+ */
+export function settleAfterRestart(): void {
+  adoptKept(() => true);
+  for (const [username, conv] of [...cache]) {
+    if (!everyChat(conv).flat().some((m) => m.status === "thinking" && !conv.held?.[m.id] && !runsOf(username).has(m.id))) continue;
+    cache.delete(username);
+    load(username);
+    tell(username);
+  }
+}
+
 /** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */
 export function resumeFromDisk(): void {
-  // first: a reply a computer is still writing has to be running again before its chat is read (load would end it)
-  adoptOpen();
+  // answers kept for a caller that is gone are dropped; a reply's own waits for its computer's next post, since the
+  // process before this one may still be answering it (a deploy's reload overlaps the two)
+  dropUnowned();
+  setTimeout(settleAfterRestart, SILENT_MS + 5_000).unref();
   let names: string[] = [];
   try {
     names = readdirSync(dirOf()).filter((f) => f.endsWith(".json"));
@@ -1445,6 +1486,8 @@ assistantApp.post("/stop", async (c) => {
   const u = c.get("user");
   const b = (await c.req.json().catch(() => null)) as { reply?: unknown } | null;
   const conv = load(u.username);
+  // a reply kept over a restart that its computer hasn't posted about yet is taken up now, so it can be stopped
+  adoptKept((o) => o.keep.kind === "assistant" && o.keep.username === u.username);
   const runs = runsOf(u.username);
   // without a reply id: the open chat's own (a reply in any other chat is stopped by its id)
   const want = typeof b?.reply === "string" ? b.reply : (conv.messages.find((m) => runs.has(m.id)) ?? conv.messages.find((m) => m.status === "thinking" && conv.held?.[m.id]))?.id;

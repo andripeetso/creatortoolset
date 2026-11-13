@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 // A restart of the server (a deploy) while the Mac writes a reply: the reply goes on in the new process.
-// "Restart" here = every module loaded again over the same DATA_DIR, as a new process would find it.
+// "Restart" here = every module loaded again over the same DATA_DIR, as a new process would find it. The modules
+// loaded before stay alive, as the old process does for some seconds in a deploy's reload: a test may still post to them.
 const DATA = (process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "assistant-restart-")));
 process.env.APP_SECRET = "assistant-test-secret";
 
@@ -23,7 +24,7 @@ async function boot() {
   const assistant = await import("./assistant");
   assistant.resumeFromDisk(); // what boot.ts does before it listens (not under tests)
   const { runAutomation } = await import("./automations");
-  return { app, routeOf: assistant.routeOf, runAutomation, ...(await import("./users")), ...(await import("./lib/devices")), ...(await import("./lib/providers")), ...(await import("./lib/mac-claude")), ...(await import("../contracts/providers")) };
+  return { app, routeOf: assistant.routeOf, settleAfterRestart: assistant.settleAfterRestart, runAutomation, ...(await import("./users")), ...(await import("./lib/devices")), ...(await import("./lib/providers")), ...(await import("./lib/mac-claude")), ...(await import("../contracts/providers")) };
 }
 type Server = Awaited<ReturnType<typeof boot>>;
 
@@ -61,7 +62,7 @@ describe("a restart of the server while the Mac writes a reply", () => {
     expect((await ana(before).relay(job.id, "text", { text: "Looking" })).status).toBe(200);
     expect((await ana(before).tools(job.mcp.token)).status).toBe(200);
     // what is kept for the restart names the request and its reply: never the prompt or the token
-    const kept = readdirSync(path.join(DATA, "mac-claude-open")).map((f) => readFileSync(path.join(DATA, "mac-claude-open", f), "utf-8")).join("") + readFileSync(path.join(DATA, "job-tokens.json"), "utf-8");
+    const kept = ["mac-claude-open", "job-tokens"].flatMap((d) => readdirSync(path.join(DATA, d)).map((f) => f + readFileSync(path.join(DATA, d, f), "utf-8"))).join("");
     expect(kept).toContain(job.id);
     expect(kept).not.toContain(job.mcp.token);
     expect(kept).not.toContain("What failed?");
@@ -136,6 +137,63 @@ describe("a restart of the server while the Mac writes a reply", () => {
     expect((await eve(after).relay(job.id, "done", { text: "Three hooks." })).status).toBe(200);
     await tick(50);
     expect((await eve(after).tasks()).find((t) => t.id === made.id)?.lastResult).toMatchObject({ status: "done", text: "Three hooks." });
+  });
+
+  it("Stop before the Mac's next post: the reply is taken up to be stopped", async () => {
+    const before = await boot();
+    const fay = await person(before, "fay");
+    await fay(before).send("A long one");
+    const job = await fay(before).claim();
+    await tick(1100);
+
+    const after = await boot();
+    expect((await fay(after).stop()).status).toBe(200);
+    await tick();
+    expect(await fay(after).reply()).toMatchObject({ status: "done", text: "*Stopped.*" });
+    expect((await fay(after).relay(job.id, "text", { text: "late" })).status).toBe(404);
+  });
+
+  it("a deploy's reload, the old process still alive beside the new: it ends the reply itself, or hands it over, and the new one never fails it", async () => {
+    const before = await boot();
+    const gus = await person(before, "gus");
+    const [a, b] = [await gus(before).make(), await gus(before).make()];
+    await gus(before).sendTo(a, "Ends in the old one");
+    await gus(before).sendTo(b, "Handed over");
+    const jobs = [await gus(before).claim(), await gus(before).claim()];
+    const [old, handed] = [jobs.find((j) => j.user.includes("Ends in the old one"))!, jobs.find((j) => j.user.includes("Handed over"))!];
+    await tick(1100);
+
+    const after = await boot(); // the new process is up; the old one has not been told to go yet
+    expect(await gus(after).replyIn(a)).toMatchObject({ status: "thinking" }); // the new one has read the chats
+    expect((await gus(before).relay(old.id, "done", { text: "Done in the old one." })).status).toBe(200);
+    await tick();
+    // told to go: its polls end so the Mac asks the new process, and posts about a running answer are sent again there
+    const poll = gus(before).claim().catch(() => null);
+    await tick();
+    before.leave();
+    await poll;
+    expect((await gus(before).relay(handed.id, "done", { text: "lost?" })).status).toBe(503);
+    expect((await gus(after).relay(handed.id, "done", { text: "Done in the new one." })).status).toBe(200);
+    await tick();
+    expect(await gus(after).replyIn(b)).toMatchObject({ status: "done", text: "Done in the new one." });
+    // the reply that ended in the old process: the new one had read the chat before that, and saw the file had changed
+    expect(await gus(after).replyIn(a)).toMatchObject({ status: "done", text: "Done in the old one." });
+  });
+
+  it("a Mac that never posts again: a minute after boot the reply is taken up anyway, and a late answer still lands", async () => {
+    const before = await boot();
+    const hal = await person(before, "hal");
+    await hal(before).send("Slow thinker");
+    const job = await hal(before).claim();
+    await tick(1100);
+
+    const after = await boot();
+    after.settleAfterRestart();
+    expect(readdirSync(path.join(DATA, "mac-claude-open"))).toHaveLength(1); // running here now: still kept, for the next restart
+    expect(await (await after.app.request("/api/health")).json()).toMatchObject({ answering: 0 });
+    expect((await hal(after).relay(job.id, "done", { text: "Finally." })).status).toBe(200);
+    await tick();
+    expect(await hal(after).reply()).toMatchObject({ status: "done", text: "Finally." });
   });
 
   it("a reply no Mac had started on says the server restarted, in words", async () => {

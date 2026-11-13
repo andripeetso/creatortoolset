@@ -24,9 +24,10 @@ import { noteCallOutcome } from "./providers";
  *
  * A restart of this server (a deploy) must not lose an answer the Mac is still writing. A caller that can take its
  * answer up again says so (MacOpts.keep): its request is then also kept on disk from the moment a Mac claims it
- * (DATA_DIR/mac-claude-open, never the prompt, a file or a token), and at boot, before the server listens, it goes
- * back to that caller (onAdopt, adoptOpen). The Mac notices nothing: its next post finds the request again. A request
- * nobody keeps is gone with the process, as before: the Mac's next post gets 404 and it stops.
+ * (DATA_DIR/mac-claude-open, never the prompt, a file or a token). The next process gives it back to that caller
+ * (onAdopt) when the Mac's next post about it arrives (adoptKept), not at boot: a deploy's reload runs the old and
+ * the new process side by side for some seconds, and the old one may still be answering it. The Mac notices nothing.
+ * A request nobody keeps is gone with the process, as before: the Mac's next post gets 404 and it stops.
  */
 
 export interface MacUsage {
@@ -195,7 +196,7 @@ interface Req {
 
 const reqs = new Map<string, Req>();
 /** the polls waiting for a request, each for its device; `step` asks again whether the hint is due (a poll that listed editor kinds) */
-let waiters: Array<{ device: string; fn: (r: Req | "hint") => void; step?: () => Promise<boolean> }> = [];
+let waiters: Array<{ device: string; fn: (r: Req | "hint" | null) => void; step?: () => Promise<boolean> }> = [];
 
 /** A step a device may claim was queued (a cut-out, lib/cutouts.ts): each held poll that listed editor kinds is asked again and answered with the hint when it is due. */
 export async function wakeEditorPolls(): Promise<void> {
@@ -218,7 +219,7 @@ export const BACKGROUND_SLOTS = 2;
 /** the Mac runs this many Claude calls at once (the Mac relay SLOTS) */
 const MAC_SLOTS = 4;
 /** the Mac posts at least every 20 s while Claude thinks */
-const SILENT_MS = 60_000;
+export const SILENT_MS = 60_000;
 const TOTAL_MS = 20 * 60_000;
 
 const macFull = (device: string) => [...reqs.values()].filter((r) => r.claimed && r.device === device).length >= MAC_SLOTS;
@@ -281,28 +282,38 @@ export interface Open {
 }
 const adopters = new Map<string, (open: Open[]) => void>();
 /**
- * A caller that can take its answers up again says so once, when it loads. `take` gets all of its kind at once (it may
- * have to know them all before it reads its own data) and calls adoptMacClaude for each, or leaves one (it is then dropped).
+ * A caller that can take its answers up again says so once, when it loads. `take` gets several at once (it may have to
+ * know them all before it reads its own data) and calls adoptMacClaude for each, or leaves one (it is then dropped).
  */
 export const onAdopt = (kind: string, take: (open: Open[]) => void): void => void adopters.set(kind, take);
 
 /**
- * At boot, before the server listens: every answer a restart left running goes back to its caller. One nobody takes
- * is dropped, so the Mac's next post gets 404 and it stops. Never on a dev server (keepsOverRestart).
+ * The answers kept on disk that this process isn't running: left by the process before it. That one may still be
+ * alive and answering them (a deploy's reload runs the old and the new side by side for some seconds), so nothing is
+ * taken up just because it is here. Never on a dev server (keepsOverRestart).
  */
-export function adoptOpen(): void {
-  if (!keepsOverRestart()) return;
+export function keptOpen(): Open[] {
+  if (!keepsOverRestart()) return [];
   let names: string[] = [];
   try {
     names = readdirSync(openDir());
   } catch {
-    return; // nothing was ever kept
+    return []; // nothing was ever kept
   }
-  const found = names.flatMap((name) => {
+  return names.flatMap((name) => {
     const id = name.replace(/\.json$/, "");
     const saved = name.endsWith(".json") && !reqs.has(id) ? readOpen(id) : null;
     return saved ? [{ id, keep: saved.keep }] : [];
   });
+}
+
+/**
+ * The kept answers `pick` chooses go back to their callers, and one nobody takes is dropped (its Mac's next post gets
+ * 404 and it stops). When: a Mac posts about one (relayRoutes), its person stops it, or it has been silent for a
+ * minute after the restart (the callers ask).
+ */
+export function adoptKept(pick: (open: Open) => boolean): void {
+  const found = keptOpen().filter(pick);
   for (const [kind, take] of adopters) {
     const mine = found.filter((o) => o.keep.kind === kind);
     try {
@@ -311,7 +322,21 @@ export function adoptOpen(): void {
       console.warn(`[mac-claude] ${kind}: answers not taken up after the restart: ${e instanceof Error ? e.message : e}`);
     }
   }
-  for (const name of names) if (!reqs.has(name.replace(/\.json$/, ""))) dropOpen(name);
+  for (const o of found) if (!reqs.has(o.id)) dropOpen(`${o.id}.json`);
+}
+
+/** At boot: answers kept for a caller that no longer takes them are dropped. */
+export const dropUnowned = (): void => adoptKept((o) => !adopters.has(o.keep.kind));
+
+let leaving = false;
+/**
+ * This process is on its way out: a deploy's reload has the next one listening already. The polls it holds end now,
+ * so each computer asks again at once and reaches the next process (a poll cut off by the kill makes the relay wait
+ * 30 s), and a post about a running answer is turned away with 503: the relay sends it again, to the next process.
+ */
+export function leave(): void {
+  leaving = true;
+  for (const w of waiters.splice(0)) w.fn(null);
 }
 
 /**
@@ -443,11 +468,14 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     if (!device) return c.json({ error: "Unauthorized" }, 401);
     c.set("device", device);
     touchDevice(device);
+    // on its way out (leave): a post about a running answer goes to the next process (the relay sends it again on 503)
+    if (leaving && /\/(text|step|ask|done|fail)$/.test(c.req.path)) return c.json({ error: "Restarting" }, 503);
     await next();
   });
 
   /** A waiting request for this device, or 204 after 25 s. A relay that sends {blobs: true} keeps big files itself (packFor). */
   app.post("/wait", async (c) => {
+    if (leaving) return c.body(null, 204); // ask again: the next process answers
     const device = c.get("device");
     const b = await body(c);
     const keeps = b.blobs === true;
@@ -461,7 +489,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
       const w = {
         device,
         ...("editor" in b && editorWaits ? { step: () => editorWaits(device, b.editor) } : {}),
-        fn: (r: Req | "hint") => {
+        fn: (r: Req | "hint" | null) => {
           clearTimeout(timer);
           resolve(r);
         },
@@ -483,7 +511,10 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
 
   /** The request this device runs (another device's is not its own: 404). */
   const mine = (c: Context): Req | undefined => {
-    const r = reqs.get(c.req.param("id") ?? "");
+    const id = c.req.param("id") ?? "";
+    // kept by the process before this one: its Mac is posting here now, so it goes back to its caller
+    if (!reqs.has(id)) adoptKept((o) => o.id === id);
+    const r = reqs.get(id);
     return r && r.device === c.get("device") ? r : undefined;
   };
 
