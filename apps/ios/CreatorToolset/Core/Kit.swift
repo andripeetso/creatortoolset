@@ -290,6 +290,8 @@ struct ChatComposer<Leading: View>: View {
     var autofocus = false
     /// What goes with the message (pictures, files), drawn inside the box above the text.
     var attachments: AnyView?
+    /// Talk instead of type: the mic's state and its button. Nil: no mic.
+    var mic: ComposerMic?
     let onSend: () -> Void
     var onStop: (() -> Void)?
     @ViewBuilder var leading: () -> Leading
@@ -300,6 +302,7 @@ struct ChatComposer<Leading: View>: View {
 
     private var empty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasAttachment }
     private var stops: Bool { working && empty && onStop != nil }
+    private var buttons: ComposerButtons { .init(empty: empty, working: working, stops: stops, mic: mic?.phase) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -319,25 +322,116 @@ struct ChatComposer<Leading: View>: View {
     private var row: some View {
         HStack(alignment: .bottom, spacing: 6) {
             leading()
-            TextField(placeholder, text: $text, axis: .vertical)
-                .lineLimit(1...6)
-                .focused($focused)
-                .padding(.vertical, 11)
-                .id(field)
-            Button {
-                if stops { onStop?() } else { send() }
-            } label: {
-                Image(systemName: stops ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 32, height: 32)
-                    .background(stops ? Color.red : empty ? Color(.systemGray3) : Color("AccentColor"), in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            switch mic?.phase {
+            case .recording(let since)?:
+                TimelineView(.periodic(from: since, by: 1)) { now in
+                    HStack(spacing: 7) {
+                        Circle().fill(.red).frame(width: 8, height: 8)
+                        Text(VoiceInput.clock(Int(now.date.timeIntervalSince(since)))).monospacedDigit()
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .accessibilityLabel("Recording")
+            case .writing?:
+                Text("Writing it down…")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            default:
+                TextField(placeholder, text: $text, axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused($focused)
+                    .padding(.vertical, 11)
+                    .id(field)
             }
-            .buttonStyle(.plain)
-            .disabled(sending || (empty && !stops))
-            .accessibilityLabel(stops ? "Stop" : "Send")
+            if buttons.micBeside, let mic {
+                Button(action: mic.toggle) {
+                    Image(systemName: "mic")
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Speak your message")
+            }
+            round
+        }
+    }
+
+    private var round: some View {
+        let kind = buttons.round
+        return Button {
+            switch kind {
+            case .send: send()
+            case .stopReply: onStop?()
+            case .mic, .stopRecording: mic?.toggle()
+            case .writing: break
+            }
+        } label: {
+            Group {
+                if kind == .writing {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: kind.symbol).font(.system(size: 15, weight: .bold))
+                }
+            }
+            .foregroundStyle(.white)
+            .frame(width: 32, height: 32)
+            .background(kind.red ? Color.red : kind == .writing || (kind == .send && empty) ? Color(.systemGray3) : Color("AccentColor"), in: Circle())
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(kind == .writing || (kind == .send && (sending || empty)) || (kind == .stopReply && sending))
+        .accessibilityLabel(kind.label)
+    }
+}
+
+/// The message box's mic, as its screen keeps it (`VoiceInput`).
+struct ComposerMic {
+    var phase: VoiceInput.Phase
+    let toggle: () -> Void
+}
+
+/// What the message box's buttons are. The round one sends; while a reply is being written and the box is empty it
+/// stops the reply. With a mic: with nothing in the box and no reply being written the round button is the mic,
+/// otherwise the mic stands beside it; while recording the round button is the recording's own red stop (the reply's
+/// Stop stays on its working line), and while the words are being written down it waits.
+struct ComposerButtons: Equatable {
+    enum Round: Equatable {
+        case send, stopReply, mic, stopRecording, writing
+
+        var symbol: String {
+            switch self {
+            case .send: "arrow.up"
+            case .stopReply, .stopRecording: "stop.fill"
+            case .mic, .writing: "mic.fill"
+            }
+        }
+
+        var red: Bool { self == .stopReply || self == .stopRecording }
+
+        var label: String {
+            switch self {
+            case .send: "Send"
+            case .stopReply: "Stop"
+            case .mic: "Speak your message"
+            case .stopRecording: "Stop recording"
+            case .writing: "Writing it down"
+            }
+        }
+    }
+
+    var round: Round
+    var micBeside: Bool
+
+    init(empty: Bool, working: Bool, stops: Bool, mic: VoiceInput.Phase?) {
+        let plain: Round = stops ? .stopReply : .send
+        switch mic {
+        case nil: (round, micBeside) = (plain, false)
+        case .recording?: (round, micBeside) = (.stopRecording, false)
+        case .writing?: (round, micBeside) = (.writing, false)
+        case .idle?: (round, micBeside) = empty && !working ? (.mic, false) : (plain, true)
         }
     }
 }

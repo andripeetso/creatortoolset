@@ -17,6 +17,8 @@ struct AssistantChatView: View {
     @State private var atBottom = debugArg("AssistantScroll") != "top"
     /// The feed's last measure: tells his own scrolling from the feed growing under him.
     @State private var measured = Measured()
+    /// Talk instead of type: recorded here, written down by the server, put in the box.
+    @StateObject private var voice = VoiceInput()
 
     static let starters = ["Where did I leave off?", "What can I finish right away?", "Find my next content idea"]
     private static let end = "end"
@@ -51,6 +53,7 @@ struct AssistantChatView: View {
                 Task { await draft.add(items) }
             }
             .onChange(of: model.view?.navigate, initial: true) { _, path in follow(path) }
+            .onDisappear { voice.cancel() }
             .onAppear {
                 AppNavigator.shared.composing = false
                 #if DEBUG
@@ -196,6 +199,7 @@ struct AssistantChatView: View {
             }
             if model.offline { QuietNotice(text: "No connection").padding(.horizontal, 22) }
             if let notice = draft.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
+            if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
             if let thinking {
                 // a reply held until its videos are in, or behind another: no clock until it is being written
                 WorkingCapsule(label: thinking.wait == nil ? "Working" : "Waiting",
@@ -206,6 +210,9 @@ struct AssistantChatView: View {
             ChatComposer(text: $draft.text, working: thinking != nil, sending: draft.reading, hasAttachment: draft.hasAttachment,
                          autofocus: autofocus,
                          attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft)) : nil,
+                         mic: ComposerMic(phase: voice.phase) { [draft] in
+                             voice.toggle { draft.text = VoiceInput.appended($0, to: draft.text) }
+                         },
                          onSend: sendDraft, onStop: { Task { await model.stop() } }) {
                 Menu {
                     Button { picking = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
