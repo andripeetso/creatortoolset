@@ -244,7 +244,7 @@ describe("Download and Remove", () => {
     await report(studio.token, { os: "mac", cpus: 10, memGb: 16, freeGb: 8 });
     setDeviceKinds(studio.device.id, [TRANSCRIBE_KIND]);
     // a Mac runs Core ML models, a Linux helper the others
-    expect((await want(studio.device.id, "parakeet-tdt-0.6b-v3", true)).status).toBe(400);
+    expect((await want(studio.device.id, "whisper-large-v3", true)).status).toBe(400);
     expect((await want(pc.device.id, "whisper-small", true)).status).toBe(400);
     // Download pressed before its first claim, with turbo already on it from before: both stay
     expect((await want(studio.device.id, "whisper-small", true)).status).toBe(200);
