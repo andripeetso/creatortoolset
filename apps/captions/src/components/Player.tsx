@@ -551,8 +551,9 @@ export function Player() {
     return () => window.clearTimeout(t);
   }, [transcribeNote]);
   const [cadenceComplete, setCadenceComplete] = useState(false);
-  const cloudTranscribing =
-    status.phase === "transcribing" && model === CLOUD_MODEL_ID;
+  // a note while it transcribes: the server could not, and the browser's model runs instead (store.ts fromServer)
+  const serverRun = model === CLOUD_MODEL_ID && !transcribeNote;
+  const cloudTranscribing = status.phase === "transcribing" && serverRun;
   const [transcriptionComplete, setTranscriptionComplete] = useState(false);
   const wasCloudTranscribing = useRef(cloudTranscribing);
 
@@ -895,7 +896,7 @@ export function Player() {
             )}
             {status.phase === "transcribing" &&
               !refining &&
-              (model === CLOUD_MODEL_ID ? (
+              (serverRun ? (
                 <CloudTranscriptionStatus
                   duration={duration}
                   complete={false}
@@ -1045,7 +1046,8 @@ export function ExtractionProcessingStatus({
 }
 
 export function ModelLoadingStatus({ progress }: { progress: number }) {
-  const model = useStudio((s) => s.model);
+  // the server's engine loads no model here: when it falls back to the browser's, that is the first one
+  const model = useStudio((s) => (s.model === CLOUD_MODEL_ID ? MODELS[0].id : s.model));
   const mb = MODELS.find((m) => m.id === model)?.mb;
   // already in this browser's model cache: nothing downloads, so the size is not said again
   const [kept, setKept] = useState(false);

@@ -14,7 +14,7 @@ const app = (await import("./boot")).default;
 const { LOCAL_USER } = await import("./users");
 const { pairDevice, touchDevice } = await import("./lib/devices");
 const { writeVoicePrefs } = await import("./lib/speech");
-const { CAPTION_LIMITS, transcribeOnComputer } = await import("./lib/computer-transcribe");
+const { CAPTION_LIMITS, ComputerBusy, transcribeOnComputer } = await import("./lib/computer-transcribe");
 const { STYLE_PRESETS } = await import("../src/lib/types");
 
 const me = LOCAL_USER.username;
@@ -136,19 +136,28 @@ describe("captions on the person's own computers", () => {
     }
   });
 
-  it("a computer that is on but busy never holds a caption longer than a minute", async () => {
+  it("a computer that is on but busy never holds a caption longer than a minute, and captions go before library transcripts", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     try {
       await claim();
       const audio = path.join(dir, "c.wav");
       writeFileSync(audio, wav);
+      const library = transcribeOnComputer(me, "whisper-large-v3-turbo", [], audio);
       const p = transcribeOnComputer(me, "whisper-large-v3-turbo", [], audio, CAPTION_LIMITS);
-      const failed = expect(p).rejects.toThrow("took it in time");
+      // the caption, asked second, is the one a computer is handed first
+      const first = (await claim()).job!;
+      await app.request(`/api/devices/relay/transcribe/${first.id}`, json({ words: [{ text: "caption", start: 0, end: 1 }], language: "en" }, pc.token));
+      await expect(p).resolves.toMatchObject({ words: [{ text: "caption" }] });
+      void library.catch(() => {});
+      // the library's transcript is with the computer now; the next caption waits, and goes another way in under a minute
+      expect((await claim()).job).not.toBeNull();
+      const q = transcribeOnComputer(me, "whisper-large-v3-turbo", [], audio, CAPTION_LIMITS);
+      const busy = expect(q).rejects.toBeInstanceOf(ComputerBusy);
       for (let t = 0; t <= CAPTION_LIMITS.claimMs; t += 15_000) {
         await vi.advanceTimersByTimeAsync(15_000);
-        touchDevice(pc.device.id); // on, and claiming nothing (busy with something else)
+        touchDevice(pc.device.id); // on, and claiming nothing (busy with the library's)
       }
-      await failed;
+      await busy;
     } finally {
       vi.useRealTimers();
     }

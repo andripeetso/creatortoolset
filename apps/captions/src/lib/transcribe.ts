@@ -45,7 +45,13 @@ export const onComputers = (): boolean => !!cloudCache?.computers;
  * The server could not write it on the person's computers and has nothing else for them (no key), or their computers'
  * run did not come back: the page writes it with its own model. The message is the quiet note it shows.
  */
-export class UseBrowser extends Error {}
+export class UseBrowser extends Error {
+  readonly why: string;
+  constructor(why: string) {
+    super(`${why}: written in this browser`);
+    this.why = why;
+  }
+}
 
 /** Encode 16 kHz mono float PCM as a 16-bit WAV blob. */
 export function pcmToWav(pcm: Float32Array, sampleRate = 16000): Blob {
@@ -79,7 +85,7 @@ export function pcmToWav(pcm: Float32Array, sampleRate = 16000): Blob {
  * for, so the server can refuse a run for one it is captioning by itself.
  */
 export async function transcribeCloud(pcm: Float32Array, name = "", project = ""): Promise<{ words: Word[]; note?: string }> {
-  const browser = (why = "Your computers did not answer") => new UseBrowser(`${why}: written in this browser`);
+  const browser = (why = "Your computers did not answer") => new UseBrowser(why);
   const res = await fetch(`/api/transcribe${project ? `?project=${encodeURIComponent(project)}` : ""}`, {
     method: "POST",
     headers: { "Content-Type": "audio/wav", "X-File-Name": encodeURIComponent(name) },

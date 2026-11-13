@@ -19,6 +19,9 @@ const nameOf = (id: string) => STT_MODELS.find((m) => m.id === id)?.name ?? id;
 /** The transcript can't run now: no computer that has its model is on. The library waits and tries again. */
 export class ComputerOff extends Error {}
 
+/** No computer took it within `claimMs` (CAPTION_LIMITS): the ones that are on are busy. */
+export class ComputerBusy extends Error {}
+
 /** The account's computers that run speech models (they declared the kind). */
 export const speechComputers = (owner: string): Device[] => listDevices((d) => d.owner === owner && !!d.kinds?.includes(TRANSCRIBE_KIND));
 const holds = (d: Device, model: string) => !!d.stt?.held.includes(model);
@@ -86,6 +89,8 @@ interface Job {
   since: number;
   /** how long its computer may take, from the audio's length */
   takeMs: number;
+  /** a person waits for it (claimMs given): handed out before the others */
+  soon: boolean;
   end: (r: TranscribeResult | Error) => void;
 }
 const jobs = new Map<number, Job>();
@@ -106,10 +111,13 @@ export function needComputerOn(owner: string, model: string): void {
 }
 
 /**
- * A person waits on the page for captions: no computer took them in a minute (one busy with a long transcript), or one
- * took them and has not answered in three minutes (or three times the audio's length), and they are made another way.
+ * A person waits on the page for captions: they go before waiting library transcripts, and when no computer took them
+ * in 30 s (checked every 15 s, so under a minute: a proxy cuts a request at 60 s) or one took them and has not answered
+ * in three minutes (or three times the audio's length), they are made another way.
+ * ponytail: a computer's run longer than the proxy allows ends in the page's own model; answer by a second request
+ * (a job id the page asks again) when captions of long recordings run on computers.
  */
-export const CAPTION_LIMITS = { claimMs: 60_000, takeMs: 3 * 60_000 } as const;
+export const CAPTION_LIMITS = { claimMs: 30_000, takeMs: 3 * 60_000 } as const;
 
 /**
  * The words in `audio` (a WAV, 16 kHz mono 16-bit) heard by `model` on one of `owner`'s computers. Rejects with
@@ -134,7 +142,7 @@ export function transcribeOnComputer(
         void wakeEditorPolls();
       }
       if (j.device && now - j.since > j.takeMs) return end(new Error(`Your computer did not transcribe it in ${Math.round(j.takeMs / 60_000)} minutes.`));
-      if (!j.device && limits.claimMs && now - j.since > limits.claimMs) return end(new Error(`No computer with ${nameOf(model)} took it in time.`));
+      if (!j.device && limits.claimMs && now - j.since > limits.claimMs) return end(new ComputerBusy(`No computer with ${nameOf(model)} took it in time.`));
       const working = [...jobs.values()].some((x) => x.owner === owner && x.device);
       if (!j.device && (!onlineHolders(owner, model).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
     }, COMPUTER_LIMITS.checkMs);
@@ -145,7 +153,7 @@ export function transcribeOnComputer(
       if (r instanceof Error) reject(r);
       else resolve(r);
     };
-    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, end };
+    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, soon: !!limits.claimMs, end };
     jobs.set(id, j);
     void wakeEditorPolls();
   });
@@ -158,7 +166,7 @@ export function transcribeOnComputer(
  * slower computer would finish sooner than the queue.
  */
 function nextFor(d: Device, balance: Balance): Job | undefined {
-  for (const j of jobs.values()) {
+  for (const j of [...jobs.values()].sort((a, b) => Number(b.soon) - Number(a.soon))) {
     if (j.owner !== d.owner || j.device || !holds(d, j.model)) continue;
     if (!balance.on) return j;
     const best = strongest(onlineHolders(d.owner, j.model).concat(isOnline(d.id) ? [] : [d]), balance.weights)[0];

@@ -48,6 +48,7 @@ import {
   FIRST_JOB_MODEL,
   MODELS,
 } from "./transcribe";
+import { isMobileDevice } from "./mobile";
 import {
   BUSY_PHASES,
   DEFAULT_STYLE,
@@ -1159,7 +1160,8 @@ async function inBrowser(pcm: Float32Array, model: string, setStatus: (s: Transc
 
 /**
  * The server's engine (the person's key, or their own computers: Settings → AI → Voice). When their computers can't
- * and the server has nothing else for them, the page's own model writes it, and `note` says so quietly.
+ * and the server has nothing else for them, the page's own model writes it, and the note says so quietly from the
+ * start of that run (the progress card then shows the browser's run). A phone never downloads a model: it says why.
  */
 async function fromServer(pcm: Float32Array, name: string, project: string, setStatus: (s: TranscribeStatus) => void): Promise<{ words: Word[]; note?: string }> {
   setStatus({ phase: "transcribing", progress: 0 });
@@ -1167,6 +1169,8 @@ async function fromServer(pcm: Float32Array, name: string, project: string, setS
     return await transcribeCloud(pcm, name, project);
   } catch (e) {
     if (!(e instanceof UseBrowser)) throw e;
+    if (isMobileDevice()) throw new Error(e.why);
+    useStudio.setState({ transcribeNote: { text: e.message } });
     return { words: await inBrowser(pcm, MODELS[0].id, setStatus), note: e.message };
   }
 }
@@ -2106,10 +2110,14 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       const slice = pcm.slice(a, b);
 
       const model = get().model;
-      const words =
-        model === CLOUD_MODEL_ID
-          ? (await fromServer(slice, clip.name, "", setStatus)).words
-          : await inBrowser(slice, model, setStatus);
+      let words: Word[];
+      if (model === CLOUD_MODEL_ID) {
+        const heard = await fromServer(slice, clip.name, "", setStatus);
+        words = heard.words;
+        if (heard.note) set({ transcribeNote: { text: heard.note } });
+      } else {
+        words = await inBrowser(slice, model, setStatus);
+      }
       // clip switched mid-flight — drop the answer
       if (get().activeClipId !== id) return;
       const nextId = wordIdGen(get().cues);

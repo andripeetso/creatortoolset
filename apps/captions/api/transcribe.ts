@@ -10,7 +10,7 @@ import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
 import { readVoicePrefs, speechFor } from "./lib/speech";
 import { NeedsKey, transcribeFile } from "./library/transcribe";
-import { CAPTION_LIMITS, ComputerOff, transcribeOnComputer } from "./lib/computer-transcribe";
+import { CAPTION_LIMITS, ComputerBusy, ComputerOff, transcribeOnComputer } from "./lib/computer-transcribe";
 import { STT_MODELS } from "../contracts/voice";
 import type { TranscribeResult } from "../contracts/devices";
 import { captioning } from "./projects";
@@ -58,7 +58,7 @@ async function wordsFromComputer(owner: string, pc: { model: string; languages: 
     return await transcribeOnComputer(owner, pc.model, pc.languages, file, CAPTION_LIMITS);
   } catch (e) {
     console.warn(`[transcribe] captions for ${owner} not from their computers: ${e instanceof Error ? e.message : e}`);
-    return { why: e instanceof ComputerOff ? "Your computers are off" : "Your computers could not do it" };
+    return { why: e instanceof ComputerOff ? "Your computers are off" : e instanceof ComputerBusy ? "Your computers are busy" : "Your computers could not do it" };
   } finally {
     await rm(file, { force: true });
   }

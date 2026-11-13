@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./audio", () => ({ extractAudio: vi.fn() }));
+vi.mock("./mobile", async (original) => ({ ...(await original<typeof import("./mobile")>()), isMobileDevice: vi.fn(() => false) }));
 // the page's own model, as it answers in a browser
 vi.mock("./transcribe", async (original) => ({
   ...(await original<typeof import("./transcribe")>()),
   transcribeAudio: vi.fn(() => ({ promise: Promise.resolve([{ id: 0, text: "browser", start: 0, end: 0.5, timing: "approximate" }]), cancel: () => {} })),
 }));
 
+import { isMobileDevice } from "./mobile";
 import { enqueueTranscription, loadClipSlots, useStudio } from "./store";
 import { CLOUD_MODEL_ID, cloudStatus, transcribeAudio } from "./transcribe";
 import { DEFAULT_STYLE } from "./types";
@@ -77,5 +79,15 @@ describe("captions on the person's computers, from the page", () => {
     enqueueTranscription([ID]);
     await landed();
     expect(useStudio.getState().transcribeNote).toEqual({ text: "Your computers did not answer: written in this browser" });
+  });
+
+  it("a phone never downloads a model: it says why", async () => {
+    vi.mocked(isMobileDevice).mockReturnValue(true);
+    server(() => Response.json({ error: "Your computers are off", code: "USE_BROWSER", why: "Your computers are off" }, { status: 503 }));
+    seed();
+    enqueueTranscription([ID]);
+    await vi.waitFor(() => expect(useStudio.getState().status).toEqual({ phase: "error", message: "Your computers are off" }), { timeout: 2000 });
+    expect(transcribeAudio).not.toHaveBeenCalled();
+    vi.mocked(isMobileDevice).mockReturnValue(false);
   });
 });
