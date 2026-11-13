@@ -207,7 +207,7 @@ export function markBoxes(
 ): { x: number; y: number; w: number; h: number; color: string }[] {
   const out: { x: number; y: number; w: number; h: number; color: string }[] = [];
   const pad = size * 0.14;
-  const over = size * 0.06;
+  const over = size * 0.1;
   const box = (k: number, from: number, to: number, color: string) => {
     const line = lines[k]!;
     if (to <= from || !line.slice(from, to).trim()) return;
@@ -235,7 +235,9 @@ export function markBoxes(
       continue;
     }
     for (let at = all.indexOf(words); at >= 0; at = all.indexOf(words, at + words.length)) {
-      const end = at + words.length;
+      // the stroke takes in what closes its last word (a full stop, a comma, a closing quote): cut off before it, it looks torn
+      let end = at + words.length;
+      while (end < all.length && /[.,!?:;…”")\]]/.test(all[end]!)) end++;
       lines.forEach((line, k) => box(k, Math.max(0, at - starts[k]!), Math.min(line.length, end - starts[k]!), m.color));
     }
   }

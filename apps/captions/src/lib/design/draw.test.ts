@@ -167,16 +167,22 @@ describe("a text's highlighter strokes", () => {
 
   it("a phrase gets a stroke behind its own words, a little wider than them, from just over the letters to just under", () => {
     // "the floor." is the third line whole: 10 letters = 100 wide, 2.8 past each end. Its letters stand on 5 + 2 lines
-    // + (30 - 20) / 2 + 16 = 86, reach 14.4 over that and 4 under, and the stroke 1.2 past both
-    expect(boxes([{ words: "the floor.", color: "#f2b63c" }], lines)).toEqual([[-2.8, 70.4, 105.6, 20.8, "#f2b63c"]]);
+    // + (30 - 20) / 2 + 16 = 86, reach 14.4 over that and 4 under, and the stroke 2 past both
+    expect(boxes([{ words: "the floor.", color: "#f2b63c" }], lines)).toEqual([[-2.8, 69.6, 105.6, 22.4, "#f2b63c"]]);
     // in the middle of a line: after "a walker. " (10 letters)
-    expect(boxes([{ words: "They need", color: "#f2b63c" }], lines)).toEqual([[97.2, 40.4, 95.6, 20.8, "#f2b63c"]]);
+    expect(boxes([{ words: "They need", color: "#f2b63c" }], lines)).toEqual([[97.2, 39.6, 95.6, 22.4, "#f2b63c"]]);
+  });
+  it("the stroke takes in the full stop or comma that closes its last word, and no letter after it", () => {
+    expect(boxes([{ words: "the floor", color: "#f2b63c" }], lines)).toEqual([[-2.8, 69.6, 105.6, 22.4, "#f2b63c"]]);
+    // "walker" is letters 2 to 7 of its line, its full stop the 8th: 7 letters wide
+    expect(boxes([{ words: "walker", color: "#f2b63c" }], lines).map((b) => [b[0], b[2]])).toEqual([[17.2, 75.6]]);
+    expect(boxes([{ words: "a walk", color: "#f2b63c" }], lines).map((b) => [b[0], b[2]])).toEqual([[-2.8, 65.6]]);
   });
   it("a phrase that wraps gets a stroke on each line it is on; capitals do not matter", () => {
-    expect(boxes([{ words: "THEY NEED the floor", color: "#ffcc00" }], lines)).toEqual([[97.2, 40.4, 95.6, 20.8, "#ffcc00"], [-2.8, 70.4, 95.6, 20.8, "#ffcc00"]]);
+    expect(boxes([{ words: "THEY NEED the floor", color: "#ffcc00" }], lines)).toEqual([[97.2, 39.6, 95.6, 22.4, "#ffcc00"], [-2.8, 69.6, 105.6, 22.4, "#ffcc00"]]);
   });
   it("every place a phrase is in gets its own stroke; a phrase that is not there gets none", () => {
-    expect(boxes([{ words: "need", color: "#f2b63c" }], lines).map((b) => [b[0], b[1]])).toEqual([[177.2, 10.4], [147.2, 40.4]]);
+    expect(boxes([{ words: "need", color: "#f2b63c" }], lines).map((b) => [b[0], b[1]])).toEqual([[177.2, 9.6], [147.2, 39.6]]);
     expect(boxes([{ words: "crawling", color: "#f2b63c" }], lines)).toEqual([]);
   });
   it("letters spaced apart: the stroke starts where the words' first letter is drawn, with the same room past both ends", () => {
@@ -186,9 +192,9 @@ describe("a text's highlighter strokes", () => {
     expect([Math.round(b!.x * 10) / 10, Math.round(b!.w * 10) / 10]).toEqual([197.2, 175.6]);
   });
   it("a stroke is as high as the text's own letters are drawn: tall capitals that reach 17 over their line and nothing under it", () => {
-    // the first line's letters stand on 26: from 26 - 17 - 1.2 to 26 + 1.2
+    // the first line's letters stand on 26: from 26 - 17 - 2 to 26 + 2
     const [b] = markBoxes([{ words: "Small ones", color: "#f2b63c" }], lines, 20, 30, 5, () => 0, width, { up: 17, down: 0 });
-    expect([Math.round(b!.y * 10) / 10, Math.round(b!.h * 10) / 10]).toEqual([7.8, 19.4]);
+    expect([Math.round(b!.y * 10) / 10, Math.round(b!.h * 10) / 10]).toEqual([7, 21]);
   });
   it("without words, a stroke behind every line, each as wide as its line and where the line is set", () => {
     const centred = (line: string) => (300 - width(line)) / 2;
