@@ -42,6 +42,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Picture } from "@/components/Picture";
 import { PictureRulers, RULER, type Guide } from "@/components/PictureRulers";
+import { ChatModeButton } from "@/components/assistant/ChatModeButton";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
 import { UserMenu } from "@/components/UserMenu";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
@@ -102,6 +103,7 @@ import { OriginalsPicture } from "@/components/OriginalsPicture";
 import { PlanOverlay } from "@/components/PlanOverlay";
 import { payloadError } from "@contracts/review-payload";
 import { useMe } from "@/lib/auth";
+import { isPhoneHub } from "@/lib/mobile";
 import { webPlugins } from "@/plugins.gen";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
@@ -1263,6 +1265,7 @@ function Header({
 }) {
   const [error, setError] = useState("");
   const { asset, manage } = view;
+  const me = useMe();
   const { ptoken } = useParams();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
@@ -1325,6 +1328,8 @@ function Header({
     <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4 chat:h-auto chat:flex-wrap">
       {manage ? (
         <>
+          {/* as in the app's bar: chat mode's one button, first (in chat mode it stands at the top of the chats) */}
+          {me && !isPhoneHub() && <ChatModeButton className="-mr-1" />}
           <HomeLink />
           <HistoryArrows />
           <Link to={libraryPath} className="shrink-0 text-sm font-semibold tracking-tight text-zinc-500 hover:text-zinc-200">

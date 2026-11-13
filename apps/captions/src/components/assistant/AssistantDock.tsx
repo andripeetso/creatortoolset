@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, ImageOff, KeyRound, MessageCircle, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -36,7 +36,6 @@ import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { duration, WorkCards, WorkingFor } from "./WorkCards";
 import { chatTitle, useChats } from "./ChatList";
-import { ChatModeButton } from "./ChatModeButton";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
 import { useChatPage } from "./useChatPage";
 import { VideoCards } from "./VideoCard";
@@ -808,8 +807,16 @@ export function AssistantDock() {
             <SquarePen className="size-4" />
           </button>
         )}
-        {/* earlier chats and the rest live in chat mode */}
-        <ChatModeButton className="size-7" />
+        {/* small over the page, or big down its side. Chat mode has its one button in the page's bar (and ⌘J) */}
+        <button
+          type="button"
+          className={headBtn}
+          onClick={() => cardThrow.moveTo(place.mode === "dock" ? { mode: "float", corner: "br" } : { mode: "dock" })}
+          aria-label={place.mode === "dock" ? "Float over the page" : "Dock to the side"}
+          title={place.mode === "dock" ? "Float over the page" : "Dock to the side"}
+        >
+          {place.mode === "dock" ? <PanelRightClose className="size-4" /> : <PanelRight className="size-4" />}
+        </button>
         <button type="button" className={headBtn} onClick={close} aria-label="Hide the assistant" title="Hide">
           <X className="size-4" />
         </button>
