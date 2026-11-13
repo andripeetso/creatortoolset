@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
+import { drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -24,6 +24,40 @@ describe("drawing a design", () => {
     const spaced = (s: string) => textWidth({ spacing: 10 }, s, measure);
     expect(wrapLines("Roll the mat", 120, measure)).toEqual(["Roll the mat"]);
     expect(wrapLines("Roll the mat", 120, spaced)).toEqual(["Roll", "the", "mat"]);
+  });
+
+  it("sets words in their box: at their own size, or shrunk to the largest size that fits, never under the smallest; balanced, in lines about as long as each other", () => {
+    // every letter 10 wide at the layer's own size of 100, a line 115 high
+    const words = (more: object) => ({ text: "Roll the mat out", size: 100, w: 100, h: 115, ...more });
+    // its own size: it wraps where it wraps, whether it fits or not
+    expect(setText(words({}), measure)).toEqual({ size: 100, lines: ["Roll the", "mat out"] });
+    // shrunk: one line of 160 fits 100 wide at 62.5; two lines would need 50
+    const shrunk = setText(words({ fit: "shrink" }), measure);
+    expect(shrunk.lines).toEqual(["Roll the mat out"]);
+    expect(shrunk.size).toBeGreaterThan(62);
+    expect(shrunk.size).toBeLessThanOrEqual(62.5);
+    // a box it fits already: its own size
+    expect(setText(words({ fit: "shrink", w: 200, h: 115 }), measure).size).toBe(100);
+    // a single word wider than the box shrinks until it fits (to half a pixel)
+    const word = setText({ text: "Supercalifragilistic", size: 100, w: 100, h: 500, fit: "shrink" }, measure);
+    expect(word.size).toBeGreaterThan(49.5);
+    expect(word.size).toBeLessThanOrEqual(50.3);
+    // a box nothing fits: the smallest size, not nothing
+    expect(setText(words({ fit: "shrink", w: 5, h: 5 }), measure).size).toBe(8);
+    // letter spacing does not shrink with the letters: on one line 15 gaps of 4 leave 40 for 160 of letters (size 25),
+    // so two lines, as high as the box lets them be (60 / 2 / 1.15), are the larger
+    const spaced = setText(words({ fit: "shrink", spacing: 4, h: 60 }), measure);
+    expect(spaced.lines).toEqual(["Roll the mat", "out"]);
+    expect(setText(words({ fit: "shrink", spacing: 4, h: 60, balance: true }), measure).lines).toEqual(["Roll the", "mat out"]);
+    expect(spaced.size).toBeGreaterThan(25.9);
+    expect(spaced.size).toBeLessThanOrEqual(26.4);
+    // balanced: five words and one become three and three, in the same two lines; one line stays one line
+    const six = { text: "aa bb cc dd ee ff", size: 100, w: 140, h: 500 };
+    expect(setText(six, measure).lines).toEqual(["aa bb cc dd ee", "ff"]);
+    expect(setText({ ...six, balance: true }, measure).lines).toEqual(["aa bb cc", "dd ee ff"]);
+    expect(setText({ ...six, w: 400, balance: true }, measure).lines).toEqual(["aa bb cc dd ee ff"]);
+    // capitals are measured as they are drawn
+    expect(setText({ text: "ab", upper: true, size: 100, w: 100, h: 500 }, (s) => (s === "AB" ? 30 : 999)).lines).toEqual(["AB"]);
   });
 
   it("gives the shapes with straight sides their corners inside the box: a triangle up, an arrow to the right, a five-pointed star", () => {

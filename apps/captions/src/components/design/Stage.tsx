@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { drawPage, fontOf, inLayer, layerAt, lineHeightOf, type Loaded } from "@/lib/design/draw";
-import { boundsOf, frameOf, freshIds, intersects, pageName, resizeAll, resizeBox, snapMove, zoomAt, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { drawPage, fontOf, inLayer, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
+import { boundsOf, frameOf, freshIds, intersects, pageName, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
  *               its handles once its name has picked it; the frame tool draws a new one. Its layers keep their
  *               place on the canvas while it is resized.
  *   Move tool   click picks a layer (Shift adds or takes one), a drag moves what is picked (it catches on its
- *               frame's and the other layers' edges and middles; Shift keeps one axis, Alt drags a copy) and, let
+ *               frame's and the other layers' edges and middles, and where its gaps to its neighbours come out
+ *               even, which are then shown with their size; Shift keeps one axis, Alt drags a copy) and, let
  *               go over another frame, leaves it in that frame; a drag from empty canvas draws a box round the
  *               layers to pick; a double click on words types in place.
  *   A picture   a double click (or Enter) on a picture moves it inside its box: a drag slides it, the wheel or a
@@ -35,8 +36,8 @@ const BLUE = "#0d99ff";
 const TURN = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#fff" stroke-width="5"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g><g stroke="#000" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g></svg>')}") 11 11, crosshair`;
 
 type Point = { x: number; y: number };
-/** A line a moving thing caught on, in the canvas's own pixels, as long as `span`. */
-type Guides = { x?: number; y?: number; span: Rect };
+/** A line a moving thing caught on, in the canvas's own pixels, as long as `span`; and the gaps it sits evenly between. */
+type Guides = { x?: number; y?: number; span: Rect; gaps?: Gap[] };
 
 export function Stage({
   pages,
@@ -126,6 +127,8 @@ export function Stage({
   const here = fr[at];
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
   const typed = page?.layers.find((l): l is TextLayer => l.id === editing && l.type === "text");
+  // the words being typed are set at the size they are drawn at (their own, or the one they shrank to)
+  const typedAs = typed ? { ...typed, size: setText(typed, measurer(fontOf(typed))).size } : typed;
   const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");
   // the wheel or a pinch over a picture that is being moved in its box zooms the picture, not the canvas
   const pictureZoom = useRef<{ now: number; set: (zoom: number) => void } | null>(null);
@@ -326,11 +329,18 @@ export function Stage({
         const ox = f.x - g.x;
         const oy = f.y - g.y;
         const targets: Rect[] = [{ x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l]))];
-        const s = snapMove({ ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy }, targets, SNAP / live.current.z);
+        const near = SNAP / live.current.z;
+        const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
+        const s = snapMove(at, targets, near);
+        // an axis that caught on no edge or middle catches on even spacing with the layers beside it (not the frame)
+        const others = targets.slice(1);
+        const evenX = m.lockX || s.x !== undefined ? null : snapSpacing({ ...at, y: at.y + (m.lockY ? 0 : s.dy) }, others, near, "x");
+        const evenY = m.lockY || s.y !== undefined ? null : snapSpacing({ ...at, x: at.x + (m.lockX ? 0 : s.dx) + (evenX?.d ?? 0) }, others, near, "y");
         // the axis Shift holds still catches on nothing
-        const dx = Math.round(ox + m.dx + (m.lockX ? 0 : s.dx));
-        const dy = Math.round(oy + m.dy + (m.lockY ? 0 : s.dy));
-        setGuides({ ...(m.lockX || s.x === undefined ? {} : { x: g.x + s.x }), ...(m.lockY || s.y === undefined ? {} : { y: g.y + s.y }), span: g });
+        const dx = Math.round(ox + m.dx + (m.lockX ? 0 : s.dx) + (evenX?.d ?? 0));
+        const dy = Math.round(oy + m.dy + (m.lockY ? 0 : s.dy) + (evenY?.d ?? 0));
+        const inCanvas = (gap: Gap): Gap => (gap.axis === "x" ? { ...gap, from: gap.from + g.x, to: gap.to + g.x, at: gap.at + g.y } : { ...gap, from: gap.from + g.y, to: gap.to + g.y, at: gap.at + g.x });
+        setGuides({ ...(m.lockX || s.x === undefined ? {} : { x: g.x + s.x }), ...(m.lockY || s.y === undefined ? {} : { y: g.y + s.y }), span: g, gaps: [...(evenX?.gaps ?? []), ...(evenY?.gaps ?? [])].map(inCanvas) });
         // an id of its own in the frame it lands in
         const taken = new Set(host.layers.filter((l) => to !== k || copy || !ids.includes(l.id)).map((l) => l.id));
         const fresh = freshIds(host, moving.length);
@@ -653,6 +663,16 @@ export function Stage({
           {outlined.map((l, n) => l && <div key={n} className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={place(n === 0 ? hover!.k : at, l)} />)}
           {guides?.x !== undefined && <div className="pointer-events-none absolute w-px bg-[#ff3b30]" style={{ left: view.x + guides.x * view.z, top: view.y + guides.span.y * view.z, height: guides.span.h * view.z }} />}
           {guides?.y !== undefined && <div className="pointer-events-none absolute h-px bg-[#ff3b30]" style={{ left: view.x + guides.span.x * view.z, top: view.y + guides.y * view.z, width: guides.span.w * view.z }} />}
+          {guides?.gaps?.map((gap, n) => {
+            // each even gap: a line across it, and how wide it is
+            const a = gap.axis === "x" ? { left: view.x + gap.from * view.z, top: view.y + gap.at * view.z } : { left: view.x + gap.at * view.z, top: view.y + gap.from * view.z };
+            const long = (gap.to - gap.from) * view.z;
+            return (
+              <div key={n} data-gap={gap.axis} className={cn("pointer-events-none absolute flex items-center justify-center bg-[#ff3b30]", gap.axis === "x" ? "h-px" : "w-px")} style={gap.axis === "x" ? { ...a, width: long } : { ...a, height: long }}>
+                <span className="whitespace-nowrap rounded-sm bg-[#ff3b30] px-1 text-[10px] leading-[14px] text-white">{Math.round(gap.to - gap.from)}</span>
+              </div>
+            );
+          })}
           {band && <div className="pointer-events-none absolute border border-[#0d99ff] bg-[#0d99ff]/10" style={onScreen(band)} />}
           {drawn && <div className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={onScreen(drawn)} />}
           {!typed && picked.length > 1 && picked.map((l) => <div key={l.id} className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, l)} />)}
@@ -684,7 +704,7 @@ export function Stage({
               {here.w} × {here.h}
             </div>
           )}
-          {typed && page && (
+          {typed && typedAs && page && (
             <textarea
               ref={typing}
               aria-label="The words of this layer"
@@ -703,7 +723,7 @@ export function Stage({
                 if (text !== typed.text) onCommit([text ? withLayers(page, [{ ...typed, text }]) : { ...page, layers: page.layers.filter((l) => l.id !== typed.id) }]);
               }}
               className="absolute resize-none overflow-hidden border-0 bg-transparent p-0 outline outline-1 outline-[#0d99ff]"
-              style={{ ...place(at, typed), font: fontOf(typed, view.z), lineHeight: `${lineHeightOf(typed) * view.z}px`, letterSpacing: typed.spacing ? `${typed.spacing * view.z}px` : undefined, color: typed.color, textAlign: typed.align, textTransform: typed.upper ? "uppercase" : undefined }}
+              style={{ ...place(at, typed), font: fontOf(typedAs, view.z), lineHeight: `${lineHeightOf(typedAs) * view.z}px`, letterSpacing: typed.spacing ? `${typed.spacing * view.z}px` : undefined, color: typed.color, textAlign: typed.align, textTransform: typed.upper ? "uppercase" : undefined }}
             />
           )}
         </div>

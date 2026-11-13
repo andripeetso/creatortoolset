@@ -25,6 +25,7 @@ import {
   Plus,
   RotateCcw,
   Unlink2,
+  WrapText,
 } from "lucide-react";
 import type { Design, DesignPage, Layer } from "@contracts/design";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
@@ -613,6 +614,12 @@ export function Inspector({
                 {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
                 {num("↔", "Letter spacing in pixels", same((l) => (l.type === "text" ? (l.spacing ?? 0) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, spacing: n || undefined } : l), { min: -20, max: 200 })}
               </div>
+              <Choice
+                label="How the words fit their box"
+                value={same((l) => (l.type === "text" ? (l.fit ?? "fixed") : undefined))}
+                options={[["fixed", "Fixed size"], ["shrink", "Shrink to fit"]] as const}
+                onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, fit: v === "shrink" ? "shrink" : undefined } : l))}
+              />
               <div className="flex justify-between">
                 {(
                   [
@@ -636,6 +643,9 @@ export function Inspector({
                     <Icon className="h-3.5 w-3.5" />
                   </Tap>
                 ))}
+                <Tap label="Even out the lines" on={same((l) => (l.type === "text" ? !!l.balance : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, balance: l.balance ? undefined : true } : l))}>
+                  <WrapText className="h-3.5 w-3.5" />
+                </Tap>
                 <Tap label="Capitals" on={same((l) => (l.type === "text" ? !!l.upper : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, upper: l.upper ? undefined : true } : l))}>
                   <CaseUpper className="h-3.5 w-3.5" />
                 </Tap>

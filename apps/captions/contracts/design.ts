@@ -91,6 +91,10 @@ export interface TextLayer extends Box {
   gradient?: Gradient;
   /** pixels between the letters, beside the font's own; absent = 0 */
   spacing?: number;
+  /** "shrink": `size` is the most, and the words are set at the largest size up to it at which they fit the box */
+  fit?: "shrink";
+  /** its lines evened out: broken so they are about as long as each other, in no more lines than it takes anyway */
+  balance?: boolean;
   align: "left" | "center" | "right";
   /** where the lines sit in the box; absent = top */
   valign?: "top" | "middle" | "bottom";

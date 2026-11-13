@@ -88,11 +88,70 @@ export function textWidth(l: Pick<TextLayer, "spacing">, s: string, measure: (s:
   return letters.reduce((n, ch) => n + measure(ch), 0) + l.spacing * Math.max(0, letters.length - 1);
 }
 
-function drawText(ctx: Ctx, l: TextLayer) {
-  ctx.font = fontOf(l);
+/** The smallest size words are shrunk to, in pixels. */
+const SMALLEST = 8;
+
+/**
+ * How a text is set in its box: the size it is drawn at and its lines. The size is its own, or (when it shrinks to
+ * fit) the largest up to its own at which every line fits the box's width and all of them its height, never under
+ * SMALLEST. Balanced, its lines are broken at the narrowest width that takes no more lines, so they come out about
+ * as long as each other. `base` gives a string's width at the layer's own size: a width at another size is that in
+ * proportion, so nothing is measured twice.
+ */
+export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeight" | "spacing" | "w" | "h" | "fit" | "balance">, base: (s: string) => number): { size: number; lines: string[] } {
+  const text = shownText(l);
+  const widthAt = (k: number) => (s: string) => textWidth(l, s, (t) => base(t) * k);
+  const linesAt = (k: number, width = l.w) => wrapLines(text, width, widthAt(k));
+  const fits = (k: number) => {
+    const lines = linesAt(k);
+    return lines.length * lineHeightOf(l) * k <= l.h + 0.5 && lines.every((line) => widthAt(k)(line) <= l.w + 0.5);
+  };
+  let k = 1;
+  if (l.fit === "shrink" && !fits(1)) {
+    // between the smallest and its own size: the largest that fits, to a four-thousandth
+    let lo = Math.min(1, SMALLEST / l.size);
+    let hi = 1;
+    for (let n = 0; n < 12; n++) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) lo = mid;
+      else hi = mid;
+    }
+    k = lo;
+  }
+  let lines = linesAt(k);
+  if (l.balance && lines.length > 1) {
+    let lo = 0;
+    let hi = l.w;
+    for (let n = 0; n < 10; n++) {
+      const mid = (lo + hi) / 2;
+      if (linesAt(k, mid).length <= lines.length) hi = mid;
+      else lo = mid;
+    }
+    lines = linesAt(k, hi);
+  }
+  return { size: Math.round(l.size * k * 100) / 100, lines };
+}
+
+/** A string's width in a font, measured on a canvas kept for it (a browser's own; for where no drawing is under way, like the box words are typed in). */
+let measuring: CanvasRenderingContext2D | null = null;
+export function measurer(font: string): (s: string) => number {
+  measuring ??= document.createElement("canvas").getContext("2d")!;
+  const ctx = measuring;
+  return (s) => {
+    ctx.font = font;
+    return ctx.measureText(s).width;
+  };
+}
+
+function drawText(ctx: Ctx, given: TextLayer) {
+  ctx.font = fontOf(given);
   ctx.textBaseline = "alphabetic";
+  const set = setText(given, (s) => ctx.measureText(s).width);
+  // from here on the layer at the size it is drawn at
+  const l = set.size === given.size ? given : { ...given, size: set.size };
+  ctx.font = fontOf(l);
   const measure = (s: string) => ctx.measureText(s).width;
-  const lines = wrapLines(shownText(l), l.w, (s) => textWidth(l, s, measure));
+  const lines = set.lines;
   const lh = lineHeightOf(l);
   const top = l.valign === "middle" ? (l.h - lines.length * lh) / 2 : l.valign === "bottom" ? l.h - lines.length * lh : 0;
   const fill = fillOf(ctx, l.color, l.gradient, l.w, l.h);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, snapSpacing, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -36,6 +36,26 @@ describe("the hands on the canvas", () => {
     expect(besideFrames([box(0, 0, 1080, 1350), box(2000, 500, 1280, 720)], box(0, 0, 1080, 1350), { w: 1080, h: 1080 })).toEqual(box(3280 + DESIGN_GAP, 0, 1080, 1080));
     expect(besideFrames([], undefined, { w: 100, h: 50 })).toEqual(box(0, 0, 100, 50));
     expect(pageName({ id: "p1", background: "#fff", layers: [] }, 1)).toBe("Frame 2");
+  });
+
+  it("catches a moving box on even spacing: between two neighbours, or beside one at the gap it keeps to the next, and says which gaps are then equal", () => {
+    const a = box(0, 100, 100, 100);
+    const b = box(300, 100, 100, 100);
+    // between a and b there is 200 of room: a box 60 wide sits at 170, 70 from each
+    expect(snapSpacing(box(166, 120, 60, 40), [a, b], 6, "x")).toEqual({ d: 4, gaps: [{ axis: "x", from: 100, to: 170, at: 140 }, { axis: "x", from: 230, to: 300, at: 140 }] });
+    expect(snapSpacing(box(150, 120, 60, 40), [a, b], 6, "x")).toBeNull();
+    // right of b, at the 200 that a keeps to b
+    expect(snapSpacing(box(597, 100, 80, 80), [a, b], 6, "x")).toEqual({ d: 3, gaps: [{ axis: "x", from: 100, to: 300, at: 140 }, { axis: "x", from: 400, to: 600, at: 140 }] });
+    // left of a likewise: its end 200 before a
+    expect(snapSpacing(box(-282, 100, 80, 80), [a, b], 6, "x")?.d).toBe(2);
+    // boxes it does not overlap across the axis are not beside it
+    expect(snapSpacing(box(166, 400, 60, 40), [a, b], 6, "x")).toBeNull();
+    // down the page the same, with the names of the sides swapped
+    const top = box(50, 0, 100, 50);
+    const low = box(50, 250, 100, 50);
+    expect(snapSpacing(box(60, 123, 40, 50), [top, low], 6, "y")).toEqual({ d: 2, gaps: [{ axis: "y", from: 50, to: 125, at: 80 }, { axis: "y", from: 175, to: 250, at: 80 }] });
+    // no room between them: nothing to catch on
+    expect(snapSpacing(box(100, 100, 300, 40), [a, b], 6, "x")).toBeNull();
   });
 
   it("keeps both sides of a frame changed in two places: its place moved here, its layers designed there", () => {

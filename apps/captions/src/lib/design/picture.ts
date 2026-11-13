@@ -1,5 +1,5 @@
 import type { PictureSpec } from "@contracts/design";
-import { drawingUrl, drawPage, fontOf, lineHeightOf, shownText, sourceOf, textWidth, wrapLines, type Loaded } from "./draw";
+import { drawingUrl, drawPage, fontOf, lineHeightOf, setText, sourceOf, textWidth, type Loaded } from "./draw";
 
 /**
  * A page as a small JPEG, drawn by the same function as the designer's canvas and the saved PNG, and the words on it
@@ -31,12 +31,16 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   for (const l of layers) {
     if (l.type !== "text") continue;
     ctx.font = fontOf(l);
+    // as it is drawn: at the size it shrank to, when it shrinks to fit
+    const set = setText(l, (t) => ctx.measureText(t).width);
+    const drawn = { ...l, size: set.size };
+    ctx.font = fontOf(drawn);
     const widthOf = (s: string) => textWidth(l, s, (t) => ctx.measureText(t).width);
-    const lines = wrapLines(shownText(l), l.w, widthOf);
+    const lines = set.lines;
     const wide = Math.ceil(Math.max(...lines.map(widthOf)));
-    const tall = Math.ceil(lines.length * lineHeightOf(l));
+    const tall = Math.ceil(lines.length * lineHeightOf(drawn));
     const said = `“${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
-    if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${l.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}`);
+    if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" ? " (it cannot shrink further)" : ""}`);
     // words that fit their box and are still cut: the box itself reaches over the frame's edge (a turned box is left to the eye)
     else if (!l.rotate) {
       const left = l.x + (l.align === "center" ? (l.w - wide) / 2 : l.align === "right" ? l.w - wide : 0);

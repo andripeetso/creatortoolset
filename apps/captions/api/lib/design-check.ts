@@ -188,6 +188,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       color: color(raw.color, "#111111"),
       ...gradient(raw.gradient),
       ...(typeof raw.spacing === "number" && num(raw.spacing, -20, 200, 0) ? { spacing: round(num(raw.spacing, -20, 200, 0)) } : {}),
+      ...(raw.fit === "shrink" ? { fit: "shrink" as const } : {}),
+      ...(raw.balance === true ? { balance: true } : {}),
       align: oneOf(raw.align, ["left", "center", "right"] as const, "left"),
       ...(raw.valign === "middle" || raw.valign === "bottom" ? { valign: raw.valign } : {}),
       ...(typeof raw.lineHeight === "number" ? { lineHeight: round(num(raw.lineHeight, 0.8, 3, 1.15)) } : {}),
@@ -305,7 +307,7 @@ export function withFrames(pages: readonly DesignPage[], w: number, h: number, w
 
 /**
  * A carousel's pages before anyone has designed them: each slide's first part as its headline and the rest under it,
- * black on white. Only a place to start from: the person's AI designs the pages (api/designs.ts), or the person does.
+ * black on white, each shrunk to fit its box when it is long. Only a place to start from: the person's AI designs the pages (api/designs.ts), or the person does.
  */
 export function plainPages(slides: readonly string[], w: number, h: number, blocks: readonly string[] = []): DesignPage[] {
   const m = Math.round(w * 0.09);
@@ -315,8 +317,8 @@ export function plainPages(slides: readonly string[], w: number, h: number, bloc
     const body = rest.join("\n\n");
     const size = Math.round((head.length <= 40 ? 96 : head.length <= 90 ? 74 : 58) * k);
     const layers: Layer[] = [];
-    if (head) layers.push({ id: "l1", type: "text", text: head, font: "Montserrat ExtraBold", size, color: "#111111", align: "left", x: m, w: w - 2 * m, ...(body ? { y: m, h: Math.round(h * 0.44) - m, valign: "bottom" as const } : { y: Math.round(h * 0.2), h: Math.round(h * 0.6), valign: "middle" as const }) });
-    if (body) layers.push({ id: "l2", type: "text", text: body.slice(0, DESIGN_LIMITS.text), font: DEFAULT_FONT, size: Math.round(44 * k), color: "#333333", align: "left", lineHeight: 1.3, x: m, y: Math.round(h * 0.48), w: w - 2 * m, h: Math.round(h * 0.44) });
+    if (head) layers.push({ id: "l1", type: "text", text: head, font: "Montserrat ExtraBold", size, color: "#111111", align: "left", fit: "shrink", x: m, w: w - 2 * m, ...(body ? { y: m, h: Math.round(h * 0.44) - m, valign: "bottom" as const } : { y: Math.round(h * 0.2), h: Math.round(h * 0.6), valign: "middle" as const }) });
+    if (body) layers.push({ id: "l2", type: "text", text: body.slice(0, DESIGN_LIMITS.text), font: DEFAULT_FONT, size: Math.round(44 * k), color: "#333333", align: "left", fit: "shrink", lineHeight: 1.3, x: m, y: Math.round(h * 0.48), w: w - 2 * m, h: Math.round(h * 0.44) });
     return { id: `p${n + 1}`, x: n * (w + DESIGN_GAP), y: 0, w, h, ...(blocks[n] ? { block: blocks[n] } : {}), background: "#ffffff", layers };
   });
 }
@@ -326,7 +328,7 @@ export function coverPage(picture: string, title: string, w: number, h: number):
   const layers: Layer[] = [{ id: "l1", type: "image", picture, fit: "cover", x: 0, y: 0, w, h }];
   const text = title.trim().slice(0, DESIGN_LIMITS.text);
   if (text) {
-    layers.push({ id: "l2", type: "text", text, font: "Anton", size: Math.round(Math.min(w, h) * 0.13), color: "#ffffff", align: "center", valign: "middle", upper: true, lineHeight: 1.05, outline: { color: "#000000", width: Math.round(Math.min(w, h) * 0.012) }, x: Math.round(w * 0.07), y: Math.round(h * 0.58), w: Math.round(w * 0.86), h: Math.round(h * 0.3) });
+    layers.push({ id: "l2", type: "text", text, font: "Anton", size: Math.round(Math.min(w, h) * 0.13), color: "#ffffff", align: "center", fit: "shrink", valign: "middle", upper: true, lineHeight: 1.05, outline: { color: "#000000", width: Math.round(Math.min(w, h) * 0.012) }, x: Math.round(w * 0.07), y: Math.round(h * 0.58), w: Math.round(w * 0.86), h: Math.round(h * 0.3) });
   }
   return { id: "p1", x: 0, y: 0, w, h, background: "#000000", layers };
 }

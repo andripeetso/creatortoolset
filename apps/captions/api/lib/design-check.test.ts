@@ -148,6 +148,11 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(spaced).toMatchObject({ spacing: 12.35, gradient: { to: "#00ff00", angle: 90 }, blend: "multiply", flipX: true });
     expect(spaced).not.toHaveProperty("flipY");
     expect(wide).toMatchObject({ spacing: 200 });
+    // shrink to fit and balanced lines: kept as they are, and nothing else in their place
+    const [fitted, loose] = cleanPages([{ layers: [text({ fit: "shrink", balance: true }), text({ fit: "grow", balance: "yes" })] }], rules).pages[0]!.layers;
+    expect(fitted).toMatchObject({ fit: "shrink", balance: true });
+    expect(loose).not.toHaveProperty("fit");
+    expect(loose).not.toHaveProperty("balance");
     expect(wide).not.toHaveProperty("gradient");
     expect(wide).not.toHaveProperty("blend");
     expect(star).toMatchObject({ shape: "star", gradient: { to: "#0000ff", angle: -45 } });

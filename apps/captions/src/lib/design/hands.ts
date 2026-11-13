@@ -124,6 +124,50 @@ export function snapMove(box: Rect, targets: readonly Rect[], near: number): { d
   return { dx: hx?.d ?? 0, dy: hy?.d ?? 0, ...(hx ? { x: hx.line } : {}), ...(hy ? { y: hy.line } : {}) };
 }
 
+/** A gap between two boxes along `axis`, to show: from `from` to `to` along it, at `at` across it. */
+export interface Gap {
+  axis: "x" | "y";
+  from: number;
+  to: number;
+  at: number;
+}
+
+/**
+ * A moving box catching on even spacing along one axis. Among the boxes beside it (the ones it overlaps across the
+ * axis) it catches where its gaps come out equal: between its two neighbours, the same gap to each; or beside one
+ * neighbour, at the gap that neighbour keeps to the next box on. Gives how far to move it to the nearest such place
+ * within `near`, and the gaps that are then equal, to show; null when there is none.
+ */
+export function snapSpacing(box: Rect, others: readonly Rect[], near: number, axis: "x" | "y"): { d: number; gaps: Gap[] } | null {
+  const [size, cross, crossSize] = axis === "x" ? (["w", "y", "h"] as const) : (["h", "x", "w"] as const);
+  const end = (r: Rect) => r[axis] + r[size];
+  const mid = box[axis] + box[size] / 2;
+  const beside = others.filter((o) => o[cross] < box[cross] + box[crossSize] && box[cross] < o[cross] + o[crossSize]);
+  // the nearest first, each way
+  const before = beside.filter((o) => end(o) <= mid).sort((a, b) => end(b) - end(a));
+  const after = beside.filter((o) => o[axis] >= mid).sort((a, b) => a[axis] - b[axis]);
+  const [prev, prev2] = before;
+  const [next, next2] = after;
+  const at = box[cross] + box[crossSize] / 2;
+  const gap = (from: number, to: number): Gap => ({ axis, from, to, at });
+  /** Places it could sit: where its start would be, and the gaps equal there. */
+  const places: { to: number; gaps: Gap[] }[] = [];
+  if (prev && next) {
+    const each = (next[axis] - end(prev) - box[size]) / 2;
+    if (each >= 0) places.push({ to: end(prev) + each, gaps: [gap(end(prev), end(prev) + each), gap(next[axis] - each, next[axis])] });
+  }
+  if (prev && prev2) {
+    const each = prev[axis] - end(prev2);
+    if (each >= 0) places.push({ to: end(prev) + each, gaps: [gap(end(prev2), prev[axis]), gap(end(prev), end(prev) + each)] });
+  }
+  if (next && next2) {
+    const each = next2[axis] - end(next);
+    if (each >= 0) places.push({ to: next[axis] - each - box[size], gaps: [gap(next[axis] - each, next[axis]), gap(end(next), next2[axis])] });
+  }
+  const best = places.filter((p) => Math.abs(p.to - box[axis]) < near).sort((a, b) => Math.abs(a.to - box[axis]) - Math.abs(b.to - box[axis]))[0];
+  return best ? { d: best.to - box[axis], gaps: best.gaps } : null;
+}
+
 /** Layers lined up: one layer with its page, several with the box round them. */
 export function alignLayers<T extends Turned>(layers: readonly T[], how: Align, page: { w: number; h: number }): T[] {
   const to = layers.length > 1 ? boundsOf(layers) : { x: 0, y: 0, w: page.w, h: page.h };
