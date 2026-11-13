@@ -774,7 +774,6 @@ final class Dictation: ObservableObject {
             },
             "keep": prefs.keep,
             "sounds": prefs.sounds,
-            "paused": prefs.on && EarlierDictationApp.isRunning() ? EarlierDictationApp.pausedLine : NSNull(),
             "needs": (!prefs.on ? nil
                 : MicrophoneAccess.status != .authorized ? "Microphone"
                 : !AXIsProcessTrusted() ? "Accessibility" : nil) ?? NSNull(),

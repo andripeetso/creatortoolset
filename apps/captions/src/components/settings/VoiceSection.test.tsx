@@ -128,7 +128,7 @@ describe("the language picker", () => {
 
 describe("dictation and the models on a Mac", () => {
   const dictation = (over: Record<string, unknown> = {}) => ({
-    on: true, hold: "fn", holdKeys: [{ id: "fn", name: "fn" }], engine: "mac", model: "whisper-base.en", keep: 10, sounds: true, needs: null, paused: null,
+    on: true, keys: { talk: "Hold fn", history: "", file: "", cancel: "" }, picking: null, engine: "mac", model: "whisper-base.en", keep: 10, sounds: true, needs: null, paused: null,
     models: [{ id: "whisper-base.en", name: "Whisper Base (English)", size: "145 MB", here: true, removable: true, progress: null }],
     ...over,
   });
@@ -155,8 +155,8 @@ describe("dictation and the models on a Mac", () => {
   });
 
   it("while the other dictation app is open, one quiet line says why it is off", () => {
-    const out = withMac(view(), dictation({ paused: "Off while your other dictation app is open", needs: "Accessibility" }));
-    expect(out).toContain("Off while your other dictation app is open");
+    const out = withMac(view(), dictation({ paused: "Off while your earlier dictation app is open", needs: "Accessibility" }));
+    expect(out).toContain("Off while your earlier dictation app is open");
     expect(out).not.toContain("Needs Accessibility");
   });
 });
