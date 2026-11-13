@@ -4,6 +4,7 @@ import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Re
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { AppBar } from "@/components/AppBar";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
+import { usePageNeeds } from "@/lib/chat-mode";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,8 @@ export default function DesignRoute() {
 }
 
 function DesignPage({ id }: { id: string }) {
+  // the layers, the canvas and what is picked side by side: beside the chats (chat mode) the page asks for that much
+  usePageNeeds(920);
   const [design, setDesign] = useState<Design | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLive] = useState<Page[] | null>(null);
@@ -607,10 +610,7 @@ function DesignPage({ id }: { id: string }) {
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
 
       <div className="flex min-h-0 flex-1">
-        {/* beside the chats (chat mode) the page keeps to the canvas and what is picked: the chat makes and moves the layers */}
-        <div className="contents chat:hidden">
-          <LayersPanel pages={shown} at={k} selected={selected} framed={framed} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
-        </div>
+        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
 
         <div ref={frame} className="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]">
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}

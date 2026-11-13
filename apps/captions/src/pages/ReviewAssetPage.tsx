@@ -1321,7 +1321,8 @@ function Header({
 
   return (
     // the app's bar (AppBar) for the owner: logo, Review › this video; a reviewer on a link gets only the way back
-    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4">
+    // this bar holds more than any other: beside the chats (chat mode) it wraps to a second row before it runs off the page
+    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4 chat:h-auto chat:flex-wrap">
       {manage ? (
         <>
           <HomeLink />

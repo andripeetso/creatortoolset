@@ -7,7 +7,8 @@ import { create } from "zustand";
  * html[data-chat-mode]) and lays out for the room it has left: <html data-pane> names the breakpoints it is narrower
  * than, and those turn off (postcss-pane.cjs), so each screen shows the layout it has for a window that wide. What a
  * screen leaves out beside the chats (its own chat, a list the chats replace) it says with the `chat:` variant
- * (tailwind.config.js) or useChatShown(). On or off, the width and whether the page shows are kept per browser.
+ * (tailwind.config.js) or useChatShown(); a screen that cannot work in half a window says how much it needs
+ * (usePageNeeds) and the chats give way. On or off, the width and whether the page shows are kept per browser.
  */
 
 const KEY = "ct-chat-mode";
@@ -15,8 +16,9 @@ const KEY = "ct-chat-mode";
 export const LIST_W = 280;
 /** The open chat's column at its narrowest. */
 export const MIN_CHAT = 340;
-/** The page at its narrowest: narrower, and the chats take the whole window. */
-export const MIN_PAGE = 360;
+/** The page at its narrowest (the sm breakpoint: a page beside the chats is never laid out as on a phone). A window with
+ *  no room for this beside the chat shows only chats. */
+export const MIN_PAGE = 640;
 /** The breakpoints the page's layouts are written for (tailwind's own). */
 const BREAKPOINTS: Array<[string, number]> = [["sm", 640], ["md", 768], ["lg", 1024], ["xl", 1280], ["2xl", 1536]];
 
@@ -42,6 +44,8 @@ interface ChatModeState extends Stored {
   shown: boolean;
   /** The page's width beside the chats while they show (0: only chats); null outside chat mode. Never stored. */
   pane: number | null;
+  /** How wide the screen on show says it has to be to work (usePageNeeds); 0 when it says nothing. Never stored. */
+  need: number;
   set: (patch: Partial<Stored>) => void;
 }
 
@@ -49,6 +53,7 @@ export const useChatMode = create<ChatModeState>((set) => ({
   ...stored(),
   shown: false,
   pane: null,
+  need: 0,
   set: (patch) =>
     set((s) => {
       const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, page: patch.page ?? s.page };
@@ -79,22 +84,40 @@ export function usePageMinWidth(px: number): boolean {
   return (pane ?? win) >= px;
 }
 
+/**
+ * For a screen that cannot work in half a window (an editor with panels on both sides of its picture): the width it
+ * needs. In chat mode the chats give way down to their least so the page gets it, where the window has it.
+ */
+export function usePageNeeds(px: number): void {
+  useEffect(() => {
+    if (!px) return;
+    useChatMode.setState({ need: px });
+    return () => useChatMode.setState({ need: 0 });
+  }, [px]);
+}
+
 export interface ChatLayout {
   /** The chats' width. */
   chat: number;
   /** The chats take the whole window: the page is hidden. */
   full: boolean;
+  /** Hidden because the window has no room for the page beside the chat, not because it was asked for. */
+  forced: boolean;
   /** The list stands beside the open chat: there is room for both (else it opens over the chat from its button). */
   list: boolean;
 }
 
-/** How the window `win` wide is shared. The page never gets less than MIN_PAGE nor the open chat less than MIN_CHAT. */
-export function chatLayout(s: Pick<Stored, "w" | "page">, win: number): ChatLayout {
-  const room = win - MIN_PAGE;
-  const full = !s.page || room < MIN_CHAT;
+/**
+ * How the window `win` wide is shared. The page never gets less than MIN_PAGE nor the open chat less than MIN_CHAT;
+ * `need` is what the screen on show asks for itself (usePageNeeds), given as far as the chat's least allows.
+ */
+export function chatLayout(s: Pick<Stored, "w" | "page">, win: number, need = 0): ChatLayout {
+  const forced = win - MIN_PAGE < MIN_CHAT;
+  const full = !s.page || forced;
+  const room = win - Math.max(MIN_PAGE, Math.min(need, win - MIN_CHAT));
   // half the window until the edge is dragged
   const chat = full ? win : Math.min(Math.max(s.w || Math.round(win / 2), MIN_CHAT), room);
-  return { chat, full, list: chat - LIST_W >= MIN_CHAT };
+  return { chat, full, forced, list: chat - LIST_W >= MIN_CHAT };
 }
 
 /** The breakpoints a page `pane` wide is narrower than, as <html data-pane> carries them: "lt-lg lt-xl lt-2xl". */
@@ -110,17 +133,20 @@ const pageWidth = () => document.documentElement.clientWidth || window.innerWidt
 export function useChatModeLayout(active: boolean): ChatLayout {
   const w = useChatMode((s) => s.w);
   const page = useChatMode((s) => s.page);
+  const need = useChatMode((s) => s.need);
   const [win, setWin] = useState(pageWidth);
   useEffect(() => {
     const on = () => setWin(pageWidth());
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
-  const layout = chatLayout({ w, page }, win);
+  const layout = chatLayout({ w, page }, win, need);
   useEffect(() => {
     if (!active) return;
     const root = document.documentElement;
     root.dataset.chatMode = layout.full ? "full" : "";
+    // the list beside the chat carries the app's name and the account (index.css)
+    root.toggleAttribute("data-chat-list", layout.list);
     root.style.setProperty("--chat-w", `${layout.chat}px`);
     if (layout.full) delete root.dataset.pane;
     else root.dataset.pane = paneBelow(win - layout.chat);
@@ -128,10 +154,11 @@ export function useChatModeLayout(active: boolean): ChatLayout {
     return () => {
       delete root.dataset.chatMode;
       delete root.dataset.pane;
+      root.removeAttribute("data-chat-list");
       root.style.removeProperty("--chat-w");
       useChatMode.setState({ shown: false, pane: null });
     };
-  }, [active, layout.chat, layout.full, win]);
+  }, [active, layout.chat, layout.full, layout.list, win]);
   return layout;
 }
 

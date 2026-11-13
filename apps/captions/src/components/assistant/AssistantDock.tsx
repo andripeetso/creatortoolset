@@ -245,11 +245,19 @@ export function AssistantDock() {
   // only chats, and a link in one is followed (a card, the app's name, a page the assistant opens): the page shows again
   const route = pathname + search;
   const routeWas = useRef(route);
+  const forcedFull = useRef(false);
+  forcedFull.current = showChatMode && layout.forced;
   useEffect(() => {
     if (routeWas.current === route) return;
     routeWas.current = route;
     const cm = useChatMode.getState();
-    if (cm.on && !cm.page) cm.set({ page: true });
+    if (!cm.on) return;
+    if (!cm.page) cm.set({ page: true });
+    // a window with no room for the page beside the chats: the page is what was asked for, the assistant floats over it
+    else if (forcedFull.current) {
+      cm.set({ on: false });
+      openAssistant();
+    }
   }, [route]);
   // the chat on screen is seen: what ended in it is not marked Done in the list (here or on another device)
   const visible = showChatMode || !collapsed;

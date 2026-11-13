@@ -25,6 +25,7 @@ import { fmtClock } from "@/lib/ass";
 import { FONT_OPTIONS, fontWeightFor } from "@/lib/types";
 import { ImportScreen } from "@/components/ImportScreen";
 import { Player } from "@/components/Player";
+import { useChatMode, usePageNeeds } from "@/lib/chat-mode";
 import { TranscriptPanel } from "@/components/TranscriptPanel";
 import { Timeline } from "@/components/Timeline";
 import { ClipBar } from "@/components/ClipBar";
@@ -202,6 +203,8 @@ function TabConflictBanner() {
 
 const MIN_TRANSCRIPT_W = 420;
 const TRANSCRIPT_W_KEY = "cap-transcript-width";
+/** The transcript at its least, the style panel and a player wide enough for an upright video. */
+const EDITOR_NEEDS = 960;
 /** Room to keep for the player + style panel when dragging the divider. */
 const RESERVED_W = 600;
 
@@ -271,6 +274,13 @@ export default function Home() {
       ? saved
       : MIN_TRANSCRIPT_W;
   });
+
+  // The editor needs its three columns: beside the chats (chat mode) it asks for that much and the chats give way. The
+  // transcript's kept width was dragged in a full window: it never takes the player's room in a narrower page.
+  const editing = !(projectLibraryRequested || projectLibraryOpen || !videoUrl);
+  usePageNeeds(editing ? EDITOR_NEEDS : 0);
+  const pane = useChatMode((s) => s.pane);
+  const shownTranscriptW = pane ? Math.max(MIN_TRANSCRIPT_W, Math.min(transcriptW, pane - RESERVED_W)) : transcriptW;
 
   const backToToolset = (e: React.MouseEvent<HTMLAnchorElement>) =>
     guardLeaveLink(e, "Leave this project", navigate);
@@ -352,7 +362,7 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  if (projectLibraryRequested || projectLibraryOpen || !videoUrl) {
+  if (!editing) {
     return <ImportScreen />;
   }
 
@@ -418,10 +428,9 @@ export default function Home() {
           </button>
       </AppBar>
 
-      {/* main area. Beside the chats (chat mode) only the video with its captions shows: the chat edits the words and
-          the look with its tools, and the transcript and style panels come back when chat mode ends */}
+      {/* main area */}
       <div className="flex min-h-0 flex-1">
-        <div style={{ width: transcriptW }} className="shrink-0 chat:hidden">
+        <div style={{ width: shownTranscriptW }} className="shrink-0">
           <TranscriptPanel />
         </div>
         <div
@@ -431,14 +440,12 @@ export default function Home() {
             localStorage.removeItem(TRANSCRIPT_W_KEY);
           }}
           title="Drag to resize the transcript — double-click to reset"
-          className="-ml-1 w-1.5 shrink-0 cursor-col-resize hover:bg-violet-500/50 active:bg-violet-500/70 chat:hidden"
+          className="-ml-1 w-1.5 shrink-0 cursor-col-resize hover:bg-violet-500/50 active:bg-violet-500/70"
         />
         <div className="min-w-0 flex-1 p-3">
           <Player />
         </div>
-        <div className="contents chat:hidden">
-          <StylePanel />
-        </div>
+        <StylePanel />
       </div>
 
       {/* clip pool + timeline */}

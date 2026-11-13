@@ -113,7 +113,8 @@ export function ChatHeader({
       </span>
       {children}
       {!layout.list && <NewChatButton onNew={onNew} disabled={!canNew} />}
-      <button
+      {/* not where the window has no room for the page at all */}
+      {!layout.forced && <button
         type="button"
         className={iconBtn}
         onClick={() => set({ page: layout.full })}
@@ -122,15 +123,15 @@ export function ChatHeader({
         title={layout.full ? "Show the page" : "Only chats"}
       >
         {layout.full ? <PanelRight className="size-4" /> : <PanelRightClose className="size-4" />}
-      </button>
+      </button>}
     </header>
   );
 }
 
 /**
  * The chats' right edge: drag it to share the window between the chats and the page (the page follows as you drag).
- * Dragged nearly to the window's right edge, the page is hidden; nearly to its left, chat mode ends. A double-click
- * goes back to half and half.
+ * Dragged far enough right that the page would get under half of its least, the page is hidden; nearly to the window's
+ * left, chat mode ends. A double-click goes back to half and half.
  */
 export function ChatEdge() {
   const [drag, setDrag] = useState(false);
