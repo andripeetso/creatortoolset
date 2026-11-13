@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
+import { toast } from "sonner";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_MOMENTS, MAX_VERSIONS } from "@contracts/editor";
 import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { droppedFiles, isMediaFile } from "@/components/assistant/draft";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, runEdit } from "@/lib/editor";
@@ -27,14 +29,20 @@ import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
-import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
+import { EditingStyles, StyleSheet, type OpenStyle } from "./editor/EditingStyles";
 import { FirstWay } from "./editor/FirstWay";
 import { FromScript } from "./editor/FromScript";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
- * Media Library, what the video is, how many versions. Create runs it; the edit page (/editor/:id) follows the steps.
+ * Media Library or dropped on the page, how many versions. Create runs it; the edit page (/editor/:id) follows the steps.
+ * Videos and recordings dropped anywhere on the Edits tab open New edit with them in it; a dropped folder gives the ones
+ * inside it.
  */
+
+/** The videos and recordings of a drop or a file choice; a browser's own list is gone after the event, so this is read at once. */
+const footageOf = (files: FileList | null | undefined): File[] => Array.from(files ?? []).filter(isMediaFile);
+const fileDrag = (e: { dataTransfer: DataTransfer | null }) => !!e.dataTransfer?.types.includes("Files");
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const SORTS = ["recent", "name"] as const;
@@ -66,6 +74,9 @@ export default function EditorPage() {
   const handed = (useLocation().state as { pick?: Picked[] } | null)?.pick;
   const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "", pick: handed } : undefined;
   const [creating, setCreating] = useState(!!start);
+  // footage dropped on the page: New edit opens and takes it
+  const [dropped, setDropped] = useState<File[]>([]);
+  const [over, setOver] = useState(false);
   const [view, setView] = useBrowseView("editor");
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
@@ -85,6 +96,39 @@ export default function EditorPage() {
   const [openAnimation, setOpenAnimation] = useState<OpenAnimation>(null);
   const asked = params.get("tab");
   const tab = asked === "styles" || asked === "animation" ? asked : "edits";
+  // on the window, so a file let go beside the sheet or on the dimmed page is taken too and never opens in the window
+  useEffect(() => {
+    if (tab !== "edits") return;
+    // lit while files are over the window: each dragover keeps it on for half a second (a leave is not told apart
+    // from moving between two elements in every browser), so it goes out by itself after a leave or a drop
+    let out: ReturnType<typeof setTimeout> | undefined;
+    const onOver = (e: DragEvent) => {
+      if (!fileDrag(e)) return;
+      e.preventDefault();
+      setOver(true);
+      clearTimeout(out);
+      out = setTimeout(() => setOver(false), 500);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!fileDrag(e) || !e.dataTransfer) return;
+      e.preventDefault();
+      setOver(false);
+      // a dropped folder is opened into its files; the drop's list is read before the first wait
+      void droppedFiles(e.dataTransfer).then(({ files }) => {
+        const footage = files.filter(isMediaFile);
+        if (!footage.length) return void toast("No video or recording in what you dropped");
+        setDropped(footage);
+        setCreating(true);
+      });
+    };
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      clearTimeout(out);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [tab]);
   const tabs = (
     <Tabs value={tab} onValueChange={(t) => setParams(t === "edits" ? {} : { tab: t })}>
       <TabsList>
@@ -146,15 +190,13 @@ export default function EditorPage() {
           New edit
         </Button>
       </AppBar>
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
+      <main className={cn("mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
         {tabs}
         {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
         {edits?.length === 0 && !anything && (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <p className="max-w-md text-sm text-zinc-500">
-              Pick raw takes from your Media Library and say what the video is. The AI picks the best take of each line, cuts the restarts and
-              pauses, and you get draft timelines for your own editor, with a preview in Review.
-            </p>
+          <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
+            <Clapperboard className="h-6 w-6 text-zinc-500" aria-hidden="true" />
+            <p className="hidden text-sm font-medium sm:block">Drop your footage here</p>
             <Button size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
               New edit
@@ -233,21 +275,26 @@ export default function EditorPage() {
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
       </main>
-      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} onStyles={styleList.refresh} />
+      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} styles={styleList.data} onStyles={styleList.refresh} dropped={dropped} />
     </div>
   );
 }
 
 /**
- * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder), then the brief.
- * `styles`: the person's editing styles. With none there is no Style select and the edit is made as it always was; with
- * none and "How do you like to work?" not answered yet, the sheet asks that first (FirstWay), and `onStyles` reads the
- * styles again once it is answered.
+ * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder) or from this
+ * computer, then what is optional: a name, a style, a description, a script. `dropped`: files let go on the page, added
+ * as they arrive; someone who dropped footage gets the form at once, and "How do you like to work?" on a New edit they open by its button.
+ * `styles`: the person's editing styles. The Style select also makes one ("New editing style…"); with none the edit is
+ * sent as it always was, with no style at all. With none and "How do you like to work?" not answered yet, the sheet
+ * asks that first (FirstWay), and `onStyles` reads the styles again once it is answered.
  */
 /** A Media Library clip picked for a new edit: its version and its title. */
 export type Picked = { versionId: string; title: string };
 
-export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open: boolean; onClose: () => void; start?: { folder: string; name: string; pick?: Picked[] }; styles?: EditingStylesView | null; onStyles?: () => Promise<unknown> }) {
+/** The Style select's last row: it opens a new style's sheet. */
+const NEW_STYLE = "+new";
+
+export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }: { open: boolean; onClose: () => void; start?: { folder: string; name: string; pick?: Picked[] }; styles?: EditingStylesView | null; onStyles?: () => Promise<unknown>; dropped?: File[] }) {
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [libId, setLibId] = useState("");
@@ -274,6 +321,12 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [makingStyle, setMakingStyle] = useState(false);
+  // the file being added from this computer, and how far it is
+  const [adding, setAdding] = useState<string | null>(null);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  // counts the files filed from this computer: the list is read again after each, so what was added is seen picked
+  const [filed, setFiled] = useState(0);
 
   /** Picking a style fills the fields it sets that this sheet shows; they stay the person's to change. */
   const pickStyle = (id: string) => {
@@ -326,7 +379,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libId, term, folder, open, from === "long"]);
+  }, [libId, term, folder, open, from === "long", filed]);
 
   const ready = (a: AssetCard) => a.state === "ready";
   const toggle = (a: AssetCard) =>
@@ -359,28 +412,42 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
     }
   };
 
-  /** Files from this computer: filed in the library (the A-roll folder, or a plug-in\'s), then picked for this edit. */
-  const fromComputer = async (files: FileList | null) => {
-    if (!files?.length) return;
-    const picked = Array.from(files); // before any await: clearing the input empties this very list in WebKit
-    setBusy(true);
-    setError(null);
-    try {
-      const target = await footageTarget();
-      for (const file of picked) {
-        const up = await uploadFile(target.libraryId, file, () => {}, target.collectionId);
-        const assetId = up.assetId ?? up.duplicateOf;
-        if (!assetId) throw new Error(`${file.name} was not filed in the library`);
-        await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
-        const asset = await getAsset(target.libraryId, assetId);
-        setPicked((m) => new Map(m).set(asset.versionId, asset.title));
+  /** Files from this computer: filed in the library (the A-roll folder, or a plug-in's), then picked for this edit. One at a time, in the order they came. */
+  const fromComputer = (files: File[]) => {
+    if (!files.length) return;
+    queue.current = queue.current.then(async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        const target = await footageTarget();
+        for (const [i, file] of files.entries()) {
+          const of = files.length > 1 ? `${i + 1} of ${files.length} · ` : "";
+          setAdding(`${of}${file.name}`);
+          // a file the Mac app reads where it lies is not sent: it has no percent
+          const up = await uploadFile(target.libraryId, file, (sent, inPlace) => setAdding(`${of}${file.name}${inPlace || !file.size ? "" : ` · ${Math.round((sent / file.size) * 100)}%`}`), target.collectionId);
+          const assetId = up.assetId ?? up.duplicateOf;
+          if (!assetId) throw new Error(`${file.name} was not filed in the library`);
+          await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
+          const asset = await getAsset(target.libraryId, assetId);
+          setPicked((m) => new Map(m).set(asset.versionId, asset.title));
+          setFiled((n) => n + 1);
+        }
+      } catch (e) {
+        setError(message(e));
+      } finally {
+        setAdding(null);
+        setBusy(false);
       }
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
+  // footage dropped on the page
+  useEffect(() => {
+    if (dropped?.length) {
+      setFrom((f) => (f === "script" ? "footage" : f));
+      fromComputer(dropped);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropped]);
 
   const create = async () => {
     if (!(await confirmHeavy("editor"))) return;
@@ -415,7 +482,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
-        {styles && !styles.styles.length && !styles.asked && onStyles ? (
+        {styles && !styles.styles.length && !styles.asked && onStyles && !dropped?.length ? (
           <FirstWay onDone={onStyles} />
         ) : (
         <form
@@ -427,11 +494,11 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
         >
           <div>
             <SheetTitle className="text-base">New edit</SheetTitle>
-            <SheetDescription className="text-xs text-zinc-500">
+            <SheetDescription className={cn("text-xs text-zinc-500", from === "footage" && "sr-only")}>
               {from === "long"
                 ? "Pick a long recording from your Media Library. The AI finds the parts that stand on their own and cuts each as its own short video, in the recording's own shape."
                 : filmed
-                  ? "Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI."
+                  ? "Add your footage, then Create and run."
                   : "A voice reads your script and the picture is cut from your B-roll. The voice runs on your own ElevenLabs key."}
             </SheetDescription>
           </div>
@@ -483,7 +550,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                 className="hidden"
                 aria-label="Footage files from this computer"
                 onChange={(e) => {
-                  void fromComputer(e.target.files);
+                  fromComputer(footageOf(e.target.files));
                   e.target.value = "";
                 }}
               />
@@ -491,7 +558,12 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                 <Plus className="h-3.5 w-3.5" />
                 Add files from this computer
               </Button>
-              <span className="text-xs text-zinc-500">Filed in your Media Library as A-roll</span>
+              {adding && (
+                <span role="status" className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500">
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                  <span className="truncate">{adding}</span>
+                </span>
+              )}
             </div>
             {folders.length > 0 && (
               <div role="group" aria-label="Folders" className="flex flex-wrap gap-1.5">
@@ -514,7 +586,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                     <li key={a.id}>
                       <button
                         type="button"
-                        disabled={!ready(a)}
+                        disabled={!ready(a) && !on}
                         aria-pressed={on}
                         onClick={() => toggle(a)}
                         className={cn(
@@ -522,9 +594,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
                           on ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-500/20 hover:border-zinc-500/50",
                         )}
                       >
-                        {/* a sound-only recording has no picture: its box stays, with no broken-image icon */}
-                        <span className="block aspect-video w-full bg-zinc-800">
-                          <Picture src={a.thumbUrl ?? thumb(a.versionId)} alt="" className="h-full w-full object-cover" />
+                        {/* a sound-only recording has no picture: its box stays, with no broken-image icon. The picture fills the box and never sets its height (a vertical clip's would) */}
+                        <span className="relative block aspect-video w-full overflow-hidden bg-zinc-800">
+                          <Picture src={a.thumbUrl ?? thumb(a.versionId)} alt="" className="absolute inset-0 h-full w-full object-cover" />
                         </span>
                         <span className="truncate px-2 py-1 text-xs">{a.title}</span>
                         {on && (
@@ -574,23 +646,29 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="edit-name">Name</Label>
-            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Untitled edit" maxLength={120} />
+            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={from === "footage" ? "The video's first line" : "Untitled edit"} maxLength={120} />
           </div>
-          {!!styles?.styles.length && (
+          {styles && (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit-style">Style</Label>
-              <select id="edit-style" value={styles.styles.some((x) => x.id === styleId) ? styleId! : ""} onChange={(e) => pickStyle(e.target.value)} className="h-9 w-fit max-w-full rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
+              <Label htmlFor="edit-style">Editing style</Label>
+              <select
+                id="edit-style"
+                value={styles.styles.some((x) => x.id === styleId) ? styleId! : ""}
+                onChange={(e) => (e.target.value === NEW_STYLE ? setMakingStyle(true) : pickStyle(e.target.value))}
+                className="h-9 w-fit max-w-full rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
+              >
                 <option value="">None</option>
                 {styles.styles.map((x) => (
                   <option key={x.id} value={x.id}>
                     {x.name}
                   </option>
                 ))}
+                <option value={NEW_STYLE}>New editing style…</option>
               </select>
             </div>
           )}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit-brief">{from === "long" ? "What should the short videos be about?" : "What is the video?"}</Label>
+            <Label htmlFor="edit-brief">{from === "long" ? "Describe the short videos you want (optional)" : "Describe the video (optional)"}</Label>
             <Textarea
               id="edit-brief"
               value={brief}
@@ -631,7 +709,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             </div>
             )}
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit-target">{from === "long" ? "About how long each (s)" : "Target length (s)"}</Label>
+              <Label htmlFor="edit-target">{from === "long" ? "Length of each (seconds)" : "Length (seconds)"}</Label>
               <Input id="edit-target" type="number" min={0} max={3600} value={targetS} onChange={(e) => setTargetS(e.target.value)} placeholder="Any" className="w-28" />
             </div>
           </div>
@@ -641,6 +719,18 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles }: { open:
             {filmed || !busy ? "Create and run" : "Making the voice"}
           </Button>
         </form>
+        )}
+        {makingStyle && (
+          <StyleSheet
+            style={null}
+            onClose={() => setMakingStyle(false)}
+            onSaved={async (made) => {
+              await onStyles?.();
+              setStyleId(made.id);
+              setVersions(made.versions);
+              setTargetS(made.targetS ? String(made.targetS) : "");
+            }}
+          />
         )}
       </SheetContent>
     </Sheet>

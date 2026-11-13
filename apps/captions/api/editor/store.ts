@@ -60,6 +60,9 @@ const fileOf = (id: string) => path.join(editDir(id), "edit.json");
 const MAX_SOURCES = 50;
 
 /** The edit, trashed or not; null for an id that is no edit. */
+/** The name of an edit nobody named: the script step gives it the video's first line (script.ts). */
+export const UNNAMED = "Untitled edit";
+
 export function readEdit(id: string): EditMeta | null {
   if (!ID.test(id)) return null;
   try {
@@ -432,7 +435,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     updatedAt: now,
     sources,
     ...(uploads.length ? { uploads: uploads.map((id) => ({ id })) } : {}),
-    name: "Untitled edit",
+    name: UNNAMED,
     brief: "",
     script: "",
     versions: 1,

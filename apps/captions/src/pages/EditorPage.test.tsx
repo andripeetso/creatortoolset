@@ -7,13 +7,21 @@ import type { VoicesView } from "@contracts/editor";
 import type { EditingStyle, EditingStylesView } from "@contracts/editor-styles";
 import { NewEditSheet } from "./EditorPage";
 
-// New edit and editing styles: an account with no style sees no Style select and sends what it always sent; with
-// styles the sheet opens on the one used last, fills the fields it sets, and says which one the edit is made with.
+// New edit and editing styles: an account with no style sends what it always sent, and its Style select offers to make
+// one; with styles the sheet opens on the one used last, fills the fields it sets, and says which one the edit is made
+// with. Files dropped on the page are added and picked.
 // The server is stubbed: one library, one ready clip.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock("@/lib/setup", () => ({ confirmHeavy: async () => true, openToolSetup: () => {} }));
 vi.mock("@/components/FootageFolderCard", () => ({ FootageFolderCard: () => null }));
+// a file from this computer: filed without a server (the upload itself is the Media Library's, tested there)
+vi.mock("@/lib/library", async (real) => ({
+  ...(await real<typeof import("@/lib/library")>()),
+  uploadFile: async (_library: string, file: File) => ({ assetId: `ast_${file.name}` }),
+  changeFolderItems: async () => ({}),
+  getAsset: async (_library: string, id: string) => ({ versionId: id.replace("ast_", "ver_"), title: id }),
+}));
 
 let posted: Record<string, unknown>[];
 let calls: { url: string; body: Record<string, unknown> }[];
@@ -53,6 +61,7 @@ beforeEach(() => {
       return reply({});
     }
     if (url === "/api/library") return reply({ libraries: [{ id: "lib_1", name: "Tiny Acrobatics" }] });
+    if (url === "/api/editor/footage-target") return reply({ libraryId: "lib_1", collectionId: "col_a" });
     if (url.includes("/collections")) return reply({ collections: installed.folders });
     if (url === "/api/edit-steps") return reply({ steps: installed.steps, canAdd: false });
     listed.push(url);
@@ -68,14 +77,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function open(styles: EditingStylesView | null, onStyles?: () => Promise<unknown>) {
+async function open(styles: EditingStylesView | null, onStyles?: () => Promise<unknown>, dropped?: File[]) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root!.render(
       <MemoryRouter>
-        <NewEditSheet open onClose={() => {}} styles={styles} onStyles={onStyles} />
+        <NewEditSheet open onClose={() => {}} styles={styles} onStyles={onStyles} dropped={dropped} />
       </MemoryRouter>,
     );
   });
@@ -104,10 +113,11 @@ async function create() {
 }
 
 describe("New edit: the Style select", () => {
-  it("an account with no style has no select, and its edit is sent as before: no style key at all", async () => {
+  it("an account with no style: the select offers None and to make one, and its edit is sent as before: no style key at all", async () => {
     for (const none of [null, { styles: [], last: null }]) {
       await open(none);
-      expect(field("edit-style")).toBeNull();
+      // not read yet: no select; read and empty: None, and a row that makes one
+      expect(field<HTMLSelectElement>("edit-style") ? [...field<HTMLSelectElement>("edit-style")!.options].map((o) => o.textContent) : null).toEqual(none ? ["None", "New editing style…"] : null);
       expect(field("edit-versions")).not.toBeNull();
       expect(await create()).toEqual({ sources: ["ver_1"], brief: "", script: "", versions: 1, targetS: 0 });
       act(() => root!.unmount());
@@ -119,7 +129,7 @@ describe("New edit: the Style select", () => {
     const a = style("s_a", "Fast and warm", { versions: 3, targetS: 40 });
     await open({ styles: [a, style("s_b", "Slow")], last: null });
     const sel = field<HTMLSelectElement>("edit-style")!;
-    expect([...sel.options].map((o) => o.textContent)).toEqual(["None", "Fast and warm", "Slow"]);
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["None", "Fast and warm", "Slow", "New editing style…"]);
     expect(sel.value).toBe("");
     await choose("edit-style", "s_a");
     expect(field<HTMLSelectElement>("edit-versions")!.value).toBe("3");
@@ -137,6 +147,31 @@ describe("New edit: the Style select", () => {
     await choose("edit-style", "");
     expect(field<HTMLSelectElement>("edit-versions")!.value).toBe("3"); // what is in the fields stays
     expect(await create()).toMatchObject({ style: null, versions: 3 });
+  });
+});
+
+describe("New edit: files dropped on the page", () => {
+  const takes = () => [new File(["x"], "one.mp4", { type: "video/mp4" }), new File(["x"], "two.mov", { type: "video/quicktime" })];
+  const submit = async () => {
+    act(() => void field<HTMLInputElement>("edit-name")!.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await flush();
+    await flush();
+  };
+
+  it("are filed and picked in the order dropped, and the edit is made from them with nothing else typed", async () => {
+    await open(null, undefined, takes());
+    await flush();
+    expect(document.body.textContent).toContain("2 picked");
+    await submit();
+    expect(posted.at(-1)).toEqual({ sources: ["ver_one.mp4", "ver_two.mov"], brief: "", script: "", versions: 1, targetS: 0 });
+  });
+
+  it("dropped by someone who has not answered How do you like to work?: the form comes at once, with them picked", async () => {
+    await open({ styles: [], last: null }, async () => {}, takes());
+    await flush();
+    expect(document.body.textContent).not.toContain("How do you like to work?");
+    expect(document.body.textContent).toContain("2 picked");
+    expect(calls).toEqual([]); // and nothing is answered for them: New edit by its button still asks
   });
 });
 
@@ -304,8 +339,8 @@ describe("New edit: short videos from a long recording", () => {
     expect(field("edit-versions")).toBeNull();
     expect([...field<HTMLSelectElement>("edit-moments")!.options].map((o) => o.value)).toEqual(["3", "5", "10", "15", "20"]);
     expect(field<HTMLSelectElement>("edit-moments")!.value).toBe("10");
-    expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("About how long each (s)");
-    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("What should the short videos be about?");
+    expect(document.querySelector('label[for="edit-target"]')!.textContent).toBe("Length of each (seconds)");
+    expect(document.querySelector('label[for="edit-brief"]')!.textContent).toBe("Describe the short videos you want (optional)");
     // a long recording can be sound only: the picker asks the library for videos and recordings there, videos alone elsewhere
     expect(listed.at(-1)).toContain("kind=video%2Caudio");
     expect(listed.find((u) => u.includes("kind="))).toMatch(/kind=video(&|$)/);

@@ -195,7 +195,7 @@ export default function EditorEditPage() {
         <section aria-label="Eye line" className={cn("flex flex-col gap-2", edit.sources.every((v) => blind.includes(v)) && "hidden")}>
           <h2 className="text-sm font-semibold">Eye line</h2>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. Punch-ins keep the eyes at that height. Change it, then draft again (no AI).</p>
+            <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. The zoom on cuts keeps the eyes at that height. Change it, then draft again (no AI).</p>
             {!busy && edit.plans.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => void act(runEdit(id, "draft"))}>
                 Draft again

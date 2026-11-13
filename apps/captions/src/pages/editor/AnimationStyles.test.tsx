@@ -126,18 +126,33 @@ describe("An editing style's Animation style", () => {
   it("is a select when the person has an animation style, and what is picked is sent", async () => {
     await sheet();
     const select = document.getElementById("style-animation") as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["None", "Bold blue"]);
+    expect([...select.options].map((o) => o.textContent)).toEqual(["None", "Bold blue", "New animation style…"]);
     expect(select.value).toBe("");
     await type("style-animation", "a_1");
     await save("style-name");
     expect(sent.at(-1)).toMatchObject({ method: "PUT", url: "/api/editor/styles/s_a", body: { animation: "a_1" } });
   });
 
-  it("is not drawn or sent for a person with none", async () => {
+  it("a person with none: the select offers to make one, and nothing is sent about one until they do", async () => {
     mine = [];
     await sheet();
-    expect(document.getElementById("style-animation")).toBeNull();
+    const select = document.getElementById("style-animation") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["None", "New animation style…"]);
     await save("style-name");
     expect(sent.at(-1)!.body).not.toHaveProperty("animation");
+  });
+
+  it("New animation style… opens its sheet over this one; the style made there is the one picked and sent", async () => {
+    mine = [];
+    await sheet();
+    await type("style-animation", "+new");
+    await type("animation-name", "Paper");
+    mine = [{ ...blue, id: "a_new", name: "Paper", pictures: [] }]; // what the list answers once it is made
+    await save("animation-name");
+    expect(sent.at(-1)).toMatchObject({ method: "POST", url: "/api/editor/animation-styles", body: { name: "Paper" } });
+    expect(document.getElementById("animation-name")).toBeNull(); // its sheet closed
+    expect((document.getElementById("style-animation") as HTMLSelectElement).value).toBe("a_new");
+    await save("style-name");
+    expect(sent.at(-1)).toMatchObject({ method: "PUT", url: "/api/editor/styles/s_a", body: { animation: "a_new" } });
   });
 });

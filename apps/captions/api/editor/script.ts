@@ -9,7 +9,7 @@ import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
 import { finishedBlock } from "./finished";
 import { momentMap, momentsPrompt, parseMoments, type RawMoment } from "./moments";
-import { readStep, saveStep, type EditMeta } from "./store";
+import { readEdit, readStep, saveEdit, saveStep, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
 
@@ -19,6 +19,9 @@ import type { StepContext } from "./worker";
  * voice as they can. The prompt is the task and the answer's shape; the only taste in it is the user's own brief.
  * It runs on the creator's AI (aiFor "editor"): no route parks the step with what to add, a Mac that is off too.
  */
+
+/** The most of a first line an unnamed edit is named with. */
+const NAME_MAX = 60;
 
 /** A take scored under this is used only when a line has nothing better. */
 export const USABLE = 0.5;
@@ -234,4 +237,13 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   // the plan as the AI gave it, kept beside the one the person goes on to change: its lines and takes by number, none of its words
   await saveStep(edit.id, "first", { plans: plans.map((p) => ({ name: p.name, lines: p.lines })) });
   await saveStep(edit.id, "plan", { lines: mapped.lines, plans, notes: [...mapped.notes, ...notes] });
+  // an edit nobody named is named after the first line of its first version; read again, as the person may have
+  // named it while the AI answered. The line's text is the AI's, so the name is marked as not the person's own
+  // (byTool: finished.ts keeps no such name), until they type one
+  const opening = mapped.lines.find((l) => l.id === plans[0]?.lines[0]?.line)?.text.trim();
+  const now = readEdit(edit.id);
+  if (opening && now?.name === UNNAMED) {
+    const name = opening.length > NAME_MAX ? `${opening.slice(0, NAME_MAX - 1).trimEnd()}…` : opening;
+    await saveEdit({ ...now, name, byTool: [...new Set([...(now.byTool ?? []), "name" as const])] });
+  }
 }

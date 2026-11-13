@@ -127,7 +127,9 @@ describe("Duplicate", () => {
 describe("The style sheet", () => {
   it("a new style: the grade, the folder and the steps are drawn when there is a choice, and an untouched grade and steps are not sent", async () => {
     await render([], "new");
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Grade", "B-roll folder", "What to blur", "How", "Edit in passes"]);
+    expect(labels()).toEqual(["Name", "Describe the editing style", "Versions", "Length (seconds)", "Pace", "Zoom on cuts", "Video size", "Animation style", "Grade", "B-roll folder", "What to blur", "How", "Edit in passes"]);
+    // each pace says what it does to the pauses
+    expect([...field<HTMLSelectElement>("style-pace")!.options].map((o) => o.textContent)).toEqual(["Tight: pauses cut out", "Natural: short pauses stay"]);
     expect(field<HTMLSelectElement>("style-size")!.value).toBe("1080x1920"); // a new style works in vertical HD
     expect(document.querySelector('[aria-label="Post-processing"]')).not.toBeNull();
     expect(field<HTMLSelectElement>("style-grade")!.value).toBe("none"); // the person's default grade is shown
@@ -169,7 +171,7 @@ describe("The style sheet", () => {
   it("with one grade, no folder and no step in this app, none of the three is drawn or sent", async () => {
     has = { grades: false, folders: false, steps: false };
     await render([style], style);
-    expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in", "Working size", "Edit in passes"]);
+    expect(labels()).toEqual(["Name", "Describe the editing style", "Versions", "Length (seconds)", "Pace", "Zoom on cuts", "Video size", "Animation style", "Edit in passes"]);
     expect(document.querySelector('[aria-label="Post-processing"]')).toBeNull();
     expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "size", "targetS", "versions"]);
   });

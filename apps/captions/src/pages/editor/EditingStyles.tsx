@@ -14,6 +14,7 @@ import { RowMenu } from "@/components/settings/ui";
 import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listAnimationStyles, listFinished, removeFinished, updateStyle } from "@/lib/editor";
 import { listCollections, listLibraries } from "@/lib/library";
 import { listSkills } from "@/lib/skills";
+import { AnimationSheet } from "./AnimationStyles";
 
 /**
  * The AI Editor's Editing styles tab: the person's styles as cards, and the sheet one is made and changed in. A style
@@ -24,6 +25,11 @@ import { listSkills } from "@/lib/skills";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const select = "h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm";
+
+/** A pace as the sheet offers it: its name and what it does to the pauses. */
+const PACE_OPTION: Record<Pace, string> = { tight: "Tight: pauses cut out", natural: "Natural: short pauses stay" };
+/** The Animation style select's last row: it opens a new animation style's sheet. */
+const NEW_ANIMATION = "+new";
 
 /** What a style sets, in one line under its name. */
 export const styleLine = (s: EditingStyle): string =>
@@ -101,9 +107,9 @@ export async function brollFolders(): Promise<{ id: string; name: string }[]> {
  * takes the person's own defaults when an edit is made. A select with nothing to choose is not drawn (one grade, no
  * folder, no step in this app, no skill). The skills offered are the AI Editor script skills (the person's own, and
  * the ones their packs and plug-ins bring), and the one the style names from before skills had a place, so it can be
- * taken off; the skill is sent only when changed here, so one the style names that is switched off for now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
+ * taken off. The Animation style select is always there: its last row makes one, which is then picked; the skill is sent only when changed here, so one the style names that is switched off for now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
  */
-function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
+export function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown> }) {
   const [name, setName] = useState(style?.name ?? "");
   const [notes, setNotes] = useState(style?.notes ?? "");
   const [versions, setVersions] = useState(style?.versions ?? 1);
@@ -115,6 +121,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [animation, setAnimation] = useState(style?.animation ?? "");
   const [passes, setPasses] = useState(!!style?.passes);
   const [animations, setAnimations] = useState<AnimationStyle[]>([]);
+  const [makingAnimation, setMakingAnimation] = useState(false);
   const [grade, setGrade] = useState<string | null>(null); // null: not changed here
   const [steps, setSteps] = useState<EditStepChoice[] | null>(null); // null: not changed here
   const [defaults, setDefaults] = useState<EditorDefaults | null>(null);
@@ -168,14 +175,13 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
       size: sizeOfKey(size),
       ...(passes !== !!style?.passes ? { passes } : {}),   // sent only when changed here
       ...(folders.length ? { brollCollectionId: folderShown || null } : {}),
-      ...(animations.length ? { animation: animationShown || null } : {}),
+      ...(animations.length ? { animation: animationShown || null } : {}),   // none of their own: nothing is said about one
       ...(skill !== null ? { skill: skill || null } : {}),
       ...(grade !== null ? { grade } : {}),
       ...(steps ? { steps } : {}),
     };
     try {
-      await (style ? updateStyle(style.id, body) : createStyle(body));
-      await onSaved();
+      await onSaved(await (style ? updateStyle(style.id, body) : createStyle(body)));
       onClose();
     } catch (e) {
       setError(message(e));
@@ -199,8 +205,8 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
             <Input id="style-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={STYLE_NAME_MAX} autoFocus={!style} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="style-notes">How should it be cut?</Label>
-            <Textarea id="style-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} maxLength={STYLE_NOTES_MAX} placeholder="Short lines, no intro. Keep the jokes. End on the question." />
+            <Label htmlFor="style-notes">Describe the editing style</Label>
+            <Textarea id="style-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} maxLength={STYLE_NOTES_MAX} placeholder="Fast, no intro: start on the strongest line. Keep the jokes and the laughs. One idea per line. End on the question." />
           </div>
           <div className="flex flex-wrap gap-4">
             <div className="flex flex-col gap-1.5">
@@ -214,21 +220,21 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="style-target">Target length (s)</Label>
+              <Label htmlFor="style-target">Length (seconds)</Label>
               <Input id="style-target" type="number" min={0} max={3600} value={targetS} onChange={(e) => setTargetS(e.target.value)} placeholder="Any" className="w-28" />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="style-pace">Pace</Label>
-              <select id="style-pace" value={pace} onChange={(e) => setPace(e.target.value as Pace)} className={`${select} w-28`}>
+              <select id="style-pace" value={pace} onChange={(e) => setPace(e.target.value as Pace)} className={`${select} min-w-28`}>
                 {PACES.map((p) => (
                   <option key={p} value={p}>
-                    {PACE_NAME[p]}
+                    {PACE_OPTION[p]}
                   </option>
                 ))}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="style-punch">Punch-in</Label>
+              <Label htmlFor="style-punch">Zoom on cuts</Label>
               <select id="style-punch" value={punch} onChange={(e) => setPunch(Number(e.target.value))} className={`${select} w-28`}>
                 {PUNCHES.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -238,7 +244,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="style-size">Working size</Label>
+              <Label htmlFor="style-size">Video size</Label>
               <select id="style-size" value={size} onChange={(e) => setSize(e.target.value)} className={`${select} min-w-40`}>
                 {SIZE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -248,8 +254,19 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
               </select>
             </div>
           </div>
-          {(grades.length > 1 || folders.length > 0 || animations.length > 0 || skills.length > 0) && (
-            <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap gap-4">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor="style-animation">Animation style</Label>
+                <select id="style-animation" value={animationShown} onChange={(e) => (e.target.value === NEW_ANIMATION ? setMakingAnimation(true) : setAnimation(e.target.value))} className={`${select} min-w-40 max-w-full`}>
+                  <option value="">None</option>
+                  {animations.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                  <option value={NEW_ANIMATION}>New animation style…</option>
+                </select>
+              </div>
               {grades.length > 1 && (
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="style-grade">Grade</Label>
@@ -275,19 +292,6 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
                   </select>
                 </div>
               )}
-              {animations.length > 0 && (
-                <div className="flex min-w-0 flex-col gap-1.5">
-                  <Label htmlFor="style-animation">Animation style</Label>
-                  <select id="style-animation" value={animationShown} onChange={(e) => setAnimation(e.target.value)} className={`${select} min-w-40 max-w-full`}>
-                    <option value="">None</option>
-                    {animations.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
               {skills.length > 0 && (
                 <div className="flex min-w-0 flex-col gap-1.5">
                   <Label htmlFor="style-skill">Skill</Label>
@@ -301,8 +305,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
                   </select>
                 </div>
               )}
-            </div>
-          )}
+          </div>
           {rows.length > 0 && (
             <section aria-label="Post-processing" className="flex flex-col gap-2">
               <h3 className="text-sm font-medium">Post-processing</h3>
@@ -388,6 +391,16 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
             </section>
           )}
         </form>
+        {makingAnimation && (
+          <AnimationSheet
+            style={null}
+            onClose={() => setMakingAnimation(false)}
+            onSaved={async (made) => {
+              setAnimations((await listAnimationStyles()).styles ?? []);
+              setAnimation(made.id);
+            }}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );
