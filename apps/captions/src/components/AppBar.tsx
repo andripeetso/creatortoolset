@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
+import { ChatModeButton } from "@/components/assistant/ChatModeButton";
 import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
 import {
@@ -45,6 +46,7 @@ export function AppBar({
   onHome?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   className?: string;
 }) {
+  const me = useMe();
   return (
     <>
     <header
@@ -59,6 +61,8 @@ export function AppBar({
         className,
       )}
     >
+      {/* in chat mode it stands at the top of the chats instead, with the name and the account (index.css hides these while they show) */}
+      {account && me && !isPhoneHub() && <ChatModeButton className="-mr-1" />}
       <HomeLink onClick={onHome} />
       <HistoryArrows />
       {/* its own width (flex-auto), so the actions move to a second row before it gets squeezed */}

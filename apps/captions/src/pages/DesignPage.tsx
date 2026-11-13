@@ -4,6 +4,7 @@ import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Pe
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { AppBar } from "@/components/AppBar";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
+import { usePageNeeds } from "@/lib/chat-mode";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,8 @@ export default function DesignRoute() {
 }
 
 function DesignPage({ id }: { id: string }) {
+  // the layers, the canvas and what is picked side by side: beside the chats (chat mode) the page asks for that much
+  usePageNeeds(920);
   const [design, setDesign] = useState<Design | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLive] = useState<Page[] | null>(null);

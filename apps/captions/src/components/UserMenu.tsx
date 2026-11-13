@@ -13,7 +13,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { logout, useAuth } from "@/lib/auth";
-import { isPhoneHub } from "@/lib/mobile";
+import { isPhoneHub, isPhonePath } from "@/lib/mobile";
 import { accountItemsFor } from "@/lib/plugin";
 import { AccountAvatar } from "@/components/settings/AccountSection";
 import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
@@ -35,7 +35,7 @@ export function useAccountInCorner(): boolean {
   const me = useAuth((s) => s.me);
   const { pathname } = useLocation();
   return (
-    !!me && !isPhoneHub() && !pathname.startsWith("/m") &&
+    !!me && !isPhoneHub() && !isPhonePath(pathname) &&
     !isPublicSharePath(pathname) && !isPublicReviewPath(pathname)
   );
 }
@@ -58,7 +58,8 @@ export function UserMenu() {
   const pluginItems = accountItemsFor(me, webPlugins);
 
   return (
-    <span className="flex items-center gap-0.5">
+    // in chat mode the account stands under the chats, so a page's own bar leaves it out (index.css)
+    <span data-user-menu className="flex items-center gap-0.5">
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button

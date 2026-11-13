@@ -95,6 +95,8 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ 
 
 export const getAssistant = () => call<AssistantView>("");
 export const sendTurn = (input: AssistantTurnInput) => call<AssistantView>("/turn", "POST", input);
+/** A message to one chat by its id, open or not (a queued message goes to the chat it was written in). */
+export const sendTurnTo = (chat: string, input: AssistantTurnInput) => call<AssistantView>(`/chats/${encodeURIComponent(chat)}/turn`, "POST", input);
 /** Stop the reply being written, else the first that waits; with `reply`, that one. */
 export const stopTurn = (reply?: string) => call<AssistantView>("/stop", "POST", reply ? { reply } : undefined);
 /** The dock's answer to a reply's send (api/assistant.ts POST /sends/:reply): the upload it started, or that the file is gone. */
@@ -106,6 +108,8 @@ export const startOver = () => call<AssistantView>("", "DELETE");
 export const openPast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}/open`, "POST");
 export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}`, "DELETE");
 /** Settle a chat (done with it, kept) or bring it back; every device folds it the same way. */
+/** This chat is on screen now: what ended in it is no longer unread (the list's Done mark, on every device). */
+export const seenChat = (id: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/seen`, "POST");
 export const settleChat = (id: string, settled: boolean) => call<unknown>(`/chats/${encodeURIComponent(id)}/settle`, "POST", { settled });
 /** Allow or deny something the reply asked to do on the Mac. */
 /** Yes or No to a question the assistant put before deleting, publishing or sending something. */

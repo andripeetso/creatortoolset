@@ -553,10 +553,10 @@ export default function EnhancePage() {
       <AppBar tool="Audio Enhancer" to={current ? "/enhance" : undefined} trail={current?.name} />
 
       <ToolIntro icon={AudioLines} title="Audio Enhancer" line="Studio sound for any recording — denoise · de-echo · level" />
-      <div className="w-[560px] max-w-[92vw]">
+      <div className="w-[560px] max-w-[92%]">
       </div>
 
-      <div className="w-[560px] max-w-[92vw]">
+      <div className="w-[560px] max-w-[92%]">
         {openingSession ? (
           // the project's final frame, empty: the same width as the editor, so nothing moves when it arrives
           <div aria-busy="true" aria-label="Opening audio project" className="w-full">
