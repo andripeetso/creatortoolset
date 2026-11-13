@@ -39,6 +39,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { typedHex } from "@/lib/design/colour";
 import { boundsOf, frameOf, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { useZoom, type ViewStore } from "@/lib/design/view";
 import { ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
@@ -270,6 +271,9 @@ function Slide({ label, value, min, max, onLive, onCommit }: { label: string; va
 }
 
 /** A choice of a few, as a row of buttons with the chosen one raised. */
+/** The zoom as a percentage. It reads the view itself: a wheel on the canvas draws this number again and nothing else of the panel. */
+const ZoomNumber = ({ view }: { view: ViewStore }) => <>{Math.round(useZoom(view) * 100)}%</>;
+
 function Choice<V extends string | number>({ label, value, options, onPick }: { label: string; value: V | null; options: readonly (readonly [V, string])[]; onPick: (v: V) => void }) {
   return (
     <div role="group" aria-label={label} className="grid gap-1 rounded-[5px] bg-[#f5f5f5] p-0.5 dark:bg-[#383838]" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
@@ -323,7 +327,7 @@ export function Inspector({
   onPagePreview,
   onAlign,
   onDistribute,
-  zoom,
+  view,
   onZoom,
   onExport,
   cropping,
@@ -352,7 +356,8 @@ export function Inspector({
   onPagePreview: (page: DesignPage | null) => void;
   onAlign: (how: Align) => void;
   onDistribute: (axis: "x" | "y") => void;
-  zoom: number;
+  /** the canvas's view: only the zoom's number reads it, and only that is drawn again when it moves */
+  view: ViewStore;
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
   /** every frame, or the one at this place, saved as said */
   onExport: (only: number | undefined, as: ExportAs) => void;
@@ -456,7 +461,7 @@ export function Inspector({
           )}
         <DropdownMenu>
           <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
-            {Math.round(zoom * 100)}%
+            <ZoomNumber view={view} />
             <ChevronDown className="h-3 w-3" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">

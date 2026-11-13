@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { drawPage, fontOf, inLayer, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
+import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
 import { boundsOf, frameOf, freshIds, groupOf, intersects, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
+import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,6 +31,9 @@ import { cn } from "@/lib/utils";
  *               together.
  *   The view    the wheel scrolls, ⌘ or Ctrl with the wheel (or a pinch) zooms about the pointer, Space or the hand
  *               tool or the middle button drags the canvas.
+ *   Drawing     while the view or a layer moves, every frame that did not change is put on the canvas as the picture
+ *               kept of it (lib/design/view.ts framePlan), so a step of the wheel costs a few pictures copied, not
+ *               every layer of every frame drawn again; a moment after the last move the frames are exact again.
  */
 
 export type Tool = "move" | "hand" | "frame" | DesignShape | "text" | "pen";
@@ -41,6 +45,14 @@ const SNAP = 6;
 /** No layer is resized smaller than this, in design pixels. */
 const MIN = 8;
 const BLUE = "#0d99ff";
+/** The device pixels all the kept pictures of frames may have together (about 96 MB), and how long nothing has to move before the frames are made exact again, in ms. */
+const KEPT_PIXELS = 24_000_000;
+const SETTLE = 120;
+type FramePicture = KeptFrame & { canvas: HTMLCanvasElement };
+/** A number for an object, the same one every time: what a frame's picture was made of, told apart without comparing every layer. */
+const numbered = new WeakMap<object, number>();
+let numbers = 0;
+const numberOf = (o: object) => numbered.get(o) ?? (numbered.set(o, ++numbers), numbers);
 const TURN = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#fff" stroke-width="5"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g><g stroke="#000" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g></svg>')}") 11 11, crosshair`;
 
 type Point = { x: number; y: number };
@@ -55,8 +67,7 @@ export function Stage({
   width,
   height,
   room,
-  view,
-  onView,
+  view: held,
   loaded,
   version,
   selected,
@@ -87,8 +98,8 @@ export function Stage({
   height: number;
   /** the canvas's size on the screen */
   room: { w: number; h: number };
-  view: View;
-  onView: (v: View) => void;
+  /** where the canvas is scrolled to and how far it is zoomed: this one draws itself again when it moves, the page around it does not */
+  view: ViewStore;
   loaded: Loaded;
   /** moves when a picture or a font finished loading, so the frames are drawn again */
   version: number;
@@ -154,12 +165,25 @@ export function Stage({
   useEffect(() => {
     if (tool !== "pen") endPen.current(false);
   }, [tool]);
-  // the view as of the last event: two wheel ticks before the next drawing both count
+  const view = useView(held);
+  // The view as of the last event: two wheel ticks before the next drawing both count. What the wheel and a drag ask
+  // of it is shown once for every picture of the screen, however many of them arrive in one; in a window that shows
+  // no pictures (hidden), at once.
   const live = useRef(view);
-  useEffect(() => void (live.current = view), [view]);
-  const show = useRef(onView);
-  useEffect(() => void (show.current = onView), [onView]);
-  const setView = (v: View) => ((live.current = v), show.current(v));
+  useEffect(() => held.subscribe(() => void (live.current = held.get())), [held]);
+  const due = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(due.current), []);
+  const setView = useCallback(
+    (v: View) => {
+      live.current = v;
+      if (document.hidden) return held.set(v);
+      due.current ||= requestAnimationFrame(() => {
+        due.current = 0;
+        held.set(live.current);
+      });
+    },
+    [held],
+  );
 
   /** Where each frame lies on the canvas. */
   const fr = pages.map((p, k) => frameOf(p, k, width, height));
@@ -194,6 +218,16 @@ export function Stage({
     typing.current?.select();
   }, [typedId]);
 
+  // The frames, drawn. A frame that fits a kept picture at this zoom is put on the canvas as that picture, made again
+  // only when its content changed; the others are copied. `sharp` moves a moment after the last drawing that left a
+  // stretched picture on the canvas (a zoom): then every frame is exact again.
+  const kept = useRef(new Map<string, { key: string; size: number; made: FramePicture }>()).current;
+  const [sharp, setSharp] = useState(0);
+  const drawnAs = useRef<{ view: View | null; sharp: number; timer: number }>({ view: null, sharp: 0, timer: 0 });
+  useEffect(() => {
+    const was = drawnAs.current;
+    return () => window.clearTimeout(was.timer);
+  }, []);
   useEffect(() => {
     const c = canvas.current;
     if (!c) return;
@@ -205,21 +239,55 @@ export function Stage({
     const ctx = c.getContext("2d")!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
+    const was = drawnAs.current;
+    const exact = sharp !== was.sharp;
+    const viewMoved = !!was.view && (was.view.x !== view.x || was.view.y !== view.y || was.view.z !== view.z);
+    was.sharp = sharp;
+    was.view = view;
+    const want = view.z * dpr;
+    let rough = false;
     pages.forEach((p, k) => {
       const f = frameOf(p, k, width, height);
       const left = view.x + f.x * view.z;
       const top = view.y + f.y * view.z;
       if (left > room.w || left + f.w * view.z < 0 || top > room.h || top + f.h * view.z < 0) return;
-      ctx.save();
-      ctx.setTransform(view.z * dpr, 0, 0, view.z * dpr, left * dpr, top * dpr);
-      ctx.beginPath();
-      ctx.rect(0, 0, f.w, f.h);
-      ctx.clip();
       // the words being typed are in the box over the frame: the layer itself is not drawn under them
-      drawPage(ctx, editing && k === at ? { ...p, layers: p.layers.filter((l) => l.id !== editing) } : p, f.w, f.h, loaded);
-      ctx.restore();
+      const inWords = editing && k === at ? editing : "";
+      const shown = inWords ? { ...p, layers: p.layers.filter((l) => l.id !== inWords) } : p;
+      // on whole device pixels, so a kept picture copied there and the frame drawn there are the same picture
+      const x = Math.round(left * dpr);
+      const y = Math.round(top * dpr);
+      const content = [numberOf(p.layers), p.background, p.gradient ? JSON.stringify(p.gradient) : "", f.w, f.h, numberOf(loaded), version, inWords].join("|");
+      const plan = framePlan({ want, finest: keptScale(f.w, f.h), content, had: kept.get(p.id)?.made, viewMoved, exact });
+      if (plan.how === "direct") {
+        ctx.save();
+        ctx.setTransform(want, 0, 0, want, x, y);
+        ctx.beginPath();
+        ctx.rect(0, 0, f.w, f.h);
+        ctx.clip();
+        drawPage(ctx, shown, f.w, f.h, loaded);
+        ctx.restore();
+        return;
+      }
+      const w = Math.ceil(f.w * plan.scale);
+      const h = Math.ceil(f.h * plan.scale);
+      const picture = keptOr(kept, p.id, `${content}@${plan.scale}`, w * h, KEPT_PIXELS, (old) => {
+        const canvas = old?.canvas ?? document.createElement("canvas");
+        // setting the size empties it
+        canvas.width = w;
+        canvas.height = h;
+        const g = canvas.getContext("2d")!;
+        g.setTransform(plan.scale, 0, 0, plan.scale, 0, 0);
+        drawPage(g, shown, f.w, f.h, loaded);
+        return { canvas, content, scale: plan.scale };
+      });
+      if (plan.scale === want) return void ctx.drawImage(picture.canvas, x, y);
+      rough = true;
+      ctx.drawImage(picture.canvas, 0, 0, f.w * plan.scale, f.h * plan.scale, left * dpr, top * dpr, f.w * want, f.h * want);
     });
-  }, [pages, at, width, height, room, view, loaded, version, editing]);
+    window.clearTimeout(was.timer);
+    if (rough) was.timer = window.setTimeout(() => setSharp((n) => n + 1), SETTLE);
+  }, [pages, at, width, height, room, view, loaded, version, editing, sharp, kept]);
 
   // the wheel and the pinch are the canvas's own: a plain listener, since React's cannot stop the browser's zoom
   useEffect(() => {
@@ -235,9 +303,11 @@ export function Stage({
       if (picture) return picture.set(picture.now * Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * 0.01));
       const v = live.current;
       if (e.ctrlKey || e.metaKey) return setView(zoomAt(v, v.z * Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * 0.01), ...spot(e)));
+      // a wheel that counts in lines or pages (some browsers, for a mouse's wheel) scrolls that many pixels
+      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? el.clientHeight : 1;
       // a wheel with Shift scrolls sideways
       const side = e.shiftKey && !e.deltaX;
-      setView({ ...v, x: v.x - (side ? e.deltaY : e.deltaX), y: v.y - (side ? 0 : e.deltaY) });
+      setView({ ...v, x: v.x - (side ? e.deltaY : e.deltaX) * unit, y: v.y - (side ? 0 : e.deltaY) * unit });
     };
     // Safari's pinch: its own events, with the scale since the pinch began
     let from = 1;
@@ -257,8 +327,7 @@ export function Stage({
       el.removeEventListener("gesturestart", pinch);
       el.removeEventListener("gesturechange", pinch);
     };
-    // setView reads the newest onView itself
-  }, []);
+  }, [setView]);
 
   // While the pen is on a line, Backspace, Delete and ⌘Z take its last point off and nothing else (not a layer, not a
   // frame, not the last saved change): heard before anything else hears the key.
@@ -350,11 +419,17 @@ export function Stage({
     return { dx: ev.shiftKey && !flat ? 0 : dx, dy: ev.shiftKey && flat ? 0 : dy, lockX: ev.shiftKey && !flat, lockY: ev.shiftKey && flat };
   };
 
+  const [panning, setPanning] = useState(false);
   const pan = (e: React.PointerEvent) => {
     const v0 = live.current;
     const x0 = e.clientX;
     const y0 = e.clientY;
-    drag(e, (ev) => setView({ ...v0, x: v0.x + ev.clientX - x0, y: v0.y + ev.clientY - y0 }));
+    setPanning(true);
+    drag(
+      e,
+      (ev) => setView({ ...v0, x: v0.x + ev.clientX - x0, y: v0.y + ev.clientY - y0 }),
+      () => setPanning(false),
+    );
   };
 
   /**
@@ -739,7 +814,7 @@ export function Stage({
           role="application"
           aria-label="Canvas"
           className="absolute inset-0 touch-none select-none overflow-hidden outline-none"
-          style={{ cursor: dropper ? "crosshair" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
+          style={{ cursor: dropper ? "crosshair" : panning ? "grabbing" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
           onPointerDown={down}
           onPointerMove={over}
           onPointerLeave={() => setHover(null)}

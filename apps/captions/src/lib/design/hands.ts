@@ -39,9 +39,9 @@ export function zoomAt(v: View, z: number, sx: number, sy: number): View {
   return { z: k, x: sx - ((sx - v.x) / v.z) * k, y: sy - ((sy - v.y) / v.z) * k };
 }
 
-/** The view that shows `box` whole, in the middle of the room. */
-export function fitView(box: Rect, room: { w: number; h: number }, pad = 56): View {
-  const z = zoomIn(Math.min(Math.max(1, room.w - 2 * pad) / box.w, Math.max(1, room.h - 2 * pad) / box.h));
+/** The view that shows `box` whole, in the middle of the room, zoomed in no further than `most`. */
+export function fitView(box: Rect, room: { w: number; h: number }, pad = 56, most: number = ZOOM.max): View {
+  const z = zoomIn(Math.min(most, Math.max(1, room.w - 2 * pad) / box.w, Math.max(1, room.h - 2 * pad) / box.h));
   return { z, x: (room.w - box.w * z) / 2 - box.x * z, y: (room.h - box.h * z) / 2 - box.y * z };
 }
 

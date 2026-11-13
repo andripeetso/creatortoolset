@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
+import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
@@ -88,7 +89,8 @@ function DesignPage({ id }: { id: string }) {
   /** The path layer whose points are shown for moving, and the picked one of them. */
   const [shaping, setShaping] = useState<{ id: string; anchor: number | null } | null>(null);
   const [tool, setTool] = useState<Tool>("move");
-  const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
+  // where the canvas is scrolled to and how far it is zoomed: kept beside this page's state, so a wheel draws the canvas again and not the whole page
+  const view = useRef(viewStore()).current;
   const [pointed, setPointed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<"saved" | "saving" | "unsaved">("saved");
@@ -132,8 +134,9 @@ function DesignPage({ id }: { id: string }) {
   useEffect(() => {
     if (placed.current || !design || !room || !design.pages[0]) return;
     placed.current = true;
-    setView(fitView(frameOf(design.pages[0], 0, design.width, design.height), room));
-  }, [design, room]);
+    // no closer than its own pixels: a small frame is not blown up to fill the window
+    view.set(fitView(frameOf(design.pages[0], 0, design.width, design.height), room, 56, 1));
+  }, [design, room, view]);
 
   const pages = useMemo(() => hist?.now ?? [], [hist]);
   const k = Math.max(0, Math.min(at, pages.length - 1));
@@ -335,7 +338,7 @@ function DesignPage({ id }: { id: string }) {
     const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base.background, layers: [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
     change((all) => [...all, fresh]);
     pick(pages.length, [], true);
-    if (!rect && room) setView((v) => ({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z }));
+    if (!rect && room) view.glide({ ...view.aim(), x: room.w / 2 - (r.x + r.w / 2) * view.aim().z, y: room.h / 2 - (r.y + r.h / 2) * view.aim().z });
   };
   /** A box drawn with the frame tool: a click makes a frame the size of the current one, a drag the size drawn. */
   const makeFrame = (r: Rect, dragged: boolean) => {
@@ -406,12 +409,15 @@ function DesignPage({ id }: { id: string }) {
   const zoom = (to: "in" | "out" | "fit" | "selection" | number) => {
     if (!room || !here) return;
     // fit: every frame of the canvas
-    if (to === "fit") return setView(fitView(boundsOf(frames), room));
+    if (to === "fit") return view.glide(fitView(boundsOf(frames), room));
     if (to === "selection") {
       const b = mine.length ? boundsOf(mine) : null;
-      return setView(fitView(b ? { ...b, x: b.x + here.x, y: b.y + here.y } : here, room));
+      return view.glide(fitView(b ? { ...b, x: b.x + here.x, y: b.y + here.y } : here, room));
     }
-    setView((v) => zoomAt(v, to === "in" ? v.z * 2 : to === "out" ? v.z / 2 : to, room.w / 2, room.h / 2));
+    // in and out: to the next stop, about the middle of the canvas, from where a glide under way is headed (two
+    // presses in a row are two stops)
+    const v = view.aim();
+    view.glide(zoomAt(v, to === "in" ? zoomStop(v.z, true) : to === "out" ? zoomStop(v.z, false) : to, room.w / 2, room.h / 2));
   };
 
   const fromComputer = async (files: readonly File[]) => {
@@ -502,6 +508,9 @@ function DesignPage({ id }: { id: string }) {
       const run = (fn: () => unknown) => (e.preventDefault(), void fn());
       if (mod) {
         if (c === "KeyZ") run(() => step(!e.shiftKey));
+        else if (e.key === "+" || e.key === "=") run(() => zoom("in"));
+        else if (e.key === "-") run(() => zoom("out"));
+        else if (c === "Digit0") run(() => zoom(1));
         else if (c === "KeyD") run(duplicate);
         else if (c === "KeyG") run(e.shiftKey ? ungroup : group);
         else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
@@ -659,7 +668,6 @@ function DesignPage({ id }: { id: string }) {
               height={design.height}
               room={room}
               view={view}
-              onView={setView}
               loaded={loaded}
               version={version}
               selected={selected}
@@ -732,7 +740,7 @@ function DesignPage({ id }: { id: string }) {
           onPagePreview={(next) => setLive(next ? [next] : null)}
           onAlign={(how) => arrange(alignLayers(mine, how, here))}
           onDistribute={(axis) => arrange(distribute(mine, axis))}
-          zoom={view.z}
+          view={view}
           onZoom={zoom}
           onExport={(only, as) => void exportPngs(only, as)}
           cropping={!!cropping}
