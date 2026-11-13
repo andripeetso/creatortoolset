@@ -109,6 +109,8 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
                 key={use}
                 id={`stt-use-${use}`}
                 title={SPEECH_USE_NAMES[use]}
+                // why it runs on another engine than the one picked (the AI Editor: English edits only on computers)
+                description={r && "note" in r ? r.note : undefined}
                 // a use that follows the Default shares its need: the Default's row says it once; a need of its own
                 // (the Default runs on a computer, this use can't) is said here
                 status={r && (own || !("needs" in r) || !("needs" in view.resolvedDefault)) && <Runs r={r} full={!!own} />}

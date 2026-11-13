@@ -67,6 +67,20 @@ describe("a use's own need", () => {
   });
 });
 
+describe("the AI Editor on your computers", () => {
+  it("offered On my computers when one has Parakeet; on Deepgram anyway, its row says why in one line", () => {
+    const note = "On your computers only edits in English: this runs on Deepgram";
+    const out = html(view({
+      stt: { default: { engine: "auto" }, per: { editor: { engine: "local" } } },
+      availableFor: { captions: ["deepgram"], transcripts: ["deepgram"], editor: ["deepgram", "local"], mic: ["deepgram"] },
+      resolved: [{ use: "editor", engine: "deepgram", model: "nova-3", note }],
+    }));
+    expect(out).toContain(note);
+    expect(out.split(note).length - 1).toBe(1);
+    expect(engineOptions(["deepgram", "local"], "local", false).map((o) => o.label)).toContain("On my computers");
+  });
+});
+
 describe("models on your computers", () => {
   it("with none, offers to add a computer; with one, each model can be downloaded, and one it has removed", () => {
     expect(html(view())).toContain('href="/settings/devices"');

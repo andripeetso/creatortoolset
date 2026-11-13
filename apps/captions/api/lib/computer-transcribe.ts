@@ -89,7 +89,7 @@ interface Job {
   since: number;
   /** how long its computer may take, from the audio's length */
   takeMs: number;
-  /** handed out before the lower ones: a mic recording (2), captions (1), a library transcript (0) */
+  /** handed out before the lower ones: a mic recording (2), captions (1), the AI Editor's (0.5), a library transcript (0) */
   rank: number;
   end: (r: TranscribeResult | Error) => void;
 }
@@ -126,6 +126,14 @@ export const CAPTION_LIMITS = { claimMs: 30_000, takeMs: 3 * 60_000, rank: 1 } a
  * the proxy's 60 s.
  */
 export const MIC_LIMITS = { claimMs: 4_000, takeMs: 15_000, checkMs: 1_000, exact: true, rank: 2 } as const;
+
+/**
+ * The AI Editor's words, one window of an edit's sound (45 s at most) at a time, while the edit's worker waits on the
+ * request: after captions (a person watches those) and before library transcripts (they wait for minutes anyway). A
+ * computer must take it in 15 s and answer in 30 s, under the proxy's 60 s; else the worker has Deepgram write it, as
+ * it did before. Parakeet on a CPU hears 45 s in about 3 s.
+ */
+export const EDITOR_LIMITS = { claimMs: 15_000, takeMs: 30_000, checkMs: 1_000, exact: true, rank: 0.5 } as const;
 
 type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: number; exact?: boolean };
 

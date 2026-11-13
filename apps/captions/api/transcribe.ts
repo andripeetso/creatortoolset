@@ -10,7 +10,7 @@ import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
 import { availableEngines, readVoicePrefs, speechFor } from "./lib/speech";
 import { NeedsKey, transcribeFile, type Route } from "./library/transcribe";
-import { CAPTION_LIMITS, ComputerBusy, ComputerOff, transcribeOnComputer } from "./lib/computer-transcribe";
+import { CAPTION_LIMITS, ComputerBusy, ComputerOff, EDITOR_LIMITS, transcribeOnComputer } from "./lib/computer-transcribe";
 import { STT_MODELS } from "../contracts/voice";
 import type { TranscribeResult } from "../contracts/devices";
 import { captioning } from "./projects";
@@ -45,27 +45,42 @@ export function captionsComputer(user: AuthVars["user"]): { model: string; langu
   return !("needs" in s) && s.engine === "local" && s.on === "computers" ? { model: s.model, languages: s.languages } : null;
 }
 
-/**
- * The words from the person's own computers (lib/computer-transcribe.ts, the road Media Library transcripts take), or
- * why not in a few words for the note the page shows when another engine wrote them.
- */
 /** Why the person's computers did not write it, in a few words (the note a page shows). */
 const computersWhy = (e: unknown) =>
   e instanceof ComputerOff ? "Your computers are off" : e instanceof ComputerBusy ? "Your computers are busy" : "Your computers could not do it";
 
-async function wordsFromComputer(owner: string, pc: { model: string; languages: string[] }, audio: ArrayBuffer): Promise<TranscribeResult | { why: string }> {
+/**
+ * The words from `owner`'s own computers (lib/computer-transcribe.ts, the road Media Library transcripts take), or
+ * why not in a few words for the note the page shows when another engine wrote them.
+ */
+async function wordsFromComputer(
+  owner: string, pc: { model: string; languages: string[] }, audio: ArrayBuffer | Uint8Array,
+  what: "captions" | "editor" = "captions",
+): Promise<TranscribeResult | { why: string }> {
   const scratch = path.join(env.dataDir, "library", "scratch");
   await mkdir(scratch, { recursive: true });
-  const file = path.join(scratch, `captions-${randomUUID()}.wav`);
+  const file = path.join(scratch, `${what}-${randomUUID()}.wav`);
   await writeFile(file, new Uint8Array(audio));
   try {
-    return await transcribeOnComputer(owner, pc.model, pc.languages, file, CAPTION_LIMITS);
+    return await transcribeOnComputer(owner, pc.model, pc.languages, file, what === "editor" ? EDITOR_LIMITS : CAPTION_LIMITS);
   } catch (e) {
-    console.warn(`[transcribe] captions for ${owner} not from their computers: ${e instanceof Error ? e.message : e}`);
+    console.warn(`[transcribe] ${what} for ${owner} not from their computers: ${e instanceof Error ? e.message : e}`);
     return { why: computersWhy(e) };
   } finally {
     await rm(file, { force: true });
   }
+}
+
+/**
+ * One window of an AI Editor edit's sound (a WAV, 16 kHz mono 16-bit) heard on the computers of `owner`, the account
+ * that started the edit, as its Voice settings say for the edit's `languages` (speechFor "editor": Parakeet, English
+ * alone). Never anyone else's computers: the caller passes the owner it read from the stored edit, not a name it was
+ * sent. `{ why }` when they can't: the worker has Deepgram write that window.
+ */
+export async function editorWordsFromComputer(owner: string, languages: string[] | undefined, audio: ArrayBuffer | Uint8Array): Promise<TranscribeResult | { why: string }> {
+  const s = speechFor(owner, "editor", languages);
+  if ("needs" in s || s.engine !== "local" || s.on !== "computers") return { why: "Not set to run on your computers" };
+  return wordsFromComputer(owner, s, audio, "editor");
 }
 
 /** `computers`: the captions run on the person's own computers, this model's name (the page's engine label). */
