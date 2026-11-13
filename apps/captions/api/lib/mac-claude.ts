@@ -213,8 +213,13 @@ export async function wakeEditorPolls(): Promise<void> {
  */
 export const answersAtRisk = (): number => [...reqs.values()].filter((r) => !(r.claimed && r.keep)).length;
 
-/** how long a request waits for the Mac before its caller falls back; longer while the Mac is on but every slot runs */
-const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000 };
+/**
+ * how long a request waits for the Mac before its caller falls back; longer while the Mac is on but every slot runs.
+ * afterStart: a restart of this server cuts every Mac's poll off, and a relay then waits up to 30 s before it polls
+ * again (its own back-off), so a request made in this process's first 45 s waits that long.
+ */
+const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000, afterStart: 45_000 };
+const startedAt = Date.now();
 export const BACKGROUND_SLOTS = 2;
 /** the Mac runs this many Claude calls at once (the Mac relay SLOTS) */
 const MAC_SLOTS = 4;
@@ -225,8 +230,9 @@ const TOTAL_MS = 20 * 60_000;
 const macFull = (device: string) => [...reqs.values()].filter((r) => r.claimed && r.device === device).length >= MAC_SLOTS;
 
 /** How long a request waits: the Mac on but full is working, so a person waits longer for it than for a silent Mac. */
-export function patienceMs(background: boolean, busy: boolean): number {
-  return background ? PATIENCE_MS.background : busy ? PATIENCE_MS.busy : PATIENCE_MS.now;
+export function patienceMs(background: boolean, busy: boolean, sinceStart = Infinity): number {
+  const usual = background ? PATIENCE_MS.background : busy ? PATIENCE_MS.busy : PATIENCE_MS.now;
+  return sinceStart < PATIENCE_MS.afterStart ? Math.max(usual, PATIENCE_MS.afterStart) : usual;
 }
 
 /** The next request for a device: what a person waits on first, background only while one of its slots is free. */
@@ -436,7 +442,8 @@ function wait(asked: Asked, claimed: boolean, cancel: AbortSignal | undefined, o
       if (leaving) return;
       const now = Date.now();
       const on = isOnline(r.device);
-      if (!r.claimed && now - started > patienceMs(r.background, on && macFull(r.device)))
+      // only a real server gives the time after its start: under tests and on a dev server the Macs' polls were never cut
+      if (!r.claimed && now - started > patienceMs(r.background, on && macFull(r.device), env.isProduction ? started - startedAt : Infinity))
         r.fail(new MacClaudeError(unclaimedMessage(r.device, on), "unclaimed"));
       else if (r.claimed && now - r.seen > SILENT_MS) r.fail(new MacClaudeError("The Mac stopped answering", "failed"));
       else if (r.claimed && now - r.claimedAt > TOTAL_MS) r.fail(new MacClaudeError("Claude took over 20 minutes", "timeout"));
