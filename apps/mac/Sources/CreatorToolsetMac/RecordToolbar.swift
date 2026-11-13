@@ -9,7 +9,8 @@ import SwiftUI
     @AppStorage("recordMicID") var micID: String = ""
     /// "none" = no camera, otherwise a device's uniqueID.
     @AppStorage("recordCameraID") var cameraID: String = "none"
-    @AppStorage("recordSystemAudio") var systemAudio: Bool = false
+    /// Record Mac sound: on unless switched off (the owner, 11-13: "have it on by default"); a choice made stays.
+    @AppStorage("recordSystemAudio") var systemAudio: Bool = true
     /// Mic level 0...1, fed by the meter while the toolbar is open: its own object, never this one's change. It
     /// changes 20 times a second, and what follows the choices here (the camera bubble) reopened the camera on every
     /// one of those, asking macOS for the camera each time: the camera never showed and the app hung.
