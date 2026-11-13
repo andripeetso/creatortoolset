@@ -464,8 +464,14 @@ function SoundTab({ look, change, events }: { look: ScreenLook; change: (patch: 
   return (
     <Group>
       {recorded.voice !== null && <SwitchRow label="Your voice" checked={look.voice !== false} onChange={(voice) => change({ voice })} />}
-      {recorded.sound !== null && (
+      {recorded.sound !== null ? (
         <SwitchRow label={device ? "Device sound" : "Mac sound"} checked={look.sound !== false} onChange={(sound) => change({ sound })} />
+      ) : (
+        // a switch for a sound that is not in the recording would do nothing: say where it is turned on instead
+        <p className="text-xs text-zinc-400">
+          {device ? "The device's sound" : "The Mac's sound"} wasn't recorded in this take. Turn on {device ? "Record device sound" : "Record Mac sound"} in the
+          recorder's toolbar before you record, and it gets its own switch here.
+        </p>
       )}
     </Group>
   );
