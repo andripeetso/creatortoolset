@@ -15,6 +15,8 @@
  *   POST /api/assistant/chats/:id/snooze { until: ms | null } → { chats }: out of the list until then (null: back now)
  *   POST /api/assistant/chats/:id/title  { title } → { chats }: its name
  *   POST /api/assistant/chats/:id/unread → { chats }: its newest finished reply counts as not looked at
+ *   POST /api/assistant/chats/:id/limit  { resume: boolean } → { chats }: its reply a usage limit stopped carries on
+ *                                        when the limit resets, or doesn't (404: no such reply is its newest)
  * Replies in different chats are written at the same time, up to 3 per account (MAX_RUNNING, api/assistant.ts); in one
  * chat one at a time, in order. Stop ({ reply }), approvals and confirms are found by their own ids in any chat.
  */
@@ -32,6 +34,9 @@ export interface AssistantMessage {
   status?: "thinking" | "done" | "error";
   /** A reply: when it began working (one queued or waiting for its videos starts later than `at`). The dock's "Working for" counts from it. */
   started?: number;
+  /** A reply a usage limit stopped (status "error"): `until` is when the limit resets (absent: it didn't say), `resume`
+   *  that the chat carries on by itself then ("Continue where you left off.", POST /chats/:id/limit). */
+  limit?: { until?: number; resume?: true };
   /** A reply that ended: how long it worked (ms), shown as "Worked for 1m 12s". */
   took?: number;
   /** What the reply did on the way, one line per tool it used ("Looking through Review"), shown as it works. */
@@ -237,6 +242,8 @@ export interface AssistantChat {
   snoozed?: number;
   /** Back from being put away and not looked at since. */
   woke?: true;
+  /** Its newest reply was stopped by a usage limit (AssistantMessage.limit). */
+  limited?: true;
   /** What it last made or opened: its newest card (an edit, a Workshop session, a Review video). */
   on?: Pick<AssistantWork, "kind" | "title">;
 }
@@ -258,6 +265,8 @@ export interface AssistantView {
   sendNow?: true;
   /** A turn sent with `later` starts at once, without waiting for its videos. Absent on older servers: the reply waits. */
   videosLater?: true;
+  /** The chat is put away until this time (ms; POST /chats/:id/snooze), as AssistantChat.snoozed. */
+  snoozed?: number;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. One per account, from any chat. */
   navigate: string | null;
   /** This server has the many-chats routes (GET /chats, /chats/:id, its /turn) and writes replies in different chats at

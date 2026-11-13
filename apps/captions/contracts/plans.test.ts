@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codexPlan, limitLine, limitMessage, noPlanLine, planFromCli, planWarning, shareOfWindow, WARN_SHARE } from "./plans";
+import { codexPlan, limitLine, limitMessage, noPlanLine, planFromCli, planWarning, shareOfWindow, WARN_SHARE, limitResetAt } from "./plans";
 
 describe("plan warnings", () => {
   it("warn before an AI Editor run on Pro and Plus, never on Max or ChatGPT Pro", () => {
@@ -66,5 +66,26 @@ describe("limit reached", () => {
     // Muse Code's: the Mac writes the reset time last (MuseStream.failure), formatted on that Mac
     const muse = "Your Muse Code plan's usage limit is reached. Muse Code said: usage limit reached. It resets Nov 11, 2026 at 5:00 AM.";
     expect(limitLine(limitMessage(muse, "Muse Code"))).toBe("Your Muse Code plan's limit is reached; it resets Nov 11, 2026 at 5:00 AM.");
+  });
+});
+
+describe("limitResetAt", () => {
+  // 2026-11-13 16:52:00 in Tallinn (UTC+2)
+  const now = Date.UTC(2026, 10, 13, 14, 52);
+  it("reads a gateway's cooldown", () => {
+    const raw = "Claude: API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 37m41s)";
+    expect(limitResetAt(raw, now)).toBe(now + (37 * 60 + 41) * 1000);
+    expect(limitResetAt("(reset after 1h 2m)", now)).toBe(now + 3720_000);
+  });
+  it("reads Claude's plan reset in its own zone", () => {
+    expect(limitResetAt("You've hit your limit · resets 5:30pm (Europe/Tallinn)", now)).toBe(Date.UTC(2026, 10, 13, 15, 30));
+    // already past today: tomorrow
+    expect(limitResetAt("You've hit your limit · resets 2pm (Europe/Tallinn)", now)).toBe(Date.UTC(2026, 10, 14, 12, 0));
+    expect(limitResetAt("You've hit your weekly limit · resets Nov 15, 9am (America/Costa_Rica)", now)).toBe(Date.UTC(2026, 10, 15, 15, 0));
+  });
+  it("is null without a time or zone", () => {
+    expect(limitResetAt("You've hit your limit", now)).toBeNull();
+    expect(limitResetAt("Try again at 5:00 PM.", now)).toBeNull();
+    expect(limitResetAt("resets 5pm (Not/AZone)", now)).toBeNull();
   });
 });

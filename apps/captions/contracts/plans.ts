@@ -113,3 +113,47 @@ export function limitMessage(cli: string, tool = "Claude"): string {
   const reset = /(?:resets|try again at)\s+(?:at\s+)?([^·\n]+?)\s*\.?$/i.exec(cli.trim())?.[1];
   return limitLine(`Your ${tool} plan's ${window} is reached${reset ? `; it resets ${reset}` : ""}.`);
 }
+
+/** A wall-clock time in an IANA zone → ms. Throws on an unknown zone. */
+function zoned(y: number, mo: number, d: number, h: number, mi: number, tz: string): number {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" });
+  const offset = (t: number) => {
+    const p = Object.fromEntries(f.formatToParts(t).map((x) => [x.type, Number(x.value)]));
+    return Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!) - Math.floor(t / 60_000) * 60_000;
+  };
+  const wall = Date.UTC(y, mo, d, h, mi);
+  return wall - offset(wall - offset(wall));
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/**
+ * When a usage limit opens again (ms), from the words it was refused with; null when they don't say. A gateway's
+ * cooldown: "(reset after 37m41s)". Claude's plan: "resets 2pm (Europe/Tallinn)", "resets Nov 15, 5:30pm (…)". A time
+ * without its zone (Codex's "Try again at 5:00 PM.", the Mac's own clock) is null: this server's clock may be elsewhere.
+ */
+export function limitResetAt(raw: string, now = Date.now()): number | null {
+  const after = /reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/i.exec(raw);
+  if (after) {
+    const s = Number(after[1] ?? 0) * 3600 + Number(after[2] ?? 0) * 60 + Number(after[3] ?? 0);
+    return s > 0 ? now + s * 1000 : null;
+  }
+  const at = /resets\s+(?:at\s+)?(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)\)/i.exec(raw);
+  if (!at) return null;
+  const [, mon, day, hour, min, half, tz] = at;
+  const h = (Number(hour) % 12) + (half!.toLowerCase() === "pm" ? 12 : 0);
+  try {
+    const today = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "numeric", day: "numeric" }).formatToParts(now).map((x) => [x.type, Number(x.value)]));
+    if (mon) {
+      const mo = MONTHS.indexOf(mon.toLowerCase());
+      if (mo < 0) return null;
+      const t = zoned(today.year!, mo, Number(day), h, Number(min ?? 0), tz!);
+      // "Jan 2" read on Dec 30 is next year's
+      return t < now - 86_400_000 ? zoned(today.year! + 1, mo, Number(day), h, Number(min ?? 0), tz!) : t;
+    }
+    const t = zoned(today.year!, today.month! - 1, today.day!, h, Number(min ?? 0), tz!);
+    return t > now ? t : zoned(today.year!, today.month! - 1, today.day! + 1, h, Number(min ?? 0), tz!);
+  } catch {
+    return null;
+  }
+}

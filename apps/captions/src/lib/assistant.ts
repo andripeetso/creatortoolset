@@ -115,6 +115,8 @@ export const settleChat = (id: string, settled: boolean) => call<unknown>(`/chat
 export const pinChat = (id: string, pinned: boolean, at?: number) => call<unknown>(`/chats/${encodeURIComponent(id)}/pin`, "POST", { pinned, ...(at ? { at } : {}) });
 export const snoozeChat = (id: string, until: number | null) => call<unknown>(`/chats/${encodeURIComponent(id)}/snooze`, "POST", { until });
 export const renameChat = (id: string, title: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/title`, "POST", { title });
+/** The chat's reply a usage limit stopped carries on when the limit resets (true), or doesn't. */
+export const limitChat = (id: string, resume: boolean) => call<unknown>(`/chats/${encodeURIComponent(id)}/limit`, "POST", { resume });
 export const unreadChat = (id: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/unread`, "POST");
 /** Allow or deny something the reply asked to do on the Mac. */
 /** Yes or No to a question the assistant put before deleting, publishing or sending something. */

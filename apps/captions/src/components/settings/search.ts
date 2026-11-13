@@ -33,6 +33,8 @@ const STATIC_ROWS = [
   { section: "general", id: "confirm-deletes", title: "Ask before moving to trash or deleting a comment", keywords: ["trash", "delete", "confirm", "comment"] },
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "ask-fit", title: "Ask when dropped footage doesn't fit the open project", keywords: ["assistant", "drop", "footage", "project", "ask"] },
+  { section: "general", id: "auto-resume-limited", title: "Resume after usage limits", keywords: ["assistant", "chat", "limit", "rate", "continue", "auto"] },
+  { section: "general", id: "snooze-limited", title: "Snooze until limits reset", keywords: ["assistant", "chat", "limit", "rate", "snooze"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
   { section: "tools", sub: "record", id: "recorder-streams", title: "Save the streams separately", description: "Screen, camera, voice and Mac sound as their own files (Screen Recorder)", keywords: ["record", "screen recorder", "camera", "streams", "separate", "files", "ai", "mac app"], needs: "mac-recorder" },
   { section: "tools", sub: "record", id: "recorder-screen-quality", title: "Screen quality", description: "How sharp the Screen Recorder records the screen", keywords: ["record", "screen recorder", "quality", "resolution", "4k", "1080p", "size", "mac app"], needs: "mac-recorder" },
