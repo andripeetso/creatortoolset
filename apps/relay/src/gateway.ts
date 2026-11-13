@@ -39,7 +39,9 @@ export interface GatewayDeps {
 
 /** Where the AI app reaches this broker. */
 const self = (gw: GatewayDeps) => gw.selfUrl || gw.publicUrl;
-const REQ_TTL = 600; // seconds a sign-in may take, from the AI app's redirect to the approval
+const REQ_TTL = 600;
+/** Sign-ins kept working per connection (account, computer, AI app). */
+const TOKENS_KEPT = 5; // seconds a sign-in may take, from the AI app's redirect to the approval
 const CODE_TTL = 300;
 const MEDIA_MAX = 5 * 1024 * 1024;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -330,9 +332,12 @@ export function exchangeCode(gw: GatewayDeps, p: Record<string, string>, authori
   const grant = proved ? (gw.db.prepare('SELECT id FROM ai_grants WHERE id = ?').get(hit.grant) as { id: string } | undefined) : undefined;
   if (!grant) return json(400, { error: 'invalid_grant' });
   const token = `cgw_${randomBytes(32).toString('hex')}`;
-  // connecting again replaces the token: no old one stays working out of sight
-  gw.db.prepare('DELETE FROM ai_tokens WHERE grant_id = ?').run(grant.id);
   gw.db.prepare('INSERT INTO ai_tokens (token_hash, grant_id, created_at) VALUES (?, ?, ?)').run(sha(token), grant.id, gw.now());
+  // the newest few stay: the same account in more than one chat app sign-in (a second device, the store's reviewers)
+  // keeps working, and old ones don't pile up out of sight
+  gw.db
+    .prepare('DELETE FROM ai_tokens WHERE grant_id = ? AND token_hash NOT IN (SELECT token_hash FROM ai_tokens WHERE grant_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)')
+    .run(grant.id, grant.id, TOKENS_KEPT);
   return json(200, { access_token: token, token_type: 'Bearer' });
 }
 

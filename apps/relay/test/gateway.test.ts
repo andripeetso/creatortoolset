@@ -335,6 +335,21 @@ test('while the computer is off a tool says so in plain words, and the connectio
   assert.deepEqual(deps.db.prepare('SELECT name FROM pragma_table_info(?)').all('ai_daily').map((r) => (r as { name: string }).name), ['day', 'app', 'tool', 'calls', 'unreachable']);
 });
 
+test('several sign-ins to the same connection keep working (another device, the reviewers), up to five', async () => {
+  const c = addComputer();
+  await c.allow('ChatGPT');
+  const tokens: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const s = await startSignIn();
+    const a = await approve(s.req, c.id);
+    tokens.push((await tokenFrom(a.json.redirect!, s)).json.access_token!);
+    clock += 1;
+  }
+  const ok = async (t: string) => (await mcp(t, rpc('ping'))).status === 200;
+  assert.equal(await ok(tokens[0]!), false); // the oldest of six is gone
+  for (const t of tokens.slice(1)) assert.equal(await ok(t), true);
+});
+
 test('removing the connection on the computer ends it here, and the AI app is told to sign in again', async () => {
   const { token } = await connected();
   pc.state.key = `ctk_${'b'.repeat(48)}`; // the computer no longer knows the old key
