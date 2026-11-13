@@ -39,6 +39,56 @@ export const CARDS_DRAW_KIND = "cards-draw";
  */
 export const CUTOUT_KIND = "cutout";
 
+/**
+ * The kind that turns speech into text with a model downloaded on the person's own computer (api/lib/computer-transcribe.ts),
+ * for the Media Library's transcripts when their engine is `local` (api/lib/speech.ts speechFor). Not an edit step: it is
+ * listed, hinted and claimed on the road above, with what the computer holds in the claim:
+ *   claim { kinds: [..., "transcribe"], models: [ids it has], getting: [ids it is downloading] }
+ *     → { job, models: [ids its owner wants on it] }   it downloads each wanted one it lacks from the model's page
+ *       (STT_MODELS `page`, a Hugging Face repository) and deletes each it has that is not wanted, then claims again
+ *   GET  transcribe/:id            → the audio: WAV, 16 kHz mono 16-bit; the job's `model` and `languages` say how
+ *   POST transcribe/:id            TranscribeResult → DeviceEnded
+ *   POST transcribe/:id/fail       { error } → DeviceEnded
+ * A transcript goes to the strongest of the account's computers that is on and has the model (computer-transcribe.ts
+ * strongest). The long poll is also answered with the hint when the wanted models differ from what the computer said
+ * it has, so a Download pressed in Settings reaches it at once. While it works, it keeps its long poll going (or it is
+ * not online, and the transcript goes back in the queue).
+ */
+export const TRANSCRIBE_KIND = "transcribe";
+
+/** What a computer sends back: the words heard, with times in seconds, and the language heard (ISO 639-1) or null. */
+export interface TranscribeResult {
+  words: { text: string; start: number; end: number }[];
+  language: string | null;
+}
+
+/** Most words in one result (about 30 hours of talk), and most models one computer lists. */
+export const TRANSCRIBE_MAX_WORDS = 300_000;
+const MODELS_MAX = 20;
+
+/** A list of model ids from an untrusted body, keeping those `known` names; null when it is not such a list. */
+export function parseModels(value: unknown, known: (id: string) => boolean): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MODELS_MAX || !value.every((m) => typeof m === "string")) return null;
+  return [...new Set((value as string[]).filter(known))];
+}
+
+/** A TranscribeResult from an untrusted body, or why not. */
+export function parseTranscribeResult(v: unknown): TranscribeResult | string {
+  const o = v as { words?: unknown; language?: unknown } | null;
+  if (!o || !Array.isArray(o.words)) return "words: a list of { text, start, end }";
+  if (o.words.length > TRANSCRIBE_MAX_WORDS) return `More than ${TRANSCRIBE_MAX_WORDS} words`;
+  const words: TranscribeResult["words"] = [];
+  for (const w of o.words as Record<string, unknown>[]) {
+    const { text, start, end } = w ?? {};
+    if (typeof text !== "string" || typeof start !== "number" || typeof end !== "number" || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start)
+      return "Each word is { text, start, end }, its times in seconds with end not before start";
+    if (text.trim()) words.push({ text: text.trim().slice(0, 100), start, end });
+  }
+  const language = typeof o.language === "string" && /^[a-z]{2,3}$/.test(o.language) ? o.language : null;
+  return { words, language };
+}
+
 /** What a cards-draw step asks a Mac to draw: one script for every card of a version, and each card's length and content. */
 export interface CardsDraw {
   /** the picture's size in pixels (even numbers) and its frames a second */
@@ -72,6 +122,9 @@ export function parseKinds(value: unknown): string[] | null {
 
 export interface DeviceClaimBody {
   kinds: string[];
+  /** with TRANSCRIBE_KIND: the speech models it has, and the ones it is downloading now */
+  models?: string[];
+  getting?: string[];
 }
 
 /** A step handed to a device: its job id, its kind, and the edit it belongs to ("" variant = the whole edit). */
@@ -80,8 +133,13 @@ export interface DeviceJob {
   kind: string;
   editId: string;
   variant: string;
+  /** a transcribe job: the model to run, and the languages spoken (empty: hear which) */
+  model?: string;
+  languages?: string[];
 }
 
 export interface DeviceClaim {
   job: DeviceJob | null;
+  /** to a device that declares TRANSCRIBE_KIND: the speech models its owner wants on it */
+  models?: string[];
 }

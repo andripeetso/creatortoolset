@@ -206,6 +206,15 @@ export function setDeviceKinds(id: string, kinds: string[]): void {
   persist();
 }
 
+/** A computer's speech models (lib/computer-transcribe.ts). Written only when they change. */
+export function setDeviceStt(id: string, stt: NonNullable<Device["stt"]>): void {
+  const d = find(id);
+  if (!d || JSON.stringify(d.stt) === JSON.stringify(stt)) return;
+  d.stt = stt;
+  persist();
+  tell(d.owner);
+}
+
 /** A device's report (the Mac relay `report`). */
 export function saveReport(id: string, r: MacReport, version?: string): void {
   const d = find(id);

@@ -1,4 +1,18 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { DEFAULT_WEIGHT, type Balance, type Machine } from "../../contracts/providers";
+import { env } from "./env";
+
+/** Load balancing (Settings → Devices): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. */
+export const balanceFile = (user: string) => path.join(env.dataDir, "balance", `${user}.json`);
+export async function readBalance(user: string): Promise<Balance> {
+  try {
+    const b = JSON.parse(await readFile(balanceFile(user), "utf-8")) as Partial<Balance>;
+    return { on: b.on !== false, weights: b.weights && typeof b.weights === "object" ? b.weights : {} };
+  } catch {
+    return { on: true, weights: {} };
+  }
+}
 
 /** A computer that runs AI Editor steps, as its last report and heartbeat left it (a device in lib/devices.ts). */
 export interface WorkerSeen {

@@ -32,8 +32,9 @@ const STEP_OF: Record<string, LibraryStep> = {
 // (a duplicate check reads the lighter copy: under 2 s a 4K clip, measured)
 const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 1, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
 const GUESS_USD = { provider: 0.05, api: 0.02 };
-/** On this computer, the speech model takes about a third of the clip's length. */
+/** On this computer, the speech model takes about a third of the clip's length; on a computer with a downloaded model, a tenth (Whisper large-v3 on a graphics card: a twentieth). */
 const DEVICE_PACE = 0.3;
+const COMPUTER_PACE = 0.1;
 // ponytail: list prices per minute (Deepgram Nova, OpenAI whisper-1), 2025; a plan's own rate may differ
 const PER_MIN_USD = { deepgram: 0.0043, openai: 0.006 };
 /** A phone's 1080p video, about 12 Mbit/s, until the library holds some of its own. */
@@ -135,10 +136,11 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
     return { seconds, usd: 0, measured, at: laneSize("files") };
   }
   if (step === "transcript") {
-    const pace = paceOf(db, "transcribe", { table: "transcripts", provider: route }, route === "device");
-    const guess = route === "device" ? clipSeconds * DEVICE_PACE : GUESS_S[route]!;
+    const pace = paceOf(db, "transcribe", { table: "transcripts", provider: route }, route === "device" || route === "computer");
+    const guess = route === "device" ? clipSeconds * DEVICE_PACE : route === "computer" ? clipSeconds * COMPUTER_PACE : GUESS_S[route]!;
     const usd = route === "deepgram" || route === "openai" ? (clipSeconds / 60) * PER_MIN_USD[route] : 0;
-    return { seconds: pace ?? guess, usd, measured: pace !== null, at: route === "device" ? 1 : laneSize("transcripts") };
+    // a computer takes one transcript at a time, as this one does
+    return { seconds: pace ?? guess, usd, measured: pace !== null, at: route === "device" || route === "computer" ? 1 : laneSize("transcripts") };
   }
   if (step === "describe") {
     const api = route !== "provider";

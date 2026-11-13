@@ -11,6 +11,7 @@ import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJo
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
 import { ModelNotReady } from "../lib/device-transcribe";
+import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
@@ -183,11 +184,12 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     // big drop would otherwise end in hundreds of failed cards
     // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
     // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
-    const wait = job.kind === "describe" ? waitFor(e) : e instanceof ModelNotReady ? MODEL_RETRY_S : 0;
+    // one made on the person's computer waits for one with its model to be on, saying so
+    const wait = job.kind === "describe" ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
-      if (e instanceof ModelNotReady) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(MODEL_WAITS, job.id);
+      if (e instanceof ModelNotReady || e instanceof ComputerOff) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(e instanceof ComputerOff ? e.message : MODEL_WAITS, job.id);
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));

@@ -31,8 +31,17 @@ describe("which engine turns speech into text", () => {
     expect(speechFor("local", "mic")).toMatchObject({ engine: "openai" });
     expect(speechFor("local", "editor")).toMatchObject({ engine: "deepgram" });
     writeVoicePrefs("local", { stt: { default: { engine: "local" } } });
-    expect(speechFor("local", "editor")).toEqual({ needs: "Runs only on a server on your own computer" });
+    expect(speechFor("local", "editor")).toEqual({ needs: "Needs a speech model on one of your computers" });
     expect(resolvedFor("local").find((r) => r.use === "mic")).toEqual({ use: "mic", engine: "openai", model: "whisper-1" });
+  });
+
+  it("a server on its owner's computer with no computers of theirs: its own model, as before", () => {
+    process.env.CT_LOCAL = "1";
+    expect(speechFor("local", "transcripts")).toMatchObject({ engine: "local", model: "whisper-base", on: "server" });
+    writeVoicePrefs("local", { stt: { default: { engine: "local" } } });
+    expect(speechFor("local", "transcripts")).toMatchObject({ engine: "local", model: "whisper-base", on: "server" });
+    writeVoicePrefs("local", { stt: { default: { engine: "local", model: "whisper-large-v3" } } });
+    expect(speechFor("local", "transcripts")).toEqual({ needs: "Needs Whisper large-v3 on one of your computers" });
   });
 
   it("a project's languages win over the person's", () => {
