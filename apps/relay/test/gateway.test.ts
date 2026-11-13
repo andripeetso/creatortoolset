@@ -169,6 +169,17 @@ test('without its secret the broker has none of this', async () => {
   assert.equal((await c.allow('ChatGPT')).status, 404);
 });
 
+test("a broker at its own address: the AI app is given that one, and only the sign-in goes to the site", async () => {
+  deps.gateway!.selfUrl = 'https://broker.test.example';
+  const meta = (await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json()) as Record<string, string>;
+  assert.equal(meta.issuer, 'https://broker.test.example');
+  assert.equal(meta.token_endpoint, 'https://broker.test.example/oauth/token');
+  assert.equal((await mcp('', rpc('ping'))).headers.get('www-authenticate'), 'Bearer resource_metadata="https://broker.test.example/.well-known/oauth-protected-resource/mcp"');
+  const s = await startSignIn();
+  assert.equal(s.to.origin + s.to.pathname, `${SELF}/connect/ai`);
+  delete deps.gateway!.selfUrl;
+});
+
 test('an AI app finds where to sign in, and the domain check answers', async () => {
   const r = await mcp('', rpc('tools/list'));
   assert.equal(r.status, 401);

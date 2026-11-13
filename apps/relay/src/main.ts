@@ -40,7 +40,7 @@ const deps = {
   publicUrl: need('RELAY_PUBLIC_URL'),
   accountSecret,
   signing: loadSigningKey(env.RELAY_SIGNING_KEY, join(dataDir, 'relay-signing-key.der')),
-  ...(grantSecret ? { gateway: { secret: grantSecret, openaiChallenge: env.RELAY_OPENAI_APPS_CHALLENGE } } : {}),
+  ...(grantSecret ? { gateway: { secret: grantSecret, openaiChallenge: env.RELAY_OPENAI_APPS_CHALLENGE, selfUrl: env.RELAY_SELF_URL?.replace(/\/$/, '') } } : {}),
 };
 
 const port = Number(env.PORT ?? 44610);

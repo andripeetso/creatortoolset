@@ -20,7 +20,7 @@ export interface Deps {
   accountSecret: Buffer;
   signing: { privateKey: KeyObject; publicKey: KeyObject; kid: string };
   /** AI apps through this broker (gateway.ts). Unset = every route of it answers 404. */
-  gateway?: Pick<GatewayDeps, 'secret' | 'fetch' | 'originOf' | 'openaiChallenge'>;
+  gateway?: Pick<GatewayDeps, 'secret' | 'fetch' | 'originOf' | 'openaiChallenge' | 'selfUrl'>;
 }
 
 const MAX_BODY = 16 * 1024;
