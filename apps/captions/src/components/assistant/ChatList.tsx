@@ -40,22 +40,22 @@ export const chatTitle = (c: Pick<AssistantChat, "title" | "count">) => (c.count
 export type ChatGroup = { name: string; chats: AssistantChat[] };
 
 /**
- * The list's order: what asks you something first, then what is still working, then the rest (the new chat you are
- * in, then what finished since you looked, then the others), newest first in each. Settled chats are apart. `query`
- * keeps the chats whose title or newest line has every word of it.
+ * The list's order: what asks you something first, then what is still working, then the rest (what finished since you
+ * looked, then the others), newest first in each. Settled chats are apart. A chat nothing was said in is not in the
+ * list: it is the new-chat screen, and no chat until its first message. `query` keeps the chats whose title or newest
+ * line has every word of it.
  */
 export function groupChats(chats: AssistantChat[], query = ""): { groups: ChatGroup[]; settled: AssistantChat[] } {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (c: AssistantChat) => words.every((w) => `${c.title} ${c.last}`.toLowerCase().includes(w));
-  const all = chats.filter(hit);
+  const all = chats.filter((c) => c.count && hit(c));
   const rest = all.filter((c) => !c.asks && !c.working && !c.settled);
-  const fresh = (c: AssistantChat) => !c.count && !!c.open;
   const done = (c: AssistantChat) => !!c.unread && !c.open;
   return {
     groups: [
       { name: "Needs you", chats: all.filter((c) => c.asks) },
       { name: "Working", chats: all.filter((c) => !c.asks && c.working) },
-      { name: "Recent", chats: [...rest.filter(fresh), ...rest.filter((c) => !fresh(c) && done(c)), ...rest.filter((c) => !fresh(c) && !done(c))] },
+      { name: "Recent", chats: [...rest.filter(done), ...rest.filter((c) => !done(c))] },
     ].filter((g) => g.chats.length),
     settled: all.filter((c) => c.settled && !c.asks && !c.working),
   };

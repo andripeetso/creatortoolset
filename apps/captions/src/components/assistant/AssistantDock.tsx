@@ -4,9 +4,10 @@ import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film,
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
+import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 import {
   cancelSecret,
   getAssistant,
@@ -23,7 +24,7 @@ import {
   sendAnswer,
   useAssistant,
 } from "@/lib/assistant";
-import { useChatMode, useChatModeKey, useChatModeLayout } from "@/lib/chat-mode";
+import { bareNow, useChatMode, useChatModeKey, useChatModeLayout, washTo } from "@/lib/chat-mode";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
@@ -145,7 +146,10 @@ export function AssistantDock() {
     user: me?.username ?? "",
   });
   // the suggestions under an empty chat arrive one at a time, once the welcome has finished writing
-  const popped = usePopIn(suggestionsFor(pathname).length, (!collapsed || useChatMode.getState().on) && !!view && welcome.stage !== "typing");
+  // in chat mode with the page not drawn (a new chat's start, or only chats), the suggestions are not about a page
+  const pageHidden = useChatMode((s) => s.on && (s.bare || !s.page));
+  const chipPath = pageHidden ? "/" : pathname;
+  const popped = usePopIn(suggestionsFor(chipPath).length, (!collapsed || useChatMode.getState().on) && !!view && welcome.stage !== "typing");
 
   const load = useCallback(async () => {
     const r = await getAssistant();
@@ -241,8 +245,26 @@ export function AssistantDock() {
     .flatMap((m) => [...(m.work ?? []), ...(m.media ?? [])])
     .filter((w) => w.href?.startsWith("/"))
     .at(-1);
-  useChatPage(showChatMode && !layout.full, view?.id, newest && { id: newest.id, href: newest.href });
-  // only chats, and a link in one is followed (a card, the app's name, a page the assistant opens): the page shows again
+  const pageWanted = useChatMode((s) => s.page);
+  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, newest && { id: newest.id, href: newest.href }, () => {
+    if (useChatMode.getState().bare) washTo({ bare: false });
+  });
+  // a new chat has no page (lib/chat-mode.ts `bare`): chat mode shows it as only chats, the question and the message
+  // box in the middle, until it makes something, a link is followed or the page is asked for. Sending does not end
+  // that. Outside chat mode a chat is about the page on screen, so only a chat nothing was said in has none
+  const unsent = !!view && !view.messages.length && !view.pending;
+  const chatWas = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!view) return;
+    const cm = useChatMode.getState();
+    const another = chatWas.current !== undefined && chatWas.current !== view.id;
+    chatWas.current = view.id;
+    const bare = bareNow(cm.bare, { chatMode: showChatMode, another, unsent });
+    if (bare !== cm.bare) cm.set({ bare });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showChatMode, view?.id, unsent]);
+  // the page is not on show (only chats, or a new chat's start) and a link is followed (a card, the app's name, a page
+  // the assistant opens): the page shows
   const route = pathname + search;
   const routeWas = useRef(route);
   const forcedFull = useRef(false);
@@ -252,12 +274,11 @@ export function AssistantDock() {
     routeWas.current = route;
     const cm = useChatMode.getState();
     if (!cm.on) return;
-    if (!cm.page) cm.set({ page: true });
     // a window with no room for the page beside the chats: the page is what was asked for, the assistant floats over it
-    else if (forcedFull.current) {
+    if (forcedFull.current) {
       cm.set({ on: false });
       openAssistant();
-    }
+    } else if (!cm.page || cm.bare) washTo({ page: true, bare: false });
   }, [route]);
   // the chat on screen is seen: what ended in it is not marked Done in the list (here or on another device)
   const visible = showChatMode || !collapsed;
@@ -616,15 +637,26 @@ export function AssistantDock() {
     stopSpeaking();
     const r = await startOver();
     if (!r.ok) return;
-    setView(r.data);
-    setSeenId(null);
+    const show = () => {
+      setView(r.data);
+      setSeenId(null);
+    };
+    // in chat mode a new chat is its own screen: no page beside it yet
+    if (useChatMode.getState().on) washTo({ bare: true }, null, show);
+    else show();
   };
   const openChat = async (id: string) => {
     if (id === view?.id) return;
     const r = await openPast(id);
     if (!r.ok) return setError(r.error);
-    setView(r.data);
-    setSeenId(r.data.messages.at(-1)?.id ?? null);
+    const show = () => {
+      setView(r.data);
+      setSeenId(r.data.messages.at(-1)?.id ?? null);
+    };
+    // from the new-chat screen to a chat that was started: its page comes back beside it
+    const cm = useChatMode.getState();
+    if (cm.on && cm.bare && r.data.messages.length) washTo({ bare: false }, null, show);
+    else show();
   };
   /** The queued messages written in the chat on screen (one from before chats were told apart shows everywhere). */
   const shownQueue = queue.filter((q) => !q.chat || q.chat === view?.id);
@@ -635,8 +667,8 @@ export function AssistantDock() {
   // a new chat in chat mode: the question and the message box in the middle of the column, the suggestions under the box
   const centred = chatMode && empty && !pending;
   // a few things to ask from the page you're on; a press sends one
-  const chips = suggestionsFor(pathname).slice(0, popped).map((s, i) => (
-              <div key={`${pathname}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
+  const chips = suggestionsFor(chipPath).slice(0, popped).map((s, i) => (
+              <div key={`${chipPath}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
                 <div className={cn("min-h-0 motion-safe:[animation:ct-pop-clip_260ms_both]", i === 0 && welcome.showing ? "pt-3" : "pt-2")}>
                   <button
                     type="button"
@@ -716,12 +748,12 @@ export function AssistantDock() {
         <ChatHeader
           layout={layout}
           title={!view ? "" : view.messages.length ? (chats?.find((c) => c.open)?.title ?? "Assistant") : chatTitle({ title: "", count: 0 })}
-          dot={
+          dot={!!view?.messages.length && (
             <span className="relative flex size-2.5 shrink-0" aria-hidden>
               {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_70%,transparent)] motion-safe:animate-ping" />}
               <span className={cn("relative size-2.5 rounded-full", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
             </span>
-          }
+          )}
           onNew={() => void newChat()}
           canNew={!!view?.messages.length}
           onList={() => setListOpen(true)}
@@ -774,7 +806,7 @@ export function AssistantDock() {
         {!view && <Dots />}
 
         {view?.provider === "none" && (
-          <div className="flex h-full flex-col items-start justify-end gap-3 pb-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
+          <div className={cn("flex h-full flex-col gap-3 pb-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2", chatMode ? "items-center justify-center text-center" : "items-start justify-end")}>
             {notice && <NoticeLine notice={notice} />}
             {welcome.showing ? (
               <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
@@ -801,7 +833,17 @@ export function AssistantDock() {
             {welcome.showing ? (
               <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
             ) : (
-              centred && <h3 className="pb-3 text-center text-2xl font-semibold tracking-tight text-balance">What should we make?</h3>
+              centred && (
+                // the new-chat screen: the question, the project it will work in, then the message box
+                <div className="flex flex-col items-center pb-5">
+                  <h3 className="text-center text-3xl font-normal tracking-tight text-balance">What should we make?</h3>
+                  {(canUse(me, "instagram") || canUse(me, "workshop")) && (
+                    <div className="mt-2 flex h-7 items-center">
+                      <ProjectSwitcher frame />
+                    </div>
+                  )}
+                </div>
+              )
             )}
             {!centred && chips}
           </div>
