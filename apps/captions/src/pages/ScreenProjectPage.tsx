@@ -15,6 +15,7 @@ import { ScreenRecordingEditor, type EditorAction } from "@/components/ScreenRec
 import { canRecordScreen, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
 import { uploadReviewFile } from "@/lib/review";
 import { openLocalRecording } from "@/lib/screen-source";
+import { useMacRecorder } from "@/components/settings/ThisMacSection";
 
 const SHARES: { dest: ShareDest; label: string }[] = [
   { dest: "review", label: "Send to Review" },
@@ -61,6 +62,8 @@ export default function ScreenProjectPage() {
 
   // the editor's Export sits in this page's bar
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  // Save the streams… only where the Mac app does it (0.15.38 and later)
+  const streams = useMacRecorder() === true;
 
   // thrown away from here: once the app's list no longer has it, back to the recordings
   const [leaving, setLeaving] = useState(false);
@@ -142,9 +145,11 @@ export default function ScreenProjectPage() {
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => tellRecorder(`streams:${rec.id}`)}>
-                  <Layers /> Save the streams…
-                </DropdownMenuItem>
+                {streams && (
+                  <DropdownMenuItem onSelect={() => tellRecorder(`streams:${rec.id}`)}>
+                    <Layers /> Save the streams…
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onSelect={() => tellRecorder(`reveal:${rec.id}`)}>
                   <FolderOpen /> Show in Finder
                 </DropdownMenuItem>

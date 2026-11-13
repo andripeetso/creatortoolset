@@ -10,7 +10,7 @@ import { AccountAvatar } from "@/components/settings/AccountSection";
 import { navBlocks, navListFor, resolveSection, sectionsFor, type NavContext, type SettingsPageId } from "@/components/settings/nav";
 import { PageActionContext } from "@/components/settings/page-action";
 import { searchSettings, type SearchHit } from "@/components/settings/search";
-import { hasThisMac } from "@/components/settings/ThisMacSection";
+import { hasThisMac, useMacRecorder } from "@/components/settings/ThisMacSection";
 import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
 import { logout, useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -40,6 +40,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const hosted = useAuth((s) => s.hosted);
   const required = useAuth((s) => s.required);
   const ctx: NavContext = { hosted, admin: me?.role === "admin", mac: hasThisMac() };
+  const macRecorder = useMacRecorder() === true;
 
   const [query, setQuery] = useState("");
   const [railOpen, setRailOpen] = useState(false); // below md: the 56px icon rail, or the nav opened over the page
@@ -104,7 +105,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   const navList = navListFor(ctx);
   const needle = query.trim();
-  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac) : [];
+  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac, macRecorder) : [];
   const activeIdx = Math.min(active, Math.max(hits.length - 1, 0));
   const name = me?.name ?? me?.username ?? "";
   const initial = (name.trim()[0] ?? "?").toUpperCase();

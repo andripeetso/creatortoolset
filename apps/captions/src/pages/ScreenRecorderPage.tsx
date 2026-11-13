@@ -12,6 +12,7 @@ import { localFileUrl, localFilesOverlap } from "@/lib/local-files";
 import { listReviewAssets, thumbUrl } from "@/lib/review";
 import { timeAgo } from "@/lib/exports";
 import { cn } from "@/lib/utils";
+import { useMacRecorder } from "@/components/settings/ThisMacSection";
 import { BrowseBar } from "@/components/browse/Bar";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 
@@ -71,7 +72,7 @@ const SORTS = ["recent", "name"] as const;
 const SORT_KEY = "recorder:sort";
 
 /** A recording's Throw away and More (send on, Show in Finder): the same on its card and its row. */
-function RecordingActions({ r, onThrowAway }: { r: LocalRecording; onThrowAway: () => void }) {
+function RecordingActions({ r, onThrowAway, streams }: { r: LocalRecording; onThrowAway: () => void; streams: boolean }) {
   return (
     <>
       <button
@@ -95,9 +96,11 @@ function RecordingActions({ r, onThrowAway }: { r: LocalRecording; onThrowAway: 
               {sh.label}
             </DropdownMenuItem>
           ))}
-          <DropdownMenuItem onSelect={() => tellRecorder(`streams:${r.id}`)}>
-            <Layers /> Save the streams…
-          </DropdownMenuItem>
+          {streams && (
+            <DropdownMenuItem onSelect={() => tellRecorder(`streams:${r.id}`)}>
+              <Layers /> Save the streams…
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onSelect={() => tellRecorder(`reveal:${r.id}`)}>
             <FolderOpen /> Show in Finder
           </DropdownMenuItem>
@@ -120,6 +123,8 @@ export default function ScreenRecorderPage() {
   const inApp = canRecordScreen();
   const { phase, busy, folder, shortcut } = useRecorderState();
   const recordings = useLocalRecordings();
+  // Save the streams… only where the Mac app does it (0.15.38 and later)
+  const streams = useMacRecorder() === true;
 
   // Review's list: the saved copy (warmed after sign-in) shows at once and refreshes underneath
   const { items: reviewAssets } = useCachedList(canUse(me, "review") ? "/api/review" : null, listReviewAssets);
@@ -233,7 +238,7 @@ export default function ScreenRecorderPage() {
                         </span>
                         <span className="shrink-0 text-xs tabular-nums text-zinc-500">{duration(r.durationMs)}</span>
                       </Link>
-                      <RecordingActions r={r} onThrowAway={() => throwAway(r)} />
+                      <RecordingActions r={r} onThrowAway={() => throwAway(r)} streams={streams} />
                     </div>
                   ))}
                 </div>
@@ -256,7 +261,7 @@ export default function ScreenRecorderPage() {
                           {r.camera ? " · camera" : ""}
                         </div>
                       </Link>
-                      <RecordingActions r={r} onThrowAway={() => throwAway(r)} />
+                      <RecordingActions r={r} onThrowAway={() => throwAway(r)} streams={streams} />
                     </div>
                   </div>
                 ))}
