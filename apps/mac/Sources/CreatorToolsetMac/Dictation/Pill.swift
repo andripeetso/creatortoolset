@@ -84,6 +84,11 @@ final class DictationPill {
     /// Shows `text` on one line in the pill for `duration` seconds, then
     /// hides it, unless another state has replaced it by then. Never pass
     /// transcript text.
+    /// Hides it only while it shows a line starting with `prefix` (a stopped download takes away only its own line).
+    func hide(ifShowing prefix: String) {
+        if case .message(let text) = model.state, text.hasPrefix(prefix) { hide() }
+    }
+
     func showMessage(_ text: String, for duration: TimeInterval = DictationPill.messageDuration) {
         show(.message(text))
         let shown = generation

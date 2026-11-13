@@ -307,6 +307,8 @@ final class Dictation: ObservableObject {
     private lazy var pill: DictationPill = { pillMade = true; return DictationPill() }()
     private var pillMade = false
     private var fetching: Task<Void, Never>?
+    /// The running download's own mark: a download stopped (`stopDownload`) no longer touches what a new one sets.
+    private var fetchMark: UUID?
     private lazy var sounds = DictationSounds()
     private var transcriber: LoadingTranscriber?
     private var controllerStore: DictationController?
@@ -368,7 +370,7 @@ final class Dictation: ObservableObject {
             phase = .off
             needs = nil
             // paused for the earlier app: a model downloading goes on
-            if !paused { fetching?.cancel() }
+            if !paused { stopDownload() }
             if pillMade { pill.hide() }
             applyKeys()
             trustWatch?.invalidate(); trustWatch = nil
@@ -686,18 +688,33 @@ final class Dictation: ObservableObject {
 
     /// The setup page opened: the model starts loading, or downloading when it isn't here, so it is ready by the time
     /// the page is done (with a speech server, it is what dictation falls back on).
-    func prepareModel() {
+    /// `asked`: whether the download is a wish the server keeps (the setup page asks only at Get Started).
+    func prepareModel(asked: Bool = true) {
         guard prefs.engine == .thisMac else { return }
-        if modelOnDisk { warm() } else { fetch(model) }
+        if modelOnDisk { warm() } else { fetch(model, asked: asked) }
     }
 
-    /// Stops `id`'s download if it is the one running (the setup page left without Get Started); what came of it is
-    /// removed (`fetch`).
+    /// Stops `id`'s download if it is the one running (the setup page left without Get Started).
     func cancelDownload(_ id: String) {
         guard download?.id == id else { return }
         DictationLog.info("download of \(id) stopped: the setup page was left")
-        fetching?.cancel()
+        stopDownload()
     }
+
+    /// Stops the running download at once: nothing it does after this shows (its pill goes), a new Download can start
+    /// straight away, it is not tried again (no retry, no wish), and what came of it is removed (`fetch`).
+    private func stopDownload() {
+        guard let id = download?.id else { return }
+        fetchMark = nil
+        download = nil
+        fetching?.cancel()
+        fetching = nil
+        if pillMade { pill.hide(ifShowing: Self.downloadingLine) }
+        SpeechModels.shared.stopped(id)
+    }
+
+    /// The pill's line while a model downloads (`showSetup`), so a stopped download takes only its own pill away.
+    nonisolated static let downloadingLine = "Downloading the speech model"
 
     /// The guide's Allow for the microphone: the system's question the first time, then its Settings pane.
     func allowMicrophone() {
@@ -799,7 +816,7 @@ final class Dictation: ObservableObject {
         if let needs { return pill.showMessage(needs, for: 60) }
         if let download {
             let m = ModelRegistry.model(download.id)
-            return pill.show(.message("Downloading the speech model · \(modelSize(m.sizeMB)) · \(Int(download.progress * 100))%"))
+            return pill.show(.message("\(Self.downloadingLine) · \(modelSize(m.sizeMB)) · \(Int(download.progress * 100))%"))
         }
         if ready { pill.showMessage("Ready. \(talkHint)") }
     }
@@ -819,6 +836,8 @@ final class Dictation: ObservableObject {
         download = (m.id, 0)
         SpeechModels.shared.changed()
         let showing = m.id == model.id
+        let mark = UUID()
+        fetchMark = mark
         fetching = Task {
             do {
                 var last = -1
@@ -826,8 +845,8 @@ final class Dictation: ObservableObject {
                     let pct = Int(fraction * 100)
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
-                            // a cancelled download (dictation switched off) shows nothing more
-                            guard pct != last, Dictation.shared.download?.id == m.id else { return }
+                            // a stopped download (the setup page left, dictation switched off) shows nothing more
+                            guard pct != last, Dictation.shared.fetchMark == mark else { return }
                             last = pct
                             Dictation.shared.download = (m.id, fraction)
                             if showing { Dictation.shared.showSetup() }
@@ -841,9 +860,11 @@ final class Dictation: ObservableObject {
                 }
                 // stopped while the files were still coming, and the download finished anyway: not kept
                 try Task.checkCancellation()
+                guard fetchMark == mark else { throw CancellationError() }
                 DictationLog.info("downloaded \(m.id)")
                 download = nil
                 fetching = nil
+                fetchMark = nil
                 SpeechModels.shared.finished(m.id, ok: true)
                 if m.id == model.id {
                     if showing, needs == nil { pill.show(.message("Getting the speech model ready")) }
@@ -852,13 +873,17 @@ final class Dictation: ObservableObject {
                 }
             } catch {
                 DictationLog.error("download of \(m.id) stopped: \(error)")
-                // stopped on purpose (the setup page left, dictation switched off): what came down goes, so a
-                // part of a 1.6 GB model never sits on the disk unasked; it downloads whole the next time
-                if Task.isCancelled {
-                    if let variant = m.whisperKitID { ModelFiles.remove(variant) } else { ParakeetFiles.remove(m) }
+                // stopped on purpose (stopDownload already undid the rest): what came down goes, so a part of a
+                // 1.6 GB model never sits on the disk unasked, unless the same model is downloading again already
+                guard fetchMark == mark else {
+                    if download?.id != m.id {
+                        if let variant = m.whisperKitID { ModelFiles.remove(variant) } else { ParakeetFiles.remove(m) }
+                    }
+                    return
                 }
                 download = nil
                 fetching = nil
+                fetchMark = nil
                 SpeechModels.shared.finished(m.id, ok: false)
                 if showing, prefs.on, !Task.isCancelled { pill.showMessage("The speech model didn't download. Press again to retry") }
             }

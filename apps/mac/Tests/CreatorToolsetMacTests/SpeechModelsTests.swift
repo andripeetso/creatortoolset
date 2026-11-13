@@ -259,3 +259,35 @@ final class SpeechModelsTests: XCTestCase {
         XCTAssertEqual(words.map(\.start), words.map(\.start).sorted())
     }
 }
+
+/// The setup page's download leaves no wish behind unless the person pressed Get Started (CT WHIP's ruling, 11-13).
+final class SetupPageWishTests: XCTestCase {
+    @MainActor
+    func testAPageStoppedDownloadIsNotTriedAgainByAClaimOrATimer() {
+        let models = SpeechModels.shared
+        // a download that failed on its own is reported as getting and tried again after `retry`
+        models.finished("whisper-small", ok: false)
+        XCTAssertTrue((models.claim()["getting"] as? [String] ?? []).contains("whisper-small"))
+        // one the page stopped (Not now) is not: no getting, no retry, no wish of its own in the claim
+        models.stopped("whisper-small")
+        let claim = models.claim()
+        XCTAssertFalse((claim["getting"] as? [String] ?? []).contains("whisper-small"))
+        XCTAssertFalse((claim["asked"] as? [String] ?? []).contains("whisper-small"))
+        // and with no wish from the server, nothing queues it, now or later
+        let later = SpeechModels.plan(wanted: [], held: [], downloading: nil, queue: [], failed: [:], now: Date().addingTimeInterval(3600))
+        XCTAssertEqual(later.queue, [])
+    }
+
+    func testGetStartedKeepsThePagesDownloadAsAWishAndNotNowDoesNot() {
+        var page = SetupDownload()
+        page.opened()
+        page.prepared(before: nil, after: "whisper-large-v3-turbo")
+        XCTAssertEqual(page.wish, "whisper-large-v3-turbo")   // Get Started asks for it
+        _ = page.closed(gotStarted: false, running: "whisper-large-v3-turbo")
+        XCTAssertNil(page.wish)                                // Not now: nothing to ask
+        // the page's model, finished but not asked yet, and one asked here the server has not heard: not removed
+        let p = SpeechModels.plan(wanted: [], held: ["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"], downloading: nil, queue: [],
+                                  failed: [:], now: Date(), keep: ["whisper-large-v3-turbo"])
+        XCTAssertEqual(p.remove, ["parakeet-tdt-0.6b-v3"])
+    }
+}

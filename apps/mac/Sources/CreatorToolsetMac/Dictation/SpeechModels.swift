@@ -30,6 +30,16 @@ final class SpeechModels {
         d.set(Array(Set((d.stringArray(forKey: Self.askedKey) ?? []) + [id])).sorted(), forKey: Self.askedKey)
     }
 
+    /// The setup page's download, not asked yet (it asks at Get Started): not removed while the page is open.
+    var pageHolds: String?
+
+    /// A download stopped on purpose (the setup page left, dictation switched off): not tried again, no retry.
+    func stopped(_ id: String) {
+        failed[id] = nil
+        changed()
+        startNext()
+    }
+
     func finished(_ id: String, ok: Bool) {
         failed[id] = ok ? nil : Date()
         // reported as getting meanwhile, so the server does not ask again on every poll; then a claim asks it again
@@ -63,7 +73,10 @@ final class SpeechModels {
     /// What the owner wants here: each model here that is not wanted goes (Remove), each wanted one that is missing is
     /// downloaded, one at a time. Ids this Mac doesn't run are left alone. True when something changed at once.
     func want(_ wanted: [String], now: Date = Date()) -> Bool {
-        let plan = Self.plan(wanted: wanted, held: Self.held(), downloading: Dictation.shared.download?.id, queue: queue, failed: failed, now: now)
+        // never removed: what the person got here and the server has not heard yet, and the setup page's download
+        let keep = (UserDefaults.standard.stringArray(forKey: Self.askedKey) ?? []) + [pageHolds].compactMap { $0 }
+        let plan = Self.plan(wanted: wanted, held: Self.held(), downloading: Dictation.shared.download?.id, queue: queue, failed: failed,
+                             now: now, keep: keep)
         plan.remove.forEach { Dictation.shared.remove($0) }
         let changed = !plan.remove.isEmpty || plan.queue != queue || plan.failed != failed
         queue = plan.queue
@@ -72,13 +85,15 @@ final class SpeechModels {
         return changed
     }
 
-    /// What `want` does, as data. Pure, so it is tested: a model here that is not wanted goes (not one downloading); a
+    /// What `want` does, as data. Pure, so it is tested: a model here that is not wanted goes (not one downloading, nor
+    /// one in `keep`: asked here and not yet told, or the setup page's); a
     /// wish no longer wanted leaves the queue and the failed list; a wanted one that is missing is queued, unless its
     /// download failed under `retry` ago. Ids this Mac doesn't run are left alone.
     /// ponytail: a download already running finishes even when its wish was cancelled; the next claim removes it.
-    nonisolated static func plan(wanted: [String], held: [String], downloading: String?, queue: [String], failed: [String: Date], now: Date)
+    nonisolated static func plan(wanted: [String], held: [String], downloading: String?, queue: [String], failed: [String: Date], now: Date,
+                                 keep: [String] = [])
         -> (remove: [String], queue: [String], failed: [String: Date]) {
-        let remove = held.filter { !wanted.contains($0) && $0 != downloading }
+        let remove = held.filter { !wanted.contains($0) && $0 != downloading && !keep.contains($0) }
         var queue = queue.filter { wanted.contains($0) }
         var failed = failed.filter { wanted.contains($0.key) }
         for id in wanted where ModelRegistry.find(id) != nil && !held.contains(id) && !queue.contains(id) && id != downloading {

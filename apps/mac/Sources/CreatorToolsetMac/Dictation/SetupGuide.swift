@@ -230,6 +230,9 @@ struct SetupDownload: Equatable {
         if open, before == nil, let after { started = after }
     }
 
+    /// Get Started: the page's own download becomes the person's wish (asked; the server keeps it for this Mac).
+    var wish: String? { started }
+
     /// The page goes: the download to stop, if it is still the page's own and the person did not press Get Started.
     mutating func closed(gotStarted: Bool, running: String?) -> String? {
         defer { open = false; started = nil }
@@ -432,6 +435,10 @@ final class SetupGuide: ObservableObject {
         case .getStarted:
             if !d.prefs.on { d.command("on", "1") }  // opened from the site's mic while dictation was off
             gotStarted = true
+            if let id = own.wish {
+                SpeechModels.shared.asked(id)
+                SpeechModels.shared.changed()
+            }
             Self.done()
             if let sheet = Self.sheet { sheet.sheetParent?.endSheet(sheet) } else { Self.window?.close() }
         }
@@ -454,8 +461,10 @@ final class SetupGuide: ObservableObject {
         guard own.mayPrepare else { return }
         let d = Dictation.shared
         let before = d.download?.id
-        d.prepareModel()
+        // not a wish yet: only Get Started makes it one, so a page left with Not now leaves none behind
+        d.prepareModel(asked: false)
         own.prepared(before: before, after: d.download?.id)
+        if let id = own.started { SpeechModels.shared.pageHolds = id }
     }
 
     private func start() {
@@ -488,6 +497,7 @@ final class SetupGuide: ObservableObject {
             Dictation.shared.cancelDownload(id)
         }
         gotStarted = false
+        SpeechModels.shared.pageHolds = nil
         tick?.invalidate()
         tick = nil
         KeyPicker.close()
