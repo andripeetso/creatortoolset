@@ -41,7 +41,7 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
         <button
           data-project-switcher={frame ? undefined : ""}
           title="Current project"
-          className={`flex max-w-[14rem] items-center gap-1.5 h-7 rounded-md border px-2.5 text-xs text-zinc-200 outline-none hover:bg-zinc-900 data-[state=open]:bg-zinc-900 ${project ? PROJECT_COLORS[projectColor(project)].ring : "border-zinc-800"}`}
+          className={`flex max-w-[min(14rem,100%)] items-center gap-1.5 h-7 rounded-md border px-2.5 text-xs text-zinc-200 outline-none hover:bg-zinc-900 data-[state=open]:bg-zinc-900 ${project ? PROJECT_COLORS[projectColor(project)].ring : "border-zinc-800"}`}
         >
           {/* the project's colour, so the current one shows at a glance */}
           <span className={`h-2 w-2 shrink-0 rounded-full ${project ? PROJECT_COLORS[projectColor(project)].dot : "bg-zinc-600"}`} />

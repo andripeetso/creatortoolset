@@ -44,7 +44,7 @@ export function useAccountInCorner(): boolean {
  * The account menu, top right beside the project switcher: in the Mac app the servers it opens (pick one to switch),
  * then Settings, Community, Usage, the plug-ins' items, sign out. A team lives on its server, so the servers are the teams.
  */
-export function UserMenu() {
+export function UserMenu({ compact }: { /** The picture alone, where room is short: the name is the menu's first line. */ compact?: boolean } = {}) {
   const required = useAuth((s) => s.required);
   const me = useAuth((s) => s.me);
   const navigate = useNavigate();
@@ -63,7 +63,8 @@ export function UserMenu() {
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button
-            title="Account menu"
+            title={compact ? `Account: ${me.name ?? me.username}` : "Account menu"}
+            aria-label="Account menu"
             className="flex h-7 items-center gap-2 rounded-md border border-border pl-1 pr-2.5 text-xs text-foreground outline-none transition-colors hover:bg-accent data-[state=open]:bg-accent"
           >
             <AccountAvatar
@@ -76,7 +77,7 @@ export function UserMenu() {
                 </span>
               }
             />
-            <span className="hidden max-w-28 truncate sm:inline">{me.name ?? me.username}</span>
+            {!compact && <span className="hidden max-w-28 truncate sm:inline">{me.name ?? me.username}</span>}
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>

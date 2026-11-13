@@ -4,10 +4,9 @@ import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film,
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
-import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { canUse, useMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 import {
   cancelSecret,
   getAssistant,
@@ -38,6 +37,7 @@ import { useThrow } from "./useThrow";
 import { duration, WorkCards, WorkingFor } from "./WorkCards";
 import { chatTitle, useChats } from "./ChatList";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
+import { WorkPicker } from "./WorkPicker";
 import { useChatPage } from "./useChatPage";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
@@ -864,14 +864,13 @@ export function AssistantDock() {
               <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
             ) : (
               centred && (
-                // the new-chat screen: the question, the project it will work in, then the message box
+                // the new-chat screen: the question, what this chat is to work on (something new, or a thing in the
+                // works), then the message box. The row keeps its height while the list of work is read
                 <div className="flex flex-col items-center pb-5">
                   <h3 className="text-center text-3xl font-normal tracking-tight text-balance">What should we make?</h3>
-                  {(canUse(me, "instagram") || canUse(me, "workshop")) && (
-                    <div className="mt-2 flex h-7 items-center">
-                      <ProjectSwitcher frame />
-                    </div>
-                  )}
+                  <div className="mt-2 flex h-7 max-w-full items-center">
+                    <WorkPicker />
+                  </div>
                 </div>
               )
             )}

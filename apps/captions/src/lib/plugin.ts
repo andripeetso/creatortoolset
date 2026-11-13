@@ -69,6 +69,17 @@ export interface PluginAccountItem {
 }
 
 /** Built-in pages a plug-in can swap for its own: `/editor` and `/editor/:id`. The built-in page renders when none does. */
+// Work in progress of a kind the plug-in owns (its own video edits, where it replaces the editor). The new-chat screen
+// offers the newest work to carry on with (lib/work.ts): this is how a plug-in's shows there.
+export interface PluginWork {
+  // What one of them is, in a word: "Edit".
+  kind: string;
+  icon: LucideIcon;
+  gate?: PluginGateId;
+  // Each with its page (`to`) and when it was last worked on (`at`, ms).
+  list: () => Promise<Array<{ id: string; title: string; to: string; at: number; busy?: boolean }>>;
+}
+
 export interface PluginReplacements {
   editor?: ComponentType;
   editorEdit?: ComponentType;
@@ -274,6 +285,7 @@ export interface WebPlugin {
   devices?: PluginDevicesSection[];
   accountMenu?: PluginAccountItem[];
   replaces?: PluginReplacements;
+  work?: PluginWork[];
   itemActions?: Partial<Record<ItemKind, PluginItemAction[]>>;
   // Review: panels under the header and toolbar buttons, for the version on screen (ReviewAssetPage).
   review?: { panels?: ReviewPanelSlot[]; actions?: ReviewActionSlot[]; timeline?: ReviewTimelineSlot };
