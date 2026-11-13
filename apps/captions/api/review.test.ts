@@ -532,6 +532,27 @@ describe("timeline file on a version", () => {
     expect(many.anchors).toEqual([clip(0), clip(50)]);
   });
 
+  it("gives the owner the timeline's file paths, never a share link", async () => {
+    const project = await read(app.request("/projects", json({ name: "Tiny project" })));
+    const asset = await up("Tiny paths.mp4", project.id);
+    const edl = `${EDL}* SOURCE FILE: /Volumes/Tiny Drive/Süvi/talk.mp4\n`;
+    await read(putTimeline(asset.id, edl));
+    const res = await app.request(`/assets/${asset.id}/v/1/timeline/sources`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({ s1: "/Volumes/Tiny Drive/Süvi/talk.mp4" });
+    expect(JSON.stringify(await read(app.request(`/assets/${asset.id}/v/1/timeline`)))).not.toContain("Volumes");
+
+    const { share } = await read(app.request(`/assets/${asset.id}`, patch({ share: { enabled: true } })));
+    expect((await app.request(`/s/${share.token}/v/1/timeline/sources`)).status).toBe(404);
+    const p = await read(app.request(`/projects/${project.id}`, patch({ share: { enabled: true } })));
+    expect((await app.request(`/p/${p.share.token}/a/${asset.id}/v/1/timeline`)).status).toBe(200);
+    expect((await app.request(`/p/${p.share.token}/a/${asset.id}/v/1/timeline/sources`)).status).toBe(404);
+
+    const none = await up("Tiny none.mp4");
+    expect((await app.request(`/assets/${none.id}/v/1/timeline/sources`)).status).toBe(404);
+  });
+
   it("refuses an oversized timeline from its declared length, before reading the body", async () => {
     const asset = await up("Tiny big.mp4");
     const { MAX_TIMELINE_BYTES } = await import("../contracts/timeline-import");

@@ -429,6 +429,8 @@ export function reviewApi(base: string) {
     stem: (v: FileRef, file: string) => mediaUrl(base, v, `stems/${file}`),
     /** The version's timeline (tracks, clips, markers), or 404 when it has none. */
     timeline: (n: number) => call<TimelineView>(`${base}/v/${n}/timeline`),
+    /** (managers) Where an imported timeline's files are on the editor's computer: { [src]: path }, or 404. */
+    timelineSources: (n: number) => call<Record<string, string>>(`${base}/v/${n}/timeline/sources`),
     comment: (body: {
       version: number;
       text: string;
