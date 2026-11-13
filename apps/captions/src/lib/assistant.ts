@@ -95,6 +95,8 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ 
 
 export const getAssistant = () => call<AssistantView>("");
 export const sendTurn = (input: AssistantTurnInput) => call<AssistantView>("/turn", "POST", input);
+/** A message to one chat by its id, open or not (a queued message goes to the chat it was written in). */
+export const sendTurnTo = (chat: string, input: AssistantTurnInput) => call<AssistantView>(`/chats/${encodeURIComponent(chat)}/turn`, "POST", input);
 /** Stop the reply being written, else the first that waits; with `reply`, that one. */
 export const stopTurn = (reply?: string) => call<AssistantView>("/stop", "POST", reply ? { reply } : undefined);
 /** The dock's answer to a reply's send (api/assistant.ts POST /sends/:reply): the upload it started, or that the file is gone. */

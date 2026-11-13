@@ -418,9 +418,10 @@ export default function Home() {
           </button>
       </AppBar>
 
-      {/* main area */}
+      {/* main area. Beside the chats (chat mode) only the video with its captions shows: the chat edits the words and
+          the look with its tools, and the transcript and style panels come back when chat mode ends */}
       <div className="flex min-h-0 flex-1">
-        <div style={{ width: transcriptW }} className="shrink-0">
+        <div style={{ width: transcriptW }} className="shrink-0 chat:hidden">
           <TranscriptPanel />
         </div>
         <div
@@ -430,12 +431,14 @@ export default function Home() {
             localStorage.removeItem(TRANSCRIPT_W_KEY);
           }}
           title="Drag to resize the transcript — double-click to reset"
-          className="-ml-1 w-1.5 shrink-0 cursor-col-resize hover:bg-violet-500/50 active:bg-violet-500/70"
+          className="-ml-1 w-1.5 shrink-0 cursor-col-resize hover:bg-violet-500/50 active:bg-violet-500/70 chat:hidden"
         />
         <div className="min-w-0 flex-1 p-3">
           <Player />
         </div>
-        <StylePanel />
+        <div className="contents chat:hidden">
+          <StylePanel />
+        </div>
       </div>
 
       {/* clip pool + timeline */}

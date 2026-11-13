@@ -1019,7 +1019,7 @@ function Review({
         </div>
 
         {/* ---------- comments ---------- */}
-        <aside className="flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l">
+        <aside className="flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l chat:lg:w-[300px]">
           <div className={cn("flex items-center gap-1 border-b border-zinc-900 px-3 py-2 text-xs")}>
             {(["all", "open", "done"] as const).map((f) => (
               <button
@@ -1321,7 +1321,7 @@ function Header({
 
   return (
     // the app's bar (AppBar) for the owner: logo, Review › this video; a reviewer on a link gets only the way back
-    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4">
+    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4 chat:h-auto chat:flex-wrap">
       {manage ? (
         <>
           <HomeLink />
@@ -1416,8 +1416,9 @@ function Header({
         </Link>
       )}
       {/* an AI Editor version has its own timeline (the editor's), so no file is added here */}
+      {/* not beside the chats (chat mode): there the video and its comments are what the page is for */}
       {manage && version.status === "ready" && !version.removed && !version.edit && !version.draft && (
-        <>
+        <span className="contents chat:hidden">
           {version.timelineFile && <span className="truncate text-xs text-zinc-500">Timeline from {version.timelineFile}</span>}
           <button
             onClick={() => timelineInput.current?.click()}
@@ -1438,7 +1439,7 @@ function Header({
               if (f) addTimeline(f);
             }}
           />
-        </>
+        </span>
       )}
       <input
         ref={fileInput}

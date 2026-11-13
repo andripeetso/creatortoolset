@@ -89,7 +89,8 @@ import {
   statusSteps,
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
-import { useDeskLayout } from "@/lib/workshop-desk";
+import { enterFocus, useDeskLayout } from "@/lib/workshop-desk";
+import { useChatMode } from "@/lib/chat-mode";
 import { mineIndex } from "@/lib/mine";
 import { SharePopover } from "@/components/workshop/SharePopover";
 import { SessionFinals } from "@/components/workshop/SessionFinals";
@@ -325,7 +326,11 @@ export default function WorkshopSessionPage() {
     window.addEventListener("focus", check);
     return () => window.removeEventListener("focus", check);
   }, [refreshAvail]);
-  const [desk, setDesk] = useDeskLayout();
+  const [savedDesk, setDesk] = useDeskLayout();
+  // in chat mode the page shows only the piece: the chats beside it are the conversation, and the other sessions are a
+  // click away in the Workshop. The saved layout is left as it was for when chat mode ends.
+  const chatMode = useChatMode((s) => s.on);
+  const desk = chatMode ? enterFocus(savedDesk, "writing") : savedDesk;
   const [auditMessageId, setAuditMessageId] = useState<string | null>(null);
   const auditThinking = useRef(new Set<string>());
 
@@ -1084,7 +1089,7 @@ export default function WorkshopSessionPage() {
         {session ? <SessionStatusSelect value={session.status} onChange={setStatus} /> : <Ghost className="h-8 w-[107px]" />}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
-        <DeskControls layout={desk} onChange={setDesk} />
+        {!chatMode && <DeskControls layout={desk} onChange={setDesk} />}
         {session ? (
           <ExportMarkdown
             sessionId={session.id}
@@ -1131,7 +1136,7 @@ export default function WorkshopSessionPage() {
       </AppBar>
 
       <div className="flex min-h-0 flex-1">
-      <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />
+      {!chatMode && <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />}
       {pageError ? (
         <p className="p-6 text-sm text-red-300">{pageError}</p>
       ) : (

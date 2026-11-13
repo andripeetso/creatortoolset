@@ -282,6 +282,16 @@ html:has(button[data-assistant-dock][data-corner="bl"]) [data-sonner-toaster] { 
    takes room, tailwind.config.js): the text is as wide as before, stays in the middle of the card and does not move
    when it outgrows the card. No rule here. */
 
+/* Chat mode (lib/chat-mode.ts): the chats stand at the left of the window, --chat-w wide, and the page moves over by as
+   much. What a page pins to the window's left moves with it. In the Mac app the window's buttons now sit over the
+   chats' own bar (AssistantDock, data-chat-bar), so the page's bar gives up the room it kept for them. */
+html[data-chat-mode] body { padding-left: var(--chat-w); }
+html[data-chat-mode] [data-appbar] [data-chat-toggle] { display: none; }
+html[data-chat-mode] [data-appbar-fade] { left: var(--chat-w); }
+html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5rem); }
+html.mac-app:not(.mac-full) [data-chat-bar] { padding-left: 84px; }
+html.mac-app[data-chat-mode] main [data-titlebar] { padding-left: 1rem; }
+
 html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }
 /* The dim behind a dialog covers the window but not the page's own bar beside it, where the window's backdrop shows
    (the body's colour). While a dialog is open the backdrop is that colour as the dim leaves it (half black over it), so
