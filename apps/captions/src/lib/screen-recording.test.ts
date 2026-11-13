@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cameraCut, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { cameraCut, cameraPlace, splitLook, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -379,6 +379,17 @@ describe("screen recording", () => {
     expect(aim(3.5).x).toBeGreaterThan(aim(1).x + 0.01);
     expect(aim(4).x).toBeCloseTo(0.5, 1);
     expect(aim(8).x).toBeCloseTo(0.7, 3);
+  });
+
+  it("splits the frame edge to edge: the screen whole at full height, the camera the rest, nothing around them", () => {
+    const look = { ...defaultLook(events, 30), shape: "16:9" as const, padding: 0.08, radius: 0.03, fill: false };
+    const cam = { ...defaultCamera(), layout: "split" as const };
+    expect(cameraPlace(look, cam, 1920, 1080, 1)).toEqual({ r: { x: 1080, y: 0, w: 840, h: 1080 }, radius: 0 });
+    const s = splitLook(look, cam, 1920, 1080, 1);
+    expect(layout(s.look, [], 0, 1000, 1000, 1920, 1080, s.cam).box).toEqual({ x: 0, y: 0, w: 1080, h: 1080 });
+    // the camera on the left, and Beside as it was
+    expect(cameraPlace(look, { ...cam, left: true }, 1920, 1080, 1)?.r).toEqual({ x: 0, y: 0, w: 840, h: 1080 });
+    expect(splitLook(look, { ...cam, layout: "side" }, 1920, 1080, 1).look).toBe(look);
   });
 
   it("cuts the camera where it is aimed, inside the picture, mirrored as seen", () => {

@@ -75,9 +75,12 @@ export type ScreenLook = {
   camera?: CameraLook;
 };
 
-/** The camera: a bubble over the picture, the camera alone, side by side with the screen, or hidden. */
+/**
+ * The camera: a bubble over the picture, the camera alone, side by side with the screen ("side", on the background with
+ * space around), the two filling the frame edge to edge ("split": no background, gap, corners, border or shadow), or hidden.
+ */
 export type CameraLook = {
-  layout: "bubble" | "only" | "side" | "hidden";
+  layout: "bubble" | "only" | "side" | "split" | "hidden";
   /** Bubble diameter as a fraction of the output's short side. */
   size: number;
   corner: "br" | "bl" | "tr" | "tl";
@@ -804,7 +807,7 @@ function restBox(look: ScreenLook, srcRatio: number, outW: number, outH: number,
  * where zooms do something else. `srcRatio` is the recording's width over its height.
  */
 export function zoomFloor(look: ScreenLook, srcRatio: number, camera: CameraLook | null = null): number {
-  if (look.zoomFit !== "frame" || !zoomGrows(look) || camera?.layout === "side") return 1;
+  if (look.zoomFit !== "frame" || !zoomGrows(look) || camera?.layout === "side" || camera?.layout === "split") return 1;
   const out = outputSize(look.shape, srcRatio * 1000, 1000, false);
   const { box } = restBox(look, srcRatio, out.width, out.height, camera);
   return Math.max(out.width / box.w, out.height / box.h);
@@ -927,11 +930,33 @@ export function cameraCut(camW: number, camH: number, r: Rect, cam: CameraLook |
 }
 
 /**
+ * The camera's share of the width in a split where the screen keeps its whole picture at the frame's full height (the
+ * camera takes the rest), 0.2–0.8. `srcRatio` is the recording's width over its height.
+ */
+export function naturalSplit(outW: number, outH: number, srcRatio: number): number {
+  return Math.min(0.8, Math.max(0.2, 1 - (outH * srcRatio) / outW));
+}
+
+/**
+ * A split ("split") drawn as what it is: side by side with no padding, gap, corners or shadow, the screen filling its
+ * part (cut only where Camera width leaves it less than its own shape). Anything else is as it was.
+ */
+export function splitLook(look: ScreenLook, cam: CameraLook | null, outW: number, outH: number, srcRatio: number): { look: ScreenLook; cam: CameraLook | null } {
+  if (cam?.layout !== "split") return { look, cam };
+  return {
+    look: { ...look, padding: 0, radius: 0, shadow: false, shadowAmount: 0, fill: true, zoomFit: "inside" },
+    cam: { ...cam, layout: "side", gap: 0, split: cam.split ?? naturalSplit(outW, outH, srcRatio) },
+  };
+}
+
+/**
  * Where the camera is drawn in the output, or null where it is not (hidden). `srcRatio` is the recording's width over
  * its height. The bubble's corner rounding comes with it.
  */
-export function cameraPlace(look: ScreenLook, cam: CameraLook, outW: number, outH: number, srcRatio: number): { r: Rect; radius: number } | null {
+export function cameraPlace(seen: ScreenLook, set: CameraLook, outW: number, outH: number, srcRatio: number): { r: Rect; radius: number } | null {
   const short = Math.min(outW, outH);
+  const { look, cam: split } = splitLook(seen, set, outW, outH, srcRatio);
+  const cam = split ?? set;
   if (cam.layout === "only") return { r: { x: 0, y: 0, w: outW, h: outH }, radius: 0 };
   if (cam.layout === "side") {
     const filled = look.fill && look.shape !== "source";
@@ -1002,7 +1027,7 @@ export function drawFrame(
   srcW: number,
   srcH: number,
   t: number,
-  look: ScreenLook,
+  seen: ScreenLook,
   path: [number, number, number][],
   clicks: ScreenEvents["clicks"],
   camera: CameraImage | null = null,
@@ -1014,7 +1039,10 @@ export function drawFrame(
 ) {
   const { width: outW, height: outH } = ctx.canvas;
   const short = Math.min(outW, outH);
-  const set = camera ? (look.camera ?? defaultCamera()) : null;
+  const chosen = camera ? (seen.camera ?? defaultCamera()) : null;
+  // a split is the side layout with nothing around it (splitLook)
+  const { look, cam: set } = splitLook(seen, chosen, outW, outH, srcW / srcH);
+  const clean = chosen?.layout === "split";
   // following the face: the cut looks where the face is at this frame (x as seen, so mirrored for a mirrored camera)
   const cam = set?.follow && camera?.aim ? { ...set, x: set.mirror ? 1 - camera.aim.x : camera.aim.x, y: camera.aim.y } : set;
   if (look.background !== "none") {
@@ -1098,6 +1126,6 @@ export function drawFrame(
 
   if (camera && cam && (cam.layout === "bubble" || cam.layout === "side")) {
     const at = cameraPlace(look, cam, outW, outH, srcW / srcH);
-    if (at) drawCamera(ctx, camera, at.r, { radius: at.radius, mirror: cam.mirror, short, shadow: true, border: true, cam });
+    if (at) drawCamera(ctx, camera, at.r, { radius: at.radius, mirror: cam.mirror, short, shadow: !clean, border: !clean, cam });
   }
 }

@@ -6,6 +6,7 @@ import {
   autoZooms,
   backgroundStops,
   defaultCamera,
+  naturalSplit,
   outputSize,
   shadowOf,
   zoomView,
@@ -101,13 +102,18 @@ export function Inspector({
         ))}
       </div>
       <div role="tabpanel" className="min-h-0 flex-1 space-y-6 overflow-y-scroll p-4 bars:pr-2">
-        {shown === "background" && <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} />}
+        {shown === "background" &&
+          (hasCamera && look.camera?.layout === "split" ? (
+            <p className="text-xs text-zinc-400">Split fills the frame edge to edge: no background, padding, corners or shadow show. Pick Beside on the Camera tab for those.</p>
+          ) : (
+            <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} />
+          ))}
         {shown === "pointer" && <PointerTab look={look} initial={initial} change={change} />}
         {shown === "zoom" && (
           <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
         {shown === "sound" && <SoundTab look={look} change={change} events={events} />}
-        {shown === "camera" && <CameraTab look={look} change={change} faces={faces} />}
+        {shown === "camera" && <CameraTab look={look} change={change} faces={faces} ratio={player.ratio() || 16 / 9} />}
       </div>
     </aside>
   );
@@ -352,7 +358,8 @@ function ZoomTab({
  * space beside the window (another shape than the recording's).
  */
 function EveryZoom({ look, change, clicks }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; clicks: boolean }) {
-  const filled = look.fill && look.shape !== "source";
+  // a split fills its part of the frame like a filled frame does (splitLook)
+  const filled = (look.fill || look.camera?.layout === "split") && look.shape !== "source";
   const room = look.shape !== "source";
   const fit = look.zoomFit === "frame" ? "frame" : look.zoomFit === "space" && room ? "space" : "inside";
   if (!clicks && filled) return null; // nothing here would change anything
@@ -467,6 +474,7 @@ function SoundTab({ look, change, events }: { look: ScreenLook; change: (patch: 
 const LAYOUTS: { id: CameraLook["layout"]; label: string }[] = [
   { id: "bubble", label: "Bubble" },
   { id: "side", label: "Beside" },
+  { id: "split", label: "Split" },
   { id: "only", label: "Alone" },
   { id: "hidden", label: "Hidden" },
 ];
@@ -480,15 +488,42 @@ const CORNERS: { id: CameraLook["corner"]; label: string }[] = [
 
 export type FaceState = { found: boolean; tried: boolean; can: boolean; finding: number | null; find: () => void };
 
-function CameraTab({ look, change, faces }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; faces: FaceState }) {
+function CameraTab({ look, change, faces, ratio }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; faces: FaceState; ratio: number }) {
   const cam = look.camera ?? defaultCamera();
   const set = (patch: Partial<CameraLook>) => change({ camera: { ...cam, ...patch } });
+  // in a split: the camera's share that leaves the screen its whole picture (naturalSplit)
+  const out = outputSize(look.shape === "source" ? "16:9" : look.shape, ratio * 1000, 1000, false);
+  const natural = Math.round(naturalSplit(out.width, out.height, ratio) * 100) / 100;
   // the face decides where the cut looks: Left – right and Up – down would do nothing
   const following = !!cam.follow && faces.found;
   return (
     <>
       <Group>
-        <Segmented label="Where the camera is" value={cam.layout} options={LAYOUTS} onChange={(layout) => set({ layout })} />
+        <Segmented
+          label="Where the camera is"
+          value={cam.layout}
+          options={LAYOUTS}
+          // a split needs a frame of its own shape to share: from Auto (the recording's shape) it goes wide
+          onChange={(layout) => change(layout === "split" && look.shape === "source" ? { camera: { ...cam, layout }, shape: "16:9" } : { camera: { ...cam, layout } })}
+        />
+        {cam.layout === "split" && (
+          <>
+            <SliderRow
+              label="Camera width"
+              value={cam.split ?? natural}
+              min={0.2}
+              max={0.8}
+              step={0.01}
+              format={pct}
+              initial={natural}
+              onChange={(split) => set({ split })}
+            />
+            {Math.abs((cam.split ?? natural) - natural) > 0.005 && (
+              <p className="text-xs text-zinc-400">The screen is cut to fill its part; the cut follows the pointer. Reset gives it its whole picture.</p>
+            )}
+            <SwitchRow label="Camera on the left" checked={!!cam.left} onChange={(left) => set({ left })} />
+          </>
+        )}
         {cam.layout === "side" && (
           <>
             <SliderRow label="Camera width" value={cam.split ?? 0.38} min={0.2} max={0.6} step={0.01} format={pct} initial={0.38} onChange={(split) => set({ split })} />
