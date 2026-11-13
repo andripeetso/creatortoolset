@@ -237,9 +237,13 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   // the plan as the AI gave it, kept beside the one the person goes on to change: its lines and takes by number, none of its words
   await saveStep(edit.id, "first", { plans: plans.map((p) => ({ name: p.name, lines: p.lines })) });
   await saveStep(edit.id, "plan", { lines: mapped.lines, plans, notes: [...mapped.notes, ...notes] });
-  // an edit nobody named is named after the first line of its first version, as it is spoken; read again, as the
-  // person may have named it while the AI answered
+  // an edit nobody named is named after the first line of its first version; read again, as the person may have
+  // named it while the AI answered. The line's text is the AI's, so the name is marked as not the person's own
+  // (byTool: finished.ts keeps no such name), until they type one
   const opening = mapped.lines.find((l) => l.id === plans[0]?.lines[0]?.line)?.text.trim();
   const now = readEdit(edit.id);
-  if (opening && now?.name === UNNAMED) await saveEdit({ ...now, name: opening.length > NAME_MAX ? `${opening.slice(0, NAME_MAX - 1).trimEnd()}…` : opening });
+  if (opening && now?.name === UNNAMED) {
+    const name = opening.length > NAME_MAX ? `${opening.slice(0, NAME_MAX - 1).trimEnd()}…` : opening;
+    await saveEdit({ ...now, name, byTool: [...new Set([...(now.byTool ?? []), "name" as const])] });
+  }
 }

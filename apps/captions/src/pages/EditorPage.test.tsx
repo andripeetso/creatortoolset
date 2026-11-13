@@ -166,21 +166,12 @@ describe("New edit: files dropped on the page", () => {
     expect(posted.at(-1)).toEqual({ sources: ["ver_one.mp4", "ver_two.mov"], brief: "", script: "", versions: 1, targetS: 0 });
   });
 
-  it("dropped before How do you like to work? is answered: they are picked when the form shows", async () => {
-    let view: EditingStylesView = { styles: [], last: null };
-    const answered = async () => void (view = { styles: [], last: null, asked: true });
-    const dropped = takes();
-    await open(view, answered, dropped);
+  it("dropped by someone who has not answered How do you like to work?: the form comes at once, with them picked", async () => {
+    await open({ styles: [], last: null }, async () => {}, takes());
     await flush();
-    expect(document.body.textContent).toContain("How do you like to work?");
-    act(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Not now")!.click());
-    await flush();
-    await flush();
-    expect(view.asked).toBe(true);
-    // the page reads the styles again and hands them down: the same sheet, now with its form
-    act(() => root!.render(<MemoryRouter><NewEditSheet open onClose={() => {}} styles={view} onStyles={answered} dropped={dropped} /></MemoryRouter>));
-    await flush();
+    expect(document.body.textContent).not.toContain("How do you like to work?");
     expect(document.body.textContent).toContain("2 picked");
+    expect(calls).toEqual([]); // and nothing is answered for them: New edit by its button still asks
   });
 });
 

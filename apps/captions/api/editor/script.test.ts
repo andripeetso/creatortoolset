@@ -128,6 +128,7 @@ describe("AI Editor script: the step", () => {
     expect(view.notes).toContain("Line L3 has no take in the footage: left out");
     // nobody named the edit: it is named after the first line of its first version
     expect(view.name).toBe(view.lines.find((l) => l.id === view.plans[0]!.lines[0]!.line)!.text);
+    expect(readEdit(editId)!.byTool).toContain("name"); // the line's text is the AI's: not kept as the person's own words
     // a name the person gave stays through the next run
     await saveEdit({ ...readEdit(editId)!, name: "Crawlers" });
     vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });

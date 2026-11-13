@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
+import { toast } from "sonner";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_MOMENTS, MAX_VERSIONS } from "@contracts/editor";
 import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { isMediaFile } from "@/components/assistant/draft";
+import { droppedFiles, isMediaFile } from "@/components/assistant/draft";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, runEdit } from "@/lib/editor";
@@ -35,7 +36,8 @@ import { FromScript } from "./editor/FromScript";
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
  * Media Library or dropped on the page, how many versions. Create runs it; the edit page (/editor/:id) follows the steps.
- * Videos and recordings dropped anywhere on the Edits tab open New edit with them in it.
+ * Videos and recordings dropped anywhere on the Edits tab open New edit with them in it; a dropped folder gives the ones
+ * inside it.
  */
 
 /** The videos and recordings of a drop or a file choice; a browser's own list is gone after the event, so this is read at once. */
@@ -97,27 +99,33 @@ export default function EditorPage() {
   // on the window, so a file let go beside the sheet or on the dimmed page is taken too and never opens in the window
   useEffect(() => {
     if (tab !== "edits") return;
+    // lit while files are over the window: each dragover keeps it on for half a second (a leave is not told apart
+    // from moving between two elements in every browser), so it goes out by itself after a leave or a drop
+    let out: ReturnType<typeof setTimeout> | undefined;
     const onOver = (e: DragEvent) => {
       if (!fileDrag(e)) return;
       e.preventDefault();
       setOver(true);
+      clearTimeout(out);
+      out = setTimeout(() => setOver(false), 500);
     };
-    const onLeave = (e: DragEvent) => !e.relatedTarget && setOver(false);
     const onDrop = (e: DragEvent) => {
-      if (!fileDrag(e)) return;
+      if (!fileDrag(e) || !e.dataTransfer) return;
       e.preventDefault();
       setOver(false);
-      const files = footageOf(e.dataTransfer?.files);
-      if (!files.length) return;
-      setDropped(files);
-      setCreating(true);
+      // a dropped folder is opened into its files; the drop's list is read before the first wait
+      void droppedFiles(e.dataTransfer).then(({ files }) => {
+        const footage = files.filter(isMediaFile);
+        if (!footage.length) return void toast("No video or recording in what you dropped");
+        setDropped(footage);
+        setCreating(true);
+      });
     };
     window.addEventListener("dragover", onOver);
-    window.addEventListener("dragleave", onLeave);
     window.addEventListener("drop", onDrop);
     return () => {
+      clearTimeout(out);
       window.removeEventListener("dragover", onOver);
-      window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
   }, [tab]);
@@ -275,7 +283,7 @@ export default function EditorPage() {
 /**
  * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder) or from this
  * computer, then what is optional: a name, a style, a description, a script. `dropped`: files let go on the page, added
- * as they arrive (also while "How do you like to work?" is up, so they are picked when the form shows).
+ * as they arrive; someone who dropped footage gets the form at once, and "How do you like to work?" on a New edit they open by its button.
  * `styles`: the person's editing styles. The Style select also makes one ("New editing style…"); with none the edit is
  * sent as it always was, with no style at all. With none and "How do you like to work?" not answered yet, the sheet
  * asks that first (FirstWay), and `onStyles` reads the styles again once it is answered.
@@ -474,7 +482,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
-        {styles && !styles.styles.length && !styles.asked && onStyles ? (
+        {styles && !styles.styles.length && !styles.asked && onStyles && !dropped?.length ? (
           <FirstWay onDone={onStyles} />
         ) : (
         <form
