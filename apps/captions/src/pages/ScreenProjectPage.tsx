@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
-import { ChevronDown, FolderOpen, Send, Trash2 } from "lucide-react";
+import { ChevronDown, FolderOpen, Layers, Send, Trash2 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -142,6 +142,9 @@ export default function ScreenProjectPage() {
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => tellRecorder(`streams:${rec.id}`)}>
+                  <Layers /> Save the streams…
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => tellRecorder(`reveal:${rec.id}`)}>
                   <FolderOpen /> Show in Finder
                 </DropdownMenuItem>

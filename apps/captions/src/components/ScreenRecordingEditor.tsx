@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import {
   alphaFileName,
+  cameraCut,
+  cameraPlace,
   defaultCamera,
   defaultLook,
   normalizeLook,
@@ -211,6 +213,72 @@ export function ScreenRecordingEditor({
   );
 
   useEffect(() => () => abort.current?.abort(), []);
+
+  // The camera in the picture: drag it to move what it shows, scroll over it to go closer (the Camera tab's Framing).
+  // A press that moves is no play/pause click.
+  const dragged = useRef(false);
+  const camAt = (e: { clientX: number; clientY: number }) => {
+    const c = player.canvas.current;
+    const now = lookRef.current;
+    const size = player.cameraSize();
+    if (!c || !now || !size || !sourceRef.current.cameraUrl) return null;
+    const cam = now.camera ?? defaultCamera();
+    const place = cameraPlace(now, cam, c.width, c.height, (width && height ? width / height : player.ratio()) || 16 / 9);
+    const b = c.getBoundingClientRect();
+    const k = c.width / b.width;
+    const x = (e.clientX - b.left) * k;
+    const y = (e.clientY - b.top) * k;
+    if (!place || x < place.r.x || x > place.r.x + place.r.w || y < place.r.y || y > place.r.y + place.r.h) return null;
+    return { cam, r: place.r, size, k };
+  };
+  const grabCamera = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    dragged.current = false;
+    const hit = e.button === 0 ? camAt(e) : null;
+    if (!hit) return;
+    const { cam, r, size, k } = hit;
+    const cut = cameraCut(size.width, size.height, r, cam, cam.mirror);
+    const fw = cut.sw / size.width;
+    const fh = cut.sh / size.height;
+    const inside = (v: number, f: number) => (f >= 1 ? 0.5 : Math.min(1 - f / 2, Math.max(f / 2, v)));
+    const from = { x: inside(cam.x ?? 0.5, fw), y: inside(cam.y ?? 0.5, fh), cx: e.clientX, cy: e.clientY };
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    el.style.cursor = "grabbing";
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - from.cx;
+      const dy = ev.clientY - from.cy;
+      if (!dragged.current && Math.hypot(dx, dy) < 3) return;
+      dragged.current = true;
+      const round = (v: number) => Math.round(v * 1000) / 1000;
+      change({
+        camera: { ...cam, x: round(inside(from.x - ((dx * k) / r.w) * fw, fw)), y: round(inside(from.y - ((dy * k) / r.h) * fh, fh)) },
+      });
+    };
+    const up = () => {
+      el.style.cursor = "";
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  };
+  const camAtRef = useRef(camAt);
+  camAtRef.current = camAt;
+  useEffect(() => {
+    const c = player.canvas.current;
+    if (!c) return;
+    const wheel = (e: WheelEvent) => {
+      const hit = camAtRef.current(e);
+      if (!hit) return;
+      e.preventDefault();
+      const zoom = Math.round(Math.min(3, Math.max(1, (hit.cam.zoom ?? 1) * Math.exp(-e.deltaY * 0.002))) * 100) / 100;
+      change({ camera: { ...hit.cam, zoom } });
+    };
+    c.addEventListener("wheel", wheel, { passive: false });
+    return () => c.removeEventListener("wheel", wheel);
+  }, [player.canvas, change]);
 
   // Space plays, the arrows step, Delete removes the picked zoom, ⌘Z and ⇧⌘Z undo and redo. Taken before anything
   // else gets the key (capture), and kept from going further: a button pressed a moment ago still has the focus and
@@ -419,7 +487,11 @@ export function ScreenRecordingEditor({
             <div ref={player.stage} className="flex h-full w-full items-center justify-center">
               <canvas
                 ref={player.canvas}
-                onClick={player.toggle}
+                onClick={() => (dragged.current ? (dragged.current = false) : player.toggle())}
+                onPointerDown={grabCamera}
+                onPointerMove={(e) => {
+                  if (e.buttons === 0) e.currentTarget.style.cursor = camAt(e) ? "grab" : "";
+                }}
                 className={cn("cursor-pointer rounded-md shadow-2xl transition-opacity", player.ready && look ? "opacity-100" : "opacity-0")}
               />
             </div>

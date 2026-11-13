@@ -39,6 +39,8 @@ export type Player = {
   ratio: () => number;
   /** The recording's current frame, whole, into a small canvas (the zoom's aim pad). False before the first frame. */
   drawSource: (ctx: CanvasRenderingContext2D) => boolean;
+  /** The camera file's picture size, null before it is known or without a camera. */
+  cameraSize: () => { width: number; height: number } | null;
 };
 
 const stored = (key: string, fallback: boolean) => {
@@ -535,6 +537,10 @@ export function usePlayer(o: {
         ctx.imageSmoothingQuality = "medium";
         ctx.drawImage(source, 0, 0, ctx.canvas.width, ctx.canvas.height);
         return true;
+      },
+      cameraSize: () => {
+        const k = camera.current?.el;
+        return k && k.videoWidth && k.videoHeight ? { width: k.videoWidth, height: k.videoHeight } : null;
       },
     }),
     [failed, loop, mediaDuration, muted, pause, play, playing, ready, s, seek],

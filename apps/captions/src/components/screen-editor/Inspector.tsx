@@ -483,7 +483,20 @@ function CameraTab({ look, change }: { look: ScreenLook; change: (patch: Partial
       <Group>
         <Segmented label="Where the camera is" value={cam.layout} options={LAYOUTS} onChange={(layout) => set({ layout })} />
         {cam.layout === "side" && (
-          <SliderRow label="Camera width" value={cam.split ?? 0.38} min={0.2} max={0.6} step={0.01} format={pct} initial={0.38} onChange={(split) => set({ split })} />
+          <>
+            <SliderRow label="Camera width" value={cam.split ?? 0.38} min={0.2} max={0.6} step={0.01} format={pct} initial={0.38} onChange={(split) => set({ split })} />
+            <SliderRow
+              label="Space between"
+              value={cam.gap ?? Math.max(look.padding, 0.012)}
+              min={0}
+              max={0.1}
+              step={0.002}
+              format={(v) => `${Math.round(v * 1000)}`}
+              initial={Math.max(look.padding, 0.012)}
+              onChange={(gap) => set({ gap })}
+            />
+            <SwitchRow label="Camera on the left" checked={!!cam.left} onChange={(left) => set({ left })} />
+          </>
         )}
         {cam.layout === "bubble" && (
           <>
@@ -520,6 +533,7 @@ function CameraTab({ look, change }: { look: ScreenLook; change: (patch: Partial
       </Group>
       {cam.layout !== "hidden" && (
         <Group title="Framing">
+          <p className="text-xs text-zinc-400">Or drag the camera in the picture, and scroll over it to go closer.</p>
           <SliderRow label="Zoom" value={cam.zoom ?? 1} min={1} max={3} step={0.05} format={(v) => `${v.toFixed(1)}×`} initial={1} onChange={(zoom) => set({ zoom })} />
           <SliderRow label="Left – right" value={cam.x ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(x) => set({ x })} />
           <SliderRow label="Up – down" value={cam.y ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(y) => set({ y })} />
