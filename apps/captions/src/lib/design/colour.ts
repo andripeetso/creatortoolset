@@ -46,15 +46,18 @@ export function coloursOn(pages: readonly DesignPage[], most = 16): string[] {
   for (const p of pages) {
     add(p.background);
     add(p.gradient?.to);
+    add(p.gradient?.via);
     for (const l of p.layers) {
       if (l.type === "text") {
         add(l.color);
         add(l.gradient?.to);
+        add(l.gradient?.via);
         add(l.outline?.color);
       }
       if (l.type === "shape") {
         add(l.fill);
         add(l.gradient?.to);
+        add(l.gradient?.via);
         add(l.stroke?.color);
       }
       add(l.shadow?.color);

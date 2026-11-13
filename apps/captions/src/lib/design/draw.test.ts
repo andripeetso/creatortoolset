@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
+import { cornersOf, drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -81,6 +81,13 @@ describe("drawing a design", () => {
     calls = 0;
     setTextOnce({ ...l }, counted);
     expect(calls).toBeGreaterThan(50);
+  });
+
+  it("gives a box its four corner radii: one for all or one each, none more than half the box", () => {
+    expect(cornersOf(undefined, 200, 100)).toEqual([0, 0, 0, 0]);
+    expect(cornersOf(30, 200, 100)).toEqual([30, 30, 30, 30]);
+    expect(cornersOf([10, 20, 0, 500], 200, 100)).toEqual([10, 20, 0, 50]);
+    expect(cornersOf(999, 200, 100)).toEqual([50, 50, 50, 50]);
   });
 
   it("gives the shapes with straight sides their corners inside the box: a triangle up, an arrow to the right, a five-pointed star", () => {

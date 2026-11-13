@@ -164,6 +164,29 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(close).toMatchObject({ zoom: 2.5, focus: { x: 0, y: 0.25 } });
     expect(whole).not.toHaveProperty("zoom");
     expect(whole).not.toHaveProperty("focus");
+    // a line's dashes, ends and side; a gradient's kind and middle colour; a radius a corner
+    const more = cleanPages(
+      [
+        {
+          gradient: { to: "#000000", kind: "radial", via: "#F80" },
+          layers: [
+            shape({ stroke: { color: "#000", width: 8, dash: [12, 6.004], round: true, side: "inside" }, radius: [40, 0, 0, 9999] }),
+            shape({ stroke: { color: "#000", width: 8, dash: [12, 0], round: "yes", side: "middle" }, radius: [20, 20, 20, 20], gradient: { to: "#fff", kind: "conic", via: "red" } }),
+            shape({ stroke: { width: 0, dash: [4, 4] }, radius: [1, 2, 3] }),
+            picture({ radius: [0, 0, 60, 60] }),
+          ],
+        },
+      ],
+      rules,
+    ).pages[0]!;
+    expect(more.gradient).toEqual({ to: "#000000", angle: 90, kind: "radial", via: "#ff8800" });
+    expect(more.layers[0]).toMatchObject({ stroke: { color: "#000", width: 8, dash: [12, 6], round: true, side: "inside" }, radius: [40, 0, 0, 2000] });
+    expect(more.layers[1]).toMatchObject({ stroke: { color: "#000", width: 8 }, radius: 20, gradient: { to: "#ffffff", angle: 90 } });
+    expect(Object.keys((more.layers[1] as { stroke: object }).stroke)).toEqual(["color", "width"]);
+    expect(Object.keys((more.layers[1] as { gradient: object }).gradient)).toEqual(["to", "angle"]);
+    expect(more.layers[2]).not.toHaveProperty("stroke");
+    expect(more.layers[2]).not.toHaveProperty("radius");
+    expect(more.layers[3]).toMatchObject({ radius: [0, 0, 60, 60] });
     // a text with nothing of these is as it was: no empty fields
     expect(Object.keys(cleanPages([{ layers: [text({ spacing: 0 })] }], rules).pages[0]!.layers[0]!)).not.toContain("spacing");
   });

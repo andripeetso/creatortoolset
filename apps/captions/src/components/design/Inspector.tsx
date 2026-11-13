@@ -17,6 +17,7 @@ import {
   CaseUpper,
   Check,
   ChevronDown,
+  CircleDot,
   Crop,
   FlipHorizontal2,
   FlipVertical2,
@@ -25,11 +26,12 @@ import {
   Minus,
   Plus,
   RotateCcw,
+  Scan,
   Ungroup,
   Unlink2,
   WrapText,
 } from "lucide-react";
-import type { Design, DesignPage, Layer } from "@contracts/design";
+import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -193,6 +195,8 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
 const SHADOW = { color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8 };
 /** The gradient a press on + gives: down the box, to black. */
 const GRADIENT = { to: "#000000", angle: 90 };
+const GRADIENT_KINDS = [["linear", "Linear"], ["radial", "Radial"]] as const;
+const CORNERS = [["◜", "Top left corner"], ["◝", "Top right corner"], ["◞", "Bottom right corner"], ["◟", "Bottom left corner"]] as const;
 const BLEND_NAMES = { multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken", lighten: "Lighten", "soft-light": "Soft light" } as const;
 /** How a frame or the picked layers are saved as pictures: PNG or JPEG, at their size or twice it. */
 export interface ExportAs {
@@ -366,6 +370,8 @@ export function Inspector({
   onDropper: (take: (hex: string) => void) => void;
 }) {
   const [ratio, setRatio] = useState(false);
+  /** Each corner's radius shown by itself. */
+  const [split, setSplit] = useState(false);
   const [as, setAs] = useState<ExportAs>({ jpeg: false, scale: 1 });
   const one = picked.length === 1 ? picked[0]! : null;
   const box = one ?? (picked.length ? boundsOf(picked) : null);
@@ -392,7 +398,15 @@ export function Inspector({
   const image = every((l) => l.type === "image");
   /** The gradient of a text or a shape (a picture and a drawing have none). */
   const gradOf = (l: Layer) => (l.type === "shape" || l.type === "text" ? l.gradient : undefined);
-  const setGrad = (g: { to: string; angle: number } | undefined) => (l: Layer): Layer => (l.type === "shape" || l.type === "text" ? { ...l, gradient: g } : l);
+  /** A layer's gradient with these of its settings changed (the others stay); undefined takes the gradient off. */
+  const setGrad = (g: Partial<Gradient> | undefined) => (l: Layer): Layer => (l.type === "shape" || l.type === "text" ? { ...l, gradient: g && { ...GRADIENT, ...l.gradient, ...g } } : l);
+  /** A corner's radius of a picture or a rectangle (0: top left, then round the box), and that corner set. */
+  const cornerOf = (l: Layer, n: number): number | undefined => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? l.radius[n]! : (l.radius ?? 0)) : undefined);
+  const setCorner = (n: number, v: number) => (l: Layer): Layer => {
+    if (l.type !== "image" && l.type !== "shape") return l;
+    const r = [0, 1, 2, 3].map((k) => (k === n ? v : (cornerOf(l, k) ?? 0))) as [number, number, number, number];
+    return { ...l, radius: r.every((x) => x === r[0]) ? r[0] || undefined : r };
+  };
   const hasGrad = picked.some(gradOf);
   /** A + or − beside a section's name, for the one thing the section can add. */
   const addOrRemove = (has: boolean, what: string, add: () => void, remove: () => void) =>
@@ -406,7 +420,11 @@ export function Inspector({
       </Tap>
     );
   const hasLine = picked.some((l) => (l.type === "shape" && l.stroke) || (l.type === "text" && l.outline));
-  const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" ? { ...l, stroke: v } : l.type === "text" ? { ...l, outline: v } : l);
+  const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" ? { ...l, stroke: v && { ...l.stroke, ...v } } : l.type === "text" ? { ...l, outline: v } : l);
+  /** A shape's own line (its dashes, ends and side), and those set. */
+  const strokeOf = (l: Layer) => (l.type === "shape" ? l.stroke : undefined);
+  const setStroke = (more: Partial<Stroke>) => (l: Layer): Layer => (l.type === "shape" && l.stroke ? { ...l, stroke: { ...l.stroke, ...more } } : l);
+  const setDash = (dash: number, gap: number) => setStroke({ dash: gap > 0 ? [dash, gap] : undefined });
   const lineOf = (l: Layer) => (l.type === "shape" ? l.stroke : l.type === "text" ? l.outline : undefined);
   const frame = frameOf(page, at, design.width, design.height);
   /** A number field of the frame itself. */
@@ -505,6 +523,19 @@ export function Inspector({
                 <Num label="∠" title="Gradient angle in degrees" value={page.gradient.angle} min={-360} max={360} onLive={(n) => onPagePreview(n === null ? null : { ...page, gradient: { ...page.gradient!, angle: n } })} onCommit={(n) => onPage({ ...page, gradient: { ...page.gradient!, angle: n } })} />
               </div>
             )}
+            {page.gradient && (
+              <>
+                <Choice label="Gradient kind" value={page.gradient.kind ?? "linear"} options={GRADIENT_KINDS} onPick={(v) => onPage({ ...page, gradient: { ...page.gradient!, kind: v === "radial" ? "radial" : undefined } })} />
+                <div className="flex items-center gap-2">
+                  {page.gradient.via ? (
+                    <Colour title="Gradient through" value={page.gradient.via} colours={colours} onDropper={onDropper} onSet={(via, merge) => onPage({ ...page, gradient: { ...page.gradient!, via } }, merge)} />
+                  ) : (
+                    <span className={cn("flex-1", DIM)}>No middle colour</span>
+                  )}
+                  {addOrRemove(!!page.gradient.via, "middle colour", () => onPage({ ...page, gradient: { ...page.gradient!, via: "#888888" } }), () => onPage({ ...page, gradient: { ...page.gradient!, via: undefined } }))}
+                </div>
+              </>
+            )}
           </Section>
         </>
       )}
@@ -553,8 +584,26 @@ export function Inspector({
                 { min: 0, max: 100 },
               )}
               {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
-                num("◜", "Corner radius", same((l) => (l.type === "image" || l.type === "shape" ? (l.radius ?? 0) : undefined)), (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, radius: n || undefined } : l), { min: 0, max: 2000 })}
+                num(
+                  "◜",
+                  "Corner radius",
+                  // corners that differ show as mixed; a number typed here is every corner's
+                  (() => {
+                    const r = same((l) => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? -1 : (l.radius ?? 0)) : undefined));
+                    return r === -1 ? null : r;
+                  })(),
+                  (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, radius: n || undefined } : l),
+                  { min: 0, max: 2000 },
+                )}
             </div>
+            {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) && (
+              <div className="flex items-center gap-2">
+                <div className="grid min-w-0 flex-1 grid-cols-4 gap-1">{split && CORNERS.map(([sign, title], n) => <div key={title}>{num(sign, title, same((l) => cornerOf(l, n)), (v) => setCorner(n, v), { min: 0, max: 2000 })}</div>)}</div>
+                <Tap label="Each corner by itself" on={split} onClick={() => setSplit(!split)}>
+                  <Scan className="h-3.5 w-3.5" />
+                </Tap>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <PickOne
@@ -591,9 +640,18 @@ export function Inspector({
               <div className="flex">{colour("Fill", same((l) => (l.type === "shape" ? l.fill : l.type === "text" ? l.color : undefined)), (c) => (l) => (l.type === "shape" ? { ...l, fill: c } : l.type === "text" ? { ...l, color: c } : l))}</div>
               {hasGrad && (
                 <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                  {colour("Gradient to", same((l) => gradOf(l)?.to), (c) => (l) => setGrad({ angle: gradOf(l)?.angle ?? GRADIENT.angle, to: c })(l))}
-                  {num("∠", "Gradient angle in degrees", same((l) => gradOf(l)?.angle), (n) => (l) => setGrad({ to: gradOf(l)?.to ?? GRADIENT.to, angle: n })(l), { min: -360, max: 360 })}
+                  {colour("Gradient to", same((l) => gradOf(l)?.to), (c) => setGrad({ to: c }))}
+                  {num("∠", "Gradient angle in degrees", same((l) => gradOf(l)?.angle), (n) => setGrad({ angle: n }), { min: -360, max: 360 })}
                 </div>
+              )}
+              {hasGrad && (
+                <>
+                  <Choice label="Gradient kind" value={same((l) => (gradOf(l) ? (gradOf(l)!.kind ?? "linear") : undefined))} options={GRADIENT_KINDS} onPick={(v) => onPatch(setGrad({ kind: v === "radial" ? "radial" : undefined }))} />
+                  <div className="flex items-center gap-2">
+                    {picked.some((l) => gradOf(l)?.via) ? colour("Gradient through", same((l) => gradOf(l)?.via), (c) => setGrad({ via: c })) : <span className={cn("flex-1", DIM)}>No middle colour</span>}
+                    {addOrRemove(picked.some((l) => gradOf(l)?.via), "middle colour", () => onPatch(setGrad({ via: "#888888" })), () => onPatch(setGrad({ via: undefined })))}
+                  </div>
+                </>
               )}
             </Section>
           )}
@@ -607,6 +665,24 @@ export function Inspector({
                   {colour("Stroke", same((l) => lineOf(l)?.color), (c) => (l) => setLine({ width: lineOf(l)?.width ?? 4, color: c })(l))}
                   {num("≡", "Stroke width", same((l) => lineOf(l)?.width), (n) => (l) => setLine(n > 0 ? { color: lineOf(l)?.color ?? "#000000", width: n } : undefined)(l), { min: 0, max: shape ? 200 : 60 })}
                 </div>
+              )}
+              {shape && hasLine && (
+                <>
+                  <Choice
+                    label="The side of the edge the line lies on"
+                    value={same((l) => (strokeOf(l) ? (strokeOf(l)!.side ?? "center") : undefined))}
+                    options={[["center", "Centre"], ["inside", "Inside"], ["outside", "Outside"]] as const}
+                    onPick={(v) => onPatch(setStroke({ side: v === "center" ? undefined : v }))}
+                  />
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    {/* a dash with no gap is no dash: a dash typed first gets a gap as long as itself */}
+                    {num("┄", "Dash length", same((l) => (strokeOf(l) ? (strokeOf(l)!.dash?.[0] ?? 0) : undefined)), (n) => (l) => setDash(n, strokeOf(l)?.dash?.[1] || n)(l), { min: 0, max: 2000 })}
+                    {num("⋯", "Gap between dashes", same((l) => (strokeOf(l) ? (strokeOf(l)!.dash?.[1] ?? 0) : undefined)), (n) => (l) => setDash(strokeOf(l)?.dash?.[0] ?? n, n)(l), { min: 0, max: 2000 })}
+                    <Tap label="Round ends" on={every((l) => !!strokeOf(l)?.round)} onClick={() => onPatch((l) => setStroke({ round: strokeOf(l)?.round ? undefined : true })(l))}>
+                      <CircleDot className="h-3.5 w-3.5" />
+                    </Tap>
+                  </div>
+                </>
               )}
             </Section>
           )}
