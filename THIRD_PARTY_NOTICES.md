@@ -103,6 +103,31 @@ copy each one's licence next to the files they install.
 - The Whisper speech models (OpenAI, MIT, https://github.com/openai/whisper), converted for Core ML by Argmax
   (https://huggingface.co/argmaxinc/whisperkit-coreml). Not in the app: dictation downloads the one chosen in
   Settings the first time someone dictates, into `~/Library/Application Support/Creator Toolset/dictation/models`.
+- [FluidAudio](https://github.com/FluidInference/FluidAudio) 0.18.3 by FluidInference (dictation's Parakeet models
+  on the Neural Engine), statically linked: Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0). It links in,
+  each listed in its `ThirdPartyLicenses/` folder:
+  - fastcluster: BSD 2-clause. Until package version 1.1.23: © 2011 Daniel Müllner <https://danifold.net>; all
+    changes from version 1.1.24 on: © Google Inc. All rights reserved. Redistribution and use in source and binary
+    forms, with or without modification, are permitted provided that the following conditions are met:
+    redistributions of source code must retain the above copyright notice, this list of conditions and the following
+    disclaimer; redistributions in binary form must reproduce the above copyright notice, this list of conditions and
+    the following disclaimer in the documentation and/or other materials provided with the distribution. THIS SOFTWARE
+    IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
+    BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+    IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+    EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  - VBx (speaker clustering): Apache-2.0.
+  - NemoTextProcessing, the prebuilt library of https://github.com/FluidInference/text-processing-rs: Apache-2.0,
+    with NVIDIA NeMo Text Processing's grammars (Apache-2.0, Copyright (c) NVIDIA CORPORATION & AFFILIATES), rustfst
+    and flate2 (MIT or Apache-2.0) and their MIT/Apache-2.0 crates.
+- The Parakeet speech models: NVIDIA Parakeet TDT 0.6B v2 and v3 (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2,
+  https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/),
+  converted for Core ML by FluidInference (https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml and
+  `-v2-coreml`, CC-BY-4.0). Not in the app: dictation downloads the one chosen into
+  `~/Library/Application Support/Creator Toolset/dictation/models/parakeet`.
 - The server inside the app (`apps/mac/scripts/build-app.sh` puts it in `Contents/Resources/server`):
   - Node.js 22 for macOS arm64 (the official build from nodejs.org, version and SHA-256 in the script): MIT,
     with the licences of the libraries it includes in `NODE-LICENSE` next to it.

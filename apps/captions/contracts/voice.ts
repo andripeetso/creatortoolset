@@ -57,8 +57,8 @@ export interface SttModel {
    */
   download?: string;
   /**
-   * The Mac's own version of it (the Mac app runs Core ML through WhisperKit): the folder name under
-   * argmaxinc/whisperkit-coreml. apps/mac Dictation/Whisper.swift ModelRegistry keeps the same ids and folders.
+   * The Mac's own version of it, in Core ML: a Whisper's folder name under argmaxinc/whisperkit-coreml (WhisperKit), or a
+   * Parakeet's Hugging Face repository (FluidAudio). apps/mac Dictation/Whisper.swift ModelRegistry keeps the same ids.
    */
   coreml?: string;
   /** Download size, for a local model. */
@@ -89,7 +89,7 @@ export const STT_MODELS: SttModel[] = [
     page: "https://huggingface.co/openai/whisper-large-v3", licence: "Apache-2.0", download: "Systran/faster-whisper-large-v3", mb: 3090, languages: "many", computer: true },
   // its card lists 25 languages; on Estonian it got nearly half the words wrong, so it is offered for English only
   { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", by: "NVIDIA", about: "English only: the fastest, and the closest word times",
-    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", mb: 2550, languages: ["en"], computer: true },
+    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", coreml: "FluidInference/parakeet-tdt-0.6b-v3-coreml", mb: 2550, languages: ["en"], computer: true },
   { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Small and quick, the one the browser already uses",
     page: "https://huggingface.co/openai/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
   // a Mac's smaller ones (Dictation on a Mac): after the others, so none of them is a computer's default
@@ -99,6 +99,8 @@ export const STT_MODELS: SttModel[] = [
     page: "https://huggingface.co/openai/whisper-small.en", licence: "Apache-2.0", coreml: "openai_whisper-small.en", mb: 488, languages: ["en"], computer: true },
   { id: "whisper-base.en", engine: "local", name: "Whisper base (English)", by: "OpenAI", about: "English only, the smallest and quickest",
     page: "https://huggingface.co/openai/whisper-base.en", licence: "Apache-2.0", coreml: "openai_whisper-base.en", mb: 145, languages: ["en"], computer: true },
+  { id: "parakeet-tdt-0.6b-v2", engine: "local", name: "Parakeet TDT 0.6B v2", by: "NVIDIA", about: "English only, on a Mac: as quick as v3",
+    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2", licence: "CC-BY-4.0", coreml: "FluidInference/parakeet-tdt-0.6b-v2-coreml", mb: 475, languages: ["en"], computer: true },
 ];
 
 /**

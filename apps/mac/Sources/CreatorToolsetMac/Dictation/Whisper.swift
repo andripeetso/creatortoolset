@@ -467,6 +467,8 @@ protocol LoadingTranscriber: Transcriber {
     var onDisk: Bool { get }
     func loaded() async -> Bool
     func load() async throws
+    /// Frees the model; one replaced loads nothing more.
+    func unload() async
 }
 
 extension WhisperKitTranscriber: LoadingTranscriber {
@@ -490,16 +492,41 @@ struct TranscriptionModel: Equatable, Sendable {
     let whisperKitID: String?
     let sizeMB: Int
     let languages: [String]
+    /// A Parakeet model's Hugging Face repository (FluidInference's Core ML conversion; Parakeet.swift), else nil.
+    var parakeet: String? = nil
+
+    /// A complete copy is on this Mac.
+    var onDisk: Bool {
+        if parakeet != nil { return ParakeetFiles.isComplete(self) }
+        return whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil
+    }
+
+    /// What runs it.
+    func transcriber() -> LoadingTranscriber {
+        parakeet != nil ? ParakeetTranscriber(model: self) : WhisperKitTranscriber(model: self)
+    }
 }
 
 /// The models dictation can run. Large v3 Turbo is the default: it hears
 /// every language Whisper knows and is the one measured best on mixed speech.
+/// For a person who speaks English alone, Parakeet v3: the same words, ten
+/// times as fast (Parakeet.swift).
 enum ModelRegistry {
     static let standardID = "whisper-large-v3-turbo"
+    static let englishID = "parakeet-tdt-0.6b-v3"
+
+    /// The default for these languages (codes): Parakeet for English alone, else Turbo.
+    static func standardID(for languages: [String]) -> String {
+        !languages.isEmpty && languages.allSatisfy { $0 == "en" } ? englishID : standardID
+    }
 
     static let shared: [TranscriptionModel] = [
         TranscriptionModel(id: "whisper-large-v3-turbo", displayName: "Whisper Large v3 Turbo",
                            whisperKitID: "openai_whisper-large-v3-v20240930_turbo", sizeMB: 1620, languages: ["multi"]),
+        TranscriptionModel(id: "parakeet-tdt-0.6b-v3", displayName: "Parakeet v3",
+                           whisperKitID: nil, sizeMB: 494, languages: ["en"], parakeet: "FluidInference/parakeet-tdt-0.6b-v3-coreml"),
+        TranscriptionModel(id: "parakeet-tdt-0.6b-v2", displayName: "Parakeet v2 (English)",
+                           whisperKitID: nil, sizeMB: 475, languages: ["en"], parakeet: "FluidInference/parakeet-tdt-0.6b-v2-coreml"),
         TranscriptionModel(id: "whisper-small", displayName: "Whisper Small",
                            whisperKitID: "openai_whisper-small", sizeMB: 490, languages: ["multi"]),
         TranscriptionModel(id: "whisper-small.en", displayName: "Whisper Small (English)",

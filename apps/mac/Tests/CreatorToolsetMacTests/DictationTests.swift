@@ -83,7 +83,7 @@ final class DictationPrefsTests: XCTestCase {
         XCTAssertTrue(p.on)
         XCTAssertEqual(p.keys, .holdFn)
         XCTAssertEqual(p.engine, .thisMac)
-        XCTAssertEqual(p.model, "whisper-large-v3-turbo")
+        XCTAssertNil(p.model, "none picked: the default for the person's languages")
         XCTAssertEqual(p.keep, 10)
         XCTAssertTrue(p.sounds)
     }
@@ -109,8 +109,17 @@ final class DictationPrefsTests: XCTestCase {
         let d = defaults()
         d.set("whisper-gigantic", forKey: DictationPrefs.keys.model)
         d.set(0, forKey: DictationPrefs.keys.keep)
-        XCTAssertEqual(DictationPrefs.load(d).model, "whisper-large-v3-turbo")
+        XCTAssertNil(DictationPrefs.load(d).model)
         XCTAssertEqual(DictationPrefs.load(d).keep, 1)
+    }
+
+    func testParakeetIsTheDefaultForEnglishAloneAndTurboOtherwise() {
+        XCTAssertEqual(ModelRegistry.standardID(for: ["en"]), "parakeet-tdt-0.6b-v3")
+        XCTAssertEqual(ModelRegistry.standardID(for: ["en", "et"]), "whisper-large-v3-turbo")
+        XCTAssertEqual(ModelRegistry.standardID(for: []), "whisper-large-v3-turbo")
+        let v2 = ModelRegistry.find("parakeet-tdt-0.6b-v2")!
+        XCTAssertEqual(ParakeetFiles.folder(v2, in: URL(fileURLWithPath: "/d")).path, "/d/models/parakeet/parakeet-tdt-0.6b-v2")
+        XCTAssertFalse(v2.onDisk || ModelRegistry.find("parakeet-tdt-0.6b-v3")!.transcriber() is WhisperKitTranscriber)
     }
 
     func testImportTakesTheEarlierAppsChoices() throws {
@@ -355,6 +364,7 @@ final class SpeechServerTests: XCTestCase {
         private(set) var calls = 0
         init(loaded: Bool = true, onDisk: Bool = true) { isLoaded = loaded; self.onDisk = onDisk }
         func loaded() async -> Bool { isLoaded }
+        func unload() async { isLoaded = false }
         func load() async throws {
             if isLoaded { return }
             await withCheckedContinuation { waiting.append($0) }

@@ -40,7 +40,7 @@ final class SpeechModels {
 
     /// The models here, by catalog id (ModelRegistry ids are contracts/voice.ts STT_MODELS ids).
     static func held() -> [String] {
-        ModelRegistry.shared.filter { $0.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }.map(\.id)
+        ModelRegistry.shared.filter(\.onDisk).map(\.id)
     }
 
     /// The claim's fields: what it has, what it is getting (downloading, waiting, or failed a little while ago, so the
@@ -142,16 +142,22 @@ final class SpeechModels {
     /// ponytail: it loads its own copy of the model beside dictation's (twice the memory while both are in), so a
     /// dictation never waits behind an hour of transcript; share one pipeline if memory gets tight.
     nonisolated static func transcript(model id: String, languages: [String], samples: [Float]) throws -> (words: [HeardWord], language: String?) {
-        guard let m = ModelRegistry.find(id), let variant = m.whisperKitID, ModelFiles.base(holding: variant) != nil else {
+        guard let m = ModelRegistry.find(id), m.onDisk else {
             throw TranscribeRefused(why: "This Mac does not have \(ModelRegistry.find(id)?.displayName ?? id).")
         }
         guard !samples.isEmpty else { return ([], nil) }
-        let engine = WhisperKitTranscriber(model: m, tuning: .words)
         let done = DispatchSemaphore(value: 0)
         let answer = Heard()
         Task.detached {
-            do { answer.result = .success(try await engine.words(samples, languages: languages)) } catch { answer.result = .failure(error) }
-            await engine.unload()
+            if m.parakeet != nil {
+                let engine = ParakeetTranscriber(model: m)
+                do { answer.result = .success(try await engine.words(samples)) } catch { answer.result = .failure(error) }
+                await engine.unload()
+            } else {
+                let engine = WhisperKitTranscriber(model: m, tuning: .words)
+                do { answer.result = .success(try await engine.words(samples, languages: languages)) } catch { answer.result = .failure(error) }
+                await engine.unload()
+            }
             done.signal()
         }
         done.wait()

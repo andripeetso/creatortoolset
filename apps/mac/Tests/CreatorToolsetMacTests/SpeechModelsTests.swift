@@ -160,7 +160,7 @@ final class SpeechModelsTests: XCTestCase {
         XCTAssertTrue(p.failed.isEmpty)
         // a failed download is tried again only after `retry`; ids this Mac doesn't run are left alone
         let failed = ["whisper-small": now.addingTimeInterval(-60)]
-        p = SpeechModels.plan(wanted: ["whisper-small", "parakeet-tdt-0.6b-v3"], held: [], downloading: nil, queue: [], failed: failed, now: now)
+        p = SpeechModels.plan(wanted: ["whisper-small", "whisper-large-v3"], held: [], downloading: nil, queue: [], failed: failed, now: now)
         XCTAssertEqual(p.queue, [])
         XCTAssertEqual(p.failed, failed)
         p = SpeechModels.plan(wanted: ["whisper-small"], held: [], downloading: nil, queue: [], failed: failed, now: now.addingTimeInterval(SpeechModels.retry))

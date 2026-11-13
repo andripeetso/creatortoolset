@@ -11,6 +11,8 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         // WhisperKit (dictation's speech model), pinned: Dictation/Whisper.swift reads the decoder's scores itself.
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.1.0"),
+        // FluidAudio (dictation's Parakeet models, on the Neural Engine), pinned like WhisperKit.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.3"),
     ],
     targets: [
         .executableTarget(
@@ -18,6 +20,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             path: "Sources/CreatorToolsetMac"
         ),
