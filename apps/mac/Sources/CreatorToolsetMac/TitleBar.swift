@@ -75,11 +75,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    /// A press on the top bar of a window in the background moves it at once, like a title bar.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        guard let event else { return super.acceptsFirstMouse(for: event) }
-        return convert(event.locationInWindow, from: nil).y < titleBarHeight || super.acceptsFirstMouse(for: event)
-    }
+    /// A press on a window in the background does what it presses at once: the top bar moves it, a button, slider or
+    /// timeline takes it. The web view's own answer is no for nearly everything, which made the first press after
+    /// coming back from another window (the recorder's toolbar, another app) do nothing.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         lastMouseDown = event

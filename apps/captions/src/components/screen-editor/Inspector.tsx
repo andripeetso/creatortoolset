@@ -10,7 +10,6 @@ import {
   shadowOf,
   zoomView,
   type CameraLook,
-  type FrameShape,
   type ScreenEvents,
   type ScreenLook,
   type Zoom,
@@ -21,14 +20,6 @@ import { ColorField, Group, PanelButton, Segmented, SliderRow, SwitchRow, Swatch
 import type { Player } from "./usePlayer";
 
 export type InspectorTab = "background" | "pointer" | "zoom" | "sound" | "camera";
-
-const SHAPES: { id: FrameShape; label: string; title: string }[] = [
-  { id: "source", label: "Auto", title: "The shape of what you recorded" },
-  { id: "16:9", label: "16:9", title: "Wide" },
-  { id: "9:16", label: "9:16", title: "Tall, for phones" },
-  { id: "1:1", label: "1:1", title: "Square" },
-  { id: "4:5", label: "4:5", title: "Portrait" },
-];
 
 const COLORS = ["#000000", "#18181b", "#3f3f46", "#f4f4f5", "#ffffff", "#1e1b4b"];
 
@@ -96,7 +87,8 @@ export function Inspector({
             aria-selected={shown === t.id}
             onClick={() => onTab(t.id)}
             className={cn(
-              "flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-[11px] transition-colors",
+              // sized by their names: "Background" needs more room than "Zoom"
+              "flex flex-auto flex-col items-center gap-1 whitespace-nowrap rounded-lg px-1.5 py-2 text-[11px] transition-colors",
               shown === t.id ? "bg-zinc-800 font-medium text-zinc-50" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
             )}
           >
@@ -125,12 +117,12 @@ function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClea
   const kind = look.background === "none" ? "none" : look.background === "color" ? "color" : "gradient";
   return (
     <>
-      <Group title="Frame">
-        <Segmented label="Frame shape" value={look.shape} options={SHAPES} onChange={(shape) => change({ shape })} />
-        {look.shape !== "source" && (
+      {/* the frame's shape is chosen above the picture */}
+      {look.shape !== "source" && (
+        <Group>
           <SwitchRow label="Fill the frame and follow the pointer" checked={look.fill} onChange={(fill) => change({ fill })} />
-        )}
-      </Group>
+        </Group>
+      )}
 
       <Group title="Background">
         <Segmented
@@ -320,6 +312,15 @@ function ZoomTab({
         <>
           <EveryZoom look={look} change={change} clicks={events.clicks.length > 0} />
           <Group title="Zooms">
+            <PanelButton
+              tone="danger"
+              onClick={() => {
+                change({ zooms: [] });
+                onPick(null);
+              }}
+            >
+              <Trash2 /> Remove all zooms
+            </PanelButton>
             <div className="space-y-1">
               {look.zooms.map((z, i) => (
                 <button
@@ -478,40 +479,52 @@ function CameraTab({ look, change }: { look: ScreenLook; change: (patch: Partial
   const cam = look.camera ?? defaultCamera();
   const set = (patch: Partial<CameraLook>) => change({ camera: { ...cam, ...patch } });
   return (
-    <Group>
-      <Segmented label="Where the camera is" value={cam.layout} options={LAYOUTS} onChange={(layout) => set({ layout })} />
-      {cam.layout === "bubble" && (
-        <>
-          <SliderRow label="Size" value={cam.size} min={0.12} max={0.4} step={0.01} format={pct} initial={defaultCamera().size} onChange={(size) => set({ size })} />
-          <div className="flex items-center justify-between text-xs text-zinc-400">
-            Corner
-            <div role="radiogroup" aria-label="The bubble's corner" className="grid grid-cols-2 gap-1">
-              {CORNERS.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={cam.corner === c.id}
-                  aria-label={c.label}
-                  title={c.label}
-                  onClick={() => set({ corner: c.id })}
-                  className={cn("h-5 w-8 rounded", cam.corner === c.id ? "bg-violet-500" : "bg-zinc-800 hover:bg-zinc-700")}
-                />
-              ))}
+    <>
+      <Group>
+        <Segmented label="Where the camera is" value={cam.layout} options={LAYOUTS} onChange={(layout) => set({ layout })} />
+        {cam.layout === "side" && (
+          <SliderRow label="Camera width" value={cam.split ?? 0.38} min={0.2} max={0.6} step={0.01} format={pct} initial={0.38} onChange={(split) => set({ split })} />
+        )}
+        {cam.layout === "bubble" && (
+          <>
+            <SliderRow label="Size" value={cam.size} min={0.12} max={0.4} step={0.01} format={pct} initial={defaultCamera().size} onChange={(size) => set({ size })} />
+            <div className="flex items-center justify-between text-xs text-zinc-400">
+              Corner
+              <div role="radiogroup" aria-label="The bubble's corner" className="grid grid-cols-2 gap-1">
+                {CORNERS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={cam.corner === c.id}
+                    aria-label={c.label}
+                    title={c.label}
+                    onClick={() => set({ corner: c.id })}
+                    className={cn("h-5 w-8 rounded", cam.corner === c.id ? "bg-violet-500" : "bg-zinc-800 hover:bg-zinc-700")}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-          <Segmented
-            label="The bubble's shape"
-            value={cam.shape}
-            options={[
-              { id: "circle", label: "Circle" },
-              { id: "rounded", label: "Rounded" },
-            ]}
-            onChange={(shape) => set({ shape })}
-          />
-        </>
+            <Segmented
+              label="The bubble's shape"
+              value={cam.shape}
+              options={[
+                { id: "circle", label: "Circle" },
+                { id: "rounded", label: "Rounded" },
+              ]}
+              onChange={(shape) => set({ shape })}
+            />
+          </>
+        )}
+        {cam.layout !== "hidden" && <SwitchRow label="Mirror" checked={cam.mirror} onChange={(mirror) => set({ mirror })} />}
+      </Group>
+      {cam.layout !== "hidden" && (
+        <Group title="Framing">
+          <SliderRow label="Zoom" value={cam.zoom ?? 1} min={1} max={3} step={0.05} format={(v) => `${v.toFixed(1)}×`} initial={1} onChange={(zoom) => set({ zoom })} />
+          <SliderRow label="Left – right" value={cam.x ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(x) => set({ x })} />
+          <SliderRow label="Up – down" value={cam.y ?? 0.5} min={0} max={1} step={0.01} format={pct} initial={0.5} onChange={(y) => set({ y })} />
+        </Group>
       )}
-      {cam.layout !== "hidden" && <SwitchRow label="Mirror" checked={cam.mirror} onChange={(mirror) => set({ mirror })} />}
-    </Group>
+    </>
   );
 }

@@ -202,6 +202,7 @@ private struct ToolbarView: View {
         HStack(spacing: 8) {
             Button(action: close) {
                 Image(systemName: "xmark.circle.fill").font(.system(size: 18)).foregroundStyle(.secondary)
+                    .frame(width: 28, height: 40).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Close")
@@ -234,6 +235,9 @@ private struct ToolbarView: View {
             }
             .frame(width: 60, height: 40)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(selected ? Color.white.opacity(0.22) : .clear))
+            // the whole tile takes the press: a plain button only hits its drawn pixels, and a miss on this panel
+            // (movable by its background) drags it instead
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(title(kind))
@@ -291,6 +295,7 @@ private struct ToolbarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(setup.systemAudio ? Color.accentColor : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
     }

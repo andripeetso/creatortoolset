@@ -15,6 +15,7 @@ import {
   pointerPath,
   trimOf,
   zoomFloor,
+  type FrameShape,
   type ScreenEvents,
   type ScreenLook,
 } from "@/lib/screen-recording";
@@ -36,6 +37,14 @@ export type EditorAction = {
 };
 
 const SIZE_KEY = "screen-editor-size";
+
+const SHAPES: { id: FrameShape; label: string; title: string }[] = [
+  { id: "source", label: "Auto", title: "The shape of what you recorded" },
+  { id: "16:9", label: "16:9", title: "Wide" },
+  { id: "9:16", label: "9:16", title: "Tall, for phones" },
+  { id: "1:1", label: "1:1", title: "Square" },
+  { id: "4:5", label: "4:5", title: "Portrait" },
+];
 const typing = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
@@ -397,6 +406,14 @@ export function ScreenRecordingEditor({
 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* the frame's shape, over the picture it changes, whichever tab is open */}
+          {look && (
+            <div className="flex justify-center pt-3">
+              <div className="w-80">
+                <Segmented label="Frame shape" value={look.shape} options={SHAPES} onChange={(shape) => change({ shape })} />
+              </div>
+            </div>
+          )}
           {/* the picture: fitted into this box by the player, a press plays and pauses */}
           <div className="relative min-h-0 flex-1 p-6">
             <div ref={player.stage} className="flex h-full w-full items-center justify-center">
