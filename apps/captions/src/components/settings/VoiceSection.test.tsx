@@ -70,7 +70,7 @@ describe("a use's own need", () => {
 describe("models on your computers", () => {
   it("with none, offers to add a computer; with one, each model can be downloaded, and one it has removed", () => {
     expect(html(view())).toContain('href="/settings/devices"');
-    const out = html(view({ computers: [{ id: "d1", name: "Studio PC", online: false, models: [{ id: "whisper-large-v3-turbo", state: "ready" }] }] }));
+    const out = html(view({ computers: [{ id: "d1", name: "Studio PC", online: false, os: "linux", models: [{ id: "whisper-large-v3-turbo", state: "ready" }] }] }));
     expect(out).toContain("Studio PC");
     expect(out).toContain("Off");
     expect(out).toContain(">Remove<");
