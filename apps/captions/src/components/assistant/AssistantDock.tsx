@@ -785,6 +785,11 @@ export function AssistantDock() {
       {/* the message box shares the header's and the chat's left and right edges */}
       {chatting && (
         <div className="shrink-0 px-4 pt-1 pb-4">
+          {/* a question still waiting for a press sits over the message box, however far up its reply is (owner,
+              2026-11-12: he opened a chat that asked for his approval and could not see where); answered, it goes back
+              under its reply */}
+          <ApprovalCards approvals={view?.messages.flatMap((m) => m.approvals ?? []).filter((x) => x.status === "waiting")} />
+          <ConfirmCards confirms={view?.messages.flatMap((m) => m.confirms ?? []).filter((x) => x.status === "waiting")} onView={setView} />
           {queue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
               {queue.map((it, i) => (
@@ -850,6 +855,9 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
     </span>
   );
 }
+
+/** A reply's questions that were answered: the ones still waiting are over the message box. */
+const answered = <T extends { status: string }>(xs?: T[]) => xs?.filter((x) => x.status !== "waiting");
 
 export function Message({
   m,
@@ -938,8 +946,8 @@ export function Message({
         {!m.wait && <Elapsed since={m.at} />}
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
-        <ApprovalCards approvals={m.approvals} />
-        <ConfirmCards confirms={m.confirms} onView={onView} />
+        <ApprovalCards approvals={answered(m.approvals)} />
+        <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
         {m.send && sending ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="truncate" title={m.send.path}>
@@ -970,8 +978,8 @@ export function Message({
       <div>
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
-        <ApprovalCards approvals={m.approvals} />
-        <ConfirmCards confirms={m.confirms} onView={onView} />
+        <ApprovalCards approvals={answered(m.approvals)} />
+        <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
         <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
         {again}
       </div>
@@ -986,8 +994,8 @@ export function Message({
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {/* the questions waiting for a press come under the words, as the reply says ("the card below"): the words
           written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
-      <ApprovalCards approvals={m.approvals} />
-      <ConfirmCards confirms={m.confirms} onView={onView} />
+      <ApprovalCards approvals={answered(m.approvals)} />
+      <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
       {again}
       {onFolder && (
         <button
