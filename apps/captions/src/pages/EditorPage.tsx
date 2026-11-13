@@ -283,7 +283,8 @@ export default function EditorPage() {
 /**
  * The New edit sheet: footage from the library (search, a folder, several at once or the whole folder) or from this
  * computer, then what is optional: a name, a style, a description, a script. `dropped`: files let go on the page, added
- * as they arrive; someone who dropped footage gets the form at once, and "How do you like to work?" on a New edit they open by its button.
+ * as they arrive; someone who dropped footage, or came with a take picked (`start.pick`), gets the form at once, and
+ * "How do you like to work?" on a New edit they open by its button.
  * `styles`: the person's editing styles. The Style select also makes one ("New editing style…"); with none the edit is
  * sent as it always was, with no style at all. With none and "How do you like to work?" not answered yet, the sheet
  * asks that first (FirstWay), and `onStyles` reads the styles again once it is answered.
@@ -482,7 +483,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
-        {styles && !styles.styles.length && !styles.asked && onStyles && !dropped?.length ? (
+        {styles && !styles.styles.length && !styles.asked && onStyles && !dropped?.length && !start?.pick?.length ? (
           <FirstWay onDone={onStyles} />
         ) : (
         <form
@@ -624,7 +625,10 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-              <span>{picked.size} picked</span>
+              {/* a few are named: a take picked elsewhere (dropped, or handed over by the library) may not be in the rows shown */}
+              <span className="min-w-0 truncate">
+                {picked.size} picked{picked.size > 0 && picked.size <= 3 && `: ${[...picked.values()].join(", ")}`}
+              </span>
               {items.length > 0 && (
                 <Button type="button" size="sm" variant="ghost" onClick={() => void pickAll()}>
                   {folder ? "Pick the whole folder" : "Pick all shown"}

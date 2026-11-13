@@ -5,7 +5,6 @@ import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch } from "@con
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
-import { createEdit } from "@/lib/editor";
 import { getAsset, openInCaptions, rerunJobs, updateAsset, useLibraryChanges } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { clock, factsOf, original, useClipView } from "./clip";
@@ -50,7 +49,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const [sharing, setSharing] = useState(false);
   const [now, setNow] = useState(-1);
   const [opening, setOpening] = useState(false);
-  const [making, setMaking] = useState(false);
   const [same, setSame] = useState<SimilarMatch[]>([]);
   const navigate = useNavigate();
   const me = useMe();
@@ -129,14 +127,9 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
       .catch((e) => onError(message(e)))
       .finally(() => setOpening(false));
   };
-  // the edit is made with this clip and opens; nothing runs until its Run there
-  const newEdit = () => {
-    setMaking(true);
-    createEdit({ sources: [a.versionId], name: a.title })
-      .then(({ id }) => navigate(`/editor/${id}`))
-      .catch((e) => onError(message(e)))
-      .finally(() => setMaking(false));
-  };
+  // New edit opens with this take picked: the other takes, the style and the rest are chosen there, and no edit is
+  // made before Create and run (EditorPage reads the pick from the navigation's state)
+  const newEdit = () => navigate("/editor?new=1", { state: { pick: [{ versionId: a.versionId, title: a.title }] } });
   // the folders it is in are read again after the move: its Folder line says where it is now
   const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
 
@@ -220,9 +213,10 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               Open in Caption Studio
             </Button>
           )}
-          {a.kind === "video" && canUse(me, "editor") && (
-            <Button size="sm" variant="outline" disabled={making} onClick={newEdit}>
-              {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
+          {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
+          {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
+            <Button size="sm" variant="outline" onClick={newEdit}>
+              <Clapperboard className="h-4 w-4" />
               New edit
             </Button>
           )}

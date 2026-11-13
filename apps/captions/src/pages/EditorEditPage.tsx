@@ -192,7 +192,8 @@ export default function EditorEditPage() {
           )}
         </section>
 
-        <section aria-label="Eye line" className={cn("flex flex-col gap-2", edit.sources.every((v) => blind.includes(v)) && "hidden")}>
+        {/* not before anything has run: the first step finds the eyes itself, and there is no cut yet to keep them level in */}
+        <section aria-label="Eye line" className={cn("flex flex-col gap-2", (edit.jobs.length === 0 || edit.sources.every((v) => blind.includes(v))) && "hidden")}>
           <h2 className="text-sm font-semibold">Eye line</h2>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. The zoom on cuts keeps the eyes at that height. Change it, then draft again (no AI).</p>
