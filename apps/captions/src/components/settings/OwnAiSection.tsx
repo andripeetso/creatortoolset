@@ -48,9 +48,15 @@ export const WEB_APPS = [
     ],
   },
 ] as const;
-/** The steps a row shows. Through Connect the sign-in at the end is the person's Creator Toolset account, not this computer. Pure, so it is tested. */
-export const stepsOf = (app: (typeof WEB_APPS)[number], via: "connect" | "web"): readonly string[] =>
-  via === "connect" ? [...app.steps.slice(0, -1), `${app.name} sends you to your Creator Toolset account: sign in and press Allow.`] : app.steps;
+/**
+ * Where a ChatGPT or Claude row stands. Through Connect, the computer's Install only gets it ready: it counts as
+ * installed once the AI app has used the connection. On the web the key is made by the AI app's own sign-in, so it
+ * counts as installed at once. Pure, so it is tested.
+ */
+export function webRowState(via: "connect" | "web", key?: { usedAt?: number }): "install" | "finish" | "installed" {
+  if (!key) return "install";
+  return via === "web" || key.usedAt ? "installed" : "finish";
+}
 const onTheWeb = () => typeof window !== "undefined" && window.location.protocol === "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
 /**
@@ -146,6 +152,13 @@ export function useOwnAi() {
  */
 export function OwnAiSection() {
   const { keys, local, error, load, disconnect } = useOwnAi();
+  // back from finishing in ChatGPT or Claude: read the keys again, so the row says Installed
+  useEffect(() => {
+    const again = () => load();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const here = local?.local ? connectableRows(local) : [];
   const connectAi = useConnectAi();
@@ -307,8 +320,9 @@ const newest = (keys: AiKeyInfo[], name: string) => keys.filter((k) => k.name ==
 /**
  * ChatGPT or Claude. Neither takes a server from a link, so Install opens the steps in the row: what to press there,
  * the address with Copy, and a button that opens the right page. The row says Installed once the app has its key.
- * On a computer linked through Connect, Install first asks the broker for the app (POST /api/connect/ai), then shows
- * the same steps with the broker's address; Remove there takes the app's grant back.
+ * On a computer linked through Connect, Install opens the app's store page (through the Connect service, which knows
+ * it) and gets this computer ready for it (POST /api/connect/ai); the row says Installed once the app has used it.
+ * Remove there takes the app's grant back.
  */
 function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
   app: (typeof WEB_APPS)[number];
@@ -323,12 +337,16 @@ function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
   const [failed, setFailed] = useState<string | null>(null);
   const setGrant = (on: boolean) =>
     fetch("/api/connect/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ app: app.name, on }) }).then((r) => json<{ ok: boolean }>(r));
+  const state = webRowState(via, aiKey);
+  // the Connect service's page for adding it in that app: its store page once it is listed there (the broker knows)
+  const addUrl = via === "connect" ? new URL(`/add/${app.name.toLowerCase()}`, url).href : "";
   const install = async () => {
+    // opened in the press itself: a window opened after waiting for an answer is one a browser or the Mac app refuses
+    window.open(addUrl, "_blank", "noopener");
     setBusy(true);
     setFailed(null);
     try {
       await setGrant(true);
-      setOpen(true);
     } catch (e) {
       setFailed(msg(e));
     } finally {
@@ -345,10 +363,10 @@ function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
       <ListRow
         icon={<ProviderLogo driver={app.logo} className="size-4" />}
         title={app.name}
-        subtitle={aiKey ? usedText(aiKey) : undefined}
+        subtitle={state === "installed" && aiKey ? usedText(aiKey) : state === "finish" ? `Finish in ${app.name}: add Creator Toolset there, then Allow.` : undefined}
         status={failed ? <Status tone="broken">{failed}</Status> : undefined}
         actions={
-          aiKey ? (
+          state === "installed" && aiKey ? (
             <>
               <InUse>Installed</InUse>
               <DisconnectMenu k={aiKey} onDisconnect={remove} />
@@ -366,10 +384,10 @@ function WebAppRow({ app, url, via, aiKey, onDone, onDisconnect }: {
           )
         }
       />
-      {open && (via === "connect" || !aiKey) && (
+      {open && via === "web" && !aiKey && (
         <div className="px-3 pb-3 sm:px-4">
           <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-            {stepsOf(app, via).map((step, i) => (
+            {app.steps.map((step, i) => (
               <li key={i}>
                 {step}
                 {i === 1 && (
