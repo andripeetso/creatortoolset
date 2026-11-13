@@ -3,7 +3,9 @@ import type { ReviewEditRef, ReviewPlayCard, ReviewPlayPlan, ReviewSlotContext, 
 import { CameraView, RecropBox } from "@/components/RecropBox";
 import { toast } from "sonner";
 import { EditTimeline, type Placeholder, type TimelineRules } from "@/components/EditTimeline";
-import { makeCut } from "@/lib/editor";
+import { getEdit, makeCut, retryJob } from "@/lib/editor";
+import { useCachedLoad } from "@/lib/local-cache";
+import type { Edit } from "@contracts/editor";
 import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
@@ -50,7 +52,9 @@ import {
 // are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
 // On a cut the app's own AI Editor made (`version.draft`), Make the next version cuts the edits into it as they are,
-// with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_RULES).
+// with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_RULES). The panel follows that
+// edit's steps for this version: it says while the next version is being made, takes it in when it is filed, and shows
+// a step that failed with Try again. The edit loads for its creator only, so nobody else gets the button.
 
 /** The id the editor's data goes under on a comment (`plugins[id]`); no plug-in may take it. */
 export const REVIEW_TIMELINE_ID = "timeline-edits";
@@ -100,7 +104,7 @@ const toCard = (c: PlayCard, manage: boolean, clipSrc?: (clip: number) => string
   ...(manage && clipSrc && c.clip !== undefined ? { src: clipSrc(c.clip), at: c.at } : {}),
 });
 
-function Edits({ asset, version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
+function Edits({ asset, version, api, reload, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
@@ -110,6 +114,17 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
   // a cut of the app's own AI Editor: its timeline edits can be made into the next version, and it is being asked for
   const own = manage ? version.draft : undefined;
   const [making, setMaking] = useState(false);
+  const ownEdit = useCachedLoad<Edit>(own ? `/api/editor/${own.edit}` : null, () => getEdit(own!.edit));
+  const ownJobs = own ? (ownEdit.data?.jobs ?? []).filter((j) => j.variant === own.name) : [];
+  const working = ownJobs.find((j) => j.state === "running") ?? ownJobs.find((j) => j.state === "queued");
+  const failed = working ? undefined : ownJobs.find((j) => (j.state === "failed" || j.state === "needs_key") && j.error !== "Stopped");
+  // the version that was being made is filed: the page takes it in
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (wasWorking.current && !working && !failed) void reload();
+    wasWorking.current = !!working;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when the steps start, end or fail
+  }, [!!working, !!failed]);
   // the talent shot being graded (the colour panel, opened from the timeline's Color) and the grade it shows while you work
   const [colour, setColour] = useState<TimelineItem | null>(null);
   const [liveGrade, setLiveGrade] = useState<Grade | null>(null);
@@ -230,10 +245,10 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
     if (!own) return;
     setMaking(true);
     makeCut(own.edit, own.name, { asset: asset.id, n: version.n, edits: planEdits })
-      .then(() => {
+      .then((e) => {
+        ownEdit.set(e);
         setHist(freshHist(EMPTY_PENDING));
         setCrop(null);
-        toast.success("Making the next version from your edits. It shows up here once it is rendered.");
       }, (e: Error) => toast.error(e.message || "Couldn't make the next version"))
       .finally(() => setMaking(false));
   };
@@ -403,7 +418,7 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
           )}
           {originals?.tried && !originalsOn && voiceFiles.length > 0 && <span>{filesFound} of {voiceFiles.length} files found</span>}
         </div>
-        {own && planEdits.length > 0 && !crop && (
+        {own && ownEdit.data && !working && planEdits.length > 0 && !crop && (
           <button type="button" disabled={making || !!hole} onClick={makeNext}
             title={hole ? "A placeholder goes with a comment: send it or drop it first" : "Cut the next version from these timeline edits as you made them, with no AI"}
             className="ml-auto rounded-full bg-violet-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-violet-500 disabled:opacity-40">
@@ -418,6 +433,18 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
           </button>
         )}
       </div>
+      {own && working && (
+        <div className="text-[11px] text-violet-300">Making the next version{working.line ? `: ${working.line}` : "…"} It shows up here when it is ready.</div>
+      )}
+      {own && failed && (
+        <div className="flex items-center gap-2 text-[11px] text-rose-400">
+          <span className="min-w-0 flex-1">The next version wasn't made: {failed.error}</span>
+          <button type="button" onClick={() => retryJob(own.edit, failed.id).then(ownEdit.set, (e: Error) => toast.error(e.message))}
+            className="shrink-0 rounded border border-rose-400/50 px-1.5 py-0.5 text-rose-200 hover:bg-rose-950">
+            Try again
+          </button>
+        </div>
+      )}
       {sentEdits.length > 0 && (
         <div className="text-[11px] text-zinc-500">
           {sentEdits.length} edit{sentEdits.length === 1 ? "" : "s"} already sent with an open comment, shown until it is resolved
