@@ -133,6 +133,21 @@ describe("timeline import", () => {
     expect(importTimeline("Cut.otio", OTIO).tracks.flatMap((t) => t.items).some((i) => i.off)).toBe(false);
   });
 
+  it("a video lane switched off whole under the talent (the takes under their retouched copies) is V0, so the talent is V1", () => {
+    const off = JSON.parse(OTIO);
+    const raw = track("Video", "TALENT (original)", [clip("A_raw.MP4", 821472, 50), clip("B_raw.MP4", 821600, 40)]);
+    raw.children.forEach((c) => ((c as { enabled: boolean }).enabled = false));
+    off.tracks.children.unshift(raw, { ...raw, name: "older takes" });
+    const v = importTimeline("Cut.otio", JSON.stringify(off));
+    expect(v.tracks.map((t) => t.id)).toEqual(["V2", "V1", "V0", "A1", "A2"]);
+    expect(v.tracks.find((t) => t.id === "V0")!.items.every((i) => i.off)).toBe(true);
+    expect(v.tracks.find((t) => t.id === "V1")!.items.map((i) => i.label)).toEqual(["A.MP4", "B.MP4"]);
+    // a lane switched off above the talent keeps its place
+    const above = JSON.parse(OTIO);
+    above.tracks.children[1].enabled = false;
+    expect(importTimeline("Cut.otio", JSON.stringify(above)).tracks.map((t) => t.id)).toEqual(["V2", "V1", "A1", "A2"]);
+  });
+
   it("an EDL (video track only) lines up with them, at the video's frame rate or its own guess", () => {
     expect(shape(importTimeline("Cut.edl", EDL, 25))).toEqual([want[1]]);
     expect(importTimeline("Cut.edl", EDL).fps).toBe(25); // frame numbers up to 24 → 25 fps

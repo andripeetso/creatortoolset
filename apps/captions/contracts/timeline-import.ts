@@ -69,13 +69,21 @@ function finish(p: Parsed, fileName: string): { view: TimelineView; sources: Rec
   let total = 0;
   for (const kind of ["V", "A"] as const) {
     let n = 0;
+    // a video lane switched off whole under every lane that shows (the takes as filmed under their retouched or
+    // censored copies) is V0, as in the app's own edits, so the talent that shows is V1; more such lanes never show
+    let shown = false;
+    let zero = false;
     for (const lane of p.lanes.filter((l) => l.kind === kind)) {
       const seen = new Set<number>();
       const clips = lane.clips
         .filter((c) => c.len > 0 && c.rec >= 0 && !seen.has(c.rec) && seen.add(c.rec))
         .sort((a, b) => a.rec - b.rec);
       if (!clips.length || n === MAX_TRACKS) continue;
-      const id = `${kind}${++n}`;
+      const off = kind === "V" && clips.every((c) => c.off);
+      if (off && !shown && zero) continue;
+      const id = off && !shown ? "V0" : `${kind}${++n}`;
+      if (id === "V0") zero = true;
+      else if (!off) shown = true;
       const items = clips.slice(0, MAX_ITEMS - total).map((c): TimelineItem => ({
         key: `${id}:${c.rec}`, track: id, rec: c.rec, len: c.len,
         label: c.label.slice(0, 120) || "clip",
