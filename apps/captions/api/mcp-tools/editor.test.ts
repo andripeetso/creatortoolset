@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,7 +18,10 @@ const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { NeedsKey } = await import("../library/transcribe");
 const { STEPS, tick } = await import("../editor/worker");
-const { readStep, saveDraft, saveStep } = await import("../editor/store");
+const { readDraft, readStep, saveDraft, saveFiled, saveStep } = await import("../editor/store");
+const { draftView } = await import("../editor/edits");
+const { emptyTracks } = await import("../editor/timeline");
+const { addVersion, fileTimelineView } = await import("../review");
 const { pairDevice } = await import("../lib/devices");
 const { saveSettings } = await import("../lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
@@ -353,5 +357,60 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     const other = await edit("Tiny farewell");
     expect((await tool(anaKey, "editor_delete", { edit: other })).value).toEqual({ id: other, name: "Tiny farewell", trashed: true });
     expect((await site(`/api/editor/${other}`)).status).toBe(404);
+  });
+
+  it("editor_cut reads a draft's timeline as Review shows it and cuts edits into its next version: all as given or none, refused in the page's words", async () => {
+    const id = await edit("Tiny tour");
+    // three shots of one take with their voices, drafted and filed in Review as the page's own steps do it
+    const tracks = emptyTracks();
+    for (const k of [0, 1, 2]) {
+      tracks.V1.items.push({ src: "ver_a", in: k * 100, len: 30, rec: k * 30, link: `c${k}` });
+      tracks.A1.items.push({ src: "ver_a", in: k * 100, len: 30, rec: k * 30, link: `c${k}` });
+    }
+    const timeline = { name: "Tiny tour v1", fps: 30, width: 1080, height: 1920, tracks, markers: [], sources: { ver_a: { versionId: "ver_a", name: "Take 1", fps: 30, tc: 0, dur: 900, w: 1080, h: 1920 } } };
+    await saveDraft(id, "v1", { timeline, notes: [] });
+    expect(await tool(anaKey, "editor_cut", { edit: id, draft: "v1" })).toMatchObject({ error: true, text: "The draft v1 has no preview in Review yet: editor_get says where each draft's preview is." });
+    const filed = (await addVersion(undefined, { owner: "ana", name: "Tiny tour v1.mp4", mime: "video/mp4", bytes: 1, draft: { edit: id, name: "v1" } }, (dest) => writeFile(dest, "x")))!;
+    const at = { assetId: filed.meta.id, n: filed.n };
+    await fileTimelineView(at.assetId, at.n, "v1-1.view.json", draftView(timeline, { ver_a: [{ w: "Hello", s: 0.1, e: 0.5 }, { w: "there", s: 0.5, e: 0.9 }] }));
+    await saveStep(id, "review", { v1: at });
+    await saveFiled(id, at.assetId, at.n, { variant: "v1", timeline });
+
+    // read: the clips by key with their words, and how to write edits
+    const read = (await tool(anaKey, "editor_cut", { edit: id, draft: "v1" })).value;
+    expect(read).toMatchObject({ id, name: "Tiny tour", draft: "v1", version: at.n, fps: 30, words: [["Hello", 3, 15], ["there", 15, 27]], link: expect.stringContaining(`/review/${at.assetId}?v=${at.n}`) });
+    expect(read.clips.map((c: { key: string }) => c.key)).toEqual(["V1:0", "V1:30", "V1:60", "A1:0", "A1:30", "A1:60"]);
+    expect(read.clips[0]).toEqual({ key: "V1:0", at: "0:00.00", frames: 30, label: "Hello there", from: "Take 1", more: [0, 870] });
+    expect(read.how).toContain("All the edits are made or none");
+    expect(await tool(nicoKey, "editor_cut", { edit: id, draft: "v1" })).toMatchObject({ error: true, text: "Not found, or not this account's." });
+
+    // an edit the route would drop or half-read is refused here, and one it refuses comes back in its own words
+    const cut = (edits: unknown) => tool(anaKey, "editor_cut", { edit: id, draft: "v1", edits });
+    expect((await cut([])).text).toContain("edits is a list with one edit per clip");
+    expect((await cut([{ key: "V1:30", trim: -5 }])).text).toBe("Take 1: an edit has no trim. It takes key, remove, head, tail, move, slip, split, track, copy_of.");
+    expect((await cut([{ key: "V1:0", move: 12 }])).text).toContain("Hello there: move can't be used on this clip as written.");
+    expect((await cut([{ key: "V1:0", head: -2.5 }])).text).toContain("Hello there: head can't be used on this clip as written.");
+    expect((await cut([{ key: "V1:0", remove: true }, { key: "V1:0", tail: -3 }])).text).toBe("Hello there: two edits name this clip. Give one edit per clip.");
+    expect((await cut([{ key: "V1:30", remove: false, head: 0 }])).text).toContain("Take 1: this edit changes nothing");
+    expect(await cut([{ key: "V1:30", remove: true }, { key: "A1:0", move: 5 }])).toMatchObject({ error: true, text: "Hello there: a voice stays with its picture, it can only be cut or taken out" });
+    expect(await cut([{ key: "V1:31", remove: true }])).toMatchObject({ error: true, text: "V1:31 is not on this version's timeline" });
+    expect(readDraft(id, "v1")!.timeline.tracks.V1.items).toHaveLength(3);
+
+    // in a reply of the assistant's: the cut is made, its card opens the cut in Review, and its next version is queued
+    const t = await turn("Take the second line out and start the third a little later");
+    const done = await tool(t.token, "editor_cut", { edit: id, draft: "v1", edits: [{ key: "V1:30", remove: true }, { key: "V1:60", head: -10, tail: 0 }] });
+    await t.end();
+    expect(done.value).toMatchObject({ id, name: "Tiny tour", draft: "v1", from_version: at.n, edits: 2, link: expect.stringContaining(`/review/${at.assetId}`) });
+    // and the answer shows the cut as it now stands: two shots with their voices, the third 10 frames shorter and moved up
+    expect(done.value.now).toEqual([
+      { track: "V1", at: "0:00.00", frames: 30, from: "Take 1" }, { track: "V1", at: "0:01.00", frames: 20, from: "Take 1" },
+      { track: "A1", at: "0:00.00", frames: 30, from: "Take 1" }, { track: "A1", at: "0:01.00", frames: 20, from: "Take 1" },
+    ]);
+    expect(readDraft(id, "v1")!.timeline.tracks.V1.items.map((i) => [i.rec, i.len, i.in])).toEqual([[0, 30, 0], [30, 20, 210]]);
+    expect((await editOf(id)).jobs.filter((j) => j.variant === "v1").map((j) => [j.kind, j.state])).toEqual([["post", "queued"]]);
+    expect(await cardOf(`edit:${id}:cut`)).toMatchObject({ kind: "edit", title: "Tiny tour", href: `/review/${at.assetId}`, status: "running", detail: "Making the next version from the timeline edits" });
+    // while that version is being made a second cut waits, in the route's words
+    expect((await cut([{ key: "V1:0", tail: -3 }])).text).toBe("This version is still being made");
+    await site(`/api/editor/${id}/stop`, "POST");
   });
 });

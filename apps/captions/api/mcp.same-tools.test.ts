@@ -34,7 +34,7 @@ const toolsOf = async (authorization: string) =>
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
-const ADDED = ["upload_file", "channel_posts", "editor_style_save", "design_get", "design_make", "design_update"];
+const ADDED = ["upload_file", "channel_posts", "editor_cut", "editor_style_save", "design_get", "design_make", "design_update"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
 const OPENED = ["use_file"];
 const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
@@ -76,8 +76,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // one, change its frames and single layers and copy a video's moment in; their 355-, 328- and 286-byte descriptions). Reading is a tool of its
     // own so an AI app outside does not ask before every look. How a design is written and changed is not in them:
     // design_get hands it over when a design is read, so it costs nothing on a turn that designs nothing
-    expect(bytes(dock) - bytes(main(dock))).toBe(3073);
+    // editor_cut adds 519 (a draft's timeline as Review shows it, and its edits cut into the next version; its 273-byte
+    // description). How edits are written is not in it: the tool hands that over when the timeline is read
+    expect(bytes(dock) - bytes(main(dock))).toBe(3592);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(4290);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(4809);
   });
 });

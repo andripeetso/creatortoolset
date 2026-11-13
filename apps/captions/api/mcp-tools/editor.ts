@@ -1,7 +1,11 @@
+import { cleanEdits, type ItemEdit, type TimelineView } from "../../contracts/edit-timeline";
+import type { Draft } from "../../contracts/editor";
 import { editorStyleTools } from "./editor-styles";
-import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } from "./types";
+import { ToolError, clock, pick, str, type Args, type ToolContext, type ToolModule } from "./types";
 
 // The AI Editor's page buttons for the assistant: Stop, Retry, a change to what the edit was asked for, the trash.
+// And Review's timeline of a draft with Make the next version: the same view and the same route as the page
+// (api/editor/routes.ts POST drafts/:name/cut), so an edit the page would refuse is refused here in the same words.
 // Listing, reading, making and running an edit are api/mcp.ts's own tools.
 
 /** The edit's API path. */
@@ -14,6 +18,21 @@ const going = (j: Args) => j.state === "queued" || j.state === "running";
 const failed = (j: Args) => j.state === "failed" || j.state === "needs_key";
 const linkOf = (ctx: ToolContext, e: Args) => `${ctx.origin}/editor/${String(e.id)}`;
 const edit = { type: "string", description: "the edit's id" };
+
+/** What an edit on the timeline may hold, as the tool names it (copy_of is the route's copyOf). */
+const CUT_FIELDS = ["key", "remove", "head", "tail", "move", "slip", "split", "track", "copy_of"];
+/** How the edits are written. It rides in the timeline's answer, so a turn that cuts nothing carries none of it. */
+const HOW_TO_CUT = [
+  "Each clip has key (<track>:<the frame it starts at>), at (that start as a time), frames (its length), label (its first words, or its file's name) and more ([frames of its footage before its start, after its end]: how far head and tail can make it longer). V1 is the speaker, A1 the speaker's voice, V2 the B-roll.",
+  "edits is a list with one edit per clip, each naming its clip by key. Every number in an edit counts frames of this version's timeline as listed here.",
+  "Edit the speaker on V1 and leave A1 alone: the voice follows every V1 edit. remove: true takes a shot out with its voice. head and tail change its start and end: negative = shorter (those words go), positive = longer (more of the take with its voice, at most `more`).",
+  'split: [frames] cuts a clip at those frames of the timeline. Each piece after the first is a clip of its own with the key <track>:<the frame it starts at>, and takes its own edit in the same list: {"key":"V1:0","split":[39]} with {"key":"V1:39","remove":true} cuts a shot at frame 39 and takes its second part out.',
+  'B-roll and other sound (V2, A2, A3) take remove, head, tail and split too, and also move (frames later; negative = earlier) and slip (it plays that many frames later in its own clip, in the same place). A copy is one edit: its key is where the copy goes, copy_of the clip it copies, and it can carry head, tail and slip, so {"key":"V2:0","copy_of":"V2:195","tail":-30} puts a copy of V2:195 at the start, 30 frames shorter. A clip placed on another takes its place there.',
+  "The order things happen in: every edit is made on this version first, and only then does what V1 lost or gained move everything after it, on every track, up or later. So B-roll that should stay on the same words needs no move when a shot before it goes: it moves up with them. Give move only to shift it against the words, in this version's frames. B-roll lying wholly over frames that go is taken out with them, and one lying partly over them gets shorter at its end.",
+  "Use A1 only to silence a voice while its picture stays: remove: true, a negative head or tail, or split it around the words and remove that piece. A voice never moves or gets longer by itself.",
+  "words lists [word, its first frame, the frame after its last]: cut on those.",
+  "All the edits are made or none: one that can't be made is refused by its clip's label. The answer lists the cut as it now stands (now): check it against what was asked. editor_get says when the new version is in Review, and this tool then reads that version.",
+].join(" ");
 
 /** What the tool calls a field → the route's name for it. */
 const FIELDS = { name: "name", brief: "brief", script: "script", versions: "versions", target_s: "targetS", broll_folder: "brollCollectionId", flags: "flags" } as const;
@@ -37,6 +56,12 @@ export const editorTools: ToolModule = {
       },
     },
     { name: "editor_delete", description: "Move an AI Editor edit to the trash; what still runs is stopped.", inputSchema: { type: "object", properties: { edit }, required: ["edit"] } },
+    {
+      name: "editor_cut",
+      description:
+        "A draft's timeline as Review shows its newest preview: each clip with its key, place and words, and how to write edits. With edits, cuts them into the draft with no AI (take out, trim, lengthen, split, move B-roll) and makes its next version: all of them as given, or none.",
+      inputSchema: { type: "object", properties: { edit, draft: str, edits: { type: "array", items: { type: "object" } } }, required: ["edit", "draft"] },
+    },
     // editing styles: make or change one, put one on an edit (editor-styles.ts)
     ...editorStyleTools.defs,
   ],
@@ -102,6 +127,64 @@ export const editorTools: ToolModule = {
       await ctx.json(path, "DELETE");
       return { ...pick(e, ["id", "name"]), trashed: true };
     },
+    editor_cut: async (a, ctx) => {
+      const path = pathOf(a.edit);
+      const e = await ctx.json(path);
+      const draft = String(a.draft ?? "");
+      const p = (e.previews as Record<string, { assetId: string; n: number }> | undefined)?.[draft];
+      if (!p) throw new ToolError(`${draft ? `The draft ${draft}` : "That draft"} has no preview in Review yet: editor_get says where each draft's preview is.`);
+      const view = await ctx.json<TimelineView>(`/api/review/assets/${p.assetId}/v/${p.n}/timeline`);
+      const items = view.tracks.flatMap((t) => t.items);
+      if (a.edits == null) {
+        return {
+          ...pick(e, ["id", "name"]),
+          draft,
+          version: p.n,
+          fps: view.fps,
+          clips: items.map((i) => ({ key: i.key, at: clock(i.rec / view.fps), frames: i.len, label: i.label, ...(i.detail ? { from: i.detail } : {}), more: [i.before ?? 0, i.after ?? 0] })),
+          words: view.words.map((w) => [w.t, w.rs, w.re]),
+          how: HOW_TO_CUT,
+          link: `${ctx.origin}/review/${p.assetId}?v=${p.n}`,
+        };
+      }
+      if (!Array.isArray(a.edits) || !a.edits.length) throw new ToolError("edits is a list with one edit per clip: leave it out to read the timeline and how to write them.");
+      // the route keeps what it can read of an edit and drops the rest without a word: an edit it would not keep whole is refused here
+      const seen = new Set<string>();
+      const edits = (a.edits as unknown[]).map((raw): ItemEdit => {
+        const x = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Args) : {};
+        const key = String(x.key ?? "");
+        // a clip is named by its words, as on the page (a piece made by a cut in this list, and a copy, by its key)
+        const label = items.find((i) => i.key === key)?.label ?? key;
+        const odd = Object.keys(x).filter((k) => !CUT_FIELDS.includes(k));
+        if (odd.length) throw new ToolError(`${label || "An edit"}: an edit has no ${odd.join(", ")}. It takes ${CUT_FIELDS.join(", ")}.`);
+        if (seen.has(key)) throw new ToolError(`${label}: two edits name this clip. Give one edit per clip.`);
+        seen.add(key);
+        // what the edit asks for (false and 0 ask for nothing), in the route's names
+        const given: Args = {};
+        if (x.remove != null && x.remove !== false) given.remove = x.remove;
+        for (const k of ["head", "tail", "move", "slip"]) if (x[k] != null && x[k] !== 0) given[k] = x[k];
+        if (x.track != null) given.track = x.track;
+        if (Array.isArray(x.split) ? x.split.length : x.split != null) given.split = Array.isArray(x.split) ? [...new Set(x.split as number[])].sort((p, q) => p - q) : x.split;
+        if (x.copy_of != null) given.copyOf = String(x.copy_of);
+        const kept = cleanEdits([{ ...given, key, label }])[0] as (ItemEdit & Args) | undefined;
+        const lost = Object.keys(given).filter((k) => JSON.stringify(given[k]) !== JSON.stringify(kept?.[k]));
+        if (!kept || lost.length) throw new ToolError(`${label || "An edit"}: ${lost.length ? `${lost.map((k) => (k === "copyOf" ? "copy_of" : k)).join(", ")} can't be used on this clip as written` : "this edit changes nothing, or its key is not a clip's"}. Read the timeline (leave edits out) for the keys and how each kind of clip is edited.`);
+        return kept;
+      });
+      const made = await ctx.json(`${path}/drafts/${encodeURIComponent(draft)}/cut`, "POST", { asset: p.assetId, n: p.n, edits });
+      // the cut as it now stands, so the AI can check what its edits made (a clip that went with frames taken out is not in it)
+      const tl = (await ctx.json<Draft>(`${path}/drafts/${encodeURIComponent(draft)}`)).timeline;
+      const now = Object.entries(tl.tracks).flatMap(([track, t]) => t.items.map((i) => ({ track, at: clock(i.rec / tl.fps), frames: i.len, from: tl.sources[i.src]?.name ?? i.src })));
+      return {
+        ...pick(made, ["id", "name"]),
+        draft,
+        from_version: p.n,
+        edits: edits.length,
+        now,
+        note: "Its next version is being made from these edits and will be filed in Review. editor_get says when: the draft's preview is being made, then in Review.",
+        link: `${ctx.origin}/review/${p.assetId}`,
+      };
+    },
     ...editorStyleTools.handlers,
   },
   steps: {
@@ -110,13 +193,17 @@ export const editorTools: ToolModule = {
     editor_update: "Updating the edit",
     // in the dock this call only asks: the edit goes on Yes
     editor_delete: "Asking before the edit goes to the trash",
+    editor_cut: "Working on the cut's timeline",
     ...editorStyleTools.steps,
   },
   // a retry starts work again: its card opens the edit, and ends when the run does (api/editor/ended.ts)
   work: (name, _a, r) =>
     name === "editor_retry" && r.id
       ? { card: { id: `edit:${String(r.id)}:retry`, kind: "edit", title: String(r.name ?? "Edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: "running", detail: "The AI Editor is working on it" } }
-      : null,
+      // a cut made from timeline edits: its card opens the cut in Review, and ends when the new version is filed
+      : name === "editor_cut" && r.id && r.from_version
+        ? { card: { id: `edit:${String(r.id)}:cut`, kind: "edit", title: String(r.name ?? "Edit"), href: String(r.link ?? "").replace(/^https?:\/\/[^/]+/, ""), status: "running", detail: "Making the next version from the timeline edits" } }
+        : null,
 };
 
 export { hasStyle } from "./editor-styles";
