@@ -21,3 +21,14 @@ it("a reply that waits says what it waits for, not that it is working", () => {
   expect(waiting).not.toContain("Working");
   expect(html(reply)).toContain("Working · 1:00");
 });
+
+it("folds the steps into one row: the current step while working, the count once done", () => {
+  const steps = ["Checking what's set up", "Looking at the edits", "Checking on the job"];
+  const html = (m: AssistantMessage) => renderToStaticMarkup(<MemoryRouter><Message m={m} onView={() => {}} /></MemoryRouter>);
+  const live = html({ id: "r", role: "assistant", text: "", at: Date.now(), status: "thinking", steps });
+  expect(live).toContain("<summary");
+  expect(live).toContain("Checking on the job…");
+  expect(live).not.toContain("Checking what&#x27;s set up…");
+  const done = html({ id: "r", role: "assistant", text: "Done.", at: Date.now(), status: "done", steps } as AssistantMessage);
+  expect(done).toContain("3 steps");
+});
