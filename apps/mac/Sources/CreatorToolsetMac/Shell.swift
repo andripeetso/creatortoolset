@@ -69,6 +69,9 @@ final class Shell: NSObject, ObservableObject {
     private var lastBlankReload = Date.distantPast
     /// The editor's packed see-through videos on their way in (AlphaVideo.swift): where each is kept, and the video it becomes.
     private var alphaDownloads: [WKDownload: (file: URL, final: URL, stacked: Bool)] = [:]
+    /// Every other download, by where it goes: shown in Finder when it is there (owner, 2026-11-12: "Okay, downloaded,
+    /// but it's like from where and what and how").
+    private var plainDownloads: [WKDownload: URL] = [:]
     /// The see-through video being made; the page's Stop ends it ("record-alpha-stop").
     private var alphaTask: Task<Void, Never>?
 
@@ -920,10 +923,13 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
             return
         }
         let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        completionHandler(uniqueURL(in: folder, named: suggestedFilename))
+        let file = uniqueURL(in: folder, named: suggestedFilename)
+        plainDownloads[download] = file
+        completionHandler(file)
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        plainDownloads[download] = nil
         if let alpha = alphaDownloads.removeValue(forKey: download) { try? FileManager.default.removeItem(at: alpha.file) }
         pushAlpha("failed")   // an editor waiting on its see-through video stops waiting (one that failed before it had a place too)
         _ = dialog("The download failed: \(error.localizedDescription)", buttons: ["OK"])
@@ -932,6 +938,10 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     /// A packed see-through video has arrived: it becomes the .mov that was asked for, shown in Finder when it is
     /// there. The editor hears how far it is, and its Stop ends it.
     func downloadDidFinish(_ download: WKDownload) {
+        if let file = plainDownloads.removeValue(forKey: download) {
+            NSWorkspace.shared.activateFileViewerSelecting([file])   // the file, picked in its Downloads window
+            return
+        }
         guard let alpha = alphaDownloads.removeValue(forKey: download) else { return }
         alphaTask = Task {
             do {

@@ -5,7 +5,7 @@ import { keyId } from './keys.ts';
 import { PROOF_WINDOW, signedBody } from './link.ts';
 
 /**
- * One address for AI apps (ChatGPT, Claude): <publicUrl>/mcp. A person signs in to their account on the hosted site,
+ * One address for AI apps (ChatGPT, Claude): <selfUrl>/mcp. A person signs in to their account on the hosted site,
  * picks their computer, and from then on every MCP request is passed through that computer's tunnel to the app on it
  * and the answer is passed back. Nothing of the person's is kept here: no scripts, pictures or video.
  *
@@ -26,7 +26,9 @@ import { PROOF_WINDOW, signedBody } from './link.ts';
 export interface GatewayDeps {
   db: DatabaseSync;
   now: () => number; // seconds
-  publicUrl: string; // this broker's own address
+  publicUrl: string; // the hosted site, where the person signs in (<publicUrl>/connect/ai)
+  /** This broker's own address, where the AI app reaches it (RELAY_SELF_URL; the same as publicUrl when unset). */
+  selfUrl?: string;
   secret: Buffer; // RELAY_GRANT_SECRET
   fetch?: typeof fetch;
   /** Where a computer answers, from its hostname. Tests point it at a local stand-in. */
@@ -35,7 +37,11 @@ export interface GatewayDeps {
   openaiChallenge?: string;
 }
 
-const REQ_TTL = 600; // seconds a sign-in may take, from the AI app's redirect to the approval
+/** Where the AI app reaches this broker. */
+const self = (gw: GatewayDeps) => gw.selfUrl || gw.publicUrl;
+const REQ_TTL = 600;
+/** Sign-ins kept working per connection (account, computer, AI app). */
+const TOKENS_KEPT = 5; // seconds a sign-in may take, from the AI app's redirect to the approval
 const CODE_TTL = 300;
 const MEDIA_MAX = 5 * 1024 * 1024;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -108,7 +114,7 @@ const okRedirect = (u: unknown): u is string => {
 };
 
 export function metadata(gw: GatewayDeps, path: string): Response | null {
-  const o = gw.publicUrl;
+  const o = self(gw);
   if (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') {
     return json(200, { resource: `${o}/mcp`, authorization_servers: [o], bearer_methods_supported: ['header'] });
   }
@@ -222,10 +228,10 @@ function codeFor(gw: GatewayDeps, grant: string, ask: Ask): string {
   codes.set(code, { grant, client: ask.c, redirect: ask.r, challenge: ask.ch, exp: now + CODE_TTL });
   return code;
 }
-const done = (gw: GatewayDeps, grant: string, ask: Ask) => back(ask.r, { code: codeFor(gw, grant, ask), state: ask.s, iss: gw.publicUrl });
+const done = (gw: GatewayDeps, grant: string, ask: Ask) => back(ask.r, { code: codeFor(gw, grant, ask), state: ask.s, iss: self(gw) });
 
 const originOf = (gw: GatewayDeps, hostname: string) => (gw.originOf ? gw.originOf(hostname) : `https://${hostname}`);
-const callback = (gw: GatewayDeps) => `${gw.publicUrl}/oauth/computer/callback`;
+const callback = (gw: GatewayDeps) => `${self(gw)}/oauth/computer/callback`;
 
 /** One connection's key from the computer: kept sealed. Connecting the same app to the same computer again replaces it. */
 function saveGrant(gw: GatewayDeps, account: string, computer: string, app: string, key: string): string {
@@ -326,9 +332,12 @@ export function exchangeCode(gw: GatewayDeps, p: Record<string, string>, authori
   const grant = proved ? (gw.db.prepare('SELECT id FROM ai_grants WHERE id = ?').get(hit.grant) as { id: string } | undefined) : undefined;
   if (!grant) return json(400, { error: 'invalid_grant' });
   const token = `cgw_${randomBytes(32).toString('hex')}`;
-  // connecting again replaces the token: no old one stays working out of sight
-  gw.db.prepare('DELETE FROM ai_tokens WHERE grant_id = ?').run(grant.id);
   gw.db.prepare('INSERT INTO ai_tokens (token_hash, grant_id, created_at) VALUES (?, ?, ?)').run(sha(token), grant.id, gw.now());
+  // the newest few stay: the same account in more than one chat app sign-in (a second device, the store's reviewers)
+  // keeps working, and old ones don't pile up out of sight
+  gw.db
+    .prepare('DELETE FROM ai_tokens WHERE grant_id = ? AND token_hash NOT IN (SELECT token_hash FROM ai_tokens WHERE grant_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)')
+    .run(grant.id, grant.id, TOKENS_KEPT);
   return json(200, { access_token: token, token_type: 'Bearer' });
 }
 
@@ -392,7 +401,7 @@ function offline(m: Rpc, cached: unknown): unknown {
 function throughHere(gw: GatewayDeps, out: unknown, computer: string, hostname: string) {
   const its = `https://${hostname}/`;
   const media = `${its}api/card/media/`;
-  const turn = (v: string) => (v.includes(its) ? v.replaceAll(media, `${gw.publicUrl}/m/${computer}/`).replaceAll(its, `${gw.publicUrl}/open/${computer}/`) : v);
+  const turn = (v: string) => (v.includes(its) ? v.replaceAll(media, `${self(gw)}/m/${computer}/`).replaceAll(its, `${self(gw)}/open/${computer}/`) : v);
   const walk = (v: unknown, card: boolean): unknown => {
     if (typeof v === 'string') return turn(v);
     if (Array.isArray(v)) return v.map((x) => walk(x, card));
@@ -405,8 +414,8 @@ function throughHere(gw: GatewayDeps, out: unknown, computer: string, hostname: 
     o.result = walk(o.result, false) as Record<string, any>;
     // the card's page loads pictures from this address only
     for (const c of Array.isArray(o.result.contents) ? o.result.contents : []) {
-      if (c?._meta?.ui?.csp) c._meta.ui.csp.resourceDomains = [gw.publicUrl];
-      if (c?._meta?.['openai/widgetCSP']) c._meta['openai/widgetCSP'].resource_domains = [gw.publicUrl];
+      if (c?._meta?.ui?.csp) c._meta.ui.csp.resourceDomains = [self(gw)];
+      if (c?._meta?.['openai/widgetCSP']) c._meta['openai/widgetCSP'].resource_domains = [self(gw)];
     }
   }
 }
@@ -425,7 +434,7 @@ function count(gw: GatewayDeps, app: string, list: Rpc[], down: boolean) {
 
 /** POST /mcp: the AI app's request, passed to the computer its token stands for. */
 export async function forwardMcp(gw: GatewayDeps, req: Request): Promise<Response> {
-  const challenge = { 'www-authenticate': `Bearer resource_metadata="${gw.publicUrl}/.well-known/oauth-protected-resource/mcp"` };
+  const challenge = { 'www-authenticate': `Bearer resource_metadata="${self(gw)}/.well-known/oauth-protected-resource/mcp"` };
   const token = /^Bearer (cgw_[a-f0-9]{64})$/.exec(req.headers.get('authorization') ?? '')?.[1];
   const g = token
     ? (gw.db
@@ -458,7 +467,7 @@ export async function forwardMcp(gw: GatewayDeps, req: Request): Promise<Respons
         method: 'POST',
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', accept: 'application/json' },
         // a link the AI app got from here and hands back (a Review video's) is the computer's own again
-        body: text.replaceAll(`${gw.publicUrl}/open/${g.computer}/`, `https://${g.hostname}/`),
+        body: text.replaceAll(`${self(gw)}/open/${g.computer}/`, `https://${g.hostname}/`),
         signal: AbortSignal.timeout(90_000),
       });
     } catch {

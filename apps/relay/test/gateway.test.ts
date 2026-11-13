@@ -169,6 +169,17 @@ test('without its secret the broker has none of this', async () => {
   assert.equal((await c.allow('ChatGPT')).status, 404);
 });
 
+test("a broker at its own address: the AI app is given that one, and only the sign-in goes to the site", async () => {
+  deps.gateway!.selfUrl = 'https://broker.test.example';
+  const meta = (await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json()) as Record<string, string>;
+  assert.equal(meta.issuer, 'https://broker.test.example');
+  assert.equal(meta.token_endpoint, 'https://broker.test.example/oauth/token');
+  assert.equal((await mcp('', rpc('ping'))).headers.get('www-authenticate'), 'Bearer resource_metadata="https://broker.test.example/.well-known/oauth-protected-resource/mcp"');
+  const s = await startSignIn();
+  assert.equal(s.to.origin + s.to.pathname, `${SELF}/connect/ai`);
+  delete deps.gateway!.selfUrl;
+});
+
 test('an AI app finds where to sign in, and the domain check answers', async () => {
   const r = await mcp('', rpc('tools/list'));
   assert.equal(r.status, 401);
@@ -322,6 +333,21 @@ test('while the computer is off a tool says so in plain words, and the connectio
     tools: [{ tool: 'media_search', calls: 2, unreachable: 1 }, { tool: 'get_review', calls: 1, unreachable: 1 }],
   });
   assert.deepEqual(deps.db.prepare('SELECT name FROM pragma_table_info(?)').all('ai_daily').map((r) => (r as { name: string }).name), ['day', 'app', 'tool', 'calls', 'unreachable']);
+});
+
+test('several sign-ins to the same connection keep working (another device, the reviewers), up to five', async () => {
+  const c = addComputer();
+  await c.allow('ChatGPT');
+  const tokens: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const s = await startSignIn();
+    const a = await approve(s.req, c.id);
+    tokens.push((await tokenFrom(a.json.redirect!, s)).json.access_token!);
+    clock += 1;
+  }
+  const ok = async (t: string) => (await mcp(t, rpc('ping'))).status === 200;
+  assert.equal(await ok(tokens[0]!), false); // the oldest of six is gone
+  for (const t of tokens.slice(1)) assert.equal(await ok(t), true);
 });
 
 test('removing the connection on the computer ends it here, and the AI app is told to sign in again', async () => {
