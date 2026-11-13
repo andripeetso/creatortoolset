@@ -12,7 +12,7 @@ const app = (await import("./boot")).default;
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
-const { MAX_RUNNING, noteWork, resumeFromDisk, routeOf, runInChat } = await import("./assistant");
+const { MAX_RUNNING, PAST_KEPT, noteWork, resumeFromDisk, routeOf, runInChat } = await import("./assistant");
 const { onAttention } = await import("./lib/attention");
 type View = import("../contracts/assistant").AssistantView;
 type Chat = import("../contracts/assistant").AssistantChat;
@@ -415,6 +415,20 @@ describe("a chat's menu in the list: pin, snooze, rename, mark unread, and looki
     await post(p, a, "snooze", { until: null });
     expect((await of(p, a)).snoozed).toBeUndefined();
     expect((await of(p, a)).woke).toBeUndefined();
+  });
+
+  it("an account past its hundred chats: the oldest go, never a pinned chat nor one put away", async () => {
+    const p = await person("cap");
+    const pinned = await answered(p, "Keep me pinned");
+    await post(p, pinned, "pin", { pinned: true });
+    const away = await answered(p, "Keep me away");
+    await post(p, away, "snooze", { until: Date.now() + 3600_000 });
+    const plain = await answered(p, "Let me go");
+    for (let i = 0; i < PAST_KEPT; i++) await p.make();
+    const ids = (await p.view()).past.map((c) => c.id);
+    expect(ids).not.toContain(plain);
+    expect((await p.chats()).map((c) => c.id)).toEqual(expect.arrayContaining([pinned, away]));
+    expect(await of(p, pinned)).toMatchObject({ pinned: expect.any(Number) });
   });
 
   it("snooze: when its time comes the chat is back and says so until it is looked at; looking at one still away leaves it away", async () => {

@@ -9,13 +9,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { deletePast, pinChat, renameChat, settleChat, snoozeChat, unreadChat } from "@/lib/assistant";
 import { confirmDialog } from "@/lib/dialogs";
 import { localInput, snoozeChoices, snoozeLeft } from "@/lib/snooze";
+import { useWorkspace } from "@/lib/workspace";
 import { onTopic } from "@/lib/sync";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { WorkingFor } from "./WorkCards";
 import { WORK_ICONS } from "./work-icons";
 
-/** The longest a timer may wait (a longer one fires at once): the list looks again after a day at the latest. */
+/** The longest a timer may wait (a longer one fires at once): past that the half-minute look brings a chat back. */
 const TIMER_MOST = 24 * 3600_000;
 
 /** Every chat (GET /api/assistant/chats), read again whenever the server says the assistant changed. */
@@ -32,12 +33,22 @@ export function useChats(on: boolean): [AssistantChat[] | null, () => void] {
     load();
     return onTopic("assistant", load);
   }, [on, load]);
-  // a chat put away comes back at its time: the list is read again then
+  // A chat put away comes back at its time: the list is read again then. On time while the window is open and the
+  // computer awake; else at the next look (every half minute while anything is away, and when the window is shown
+  // again), which also covers a computer that slept and a clock a little ahead of the server's.
   const next = Math.min(...(chats ?? []).flatMap((c) => (c.snoozed ? [c.snoozed] : [])));
   useEffect(() => {
     if (!on || !Number.isFinite(next)) return;
-    const t = setTimeout(load, Math.min(Math.max(next - Date.now(), 0) + 1000, TIMER_MOST));
-    return () => clearTimeout(t);
+    const look = () => Date.now() >= next && load();
+    const shown = () => document.visibilityState === "visible" && look();
+    const every = setInterval(look, 30_000);
+    const due = next - Date.now() < TIMER_MOST ? setTimeout(load, Math.max(next - Date.now(), 0) + 1000) : undefined;
+    document.addEventListener("visibilitychange", shown);
+    return () => {
+      clearInterval(every);
+      clearTimeout(due);
+      document.removeEventListener("visibilitychange", shown);
+    };
   }, [on, next, load]);
   return [chats, load];
 }
@@ -100,6 +111,8 @@ const rowBtn = "flex items-center rounded-md px-1.5 text-muted-foreground hover:
  */
 export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantChat[] | null; onOpen: (id: string) => Promise<unknown> | void; onNew: () => Promise<unknown> | void; reload: () => void }) {
   const navigate = useNavigate();
+  // a chat works in the account's current project: its menu opens that project's settings
+  const project = useWorkspace((s) => s.currentProjectId);
   const [showSettled, setShowSettled] = useState(false);
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [query, setQuery] = useState("");
@@ -187,19 +200,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
       reload();
     })();
 
-  /** The times a chat can be put away until, as menu items of either kind of menu. */
-  const snoozeItems = (c: AssistantChat, Item: typeof ContextMenuItem | typeof DropdownMenuItem, Line: typeof ContextMenuSeparator | typeof DropdownMenuSeparator) => (
-    <>
-      {snoozeChoices().map((s) => (
-        <Item key={s.until} onSelect={() => snooze(c, s.until)}>
-          {s.label}
-          <span className="ml-auto pl-4 text-xs text-muted-foreground tabular-nums">{s.when}</span>
-        </Item>
-      ))}
-      <Line />
-      <Item onSelect={() => setCustom(c)}>Custom…</Item>
-    </>
-  );
+  const snoozeItems = (c: AssistantChat, menu: "context" | "dropdown") => <SnoozeItems menu={menu} onPick={(until) => snooze(c, until)} onCustom={() => setCustom(c)} />;
 
   const row = (c: AssistantChat) => {
     const marked = rows[at]?.id === c.id;
@@ -216,16 +217,17 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
       </button>
     ) : (
       <>
-        <DropdownMenu onOpenChange={(o) => setMenuOf(o ? c.id : null)}>
+        {/* one that asks you something is back the moment it is put away: it has no clock */}
+        {!c.asks && <DropdownMenu onOpenChange={(o) => setMenuOf(o ? c.id : null)}>
           <DropdownMenuTrigger asChild>
             <button type="button" className={rowBtn} aria-label={`Snooze "${title}"`} title="Snooze: put it away until later">
               <Clock className="size-3" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-52">
-            {snoozeItems(c, DropdownMenuItem, DropdownMenuSeparator)}
+            {snoozeItems(c, "dropdown")}
           </DropdownMenuContent>
-        </DropdownMenu>
+        </DropdownMenu>}
         {!c.working && (
           <button type="button" onClick={() => settle(c, true)} className={cn(rowBtn, "-mr-1 gap-1 text-xs")} aria-label={`Settle "${title}"`} title="Settle: done with it, kept">
             <Check className="size-3.5" />
@@ -323,10 +325,10 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
           {!c.working && <ContextMenuItem onSelect={() => settle(c, !c.settled)}>{c.settled ? "Un-settle chat" : "Settle chat"}</ContextMenuItem>}
           {c.snoozed ? (
             <ContextMenuItem onSelect={() => snooze(c, null)}>Wake chat</ContextMenuItem>
-          ) : (
+          ) : c.asks ? null : (
             <ContextMenuSub>
               <ContextMenuSubTrigger>Snooze</ContextMenuSubTrigger>
-              <ContextMenuSubContent className="min-w-52">{snoozeItems(c, ContextMenuItem, ContextMenuSeparator)}</ContextMenuSubContent>
+              <ContextMenuSubContent className="min-w-52">{snoozeItems(c, "context")}</ContextMenuSubContent>
             </ContextMenuSub>
           )}
           <ContextMenuSeparator />
@@ -352,7 +354,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
               <ContextMenuItem onSelect={() => copy(c.id, "Chat ID")}>Chat ID</ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
-          <ContextMenuItem onSelect={() => navigate("/projects")}>Project settings</ContextMenuItem>
+          <ContextMenuItem onSelect={() => navigate(project ? `/projects?edit=${encodeURIComponent(project)}` : "/projects")}>Project settings</ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onSelect={() => remove(c)}>
             <Trash2 />
@@ -424,6 +426,27 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
       {/* made anew for each chat it is opened for: its time starts an hour from then */}
       <SnoozeUntil key={custom?.id ?? ""} chat={custom} onClose={() => setCustom(null)} onPick={(until) => custom && snooze(custom, until)} />
     </div>
+  );
+}
+
+/**
+ * The times a chat can be put away until, in either kind of menu. Worked out when the menu opens (it is drawn only
+ * then), and the one picked again at the click: "In 1 hour" is an hour from the click.
+ */
+function SnoozeItems({ menu, onPick, onCustom }: { menu: "context" | "dropdown"; onPick: (until: number) => void; onCustom: () => void }) {
+  const Item = menu === "context" ? ContextMenuItem : DropdownMenuItem;
+  const Line = menu === "context" ? ContextMenuSeparator : DropdownMenuSeparator;
+  return (
+    <>
+      {snoozeChoices().map((s) => (
+        <Item key={s.label} onSelect={() => onPick(snoozeChoices().find((x) => x.label === s.label)?.until ?? s.until)}>
+          {s.label}
+          <span className="ml-auto pl-4 text-xs text-muted-foreground tabular-nums">{s.when}</span>
+        </Item>
+      ))}
+      <Line />
+      <Item onSelect={onCustom}>Custom…</Item>
+    </>
   );
 }
 

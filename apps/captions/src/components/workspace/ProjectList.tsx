@@ -27,11 +27,13 @@ export function ProjectList() {
   const select = useWorkspace((s) => s.select);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [params, setParams] = useSearchParams();
-  // `/projects?add=1` opens the New project form once, then the parameter goes
+  // `/projects?add=1` opens the New project form once, `?edit=<id>` that project's own (a chat's menu asks for the
+  // current one); then the parameter goes
   useEffect(() => {
-    if (params.get("add") !== "1") return;
-    setEditing("new");
-    setParams((p) => (p.delete("add"), p), { replace: true });
+    const edit = params.get("add") === "1" ? "new" : params.get("edit");
+    if (!edit) return;
+    setEditing(edit);
+    setParams((p) => (p.delete("add"), p.delete("edit"), p), { replace: true });
   }, [params, setParams]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
