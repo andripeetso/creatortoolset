@@ -19,6 +19,15 @@ struct GuideFacts: Equatable {
     var modelHere = false
     /// 0...1 while the model downloads.
     var progress: Double?
+
+    /// What still keeps "Try it" from working, in one line; nil when nothing does.
+    var missing: String? {
+        if !microphone || !accessibility { return "Allow \(!microphone ? "the microphone" : "Accessibility") first (step 2)." }
+        if engine == .thisMac || !serverOffered, !modelHere {
+            return progress.map { "The speech model is downloading · \(Int($0 * 100))%" } ?? "Download the speech model first (step 3)."
+        }
+        return nil
+    }
 }
 
 enum GuideAction {
@@ -90,6 +99,9 @@ struct SetupGuideView: View {
             TextField("Your words appear here", text: $tried, axis: .vertical)
                 .lineLimit(3...5)
                 .textFieldStyle(.roundedBorder)
+            if let missing = facts.missing {
+                Text(missing).font(.callout).foregroundStyle(.orange)
+            }
         }
     }
 

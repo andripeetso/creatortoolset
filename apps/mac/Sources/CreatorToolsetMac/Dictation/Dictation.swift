@@ -225,7 +225,13 @@ final class Dictation: ObservableObject {
     /// notifications. The one check for "another app has dictation's keys".
     @Published private(set) var earlierAppOpen = false
 
+    private var runningWatch: NSKeyValueObservation?
+
     private func watchEarlierApp() {
+        // menu bar apps (that one is) don't always get launch and quit notifications: the running list does change
+        runningWatch = NSWorkspace.shared.observe(\.runningApplications) { _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { Dictation.shared.checkEarlierApp() } }
+        }
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -571,7 +577,10 @@ final class Dictation: ObservableObject {
     /// The first press of the talk key while something is missing: the setup guide the very first time, after that the
     /// pill's step-by-step `setUp`.
     private func firstPress() {
-        if SetupGuide.isOpen || !UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided) { SetupGuide.show() } else { setUp() }
+        guard SetupGuide.isOpen || !UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided) else { return setUp() }
+        // the model downloads while the guide is read, as the pill's setup did
+        if prefs.engine == .thisMac, !modelOnDisk { fetch(model) }
+        SetupGuide.show()
     }
 
     /// The guide's Allow for the microphone: the system's question the first time, then its Settings pane.
@@ -606,7 +615,7 @@ final class Dictation: ObservableObject {
 
     /// Settings' key button: the picker for one action, refusing a key another action or the recording shortcut has.
     func pick(_ action: DictationAction) {
-        picking = action
+        defer { picking = action }   // after show: it closes an open picker, whose close clears `picking`
         KeyPicker.show(
             title: action.name,
             prompt: "Press the key for \(action.name).\n"

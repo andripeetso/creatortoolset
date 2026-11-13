@@ -313,6 +313,27 @@ final class DictationControllerTests: XCTestCase {
 final class DictationKeysTests: XCTestCase {
     private let optionSpace = KeyBinding.key(Shortcut(keyCode: 49, carbonModifiers: 2048, display: "⌥Space"))
 
+    func testNoTalkKeyIsKeptAsNone() {
+        let name = "dictation-keys-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: name)!
+        defer { d.removePersistentDomain(forName: name) }
+        DictationKeys().save(d)
+        XCTAssertTrue(DictationKeys.isSaved(d), "the next launch must not put the first keys back")
+        XCTAssertEqual(DictationKeys.load(d), DictationKeys())
+    }
+
+    func testTryItSaysWhatIsMissing() {
+        var f = GuideFacts(talkKey: "F13", talkHint: "Press F13 to talk", modelName: "M", modelSize: "1 GB")
+        XCTAssertEqual(f.missing, "Allow the microphone first (step 2).")
+        f.microphone = true
+        f.accessibility = true
+        XCTAssertEqual(f.missing, "Download the speech model first (step 3).")
+        f.progress = 0.5
+        XCTAssertEqual(f.missing, "The speech model is downloading · 50%")
+        f.modelHere = true
+        XCTAssertNil(f.missing)
+    }
+
     func testFirstKeysFollowTheKeyboard() {
         XCTAssertEqual(DictationKeys.first(hadDictation: false, keyboardHasF13: true), .functionKeys)
         XCTAssertEqual(DictationKeys.first(hadDictation: true, keyboardHasF13: false), .functionKeys, "keeps the keys it had")

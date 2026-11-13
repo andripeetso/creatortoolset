@@ -5,7 +5,7 @@ import { Card, Row, Section, SettingsSelect, Status } from "./ui";
 import { tell, type DictationAction, type ThisMacState } from "./ThisMacSection";
 
 const KEEP = [5, 10, 25, 50, 100];
-const KEYS: Array<[DictationAction, string]> = [["talk", "Talk"], ["history", "History"], ["file", "Transcribe a file"], ["cancel", "Cancel"]];
+const NAMES: Record<DictationAction, string> = { talk: "Talk", history: "History", file: "Transcribe a file", cancel: "Cancel" };
 
 /**
  * Dictation on this Mac (apps/mac Dictation.swift): shown only where the app reports it. The app keeps every value; each
@@ -15,6 +15,11 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
   const d = mac?.dictation;
   if (!d) return null;
   const set = (what: string, value = "") => tell(`dictation:${what}:${value}`);
+  const key = (action: DictationAction) => (
+    <Button size="sm" variant="outline" className="min-w-24" aria-label={`${NAMES[action]} key`} onClick={() => set("pick", action)}>
+      {d.picking === action ? "Press a key…" : d.keys[action] || "Choose key"}
+    </Button>
+  );
   const model = d.models.find((m) => m.id === d.model);
   const keep = KEEP.includes(d.keep) ? KEEP : [...KEEP, d.keep].sort((a, b) => a - b);
   const remove = async () => {
@@ -38,19 +43,8 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
         />
         {d.on && (
           <>
-            {KEYS.map(([action, title]) => (
-              <Row
-                key={action}
-                id={`dictation-key-${action}`}
-                title={title}
-                description={action === "talk" ? "Tap to start and stop, or hold a key like fn while you talk." : undefined}
-                control={
-                  <Button size="sm" variant="outline" className="min-w-24" aria-label={`${title} key`} onClick={() => set("pick", action)}>
-                    {d.picking === action ? "Press a key…" : d.keys[action] || "Choose"}
-                  </Button>
-                }
-              />
-            ))}
+            <Row id="dictation-key-talk" title="Talk" description="Tap to start and stop, or hold a key like fn while you talk." control={key("talk")} />
+            <Row id="dictation-key-cancel" title="Cancel" description="Stops a recording, and nothing is pasted." control={key("cancel")} />
             <Row
               id="dictation-model"
               title="Speech model"
@@ -81,6 +75,7 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
                     options={keep.map((n) => ({ value: String(n), label: `Last ${n}` }))}
                     className="sm:min-w-28"
                   />
+                  {key("history")}
                   <Button size="sm" variant="outline" onClick={() => set("history")}>Open</Button>
                 </>
               }
@@ -89,7 +84,12 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
               id="dictation-file"
               title="Transcribe a file"
               description="Audio or video, on this Mac."
-              control={<Button size="sm" variant="outline" onClick={() => set("file")}>Open</Button>}
+              control={
+                <>
+                  {key("file")}
+                  <Button size="sm" variant="outline" onClick={() => set("file")}>Open</Button>
+                </>
+              }
             />
             <Row
               id="dictation-sounds"
