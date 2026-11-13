@@ -11,8 +11,8 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
-const { pairDevice, saveReport } = await import("./devices");
-const { strongest, transcribeOnComputer, ComputerOff } = await import("./computer-transcribe");
+const { pairDevice, touchDevice } = await import("./devices");
+const { strongest, transcribeOnComputer, ComputerOff, COMPUTER_LIMITS } = await import("./computer-transcribe");
 const { speechFor, writeVoicePrefs } = await import("./speech");
 
 const ana = createUser("ana", "password1");
@@ -70,6 +70,47 @@ describe("which computer gets a transcript", () => {
   it("with no computer that has the model on, it waits and says for what", async () => {
     await expect(transcribeOnComputer("ana", "whisper-large-v3", [], "x.wav")).rejects.toBeInstanceOf(ComputerOff);
     await expect(transcribeOnComputer("ana", "whisper-large-v3", [], "x.wav")).rejects.toThrow("Waits for a computer with Whisper large-v3 to be on");
+  });
+});
+
+describe("a transcript never waits for ever", () => {
+  const audio = () => {
+    const f = path.join(process.env.DATA_DIR!, "b.wav");
+    writeFileSync(f, Buffer.alloc(32_000 * 60)); // a minute of audio
+    return f;
+  };
+  const tick = (ms: number, keep: string[] = []) => vi.advanceTimersByTimeAsync(ms).then(() => keep.forEach(touchDevice));
+
+  it("its computer goes off: it waits and says so", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      await claim(pc.token, ["whisper-large-v3-turbo"]);
+      const p = transcribeOnComputer("ana", "whisper-large-v3-turbo", [], audio());
+      const off = expect(p).rejects.toBeInstanceOf(ComputerOff);
+      await tick(60_000);
+      await off;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a computer that is on but never claims it: it waits; one that claims and never answers: it fails, a try", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const both = [pc.device.id, mac.device.id];
+    try {
+      touchDevice(pc.device.id);
+      const p = transcribeOnComputer("ana", "whisper-large-v3-turbo", [], audio());
+      const waits = expect(p).rejects.toBeInstanceOf(ComputerOff);
+      for (let t = 0; t <= COMPUTER_LIMITS.unclaimedMs; t += 15_000) await tick(15_000, both);
+      await waits;
+      const q = transcribeOnComputer("ana", "whisper-large-v3-turbo", [], audio());
+      const slow = expect(q).rejects.toThrow("did not transcribe it in 10 minutes");
+      expect((await claim(pc.token, ["whisper-large-v3-turbo"])).job).not.toBeNull();
+      for (let t = 0; t <= COMPUTER_LIMITS.takeMs; t += 15_000) await tick(15_000, both);
+      await slow;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

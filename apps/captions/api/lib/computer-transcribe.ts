@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { TRANSCRIBE_KIND, parseTranscribeResult, type DeviceJob, type TranscribeResult } from "../../contracts/devices";
 import { DEFAULT_WEIGHT, type Balance, type Device } from "../../contracts/providers";
 import { STT_MODELS } from "../../contracts/voice";
@@ -73,17 +74,29 @@ interface Job {
   languages: string[];
   /** the WAV the computer fetches */
   audio: string;
-  /** the computer that claimed it */
+  /** the computer that claimed it, and since when (ms); or since when it waits for one */
   device?: string;
+  since: number;
+  /** how long its computer may take, from the audio's length */
+  takeMs: number;
   end: (r: TranscribeResult | Error) => void;
 }
 const jobs = new Map<number, Job>();
 let lastId = 0;
-/** How often a waiting transcript checks that a computer for it is still on. */
-const CHECK_MS = 15_000;
+/**
+ * How often a transcript checks on its computer; how long it waits unclaimed while no computer of its account works on
+ * one (a computer that is on but does not claim: an old helper); and the least time a computer may take for one, else
+ * three times the audio's length (a CPU with large-v3 is about as fast as the talk).
+ */
+export const COMPUTER_LIMITS = { checkMs: 15_000, unclaimedMs: 5 * 60_000, takeMs: 10 * 60_000 } as const;
 
 const onlineHolders = (owner: string, model: string) => speechComputers(owner).filter((d) => holds(d, model) && isOnline(d.id));
 const offLine = (model: string) => `Waits for a computer with ${nameOf(model)} to be on`;
+
+/** Throws ComputerOff when no computer of `owner` that has `model` is on: checked before the audio is cut. */
+export function needComputerOn(owner: string, model: string): void {
+  if (!onlineHolders(owner, model).length) throw new ComputerOff(offLine(model));
+}
 
 /**
  * The words in `audio` (a WAV, 16 kHz mono 16-bit) heard by `model` on one of `owner`'s computers. Rejects with
@@ -91,16 +104,22 @@ const offLine = (model: string) => `Waits for a computer with ${nameOf(model)} t
  */
 export function transcribeOnComputer(owner: string, model: string, languages: string[], audio: string): Promise<TranscribeResult> {
   if (!onlineHolders(owner, model).length) return Promise.reject(new ComputerOff(offLine(model)));
+  // 16 kHz mono 16-bit: 32,000 bytes a second
+  const takeMs = Math.max(COMPUTER_LIMITS.takeMs, (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32 * 3);
   return new Promise((resolve, reject) => {
     const id = ++lastId;
-    // a computer that went off gives its transcript back; with none left that is on, the caller waits and tries again
+    // a computer that went off gives its transcript back; with none left that is on, the caller waits and tries again.
+    // One that is on and never claims it, while none works on one, is the same; one that takes too long fails it (a try).
     const check = setInterval(() => {
+      const now = Date.now();
       if (j.device && !isOnline(j.device)) {
-        j.device = undefined;
+        Object.assign(j, { device: undefined, since: now });
         void wakeEditorPolls();
       }
-      if (!j.device && !onlineHolders(owner, model).length) end(new ComputerOff(offLine(model)));
-    }, CHECK_MS);
+      if (j.device && now - j.since > j.takeMs) return end(new Error(`Your computer did not transcribe it in ${Math.round(j.takeMs / 60_000)} minutes.`));
+      const working = [...jobs.values()].some((x) => x.owner === owner && x.device);
+      if (!j.device && (!onlineHolders(owner, model).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
+    }, COMPUTER_LIMITS.checkMs);
     check.unref();
     const end = (r: TranscribeResult | Error) => {
       clearInterval(check);
@@ -108,7 +127,7 @@ export function transcribeOnComputer(owner: string, model: string, languages: st
       if (r instanceof Error) reject(r);
       else resolve(r);
     };
-    const j: Job = { id, owner, model, languages, audio, end };
+    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, end };
     jobs.set(id, j);
     void wakeEditorPolls();
   });
@@ -138,6 +157,7 @@ export function claimTranscript(d: Device, balance: Balance): DeviceJob | null {
   const j = nextFor(d, balance);
   if (!j) return null;
   j.device = d.id;
+  j.since = Date.now();
   return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages };
 }
 

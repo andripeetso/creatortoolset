@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
-import { transcribeOnComputer } from "../lib/computer-transcribe";
+import { needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
 import { speechFor } from "../lib/speech";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
@@ -158,6 +158,8 @@ async function computer(file: string, actor: string, model: string, languages: s
  */
 export async function transcribeFile(src: string, actor: string | null, scratch: string, status: string = src): Promise<Transcribed & { provider: Route["provider"] }> {
   const route = transcribeRoute(actor);
+  // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
+  if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
   await mkdir(scratch, { recursive: true });
   const wav = route.provider === "deepgram" || route.provider === "computer";
   const out = path.join(scratch, `transcribe-${randomUUID()}.${wav ? "wav" : route.provider === "openai" ? "m4a" : "f32"}`);
