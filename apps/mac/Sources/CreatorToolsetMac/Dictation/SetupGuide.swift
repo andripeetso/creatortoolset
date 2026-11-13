@@ -1,7 +1,8 @@
 // The dictation setup page: one page, opened by the first press of the talk key (or the menu bar's Dictate) before
 // dictation was set up, and by Settings' Set up. The talk key, the languages, both permissions with their own Allow,
 // where speech turns into text, and Get Started. Opening it starts loading (or downloading) the model, so it is ready
-// by the time the page is done. Nothing opens it by itself at launch.
+// by the time the page is done. Once per Mac it also offers itself, as a sheet on the main window with Not now, at the
+// first calm moment after the site's own setup (`dictationOffer`).
 import AppKit
 import SwiftUI
 
@@ -189,6 +190,36 @@ struct SetupPageView: View {
     }
 }
 
+/// The page as the offered sheet: the same page, with Not now (and Esc) to leave without setting anything up.
+struct SetupOfferView: View {
+    let facts: SetupFacts
+    var model = ModelRegistry.standardID
+    let act: (SetupAction) -> Void
+    let notNow: () -> Void
+
+    var body: some View {
+        SetupPageView(facts: facts, model: model, act: act)
+            .overlay(alignment: .topTrailing) {
+                Button("Not now", action: notNow)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .keyboardShortcut(.cancelAction)
+                    .padding(16)
+            }
+    }
+}
+
+enum DictationOffer: Equatable { case show, wait, never }
+
+/// Whether the setup page offers itself now. Never again once it was offered, or once dictation was set up (Get
+/// Started, or the page closed) or switched off; else only while the site's page is calm (its own setup and welcome
+/// are not on screen, ThisMacBridge `page:calm`) and nothing else is in front (`busy`: an alert or sheet, a recording,
+/// a dictation, the page already open, the window not the key one).
+func dictationOffer(offered: Bool, guided: Bool, dictationOn: Bool, pageCalm: Bool, busy: Bool) -> DictationOffer {
+    if offered || guided || !dictationOn { return .never }
+    return pageCalm && !busy ? .show : .wait
+}
+
 /// A capsule with a light fill, with a chevron when it opens a list.
 struct PillLabel: View {
     let title: String
@@ -280,6 +311,10 @@ struct LanguageChecklist: View {
 @MainActor
 final class SetupGuide: ObservableObject {
     private static var window: NSWindow?
+    /// The page offered by itself, as a sheet on the main window (`offer`).
+    private static var sheet: NSWindow?
+    private static var offerTimer: Timer?
+    static let offeredKey = "dictation.offered"
     private static let guide = SetupGuide()
     private static let delegate = Delegate()
 
@@ -290,10 +325,16 @@ final class SetupGuide: ObservableObject {
     /// A language was ticked or unticked since the page opened: the server's answer doesn't replace the ticks.
     private var touched = false
     private var tick: Timer?
+    /// Offered by itself: the model waits for the person's first click, so an offer never starts a download alone.
+    private var holdsModel = false
 
-    static var isOpen: Bool { window?.isVisible == true }
+    static var isOpen: Bool { window?.isVisible == true || sheet != nil }
 
     static func show() {
+        if let parent = sheet?.sheetParent {
+            NSApp.activate(ignoringOtherApps: true)
+            return parent.makeKeyAndOrderFront(nil)
+        }
         let g = guide
         if window == nil {
             let host = NSHostingView(rootView: SetupGuideHost(guide: g))
@@ -313,6 +354,59 @@ final class SetupGuide: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.orderFrontRegardless()  // a shortcut can't activate an accessory app on macOS 14+
+    }
+
+    /// The site's page is calm (`page:calm`) or not (`page:busy`, and every new page load). While it is calm the offer
+    /// is tried now and every 2 s until it shows or never will: the page says calm once, and an alert or a recording
+    /// may be in the way at that moment.
+    static func page(calm: Bool) {
+        offerTimer?.invalidate()
+        offerTimer = nil
+        guard calm, tryOffer() == .wait else { return }
+        offerTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                guard Self.tryOffer() != .wait else { return }
+                timer.invalidate()
+                Self.offerTimer = nil
+            }
+        }
+    }
+
+    private static func tryOffer() -> DictationOffer {
+        let d = Dictation.shared
+        let shell = AppDelegate.shell
+        let main = shell?.webView.window
+        let busy = NSApp.modalWindow != nil || main?.attachedSheet != nil || main?.isKeyWindow != true
+            || shell?.hasServer != true || shell?.recorder.busy == true
+            || d.phase == .recording || d.phase == .transcribing || isOpen
+        let next = dictationOffer(offered: UserDefaults.standard.bool(forKey: offeredKey),
+                                  guided: UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided),
+                                  dictationOn: d.prefs.on, pageCalm: true, busy: busy)
+        if next == .show, let main { offer(on: main) }
+        return next
+    }
+
+    private static func offer(on parent: NSWindow) {
+        UserDefaults.standard.set(true, forKey: offeredKey)
+        let g = guide
+        g.holdsModel = true
+        g.start()
+        let host = NSHostingView(rootView: SetupOfferHost(guide: g))
+        let s = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize),
+                         styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+        s.contentView = host
+        sheet = s
+        parent.beginSheet(s) { _ in
+            MainActor.assumeIsolated {
+                Self.sheet = nil
+                Self.guide.stop()
+            }
+        }
+    }
+
+    /// Not now: the sheet goes, dictation stays not set up (the talk key's first press still opens the page).
+    fileprivate static func notNow() {
+        if let sheet { sheet.sheetParent?.endSheet(sheet) }
     }
 
     static func read(languages: [String]) -> SetupFacts {
@@ -335,6 +429,10 @@ final class SetupGuide: ObservableObject {
 
     func act(_ action: SetupAction) {
         let d = Dictation.shared
+        if holdsModel {
+            holdsModel = false
+            d.prepareModel()
+        }
         switch action {
         case .pickTalk: d.pick(.talk)
         case .language(let code):
@@ -349,7 +447,7 @@ final class SetupGuide: ObservableObject {
             d.prepareModel()
         case .getStarted:
             Self.done()
-            Self.window?.close()
+            if let sheet = Self.sheet { sheet.sheetParent?.endSheet(sheet) } else { Self.window?.close() }
         }
         refresh()
     }
@@ -381,12 +479,13 @@ final class SetupGuide: ObservableObject {
             defaults = await Dictation.shared.defaultLanguages()
             if !touched { languages = Dictation.shared.prefs.languages ?? defaults }
             // once the languages are known, which choose the default model
-            Dictation.shared.prepareModel()
+            if !holdsModel { Dictation.shared.prepareModel() }
             refresh()
         }
     }
 
     fileprivate func stop() {
+        holdsModel = false
         tick?.invalidate()
         tick = nil
         KeyPicker.close()
@@ -410,5 +509,13 @@ private struct SetupGuideHost: View {
     @ObservedObject private var dictation = Dictation.shared
     var body: some View {
         SetupPageView(facts: guide.facts, model: dictation.model.id) { guide.act($0) }
+    }
+}
+
+private struct SetupOfferHost: View {
+    @ObservedObject var guide: SetupGuide
+    @ObservedObject private var dictation = Dictation.shared
+    var body: some View {
+        SetupOfferView(facts: guide.facts, model: dictation.model.id, act: { guide.act($0) }, notNow: SetupGuide.notNow)
     }
 }

@@ -28,23 +28,38 @@ final class SetupGuideShotsTests: XCTestCase {
         hold.progress = nil
         let shots: [(String, SetupFacts)] = [("fresh", fresh), ("halfway", halfway), ("ready", done), ("server", server), ("hold", hold)]
         for (name, facts) in shots {
-            for dark in [false, true] {
-                let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
-                let view = SetupPageView(facts: facts) { _ in }
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .environment(\.colorScheme, dark ? .dark : .light)
-                let host = NSHostingView(rootView: view)
-                host.appearance = appearance
-                let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
-                window.appearance = appearance
-                window.contentView = host
-                window.setContentSize(host.fittingSize)
-                host.layoutSubtreeIfNeeded()
-                let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: rep)
-                let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
-                try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
-            }
+            try draw(SetupPageView(facts: facts) { _ in }.background(Color(nsColor: .windowBackgroundColor)), name, folder)
+        }
+        // the page offered by itself: a sheet on the main window, with Not now (drawn here, not AppKit's own sheet)
+        var offered = fresh
+        offered.progress = nil
+        let sheet = SetupOfferView(facts: offered, act: { _ in }, notNow: {})
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+        let onWindow = ZStack(alignment: .top) {
+            Color(nsColor: .underPageBackgroundColor)
+            sheet.padding(.top, 28)
+        }
+        .frame(width: 900, height: 700)
+        try draw(onWindow, "offer", folder)
+    }
+
+    private func draw(_ content: some View, _ name: String, _ folder: String) throws {
+        for dark in [false, true] {
+            let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
+            let view = content.environment(\.colorScheme, dark ? .dark : .light)
+            let host = NSHostingView(rootView: view)
+            host.appearance = appearance
+            let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
+            window.appearance = appearance
+            window.contentView = host
+            window.setContentSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: rep)
+            let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
         }
     }
 }

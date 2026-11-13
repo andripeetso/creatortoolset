@@ -880,6 +880,11 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         failed(error)
     }
 
+    /// A new page load (a reload, another server): calm again only when that page says so (SetupGuide.page).
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        SetupGuide.page(calm: false)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         AppLog.write("the page's web process ended: reloading \(webView.url?.absoluteString ?? "")")
         if webView.url == nil { open("/") } else { webView.reload() }

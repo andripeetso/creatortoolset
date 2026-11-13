@@ -122,6 +122,12 @@ export function markIntroSeen(): void {
 }
 export const introSeen = (): boolean => introSeenThisLoad || read("local", INTRO_SEEN) === "1";
 
+/**
+ * Whether the page is calm enough for the Mac app's own one-time offer (dictation's setup sheet): everything setup
+ * reads has loaded, setup is not on screen and Home's welcome is not playing.
+ */
+export const pageCalm = (at: { loaded: boolean; open: boolean; intro: boolean }): boolean => at.loaded && !at.open && !at.intro;
+
 /** The system's Reduce motion. */
 export const stillMotion = (): boolean => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
