@@ -164,4 +164,10 @@ describe("Download and Remove", () => {
     // the Mac's two models were never asked about: they stay
     expect((await claim(mac.token, ["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"])).models).toEqual(["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"]);
   });
+
+  it("with large-v3 and turbo both downloaded and none chosen, turbo runs: it is the default", async () => {
+    await claim(pc.token, ["whisper-large-v3", "whisper-large-v3-turbo"]);
+    writeVoicePrefs("ana", { languages: [], stt: { default: { engine: "local" }, per: { transcripts: null } } });
+    expect(speechFor("ana", "transcripts")).toMatchObject({ model: "whisper-large-v3-turbo", on: "computers" });
+  });
 });

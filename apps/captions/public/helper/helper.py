@@ -64,7 +64,11 @@ def call(server, token, method, path, body=None, raw=False, timeout=60):
         if e.code == 401 and token:
             raise Removed() from e
         detail = e.read().decode(errors="replace")[:300]
-        raise RuntimeError(f"{method} {path}: {e.code} {detail}") from e
+        try:
+            detail = json.loads(detail)["error"]  # the server's own sentence
+        except Exception:
+            pass
+        raise RuntimeError(f"{detail} ({e.code} on {path})") from e
     return data if raw else (json.loads(data) if data else None)
 
 
@@ -73,7 +77,10 @@ def call(server, token, method, path, body=None, raw=False, timeout=60):
 def pair(server, code):
     server = server.rstrip("/")
     name = socket.gethostname()
-    r = call(server, None, "POST", "/api/devices/pair", {"code": code, "name": name, "version": VERSION})
+    try:
+        r = call(server, None, "POST", "/api/devices/pair", {"code": code, "name": name, "version": VERSION})
+    except (RuntimeError, OSError) as e:
+        sys.exit(f"Not paired: {e}")
     os.makedirs(HOME, exist_ok=True)
     fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -159,16 +166,22 @@ class Runner:
         return m
 
     def transcribe(self, mid, pcm, languages):
+        """The words, and whether the graphics card made them."""
         if self.cuda and CATALOG[mid][1] == "faster-whisper":
             try:
-                return self._run(mid, pcm, languages, True)
-            except Exception as e:  # a missing CUDA library often fails here, not when the model loads
-                if not any(w in str(e).lower() for w in ("cuda", "cublas", "cudnn", "libcu", "gpu")):
+                return self._run(mid, pcm, languages, True), True
+            except Exception as e:
+                msg = str(e).lower()
+                if not any(w in msg for w in ("cuda", "cublas", "cudnn", "libcu", "gpu", "out of memory")):
                     raise
-                log("graphics card failed, from now on on the CPU:", str(e)[:200])
-                self.cuda = False
                 self.loaded = (None, None)
-        return self._run(mid, pcm, languages, False)
+                # a missing CUDA library (it often shows here, not when the model loads) is for good; a full card is for now
+                if any(w in msg for w in ("cannot be loaded", "not found", "cannot open shared object")):
+                    log("graphics card can't be used, from now on the CPU:", str(e)[:200])
+                    self.cuda = False
+                else:
+                    log("graphics card failed on this one, it runs on the CPU:", str(e)[:200])
+        return self._run(mid, pcm, languages, False), False
 
     def _run(self, mid, pcm, languages, cuda):
         m = self.model(mid, cuda)
@@ -223,14 +236,19 @@ class Helper:
         return call(self.server, self.token, *a, **k)
 
     def claim(self):
-        """Says what it has and is downloading, takes a transcript if one waits, and does what its owner wants."""
+        """Says what it has and is downloading, takes a transcript if one waits, and does what its owner wants. False when
+        nothing came of it (a wish it can't follow now: the model a transcript is using, or one this helper doesn't know)."""
+        did = False
         with self.lock:
             for _ in range(3):
                 r = self.call("POST", "/api/devices/relay/editor/claim", {"kinds": [KIND], "models": held(), "getting": sorted(self.getting)})
                 if r.get("job"):
                     self.jobs.put(r["job"])
+                    did = True
                 if not self.sync(r.get("models") or []):
-                    return
+                    return did
+                did = True
+        return did
 
     def sync(self, wanted):
         """Deletes each model it has that is not wanted (its own folder only), starts a download for each wanted one it
@@ -288,8 +306,7 @@ class Helper:
                 self.busy = job["model"]
                 audio = self.call("GET", f"/api/devices/relay/transcribe/{jid}", raw=True, timeout=600)
                 t0 = time.time()
-                out = self.runner.transcribe(job["model"], read_wav(audio), job.get("languages") or [])
-                gpu_used = self.runner.cuda and CATALOG[job["model"]][1] == "faster-whisper"
+                out, gpu_used = self.runner.transcribe(job["model"], read_wav(audio), job.get("languages") or [])
                 log(f"transcript {jid}: {len(out['words'])} words, {len(audio) / 32000:.0f} s of audio in {time.time() - t0:.1f} s",
                     "on the graphics card" if gpu_used else "on the CPU")
                 r = self.safe(self.call, "POST", f"/api/devices/relay/transcribe/{jid}", out)
@@ -333,7 +350,9 @@ class Helper:
                 r = self.call("POST", "/api/devices/relay/wait", {"blobs": False, "editor": [KIND]})
                 failures = 0
                 if r and r.get("editor"):
-                    self.claim()
+                    # the server hints again while a wish stays open: wait a little instead of asking at once
+                    if not self.claim():
+                        time.sleep(5)
                 elif r and r.get("id"):
                     # an AI request: this computer runs no AI tools, so it says so at once instead of letting it wait
                     self.call("POST", f"/api/devices/relay/{r['id']}/fail", {"error": "This computer runs speech models only"})
