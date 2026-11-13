@@ -410,10 +410,14 @@ export function splitView(view: TimelineView, edits: ItemEdit[]): TimelineView {
 type Spans = Pick<PlayPlan, "skips" | "holds">;
 const ms = (s: number) => Math.round(s * 1000) / 1000;
 
-/** A frame of the cut as a frame of the edited timeline: the holds it is past added, the skipped frames before it taken out. */
+/**
+ * A frame of the cut as a frame of the edited timeline: the holds it is past added, the skipped frames before it taken
+ * out. The player holds on the middle of a held frame and plays on from there (lib/review-play.ts), so from that middle
+ * the hold is behind it.
+ */
 export function editedFrame(plan: Spans, r: number): number {
   let e = r;
-  for (const h of plan.holds) if (r >= h.at + 1) e += h.frames;
+  for (const h of plan.holds) if (r >= h.at + 0.5) e += h.frames;
   for (const [a, b] of plan.skips) e -= Math.max(0, Math.min(b, r) - a);
   return e;
 }

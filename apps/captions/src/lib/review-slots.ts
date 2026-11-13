@@ -88,6 +88,8 @@ export class ReviewSlotBridge {
       cards: all.flatMap((p) => p.cards),
       frames: all.flatMap((p) => p.frames),
       looks: all.flatMap((p) => p.looks ?? []),
+      // one sound for the whole edit: the first plan that plays it from the originals
+      ...(all.find((p) => p.sound) ? { sound: all.find((p) => p.sound)!.sound } : {}),
     };
   }
 

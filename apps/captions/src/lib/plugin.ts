@@ -132,6 +132,12 @@ export interface ReviewPlayPlan {
   frames: { from: number; to: number; box: { x: number; y: number; k: number } }[];
   /** A look the picture takes over a span: a CSS `filter` value (e.g. `url(#id)` of an SVG filter the panel draws). */
   looks?: { from: number; to: number; filter: string }[];
+  /**
+   * The edit's sound from its originals, in frames of the edited timeline (the video's frames with the holds put in and
+   * the skips taken out): each piece plays `src` (a URL) from `offset` seconds, at frame `at`, for `frames`. While it is
+   * set the video is muted and these play instead (lib/synced-sound.ts useEditSound).
+   */
+  sound?: { src: string; at: number; frames: number; offset: number }[];
 }
 
 /**
@@ -207,6 +213,9 @@ export type ReviewEditRef = { project: string; draft: string };
  * - `face`: on an AI edit, the timeline's Face (face refinement strength): `still` = frame `at` of a shot as filmed
  *   (left half) and retouched at `max` x the edit's look (right half), one image URL the page fades between; `strength`
  *   = the edit's now (1 = its look), `save` keeps a new one for the edit. Face is offered only where this is set.
+ * - `sources`: on an AI edit, where its recordings are on the person's own computer: source key (TimelineItem.src) to
+ *   the file's full path. With the Mac app's say (a folder the person allows there), the timeline plays the edit from
+ *   them: a voice pulled out or moved plays its real words. Managers only: the originals aren't blurred.
  */
 export interface ReviewTimelineSlot {
   clipSrc?: (clip: number) => string;
@@ -221,6 +230,7 @@ export interface ReviewTimelineSlot {
     strength: (edit: ReviewEditRef) => Promise<number>;
     save: (edit: ReviewEditRef, strength: number) => Promise<void>;
   };
+  sources?: (edit: ReviewEditRef, signal: AbortSignal) => Promise<Record<string, string>>;
 }
 
 /**
@@ -263,7 +273,7 @@ export type ReviewActionEntry = ReviewActionSlot & { key: string; pluginId: stri
 /** The timeline editor's plug-in parts: each one from the first plug-in that gives it (see ReviewTimelineSlot). */
 export function reviewTimelineOf(plugins: WebPlugin[]): ReviewTimelineSlot {
   const pick = <K extends keyof ReviewTimelineSlot>(k: K) => plugins.find((p) => p.review?.timeline?.[k])?.review?.timeline?.[k];
-  return { clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look"), face: pick("face") };
+  return { clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look"), face: pick("face"), sources: pick("sources") };
 }
 
 /** The Review panels and toolbar buttons this account may see: a gated one is left out while its gate is off (canUse). */

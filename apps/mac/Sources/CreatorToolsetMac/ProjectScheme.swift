@@ -6,6 +6,9 @@ import WebKit
 // through ProjectStore, and the file name must be an exact key of `types`. Files are read on a background queue in
 // 1 MB pieces; a stop from WebKit ends the read, and nothing is sent to WebKit after it.
 //
+// `ctlocal://media/<base64url of an absolute path>` serves an edit's original video and sound files the same way, only
+// from the folders the user granted in this app's own open panel (MediaFiles.swift decides).
+//
 // Every answer to WebKit is made on the main thread, with nothing held while waiting for it. WebKit starts and stops
 // tasks on the main thread, and an answer made from another thread waits for the main thread inside WebKit. Until
 // 0.13.1 the answers were made from the reading thread under a lock that start and stop also took: one request
@@ -27,12 +30,14 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
     private static let chunk: Int64 = 1 << 20
 
     private let root: @MainActor () -> URL
+    private let granted: @MainActor () -> [String]
     /// Tasks still being answered. Holding them keeps their ids unique until they end; `stop` removes one. Read and
     /// written on the main thread only.
     private var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
 
-    init(root: @escaping @MainActor () -> URL) {
+    init(root: @escaping @MainActor () -> URL, granted: @escaping @MainActor () -> [String] = { MediaFiles.granted }) {
         self.root = root
+        self.granted = granted
         super.init()
     }
 
@@ -67,10 +72,10 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         guard let url = request.url else { return urlSchemeTask.didFailWithError(CocoaError(.fileReadUnknown)) }
         let task = urlSchemeTask
         live[ObjectIdentifier(task)] = task
-        let root = MainActor.assumeIsolated { self.root() }
+        let (root, granted) = MainActor.assumeIsolated { (self.root(), self.granted()) }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
-                       root: root, task: task)
+                       root: root, granted: granted, task: task)
         }
     }
 
@@ -78,13 +83,24 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         live[ObjectIdentifier(urlSchemeTask)] = nil
     }
 
-    private func serve(_ url: URL, method: String?, range: String?, root: URL, task: WKURLSchemeTask) {
+    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], task: WKURLSchemeTask) {
         guard method == "GET" else { return reply(task, url, 405, ["Allow": "GET"]) }
+        if url.host == MediaFiles.host {
+            guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
+            switch MediaFiles.gate(path, granted: granted) {
+            case .status(let status): return reply(task, url, status)
+            case .file(let real, let type): return stream(URL(fileURLWithPath: real), type: type, url, range: range, task: task)
+            }
+        }
         let name = String(url.path.dropFirst())
         guard let type = Self.types[name], let project = ProjectStore.project(id: url.host ?? "", root: root) else {
             return reply(task, url, 404)
         }
-        let file = project.folder.appendingPathComponent(name)
+        stream(project.folder.appendingPathComponent(name), type: type, url, range: range, task: task)
+    }
+
+    /// One file as the answer to `url`: all of it, or the one range asked for, in 1 MB pieces.
+    private func stream(_ file: URL, type: String, _ url: URL, range: String?, task: WKURLSchemeTask) {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
               let size = (attributes[.size] as? NSNumber)?.int64Value,
               let handle = try? FileHandle(forReadingFrom: file) else {
@@ -94,7 +110,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
 
         var start: Int64 = 0, end = size - 1, status = 200
         var headers = ["Content-Type": type, "Accept-Ranges": "bytes"]
-        if name.hasSuffix(".json") { headers["Cache-Control"] = "no-store" }
+        if type == "application/json" { headers["Cache-Control"] = "no-store" }
         if let range {
             guard let r = Self.byteRange(header: range, size: size) else {
                 return reply(task, url, 416, ["Content-Range": "bytes */\(size)"])

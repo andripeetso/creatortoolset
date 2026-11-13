@@ -97,6 +97,7 @@ import { ReviewActionButtons, ReviewPanelSlots, type ReviewBaseContext, type Rev
 import ReviewEdits, { REVIEW_TIMELINE_ID } from "@/components/ReviewEdits";
 import { ReviewSlotBridge } from "@/lib/review-slots";
 import { mutedAt, usePlanFollow } from "@/lib/review-play";
+import { resumeSound, useEditSound } from "@/lib/synced-sound";
 import { PlanOverlay } from "@/components/PlanOverlay";
 import { payloadError } from "@contracts/review-payload";
 import { useMe } from "@/lib/auth";
@@ -311,6 +312,8 @@ function Review({
   // a plug-in's preview (ReviewPlayPlan, lib/review-play.ts): the player skips, holds and follows it while it plays
   const plan = bridge.plan();
   const { holding, endHold } = usePlanFollow(video, plan, time, playing);
+  // the timeline's edits with their sound from the originals (the plan's `sound`): the video plays muted under it
+  const editSound = useEditSound(video, plan, holding);
   const pf = time * fps;
   const frameNow = plan?.frames.find((r) => pf >= r.from && pf < r.to);
   const lookNow = plan?.looks?.find((r) => pf >= r.from && pf < r.to);
@@ -348,6 +351,7 @@ function Review({
   }, [shuttle]);
   const toggle = () => {
     endHold();
+    resumeSound(); // sound made outside a click starts only after one
     const el = video.current;
     if (!el || version.status !== "ready") return;
     if (shuttle) {
@@ -861,7 +865,7 @@ function Review({
                   className="h-full w-full"
                   playsInline
                   preload="auto"
-                  muted={muted || voiceLive || mutedAt(plan, time)}
+                  muted={muted || voiceLive || editSound.live || mutedAt(plan, time)}
                   style={frameNow || lookNow ? {
                     ...(frameNow && {
                       transform: `scale(${1 / frameNow.box.k}) translate(${-frameNow.box.x * 100}%, ${-frameNow.box.y * 100}%)`,
@@ -1003,7 +1007,7 @@ function Review({
               video={video}
               stems={version.stems}
               url={(f) => api.stem(version, f)}
-              muted={muted}
+              muted={muted || editSound.live}
               onLive={setVoiceLive}
               save={version.edit ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
                 () => "Kept for this edit: the AI Editor cuts it again with this voice, back here as the next version.") : undefined}

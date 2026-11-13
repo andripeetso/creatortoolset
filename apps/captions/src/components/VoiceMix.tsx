@@ -3,93 +3,7 @@ import { AudioLines, Loader2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import type { StemSet } from "@/lib/review";
-
-/** The version's sound parts on the video's clock (Web Audio): each part a
- *  buffer through its own gain, restarted at the video's time on play, seek,
- *  a stall or a speed change, and when it drifts more than DRIFT_S. */
-const DRIFT_S = 0.08;
-const EVENTS = ["play", "playing", "pause", "waiting", "seeked", "ratechange", "ended"] as const;
-
-class Engine {
-  ctx = new AudioContext();
-  master = this.ctx.createGain();
-  parts = new Map<string, { buf: AudioBuffer; gain: GainNode }>();
-  playing: AudioBufferSourceNode[] = [];
-  from = 0;
-  t0 = 0;
-  rate = 1;
-  timer = 0;
-  /** Play, pause, a seek, a stall, a speed change: restart only when out of step. */
-  follow = () => {
-    if (this.el.paused || this.el.ended || this.el.readyState < 3) this.stop();
-    else if (!this.playing.length || this.rate !== this.el.playbackRate || Math.abs(this.drift()) > DRIFT_S) this.start();
-  };
-
-  private el: HTMLVideoElement;
-
-  constructor(el: HTMLVideoElement) {
-    this.el = el;
-    this.master.connect(this.ctx.destination);
-    void this.ctx.resume();   // made in a click: browsers let sound start from a gesture
-  }
-
-  async load(files: string[], url: (f: string) => string) {
-    await Promise.all(files.map(async (f) => {
-      const res = await fetch(url(f));
-      if (!res.ok) throw new Error(`${f} (${res.status})`);
-      const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());
-      const gain = this.ctx.createGain();
-      gain.connect(this.master);
-      this.parts.set(f, { buf, gain });
-    }));
-  }
-
-  run() {
-    for (const e of EVENTS) this.el.addEventListener(e, this.follow);
-    this.timer = window.setInterval(this.follow, 250);
-    this.follow();
-  }
-
-  // what's heard now left the graph outputLatency ago (Bluetooth: ~0.2 s), so the parts run that far ahead
-  latency = () => this.ctx.outputLatency || this.ctx.baseLatency || 0;
-  drift = () => this.from + (this.ctx.currentTime - this.t0) * this.rate - this.el.currentTime - this.latency();
-
-  start() {
-    this.stop();
-    void this.ctx.resume();
-    this.rate = this.el.playbackRate;
-    this.from = this.el.currentTime + this.latency();
-    this.t0 = this.ctx.currentTime;
-    for (const { buf, gain } of this.parts.values()) {
-      if (this.from >= buf.duration) continue;
-      const s = this.ctx.createBufferSource();
-      s.buffer = buf;
-      s.playbackRate.value = this.rate;
-      s.connect(gain);
-      s.start(0, this.from);
-      this.playing.push(s);
-    }
-  }
-
-  stop() {
-    for (const s of this.playing) {
-      s.stop();
-      s.disconnect();
-    }
-    this.playing = [];
-  }
-
-  level(file: string, v: number) {
-    this.parts.get(file)?.gain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.015);
-  }
-
-  close() {
-    window.clearInterval(this.timer);
-    for (const e of EVENTS) this.el.removeEventListener(e, this.follow);
-    this.stop();
-    void this.ctx.close();
-  }
-}
+import { SyncedSound } from "@/lib/synced-sound";
 
 /**
  * Review's voice controls: the edit's enhancer, and per recording how much of it
@@ -119,11 +33,11 @@ export function VoiceMix({ video, stems: given, url, muted, onLive, save }: {
   const [mix, setMix] = useState<Record<string, number>>(() => Object.fromEntries(stems.groups.map((g) => [g.key, g.mix || 1])));
   const [state, setState] = useState<"off" | "loading" | "live">("off");
   const [note, setNote] = useState("");
-  const engine = useRef<Engine | null>(null);
+  const engine = useRef<SyncedSound | null>(null);
   const files = useMemo(() => ["rest.m4a", ...stems.groups.flatMap((g) => ["original", ...stems.fx].map((f) => `${g.key}.${f}.m4a`))], [stems]);
   const live = useRef({ mix, voice, muted, onLive });
 
-  const levels = useCallback((e: Engine) => {
+  const levels = useCallback((e: SyncedSound) => {
     const { mix: m, voice: fx, muted: off } = live.current;
     e.master.gain.setTargetAtTime(off ? 0 : 1, e.ctx.currentTime, 0.015);
     for (const g of stems.groups) {
@@ -147,11 +61,12 @@ export function VoiceMix({ video, stems: given, url, muted, onLive, save }: {
   // the first touch loads the parts (in the click: browsers only start sound from a gesture)
   const start = () => {
     if (engine.current || !video.current) return;
-    const e = new Engine(video.current);
+    const e = new SyncedSound(video.current);
     engine.current = e;
     setState("loading");
     setNote("");
-    e.load(files, url).then(
+    // each part the length of the cut, laid from its start on the video's own time
+    e.load(files.map((file) => ({ file, at: 0, offset: 0, dur: Infinity })), url).then(
       () => {
         if (engine.current !== e) return;
         levels(e);

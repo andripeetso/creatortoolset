@@ -302,6 +302,38 @@ describe("ReviewEdits panel", () => {
     expect(added).toMatchObject({ src: "/clips/7" });
   });
 
+  it("in the Mac app, a stretched voice plays its words from the original recording once its folder is allowed", async () => {
+    const voiced: TimelineView = { ...view, tracks: [
+      view.tracks[0],
+      { id: "A1", name: "A1", items: [{ key: "A1:0", track: "A1", rec: 0, len: 200, label: "Voice", src: "vo", ins: 2 }] },
+    ] };
+    let granted: string[] = [];
+    const post = vi.fn(async (b: { ask?: string; list?: boolean }) => {
+      if (b.ask) granted = [b.ask];
+      return { granted };
+    });
+    (window as unknown as { webkit: object }).webkit = { messageHandlers: { mediaAccess: { postMessage: post } } };
+    document.documentElement.dataset.macLocalFiles = "3";
+    try {
+      const sources = vi.fn(async () => ({ vo: "/Volumes/Shoot/VO/take 1.wav" }));
+      const longer = { id: "c1", data: { edits: [{ key: "A1:0", label: "Voice", tail: 25 }, { key: "V1:100", label: "Shot two", tail: 25 }] } };
+      const { bridge } = await mount([longer], undefined, { timeline: async () => voiced }, { sources });
+      expect(sources).toHaveBeenCalledWith(edit, expect.any(AbortSignal));
+      // not allowed yet: the cut plays as before, and the timeline offers the originals
+      expect((bridge.plan() as ReviewPlayPlan).sound).toBeUndefined();
+      await act(async () => button("Play edits from the originals")!.click());
+      expect(post).toHaveBeenCalledWith({ ask: "/Volumes/Shoot/VO" });
+      // allowed: the voice plays from its recording, 25 frames longer, into the hold the longer shot makes
+      expect((bridge.plan() as ReviewPlayPlan).sound).toEqual([
+        { src: `ctlocal://media/${btoa("/Volumes/Shoot/VO/take 1.wav").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")}`, at: 0, frames: 225, offset: 2 },
+      ]);
+      expect(button("Play edits from the originals")).toBeUndefined();
+    } finally {
+      delete (window as unknown as { webkit?: object }).webkit;
+      delete document.documentElement.dataset.macLocalFiles;
+    }
+  });
+
   it("unmounting clears the plan the player follows", async () => {
     const { bridge } = await mount([{ id: "c1", data: { edits: [{ key: "V1:0", label: "Shot one", remove: true }] } }]);
     expect(bridge.plan()).not.toBeNull();

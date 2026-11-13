@@ -6,6 +6,7 @@ import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
 import { loudest, peaks } from "@/lib/waveform";
+import { allGranted, askMediaFolder, commonFolder, listMediaFolders, localMediaFiles, localMediaUrl } from "@/lib/local-files";
 import {
   cameraIn,
   clampCrop,
@@ -13,6 +14,8 @@ import {
   framingToCrop,
   PLACEHOLDER_LOOKS,
   playPlan,
+  renderPieces,
+  voicePieces,
   type PlayCard,
   splitView,
   stackEdits,
@@ -111,6 +114,27 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   // the colour panel's video: read on each use, so a remounted player element is the one it grades
   const video = useMemo(() => ({ get current() { return slots.current.player.video(); } }), []);
   useEffect(() => () => camAsk.current?.abort(), []);
+  // the edit's recordings on this computer (source key to path, from the plug-in, managers only) and whether the Mac
+  // app lets the page play them: then the timeline's edits play with their real sound (a voice pulled out plays its words)
+  const [originals, setOriginals] = useState<{ paths: Record<string, string>; folder: string; on: boolean } | null>(null);
+  useEffect(() => {
+    const sources = hooks.sources;
+    if (!manage || !edit || !sources || !localMediaFiles()) return;
+    const ctl = new AbortController();
+    sources(edit, ctl.signal).then(async (paths) => {
+      const list = Object.values(paths);
+      if (!list.length || ctl.signal.aborted) return;
+      const on = allGranted(list, await listMediaFolders());
+      if (!ctl.signal.aborted) setOriginals({ paths, folder: commonFolder(list), on });
+    }, () => {});
+    return () => ctl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per edit
+  }, [edit?.project, edit?.draft, manage]);
+  const allowOriginals = async () => {
+    if (!originals) return;
+    const granted = await askMediaFolder(originals.folder);
+    setOriginals({ ...originals, on: allGranted(Object.values(originals.paths), granted) });
+  };
   const { edits: handEdits, hole } = hist.now;
   const { edits: sentEdits, holes: sentHoles } = sentOf(sent);
   const planEdits = stackEdits([sentEdits, handEdits]);
@@ -211,6 +235,13 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   const plan = view && previewOn
     ? playPlan(splitView(view, playEdits), playEdits, [...sentHoles, ...(hole ? [{ ...hole, text: text.trim() || hole.text }] : [])])
     : null;
+  // played from the originals: each voice clip from its recording, the rest of the sound (music, effects) from the cut's
+  // own stem between the skips and holds; only while there are edits (else the cut plays as rendered, its voice controls on)
+  const sound = view && plan && originals?.on && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
+    ...voicePieces(splitView(view, playEdits), playEdits, plan)
+      .filter((p) => originals.paths[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.paths[p.src]) })),
+    ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
+  ] : null;
   const planned = !!plan && (plan.skips.length + plan.mutes.length + plan.holds.length + plan.cards.length + plan.frames.length + plan.grades.length > 0);
   // the shot being graded plays the panel's grade over its whole span while the panel is open, in place of the shot's
   // planned grades (while the reframe window is open the picture takes no look)
@@ -229,6 +260,7 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       ...grades.map((g, i) => ({ from: g.from, to: g.to, filter: `url(#${gradeId(i)})` })),
       ...(shotLook ? [{ from: shotLook.from, to: shotLook.to, filter: `url(#${LIVE_GRADE})` }] : []),
     ],
+    ...(sound ? { sound } : {}),
   } : null;
   const playJson = JSON.stringify(play);
   // a new plan goes to the player; the page compares it with the last one, so a same plan costs nothing
@@ -297,7 +329,15 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       {grades.map((g, i) => <GradeFilter key={gradeId(i)} id={gradeId(i)} from={g.was} to={g.grade} />)}
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] text-zinc-500">{manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}</div>
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+          {manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
+          {originals && !originals.on && (
+            <button onClick={() => void allowOriginals()} className="rounded px-1.5 py-0.5 text-violet-300 hover:bg-zinc-800"
+              title={`Your edits play with the real sound from the original recordings in ${originals.folder}`}>
+              Play edits from the originals
+            </button>
+          )}
+        </div>
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}
             title="Play your timeline edits and placeholders on this cut (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"

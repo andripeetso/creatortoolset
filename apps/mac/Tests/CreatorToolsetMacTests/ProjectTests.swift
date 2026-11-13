@@ -10,9 +10,12 @@ private final class WrittenTask: NSObject, WKURLSchemeTask {
     private(set) var calls: [String] = []
     private(set) var offMain = 0
     private(set) var bytes = 0
+    private(set) var status = 0
 
-    init(_ url: URL, _ done: XCTestExpectation) {
-        request = URLRequest(url: url)
+    init(_ url: URL, _ done: XCTestExpectation, range: String? = nil) {
+        var request = URLRequest(url: url)
+        request.setValue(range, forHTTPHeaderField: "Range")
+        self.request = request
         self.done = done
     }
 
@@ -20,7 +23,7 @@ private final class WrittenTask: NSObject, WKURLSchemeTask {
         calls.append(what)
         if !Thread.isMainThread { offMain += 1 }
     }
-    func didReceive(_ response: URLResponse) { note("response") }
+    func didReceive(_ response: URLResponse) { note("response"); status = (response as? HTTPURLResponse)?.statusCode ?? 0 }
     func didReceive(_ data: Data) { note("data"); bytes += data.count }
     func didFinish() { note("finish"); done.fulfill() }
     func didFailWithError(_ error: Error) { note("fail"); done.fulfill() }
@@ -136,5 +139,27 @@ final class ProjectTests: XCTestCase {
         scheme.webView(web, stop: stopped)
         wait(for: [unwanted], timeout: 0.5)
         XCTAssertEqual(stopped.calls, [])
+    }
+
+    /// ctlocal://media/: a granted file answers a range like a recording does; an ungranted one gets 403 and no bytes.
+    @MainActor
+    func testMediaHostServesOnlyGrantedFiles() throws {
+        let footage = root.appendingPathComponent("Footage", isDirectory: true)
+        try FileManager.default.createDirectory(at: footage, withIntermediateDirectories: true)
+        try Data(count: 1000).write(to: footage.appendingPathComponent("A001.MOV"))
+        try Data(count: 1000).write(to: root.appendingPathComponent("B001.mov"))
+        let folder = root!, granted = [footage.path]
+        let scheme = ProjectScheme(root: { folder }, granted: { granted })
+        let web = WKWebView(frame: .zero)
+
+        let ok = WrittenTask(MediaFiles.url(path: footage.appendingPathComponent("A001.MOV").path), expectation(description: "ok"), range: "bytes=100-199")
+        let refused = WrittenTask(MediaFiles.url(path: root.appendingPathComponent("B001.mov").path), expectation(description: "refused"))
+        scheme.webView(web, start: ok)
+        scheme.webView(web, start: refused)
+        wait(for: [ok.done, refused.done], timeout: 10)
+        XCTAssertEqual(ok.status, 206)
+        XCTAssertEqual(ok.bytes, 100)
+        XCTAssertEqual(refused.status, 403)
+        XCTAssertEqual(refused.calls, ["response", "finish"])
     }
 }
