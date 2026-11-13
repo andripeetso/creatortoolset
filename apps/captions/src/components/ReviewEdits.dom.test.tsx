@@ -337,6 +337,12 @@ describe("ReviewEdits panel", () => {
         { src: cam, at: 100, frames: 125, offset: 6, x: -0.125, y: -0.125, s: 1.25 },
       ]);
       expect(button("Play edits from the originals")).toBeUndefined();
+      // the voice clip's waveform comes from its recording (the timeline draws its pulled-out edge from it)
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(host.querySelector('[data-testid="lanes"]')!.textContent).toContain("A1:0");
     } finally {
       vi.unstubAllGlobals();
       delete (window as unknown as { webkit?: object }).webkit;

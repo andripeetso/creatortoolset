@@ -155,6 +155,7 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
   // the audio lanes' waveforms: the voice on A1 and the rest of the sound on the others (the
   // version's stems), else the video's own sound on every one (an imported timeline)
   const [waves, setWaves] = useState<Record<string, Float32Array> | null>(null);
+  const [clipWaves, setClipWaves] = useState<Record<string, Float32Array> | null>(null);
   const stems = version.stems;
   useEffect(() => {
     setWaves(null);
@@ -256,6 +257,31 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
       const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
       return { src: localMediaUrl(originals!.found[src]), at, frames, offset, x: box.x, y: box.y, s: box.s };
     }) : null;
+  // each sound clip's own waveform from its file, once the files are found: the timeline draws a clip and what its
+  // edges are pulled out to from it (`waves[item.key]`, the file from its first second), so a stretched edge shows the
+  // words that are really there. Sound files only: a camera file would be decoded whole for its sound.
+  const audioFile = (p: string) => /\.(wav|aif|aiff|m4a|mp3|flac|caf)$/i.test(p);
+  const waveFiles = originalsOn && originals ? Object.entries(originals.found).filter(([, p]) => audioFile(p)) : [];
+  const waveKey = JSON.stringify(waveFiles);
+  useEffect(() => {
+    if (!waveFiles.length || !view) return void setClipWaves(null);
+    let gone = false;
+    Promise.all(waveFiles.map(([src, p]) => peaks(localMediaUrl(p)).then((d): [string, Float32Array] => [src, d], () => null)))
+      .then((got) => {
+        if (gone) return;
+        const bySrc = Object.fromEntries(got.filter((g): g is [string, Float32Array] => !!g));
+        const out: Record<string, Float32Array> = {};
+        for (const t of view.tracks) {
+          if (t.id[0] !== "A") continue;
+          for (const it of t.items) if (it.src && bySrc[it.src]) out[it.key] = bySrc[it.src];
+        }
+        setClipWaves(Object.keys(out).length ? out : null);
+      });
+    return () => {
+      gone = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per set of found files
+  }, [waveKey, view]);
   const planned = !!plan && (plan.skips.length + plan.mutes.length + plan.holds.length + plan.cards.length + plan.frames.length + plan.grades.length > 0);
   // the shot being graded plays the panel's grade over its whole span while the panel is open, in place of the shot's
   // planned grades (while the reframe window is open the picture takes no look)
@@ -429,7 +455,7 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
         time={time}
         onSeek={(t) => slots.current.player.seek(t)}
         edits={planEdits}
-        waves={waves}
+        waves={clipWaves ? { ...waves, ...clipWaves } : waves}
         placeholders={[...sentHoles, ...(hole ? [hole] : [])]}
         selected={pin?.selected}
         marked={pin?.marked}
