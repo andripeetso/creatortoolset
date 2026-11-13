@@ -25,7 +25,7 @@ final class PanelShotsTests: XCTestCase {
         let shots: [(String, AnyView)] = [
             ("empty", AnyView(panel([], []))),
             ("running", AnyView(panel([edit], [reply]))),
-            ("stopped", AnyView(panel([], [stopped]))),
+            ("stopped", AnyView(panel([edit], [stopped]))),
             ("recording", AnyView(panel([edit], [], recording: true, lit: true))),
         ]
         for (name, view) in shots {
