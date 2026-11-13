@@ -65,6 +65,18 @@ function SessionThumb({ s, className }: { s: SessionMeta; className: string }) {
   );
 }
 
+/**
+ * On a project that is being opened: a light runs along its lower edge, and only once the opening has taken a moment
+ * (one read from the server). A project that opens at once shows nothing.
+ */
+function OpeningLine() {
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden opacity-0 [animation:bar-fade_0.2s_0.4s_forwards]">
+      <span className="processing-progress-shimmer absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-violet-400 to-transparent" />
+    </span>
+  );
+}
+
 interface SessionHandlers {
   opening: string | null;
   renaming: string | null;
@@ -88,9 +100,6 @@ function ActionButtons({
   h: SessionHandlers;
   className?: string;
 }) {
-  if (h.opening === s.id) {
-    return <span className="text-[11px] text-violet-400">Opening…</span>;
-  }
   return (
     <div className={className}>
       {h.folders && <MoveToMenu state={h.folders} id={s.id} className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" />}
@@ -184,8 +193,10 @@ function SessionRow({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
     <div
       onClick={() => h.renaming !== s.id && h.open(s.id)}
       {...h.folders?.drag(s.id)}
-      className="group flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-2 transition-colors hover:border-violet-500/50 hover:bg-zinc-900"
+      aria-busy={h.opening === s.id || undefined}
+      className="group relative flex cursor-pointer items-center gap-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-2 transition-colors hover:border-violet-500/50 hover:bg-zinc-900 aria-busy:border-violet-500/50"
     >
+      {h.opening === s.id && <OpeningLine />}
       <SessionThumb s={s} className="h-10 w-[72px] shrink-0 rounded" />
       <div className="min-w-0 flex-1">
         <NameOrInput s={s} h={h} className="text-sm text-zinc-200" />
@@ -210,7 +221,8 @@ function SessionTile({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
     <div
       onClick={() => h.renaming !== s.id && h.open(s.id)}
       {...h.folders?.drag(s.id)}
-      className="group cursor-pointer overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-violet-500/50 hover:bg-zinc-900"
+      aria-busy={h.opening === s.id || undefined}
+      className="group cursor-pointer overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-violet-500/50 hover:bg-zinc-900 aria-busy:border-violet-500/50"
     >
       <div className="relative aspect-video w-full overflow-hidden bg-zinc-800">
         <SessionThumb
@@ -222,16 +234,7 @@ function SessionTile({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
           h={h}
           className="absolute right-1 top-1 flex rounded-md bg-black/60 opacity-0 transition-opacity group-hover:opacity-100"
         />
-        {s.clipCount > 1 && (
-          <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-px text-[9px] font-medium text-zinc-300">
-            {s.clipCount} clips
-          </span>
-        )}
-        {h.opening === s.id && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-[11px] text-violet-300">
-            Opening…
-          </div>
-        )}
+        {h.opening === s.id && <OpeningLine />}
       </div>
       <div className="px-2 py-1.5">
         <NameOrInput
@@ -543,27 +546,6 @@ export function ImportScreen() {
           </div>
         </details>
       )}
-
-      <div className="mb-2 mt-10 grid w-[560px] max-w-[90%] grid-cols-3 gap-3 text-center text-xs text-zinc-500">
-        <div className="rounded-lg bg-zinc-900/60 px-3 py-3">
-          <span className="mb-1 block text-sm font-medium text-zinc-300">
-            1 · Transcribe
-          </span>
-          Whisper AI runs 100% on your device
-        </div>
-        <div className="rounded-lg bg-zinc-900/60 px-3 py-3">
-          <span className="mb-1 block text-sm font-medium text-zinc-300">
-            2 · Caption
-          </span>
-          Click the transcript to jump around
-        </div>
-        <div className="rounded-lg bg-zinc-900/60 px-3 py-3">
-          <span className="mb-1 block text-sm font-medium text-zinc-300">
-            3 · Export
-          </span>
-          ProRes 4444 / WebM with real alpha
-        </div>
-      </div>
 
       {/* all-projects overlay: over the top bar too (it is sticky), so its own Back, New folder and view switch can be pressed */}
       {showAll && (

@@ -16,7 +16,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { isEditorBusy, playerRef, useStudio } from "@/lib/store";
+import { canSplitPosAt, isEditorBusy, playerRef, useStudio } from "@/lib/store";
 import { useShareTheme } from "@/components/ShareTheme";
 import { fmtTimecode } from "@/lib/ass";
 import { useTimeAxis } from "@/lib/use-time-axis";
@@ -57,6 +57,16 @@ type Drag =
 export function Timeline() {
   const duration = useStudio((s) => s.duration);
   const peaks = useStudio((s) => s.peaks);
+  const ensureAudio = useStudio((s) => s.ensureAudio);
+  const videoUrl = useStudio((s) => s.videoUrl);
+  const activeClipId = useStudio((s) => s.activeClipId);
+  // The clip's sound picture is asked for here, by the timeline that draws it: a project opened from this browser's
+  // stored copy has none, and neither has one saved without it. Not where a project is loaded: the last one is loaded at
+  // every start of the app, on any page, and a phone's page draws no timeline. Asked again for a new clip or a new
+  // address of this one; a clip known to have no sound (an empty picture) is not asked again.
+  useEffect(() => {
+    if (!peaks) void ensureAudio();
+  }, [peaks, videoUrl, activeClipId, ensureAudio]);
   const cues = useStudio((s) => s.cues);
   const currentTime = useStudio((s) => s.currentTime);
   const playing = useStudio((s) => s.playing);
@@ -133,12 +143,19 @@ export function Timeline() {
 
   const width = Math.max(1, Math.ceil(duration * pxPerSec));
   const lanesCount = showLayers ? textLanes.lanes : 0;
+  // A lane is there only when it holds something. The caption sections' row comes with the first split, the text
+  // lanes with the first text.
+  const posRowH = showLayers && posSegments.length > 0 ? POS_H + PAD : 0;
   /** Extra height of the layers block (position row + text lanes). */
-  const layersExtra = showLayers
-    ? POS_H + PAD + (lanesCount > 0 ? lanesCount * POS_H + PAD : 0)
-    : 0;
-  const canvasH = RULER_H + WAVE_H + CUE_H + PAD * 2 + layersExtra;
+  const layersExtra = posRowH + (lanesCount > 0 ? lanesCount * POS_H + PAD : 0);
+  // The sound lane: kept while the clip's sound picture is still to come (read when the project opens, or made with the
+  // transcript), so the timeline does not grow under the player when it arrives; none for a clip that has no sound to
+  // show (an empty picture, lib/store.ts ensureAudio).
+  const waveH = !peaks || peaks.length > 0 ? WAVE_H + PAD : 0;
+  const canvasH = RULER_H + PAD + layersExtra + waveH + CUE_H;
   const selectedSeg = posSegments.find((s) => s.id === selectedPosId) ?? null;
+  // a project opens at 0:00, where nothing can be split: the button says so instead of doing nothing
+  const canSplit = !editorBusy && canSplitPosAt(posSegments, duration, currentTime);
   const selectedText = texts.find((t) => t.id === selectedTextId) ?? null;
 
   // reveal the layers when clips appear from elsewhere (e.g. loading a project)
@@ -150,7 +167,8 @@ export function Timeline() {
   }, [posSegments.length, texts.length]);
 
   const posRowTop = RULER_H + PAD;
-  const textTop = posRowTop + POS_H + PAD;
+  const textTop = posRowTop + posRowH;
+  const cueTop = posRowTop + layersExtra + waveH;
 
   const { dark } = useShareTheme();
   const draw = useCallback(() => {
@@ -212,51 +230,33 @@ export function Timeline() {
     // caption position layer (right under the ruler when open)
     if (showLayers) {
       ctx.font = "10px Inter, system-ui, sans-serif";
-      if (posSegments.length === 0) {
-        ctx.fillStyle = k("#1c1c22", "#f0f0f2");
+      for (const s of posSegments) {
+        const x = t2x(s.start);
+        const w = Math.max(2, t2x(s.end) - x);
+        const custom = s.x != null;
+        const active = currentTime >= s.start && currentTime < s.end;
+        ctx.fillStyle = custom
+          ? active
+            ? vc(600)
+            : vc(700)
+          : active
+            ? k("#4b4b55", "#c4c4cc")
+            : k("#33333c", "#e4e4e7");
         ctx.beginPath();
-        ctx.roundRect(1, posRowTop, W - 2, POS_H - 4, 3);
+        ctx.roundRect(x + 1, posRowTop, w - 2, POS_H - 4, 3);
         ctx.fill();
-        ctx.setLineDash([4, 3]);
-        ctx.strokeStyle = k("#3f3f46", "#d4d4d8");
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = "#71717a";
-        ctx.fillText(
-          "captions — split to move them for a section",
-          6,
-          posRowTop + (POS_H - 4) / 2,
-          W - 12
-        );
-      } else {
-        for (const s of posSegments) {
-          const x = t2x(s.start);
-          const w = Math.max(2, t2x(s.end) - x);
-          const custom = s.x != null;
-          const active = currentTime >= s.start && currentTime < s.end;
-          ctx.fillStyle = custom
-            ? active
-              ? vc(600)
-              : vc(700)
-            : active
-              ? k("#4b4b55", "#c4c4cc")
-              : k("#33333c", "#e4e4e7");
+        if (s.id === selectedPosId) {
+          ctx.strokeStyle = k("#f4f4f5", "#18181b");
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.roundRect(x + 1, posRowTop, w - 2, POS_H - 4, 3);
-          ctx.fill();
-          if (s.id === selectedPosId) {
-            ctx.strokeStyle = k("#f4f4f5", "#18181b");
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.roundRect(x + 1.5, posRowTop + 0.75, w - 3, POS_H - 5.5, 3);
-            ctx.stroke();
-            ctx.lineWidth = 1;
-          }
-          if (w > 44) {
-            ctx.fillStyle = custom ? "#ffffff" : k("#a1a1aa", "#52525b");
-            const label = custom ? "captions · moved" : "captions";
-            ctx.fillText(label, x + 6, posRowTop + (POS_H - 4) / 2, w - 12);
-          }
+          ctx.roundRect(x + 1.5, posRowTop + 0.75, w - 3, POS_H - 5.5, 3);
+          ctx.stroke();
+          ctx.lineWidth = 1;
+        }
+        if (w > 44) {
+          ctx.fillStyle = custom ? "#ffffff" : k("#a1a1aa", "#52525b");
+          const label = custom ? "captions · moved" : "captions";
+          ctx.fillText(label, x + 6, posRowTop + (POS_H - 4) / 2, w - 12);
         }
       }
 
@@ -298,13 +298,12 @@ export function Timeline() {
         const h = Math.max(1, v * WAVE_H * 0.92);
         ctx.fillRect(x, mid - h / 2, 1, h);
       }
-    } else {
+    } else if (waveH > 0) {
       ctx.fillStyle = k("#27272a", "#e4e4e7");
       ctx.fillRect(0, waveTop + WAVE_H / 2 - 1, W, 2);
     }
 
     // cue blocks (dimmed while locked by the cadence pass)
-    const cueTop = waveTop + WAVE_H + PAD;
     ctx.font = "10px Inter, system-ui, sans-serif";
     if (editorBusy) ctx.globalAlpha = 0.4;
     for (const c of cues) {
@@ -352,7 +351,7 @@ export function Timeline() {
     ctx.lineTo(px, 8);
     ctx.closePath();
     ctx.fill();
-  }, [duration, peaks, cues, currentTime, pxPerSec, width, canvasH, showLayers, layersExtra, posSegments, selectedPosId, texts, textLanes, selectedTextId, posRowTop, textTop, fps, editorBusy, rangeSel, dark]);
+  }, [duration, peaks, cues, currentTime, pxPerSec, width, canvasH, showLayers, layersExtra, posSegments, selectedPosId, texts, textLanes, selectedTextId, posRowTop, textTop, cueTop, waveH, fps, editorBusy, rangeSel, dark]);
 
   useEffect(() => {
     draw();
@@ -605,7 +604,6 @@ export function Timeline() {
 
   /** Cue edge under the pointer (for dragging caption in/out points). */
   const edgeAt = (x: number, y: number): { id: number; side: "start" | "end" } | null => {
-    const cueTop = RULER_H + PAD + layersExtra + WAVE_H + PAD;
     if (y < cueTop || y > cueTop + CUE_H) return null;
     let best: { id: number; side: "start" | "end"; d: number } | null = null;
     for (const c of cues) {
@@ -819,17 +817,19 @@ export function Timeline() {
         >
           <UnfoldHorizontal className="h-3.5 w-3.5" /> Fill gaps
         </button>
-        <button
-          onClick={() => setShowLayers((v) => !v)}
-          title="Video layers — caption positioning per section + text on screen"
-          className={`ml-1.5 flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] ${
-            showLayers
-              ? "border-violet-500/60 bg-violet-600/20 text-violet-200"
-              : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-          }`}
-        >
-          <Layers className="h-3.5 w-3.5" /> Layers
-        </button>
+        {(posSegments.length > 0 || texts.length > 0) && (
+          <button
+            onClick={() => setShowLayers((v) => !v)}
+            title="Show or hide the layers: caption sections and text on screen"
+            className={`ml-1.5 flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] ${
+              showLayers
+                ? "border-violet-500/60 bg-violet-600/20 text-violet-200"
+                : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+            }`}
+          >
+            <Layers className="h-3.5 w-3.5" /> Layers
+          </button>
+        )}
         <button
           onClick={() => {
             setShowLayers(true);
@@ -841,16 +841,21 @@ export function Timeline() {
         >
           <Type className="h-3.5 w-3.5" /> Text
         </button>
-        {showLayers && (
-          <button
-            onClick={() => splitPosAt(currentTime)}
-            disabled={duration <= 0}
-            title="Split the caption layer at the playhead"
-            className="ml-1.5 flex items-center gap-1.5 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
-          >
-            <Scissors className="h-3.5 w-3.5" /> Split
-          </button>
-        )}
+        <button
+          onClick={() => {
+            setShowLayers(true);
+            splitPosAt(currentTime);
+          }}
+          disabled={!canSplit}
+          title={
+            canSplit
+              ? "Split the captions at the playhead: each section can have its own caption position"
+              : "Move the playhead to where the captions should split (not the very start or end)"
+          }
+          className="ml-1.5 flex items-center gap-1.5 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+        >
+          <Scissors className="h-3.5 w-3.5" /> Split
+        </button>
         {showLayers && posSegments.length > 0 && (
           <button
             onClick={snapPosToCues}
