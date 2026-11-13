@@ -558,6 +558,10 @@ export function Inspector({
               </>
             )}
           </Section>
+          <Section title="Finish">
+            <Slide label="Grain" value={page.grain ?? 0} min={0} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, grain: n || undefined })} onCommit={(n) => onPage({ ...page, grain: n || undefined })} />
+            <Slide label="Vignette" value={page.vignette ?? 0} min={-100} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, vignette: n || undefined })} onCommit={(n) => onPage({ ...page, vignette: n || undefined })} />
+          </Section>
         </>
       )}
 
@@ -625,6 +629,7 @@ export function Inspector({
                 </Tap>
               </div>
             )}
+            {every((l) => l.type !== "image") && slide("Blur", same((l) => (l.type !== "image" ? (l.blur ?? 0) : undefined)), (n) => (l) => (l.type !== "image" ? { ...l, blur: n || undefined } : l), 0, 100)}
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <PickOne
