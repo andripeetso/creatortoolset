@@ -1019,7 +1019,7 @@ function Review({
         </div>
 
         {/* ---------- comments ---------- */}
-        <aside className="flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l chat:lg:w-[300px]">
+        <aside className="flex min-h-0 flex-1 flex-col border-zinc-900 lg:w-[380px] lg:flex-none lg:border-l">
           <div className={cn("flex items-center gap-1 border-b border-zinc-900 px-3 py-2 text-xs")}>
             {(["all", "open", "done"] as const).map((f) => (
               <button
@@ -1321,7 +1321,7 @@ function Header({
 
   return (
     // the app's bar (AppBar) for the owner: logo, Review › this video; a reviewer on a link gets only the way back
-    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4 chat:h-auto chat:flex-wrap">
+    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4">
       {manage ? (
         <>
           <HomeLink />

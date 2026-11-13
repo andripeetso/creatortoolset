@@ -58,14 +58,11 @@ export function AppBar({
         // From tablet width up it stays put while the page scrolls under it: that, and its colour, are in index.css
         // ([data-appbar]) at zero specificity, so a page's own classes here win
         "flex min-h-14 w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2 sm:h-14 sm:flex-nowrap sm:gap-x-3 sm:px-4",
-        // beside the chats (chat mode) the page has about half the window: its actions wrap under the title rather than
-        // running off the edge
-        "chat:h-auto chat:flex-wrap",
         className,
       )}
     >
-      {/* in chat mode it stands at the top of the chats instead (index.css hides this one while they show) */}
-      {account && me && !isPhoneHub() && <ChatModeButton className="-mr-1" data-chat-toggle />}
+      {/* in chat mode it stands at the top of the chats instead, with the name and the account (index.css hides these while they show) */}
+      {account && me && !isPhoneHub() && <ChatModeButton className="-mr-1" />}
       <HomeLink onClick={onHome} />
       <HistoryArrows />
       {/* its own width (flex-auto), so the actions move to a second row before it gets squeezed */}
@@ -79,7 +76,7 @@ export function AppBar({
           </>
         )}
       </nav>
-      <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2 chat:shrink chat:flex-wrap">
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2">
         {children}
         {/* the pill sits on the account button's corner on a phone, so it never takes the bar's room (PlanLimitPill) */}
         {account && (

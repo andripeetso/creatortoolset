@@ -94,7 +94,7 @@ function ProjectSwitcher() {
       <button
         onClick={toggle}
         title="Switch project"
-        className="flex max-w-[36vw] items-center gap-1 rounded-md px-1.5 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+        className="flex max-w-[min(36vw,16rem)] items-center gap-1 rounded-md px-1.5 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
       >
         <span className="truncate">{busy ? "Opening…" : fileName}</span>
         <ChevronDown className="h-3 w-3 shrink-0" />

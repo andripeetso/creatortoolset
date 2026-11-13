@@ -1,0 +1,164 @@
+import { useState, type ReactNode } from "react";
+import { PanelLeft, PanelRight, PanelRightClose, SquarePen, X } from "lucide-react";
+import type { AssistantChat } from "@contracts/assistant";
+import { HomeLink } from "@/components/HomeLink";
+import { UserMenu } from "@/components/UserMenu";
+import { LIST_W, MIN_PAGE, previewChatWidth, useChatMode, type ChatLayout } from "@/lib/chat-mode";
+import { cn } from "@/lib/utils";
+import { ChatList } from "./ChatList";
+import { ChatModeButton } from "./ChatModeButton";
+
+const iconBtn = "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40";
+
+function NewChatButton({ onNew, disabled }: { onNew: () => void; disabled: boolean }) {
+  return (
+    <button type="button" className={iconBtn} onClick={onNew} disabled={disabled} aria-label="Start a new chat" title="New chat">
+      <SquarePen className="size-4" />
+    </button>
+  );
+}
+
+/**
+ * The left column of chat mode: the app's name (the way Home), every chat, the account. It stands beside the open chat
+ * while there is room; narrower, it opens over the chat from the list button (`onClose` then closes it again).
+ */
+export function ChatsAside({
+  chats,
+  onOpen,
+  onNew,
+  canNew,
+  reload,
+  onClose,
+}: {
+  chats: AssistantChat[] | null;
+  onOpen: (id: string) => Promise<unknown> | void;
+  onNew: () => Promise<unknown> | void;
+  /** Off while the open chat is still empty: it is the new chat. */
+  canNew: boolean;
+  reload: () => void;
+  onClose?: () => void;
+}) {
+  const pick = <A extends unknown[]>(fn: (...a: A) => Promise<unknown> | void) => (...a: A) => {
+    onClose?.();
+    return fn(...a);
+  };
+  return (
+    <>
+      {onClose && <div className="absolute inset-0 z-20 bg-black/40 motion-safe:animate-in motion-safe:fade-in" onClick={onClose} aria-hidden />}
+      <aside
+        aria-label="Chats"
+        style={{ width: LIST_W }}
+        className={cn(
+          "flex min-h-0 shrink-0 flex-col border-r bg-popover",
+          onClose && "absolute inset-y-0 left-0 z-20 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4 motion-safe:duration-200",
+        )}
+      >
+        {/* as high as the page's bar: the Mac app's window buttons sit at its start (index.css, data-chat-bar) */}
+        <header data-chat-bar className="flex h-14 shrink-0 items-center gap-1 pr-2 pl-3 select-none">
+          <ChatModeButton />
+          <HomeLink className="min-w-0 truncate" />
+          <span className="flex-1" />
+          <NewChatButton onNew={() => void pick(onNew)()} disabled={!canNew} />
+          {onClose && (
+            <button type="button" className={iconBtn} onClick={onClose} aria-label="Close the list" title="Close">
+              <X className="size-4" />
+            </button>
+          )}
+        </header>
+        <ChatList chats={chats} onOpen={pick(onOpen)} onNew={onNew} reload={reload} />
+        <footer className="flex h-12 shrink-0 items-center border-t px-3">
+          <UserMenu />
+        </footer>
+      </aside>
+    </>
+  );
+}
+
+/**
+ * The open chat's bar in chat mode: its name and whether it is working, then the one button (hide the page for only
+ * chats, or bring it back). Where the list has no room beside the chat, the buttons that live in its head move here.
+ */
+export function ChatHeader({
+  layout,
+  title,
+  dot,
+  onNew,
+  canNew,
+  onList,
+  children,
+}: {
+  layout: ChatLayout;
+  title: string;
+  dot: ReactNode;
+  onNew: () => void;
+  canNew: boolean;
+  /** Open the folded list over the chat. */
+  onList: () => void;
+  children?: ReactNode;
+}) {
+  const set = useChatMode((s) => s.set);
+  return (
+    <header {...(layout.list ? {} : { "data-chat-bar": "" })} className="flex h-14 shrink-0 items-center gap-1.5 border-b pr-3 pl-3 select-none">
+      {!layout.list && (
+        <>
+          <ChatModeButton />
+          <button type="button" className={iconBtn} onClick={onList} aria-label="Show the chats" title="Chats">
+            <PanelLeft className="size-4" />
+          </button>
+        </>
+      )}
+      <span className={cn("flex min-w-0 flex-1 items-center gap-2.5", layout.list && "pl-2")}>
+        {dot}
+        <h2 className="min-w-0 truncate text-sm font-semibold tracking-tight">{title}</h2>
+      </span>
+      {children}
+      {!layout.list && <NewChatButton onNew={onNew} disabled={!canNew} />}
+      <button
+        type="button"
+        className={iconBtn}
+        onClick={() => set({ page: layout.full })}
+        aria-pressed={!layout.full}
+        aria-label={layout.full ? "Show the page beside the chats" : "Hide the page: only chats"}
+        title={layout.full ? "Show the page" : "Only chats"}
+      >
+        {layout.full ? <PanelRight className="size-4" /> : <PanelRightClose className="size-4" />}
+      </button>
+    </header>
+  );
+}
+
+/**
+ * The chats' right edge: drag it to share the window between the chats and the page (the page follows as you drag).
+ * Dragged nearly to the window's right edge, the page is hidden; nearly to its left, chat mode ends. A double-click
+ * goes back to half and half.
+ */
+export function ChatEdge() {
+  const [drag, setDrag] = useState(false);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Share the window between the chats and the page"
+      title="Drag to resize · double-click for half and half"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDrag(true);
+      }}
+      onPointerMove={(e) => drag && previewChatWidth(e.clientX)}
+      onPointerUp={(e) => {
+        if (!drag) return;
+        setDrag(false);
+        const { set } = useChatMode.getState();
+        const win = document.documentElement.clientWidth || window.innerWidth;
+        if (e.clientX < 200) set({ on: false });
+        else if (e.clientX > win - MIN_PAGE / 2) set({ page: false });
+        else set({ w: previewChatWidth(e.clientX) });
+      }}
+      onDoubleClick={() => useChatMode.getState().set({ w: 0 })}
+      className="group absolute inset-y-0 right-0 z-10 w-2 cursor-col-resize touch-none"
+    >
+      <span className={cn("absolute inset-y-0 right-0 w-px transition-colors", drag ? "bg-[var(--tint)]" : "group-hover:bg-[var(--tint)]")} />
+    </div>
+  );
+}

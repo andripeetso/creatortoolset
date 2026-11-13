@@ -1,37 +1,57 @@
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 /**
- * Chat mode: the assistant fills the left of the window (its chats, and the one open), the page you're on stands to
- * its right. The page moves over by the chats' width (body padding, index.css: html[data-chat-mode]); a page can lay
- * itself out for the narrower room with the `chat:` variant (tailwind.config.js). On or off, and how wide, are kept
- * per browser.
+ * Chat mode: the assistant fills the left of the window (every chat in a list, the open one beside it) and the page the
+ * open chat works on stands to its right. The page moves over by the chats' width (body padding, index.css:
+ * html[data-chat-mode]) and lays out for the room it has left: <html data-pane> names the breakpoints it is narrower
+ * than, and those turn off (postcss-pane.cjs), so each screen shows the layout it has for a window that wide. What a
+ * screen leaves out beside the chats (its own chat, a list the chats replace) it says with the `chat:` variant
+ * (tailwind.config.js) or useChatShown(). On or off, the width and whether the page shows are kept per browser.
  */
 
 const KEY = "ct-chat-mode";
-/** Narrower than this, a drag of the edge ends chat mode. */
-export const MIN_W = 460;
-/** A page narrower than this is not worth showing: the chats take the whole window. */
-export const MIN_PAGE = 320;
+/** The chats list beside the open chat. */
+export const LIST_W = 280;
+/** The open chat's column at its narrowest. */
+export const MIN_CHAT = 360;
+/** The page at its narrowest: narrower, and the chats take the whole window. */
+export const MIN_PAGE = 360;
+/** The breakpoints the page's layouts are written for (tailwind's own). */
+const BREAKPOINTS: Array<[string, number]> = [["sm", 640], ["md", 768], ["lg", 1024], ["xl", 1280], ["2xl", 1536]];
 
-type Stored = { on: boolean; w: number };
+type Stored = {
+  on: boolean;
+  /** The chats' width as dragged; 0 = half the window. */
+  w: number;
+  /** The page shows beside the chats (off: only chats). */
+  page: boolean;
+};
+
 const stored = (): Stored => {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<Stored> | null;
-    return { on: s?.on === true, w: typeof s?.w === "number" ? s.w : 0 };
+    return { on: s?.on === true, w: typeof s?.w === "number" && s.w > 0 ? s.w : 0, page: s?.page !== false };
   } catch {
-    return { on: false, w: 0 };
+    return { on: false, w: 0, page: true };
   }
 };
 
 interface ChatModeState extends Stored {
+  /** The chats are on screen now (the assistant draws them: not during setup, not signed out). Never stored. */
+  shown: boolean;
+  /** The page's width beside the chats while they show (0: only chats); null outside chat mode. Never stored. */
+  pane: number | null;
   set: (patch: Partial<Stored>) => void;
 }
 
 export const useChatMode = create<ChatModeState>((set) => ({
   ...stored(),
+  shown: false,
+  pane: null,
   set: (patch) =>
     set((s) => {
-      const next = { on: patch.on ?? s.on, w: patch.w ?? s.w };
+      const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, page: patch.page ?? s.page };
       try {
         localStorage.setItem(KEY, JSON.stringify(next));
       } catch {
@@ -41,11 +61,103 @@ export const useChatMode = create<ChatModeState>((set) => ({
     }),
 }));
 
-/** The chats' width in a window `win` wide: what was dragged, else half; all of it when the page would be too narrow. */
-export function chatWidth(w: number, win: number): number {
-  const want = w || Math.round(win / 2);
-  if (win - want < MIN_PAGE) return win;
-  return Math.max(MIN_W, want);
+/** Whether the chats stand beside this page now: a screen leaves out what they replace only while they really show. */
+export const useChatShown = (): boolean => useChatMode((s) => s.on && s.shown);
+
+/**
+ * Whether the page has at least `px` of width: the window's, less the chats beside it in chat mode. For a layout that
+ * is decided in script; CSS breakpoints follow the page's room by themselves (postcss-pane.cjs).
+ */
+export function usePageMinWidth(px: number): boolean {
+  const pane = useChatMode((s) => s.pane);
+  const [win, setWin] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const on = () => setWin(window.innerWidth);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  return (pane ?? win) >= px;
+}
+
+export interface ChatLayout {
+  /** The chats' width. */
+  chat: number;
+  /** The chats take the whole window: the page is hidden. */
+  full: boolean;
+  /** The list stands beside the open chat: there is room for both (else it opens over the chat from its button). */
+  list: boolean;
+}
+
+/** How the window `win` wide is shared. The page never gets less than MIN_PAGE nor the open chat less than MIN_CHAT. */
+export function chatLayout(s: Pick<Stored, "w" | "page">, win: number): ChatLayout {
+  const room = win - MIN_PAGE;
+  const full = !s.page || room < MIN_CHAT;
+  // half the window until the edge is dragged
+  const chat = full ? win : Math.min(Math.max(s.w || Math.round(win / 2), MIN_CHAT), room);
+  return { chat, full, list: chat - LIST_W >= MIN_CHAT };
+}
+
+/** The breakpoints a page `pane` wide is narrower than, as <html data-pane> carries them: "lt-lg lt-xl lt-2xl". */
+export const paneBelow = (pane: number): string => BREAKPOINTS.filter(([, px]) => pane < px).map(([name]) => `lt-${name}`).join(" ");
+
+/** The window's width less its scrollbar, where it has one: the chats' edge stays where it can be grabbed. */
+const pageWidth = () => document.documentElement.clientWidth || window.innerWidth;
+
+/**
+ * For the one component that draws the chats (AssistantDock): the layout for this window, kept on <html> while `active`
+ * (data-chat-mode, --chat-w, data-pane) so the page and its breakpoints follow, and `shown` in the store for the screens.
+ */
+export function useChatModeLayout(active: boolean): ChatLayout {
+  const w = useChatMode((s) => s.w);
+  const page = useChatMode((s) => s.page);
+  const [win, setWin] = useState(pageWidth);
+  useEffect(() => {
+    const on = () => setWin(pageWidth());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  const layout = chatLayout({ w, page }, win);
+  useEffect(() => {
+    if (!active) return;
+    const root = document.documentElement;
+    root.dataset.chatMode = layout.full ? "full" : "";
+    root.style.setProperty("--chat-w", `${layout.chat}px`);
+    if (layout.full) delete root.dataset.pane;
+    else root.dataset.pane = paneBelow(win - layout.chat);
+    useChatMode.setState({ shown: true, pane: layout.full ? 0 : win - layout.chat });
+    return () => {
+      delete root.dataset.chatMode;
+      delete root.dataset.pane;
+      root.style.removeProperty("--chat-w");
+      useChatMode.setState({ shown: false, pane: null });
+    };
+  }, [active, layout.chat, layout.full, win]);
+  return layout;
+}
+
+/** While the chats' edge is dragged: the page follows at once (the store takes the width when the drag ends). */
+export function previewChatWidth(x: number): number {
+  const win = pageWidth();
+  const chat = Math.min(Math.max(x, MIN_CHAT), Math.max(MIN_CHAT, win - MIN_PAGE));
+  const root = document.documentElement;
+  root.style.setProperty("--chat-w", `${chat}px`);
+  root.dataset.pane = paneBelow(win - chat);
+  return chat;
+}
+
+/** ⌘J (Ctrl+J): chat mode on or off, from anywhere. */
+export function useChatModeKey(enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "j" || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.repeat) return;
+      e.preventDefault();
+      // the button on screen now: the page bar's, or the one at the top of the chats
+      toggleChatMode([...document.querySelectorAll<HTMLElement>("[data-chat-toggle]")].find((b) => b.getBoundingClientRect().width));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [enabled]);
 }
 
 /**
@@ -56,7 +168,7 @@ export function toggleChatMode(from?: HTMLElement | null): void {
   const { on, set } = useChatMode.getState();
   const r = from?.getBoundingClientRect();
   set({ on: !on });
-  if (r) requestAnimationFrame(() => requestAnimationFrame(() => wave(r.left + r.width / 2, r.top + r.height / 2, !on)));
+  if (r && r.width) requestAnimationFrame(() => requestAnimationFrame(() => wave(r.left + r.width / 2, r.top + r.height / 2, !on)));
 }
 
 const PUSHED = "[data-appbar] > *, [data-chat-panel] li, [data-chat-panel] header > *, #root :is(section, article, li, h1, h2, img, video, [data-tile])";

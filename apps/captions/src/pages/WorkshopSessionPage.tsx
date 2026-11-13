@@ -90,7 +90,7 @@ import {
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
 import { enterFocus, useDeskLayout } from "@/lib/workshop-desk";
-import { useChatMode } from "@/lib/chat-mode";
+import { useChatShown } from "@/lib/chat-mode";
 import { mineIndex } from "@/lib/mine";
 import { SharePopover } from "@/components/workshop/SharePopover";
 import { SessionFinals } from "@/components/workshop/SessionFinals";
@@ -329,7 +329,7 @@ export default function WorkshopSessionPage() {
   const [savedDesk, setDesk] = useDeskLayout();
   // in chat mode the page shows only the piece: the chats beside it are the conversation, and the other sessions are a
   // click away in the Workshop. The saved layout is left as it was for when chat mode ends.
-  const chatMode = useChatMode((s) => s.on);
+  const chatMode = useChatShown();
   const desk = chatMode ? enterFocus(savedDesk, "writing") : savedDesk;
   const [auditMessageId, setAuditMessageId] = useState<string | null>(null);
   const auditThinking = useRef(new Set<string>());

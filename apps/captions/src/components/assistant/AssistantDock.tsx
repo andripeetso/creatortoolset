@@ -15,6 +15,7 @@ import {
   openAssistant,
   openPast,
   saveKey,
+  seenChat,
   sendTurn,
   sendTurnTo,
   startOver,
@@ -22,7 +23,7 @@ import {
   sendAnswer,
   useAssistant,
 } from "@/lib/assistant";
-import { chatWidth, MIN_PAGE, MIN_W, useChatMode } from "@/lib/chat-mode";
+import { useChatMode, useChatModeKey, useChatModeLayout } from "@/lib/chat-mode";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
@@ -33,8 +34,10 @@ import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUplo
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { duration, WorkCards, WorkingFor } from "./WorkCards";
-import { ChatList, useChats } from "./ChatList";
+import { chatTitle, useChats } from "./ChatList";
 import { ChatModeButton } from "./ChatModeButton";
+import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
+import { useChatPage } from "./useChatPage";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { ConfirmCards } from "./ConfirmCards";
@@ -136,7 +139,7 @@ export function AssistantDock() {
   const setup = useSetup((s) => s.view);
   const connected = !!view && view.provider !== "none";
   const welcome = useWelcome({
-    open: !collapsed,
+    open: !collapsed || chatMode,
     eligible: !!view && !!setup && talk !== "chat" && setupFinished(setup) && view.messages.length === 0,
     connected,
     user: me?.username ?? "",
@@ -202,30 +205,6 @@ export function AssistantDock() {
     })();
   }, [search, real, pathname, navigate]);
 
-  // chat mode: the page beside the chats is what the open chat works on, its newest card or video (a Workshop piece, an
-  // edit, a Review video). Opening a chat, turning chat mode on, or a new card in the chat goes there once; in between
-  // the page is yours to move around in. A chat with nothing of its own leaves the page where it is. Not on a reload or a
-  // link opened in chat mode: that page is the one asked for.
-  const newest = view?.messages
-    .flatMap((m) => [...(m.work ?? []), ...(m.media ?? [])])
-    .filter((w) => w.href?.startsWith("/"))
-    .at(-1);
-  const followed = useRef<string | null>(useChatMode.getState().on ? "loaded" : null);
-  useEffect(() => {
-    if (!chatMode) {
-      followed.current = null;
-      return;
-    }
-    if (!view) return;
-    const key = `${view.id}:${newest?.id ?? ""}`;
-    if (followed.current === key) return;
-    const loaded = followed.current === "loaded";
-    followed.current = key;
-    if (!loaded && newest && newest.href !== pathname + search) navigate(newest.href);
-    // the page moves only when the chat or its newest card changes, not on every route change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatMode, view?.id, newest?.id]);
-
   // a page the assistant opened: move there once, then clear it on the server
   useEffect(() => {
     if (!view?.navigate) return;
@@ -251,27 +230,38 @@ export function AssistantDock() {
     };
   }, [docked]);
 
-  // chat mode: the chats take the left of the window and the page moves over by as much (index.css, html[data-chat-mode])
-  const chatW = useChatMode((s) => s.w);
-  // the window's width less its scrollbar, where it has one: the chats' edge stays where it can be grabbed
-  const [winW, setWinW] = useState(pageWidth);
-  useEffect(() => {
-    const on = () => setWinW(pageWidth());
-    window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
-  }, []);
-  const panelW = chatWidth(chatW, winW);
+  // chat mode: the chats take the left of the window and the page moves over by as much, laid out for the room it has left
   const showChatMode = real && chatMode;
+  const layout = useChatModeLayout(showChatMode);
+  useChatModeKey(real);
+  // the list folded away opens over the chat from its button, until a chat is picked
+  const [listOpen, setListOpen] = useState(false);
+  // the page beside the chats is the open chat's own (useChatPage): its newest card or video is what it works on
+  const newest = view?.messages
+    .flatMap((m) => [...(m.work ?? []), ...(m.media ?? [])])
+    .filter((w) => w.href?.startsWith("/"))
+    .at(-1);
+  useChatPage(showChatMode && !layout.full, view?.id, newest && { id: newest.id, href: newest.href });
+  // only chats, and a link in one is followed (a card, the app's name, a page the assistant opens): the page shows again
+  const route = pathname + search;
+  const routeWas = useRef(route);
   useEffect(() => {
-    if (!showChatMode) return;
-    const root = document.documentElement;
-    root.dataset.chatMode = "";
-    root.style.setProperty("--chat-w", `${panelW}px`);
-    return () => {
-      delete root.dataset.chatMode;
-      root.style.removeProperty("--chat-w");
-    };
-  }, [showChatMode, panelW]);
+    if (routeWas.current === route) return;
+    routeWas.current = route;
+    const cm = useChatMode.getState();
+    if (cm.on && !cm.page) cm.set({ page: true });
+  }, [route]);
+  // the chat on screen is seen: what ended in it is not marked Done in the list (here or on another device)
+  const visible = showChatMode || !collapsed;
+  useEffect(() => {
+    if (!visible || !view?.id || !view.chats || last?.status === "thinking") return;
+    const look = () => document.visibilityState === "visible" && void seenChat(view.id);
+    look();
+    document.addEventListener("visibilitychange", look);
+    return () => document.removeEventListener("visibilitychange", look);
+    // again when the newest message changes or ends
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, view?.id, last?.id, last?.status]);
   // a reply that starts, ends or asks changes the list's groups
   useEffect(() => {
     if (chatMode) reloadChats();
@@ -328,8 +318,9 @@ export function AssistantDock() {
     drafts.current.delete(id);
   }, [view?.id]);
   const [queue, setQueue] = useState<Queued[]>(storedQueue);
-  // a queued message the server refused stays first and waits for a click (no retry loop)
-  const [held, setHeld] = useState(false);
+  // a queued message the server refused waits for a click (no retry loop), and holds back the ones after it in its own
+  // chat only: another chat's messages still go
+  const [held, setHeld] = useState<string[]>([]);
   const sending = useRef(false);
   useEffect(() => {
     const save = (q: Queued[]) => (q.length ? localStorage.setItem(QUEUE_KEY, JSON.stringify(q)) : localStorage.removeItem(QUEUE_KEY));
@@ -418,14 +409,15 @@ export function AssistantDock() {
   }, [handed, addPictures]);
   const connectedNow = !!view && view.provider !== "none";
   useEffect(() => {
-    const next = queue[0];
+    const stuck = new Set(queue.filter((q) => held.includes(q.id)).map((q) => q.chat ?? ""));
+    const next = queue.find((q) => !stuck.has(q.chat ?? ""));
     // the server queues a message sent while a reply is being written: only a send in flight or a refused one holds this
-    if (!next || held || !connectedNow || sending.current) return;
+    if (!next || !connectedNow || sending.current) return;
     sending.current = true;
     void send(next).then((ok) => {
       sending.current = false;
       if (ok) setQueue((q) => q.filter((x) => x.id !== next.id));
-      else setHeld(true);
+      else setHeld((h) => [...h, next.id]);
     });
     // send is a fresh function each render; the queue, the reply and the hold decide when to go
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -511,7 +503,8 @@ export function AssistantDock() {
     const ids = new Set((i > 0 && target?.wait ? (msgs[i - 1]!.files ?? []) : []).map((f) => f.id));
     for (const u of uploads.current.values()) if (u.id && ids.has(u.id)) u.ctl.abort();
     if (target) sends.current.get(target.id)?.ctl.abort();
-    void stopTurn().then((r) => r.ok && setView(r.data));
+    // by its id: with several chats at work, never another chat's reply
+    void stopTurn(target?.id).then((r) => r.ok && setView(r.data));
   };
   /** A chip's X in the box: its upload stops, and what reached the server is deleted. */
   const removeFile = (f: Draft["files"][number]) => {
@@ -529,17 +522,17 @@ export function AssistantDock() {
   };
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
-    setHeld(false);
+    setHeld((h) => h.filter((x) => x !== id));
     if (thinking) stop();
   };
   const editQueued = (it: Queued) => {
     setQueue((q) => q.filter((x) => x.id !== it.id));
-    if (queue[0]?.id === it.id) setHeld(false);
+    setHeld((h) => h.filter((x) => x !== it.id));
     putBack(it);
   };
   const unqueue = (it: Queued) => {
     setQueue((q) => q.filter((x) => x.id !== it.id));
-    if (queue[0]?.id === it.id) setHeld(false);
+    setHeld((h) => h.filter((x) => x !== it.id));
   };
 
   const close = useCallback(() => {
@@ -611,21 +604,19 @@ export function AssistantDock() {
     );
   }
 
-  const newChat = () => {
+  const newChat = async () => {
     stopSpeaking();
-    void startOver().then((r) => {
-      if (!r.ok) return;
-      setView(r.data);
-      setSeenId(null);
-    });
+    const r = await startOver();
+    if (!r.ok) return;
+    setView(r.data);
+    setSeenId(null);
   };
-  const openChat = (id: string) => {
+  const openChat = async (id: string) => {
     if (id === view?.id) return;
-    void openPast(id).then((r) => {
-      if (!r.ok) return setError(r.error);
-      setView(r.data);
-      setSeenId(r.data.messages.at(-1)?.id ?? null);
-    });
+    const r = await openPast(id);
+    if (!r.ok) return setError(r.error);
+    setView(r.data);
+    setSeenId(r.data.messages.at(-1)?.id ?? null);
   };
   /** The queued messages written in the chat on screen (one from before chats were told apart shows everywhere). */
   const shownQueue = queue.filter((q) => !q.chat || q.chat === view?.id);
@@ -633,6 +624,28 @@ export function AssistantDock() {
   const empty = chatting && !view.messages.length;
   const pending = view?.pending;
   const headBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40";
+  // a new chat in chat mode: the question and the message box in the middle of the column, the suggestions under the box
+  const centred = chatMode && empty && !pending;
+  // a few things to ask from the page you're on; a press sends one
+  const chips = suggestionsFor(pathname).slice(0, popped).map((s, i) => (
+              <div key={`${pathname}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
+                <div className={cn("min-h-0 motion-safe:[animation:ct-pop-clip_260ms_both]", i === 0 && welcome.showing ? "pt-3" : "pt-2")}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
+                    className={cn(
+                      "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
+                      "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
+                      "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:duration-300",
+                    )}
+                  >
+                    <span>{s}</span>
+                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
+                  </button>
+                </div>
+              </div>
+            ));
 
   return (
     <section
@@ -644,10 +657,11 @@ export function AssistantDock() {
       data-chat-panel={chatMode || undefined}
       className={cn(
         // above page dialogs (z-50, Settings among them), under confirms (z-[60], alert-dialog.tsx)
-        "pointer-events-auto fixed z-[55] flex flex-col overflow-hidden bg-popover text-popover-foreground",
+        "pointer-events-auto fixed z-[55] flex overflow-hidden bg-popover text-popover-foreground",
+        chatMode ? "flex-row" : "flex-col",
         // in chat mode the chats are part of the window: a dialog (z-50) stands over them as it does over the page
         chatMode
-          ? "inset-y-0 left-0 z-[45] border-r"
+          ? cn("inset-y-0 left-0 z-[45]", !layout.full && "border-r")
           : place.mode === "dock"
           ? "inset-y-0 right-0 border-l shadow-2xl"
           : cn("h-[min(600px,calc(100dvh-6rem))] w-[min(400px,calc(100vw-2rem))] rounded-2xl border shadow-2xl shadow-black/30", AT[place.corner], ORIGIN[place.corner]),
@@ -661,7 +675,8 @@ export function AssistantDock() {
               place.mode === "dock" ? "motion-safe:slide-in-from-right" : "motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:ease-[cubic-bezier(.3,1.3,.5,1)]",
             ),
       )}
-      style={chatMode ? { ...tint, width: panelW } : place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
+      // --chat-w is the layout's width on <html> (lib/chat-mode.ts): the panel follows a drag of its edge at once
+      style={chatMode ? { ...tint, width: "var(--chat-w)" } : place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
       onDragOver={(e) => {
         if (!connectedNow || !e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -686,30 +701,30 @@ export function AssistantDock() {
           Drop pictures, videos or a folder
         </div>
       )}
+      {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} />}
+      {chatMode && !layout.list && listOpen && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} onClose={() => setListOpen(false)} />}
+      <div className={cn("flex min-w-0 flex-1 flex-col", !chatMode && "contents")}>
       {chatMode ? (
-        // one row across the chats, as high as the page's bar: the Mac app's window buttons sit at its start
-        <header data-chat-bar className="flex h-14 shrink-0 items-center gap-1 border-b px-3 select-none">
-          <div className="flex w-64 shrink-0 items-center gap-1">
-            <ChatModeButton />
-            <span className="flex-1" />
-            <button type="button" className={headBtn} onClick={newChat} disabled={!view?.messages.length} aria-label="Start a new chat" title="New chat">
-              <SquarePen className="size-4" />
-            </button>
-          </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2.5 pl-4">
+        <ChatHeader
+          layout={layout}
+          title={!view ? "" : view.messages.length ? (chats?.find((c) => c.open)?.title ?? "Assistant") : chatTitle({ title: "", count: 0 })}
+          dot={
             <span className="relative flex size-2.5 shrink-0" aria-hidden>
               {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_70%,transparent)] motion-safe:animate-ping" />}
               <span className={cn("relative size-2.5 rounded-full", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
             </span>
-            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">{chats?.find((c) => c.open)?.title ?? "Assistant"}</h2>
-            <NoToolsNote view={view} />
-            {readAloud.speaking && (
-              <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">
-                <VolumeX className="size-4" />
-              </button>
-            )}
-          </div>
-        </header>
+          }
+          onNew={() => void newChat()}
+          canNew={!!view?.messages.length}
+          onList={() => setListOpen(true)}
+        >
+          <NoToolsNote view={view} />
+          {readAloud.speaking && (
+            <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">
+              <VolumeX className="size-4" />
+            </button>
+          )}
+        </ChatHeader>
       ) : (
       <header
         onPointerDown={cardThrow.onPointerDown}
@@ -733,7 +748,7 @@ export function AssistantDock() {
           </button>
         )}
         {!!view?.messages.length && (
-          <button type="button" className={headBtn} onClick={newChat} aria-label="Start a new chat" title="New chat (this one stays in chat mode's list)">
+          <button type="button" className={headBtn} onClick={() => void newChat()} aria-label="Start a new chat" title="New chat (this one stays in chat mode's list)">
             <SquarePen className="size-4" />
           </button>
         )}
@@ -745,16 +760,9 @@ export function AssistantDock() {
       </header>
       )}
 
-      <div className={cn("flex min-h-0 flex-1", !chatMode && "contents")}>
-      {chatMode && (
-        <nav aria-label="Chats" className="w-64 shrink-0 overflow-y-scroll border-r px-2 py-3 text-sm">
-          <ChatList chats={chats} onOpen={openChat} reload={reloadChats} />
-        </nav>
-      )}
-      <div className={cn("flex min-w-0 flex-1 flex-col", !chatMode && "contents")}>
       {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing.
           In chat mode the messages and the box keep to a readable column in the middle */}
-      <div className={cn("relative min-h-0 flex-1 pt-2 pb-3 text-sm", chatMode ? "overflow-y-scroll px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
+      <div className={cn("relative min-h-0 flex-1 pt-2 pb-3 text-sm", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
         {!view && <Dots />}
 
         {view?.provider === "none" && (
@@ -782,26 +790,12 @@ export function AssistantDock() {
             )}
             {/* the welcome writes at the bottom, right above the message box. The suggestions come after it has finished,
                 one after another, and each grows in under it, so the line is pushed up a step at a time (owner, 2026-11-10) */}
-            {welcome.showing && <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />}
-            {suggestionsFor(pathname).slice(0, popped).map((s, i) => (
-              <div key={`${pathname}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
-                <div className={cn("min-h-0 motion-safe:[animation:ct-pop-clip_260ms_both]", i === 0 && welcome.showing ? "pt-3" : "pt-2")}>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
-                    className={cn(
-                      "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
-                      "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
-                      "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:duration-300",
-                    )}
-                  >
-                    <span>{s}</span>
-                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
-                  </button>
-                </div>
-              </div>
-            ))}
+            {welcome.showing ? (
+              <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
+            ) : (
+              centred && <h3 className="pb-3 text-center text-2xl font-semibold tracking-tight text-balance">What should we make?</h3>
+            )}
+            {!centred && chips}
           </div>
         )}
 
@@ -870,13 +864,12 @@ export function AssistantDock() {
           <ConfirmCards confirms={view?.messages.flatMap((m) => m.confirms ?? []).filter((x) => x.status === "waiting")} onView={setView} />
           {shownQueue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
-              {shownQueue.map((it, i) => (
-                // "Not sent" belongs to the first in the whole queue: the one the server refused
+              {shownQueue.map((it) => (
                 <li
                   key={it.id}
                   className="flex items-center gap-2 rounded-xl border bg-muted/60 px-3 py-1.5 text-[13px] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1"
                 >
-                  <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{i === 0 && held && queue[0]?.id === it.id ? "Not sent" : "Queued"}</span>
+                  <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{held.includes(it.id) ? "Not sent" : "Queued"}</span>
                   <span className="min-w-0 flex-1 truncate" title={it.text}>
                     {it.text.trim() || attachmentsLabel(it)}
                     {it.text.trim() && attachmentsLabel(it) ? <span className="ml-1.5 text-[11px] text-muted-foreground">+ {attachmentsLabel(it)}</span> : null}
@@ -917,52 +910,11 @@ export function AssistantDock() {
           />
         </div>
       )}
+      {/* a new chat's suggestions under the box; as tall as the room above it, so the box sits in the middle */}
+      {centred && <div className="min-h-0 flex-1 overflow-y-auto px-[max(1.5rem,calc((100%-46rem)/2))] pb-4">{chips}</div>}
       </div>
-      </div>
-      {chatMode && <EdgeHandle width={panelW} />}
+      {chatMode && !layout.full && <ChatEdge />}
     </section>
-  );
-}
-
-const pageWidth = () => document.documentElement.clientWidth || window.innerWidth;
-
-/**
- * The chats' right edge in chat mode: drag it to give the page more or less room. Let go narrower than MIN_W and chat mode
- * ends; let go with less than MIN_PAGE left for the page and the chats take the whole window.
- */
-function EdgeHandle({ width }: { width: number }) {
-  const [drag, setDrag] = useState(false);
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Chats' width"
-      title="Drag to resize · all the way left leaves chat mode"
-      onPointerDown={(e) => {
-        e.preventDefault();
-        e.currentTarget.setPointerCapture(e.pointerId);
-        setDrag(true);
-      }}
-      onPointerMove={(e) => {
-        if (!drag) return;
-        document.documentElement.style.setProperty("--chat-w", `${Math.max(200, Math.min(pageWidth(), e.clientX))}px`);
-        (e.currentTarget.parentElement as HTMLElement).style.width = `${Math.max(200, Math.min(pageWidth(), e.clientX))}px`;
-      }}
-      onPointerUp={(e) => {
-        if (!drag) return;
-        setDrag(false);
-        const x = e.clientX;
-        const { set } = useChatMode.getState();
-        if (x < MIN_W) set({ on: false });
-        else set({ w: pageWidth() - x < MIN_PAGE ? pageWidth() : Math.round(x) });
-        // the store's width is the truth again (a release that left it unchanged)
-        (e.currentTarget.parentElement as HTMLElement).style.width = `${width}px`;
-      }}
-      onDoubleClick={() => useChatMode.getState().set({ w: 0 })}
-      className="group absolute inset-y-0 right-0 z-10 w-2 cursor-col-resize touch-none"
-    >
-      <span className={cn("absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors", drag ? "bg-[var(--tint)]" : "group-hover:bg-[var(--tint)]")} />
-    </div>
   );
 }
 

@@ -58,7 +58,8 @@ export function UserMenu() {
   const pluginItems = accountItemsFor(me, webPlugins);
 
   return (
-    <span className="flex items-center gap-0.5">
+    // in chat mode the account stands under the chats, so a page's own bar leaves it out (index.css)
+    <span data-user-menu className="flex items-center gap-0.5">
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button

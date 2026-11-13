@@ -108,6 +108,8 @@ export const startOver = () => call<AssistantView>("", "DELETE");
 export const openPast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}/open`, "POST");
 export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}`, "DELETE");
 /** Settle a chat (done with it, kept) or bring it back; every device folds it the same way. */
+/** This chat is on screen now: what ended in it is no longer unread (the list's Done mark, on every device). */
+export const seenChat = (id: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/seen`, "POST");
 export const settleChat = (id: string, settled: boolean) => call<unknown>(`/chats/${encodeURIComponent(id)}/settle`, "POST", { settled });
 /** Allow or deny something the reply asked to do on the Mac. */
 /** Yes or No to a question the assistant put before deleting, publishing or sending something. */
