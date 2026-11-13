@@ -50,6 +50,7 @@ export function Stage({
   editing,
   onEdit,
   pointed,
+  dropper,
   menu,
 }: {
   /** the pages as shown: the one being dragged is its live self */
@@ -81,6 +82,8 @@ export function Stage({
   onEdit: (id: string | null) => void;
   /** a layer pointed at in the layers list */
   pointed: string | null;
+  /** the dropper is out: a press on the canvas gives it the colour under the pointer, and picks nothing */
+  dropper: ((hex: string) => void) | null;
   /** the right-click menu's content */
   menu: ReactNode;
 }) {
@@ -374,6 +377,17 @@ export function Stage({
     // a press beside the words being typed ends the typing and keeps them; it picks or moves nothing
     if (typing.current) return typing.current.blur();
     box.current?.focus({ preventScroll: true });
+    if (dropper) {
+      // the colour as it is drawn, read off the canvas itself (a browser's own dropper is not in every browser); a
+      // press beside every page gives nothing and the dropper stays out
+      const c = canvas.current;
+      if (e.button !== 0 || !c) return;
+      const r = c.getBoundingClientRect();
+      const k = c.width / r.width;
+      const [red, green, blue, alpha] = c.getContext("2d")!.getImageData(Math.round((e.clientX - r.left) * k), Math.round((e.clientY - r.top) * k), 1, 1).data;
+      if (alpha) dropper(`#${[red!, green!, blue!].map((n) => n.toString(16).padStart(2, "0")).join("")}`);
+      return;
+    }
     if (e.button === 1 || (e.button === 0 && (space || tool === "hand"))) return pan(e);
     const p = world(e);
     const k = pageUnder(p);
@@ -416,7 +430,7 @@ export function Stage({
           role="application"
           aria-label="Canvas"
           className="absolute inset-0 touch-none select-none overflow-hidden outline-none"
-          style={{ cursor: space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
+          style={{ cursor: dropper ? "crosshair" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
           onPointerDown={down}
           onPointerMove={over}
           onPointerLeave={() => setHover(null)}

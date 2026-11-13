@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Image, Lock, Loc
 import type { DesignPage, Layer } from "@contracts/design";
 import { layerName, pageName } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
+import { Tip } from "./Tip";
 
 /**
  * The layers list: every page with its layers under it, the front one on top. A click picks (Shift or ⌘ adds or
@@ -108,9 +109,11 @@ export function LayersPanel({
     <nav aria-label="Layers" className="flex w-60 shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
         <h2 className="font-semibold">Layers</h2>
-        <button type="button" aria-label="Add a page" title="Add a page" onClick={onAddPage} className="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-zinc-500/15">
-          <Plus className="h-3.5 w-3.5" />
-        </button>
+        <Tip label="Add a page" side="right">
+          <button type="button" aria-label="Add a page" onClick={onAddPage} className="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-zinc-500/15">
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </Tip>
       </div>
       <div role="tree" className="min-h-0 flex-1 select-none overflow-y-auto py-1">
         {pages.map((p, k) => {

@@ -1,22 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { Circle, Download, Hand, ImagePlus, Loader2, MousePointer2, Redo2, Sparkles, Square, Type, Undo2 } from "lucide-react";
+import { Circle, Download, Hand, ImagePlus, MousePointer2, Redo2, Square, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
-import type { AnimationStyle } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
 import { Inspector } from "@/components/design/Inspector";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/components/ui/context-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
+import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
 import { alignLayers, boundsOf, distribute, fitView, freshIds, layerName, pageLeft, pageName, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
-import { addPicture, designWithAi, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
+import { coloursOn } from "@/lib/design/colour";
+import { addPicture, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
-import { listAnimationStyles } from "@/lib/editor";
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
@@ -24,9 +22,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * The designer (/design/:id): a canvas with every page of the design on it, the layers list on its left, the
- * properties of what is picked on its right and the tools under it. "Design with AI" has the person's AI design every
- * page in the look they pick; what comes back is layers like any others, so every part of it can be moved, resized,
- * restyled or taken out. Each page is saved as a PNG of exactly the design's size. Every change is a step ⌘Z takes
+ * properties of what is picked on its right and the tools under it. The person's AI designs here through the
+ * assistant beside the page (the designer's tools, api/mcp-tools/designs.ts): what it writes shows on the canvas at
+ * once, as layers like any others. Each page is saved as a PNG of exactly its size. Every change is a step ⌘Z takes
  * back, and is saved a moment later.
  *
  * Keys: V move, H hand, R rectangle, O ellipse, T text · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
@@ -78,11 +76,8 @@ function DesignPage({ id }: { id: string }) {
   const [pointed, setPointed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<"saved" | "saving" | "unsaved">("saved");
-  const [styles, setStyles] = useState<AnimationStyle[]>([]);
-  const [look, setLook] = useState("");
-  const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [said, setSaid] = useState<string[]>([]);
+  /** The dropper is out: the next press on the canvas gives its colour to `take`. */
+  const [dropper, setDropper] = useState<{ take: (hex: string) => void } | null>(null);
   const [version, setVersion] = useState(0);
   const loaded = useRef<Loaded>(new Map()).current;
   const frame = useRef<HTMLDivElement>(null);
@@ -95,11 +90,9 @@ function DesignPage({ id }: { id: string }) {
         server.current = { pages: d.pages, at: d.updatedAt };
         setDesign(d);
         setHist(freshHist(d.pages));
-        setLook(d.look ?? "");
       },
       (e) => setError(message(e)),
     );
-    listAnimationStyles().then((v) => setStyles(v.styles), () => setStyles([]));
   }, [id]);
 
   // the app's fonts, before the first page is drawn with them
@@ -133,6 +126,7 @@ function DesignPage({ id }: { id: string }) {
   const shown = useMemo(() => (live ? pages.map((p) => (p.id === live.id ? live : p)) : pages), [pages, live]);
   const page = shown[k];
   const mine = base ? base.layers.filter((l) => selected.includes(l.id)) : [];
+  const colours = useMemo(() => coloursOn(pages), [pages]);
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
 
   // every picture and drawing the pages show, loaded once each
@@ -405,7 +399,7 @@ function DesignPage({ id }: { id: string }) {
       if (e.key === "+" || e.key === "=") return run(() => zoom("in"));
       if (e.key === "-") return run(() => zoom("out"));
       if (!e.shiftKey && TOOL_KEYS[c]) return run(() => setTool(TOOL_KEYS[c]!));
-      if (e.key === "Escape") return run(() => (tool !== "move" ? setTool("move") : pick(k, [])));
+      if (e.key === "Escape") return run(() => (dropper ? setDropper(null) : tool !== "move" ? setTool("move") : pick(k, [])));
       if (e.key === "Delete" || e.key === "Backspace") return run(remove);
       if (!has) return;
       const by = ARROWS[e.key];
@@ -466,29 +460,6 @@ function DesignPage({ id }: { id: string }) {
       else downloadBlob(`${fileName(design.name)}.zip`, zipStored(files));
     } catch (e) {
       setError(message(e));
-    }
-  };
-
-  const aiDesign = async () => {
-    if (!design || !hist) return;
-    setBusy(true);
-    setError(null);
-    setSaid([]);
-    try {
-      // what is on the pages now goes first, so the AI starts from the words as they are
-      await send(hist.now);
-      const out = await designWithAi(design.id, { look: look || null, notes });
-      // what the AI made is on the server already: shown as one step, and not saved back
-      server.current = { pages: out.design.pages, at: out.design.updatedAt };
-      first.current = true;
-      setDesign(out.design);
-      change(() => out.design.pages);
-      pick(k, []);
-      setSaid(out.notes);
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -559,6 +530,7 @@ function DesignPage({ id }: { id: string }) {
               editing={editing}
               onEdit={setEditing}
               pointed={pointed}
+              dropper={dropper ? (hex) => (dropper.take(hex), setDropper(null)) : null}
               menu={
                 <ContextMenuContent className="w-56">
                   {item("Copy", "⌘C", copy, none)}
@@ -580,50 +552,18 @@ function DesignPage({ id }: { id: string }) {
           <div role="toolbar" aria-label="Tools" className={cn("absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border p-1.5 shadow-lg", BAR)}>
             {TOOLS.map(([t, label, keys, Icon]) => (
               // the button lets the keys go again, so Space still drags the canvas after a click here
-              <button key={t} type="button" aria-label={label} aria-pressed={tool === t} title={`${label} (${keys})`} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md", tool === t ? "bg-[#0d99ff] text-white" : "hover:bg-zinc-500/15")}>
+              <Tip key={t} label={label} keys={keys}>
+              <button type="button" aria-label={label} aria-pressed={tool === t} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md", tool === t ? "bg-[#0d99ff] text-white" : "hover:bg-zinc-500/15")}>
                 <Icon className="h-4 w-4" />
               </button>
+              </Tip>
             ))}
             <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Pictures from this computer" onChange={(e) => (void fromComputer([...(e.target.files ?? [])]), (e.target.value = ""))} />
-            <button type="button" aria-label="Picture" title="Picture" onClick={(e) => (fileRef.current?.click(), e.currentTarget.blur())} className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-500/15">
-              <ImagePlus className="h-4 w-4" />
-            </button>
-            <span className="mx-1 h-5 w-px bg-[#e6e6e6] dark:bg-[#444]" />
-            <Popover>
-              <PopoverTrigger asChild>
-                <button type="button" aria-label="Design with AI" title="Design with AI" className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium hover:bg-zinc-500/15">
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  {busy ? "Designing" : "Design with AI"}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent side="top" align="center" sideOffset={12} className={cn("w-72 p-3", BAR)}>
-                <section aria-label="Design with AI" className="flex flex-col gap-2 text-xs">
-                  <label className="flex flex-col gap-1 text-zinc-500 dark:text-[#b3b3b3]">
-                    Look
-                    <select value={look} onChange={(e) => setLook(e.target.value)} className="h-8 w-full rounded-[5px] bg-[#f5f5f5] px-2 text-zinc-50 outline-none dark:bg-[#383838]">
-                      <option value="">The AI's own</option>
-                      {styles.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <Textarea aria-label="What to ask for" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} maxLength={2000} placeholder="Big type, one bright colour, a drawing on the first page." />
-                  <Button size="sm" disabled={busy} onClick={() => void aiDesign()}>
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    {busy ? "Designing" : pages.length === 1 ? "Design this page" : `Design all ${pages.length} pages`}
-                  </Button>
-                  {said.length > 0 && (
-                    <ul className="list-disc pl-4 text-zinc-500 dark:text-[#b3b3b3]">
-                      {said.map((n, i) => (
-                        <li key={i}>{n}</li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              </PopoverContent>
-            </Popover>
+            <Tip label="Picture from this computer">
+              <button type="button" aria-label="Picture" onClick={(e) => (fileRef.current?.click(), e.currentTarget.blur())} className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-500/15">
+                <ImagePlus className="h-4 w-4" />
+              </button>
+            </Tip>
           </div>
         </div>
 
@@ -641,6 +581,8 @@ function DesignPage({ id }: { id: string }) {
           zoom={view.z}
           onZoom={zoom}
           onExport={(only) => void exportPngs(only)}
+          colours={colours}
+          onDropper={(take) => setDropper({ take })}
         />
       </div>
     </div>

@@ -15,6 +15,7 @@ import {
   AlignVerticalJustifyStart,
   AlignVerticalSpaceAround,
   CaseUpper,
+  Check,
   ChevronDown,
   Link2,
   Minus,
@@ -24,8 +25,12 @@ import {
 import type { Design, DesignPage, Layer } from "@contracts/design";
 import { DESIGN_FORMATS } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { typedHex } from "@/lib/design/colour";
 import { boundsOf, pageName, resizeAll, type Align } from "@/lib/design/hands";
-import { DESIGN_FONTS } from "@/lib/design/fonts";
+import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { ColourPicker } from "./ColourPicker";
+import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -68,7 +73,8 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
   };
   return (
     // not a <label>: a click that ends a drag on it would put the keys in the field
-    <div title={title} className={FIELD}>
+    <Tip label={title}>
+    <div data-field={title} className={FIELD}>
       <span onPointerDown={scrub} className={cn("flex shrink-0 cursor-ew-resize select-none items-center", DIM)}>
         {label}
       </span>
@@ -99,28 +105,46 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
         className="w-full min-w-0 bg-transparent outline-none placeholder:text-zinc-400"
       />
     </div>
+    </Tip>
   );
 }
 
 /**
- * A colour: the swatch opens the computer's picker, the field beside it takes a hex code. Every shade the picker
- * passes is set at once, and `merge` names the picking they belong to, so the whole of it is one step to undo.
+ * A colour: the swatch opens the picker (ColourPicker), the field beside it takes a hex code. Every colour the picker
+ * passes is set at once, and `merge` names the drag or press it belongs to, so each is one step to undo.
  */
-function Colour({ title, value, onSet }: { title: string; value: string | null; onSet: (c: string, merge?: string) => void }) {
-  const picking = useRef(0);
+function Colour({ title, value, colours, onSet, onDropper }: { title: string; value: string | null; colours: readonly string[]; onSet: (c: string, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void }) {
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
+  // each opening is a picking of its own: its drags never join the last opening's
+  const opened = useRef(0);
   const hex = value && /^#[0-9a-f]{6}$/i.test(value) ? value : "#000000";
   return (
     <div className={cn(FIELD, "flex-1")}>
-      <input
-        type="color"
-        aria-label={title}
-        value={hex}
-        // each press on the swatch is a new picking
-        onPointerDown={() => picking.current++}
-        onChange={(e) => onSet(e.target.value, `${title} ${picking.current}`)}
-        className="h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-sm border border-black/15 bg-transparent p-0 dark:border-white/20 [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-sm [&::-webkit-color-swatch]:border-0"
-      />
+      <Popover open={open} onOpenChange={(now) => (now && opened.current++, setOpen(now))}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={title}
+            className="h-4 w-4 shrink-0 rounded-sm border border-black/15 dark:border-white/20"
+            style={{ background: value === null ? "repeating-linear-gradient(45deg, #888 0 3px, #bbb 3px 6px)" : hex }}
+          />
+        </PopoverTrigger>
+        <PopoverContent side="left" align="start" sideOffset={14} className="w-auto border-[#e6e6e6] bg-white p-3 text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
+          <ColourPicker
+            value={hex}
+            colours={colours}
+            onSet={(c, gesture) => onSet(c, `${title} ${opened.current}.${gesture}`)}
+            onDropper={
+              onDropper &&
+              (() => {
+                setOpen(false);
+                onDropper((c) => onSet(c));
+              })
+            }
+          />
+        </PopoverContent>
+      </Popover>
       <input
         aria-label={`${title} as a hex code`}
         value={draft ?? (value === null ? "" : value.slice(1).toUpperCase())}
@@ -130,9 +154,8 @@ function Colour({ title, value, onSet }: { title: string; value: string | null; 
         onFocus={(e) => e.currentTarget.select()}
         onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
         onBlur={(e) => {
-          const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(e.currentTarget.value.trim());
-          const six = m && (m[1]!.length === 3 ? m[1]!.replace(/./g, "$&$&") : m[1]!);
-          if (draft !== null && six && `#${six.toLowerCase()}` !== value) onSet(`#${six.toLowerCase()}`);
+          const typed = typedHex(e.currentTarget.value);
+          if (draft !== null && typed && typed !== value) onSet(typed);
           setDraft(null);
         }}
         className="w-full min-w-0 bg-transparent uppercase outline-none placeholder:normal-case placeholder:text-zinc-400"
@@ -152,9 +175,11 @@ const Section = ({ title, action, children }: { title: string; action?: ReactNod
 );
 
 const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) => (
-  <button type="button" aria-label={label} title={label} aria-pressed={on} disabled={disabled} onClick={onClick} className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] disabled:opacity-30", on ? "bg-[#0d99ff]/20 text-[#0d99ff]" : "hover:bg-zinc-500/15")}>
-    {children}
-  </button>
+  <Tip label={label}>
+    <button type="button" aria-label={label} aria-pressed={on} disabled={disabled} onClick={onClick} className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] disabled:opacity-30", on ? "bg-[#0d99ff]/20 text-[#0d99ff]" : "hover:bg-zinc-500/15")}>
+      {children}
+    </button>
+  </Tip>
 );
 
 /** The shadow a press on + gives. */
@@ -183,6 +208,8 @@ export function Inspector({
   zoom,
   onZoom,
   onExport,
+  colours,
+  onDropper,
 }: {
   design: Design;
   page: DesignPage;
@@ -203,6 +230,10 @@ export function Inspector({
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
   /** every page, or the one at this place */
   onExport: (only?: number) => void;
+  /** the colours the design already uses, for the picker */
+  colours: readonly string[];
+  /** the next press on the canvas gives its colour to `take` */
+  onDropper: (take: (hex: string) => void) => void;
 }) {
   const [ratio, setRatio] = useState(false);
   const one = picked.length === 1 ? picked[0]! : null;
@@ -217,7 +248,7 @@ export function Inspector({
   const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number } = {}) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
   );
-  const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} onSet={(c, merge) => onPatch(to(c), merge)} />;
+  const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} colours={colours} onDropper={onDropper} onSet={(c, merge) => onPatch(to(c), merge)} />;
   /** The picked layers resized so the box round them is `w` × `h` (one layer: that layer; with the lock, in its shape). */
   const sized = (w: number, h: number) => (l: Layer) => (box ? resizeAll([l], box, { x: box.x, y: box.y, w, h })[0]! : l);
 
@@ -278,7 +309,7 @@ export function Inspector({
           </Section>
           <Section title="Fill">
             <div className="flex">
-              <Colour title="The page's colour" value={page.background} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
+              <Colour title="The page's colour" value={page.background} colours={colours} onDropper={onDropper} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
             </div>
           </Section>
         </>
@@ -361,16 +392,22 @@ export function Inspector({
           )}
           {text && (
             <Section title="Typography">
-              <select aria-label="Font" value={same((l) => (l.type === "text" ? l.font : undefined)) ?? ""} onChange={(e) => (onPatch((l) => (l.type === "text" ? { ...l, font: e.target.value } : l)), e.currentTarget.blur())} className={cn(FIELD, "w-full outline-none")}>
-                <option value="" disabled hidden>
-                  Mixed
-                </option>
-                {DESIGN_FONTS.map((f) => (
-                  <option key={f.family} value={f.family}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
+              <DropdownMenu>
+                <DropdownMenuTrigger aria-label="Font" className={cn(FIELD, "w-full justify-between outline-none")}>
+                  <span className="truncate">{DESIGN_FONTS.find((f) => f.family === same((l) => (l.type === "text" ? l.font : undefined)))?.label ?? "Mixed"}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-h-96 w-56 overflow-y-auto">
+                  {DESIGN_FONTS.map((f) => (
+                    <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family } : l))} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}"`, fontWeight: designWeight(f.family) }}>
+                        {f.label}
+                      </span>
+                      {same((l) => (l.type === "text" ? l.font : undefined)) === f.family && <Check className="h-3.5 w-3.5 shrink-0" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <div className="grid grid-cols-2 gap-2">
                 {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
                 {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
@@ -437,13 +474,24 @@ export function Inspector({
           </Section>
           {every((l) => l.type === "image") && (
             <Section title="Picture">
-              <select aria-label="How the picture sits in its box" value={same((l) => (l.type === "image" ? l.fit : undefined)) ?? ""} onChange={(e) => (onPatch((l) => (l.type === "image" ? { ...l, fit: e.target.value as "cover" | "contain" } : l)), e.currentTarget.blur())} className={cn(FIELD, "w-full outline-none")}>
-                <option value="" disabled hidden>
-                  Mixed
-                </option>
-                <option value="cover">Fill</option>
-                <option value="contain">Fit</option>
-              </select>
+              <div role="group" aria-label="How the picture sits in its box" className="grid grid-cols-2 gap-1 rounded-[5px] bg-[#f5f5f5] p-0.5 dark:bg-[#383838]">
+                {(
+                  [
+                    ["cover", "Fill"],
+                    ["contain", "Fit"],
+                  ] as const
+                ).map(([fit, label]) => (
+                  <button
+                    key={fit}
+                    type="button"
+                    aria-pressed={same((l) => (l.type === "image" ? l.fit : undefined)) === fit}
+                    onClick={() => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))}
+                    className={cn("h-5 rounded-[4px]", same((l) => (l.type === "image" ? l.fit : undefined)) === fit ? "bg-white shadow-sm dark:bg-[#5a5a5a]" : "text-zinc-500 dark:text-[#b3b3b3]")}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </Section>
           )}
         </>
