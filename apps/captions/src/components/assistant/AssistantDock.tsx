@@ -651,7 +651,7 @@ export function AssistantDock() {
         void load();
       }
     };
-    if (layout) washTo(layout, null, show);
+    if (layout) washTo(layout, null, { also: show });
     else show();
   };
   const newChat = async () => {

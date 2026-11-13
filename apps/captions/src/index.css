@@ -282,23 +282,46 @@ html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5r
 html.chat-wash::view-transition-old(root),
 html.chat-wash::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 html.chat-wash::view-transition-new(root) {
-  /* solid up to a rim 120px wide (RIM, lib/chat-mode.ts) */
-  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 120px), transparent) 0 0 / 0 0 no-repeat;
-  mask: radial-gradient(circle closest-side, #000 calc(100% - 120px), transparent) 0 0 / 0 0 no-repeat;
+  /* solid up to a rim 90px wide (RIM, lib/chat-mode.ts) */
+  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 90px), transparent) 0 0 / 0 0 no-repeat;
+  mask: radial-gradient(circle closest-side, #000 calc(100% - 90px), transparent) 0 0 / 0 0 no-repeat;
 }
-/* The light on the front: a soft ring, white in the dark and the project's colour on a light screen. --light is how
-   strong it is (0: no light, the front is the two screens' soft meeting alone). Its size is animated in script. */
-.chat-wash-front {
-  --light: 0.1;
+/* The lights of that switch (sized and moved in script). They are drawn over what is under them with no blending, so
+   they show on a dark screen and on a light one, whatever the theme (some tools are always dark). */
+.chat-wash-light,
+.chat-wash-lens,
+.chat-wash-bloom {
   position: fixed;
   z-index: 70;
   border-radius: 50%;
   pointer-events: none;
-  background: rgb(var(--violet-600) / var(--light));
-  -webkit-mask: radial-gradient(circle closest-side, transparent 64%, #000 86%, transparent);
-  mask: radial-gradient(circle closest-side, transparent 64%, #000 86%, transparent);
 }
-.dark .chat-wash-front { background: rgb(255 255 255 / var(--light)); }
+/* On the front: a white crest, behind it the colours of a soap film round the ring (twice round, so any quarter of it
+   has them), trailing off toward the button. The colours are strong enough to show on white, where the crest cannot. */
+.chat-wash-light {
+  background:
+    radial-gradient(circle closest-side, transparent 91%, rgb(255 255 255 / 0.9) 94.5%, transparent 98%),
+    conic-gradient(from 70deg, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 42%, rgb(0 0 0 / 0.2) 58%, rgb(0 0 0 / 0.55) 76%, rgb(0 0 0 / 0.95) 88%, #000 96%, transparent);
+  mask: radial-gradient(circle closest-side, transparent 42%, rgb(0 0 0 / 0.2) 58%, rgb(0 0 0 / 0.55) 76%, rgb(0 0 0 / 0.95) 88%, #000 96%, transparent);
+}
+/* Under the front: what is there is softened and its colours pushed, as through moving water. */
+.chat-wash-lens {
+  -webkit-backdrop-filter: blur(6px) saturate(1.8) hue-rotate(-20deg);
+  backdrop-filter: blur(6px) saturate(1.8) hue-rotate(-20deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 60%, #000 85%, #000 94%, transparent);
+  mask: radial-gradient(circle closest-side, transparent 60%, #000 85%, #000 94%, transparent);
+}
+/* At the button, before the front leaves it: a white heart in the same colours. */
+.chat-wash-bloom {
+  background:
+    radial-gradient(circle closest-side, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.5) 20%, transparent 55%),
+    conic-gradient(from 70deg, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8, #818cf8, #e879f9, #fb7185, #38bdf8);
+  -webkit-mask: radial-gradient(circle closest-side, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.35) 62%, transparent);
+  mask: radial-gradient(circle closest-side, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.35) 62%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
 /* In the Mac app the window's buttons sit over the chats' own bar (data-chat-bar), so the page's bar gives up the room
    it kept for them. */
 html.mac-app:not(.mac-full) [data-chat-bar] { padding-left: 84px; }

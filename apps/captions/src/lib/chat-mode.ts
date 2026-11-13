@@ -207,27 +207,45 @@ export function useChatModeKey(enabled: boolean): void {
   }, [enabled]);
 }
 
-/** Turn chat mode on or off from its button (⌘J: the one on screen). */
+/** Turn chat mode on or off from its button (⌘J: the one on screen): the whole switch, with its build. */
 export function toggleChatMode(from?: HTMLElement | null): void {
-  washTo({ on: !useChatMode.getState().on }, from);
+  washTo({ on: !useChatMode.getState().on }, from, { build: true });
 }
 
-/** How long the wash takes, from the press to the new screen all there (ms). */
-export const WASH = 900;
-/** How wide the front's soft rim is (px; index.css has the same number). */
-const RIM = 120;
-/** How far the front pushes what it passes (px, right next to the button). */
-const PUSH = 12;
-/** How long a pushed thing takes to settle (ms). */
-const SETTLE = 640;
-/** How far across its reach the front is (0 to 1) at `t` of the wash (0 to 1): a little quicker off the button than at the end. */
-export const frontAt = (t: number): number => 1 - (1 - t) ** 1.35;
-/** When (0 to 1 of the wash) the front is `d` of its reach away from the button: frontAt the other way round. */
-export const frontReaches = (d: number): number => 1 - (1 - Math.min(1, Math.max(0, d))) ** (1 / 1.35);
+/** The build before the chat-mode switch (ms): light gathers at the button and the screen is drawn toward it. */
+const BUILD = 200;
+/** How long the front then takes to cross the window (ms), */
+export const WASH = 760;
+/** and for the smaller switches, which have no build (the page shown or hidden, a new chat, a chat's first page). */
+const WASH_SMALL = 560;
+/** How wide the soft rim is where the two screens meet (px; index.css has the same number). */
+const RIM = 90;
+/** How far a thing is drawn toward the button (px, right next to it). */
+const PULL = 18;
+/** How long a thing takes to settle once the front has let it go (ms). */
+const SETTLE = 720;
+/** How big the light at the button gets (px, its radius). */
+const BLOOM = 190;
+/** How far across its reach the front is (0 to 1) at `t` (0 to 1): it takes a moment to get going and finishes fast. */
+export const frontAt = (t: number): number => t ** 1.8;
+/** When (0 to 1) the front is `d` of its reach away from the button: frontAt the other way round. */
+export const frontReaches = (d: number): number => Math.min(1, Math.max(0, d)) ** (1 / 1.8);
 
-/** The wash on screen now, if one is, and what it changes. */
+/** The switch on its way (its build, then its wash) and what it changes. */
 let washing: { skipTransition(): void } | null = null;
 let washingTo: Partial<Stored> = {};
+/** Its build, while that runs: nothing has changed yet. `land` ends it with the change, `drop` without. */
+let build: { land(): void; drop(): void } | null = null;
+/** What the front let go of and is still springing back. */
+let springs: Animation[] = [];
+
+/** A switch cut short by another one: its lights and what was still springing go at once, with it. */
+function cutShort(): void {
+  washing?.skipTransition();
+  for (const el of document.querySelectorAll(".chat-wash-light, .chat-wash-lens, .chat-wash-bloom")) el.remove();
+  for (const a of springs) a.cancel();
+  springs = [];
+}
 
 /** The middle of `el`, or of the chat-mode button on screen. */
 function middleOf(el?: Element | null): { x: number; y: number } | null {
@@ -237,32 +255,87 @@ function middleOf(el?: Element | null): { x: number; y: number } | null {
 
 /**
  * Change how chat mode shares the window (on or off, the page shown or hidden) from a button; `also` is what else
- * changes in the same breath (the chat on show). The screen as it was
- * stays where it is and the new one washes over it from the button outwards, a soft-rimmed round front that crosses the
- * window in WASH; what the front passes is pushed a little away from the button and settles back. With no button
- * (⌘J on a screen whose bar has none) it starts where the button stands afterwards. Changed again while a wash runs, or
- * where motion is turned down, the new screen is there at once.
+ * changes in the same breath (the chat on show).
+ *
+ * The screen as it was stays where it is and the new one washes over it from the button outwards: a round front with a
+ * ring of light on it that takes a moment to get going and finishes fast. What the front lets go of springs back from
+ * where it was drawn toward the button, and settles. With `build` (the chat-mode switch itself) there is a beat first:
+ * light gathers at the button and what is on screen is drawn toward it. With no button (⌘J on a screen whose bar has
+ * none) it starts where the button stands. Pressed again during the build, the switch is taken back; changed again
+ * while the wash runs, or where motion is turned down, the new screen is there at once.
  */
-export function washTo(patch: Partial<Stored>, from?: Element | null, also?: () => void): void {
+export function washTo(patch: Partial<Stored>, from?: Element | null, how: { also?: () => void; build?: boolean } = {}): void {
   const { set } = useChatMode.getState();
   // what else changes with the layout (another chat is opened) is part of the same new screen
   const change = () => {
-    also?.();
+    how.also?.();
     set(patch);
   };
-  // asked for twice (a page opened by two things at once): the wash on its way is the answer
-  if (washing && !also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return;
+  // asked for twice (a page opened by two things at once): the switch on its way is the answer. During its build
+  // nothing has changed yet, so the same press again takes it back
+  if (washing && !how.also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return void build?.drop();
   if (washing || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-    washing?.skipTransition();
+    cutShort();
     return change();
   }
   const pressed = middleOf(from);
+  // no button on screen: about where it stands in the chats' bar
+  const at = () => pressed ?? middleOf() ?? { x: 28, y: 28 };
+  if (!how.build) return release(change, at, patch, WASH_SMALL, null);
+  const o = at();
+  const light = lightAt("chat-wash-bloom", o.x, o.y, BLOOM);
+  light.animate([{ transform: "scale(0.1)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }], { duration: BUILD, easing: "cubic-bezier(.2,.7,.3,1)", fill: "both" });
+  const pulls = moved(o.x, o.y).map(({ el, ux, uy }) =>
+    el.animate([{ transform: "translate(0, 0)" }, { transform: `translate(${-ux}px, ${-uy}px)` }], { duration: BUILD, easing: "cubic-bezier(.3,0,.4,1)", composite: "add", fill: "forwards" }),
+  );
+  const end = () => {
+    window.clearTimeout(timer);
+    build = null;
+    washing = null;
+    washingTo = {};
+  };
+  const timer = window.setTimeout(() => {
+    end();
+    release(
+      () => {
+        // the new screen's things have their own way back (wash): the old ones' pull ends with the old screen
+        for (const a of pulls) a.cancel();
+        change();
+      },
+      () => o,
+      patch,
+      WASH,
+      light,
+    );
+  }, BUILD);
+  build = {
+    land: () => {
+      end();
+      for (const a of pulls) a.cancel();
+      light.remove();
+      change();
+    },
+    drop: () => {
+      end();
+      for (const a of pulls) {
+        a.reverse();
+        void a.finished.then(() => a.cancel(), () => {});
+      }
+      void light.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: "forwards" }).finished.then(() => light.remove());
+    },
+  };
+  washing = { skipTransition: () => build?.land() };
+  washingTo = patch;
+}
+
+/** The change, and the front that shows it. `light`: the light the build left at the button, if there was one. */
+function release(change: () => void, at: () => { x: number; y: number }, patch: Partial<Stored>, duration: number, light: HTMLElement | null): void {
   const go = (picture: string | null) => {
-    const { x, y } = pressed ?? middleOf() ?? { x: 0, y: 0 };
-    wash(x, y, picture);
+    const { x, y } = at();
+    wash(x, y, picture, duration, light);
   };
   if (!document.startViewTransition) {
-    // no picture of the old screen to wash over: the chats show from the button, and everything gets its push
+    // no picture of the old screen to wash over: the chats show from the button, with the light and the spring back
     change();
     requestAnimationFrame(() => requestAnimationFrame(() => go(null)));
     return;
@@ -277,88 +350,108 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, also?: () 
   washingTo = patch;
   t.ready.then(
     () => go("::view-transition-new(root)"),
-    () => {},
+    () => light?.remove(),
   );
   void t.finished.finally(() => {
     washing = null;
     washingTo = {};
     root.classList.remove("chat-wash");
-    // the mask's and the old picture's animations hold their last frame: they go with the pictures
+    // the mask's animation holds its last frame: it goes with the pictures
     for (const a of document.getAnimations()) if ((a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition")) a.cancel();
   });
 }
 
-const PUSHED = "[data-appbar] > *, [data-chat-panel] li, [data-chat-panel] header > *, #root :is(section, article, li, h1, h2, img, video, [data-tile])";
+const MOVED = "[data-appbar] > *, [data-chat-panel] li, [data-chat-panel] header > *, #root :is(section, article, li, h1, h2, img, video, [data-tile])";
+
+/** What on screen is drawn toward (x, y), and by how much (px): more next to it, half as much at the window's far corner. */
+function moved(x: number, y: number): Array<{ el: HTMLElement; d: number; ux: number; uy: number }> {
+  const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  return [...document.querySelectorAll<HTMLElement>(MOVED)]
+    .map((el) => ({ el, r: el.getBoundingClientRect() }))
+    .filter(({ r }) => r.width > 8 && r.height > 8 && r.width * r.height < innerWidth * innerHeight * 0.4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth)
+    .slice(0, 160)
+    .map(({ el, r }) => {
+      const dx = r.left + r.width / 2 - x;
+      const dy = r.top + r.height / 2 - y;
+      const d = Math.hypot(dx, dy) || 1;
+      const k = PULL * (1 - 0.5 * Math.min(1, d / far));
+      return { el, d, ux: (dx / d) * k, uy: (dy / d) * k };
+    });
+}
+
+/** A round light (index.css) centred on (x, y), `r` px to its rim; its size and strength are animated by who asks. */
+function lightAt(name: string, x: number, y: number, r: number): HTMLElement {
+  const el = document.body.appendChild(document.createElement("div"));
+  el.className = name;
+  Object.assign(el.style, { left: `${x - r}px`, top: `${y - r}px`, width: `${2 * r}px`, height: `${2 * r}px` });
+  return el;
+}
 
 /**
- * The front from (x, y) and the pushes behind it. `picture`: the pseudo-element that holds the new screen, shown
- * through a round mask that grows (index.css gives it the mask; its size and place are animated here); null where there
- * is no such picture, and the chats alone are shown from the button. A ring of light rides on the front.
+ * The front from (x, y), crossing the window in `duration`, and what it lets go of behind it. `picture`: the
+ * pseudo-element that holds the new screen, shown through a round mask that grows (index.css gives it the mask; its
+ * size and place are animated here); null where there is no such picture, and the chats alone are shown from the
+ * button. On the front ride a ring of light and a ring that softens and colours what is under it; both trail off
+ * toward the button and leave the window after the front has.
  */
-function wash(x: number, y: number, picture: string | null): void {
+function wash(x: number, y: number, picture: string | null, duration: number, light: HTMLElement | null): void {
   const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
   // the front is the middle of the rim; it ends half a rim past the window's far corner, which is then all new
   const reach = far + RIM / 2;
   const STEPS = 30;
   const at = Array.from({ length: STEPS + 1 }, (_, i) => reach * frontAt(i / STEPS));
-  const root = document.documentElement;
   if (picture) {
     const frames = at.map((f) => {
       const s = `${2 * f + RIM}px`;
       const p = `${x - f - RIM / 2}px ${y - f - RIM / 2}px`;
       return { maskSize: `${s} ${s}`, maskPosition: p, webkitMaskSize: `${s} ${s}`, webkitMaskPosition: p };
     });
-    root.animate(frames, { duration: WASH, pseudoElement: picture, fill: "both" });
-    // the old screen gives a little as the front leaves the button
-    const origin = `${x}px ${y}px`;
-    root.animate(
-      [
-        { transform: "scale(1)", transformOrigin: origin },
-        { transform: "scale(1.012)", transformOrigin: origin },
-      ],
-      { duration: WASH, pseudoElement: "::view-transition-old(root)", fill: "both", easing: "ease-out" },
-    );
+    document.documentElement.animate(frames, { duration, pseudoElement: picture, fill: "both" });
   } else {
     const panel = document.querySelector<HTMLElement>("[data-chat-panel]");
     const px = x - (panel?.getBoundingClientRect().left ?? 0);
     panel?.animate?.(
       at.map((f) => ({ clipPath: `circle(${f}px at ${px}px ${y}px)` })),
-      { duration: WASH },
+      { duration },
     );
   }
-  // the light on the front: a ring (index.css .chat-wash-front) whose brightest part stands at the front, fading as it spreads
-  const ring = document.body.appendChild(document.createElement("div"));
-  ring.className = "chat-wash-front";
-  const BASE = 400;
-  Object.assign(ring.style, { left: `${x - BASE / 2}px`, top: `${y - BASE / 2}px`, width: `${BASE}px`, height: `${BASE}px` });
-  ring.animate(
-    // the ring is brightest at 0.86 of its radius
-    at.map((f, i) => ({ transform: `scale(${f / 0.86 / (BASE / 2)})`, opacity: Math.min(1, 2.4 * (1 - i / STEPS)) })),
-    { duration: WASH, fill: "both" },
-  ).finished.then(
-    () => ring.remove(),
-    () => ring.remove(),
-  );
-  const els = [...document.querySelectorAll<HTMLElement>(PUSHED)]
-    .map((el) => ({ el, r: el.getBoundingClientRect() }))
-    .filter(({ r }) => r.width > 8 && r.height > 8 && r.width * r.height < innerWidth * innerHeight * 0.4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth)
-    .slice(0, 160);
-  for (const { el, r } of els) {
-    const dx = r.left + r.width / 2 - x;
-    const dy = r.top + r.height / 2 - y;
-    const d = Math.hypot(dx, dy) || 1;
-    const k = PUSH * (1 - 0.5 * Math.min(1, d / far));
-    const ux = (dx / d) * k;
-    const uy = (dy / d) * k;
-    const pushed = { transform: `translate(${ux}px, ${uy}px)` };
-    const back = { transform: `translate(${-ux * 0.2}px, ${-uy * 0.2}px)` };
+  // the rings: their rim is where the new screen is whole (they are drawn in it, and it thins out across the rim), and
+  // they go on for a while after the front, out of the window, fading. They run a moment behind the mask (LATE of
+  // the wash): a browser moves them on its fast path and the mask on its slow one, a frame or two behind, and a ring
+  // that got ahead of the mask lost its crest to the rim
+  const TAIL = 0.4;
+  const LATE = 0.045;
+  const BASE = 200;
+  // the chat-mode switch itself (the one with a build) has the light at full strength; the smaller switches, which
+  // happen all the time, half of it
+  const strength = light ? 1 : 0.5;
+  const rings = Array.from({ length: STEPS + 1 }, (_, i) => {
+    const t = (i / STEPS) * (1 + TAIL);
+    return { transform: `scale(${Math.max(0, reach * frontAt(Math.max(0, t - LATE)) - RIM / 2) / BASE}) rotate(${50 * t}deg)`, opacity: strength * Math.min(1, t * 6) * (t <= 1 ? 1 : 1 - (t - 1) / TAIL) };
+  });
+  for (const name of ["chat-wash-lens", "chat-wash-light"]) {
+    const ring = lightAt(name, x, y, BASE);
+    void ring.animate(rings, { duration: duration * (1 + TAIL), fill: "both" }).finished.then(
+      () => ring.remove(),
+      () => ring.remove(),
+    );
+  }
+  // the light the build left at the button opens out into the front and goes
+  if (light)
+    void light.animate([{ transform: "scale(1)", opacity: 1 }, { transform: "scale(1.5)", opacity: 0.9, offset: 0.4 }, { transform: "scale(3)", opacity: 0 }], { duration: duration * 0.7, easing: "cubic-bezier(.4,0,.8,.6)", fill: "forwards" }).finished.then(
+      () => light.remove(),
+      () => light.remove(),
+    );
+  springs = moved(x, y).map(({ el, d, ux, uy }) => {
+    const drawn = { transform: `translate(${-ux}px, ${-uy}px)` };
+    const past = { transform: `translate(${ux * 0.3}px, ${uy * 0.3}px)` };
     const rest = { transform: "translate(0, 0)" };
-    el.animate(
-      // under the new screen's mask a thing is at its furthest as the front shows it, then settles; with no mask it
-      // is in plain sight all along, so it starts from where it stands
-      picture ? [pushed, { ...back, offset: 0.55 }, rest] : [rest, { ...pushed, offset: 0.3 }, { ...back, offset: 0.65 }, rest],
+    return el.animate(
+      // under the new screen's mask, or after a build, a thing is where it was drawn to when the front lets it go:
+      // it springs back past its place and settles. With neither it is in plain sight at rest, so it is drawn first
+      picture || light ? [drawn, { ...past, offset: 0.45 }, rest] : [rest, { ...drawn, offset: 0.3 }, { ...past, offset: 0.65 }, rest],
       // added to whatever transform the element has of its own (a centred dialog, a hover lift), never replacing it
-      { duration: SETTLE, delay: WASH * frontReaches(d / reach), easing: "cubic-bezier(.3,.7,.3,1)", composite: "add", fill: "backwards" },
+      { duration: SETTLE, delay: duration * frontReaches(d / reach), easing: "cubic-bezier(.3,.7,.3,1)", composite: "add", fill: "backwards" },
     );
-  }
+  });
 }
