@@ -107,7 +107,8 @@ export function ChatHeader({
 }: {
   layout: ChatLayout;
   title: string;
-  dot: ReactNode;
+  /** Whether the open chat is working; nothing for a new chat, which is no chat yet. */
+  dot?: ReactNode;
   onNew: () => void;
   canNew: boolean;
   /** Open the folded list over the chat. */
@@ -134,7 +135,7 @@ export function ChatHeader({
       {!layout.forced && <button
         type="button"
         className={iconBtn}
-        onClick={(e) => washTo({ page: layout.full }, e.currentTarget)}
+        onClick={(e) => washTo(layout.full ? { page: true, bare: false } : { page: false }, e.currentTarget)}
         aria-pressed={!layout.full}
         aria-label={layout.full ? "Show the page beside the chats" : "Hide the page: only chats"}
         title={layout.full ? "Show the page" : "Only chats"}

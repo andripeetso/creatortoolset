@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatLayout, frontAt, frontReaches, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
+import { bareNow, chatLayout, frontAt, frontReaches, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
 
 const fresh = { w: 0, page: true };
 
@@ -28,6 +28,26 @@ describe("chatLayout", () => {
     expect(chatLayout(fresh, 1440, 960)).toMatchObject({ chat: 480, full: false, list: false });
     expect(chatLayout(fresh, 1920, 960)).toMatchObject({ chat: 960, list: true });
     expect(chatLayout(fresh, 1200, 2000)).toMatchObject({ chat: MIN_CHAT, full: false });
+  });
+});
+
+describe("a new chat", () => {
+  it("has no page: only chats, whatever was chosen for the page, and not because the window is too narrow", () => {
+    expect(chatLayout({ ...fresh, bare: true }, 1440)).toMatchObject({ chat: 1440, full: true, forced: false, list: true });
+    expect(chatLayout({ ...fresh, bare: false }, 1440)).toMatchObject({ full: false });
+  });
+  it("stays without a page when its first message is sent, until something ends that; another chat is judged anew", () => {
+    const chatMode = true;
+    expect(bareNow(false, { chatMode, another: false, unsent: true })).toBe(true);
+    // sent: nothing moves
+    expect(bareNow(true, { chatMode, another: false, unsent: false })).toBe(true);
+    // the page was asked for on the new-chat screen and a message sent after: it stays
+    expect(bareNow(false, { chatMode, another: false, unsent: false })).toBe(false);
+    // another chat: one that was started has its page, a new one has none
+    expect(bareNow(true, { chatMode, another: true, unsent: false })).toBe(false);
+    expect(bareNow(false, { chatMode, another: true, unsent: true })).toBe(true);
+    // outside chat mode a chat that was started is about the page on screen
+    expect(bareNow(true, { chatMode: false, another: false, unsent: false })).toBe(false);
   });
 });
 

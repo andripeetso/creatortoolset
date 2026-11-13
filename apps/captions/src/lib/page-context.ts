@@ -59,7 +59,8 @@ export function pageContext(): AssistantContext {
     .map(textOf)
     .filter(Boolean)
     .slice(0, 30);
-  const visible = describePage({ crumb: crumbEl ? textOf(crumbEl) : undefined, dialog, headings });
+  // only chats (chat mode with the page not drawn): nothing of the page is what the person is looking at
+  const visible = document.documentElement.dataset.chatMode === "full" ? "Only the chats are on screen: this page is not shown." : describePage({ crumb: crumbEl ? textOf(crumbEl) : undefined, dialog, headings });
   return { path: location.pathname + location.search, title: document.title, ...(visible ? { visible } : {}), ...(thisMacBridge() ? { mac: true } : {}), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 

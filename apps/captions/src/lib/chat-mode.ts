@@ -9,7 +9,8 @@ import { create } from "zustand";
  * than, and those turn off (postcss-pane.cjs), so each screen shows the layout it has for a window that wide. What a
  * screen leaves out beside the chats (its own chat, a list the chats replace) it says with the `chat:` variant
  * (tailwind.config.js) or useChatShown(); a screen that cannot work in half a window says how much it needs
- * (usePageNeeds) and the chats give way. On or off, the width and whether the page shows are kept per browser.
+ * (usePageNeeds) and the chats give way. A new chat has no page: it starts as only chats (`bare`) and its page comes
+ * beside it when it makes something. On or off, the width and whether the page shows are kept per browser.
  */
 
 const KEY = "ct-chat-mode";
@@ -27,16 +28,21 @@ type Stored = {
   on: boolean;
   /** The chats' width as dragged; 0 = half the window. */
   w: number;
-  /** The page shows beside the chats (off: only chats). */
+  /** The page shows beside the chats (off: only chats). Your own choice: the bar's button. */
   page: boolean;
+  /**
+   * The open chat has no page yet: a new chat, until it makes something, a link is followed or the page is asked for.
+   * Only chats then, whatever `page` says. Kept so a reload paints the same screen at once.
+   */
+  bare: boolean;
 };
 
 const stored = (): Stored => {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<Stored> | null;
-    return { on: s?.on === true, w: typeof s?.w === "number" && s.w > 0 ? s.w : 0, page: s?.page !== false };
+    return { on: s?.on === true, w: typeof s?.w === "number" && s.w > 0 ? s.w : 0, page: s?.page !== false, bare: s?.bare === true };
   } catch {
-    return { on: false, w: 0, page: true };
+    return { on: false, w: 0, page: true, bare: false };
   }
 };
 
@@ -57,7 +63,7 @@ export const useChatMode = create<ChatModeState>((set) => ({
   need: 0,
   set: (patch) =>
     set((s) => {
-      const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, page: patch.page ?? s.page };
+      const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, page: patch.page ?? s.page, bare: patch.bare ?? s.bare };
       try {
         localStorage.setItem(KEY, JSON.stringify(next));
       } catch {
@@ -112,14 +118,23 @@ export interface ChatLayout {
  * How the window `win` wide is shared. The page never gets less than MIN_PAGE nor the open chat less than MIN_CHAT;
  * `need` is what the screen on show asks for itself (usePageNeeds), given as far as the chat's least allows.
  */
-export function chatLayout(s: Pick<Stored, "w" | "page">, win: number, need = 0): ChatLayout {
+export function chatLayout(s: Pick<Stored, "w" | "page"> & { bare?: boolean }, win: number, need = 0): ChatLayout {
   const forced = win - MIN_PAGE < MIN_CHAT;
-  const full = !s.page || forced;
+  const full = !s.page || forced || !!s.bare;
   const room = win - Math.max(MIN_PAGE, Math.min(need, win - MIN_CHAT));
   // half the window until the edge is dragged
   const chat = full ? win : Math.min(Math.max(s.w || Math.round(win / 2), MIN_CHAT), room);
   return { chat, full, forced, list: chat - LIST_W >= MIN_CHAT };
 }
+
+/**
+ * Whether the open chat has no page (`bare`), given what it was. A chat nothing was said in has none; neither has it
+ * after its first message (sending moves nothing: what ends it is something made, a link, the page's button). Another
+ * chat on show is a new one or one that was started. Outside chat mode a chat is about the page on screen, so only a
+ * chat nothing was said in is bare.
+ */
+export const bareNow = (was: boolean, s: { chatMode: boolean; another: boolean; unsent: boolean }): boolean =>
+  !s.chatMode || s.another || s.unsent ? s.unsent : was;
 
 /** The breakpoints a page `pane` wide is narrower than, as <html data-pane> carries them: "lt-lg lt-xl lt-2xl". */
 export const paneBelow = (pane: number): string => BREAKPOINTS.filter(([, px]) => pane < px).map(([name]) => `lt-${name}`).join(" ");
@@ -134,6 +149,7 @@ const pageWidth = () => document.documentElement.clientWidth || window.innerWidt
 export function useChatModeLayout(active: boolean): ChatLayout {
   const w = useChatMode((s) => s.w);
   const page = useChatMode((s) => s.page);
+  const bare = useChatMode((s) => s.bare);
   const need = useChatMode((s) => s.need);
   const [win, setWin] = useState(pageWidth);
   useEffect(() => {
@@ -141,12 +157,14 @@ export function useChatModeLayout(active: boolean): ChatLayout {
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
-  const layout = chatLayout({ w, page }, win, need);
+  const layout = chatLayout({ w, page, bare }, win, need);
   // before the browser draws: a switch is one picture of the old screen and one of the new (washTo)
   useLayoutEffect(() => {
     if (!active) return;
     const root = document.documentElement;
     root.dataset.chatMode = layout.full ? "full" : "";
+    // a page that is not drawn is not heard either
+    if (layout.full) for (const m of document.querySelectorAll<HTMLMediaElement>("main video, main audio")) m.pause();
     // the list beside the chat carries the app's name and the account (index.css)
     root.toggleAttribute("data-chat-list", layout.list);
     root.style.setProperty("--chat-w", `${layout.chat}px`);
@@ -207,8 +225,9 @@ export const frontAt = (t: number): number => 1 - (1 - t) ** 1.35;
 /** When (0 to 1 of the wash) the front is `d` of its reach away from the button: frontAt the other way round. */
 export const frontReaches = (d: number): number => 1 - (1 - Math.min(1, Math.max(0, d))) ** (1 / 1.35);
 
-/** The wash on screen now, if one is. */
+/** The wash on screen now, if one is, and what it changes. */
 let washing: { skipTransition(): void } | null = null;
+let washingTo: Partial<Stored> = {};
 
 /** The middle of `el`, or of the chat-mode button on screen. */
 function middleOf(el?: Element | null): { x: number; y: number } | null {
@@ -217,17 +236,25 @@ function middleOf(el?: Element | null): { x: number; y: number } | null {
 }
 
 /**
- * Change how chat mode shares the window (on or off, the page shown or hidden) from a button. The screen as it was
+ * Change how chat mode shares the window (on or off, the page shown or hidden) from a button; `also` is what else
+ * changes in the same breath (the chat on show). The screen as it was
  * stays where it is and the new one washes over it from the button outwards, a soft-rimmed round front that crosses the
  * window in WASH; what the front passes is pushed a little away from the button and settles back. With no button
  * (⌘J on a screen whose bar has none) it starts where the button stands afterwards. Changed again while a wash runs, or
  * where motion is turned down, the new screen is there at once.
  */
-export function washTo(patch: Partial<Stored>, from?: Element | null): void {
+export function washTo(patch: Partial<Stored>, from?: Element | null, also?: () => void): void {
   const { set } = useChatMode.getState();
+  // what else changes with the layout (another chat is opened) is part of the same new screen
+  const change = () => {
+    also?.();
+    set(patch);
+  };
+  // asked for twice (a page opened by two things at once): the wash on its way is the answer
+  if (washing && !also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return;
   if (washing || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
     washing?.skipTransition();
-    return set(patch);
+    return change();
   }
   const pressed = middleOf(from);
   const go = (picture: string | null) => {
@@ -236,7 +263,7 @@ export function washTo(patch: Partial<Stored>, from?: Element | null): void {
   };
   if (!document.startViewTransition) {
     // no picture of the old screen to wash over: the chats show from the button, and everything gets its push
-    set(patch);
+    change();
     requestAnimationFrame(() => requestAnimationFrame(() => go(null)));
     return;
   }
@@ -245,14 +272,16 @@ export function washTo(patch: Partial<Stored>, from?: Element | null): void {
   root.classList.add("chat-wash");
   // the screen has to be the new one by the time this returns (useChatModeLayout puts the layout on <html> in a
   // layout effect, so one synchronous render does it)
-  const t = document.startViewTransition(() => flushSync(() => set(patch)));
+  const t = document.startViewTransition(() => flushSync(change));
   washing = t;
+  washingTo = patch;
   t.ready.then(
     () => go("::view-transition-new(root)"),
     () => {},
   );
   void t.finished.finally(() => {
     washing = null;
+    washingTo = {};
     root.classList.remove("chat-wash");
     // the mask's and the old picture's animations hold their last frame: they go with the pictures
     for (const a of document.getAnimations()) if ((a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition")) a.cancel();

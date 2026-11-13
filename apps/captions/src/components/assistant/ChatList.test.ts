@@ -14,12 +14,12 @@ describe("groupChats", () => {
     chat("settled", { settled: true }),
     chat("read", { unread: true, open: true }),
   ];
-  it("what asks you first, then what works, then the rest: the new chat, what finished unseen, the others", () => {
+  it("what asks you first, then what works, then the rest: what finished unseen, the others; a chat nothing was said in is not listed", () => {
     const { groups, settled } = groupChats(chats);
     expect(groups.map((g) => [g.name, g.chats.map((c) => c.id)])).toEqual([
       ["Needs you", ["asks"]],
       ["Working", ["working"]],
-      ["Recent", ["new", "done", "plain", "read"]],
+      ["Recent", ["done", "plain", "read"]],
     ]);
     expect(settled.map((c) => c.id)).toEqual(["settled"]);
   });
