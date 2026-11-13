@@ -50,10 +50,10 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 const go = (to: string) => new Response(null, { status: 302, headers: { location: to, 'cache-control': 'no-store' } });
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 /** A page for the person's browser when a sign-in can't go on (the AI app has no way to show it). */
-const page = (status: number, line: string) =>
+const page = (status: number, line: string, title = "This connection can't go ahead") =>
   new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Creator Toolset</title>` +
-      `<body style="font:16px/1.5 system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 20px"><h1 style="font-size:20px">This connection can't go ahead</h1><p>${esc(line)}</p>`,
+      `<body style="font:16px/1.5 system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 20px"><h1 style="font-size:20px">${esc(title)}</h1><p>${esc(line)}</p>`,
     { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' } },
   );
 
@@ -384,21 +384,27 @@ function offline(m: Rpc, cached: unknown): unknown {
   }
 }
 
-/** A card's pictures come through here, since the card may load from one address only; its video stays on the computer. */
+/**
+ * Every link in an answer that points at the computer is turned into one on this address, so an AI app deals with one
+ * address for every person: a card's pictures are fetched through /m, any other link opens through /open (below). A
+ * card's video link is left out: video stays on the computer.
+ */
 function throughHere(gw: GatewayDeps, out: unknown, computer: string, hostname: string) {
-  const from = `https://${hostname}/api/card/media/`;
-  const to = `${gw.publicUrl}/m/${computer}/`;
-  const walk = (v: unknown): unknown => {
-    if (typeof v === 'string') return v.startsWith(from) ? to + v.slice(from.length) : v;
-    if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'play').map(([k, x]) => [k, walk(x)]));
+  const its = `https://${hostname}/`;
+  const media = `${its}api/card/media/`;
+  const turn = (v: string) => (v.includes(its) ? v.replaceAll(media, `${gw.publicUrl}/m/${computer}/`).replaceAll(its, `${gw.publicUrl}/open/${computer}/`) : v);
+  const walk = (v: unknown, card: boolean): unknown => {
+    if (typeof v === 'string') return turn(v);
+    if (Array.isArray(v)) return v.map((x) => walk(x, card));
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).filter(([k]) => !card || k !== 'play').map(([k, x]) => [k, walk(x, card || k === 'card')]));
     return v;
   };
   for (const one of Array.isArray(out) ? out : [out]) {
-    const r = (one as { result?: Record<string, any> } | null)?.result;
-    if (!r || typeof r !== 'object') continue;
-    if (r._meta?.card) r._meta.card = walk(r._meta.card);
-    for (const c of Array.isArray(r.contents) ? r.contents : []) {
+    const o = one as { result?: Record<string, any> } | null;
+    if (!o?.result || typeof o.result !== 'object') continue;
+    o.result = walk(o.result, false) as Record<string, any>;
+    // the card's page loads pictures from this address only
+    for (const c of Array.isArray(o.result.contents) ? o.result.contents : []) {
       if (c?._meta?.ui?.csp) c._meta.ui.csp.resourceDomains = [gw.publicUrl];
       if (c?._meta?.['openai/widgetCSP']) c._meta['openai/widgetCSP'].resource_domains = [gw.publicUrl];
     }
@@ -451,7 +457,8 @@ export async function forwardMcp(gw: GatewayDeps, req: Request): Promise<Respons
       res = await (gw.fetch ?? fetch)(`${originOf(gw, g.hostname)}/api/mcp`, {
         method: 'POST',
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', accept: 'application/json' },
-        body: text,
+        // a link the AI app got from here and hands back (a Review video's) is the computer's own again
+        body: text.replaceAll(`${gw.publicUrl}/open/${g.computer}/`, `https://${g.hostname}/`),
         signal: AbortSignal.timeout(90_000),
       });
     } catch {
@@ -516,6 +523,30 @@ export async function relayMedia(gw: GatewayDeps, computer: string, token: strin
     chunks.push(chunk);
   }
   return new Response(Buffer.concat(chunks), { headers: { 'content-type': type, 'cache-control': 'private, max-age=3600' } });
+}
+
+const OPEN_PATH = /^[A-Za-z0-9._~%/-]{0,500}$/;
+const OPEN_QUERY = /^(\?[A-Za-z0-9._~%=&-]{0,500})?$/;
+
+/**
+ * GET /open/<computer>/<path>: where a link in an AI app's answer lands. The thing lives on the person's computer, so
+ * the page offers the app on it (its own link, creatortoolset://…) and the computer's web address, which asks for the
+ * computer's password.
+ */
+export function openPage(gw: GatewayDeps, computer: string, rest: string, query: string): Response {
+  const row = gw.db.prepare('SELECT hostname FROM computers WHERE id = ?').get(computer) as { hostname: string } | undefined;
+  if (!row || !OPEN_PATH.test(rest) || !OPEN_QUERY.test(query)) return page(404, "That link doesn't lead anywhere any more.", 'Not found');
+  const inApp = `creatortoolset://${rest}${query}`;
+  const inBrowser = `https://${row.hostname}/${rest}${query}`;
+  const button = 'display:inline-block;padding:10px 18px;border-radius:9px;text-decoration:none;font-weight:600';
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open in Creator Toolset</title>` +
+      `<body style="font:16px/1.5 system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 20px"><h1 style="font-size:20px">Open in Creator Toolset</h1>` +
+      `<p>It is on your computer.</p>` +
+      `<p><a style="${button};background:#111;color:#fff" href="${esc(inApp)}">Open in the app</a></p>` +
+      `<p><a href="${esc(inBrowser)}">Open in the browser</a>. It asks for your computer's password.</p>`,
+    { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' } },
+  );
 }
 
 /**

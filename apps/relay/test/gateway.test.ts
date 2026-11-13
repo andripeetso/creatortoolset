@@ -227,8 +227,8 @@ test("a card's pictures come through the broker, its video does not", async () =
   const item = answer.result._meta.card.items[0];
   assert.equal(item.thumb, `${SELF}/m/${c.id}/${THUMB}`);
   assert.equal('play' in item, false);
-  // a link into the app stays the computer's own
-  assert.equal(answer.result._meta.card.href, `https://${c.hostname}/library`);
+  // a link into the app opens through the broker's own address, for every person the same one
+  assert.equal(answer.result._meta.card.href, `${SELF}/open/${c.id}/library`);
   assert.equal(answer.result.content[0].text, '{"files":1}');
 
   const page = await call(rpc('resources/read', { uri: 'ui://card' }));
@@ -244,6 +244,20 @@ test("a card's pictures come through the broker, its video does not", async () =
   assert.equal((await fetch(`${base}/m/${c.id}/${PLAY}`)).status, 404);
   assert.equal((await fetch(`${base}/m/${'0'.repeat(32)}/${THUMB}`)).status, 404);
   assert.equal((await fetch(`${base}/m/${c.id}/nonsense`)).status, 404);
+
+  // where such a link lands: the app on the computer, or the computer's web address
+  const landing = await (await fetch(`${base}/open/${c.id}/review/abc-123?v=2`)).text();
+  assert.ok(landing.includes('href="creatortoolset://review/abc-123?v=2"'));
+  assert.ok(landing.includes(`href="https://${c.hostname}/review/abc-123?v=2"`));
+  assert.equal((await fetch(`${base}/open/${'0'.repeat(32)}/review/abc`)).status, 404);
+  // a path that tries to carry markup lands nowhere
+  assert.equal((await fetch(`${base}/open/${c.id}/x%22%3E%3Cscript%3E`)).status, 200);
+  assert.equal((await (await fetch(`${base}/open/${c.id}/x%22%3E%3Cscript%3E`)).text()).includes('<script>'), false);
+  assert.equal((await fetch(`${base}/open/${c.id}/review/abc?next=https://evil.example`)).status, 404);
+
+  // a link the AI app hands back reaches the computer as the computer's own
+  await mcp(token, rpc('tools/call', { name: 'get_review', arguments: { link: `${SELF}/open/${c.id}/review/abc-123` } }));
+  assert.ok(pc.state.seen.at(-1)!.body.includes(`"link":"https://${c.hostname}/review/abc-123"`));
 });
 
 test("a computer that has not allowed the app: on to its own Allow page, and its code becomes the key", async () => {

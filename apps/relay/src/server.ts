@@ -8,7 +8,7 @@ import { connectStats, createChallenge, linkComputer, listComputers, renewTunnel
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
-import { aiStats, approveAuthorize, authorizeInfo, computerCallback, exchangeCode, forwardMcp, grantFromComputer, metadata, registerClient, relayMedia, startAuthorize, type GatewayDeps } from './gateway.ts';
+import { aiStats, approveAuthorize, authorizeInfo, computerCallback, exchangeCode, forwardMcp, grantFromComputer, metadata, openPage, registerClient, relayMedia, startAuthorize, type GatewayDeps } from './gateway.ts';
 
 export interface Deps {
   db: DatabaseSync;
@@ -85,6 +85,8 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
       if (req.method === 'GET' && path === '/mcp') return new Response(null, { status: 405, headers: { allow: 'POST' } });
       const media = /^\/m\/([0-9a-f]{32})\/([\w.-]{1,2000})$/.exec(path);
       if (media && req.method === 'GET') return await relayMedia(gw, media[1], media[2]);
+      const opens = /^\/open\/([0-9a-f]{32})\/(.*)$/.exec(path);
+      if (opens && req.method === 'GET') return openPage(gw, opens[1], opens[2], url.search);
     }
     if (req.method === 'GET' && path === '/v1/keys') {
       return json(200, { keys: [{ kid: d.signing.kid, publicKey: publicKeyB64(d.signing.publicKey) }] });
