@@ -8,8 +8,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import type { ToolFoldersState } from "@/lib/folders";
 import { FolderCard, FolderRow } from "./Folder";
 
-/** The folders on screen as cards: their pictures from inside, their count, items dropped on one go in. */
-export function ToolFolderCards({ state, pictureOf }: { state: ToolFoldersState; pictureOf: (id: string) => string | undefined }) {
+/** The folders on screen as cards: their pictures from inside, their count, items dropped on one go in. `aspect`: the picture box's shape, when the tool's own cards are not 16:9. */
+export function ToolFolderCards({ state, pictureOf, aspect }: { state: ToolFoldersState; pictureOf: (id: string) => string | undefined; aspect?: "video" | "portrait" | "square" }) {
   return (
     <>
       {state.folders.map((f) => (
@@ -23,6 +23,7 @@ export function ToolFolderCards({ state, pictureOf }: { state: ToolFoldersState;
             .filter((src): src is string => !!src)
             .slice(0, 4)
             .map((src) => ({ src }))}
+          aspect={aspect}
           meta={<FolderMeta state={state} f={f} />}
           drop={{ type: state.dragType, onItems: (ids) => void state.move(ids, f.id), label: "Move into this folder" }}
           onRename={() => void state.rename(f)}

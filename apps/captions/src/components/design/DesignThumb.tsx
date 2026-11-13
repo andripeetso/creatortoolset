@@ -7,10 +7,12 @@ import { getDesign, pictureUrl } from "@/lib/designs";
 /**
  * A design's first frame, small and in its own shape, drawn by the same function as the designer's canvas. `stamp` is
  * the design's last change: a new one reads and draws it again. `width` and `height` hold the card's shape until the
- * design is read.
+ * design is read. `tile`: the shape (width over height) of the box it sits in, when every card's box is the same: the
+ * frame is fitted inside that box in its own shape, with a hairline round it (a white frame on a light page still has
+ * an edge); a canvas with no frame yet shows nothing.
  * ponytail: each card reads its whole design; a saved picture of the first frame when lists get long.
  */
-export function DesignThumb({ id, stamp, width, height }: { id: string; stamp: number; width: number; height: number }) {
+export function DesignThumb({ id, stamp, width, height, tile }: { id: string; stamp: number; width: number; height: number; tile?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [design, setDesign] = useState<Design | null>(null);
   const [drawn, setDrawn] = useState(0);
@@ -53,5 +55,9 @@ export function DesignThumb({ id, stamp, width, height }: { id: string; stamp: n
   }, [design, drawn, loaded]);
 
   const first = design?.pages[0] && frameOf(design.pages[0], 0, design.width, design.height);
-  return <canvas ref={canvas} aria-hidden className="block w-full bg-zinc-500/10" style={{ aspectRatio: `${first ? first.w : width} / ${first ? first.h : height}` }} />;
+  const w = first ? first.w : width;
+  const h = first ? first.h : height;
+  if (tile === undefined) return <canvas ref={canvas} aria-hidden className="block w-full bg-zinc-500/10" style={{ aspectRatio: `${w} / ${h}` }} />;
+  // wider than its box: as wide as the box; taller: as tall
+  return <canvas ref={canvas} aria-hidden className={`block rounded-[3px] ring-1 ring-zinc-500/25 ${w / h >= tile ? "h-auto w-full" : "h-full w-auto"} ${design && !design.pages.length ? "invisible" : ""}`} style={{ aspectRatio: `${w} / ${h}` }} />;
 }

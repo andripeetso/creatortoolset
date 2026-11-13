@@ -114,7 +114,7 @@ export interface Cover {
 }
 
 /** The folders view's folder: a 2×2 mosaic of `covers` (up to four), its name and `meta`. */
-export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { covers: Cover[]; aspect?: "video" | "portrait" }) {
+export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { covers: Cover[]; aspect?: "video" | "portrait" | "square" }) {
   const { over, handlers } = useFolderDrop(p.drop);
   const shown = covers.slice(0, 4);
   const Icon = p.icon ?? FolderIcon;
@@ -129,7 +129,7 @@ export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { c
           over ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-800",
         )}
       >
-        <div className={cn("relative overflow-hidden bg-zinc-950", aspect === "video" ? "aspect-video" : "aspect-[4/5]")}>
+        <div className={cn("relative overflow-hidden bg-zinc-950", aspect === "video" ? "aspect-video" : aspect === "square" ? "aspect-square" : "aspect-[4/5]")}>
           {shown.length > 0 ? (
             // fixed rows: a tall (9:16) picture must not grow past the box
             <div

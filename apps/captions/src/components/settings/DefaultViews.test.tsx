@@ -41,6 +41,7 @@ describe("Default view", () => {
       ["Story Splitter", "List"],
       ["Video Notes", "List"],
       ["Guide Builder", "List"],
+      ["Designer", "Cards"],
     ]); // the Screen Recorder's row is the Mac app's only
     expect(el.textContent).not.toContain("Reset");
   });

@@ -15,6 +15,7 @@ export const BROWSE_VIEWS = {
   stories: { label: "Story Splitter", view: "list" },
   notes: { label: "Video Notes", view: "list" },
   guides: { label: "Guide Builder", view: "list" },
+  design: { label: "Designer", view: "grid" },
   recorder: { label: "Screen Recorder", view: "grid" },
 } as const satisfies Record<string, { label: string; view: BrowseView }>;
 export type BrowseTool = keyof typeof BROWSE_VIEWS;
