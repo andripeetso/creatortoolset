@@ -125,7 +125,7 @@ export const CAPTION_LIMITS = { claimMs: 30_000, takeMs: 3 * 60_000, rank: 1 } a
  * its length (two minutes at most), and else it is written another way (api/transcribe.ts POST /mic), all well under
  * the proxy's 60 s.
  */
-export const MIC_LIMITS = { claimMs: 4_000, takeMs: 30_000, checkMs: 1_000, exact: true, rank: 2 } as const;
+export const MIC_LIMITS = { claimMs: 4_000, takeMs: 15_000, checkMs: 1_000, exact: true, rank: 2 } as const;
 
 type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: number; exact?: boolean };
 

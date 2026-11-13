@@ -131,8 +131,10 @@ export function useVoiceInput(onText: (text: string) => void) {
     try {
       const { text, note } = await writeDown(new Blob(chunks, { type: recorder.mimeType }), setProgress);
       if (text) textTo.current(text);
-      // ponytail: the note shows in the error line (the dock's only line for the mic); a quieter line belongs in the dock
-      setError(text ? (note ?? null) : "Didn't catch anything. Try again a little closer to the mic.");
+      // a note (another engine wrote it because the person's computers couldn't) is not an error: the dock's only line
+      // for the mic is its red error line, so the note stays unsaid there and the words simply arrive
+      void note;
+      setError(text ? null : "Didn't catch anything. Try again a little closer to the mic.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't write that down");
     }

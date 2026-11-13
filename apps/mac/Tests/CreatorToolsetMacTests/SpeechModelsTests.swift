@@ -214,7 +214,7 @@ final class SpeechModelsTests: XCTestCase {
             XCTAssertEqual(($0 as? ServerDictationError)?.userMessage, "Your server couldn't write it down (HTTP 502)")
         }
         // the wait is the recording's own length, with a floor for a short one
-        XCTAssertEqual(ServerTranscriber.timeout(seconds: 1), 5)
+        XCTAssertEqual(ServerTranscriber.timeout(seconds: 1), 10)
         XCTAssertEqual(ServerTranscriber.timeout(seconds: 20), 20)
     }
 
