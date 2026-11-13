@@ -18,7 +18,7 @@ curl -fsSL <server>/helper/install.sh | sh -s -- <server> <code>
 
 It needs Python 3 and curl (and `uv` or `python3-venv`). It puts everything in `~/.local/share/creator-toolset-helper`
 (`CT_HELPER_HOME` to change it), pairs this computer with your account, installs faster-whisper and onnx-asr in its own
-virtual environment (with the CUDA libraries when `nvidia-smi` is there) and starts the systemd user service
+virtual environment (with CUDA 12's cuBLAS and cuDNN when `nvidia-smi` is there) and starts the systemd user service
 `creator-toolset-helper`. To keep it running while you are logged out: `loginctl enable-linger $USER`.
 
 By hand: copy `helper.py` and `requirements.txt`, make a virtual environment with them, then
@@ -30,7 +30,7 @@ By hand: copy `helper.py` and `requirements.txt`, make a virtual environment wit
 - Downloads only the models you press Download for under Settings → AI → Voice, from the model's Hugging Face
   conversion, into `models/<id>/`, and deletes the ones you remove. Nothing else is deleted.
 - Runs Whisper (large-v3 turbo, large-v3) with faster-whisper: on the graphics card in float16, else on the CPU in int8.
-  Parakeet TDT 0.6B v3 (English) with onnx-asr.
+  Parakeet TDT 0.6B v3 (English) with onnx-asr, on the CPU.
 - Sends back the words with their times. One transcript at a time.
 
 ## Logs, stop, remove

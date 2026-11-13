@@ -113,7 +113,7 @@ def machine():
 
 
 def cuda_libs():
-    """The CUDA libraries pip put in this venv (nvidia-*-cu12), which CTranslate2 and ONNX Runtime load by name."""
+    """The CUDA libraries pip put in this venv (nvidia-*-cu12), which CTranslate2 loads by name."""
     import site
     dirs = []
     for sp in site.getsitepackages():
@@ -149,14 +149,14 @@ class Runner:
             from faster_whisper import WhisperModel
             m = WhisperModel(model_dir(mid), device="cuda" if cuda else "cpu", compute_type="float16" if cuda else "int8")
         else:
+            # ONNX Runtime's CPU build: its CUDA build wants other CUDA libraries than CTranslate2's, and Parakeet is quick on a CPU
             import onnx_asr
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if cuda else ["CPUExecutionProvider"]
-            m = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", path=model_dir(mid), providers=providers).with_timestamps()
+            m = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", path=model_dir(mid), providers=["CPUExecutionProvider"]).with_timestamps()
         self.loaded = ((mid, cuda), m)
         return m
 
     def transcribe(self, mid, pcm, languages):
-        if self.cuda:
+        if self.cuda and CATALOG[mid][1] == "faster-whisper":
             try:
                 return self._run(mid, pcm, languages, True)
             except Exception as e:  # a missing CUDA library often fails here, not when the model loads
@@ -286,8 +286,9 @@ class Helper:
                 audio = self.call("GET", f"/api/devices/relay/transcribe/{jid}", raw=True, timeout=600)
                 t0 = time.time()
                 out = self.runner.transcribe(job["model"], read_wav(audio), job.get("languages") or [])
+                gpu_used = self.runner.cuda and CATALOG[job["model"]][1] == "faster-whisper"
                 log(f"transcript {jid}: {len(out['words'])} words, {len(audio) / 32000:.0f} s of audio in {time.time() - t0:.1f} s",
-                    "on the graphics card" if self.runner.cuda else "on the CPU")
+                    "on the graphics card" if gpu_used else "on the CPU")
                 r = self.safe(self.call, "POST", f"/api/devices/relay/transcribe/{jid}", out)
             except Removed:
                 self.stop = Removed()

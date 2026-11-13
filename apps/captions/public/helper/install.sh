@@ -24,8 +24,8 @@ else
 fi
 $PIP -r "$DIR/requirements.txt"
 if command -v nvidia-smi >/dev/null 2>&1; then
-  # the graphics card: ONNX Runtime with CUDA 12 and cuDNN 9, which faster-whisper's CTranslate2 uses too
-  $PIP "onnxruntime-gpu[cuda,cudnn]"
+  # the graphics card: faster-whisper's CTranslate2 loads CUDA 12's cuBLAS and cuDNN 9 by name (helper.py finds them here)
+  $PIP nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"
 fi
 mkdir -p "$HOME/.config/systemd/user"
 sed "s|@DIR@|$DIR|g" "$DIR/creator-toolset-helper.service" > "$HOME/.config/systemd/user/creator-toolset-helper.service"
