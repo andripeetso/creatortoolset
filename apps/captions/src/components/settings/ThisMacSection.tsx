@@ -51,8 +51,6 @@ export type DictationState = {
   models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;
   keep: number;
   sounds: boolean;
-  /** why it is off for now (the other dictation app is open, it takes the same keys), or null; missing in older Mac apps */
-  paused?: string | null;
   /** the permission still to give, or null */
   needs: "Microphone" | "Accessibility" | null;
 };
