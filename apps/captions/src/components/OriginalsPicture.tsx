@@ -58,7 +58,7 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
         if (!c.run && !v.paused) v.pause();
       }
       // the other player waits on the next shot's first frame
-      const spare = on === null ? null : on === 0 ? 1 : 0;
+      const spare = on === 0 ? 1 : 0; // between shots (B-roll on screen) player 0 waits
       if (spare !== null && next && loaded[spare] !== next) {
         load(spare, next, next.offset);
         players[spare]!.pause();
