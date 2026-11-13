@@ -750,10 +750,7 @@ function Review({
         slotCtx={slotCtx}
         bind={bindSlot}
       />
-      {/* the timeline on a version with a timeline (everyone; its edit tools are the managers'), then the plug-ins' panels */}
-      {version.status === "ready" && !version.removed && (
-        <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} />
-      )}
+      {/* the plug-ins' panels */}
       <ReviewPanelSlots slots={slots.panels} ctx={slotCtx} bind={bindSlot} />
       {comparing && (
         <ReviewCompare
@@ -941,10 +938,6 @@ function Review({
             onPick={focusComment}
           />
 
-
-
-
-
           <div className="flex items-center gap-1 px-3 pb-2 text-zinc-300">
             <IconBtn label={playing ? "Pause (space)" : "Play (space)"} onClick={toggle}>
               {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
@@ -1004,6 +997,11 @@ function Review({
               save={version.edit ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
                 () => "Kept for this edit: the AI Editor cuts it again with this voice, back here as the next version.") : undefined}
             />
+          )}
+
+          {/* the timeline on a version with a timeline, under the player's controls (everyone; its edit tools are the managers') */}
+          {version.status === "ready" && !version.removed && (
+            <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} />
           )}
         </div>
 
