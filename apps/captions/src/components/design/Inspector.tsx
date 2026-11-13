@@ -14,6 +14,7 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   AlignVerticalSpaceAround,
+  Ban,
   CaseUpper,
   Check,
   ChevronDown,
@@ -395,11 +396,15 @@ export function Inspector({
 
   const text = every((l) => l.type === "text");
   const shape = every((l) => l.type === "shape");
+  /** A shape or a path: what has a fill and a line of its own. */
+  const lined = every((l) => l.type === "shape" || l.type === "path");
   const image = every((l) => l.type === "image");
   /** The gradient of a text or a shape (a picture and a drawing have none). */
-  const gradOf = (l: Layer) => (l.type === "shape" || l.type === "text" ? l.gradient : undefined);
+  const gradOf = (l: Layer) => (l.type === "shape" || l.type === "path" || l.type === "text" ? l.gradient : undefined);
   /** A layer's gradient with these of its settings changed (the others stay); undefined takes the gradient off. */
-  const setGrad = (g: Partial<Gradient> | undefined) => (l: Layer): Layer => (l.type === "shape" || l.type === "text" ? { ...l, gradient: g && { ...GRADIENT, ...l.gradient, ...g } } : l);
+  const setGrad = (g: Partial<Gradient> | undefined) => (l: Layer): Layer =>
+    // (a gradient runs from the fill's colour: a path with no fill gets one with it)
+    l.type === "shape" || l.type === "path" || l.type === "text" ? { ...l, ...(g && l.type === "path" && !l.fill ? { fill: "#d9d9d9" } : {}), gradient: g && { ...GRADIENT, ...l.gradient, ...g } } : l;
   /** A corner's radius of a picture or a rectangle (0: top left, then round the box), and that corner set. */
   const cornerOf = (l: Layer, n: number): number | undefined => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? l.radius[n]! : (l.radius ?? 0)) : undefined);
   const setCorner = (n: number, v: number) => (l: Layer): Layer => {
@@ -419,13 +424,13 @@ export function Inspector({
         <Plus className="h-3.5 w-3.5" />
       </Tap>
     );
-  const hasLine = picked.some((l) => (l.type === "shape" && l.stroke) || (l.type === "text" && l.outline));
-  const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" ? { ...l, stroke: v && { ...l.stroke, ...v } } : l.type === "text" ? { ...l, outline: v } : l);
+  const hasLine = picked.some((l) => ((l.type === "shape" || l.type === "path") && l.stroke) || (l.type === "text" && l.outline));
+  const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" || l.type === "path" ? { ...l, stroke: v && { ...l.stroke, ...v } } : l.type === "text" ? { ...l, outline: v } : l);
   /** A shape's own line (its dashes, ends and side), and those set. */
-  const strokeOf = (l: Layer) => (l.type === "shape" ? l.stroke : undefined);
-  const setStroke = (more: Partial<Stroke>) => (l: Layer): Layer => (l.type === "shape" && l.stroke ? { ...l, stroke: { ...l.stroke, ...more } } : l);
+  const strokeOf = (l: Layer) => (l.type === "shape" || l.type === "path" ? l.stroke : undefined);
+  const setStroke = (more: Partial<Stroke>) => (l: Layer): Layer => ((l.type === "shape" || l.type === "path") && l.stroke ? { ...l, stroke: { ...l.stroke, ...more } } : l);
   const setDash = (dash: number, gap: number) => setStroke({ dash: gap > 0 ? [dash, gap] : undefined });
-  const lineOf = (l: Layer) => (l.type === "shape" ? l.stroke : l.type === "text" ? l.outline : undefined);
+  const lineOf = (l: Layer) => (l.type === "shape" || l.type === "path" ? l.stroke : l.type === "text" ? l.outline : undefined);
   const frame = frameOf(page, at, design.width, design.height);
   /** A number field of the frame itself. */
   const fnum = (label: string, title: string, value: number, set: (n: number) => Partial<DesignPage>, more: { min: number; max: number }) => (
@@ -437,7 +442,7 @@ export function Inspector({
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? `Group of ${picked.length}` : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : SHAPE_NAMES[one.shape]) : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? `Group of ${picked.length}` : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : SHAPE_NAMES[one.shape]) : "Frame"}</h2>
         <div className="flex items-center">
           {picked.some((l) => l.group && page.layers.filter((x) => x.group === l.group).length > 1) && (
             <Tap label="Ungroup" onClick={onUngroup}>
@@ -635,9 +640,26 @@ export function Inspector({
               />
             )}
           </Section>
-          {(shape || text) && (
+          {(lined || text) && (
             <Section title="Fill" action={addOrRemove(hasGrad, "gradient", () => onPatch(setGrad(GRADIENT)), () => onPatch(setGrad(undefined)))}>
-              <div className="flex">{colour("Fill", same((l) => (l.type === "shape" ? l.fill : l.type === "text" ? l.color : undefined)), (c) => (l) => (l.type === "shape" ? { ...l, fill: c } : l.type === "text" ? { ...l, color: c } : l))}</div>
+              <div className="flex items-center gap-2">
+                {every((l) => l.type === "path" && !l.fill) ? (
+                  <>
+                    <span className={cn("flex-1", DIM)}>None</span>
+                    <Tap label="Add a fill" onClick={() => onPatch((l) => (l.type === "path" ? { ...l, fill: "#d9d9d9" } : l))}>
+                      <Plus className="h-3.5 w-3.5" />
+                    </Tap>
+                  </>
+                ) : (
+                  colour("Fill", same((l) => (l.type === "shape" || l.type === "path" ? l.fill : l.type === "text" ? l.color : undefined)), (c) => (l) => (l.type === "shape" || l.type === "path" ? { ...l, fill: c } : l.type === "text" ? { ...l, color: c } : l))
+                )}
+                {/* a path may be a line alone */}
+                {picked.some((l) => l.type === "path" && l.fill) && (
+                  <Tap label="No fill" onClick={() => onPatch((l) => (l.type === "path" ? { ...l, fill: undefined, gradient: undefined, stroke: l.stroke ?? { color: "#111111", width: 6 } } : l))}>
+                    <Ban className="h-3.5 w-3.5" />
+                  </Tap>
+                )}
+              </div>
               {hasGrad && (
                 <div className="grid grid-cols-[1fr_4.5rem] gap-2">
                   {colour("Gradient to", same((l) => gradOf(l)?.to), (c) => setGrad({ to: c }))}
@@ -655,7 +677,7 @@ export function Inspector({
               )}
             </Section>
           )}
-          {(shape || text) && (
+          {(lined || text) && (
             <Section
               title="Stroke"
               action={addOrRemove(hasLine, "stroke", () => onPatch(setLine({ color: "#000000", width: 4 })), () => onPatch(setLine(undefined)))}
@@ -663,10 +685,10 @@ export function Inspector({
               {hasLine && (
                 <div className="grid grid-cols-[1fr_4.5rem] gap-2">
                   {colour("Stroke", same((l) => lineOf(l)?.color), (c) => (l) => setLine({ width: lineOf(l)?.width ?? 4, color: c })(l))}
-                  {num("≡", "Stroke width", same((l) => lineOf(l)?.width), (n) => (l) => setLine(n > 0 ? { color: lineOf(l)?.color ?? "#000000", width: n } : undefined)(l), { min: 0, max: shape ? 200 : 60 })}
+                  {num("≡", "Stroke width", same((l) => lineOf(l)?.width), (n) => (l) => setLine(n > 0 ? { color: lineOf(l)?.color ?? "#000000", width: n } : undefined)(l), { min: 0, max: lined ? 200 : 60 })}
                 </div>
               )}
-              {shape && hasLine && (
+              {lined && hasLine && (
                 <>
                   <Choice
                     label="The side of the edge the line lies on"

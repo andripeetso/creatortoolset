@@ -251,6 +251,34 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : {}),
     };
   }
+  if (raw.type === "path") {
+    const fine = (n: number) => Math.round(n * 1e5) / 1e5;
+    // a handle's end, in parts of the box: it may lie well outside the box (the box is drawn round the line, not round its handles)
+    const given = (Array.isArray(raw.points) ? raw.points : []).filter(obj).slice(0, DESIGN_LIMITS.points);
+    // Points are parts of the box. Ones far outside it were written in pixels (every other number of a layer is in
+    // pixels, so that is how an AI writes them when it forgets): they are read as pixels of the box, all of them.
+    const far = (v: unknown) => Math.abs(num(v, -1e6, 1e6, 0)) > 2;
+    const pixels = given.some((p) => far(p.x) || far(p.y));
+    const part = (v: unknown, size: number, lo: number, hi: number) => fine(num(num(v, -1e6, 1e6, 0) / (pixels ? size : 1), lo, hi, 0));
+    const pair = (v: unknown): [number, number] | null => (Array.isArray(v) && v.length === 2 && (part(v[0], box.w, -16, 16) || part(v[1], box.h, -16, 16)) ? [part(v[0], box.w, -16, 16), part(v[1], box.h, -16, 16)] : null);
+    const points = given.map((p) => ({ x: part(p.x, box.w, -1, 2), y: part(p.y, box.h, -1, 2), ...(pair(p.in) ? { in: pair(p.in)! } : {}), ...(pair(p.out) ? { out: pair(p.out)! } : {}) }));
+    if (points.length < 2) {
+      say("a path with fewer than two points: left out");
+      return null;
+    }
+    const stroke = line(raw.stroke, 200);
+    const fill = typeof raw.fill === "string" && COLOR.test(raw.fill.trim()) ? color(raw.fill, "#000000") : null;
+    return {
+      type: "path",
+      ...box,
+      points,
+      ...(raw.closed === true ? { closed: true } : {}),
+      ...(fill ? { fill } : {}),
+      ...gradient(raw.gradient),
+      // a path with neither a fill nor a line would be nothing to see: it gets a thin line
+      ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : fill ? {} : { stroke: { color: "#111111", width: 4 } }),
+    };
+  }
   if (raw.type === "drawing") {
     const svg = safeSvg(raw.svg);
     if (!svg) {

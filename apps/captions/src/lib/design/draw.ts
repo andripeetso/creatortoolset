@@ -1,5 +1,6 @@
-import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, Stroke, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
+import { onPath, tracePath } from "./path";
 import { retouch, retouches } from "./retouch";
 
 /**
@@ -324,6 +325,37 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   ctx.restore();
 }
 
+/**
+ * A line along an outline (`trace` adds the outline to the path under way) in a w × h box: dashed and with round ends
+ * when it says so, and on one side of the outline only when it has a side.
+ */
+function strokeAlong(ctx: Ctx, s: Stroke | undefined, trace: () => void, w: number, h: number, join: CanvasLineJoin) {
+  if (!s) return;
+  ctx.lineJoin = join;
+  ctx.strokeStyle = s.color;
+  ctx.lineCap = s.round ? "round" : "butt";
+  if (s.dash) ctx.setLineDash(s.dash);
+  if (!s.side) {
+    ctx.lineWidth = s.width;
+    return void ctx.stroke();
+  }
+  // on one side of the edge: a line twice as wide along the edge, with the half on the other side cut away
+  // (inside: only what is in the shape is drawn; outside: only what is in a box round it and not in the shape)
+  ctx.save();
+  if (s.side === "outside") {
+    const far = 2 * s.width + 10;
+    ctx.beginPath();
+    ctx.rect(-far, -far, w + 2 * far, h + 2 * far);
+    trace();
+    ctx.clip("evenodd");
+  } else ctx.clip();
+  ctx.beginPath();
+  trace();
+  ctx.lineWidth = s.width * 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** A layer in its own box. `cast`: only what throws its shadow (a picture's whole box, not the picture cut to its corners). */
 function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
   if (l.type === "text") drawText(ctx, l);
@@ -332,36 +364,17 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: st
     shapePath(ctx, l);
     ctx.fillStyle = fillOf(ctx, l.fill, l.gradient, l.w, l.h);
     ctx.fill();
-    const s = l.stroke;
-    if (s) {
-      // a rectangle keeps its square corners; a star's or an arrow's points are rounded off, or a wide line would spike far out of them
-      ctx.lineJoin = l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round";
-      ctx.strokeStyle = s.color;
-      if (s.dash) {
-        ctx.setLineDash(s.dash);
-        ctx.lineCap = s.round ? "round" : "butt";
-      }
-      if (!s.side) {
-        ctx.lineWidth = s.width;
-        ctx.stroke();
-      } else {
-        // on one side of the edge: a line twice as wide along the edge, with the half on the other side cut away
-        // (inside: only what is in the shape is drawn; outside: only what is in a box round it and not in the shape)
-        ctx.save();
-        if (s.side === "outside") {
-          const far = 2 * s.width + 10;
-          ctx.beginPath();
-          ctx.rect(-far, -far, l.w + 2 * far, l.h + 2 * far);
-          shapePath(ctx, l);
-          ctx.clip("evenodd");
-        } else ctx.clip();
-        ctx.beginPath();
-        shapePath(ctx, l);
-        ctx.lineWidth = s.width * 2;
-        ctx.stroke();
-        ctx.restore();
-      }
+    // a rectangle keeps its square corners; a star's or an arrow's points are rounded off, or a wide line would spike far out of them
+    strokeAlong(ctx, l.stroke, () => shapePath(ctx, l), l.w, l.h, l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round");
+  } else if (l.type === "path") {
+    const trace = () => tracePath(ctx, l.points, !!l.closed, l.w, l.h);
+    ctx.beginPath();
+    trace();
+    if (l.fill) {
+      ctx.fillStyle = fillOf(ctx, l.fill, l.gradient, l.w, l.h);
+      ctx.fill();
     }
+    strokeAlong(ctx, l.stroke, trace, l.w, l.h, "round");
   } else {
     const pic = loaded.get(sourceOf(l)!);
     if (pic && pic.width && pic.height) {
@@ -404,4 +417,7 @@ export function inLayer(l: Layer, px: number, py: number): { x: number; y: numbe
 }
 
 /** The topmost layer under a point of the page that a press can pick (a hidden or locked one lets it through), or null. */
-export const layerAt = (page: DesignPage, px: number, py: number): Layer | null => [...page.layers].reverse().find((l) => !l.hidden && !l.locked && inLayer(l, px, py).inside) ?? null;
+export const layerAt = (page: DesignPage, px: number, py: number, near = 8): Layer | null =>
+  // a path is under the pointer where its line or its fill is (or within `near` of its line: a few pixels of the
+  // screen, whatever the zoom), not anywhere in the box round it
+  [...page.layers].reverse().find((l) => !l.hidden && !l.locked && (l.type === "path" ? onPath(l, px, py, near) : inLayer(l, px, py).inside)) ?? null;

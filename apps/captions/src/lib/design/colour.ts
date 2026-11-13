@@ -54,7 +54,7 @@ export function coloursOn(pages: readonly DesignPage[], most = 16): string[] {
         add(l.gradient?.via);
         add(l.outline?.color);
       }
-      if (l.type === "shape") {
+      if (l.type === "shape" || l.type === "path") {
         add(l.fill);
         add(l.gradient?.to);
         add(l.gradient?.via);

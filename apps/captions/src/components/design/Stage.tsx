@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type TextLayer } from "@contracts/design";
+import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, inLayer, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
 import { boundsOf, frameOf, freshIds, groupOf, intersects, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { cn } from "@/lib/utils";
 
 /**
@@ -17,6 +18,11 @@ import { cn } from "@/lib/utils";
  *               even, which are then shown with their size; Shift keeps one axis, Alt drags a copy) and, let
  *               go over another frame, leaves it in that frame; a drag from empty canvas draws a box round the
  *               layers to pick; a double click on words types in place.
+ *   The pen     each press puts a point of a line down, a corner; dragged on from the press, the point gets two
+ *               handles and the line curves through it. A press on the first point closes the line; Enter, Esc or a
+ *               double click ends it open. A double click (or Enter) on a path shows its points: a point or a
+ *               handle's end is dragged (Alt: that handle alone), a double click on a point makes it a corner or
+ *               smooth, Delete takes the picked point out.
  *   A picture   a double click (or Enter) on a picture moves it inside its box: a drag slides it, the wheel or a
  *               pinch zooms it, and a press beside it (or Esc) is done with it. The box itself stays.
  *   Handles     a corner or a side resizes about the opposite one (Shift keeps the shape, Alt the middle), through
@@ -26,7 +32,7 @@ import { cn } from "@/lib/utils";
  *               tool or the middle button drags the canvas.
  */
 
-export type Tool = "move" | "hand" | "frame" | DesignShape | "text";
+export type Tool = "move" | "hand" | "frame" | DesignShape | "text" | "pen";
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 const CURSOR: Record<Handle, string> = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
@@ -63,6 +69,9 @@ export function Stage({
   onMakeFrame,
   editing,
   onEdit,
+  onMakePath,
+  shaping,
+  onShape,
   cropping,
   onCrop,
   pointed,
@@ -99,6 +108,11 @@ export function Stage({
   /** the text layer being typed in */
   editing: string | null;
   onEdit: (id: string | null) => void;
+  /** a line drawn with the pen, in its frame's pixels: its box and its points in parts of that box */
+  onMakePath: (at: number, path: { x: number; y: number; w: number; h: number; points: PathLayer["points"]; closed: boolean }) => void;
+  /** the path layer whose points are shown, and the one of them that is picked */
+  shaping: { id: string; anchor: number | null } | null;
+  onShape: (s: { id: string; anchor: number | null } | null) => void;
   /** the picture layer being moved inside its box */
   cropping: string | null;
   onCrop: (id: string | null) => void;
@@ -118,6 +132,28 @@ export function Stage({
   const [drawn, setDrawn] = useState<Rect | null>(null);
   const [hover, setHover] = useState<{ k: number; id: string } | null>(null);
   const [space, setSpace] = useState(false);
+  /** The line the pen is drawing: its frame, its points in that frame's pixels, and where the pointer is on the canvas. */
+  const [pen, setPen] = useState<{ k: number; points: Anchor[] } | null>(null);
+  const [penAt, setPenAt] = useState<Point | null>(null);
+  const penNow = useRef(pen);
+  useEffect(() => void (penNow.current = pen), [pen]);
+  /** The pen's line is done: a layer of its frame, when it has two points that are not one. */
+  const finishPen = (closed: boolean) => {
+    const made = penNow.current;
+    penNow.current = null;
+    setPen(null);
+    setPenAt(null);
+    const points = (made?.points ?? []).filter((p, n, all) => !n || p.x !== all[n - 1]!.x || p.y !== all[n - 1]!.y);
+    if (!made || points.length < 2) return;
+    const { box, points: parts } = fitPath(points, closed && points.length > 2);
+    onMakePath(made.k, { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h), points: parts, closed: closed && points.length > 2 });
+  };
+  // another tool taken up (Esc and Enter take the move tool) ends the line the pen was on, open
+  const endPen = useRef(finishPen);
+  useEffect(() => void (endPen.current = finishPen));
+  useEffect(() => {
+    if (tool !== "pen") endPen.current(false);
+  }, [tool]);
   // the view as of the last event: two wheel ticks before the next drawing both count
   const live = useRef(view);
   useEffect(() => void (live.current = view), [view]);
@@ -134,6 +170,7 @@ export function Stage({
   // the words being typed are set at the size they are drawn at (their own, or the one they shrank to)
   const typedAs = typed ? { ...typed, size: setText(typed, measurer(fontOf(typed))).size } : typed;
   const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");
+  const shaped = page?.layers.find((l): l is PathLayer => l.id === shaping?.id && l.type === "path");
   // the wheel or a pinch over a picture that is being moved in its box zooms the picture, not the canvas
   const pictureZoom = useRef<{ now: number; set: (zoom: number) => void } | null>(null);
   useEffect(() => {
@@ -223,6 +260,24 @@ export function Stage({
     // setView reads the newest onView itself
   }, []);
 
+  // While the pen is on a line, Backspace, Delete and ⌘Z take its last point off and nothing else (not a layer, not a
+  // frame, not the last saved change): heard before anything else hears the key.
+  useEffect(() => {
+    if (!pen) return;
+    const key = (e: KeyboardEvent) => {
+      const undo = (e.metaKey || e.ctrlKey) && e.code === "KeyZ";
+      if (!undo && e.key !== "Backspace" && e.key !== "Delete") return;
+      e.preventDefault();
+      e.stopPropagation();
+      const points = (penNow.current?.points ?? []).slice(0, -1);
+      const next = penNow.current && points.length ? { k: penNow.current.k, points } : null;
+      penNow.current = next;
+      setPen(next);
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [pen]);
+
   // Space held: the pointer drags the canvas. Only while nothing else has the keys (a field, a button)
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -255,7 +310,7 @@ export function Stage({
     for (let k = fr.length - 1; k >= 0; k--) if (p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
     return -1;
   };
-  const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y) : null);
+  const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null);
 
   // a drag under way when the canvas goes away ends there, with its listeners
   const dragging = useRef<(() => void) | null>(null);
@@ -497,6 +552,49 @@ export function Stage({
     );
   };
 
+  /** A press with the pen: a point of the line; on its first point, the line closed and done. Dragged on, the point's two handles. */
+  const penDown = (e: React.PointerEvent, p: Point, under: number) => {
+    const k = pen?.k ?? (under >= 0 ? under : at);
+    const f = fr[k];
+    // its frame is gone (taken out somewhere else): so is the line; and a line holds no more points than a path may
+    if (!f) return void (setPen(null), setPenAt(null));
+    if ((pen?.points.length ?? 0) >= DESIGN_LIMITS.points) return finishPen(false);
+    const local = { x: Math.round(p.x - f.x), y: Math.round(p.y - f.y) };
+    const first = pen?.points[0];
+    if (pen && pen.points.length > 1 && first && Math.hypot(local.x - first.x, local.y - first.y) <= 8 / live.current.z) return finishPen(true);
+    const points = [...(pen?.points ?? []), local];
+    setPen({ k, points });
+    drag(e, (ev) => {
+      const to = world(ev);
+      const out: [number, number] = [Math.round(to.x - f.x - local.x), Math.round(to.y - f.y - local.y)];
+      setPen({ k, points: points.map((q, n) => (n === points.length - 1 ? { ...q, out, in: [-out[0], -out[1]] as [number, number] } : q)) });
+    });
+  };
+
+  /** A point of a path, or the end of one of its handles, dragged: the line follows, and its box with it. */
+  const shapeDrag = (e: React.PointerEvent, l: PathLayer, px: Anchor[], on: { anchor: number; handle?: "in" | "out" }) => {
+    onShape({ id: l.id, anchor: on.anchor });
+    if (!page || !here) return;
+    const f = here;
+    const a = px[on.anchor]!;
+    let last: DesignPage | null = null;
+    drag(
+      e,
+      (ev) => {
+        const to = world(ev);
+        // in the box as it was when the drag began: the layer is refit at every step, the drag is not
+        const [bx, by] = toBox(l, to.x - f.x, to.y - f.y);
+        const next = px.map((q, n) => (n !== on.anchor ? q : on.handle ? dragHandle(q, on.handle, [bx - a.x, by - a.y], ev.altKey) : { ...q, x: bx, y: by }));
+        last = withLayers(page, [refit(l, next)]);
+        onLive([last]);
+      },
+      () => {
+        onLive(null);
+        if (last) onCommit([last]);
+      },
+    );
+  };
+
   /** A frame dragged by its name: it catches on the other frames' edges and middles. A press without a drag only picks it. */
   const moveFrame = (e: React.PointerEvent, k: number) => {
     // the hand, the dropper, a making tool and the other buttons are the canvas's own press
@@ -576,6 +674,15 @@ export function Stage({
       if (inLayer(cropped, p.x - here.x, p.y - here.y).inside) return slidePicture(e, cropped);
       onCrop(null);
     }
+    // a path whose points are shown: a press on a point or a handle's end drags it, a press beside them is done with it
+    if (shaped && here) {
+      const [bx, by] = toBox(shaped, p.x - here.x, p.y - here.y);
+      const px = inPixels(shaped);
+      const on = pathHit(px, shaping?.anchor ?? null, bx, by, 7 / live.current.z);
+      if (on) return shapeDrag(e, shaped, px, on);
+      onShape(null);
+    }
+    if (tool === "pen") return penDown(e, p, k);
     if (tool === "frame") return make(e, -1);
     if (tool !== "move") return make(e, k >= 0 ? k : at);
     if (!hit) return marquee(e, k);
@@ -592,6 +699,7 @@ export function Stage({
   const over = (e: React.PointerEvent) => {
     const p = world(e);
     const k = frameUnder(p);
+    if (pen) setPenAt(p);
     const hit = !e.buttons && tool === "move" && !space ? hitAt(k, p) : null;
     if ((hit?.id ?? null) !== (hover?.id ?? null) || (hit && k !== hover?.k)) setHover(hit ? { k, id: hit.id } : null);
   };
@@ -649,7 +757,19 @@ export function Stage({
             const p = world(e);
             const k = frameUnder(p);
             const hit = hitAt(k, p);
+            if (tool === "pen") return finishPen(false);
+            // on a point of the path being shaped: a corner made smooth, or smooth made a corner
+            if (shaped && here && page) {
+              const [bx, by] = toBox(shaped, p.x - here.x, p.y - here.y);
+              const px = inPixels(shaped);
+              const on = pathHit(px, null, bx, by, 7 / live.current.z);
+              if (on) return onCommit([withLayers(page, [refit(shaped, toggleSmooth(px, on.anchor, !!shaped.closed))])]);
+            }
             if (tool !== "move" || !hit) return;
+            if (hit.type === "path") {
+              onPick(k, [hit.id]);
+              return onShape({ id: hit.id, anchor: null });
+            }
             // a double click goes into a group: the one layer under it
             if (hit.type !== "text" && hit.type !== "image") return void (hit.group && onPick(k, [hit.id]));
             onPick(k, [hit.id]);
@@ -690,6 +810,58 @@ export function Stage({
           })}
           {band && <div className="pointer-events-none absolute border border-[#0d99ff] bg-[#0d99ff]/10" style={onScreen(band)} />}
           {drawn && <div className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={onScreen(drawn)} />}
+          {pen &&
+            fr[pen.k] &&
+            (() => {
+              // the line so far, its points, and a thin line on to the pointer
+              const f = fr[pen.k]!;
+              const at = (x: number, y: number): [number, number] => [view.x + (f.x + x) * view.z, view.y + (f.y + y) * view.z];
+              const last = pen.points.at(-1)!;
+              const from = at(last.x, last.y);
+              return (
+                <svg data-pen className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+                  <path d={svgPath(pen.points, false, at)} fill="none" stroke={BLUE} strokeWidth={1.5} />
+                  {penAt && <line x1={from[0]} y1={from[1]} x2={view.x + penAt.x * view.z} y2={view.y + penAt.y * view.z} stroke={BLUE} strokeWidth={1} strokeDasharray="4 3" />}
+                  {pen.points.map((q, n) => {
+                    const [x, y] = at(q.x, q.y);
+                    return <rect key={n} data-pen-point={n} x={x - 3.5} y={y - 3.5} width={7} height={7} fill="#ffffff" stroke={BLUE} strokeWidth={1} />;
+                  })}
+                </svg>
+              );
+            })()}
+          {shaped &&
+            here &&
+            (() => {
+              // the path's own line, its points, and the picked point's handles
+              const px = inPixels(shaped);
+              const at = (x: number, y: number): [number, number] => {
+                const [fx, fy] = toFrame(shaped, x, y);
+                return [view.x + (here.x + fx) * view.z, view.y + (here.y + fy) * view.z];
+              };
+              const picked = shaping?.anchor === null || shaping?.anchor === undefined ? null : px[shaping.anchor];
+              return (
+                <svg data-shaping className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+                  <path d={svgPath(px, !!shaped.closed, at)} fill="none" stroke={BLUE} strokeWidth={1} />
+                  {picked &&
+                    (["in", "out"] as const).map((which) => {
+                      const h = picked[which];
+                      if (!h) return null;
+                      const [x1, y1] = at(picked.x, picked.y);
+                      const [x2, y2] = at(picked.x + h[0], picked.y + h[1]);
+                      return (
+                        <g key={which}>
+                          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={BLUE} strokeWidth={1} />
+                          <circle data-path-handle={which} cx={x2} cy={y2} r={3.5} fill="#ffffff" stroke={BLUE} strokeWidth={1} />
+                        </g>
+                      );
+                    })}
+                  {px.map((q, n) => {
+                    const [x, y] = at(q.x, q.y);
+                    return <rect key={n} data-path-point={n} x={x - 3.5} y={y - 3.5} width={7} height={7} fill={n === shaping?.anchor ? BLUE : "#ffffff"} stroke={BLUE} strokeWidth={1} />;
+                  })}
+                </svg>
+              );
+            })()}
           {!typed && picked.length > 1 && picked.map((l) => <div key={l.id} className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, l)} />)}
           {cropped && here && (
             <>
@@ -699,7 +871,7 @@ export function Stage({
               </div>
             </>
           )}
-          {!typed && !cropped && around && here && (
+          {!typed && !cropped && !shaped && around && here && (
             <>
               <div data-selection className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, one ?? around)}>
                 {/* just outside each corner: turning (one layer only) */}

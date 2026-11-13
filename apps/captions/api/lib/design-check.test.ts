@@ -191,6 +191,33 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(Object.keys(cleanPages([{ layers: [text({ spacing: 0 })] }], rules).pages[0]!.layers[0]!)).not.toContain("spacing");
   });
 
+  it("keeps a path: two points or more, each in parts of its box, with a thin line when it has neither a fill nor a line", () => {
+    const path = (more: object) => ({ type: "path", x: 10, y: 10, w: 200, h: 100, ...more });
+    const { pages, notes } = cleanPages(
+      [
+        {
+          layers: [
+            path({ points: [{ x: 0, y: 1 }, { x: 0.5, y: 0, in: [-0.2, 0], out: [0.2, 0] }, { x: 1, y: 1, in: [0, 0] }], closed: true, fill: "#FF0000" }),
+            path({ points: [{ x: 0, y: 0 }, { x: 9, y: -9, out: [99, "up"] }, "junk"], closed: "yes" }),
+            path({ points: [{ x: 0, y: 0 }] }),
+            path({ points: "a line" }),
+          ],
+        },
+      ],
+      rules,
+    );
+    expect(pages[0]!.layers).toHaveLength(2);
+    expect(pages[0]!.layers[0]).toEqual({ id: "l1", type: "path", x: 10, y: 10, w: 200, h: 100, points: [{ x: 0, y: 1 }, { x: 0.5, y: 0, in: [-0.2, 0], out: [0.2, 0] }, { x: 1, y: 1 }], closed: true, fill: "#ff0000" });
+    // (a point far outside the box: the points are pixels of the 200 × 100 box; what is no number is 0)
+    expect(pages[0]!.layers[1]).toMatchObject({ points: [{ x: 0, y: 0 }, { x: 0.045, y: -0.09, out: [0.495, 0] }], stroke: { color: "#111111", width: 4 } });
+    expect(pages[0]!.layers[1]).not.toHaveProperty("closed");
+    expect(pages[0]!.layers[1]).not.toHaveProperty("fill");
+    expect(notes).toEqual(["Page 1: a path with fewer than two points: left out", "Page 1: a path with fewer than two points: left out"]);
+    // points written in pixels of the box, as every other number of a layer is: read as such, handles too
+    const [px] = cleanPages([{ layers: [path({ points: [{ x: 0, y: 100 }, { x: 100, y: 0, in: [-50, 0], out: [50, 0] }, { x: 200, y: 100 }] })] }], rules).pages[0]!.layers;
+    expect(px).toMatchObject({ points: [{ x: 0, y: 1 }, { x: 0.5, y: 0, in: [-0.25, 0], out: [0.25, 0] }, { x: 1, y: 1 }] });
+  });
+
   it("keeps a picture's colour changes, each a whole number in its range and none when it is nothing; the picture it was cut from must be the design's own", () => {
     const picture = (more: object) => ({ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, ...more });
     const two = { ...rules, pictures: ["ab12cd34.jpg", "cd34ef56.png"] };

@@ -40,7 +40,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, pictures: 60, pictureBytes: 8_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, pictures: 60, pictureBytes: 8_000_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -164,7 +164,27 @@ export interface DrawingLayer extends Box {
   svg: string;
 }
 
-export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer;
+/** A point of a path, in parts of its layer's box (0, 0 is the box's top left and 1, 1 its bottom right): where the line passes, and how far from there each of its two handles ends (none: a corner, and a straight line to the next corner). */
+export interface PathPoint {
+  x: number;
+  y: number;
+  in?: [number, number];
+  out?: [number, number];
+}
+
+/** A line drawn with the pen: straight and curved stretches from point to point, open or closed, filled or not. Its points can be moved one by one in the designer. */
+export interface PathLayer extends Box {
+  type: "path";
+  points: PathPoint[];
+  /** the last point joined to the first */
+  closed?: boolean;
+  /** "#rrggbb"; absent = not filled */
+  fill?: string;
+  gradient?: Gradient;
+  stroke?: Stroke;
+}
+
+export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer;
 
 /**
  * A frame: one picture of the design, with a place and a size of its own on the design's canvas, so a carousel's
