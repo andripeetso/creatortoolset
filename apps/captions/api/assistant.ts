@@ -1317,7 +1317,23 @@ export function saidInChat(username: string, turn: string): Array<{ id: string; 
   const typed = (m: AssistantMessage, i: number) => m.role === "user" && !m.task && !sent[i - 1]?.choices?.includes(m.text);
   return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
 }
-/** The check a quote is held to against those; an editing style's notes are held to it too (api/editor/routes.ts). */
+/**
+ * The pictures the person sent in the chat a reply is being written in, oldest first: each one's id and its file. Null
+ * when that reply is not being written, or nobody is there (a scheduled run). The assistant's animation_style_save
+ * adds the newest of them to a style as inspirations (api/editor/animation-styles.ts).
+ */
+export function picturesInChat(username: string, turn: string): Array<{ id: string; file: string }> | null {
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn && m.status === "thinking"));
+  if (!list || unattended(username, turn)) return null;
+  return list
+    .filter((m) => m.role === "user" && !m.task)
+    .flatMap((m) => m.images ?? [])
+    .flatMap((im) => {
+      const found = imageFile(username, im.id);
+      return found ? [{ id: im.id, file: found.file }] : [];
+    });
+}
+/** The check a quote is held to against those; a style's own text is held to it too (api/editor/own-words.ts). */
 export { foundIn } from "./lib/memory";
 
 /** A reply is being written in this chat now: a run waits for it to end. */

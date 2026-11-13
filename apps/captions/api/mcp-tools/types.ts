@@ -33,6 +33,11 @@ export type ToolContext = {
    * Everything before sure() runs twice on a Yes, so only read before it.
    */
   sure: (question: string) => Promise<void>;
+  /**
+   * Opens a page of the app for the person, in the chat the reply is written in (a relative path, as navigate takes).
+   * Only there in the app's own assistant: a caller from outside has no window of this app to open it in.
+   */
+  open?: (path: string) => Promise<void>;
 };
 
 export type ToolHandler = (args: Args, ctx: ToolContext) => Promise<unknown>;

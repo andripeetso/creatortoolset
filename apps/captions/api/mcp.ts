@@ -1299,6 +1299,7 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
       if (!askConfirm(user.username, turn, question, { tool: name, args })) throw new ToolError("Too many questions are waiting for the user under this reply: end it and let them answer.");
       throw new Asked(question);
     },
+    ...(turn ? { open: async (p: string) => void (await navigateTo(user.username, p, turn)) } : {}),
   };
   const plug = plugged.handlers.get(name);
   const own = notHere(name) ? undefined : MODULE_HANDLERS.get(name);
@@ -1407,7 +1408,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  */
 const READS = new Set("captions_get captions_list design_get editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait navigate show_video offer_choices".split(" "));
 const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_sources workshop_update_session".split(" "));
-const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_retry editor_run editor_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
+const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_retry editor_run editor_style_save animation_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
 const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
 export const annotationsOf = (name: string) => ({

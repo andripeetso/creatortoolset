@@ -1,4 +1,5 @@
-import type { EditingStyle, EditingStylesView } from "../../contracts/editor-styles";
+import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStylesView } from "../../contracts/editor-styles";
+import { BRIEF_NOT_TYPED } from "../editor/animation-styles";
 import { stylesView } from "../editor/styles";
 import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } from "./types";
 
@@ -10,6 +11,11 @@ import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } fr
 // routes.ts). The notes never come back through these tools either: a style can be one somebody else published, and
 // its text is not for an AI that has tools on the person's computer. On a change, notes add a line and never replace:
 // what the person wrote before stays until they change it on the style's sheet.
+//
+// An animation style (the look of an edit's animated cards) is made the same way: its brief is the person's words by
+// the same check, and its pictures are ones they sent in the chat, found by the reply itself and never by a path. A
+// brief that is not their words does not stop the style: it is made without one, and its sheet opens for them to
+// write it there. After a save in the app's own chat the style's sheet opens (ctx.open), so they see what was made.
 
 /** editor_style_use is listed only for an account that has a style (api/mcp.ts, tools/list). */
 export const hasStyle = (username: string): boolean => stylesView(username).styles.length > 0;
@@ -22,14 +28,16 @@ const out = (s: EditingStyle) => ({ id: s.id, name: s.name, versions: s.versions
 /** The tool's size, "1080x1920" or "footage" (the footage's own) → the route's. */
 const sizeOf = (v: unknown) => (v === "footage" ? null : { w: Number(String(v).split("x")[0]), h: Number(String(v).split("x")[1]) });
 const sheet = (ctx: ToolContext) => `${ctx.origin}/editor?tab=styles`;
+/** A style's own sheet: its tab with the style named, which the page opens (src/pages/EditorPage.tsx). */
+const sheetOf = (tab: "styles" | "animation", id: string) => `/editor?tab=${tab}&style=${id}`;
 
-/** One of the person's styles by its id, or by its name in any case. */
-function one(all: EditingStyle[], key: unknown): EditingStyle {
+/** One of the person's styles by its id, or by its name in any case. `kind`: "editing" or "animation", for the words of a miss. */
+function one<S extends { id: string; name: string }>(all: S[], key: unknown, kind = "editing", maker = "editor_style_save"): S {
   const k = String(key ?? "").trim().toLowerCase();
   const hits = all.filter((s) => s.id === k);
   const found = hits.length ? hits : all.filter((s) => s.name.toLowerCase() === k);
   if (found.length === 1) return found[0]!;
-  if (!all.length) throw new ToolError("The user has no editing style yet: editor_style_save makes one.");
+  if (!all.length) throw new ToolError(`The user has no ${kind} style yet: ${maker} makes one.`);
   throw new ToolError(`${found.length ? "Several styles have that name: give the id" : "No style has that id or name"}. The user's styles: ${all.map((s) => `${s.name} (${s.id})`).join(", ")}.`);
 }
 
@@ -48,6 +56,11 @@ export const editorStyleTools: ToolModule = {
       description: "Set an edit's editing style before it runs: editor_create with start: false, this, then editor_run. style = a style's id or name (none takes it off); leave both out to list the user's styles.",
       inputSchema: { type: "object", properties: { edit: str, style: str } },
     },
+    {
+      name: "animation_style_save",
+      description: "Make or change an AI Editor animation style, the look of an edit's animated cards (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add.",
+      inputSchema: { type: "object", properties: { id: str, name: str, brief: str, pictures: { type: "integer" } } },
+    },
   ],
   handlers: {
     editor_style_save: async (a, ctx) => {
@@ -57,13 +70,56 @@ export const editorStyleTools: ToolModule = {
       if (a.id == null) {
         if (!body.name) throw new ToolError("Give the new style a name.");
         const made = await ctx.json<EditingStyle>("/api/editor/styles", "POST", { ...body, ...(notes ? { notes } : {}), ...(a.from_edit != null ? { fromEdit: String(a.from_edit) } : {}) });
-        return { ...out(made), made: true, link: sheet(ctx) };
+        await ctx.open?.(sheetOf("styles", made.id));
+        return { ...out(made), made: true, link: `${ctx.origin}${sheetOf("styles", made.id)}` };
       }
       if (a.from_edit != null) throw new ToolError("from_edit makes a new style: leave id out.");
       if (!Object.keys(body).length && !notes) throw new ToolError(`Nothing to change: give ${Object.keys(FIELDS).join(", ")}, size or notes.`);
       const s = one(await styles(ctx), a.id);
       const saved = await ctx.json<EditingStyle>(`/api/editor/styles/${s.id}`, "PUT", { ...body, ...(notes ? { addNotes: notes } : {}) });
-      return { ...out(saved), ...(notes ? { note: "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." } : {}), link: sheet(ctx) };
+      await ctx.open?.(sheetOf("styles", saved.id));
+      return { ...out(saved), ...(notes ? { note: "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." } : {}), link: `${ctx.origin}${sheetOf("styles", saved.id)}` };
+    },
+    animation_style_save: async (a, ctx) => {
+      const at = "/api/editor/animation-styles";
+      const name = a.name == null ? undefined : String(a.name);
+      const brief = typeof a.brief === "string" ? a.brief.trim() : "";
+      const pictures = a.pictures == null ? 0 : Number(a.pictures);
+      const was = a.id == null ? null : one((await ctx.json<AnimationStylesView>(at)).styles, a.id, "animation", "animation_style_save");
+      if (!was && !name) throw new ToolError("Give the new style a name.");
+      if (was && name === undefined && !brief && !pictures) throw new ToolError("Nothing to change: give name, brief or pictures.");
+      const save = (body: Args) => ctx.json<AnimationStyle>(was ? `${at}/${was.id}` : at, was ? "PUT" : "POST", body);
+      // a brief that is not the person's words never stops the style: the rest is saved and they write it on its sheet.
+      // On a change the words are added under the brief it has and never replace it
+      let unsaid = false;
+      let s = await save({ ...(name !== undefined ? { name } : {}), ...(brief ? { [was ? "addBrief" : "brief"]: brief } : {}) }).catch((e: unknown) => {
+        if (!(brief && e instanceof ToolError && e.message === BRIEF_NOT_TYPED)) throw e;
+        unsaid = true;
+        return was && name === undefined ? was : save({ name });
+      });
+      let added: number | undefined;
+      let full = false;
+      if (pictures) {
+        const r = await ctx.json<{ style: AnimationStyle; added: number; full?: true }>(`${at}/${s.id}/pictures/chat`, "POST", { newest: pictures });
+        ({ style: s, added } = r);
+        full = !!r.full;
+      }
+      await ctx.open?.(sheetOf("animation", s.id));
+      const notes = [
+        unsaid ? "The description was not saved: it is not a whole phrase the user typed in this chat. They write or paste it on the style's sheet." : "",
+        added !== undefined && added < pictures ? (full ? "The style holds all the pictures it keeps: the rest were not added." : "Fewer pictures were added than asked: the others are already in the style, are not in this chat, or could not be read.") : "",
+        ctx.open ? "Its sheet is open for the user." : "",
+      ].filter(Boolean);
+      return {
+        id: s.id,
+        name: s.name,
+        has_brief: !!s.brief,
+        pictures: s.pictures.length,
+        ...(was ? {} : { made: true }),
+        ...(added !== undefined ? { added } : {}),
+        ...(notes.length ? { note: notes.join(" ") } : {}),
+        link: `${ctx.origin}${sheetOf("animation", s.id)}`,
+      };
     },
     editor_style_use: async (a, ctx) => {
       const all = await styles(ctx);
@@ -82,5 +138,5 @@ export const editorStyleTools: ToolModule = {
       };
     },
   },
-  steps: { editor_style_save: "Saving the editing style", editor_style_use: "Setting the edit's style" },
+  steps: { editor_style_save: "Saving the editing style", animation_style_save: "Saving the animation style", editor_style_use: "Setting the edit's style" },
 };

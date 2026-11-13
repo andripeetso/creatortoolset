@@ -89,6 +89,20 @@ describe("Animation styles tab", () => {
   });
 });
 
+describe("An empty Animation styles tab when an AI answers in the assistant", () => {
+  it("its button starts the chat, and Use a form opens the sheet", async () => {
+    let chats = 0;
+    const before = opened.length;
+    await render(<AnimationStyles styles={[]} open={null} onOpen={(s) => opened.push(s)} onChanged={async () => {}} onChat={() => chats++} />);
+    const buttons = [...host!.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["New animation style", "Use a form"]);
+    act(() => buttons[0]!.click());
+    expect([chats, opened.length]).toEqual([1, before]);
+    act(() => buttons[1]!.click());
+    expect([chats, opened.at(-1)]).toEqual([1, "new"]);
+  });
+});
+
 describe("The animation style sheet", () => {
   it("a saved style shows what was liked and what was added, each with its ×, and says nothing else", async () => {
     await tab([blue], blue);

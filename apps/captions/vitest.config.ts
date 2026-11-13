@@ -10,6 +10,7 @@ const ffmpegFiles = [
   "api/assistant.test.ts",
   "api/designs.test.ts",
   "api/mcp-tools/designs.test.ts",
+  "api/mcp-tools/animation-style.test.ts",
   "api/editor/analyze.test.ts",
   "api/editor/animation-styles.test.ts",
   "api/editor/cards/step.test.ts",

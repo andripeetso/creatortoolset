@@ -126,8 +126,10 @@ describe.skipIf(rootReplaced)("making, changing and picking a style by asking", 
     const t = await turn("Make me an editing style called Tiny fast. Cut it fast with no pauses, and keep the bloopers in. Three versions of 30 seconds, natural pace, strong punch-in.");
     // the notes as the AI sends them: other case and spacing than typed. What is kept is the person's wording
     const made = await tool(t.token, "editor_style_save", { name: "Tiny fast", notes: "cut it FAST   with no pauses, and keep the bloopers in", versions: 3, target_s: 30, pace: "natural", punch: 1.3 });
-    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny fast", versions: 3, target_s: 30, pace: "natural", punch: 1.3, size: "footage", has_notes: true, made: true, link: SHEET });
+    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny fast", versions: 3, target_s: 30, pace: "natural", punch: 1.3, size: "footage", has_notes: true, made: true, link: `${SHEET}&style=${made.value.id}` });
     const id = made.value.id as string;
+    // and the style's sheet opens for the person
+    expect(((await (await site("/api/assistant")).json()) as { navigate?: string }).navigate).toBe(`/editor?tab=styles&style=${id}`);
     expect(await styleOf(id)).toMatchObject({ name: "Tiny fast", notes: "Cut it fast with no pauses, and keep the bloopers in", versions: 3, targetS: 30, pace: "natural", punch: 1.3 });
 
     // a change, by id or by name: only what is sent moves; a number is kept as the route keeps it
