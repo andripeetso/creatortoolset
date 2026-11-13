@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Dictation, ScreenRecording, ThisComputer } from "./GeneralSection";
+import { ScreenRecording, ThisComputer } from "./GeneralSection";
+import { Dictation } from "./DictationSettings";
 import type { DictationState, ThisMacState } from "./ThisMacSection";
 
 const state = (over: Partial<ThisMacState> = {}) => ({ answer: "", aiOn: true, running: 0, lastError: null, notice: null, paired: true, problem: null, servers: [], ...over }) as ThisMacState;

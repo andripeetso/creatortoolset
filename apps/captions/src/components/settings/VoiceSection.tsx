@@ -7,6 +7,8 @@ import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { LANGUAGES, SAME, engineOptions, keyFix, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
 import { Card, ErrorRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
+import { Dictation } from "./DictationSettings";
+import { hasThisMac, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 type Body = Parameters<typeof putVoice>[0];
 
@@ -17,6 +19,8 @@ type Body = Parameters<typeof putVoice>[0];
  */
 export function VoiceSection() {
   const { data, error, refresh, set } = useVoice();
+  // dictation lives in the Mac app: its group shows only where the app reports it
+  const mac = useThisMac(hasThisMac());
   // read-aloud is kept in this browser: it never waits for (or fails with) the server's voice settings
   if (!data)
     return (
@@ -41,10 +45,10 @@ export function VoiceSection() {
       saveFailed(msg(e));
     }
   };
-  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} want={(c, m, k) => void want(c, m, k)} />;
+  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} want={(c, m, k) => void want(c, m, k)} mac={mac} />;
 }
 
-export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void; want?: (computer: string, model: string, keep: boolean) => void }) {
+export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void; want?: (computer: string, model: string, keep: boolean) => void; mac?: ThisMacState | null }) {
   const setLanguages = (languages: string[]) => save({ languages }, { ...view, languages });
   const setChoice = (use: SpeechUse | "default", value: string) => {
     if (use === "default") {
@@ -118,6 +122,8 @@ export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; sa
       </Section>
 
       <OnMyComputers computers={view.computers} want={want} />
+
+      <Dictation mac={mac} />
 
       <TextToSpeech />
     </div>
