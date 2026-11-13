@@ -1,10 +1,15 @@
+import { randomUUID } from "node:crypto";
+import { rm, writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { Hono } from "hono";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
-import { readVoicePrefs } from "./lib/speech";
+import { env } from "./lib/env";
+import { readVoicePrefs, speechFor } from "./lib/speech";
+import { NeedsKey, transcribeFile } from "./library/transcribe";
 import { captioning } from "./projects";
 
 /**
@@ -348,4 +353,37 @@ transcribeApp.post("/", async (c) => {
   const result = await transcribeWav(audio, user);
   if ("error" in result) return c.json({ error: result.error }, result.status);
   return c.json(result);
+});
+
+/** Longest recording the mic takes: two minutes are 3.8 MB as the browser's WAV, under 1 MB as the phone's AAC. */
+const MIC_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Talking to the assistant (the web dock's mic and the phone's): a short recording in any format ffmpeg reads (WAV, the
+ * phone's m4a) → `{ text, language }`, written down by the engine the person chose for `mic` (Settings → AI → Voice,
+ * speechFor) in their languages. With no engine it answers NEEDS_KEY and what to add. The text is never sent anywhere
+ * from here: it goes into the message box.
+ */
+transcribeApp.post("/mic", async (c) => {
+  const user = c.get("user");
+  const s = speechFor(user, "mic");
+  if ("needs" in s) return c.json({ error: s.needs, code: "NEEDS_KEY" }, 402);
+  if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Cloud transcription is locked for your account", code: "CLOUD_LOCKED" }, 403);
+  if (Number(c.req.header("content-length") ?? 0) > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
+  const audio = new Uint8Array(await c.req.arrayBuffer());
+  if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
+  if (audio.byteLength > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
+  const scratch = path.join(env.dataDir, "library", "scratch");
+  await mkdir(scratch, { recursive: true });
+  const src = path.join(scratch, `mic-${randomUUID()}`);
+  await writeFile(src, audio);
+  try {
+    const t = await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true });
+    return c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language });
+  } catch (e) {
+    if (e instanceof NeedsKey) return c.json({ error: e.message, code: "NEEDS_KEY" }, 402);
+    return c.json({ error: e instanceof Error ? e.message : "Couldn't write that down" }, 502);
+  } finally {
+    await rm(src, { force: true });
+  }
 });
