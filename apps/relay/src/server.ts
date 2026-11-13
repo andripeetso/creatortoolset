@@ -8,7 +8,7 @@ import { connectStats, createChallenge, linkComputer, listComputers, renewTunnel
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
-import { addPage, aiStats, approveAuthorize, authorizeInfo, computerCallback, exchangeCode, forwardMcp, grantFromComputer, metadata, openPage, registerClient, relayMedia, startAuthorize, type GatewayDeps } from './gateway.ts';
+import { aiStats, approveAuthorize, authorizeInfo, computerCallback, exchangeCode, forwardMcp, grantFromComputer, metadata, openPage, registerClient, relayMedia, startAuthorize, type GatewayDeps } from './gateway.ts';
 
 export interface Deps {
   db: DatabaseSync;
@@ -20,7 +20,7 @@ export interface Deps {
   accountSecret: Buffer;
   signing: { privateKey: KeyObject; publicKey: KeyObject; kid: string };
   /** AI apps through this broker (gateway.ts). Unset = every route of it answers 404. */
-  gateway?: Pick<GatewayDeps, 'secret' | 'fetch' | 'originOf' | 'openaiChallenge' | 'listings'>;
+  gateway?: Pick<GatewayDeps, 'secret' | 'fetch' | 'originOf' | 'openaiChallenge'>;
 }
 
 const MAX_BODY = 16 * 1024;
@@ -85,8 +85,6 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
       if (req.method === 'GET' && path === '/mcp') return new Response(null, { status: 405, headers: { allow: 'POST' } });
       const media = /^\/m\/([0-9a-f]{32})\/([\w.-]{1,2000})$/.exec(path);
       if (media && req.method === 'GET') return await relayMedia(gw, media[1], media[2]);
-      const add = /^\/add\/([a-z]{1,20})$/i.exec(path);
-      if (add && req.method === 'GET') return addPage(gw, add[1]);
       const opens = /^\/open\/([0-9a-f]{32})\/(.*)$/.exec(path);
       if (opens && req.method === 'GET') return openPage(gw, opens[1], opens[2], url.search);
     }

@@ -25,14 +25,6 @@ if (accountSecret.length < 32) throw new Error('RELAY_ACCOUNT_SECRET must be at 
 const grantSecret = env.RELAY_GRANT_SECRET ? Buffer.from(env.RELAY_GRANT_SECRET) : null;
 if (grantSecret && grantSecret.length < 32) throw new Error('RELAY_GRANT_SECRET must be at least 32 bytes');
 
-// Creator Toolset's page in each AI app's store, once listed there: only https links are taken.
-const listings = Object.fromEntries(
-  [
-    ['ChatGPT', env.RELAY_LISTING_CHATGPT],
-    ['Claude', env.RELAY_LISTING_CLAUDE],
-  ].filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].startsWith('https://')),
-);
-
 const cf = createCloudflare({
   accountId: need('CLOUDFLARE_ACCOUNT_ID'),
   zoneId: need('CLOUDFLARE_ZONE_ID'),
@@ -48,7 +40,7 @@ const deps = {
   publicUrl: need('RELAY_PUBLIC_URL'),
   accountSecret,
   signing: loadSigningKey(env.RELAY_SIGNING_KEY, join(dataDir, 'relay-signing-key.der')),
-  ...(grantSecret ? { gateway: { secret: grantSecret, openaiChallenge: env.RELAY_OPENAI_APPS_CHALLENGE, listings } } : {}),
+  ...(grantSecret ? { gateway: { secret: grantSecret, openaiChallenge: env.RELAY_OPENAI_APPS_CHALLENGE } } : {}),
 };
 
 const port = Number(env.PORT ?? 44610);
