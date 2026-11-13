@@ -631,17 +631,22 @@ final class Dictation: ObservableObject {
     func defaultLanguages() async -> [String] {
         let server = await languages?() ?? []
         let codes = server.isEmpty ? SpokenLanguage.preferredCodes() : server
-        return codes.filter(SpokenLanguage.whisperLanguages.contains)
+        let found = codes.filter(SpokenLanguage.whisperLanguages.contains)
+        listening = found
+        modelChanged()
+        return found
+    }
+
+    /// Get Started, or the setup page closed: the model it showed is kept as the person's, whatever the languages do later.
+    func keepModel() {
+        if prefs.model == nil { update { $0.model = model.id } }
     }
 
     /// The server's languages for Whisper, at most every five minutes; none = the Mac's own languages.
     private func refreshLanguages() {
         guard Date().timeIntervalSince(spokenAt) > 300, let languages else { return }
         spokenAt = Date()
-        Task {
-            spoken = await languages() ?? []
-            modelChanged()
-        }
+        Task { spoken = await languages() ?? [] }
     }
 
     fileprivate func sync() {
@@ -650,10 +655,13 @@ final class Dictation: ObservableObject {
 
     // MARK: first press: permissions and the model
 
-    /// The person's pick, else the default for the languages dictation listens for (`context`).
+    /// The person's pick, else the default for the languages the setup page shows (`defaultLanguages`); Get Started
+    /// keeps it (`keepModel`), so it never changes under a dictation.
     var model: TranscriptionModel {
-        ModelRegistry.model(prefs.model ?? ModelRegistry.standardID(for: prefs.languages ?? (spoken.isEmpty ? SpokenLanguage.preferredCodes() : spoken)))
+        ModelRegistry.model(prefs.model ?? ModelRegistry.standardID(for: prefs.languages ?? listening ?? SpokenLanguage.preferredCodes()))
     }
+    /// What `defaultLanguages` last found.
+    private var listening: [String]?
     var modelOnDisk: Bool { model.onDisk }
 
     var ready: Bool {

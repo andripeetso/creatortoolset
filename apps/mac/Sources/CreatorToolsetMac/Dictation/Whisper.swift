@@ -509,8 +509,8 @@ struct TranscriptionModel: Equatable, Sendable {
 
 /// The models dictation can run. Large v3 Turbo is the default: it hears
 /// every language Whisper knows and is the one measured best on mixed speech.
-/// For a person who speaks English alone, Parakeet v3: the same words, ten
-/// times as fast (Parakeet.swift).
+/// For a person who speaks English alone, Parakeet v3: nearly the same words
+/// on English, ten times as fast (Parakeet.swift).
 enum ModelRegistry {
     static let standardID = "whisper-large-v3-turbo"
     static let englishID = "parakeet-tdt-0.6b-v3"

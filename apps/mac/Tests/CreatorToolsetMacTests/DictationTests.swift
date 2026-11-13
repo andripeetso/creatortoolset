@@ -119,7 +119,7 @@ final class DictationPrefsTests: XCTestCase {
         XCTAssertEqual(ModelRegistry.standardID(for: []), "whisper-large-v3-turbo")
         let v2 = ModelRegistry.find("parakeet-tdt-0.6b-v2")!
         XCTAssertEqual(ParakeetFiles.folder(v2, in: URL(fileURLWithPath: "/d")).path, "/d/models/parakeet/parakeet-tdt-0.6b-v2")
-        XCTAssertFalse(v2.onDisk || ModelRegistry.find("parakeet-tdt-0.6b-v3")!.transcriber() is WhisperKitTranscriber)
+        XCTAssertTrue(v2.transcriber() is ParakeetTranscriber)
     }
 
     func testImportTakesTheEarlierAppsChoices() throws {

@@ -13,7 +13,8 @@ final class ParakeetTimingTests: XCTestCase {
         let model = ModelRegistry.find(env["DICTATION_TIME_MODEL"] ?? ModelRegistry.englishID)!
         let base = URL(fileURLWithPath: dir)
         var start = Date()
-        try await ParakeetFiles.download(model, in: base)
+        try await ParakeetFiles.download(model, in: base) { if Int($0 * 1000) % 100 == 0 { print("TIMING download \(String(format: "%.2f", $0))") } }
+        XCTAssertTrue(ParakeetFiles.isComplete(model, in: base))
         print("TIMING \(model.id) download: \(String(format: "%.2f", Date().timeIntervalSince(start))) s")
         var rounds = [("cold", base), ("warm", base)]
         if let copy = env["PARAKEET_COPY"] { rounds.insert(("first", URL(fileURLWithPath: copy)), at: 0) }
@@ -28,9 +29,13 @@ final class ParakeetTimingTests: XCTestCase {
                 let text = try await transcriber.transcribe(samples, context: TranscriptionContext()).text
                 print("TIMING \(round) \(String(format: "%.2f", Double(samples.count) / 16_000)) s of audio in \(String(format: "%.2f", Date().timeIntervalSince(start))) s: \(text)")
             }
-            let words = try await transcriber.words(AudioFileLoader.load(url: URL(fileURLWithPath: wavs[0]))).words
-            XCTAssertFalse(words.isEmpty)
-            print("TIMING words: " + words.map { "\($0.text)@\(String(format: "%.2f", $0.start))" }.joined(separator: " "))
+            for wav in wavs {
+                let words = try await transcriber.words(AudioFileLoader.load(url: URL(fileURLWithPath: wav))).words
+                XCTAssertFalse(words.isEmpty)
+                XCTAssertEqual(words.map(\.start), words.map(\.start).sorted(), "times never go back")
+                XCTAssertTrue(words.allSatisfy { $0.end >= $0.start })
+                print("TIMING words: " + words.map { "\($0.text)@\(String(format: "%.2f", $0.start))" }.joined(separator: " "))
+            }
             await transcriber.unload()
         }
     }

@@ -355,7 +355,10 @@ final class SetupGuide: ObservableObject {
     }
 
     /// Get Started, or the window closed by hand: set up, so later presses use the pill's steps.
-    fileprivate static func done() { UserDefaults.standard.set(true, forKey: DictationPrefs.keys.guided) }
+    fileprivate static func done() {
+        UserDefaults.standard.set(true, forKey: DictationPrefs.keys.guided)
+        Dictation.shared.keepModel()
+    }
 
     private func refresh() {
         let new = Self.read(languages: languages)
@@ -363,7 +366,6 @@ final class SetupGuide: ObservableObject {
     }
 
     private func start() {
-        Dictation.shared.prepareModel()
         refresh()
         if tick == nil {
             tick = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -378,6 +380,8 @@ final class SetupGuide: ObservableObject {
         Task {
             defaults = await Dictation.shared.defaultLanguages()
             if !touched { languages = Dictation.shared.prefs.languages ?? defaults }
+            // once the languages are known, which choose the default model
+            Dictation.shared.prepareModel()
             refresh()
         }
     }
