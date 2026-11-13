@@ -276,27 +276,31 @@ html[data-chat-mode="full"] main { display: none; }
    from the right (a drawer). */
 html[data-chat-mode] main .fixed:is(.inset-0, .inset-x-0):not([class*="left-auto"]) { left: var(--chat-w); }
 html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5rem); }
-/* A switch of chat mode's layout (washTo, lib/chat-mode.ts): the picture of the screen as it was stays put and the new
+/* Chat mode turned on or off (washTo, lib/chat-mode.ts): the picture of the screen as it was stays put and the new
    screen shows through a round, soft-rimmed mask that grows from the button (its size and place are animated there;
-   nothing of it shows before that starts). */
-html.chat-wash::view-transition-old(root),
-html.chat-wash::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+   nothing of it shows before that starts). No picture is cross-faded: each is moved and faded from there. */
+html.chat-wash::view-transition-old(*),
+html.chat-wash::view-transition-new(*) { animation: none; mix-blend-mode: normal; }
+/* the new screen can be used from the first moment where the browser lets a click through the pictures over it */
+html.chat-wash::view-transition { pointer-events: none; }
 html.chat-wash::view-transition-new(root) {
-  /* solid up to a rim 220px wide (RIM, lib/chat-mode.ts) */
-  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 220px), transparent) 0 0 / 0 0 no-repeat;
-  mask: radial-gradient(circle closest-side, #000 calc(100% - 220px), transparent) 0 0 / 0 0 no-repeat;
+  /* solid up to a rim 140px wide (RIM, lib/chat-mode.ts) */
+  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 140px), transparent) 0 0 / 0 0 no-repeat;
+  mask: radial-gradient(circle closest-side, #000 calc(100% - 140px), transparent) 0 0 / 0 0 no-repeat;
 }
-/* The light on the front of the chat-mode switch (sized, moved and dimmed in script): one soft band, no line in it
-   anywhere. The project's colour, which shows on a light screen, and white, which shows on a dark one; drawn over
-   what is under it with no blending and no change to its colours, at a strength it can be read through. */
-.chat-wash-light {
-  position: fixed;
-  z-index: 70;
-  border-radius: 50%;
-  pointer-events: none;
+/* The light on the front. An empty element over the window, there only while the switch runs: as a picture of its own
+   it is drawn over both screens and over every thing the front moves, and the light is that picture's background
+   (sized and moved in script with the mask). Its brightest line is 60px in from its rim (LIGHT_RIM): a soft band of
+   white, which shows on a dark screen, with a narrow shade right behind it, which shows on a light one, in a glow of
+   the project's colour. No hard line in it: on a dark screen a crisp white one read as an edge drawn over the app. */
+.chat-wash-light { position: fixed; inset: 0; pointer-events: none; view-transition-name: chat-wash-light; }
+html.chat-wash::view-transition-group(chat-wash-light) {
   background:
-    radial-gradient(circle closest-side, transparent 48%, rgb(255 255 255 / 0.05) 62%, rgb(255 255 255 / 0.15) 76%, rgb(255 255 255 / 0.2) 84%, rgb(255 255 255 / 0.15) 91%, rgb(255 255 255 / 0.05) 96.5%, transparent),
-    radial-gradient(circle closest-side, transparent 48%, rgb(var(--violet-600) / 0.08) 62%, rgb(var(--violet-600) / 0.24) 76%, rgb(var(--violet-600) / 0.34) 84%, rgb(var(--violet-600) / 0.24) 91%, rgb(var(--violet-600) / 0.08) 96.5%, transparent);
+    radial-gradient(circle closest-side, transparent calc(100% - 76px), rgb(255 255 255 / 0.34) calc(100% - 60px), transparent calc(100% - 46px)),
+    radial-gradient(circle closest-side, transparent calc(100% - 104px), rgb(0 0 0 / 0.09) calc(100% - 74px), transparent calc(100% - 62px)),
+    radial-gradient(circle closest-side, transparent calc(100% - 150px), rgb(var(--violet-600) / 0.08) calc(100% - 100px), rgb(var(--violet-600) / 0.3) calc(100% - 62px), rgb(var(--violet-600) / 0.1) calc(100% - 36px), transparent calc(100% - 8px));
+  background-repeat: no-repeat;
+  background-size: 0 0;
 }
 /* In the Mac app the window's buttons sit over the chats' own bar (data-chat-bar), so the page's bar gives up the room
    it kept for them. */

@@ -76,7 +76,8 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
   const settledOpen = showSettled || !!query.trim();
   const rows = useMemo(() => [...groups.flatMap((g) => g.chats), ...(settledOpen ? settled : [])], [groups, settled, settledOpen]);
   useEffect(() => setAt(-1), [query]);
-  if (!chats) return null;
+  // not read yet: its room is kept, so what stands under the list is in its place from the first moment
+  if (!chats) return <div className="flex-1" />;
 
   /** The chat to show once `gone` leaves the list: the next one that is neither settled nor it, else a new chat. */
   const moveOn = async (gone: AssistantChat) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bareNow, chatLayout, frontAt, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
+import { bareNow, chatLayout, frontAt, frontReaches, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
 
 const fresh = { w: 0, page: true };
 
@@ -60,10 +60,20 @@ describe("paneBelow", () => {
   });
 });
 
-describe("the wash's front", () => {
+describe("the wave's front", () => {
   it("starts at the button, ends at its reach, and is slower at first than at the end", () => {
     expect(frontAt(0)).toBe(0);
     expect(frontAt(1)).toBe(1);
     expect(frontAt(0.5) - frontAt(0)).toBeLessThan(frontAt(1) - frontAt(0.5));
+  });
+
+  it("is on its way at once: a tenth of the time in, it has left the button", () => {
+    expect(frontAt(0.1)).toBeGreaterThan(0.01);
+  });
+
+  it("reaches a thing when it is that far: the time for a distance is the distance at that time", () => {
+    for (const t of [0, 0.05, 0.3, 0.62, 0.9, 1]) expect(frontReaches(frontAt(t))).toBeCloseTo(t, 4);
+    expect(frontReaches(-0.2)).toBe(0);
+    expect(frontReaches(1.4)).toBe(1);
   });
 });
