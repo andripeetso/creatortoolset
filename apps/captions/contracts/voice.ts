@@ -86,3 +86,18 @@ export interface VoiceView extends VoicePrefs {
 
 /** A two-letter language code. */
 export const isLanguage = (s: unknown): s is string => typeof s === "string" && /^[a-z]{2}$/.test(s);
+
+/** The languages a project or an edit offers (the ones the speech engines here hear), by code. */
+export const SPOKEN_LANGUAGES = [
+  "en", "et", "fi", "sv", "no", "da", "de", "nl", "fr", "es", "pt", "it", "pl", "cs", "lv", "lt", "ru", "uk",
+  "tr", "el", "hu", "ro", "bg", "hi", "ja", "ko", "zh", "id", "vi", "th",
+] as const;
+
+/** A language's English name ("et" → "Estonian"); the code itself where the runtime has no name for it. */
+export function languageName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}

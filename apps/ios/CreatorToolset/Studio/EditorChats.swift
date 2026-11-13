@@ -74,6 +74,9 @@ struct EditorTodo: Decodable {
         var at: Double
         /// true = a held pass. Absent on a look sheet, and on every row of an older server.
         var hold: Bool?
+        /// "language": analyze heard no word in the clips and asks which language they are in (`message` is the question).
+        var ask: String?
+        var message: String?
         /// 0 to 1, while it runs.
         var progress: Double?
 
@@ -192,7 +195,7 @@ enum EditorChats {
         let (read, todo) = try await (list, waits)
         let edits = read.items
         ChatsModel.shared.unreadable += read.skipped
-        for job in todo.sheets where job.hold == nil && heldJobs[job.key] == nil {
+        for job in todo.sheets where job.hold == nil && job.ask == nil && heldJobs[job.key] == nil {
             let edit: EditorProject? = try? await api.get("/api/editor/\(job.edit)")
             heldJobs[job.key] = edit?.jobs.first { $0.id == job.job }?.hold == true
         }
@@ -215,6 +218,9 @@ enum EditorChats {
             func row(_ detail: String, _ status: RowStatus, error: Bool = false, shelf: ChatRow.Shelf = .active, finished: Date? = nil) -> ChatRow {
                 ChatRow(id: "/editor/\(edit.id)", route: .edit(edit.id), title: edit.name, detail: detail, detailIsError: error,
                         status: status, at: when, shelf: shelf, keys: keys, finished: finished)
+            }
+            if let job = sheets.first(where: { $0.ask != nil }) {
+                return row(job.message ?? "What language do you speak in these clips?", .yourGo)
             }
             if let job = sheets.first {
                 return row(job.hold ?? held.contains(job.key) ? EditorWords.held(job.kind) : "Look sheet is ready", .yourGo)

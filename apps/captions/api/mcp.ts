@@ -228,10 +228,10 @@ export const TOOLS = [
   {
     name: "editor_create",
     description:
-      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
     inputSchema: {
       type: "object",
-      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, start: { type: "boolean" } },
+      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
       required: ["sources"],
     },
   },
@@ -849,7 +849,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     editor_create: async (a) => {
       const sources = Array.isArray(a.sources) ? a.sources.map(String) : [];
       if (!sources.length) throw new ToolError("Give sources: the takes' version_id (media_search or media_import_folder).");
-      const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions"]) };
+      const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages"]) };
       if (a.target_s != null) body.targetS = a.target_s;
       if (a.broll_folder) body.brollCollectionId = a.broll_folder;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);

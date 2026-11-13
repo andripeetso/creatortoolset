@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "speech-"));
 delete process.env.APP_SECRET; // the solo install: "local" is the admin, served by the server's keys
-const { speechFor, writeVoicePrefs, readVoicePrefs, resolvedFor, resolvedOne } = await import("./speech");
+const { speechFor, speechJob, writeVoicePrefs, readVoicePrefs, resolvedFor, resolvedOne } = await import("./speech");
 const { firstAsk } = await import("../transcribe");
 
 afterEach(() => {
@@ -45,6 +45,15 @@ describe("which engine turns speech into text", () => {
     writeVoicePrefs("local", { languages: ["et", "en"] });
     expect(speechFor("local", "editor")).toMatchObject({ languages: ["et", "en"] });
     expect(speechFor("local", "editor", ["de"])).toMatchObject({ languages: ["de"] });
+  });
+
+  it("a job on the person's own computer gets the engine and languages, never the key", () => {
+    writeVoicePrefs("local", { languages: ["et"] });
+    expect(speechJob("local", "editor")).toEqual({ languages: ["et"] });   // no engine here: the languages still go
+    expect(speechJob("local", "editor", ["fi"])).toEqual({ languages: ["fi"] });
+    process.env.DEEPGRAM_API_KEY = "dg";
+    expect(speechJob("local", "editor")).toEqual({ engine: "deepgram", model: "nova-3", languages: ["et"] });
+    expect(speechJob("local", "editor", ["fi"])).toEqual({ engine: "deepgram", model: "nova-3", languages: ["fi"] });
   });
 
   it("refuses what it can't use, and keeps what was there", () => {

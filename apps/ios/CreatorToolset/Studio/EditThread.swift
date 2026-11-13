@@ -28,6 +28,10 @@ struct EditorProject: Decodable, Hashable {
         var hold: Bool?
         /// A look sheet that waits for his go.
         var sheet: Sheet?
+        /// "language": analyze heard no word in the clips and asks which language they are in (`message` asks it);
+        /// `choices` are the person's Voice languages, as two-letter codes.
+        var ask: String?
+        var choices: [String]?
         var note: String?
         var gen: String?
         var versions: Int?
@@ -249,8 +253,9 @@ final class EditThreadModel: ObservableObject {
     }
 
     /// "Looks good, carry on".
-    func go(_ job: EditorProject.Job) async {
-        await act { try await $0.send("/api/editor/\(self.id)/jobs/\(job.id)/go", json: [String: Any]()) }
+    /// His go on a waiting job; `language` answers analyze's question (the clips are listened to again in it).
+    func go(_ job: EditorProject.Job, language: String? = nil) async {
+        await act { try await $0.send("/api/editor/\(self.id)/jobs/\(job.id)/go", json: language.map { ["language": $0] as [String: Any] } ?? [:]) }
     }
 
     func sendToReview(_ draft: EditorProject.Draft) async {
@@ -353,7 +358,11 @@ struct EditThreadView: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(model.feed) { item in row(item) }
                     ForEach(model.waiting) { job in
-                        GoCard(editId: id, job: job) { await model.go(job) }
+                        if job.ask == "language" {
+                            LanguageCard(job: job) { await model.go(job, language: $0) }
+                        } else {
+                            GoCard(editId: id, job: job) { await model.go(job) }
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -537,6 +546,40 @@ private struct GoCard: View {
                     busy = false
                 }
             }
+        }
+    }
+}
+
+/// Analyze heard no word in the clips: which language he speaks in them. His Voice languages first, any other in a menu.
+private struct LanguageCard: View {
+    let job: EditorProject.Job
+    let answer: (String) async -> Void
+    @State private var busy = false
+    /// The languages a project or an edit offers (contracts/voice.ts SPOKEN_LANGUAGES).
+    static let spoken = ["en", "et", "fi", "sv", "no", "da", "de", "nl", "fr", "es", "pt", "it", "pl", "cs", "lv", "lt", "ru",
+                         "uk", "tr", "el", "hu", "ro", "bg", "hi", "ja", "ko", "zh", "id", "vi", "th"]
+    static func name(_ code: String) -> String { Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code }
+
+    var body: some View {
+        AskCard(eyebrow: "Waiting for you", title: "Which language?") {
+            Text(job.message ?? "I heard no speech in these clips. What language do you speak in them?").font(.subheadline)
+            ForEach(job.choices ?? [], id: \.self) { code in
+                WideButton(title: Self.name(code), busy: busy) { pick(code) }
+            }
+            Menu {
+                ForEach(Self.spoken, id: \.self) { code in Button(Self.name(code)) { pick(code) } }
+            } label: {
+                Text("Other…").frame(maxWidth: .infinity)
+            }
+            .disabled(busy)
+        }
+    }
+
+    private func pick(_ code: String) {
+        Task {
+            busy = true
+            await answer(code)
+            busy = false
         }
     }
 }

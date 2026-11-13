@@ -29,6 +29,7 @@ import {
   type WorkshopRule,
 } from "@/lib/workshop";
 import { PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
+import { LanguageSelect } from "../LanguageSelect";
 
 const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes: "", accountId: null };
 
@@ -371,6 +372,18 @@ export function ProjectForm({
           {f.notes.length}/{PROJECT_NOTES_MAX} — always in the prompt, so keep it short.
         </span>
       </label>
+      )}
+      {!setup && (
+        <label className="text-[11px] text-zinc-400">
+          Spoken in its videos
+          <LanguageSelect
+            value={f.languages?.[0] ?? ""}
+            onChange={(code) => setF((cur) => ({ ...cur, languages: code ? [code] : [] }))}
+            disabled={locked}
+            className={`${input} mt-1`}
+          />
+          <span className="mt-0.5 block text-[10px] text-zinc-600">What its transcripts listen for.</span>
+        </label>
       )}
       {!formId && !setup && (knowledge.length || frameworks.length || rules.length) ? (
         <div>

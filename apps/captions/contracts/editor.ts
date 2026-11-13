@@ -49,6 +49,9 @@ export interface EditBrief {
   framing: { punch: number };
   /** the per-edit flags a plug-in declared (EditFlag), by id: on or off. A new edit records every declared flag. */
   flags: Record<string, boolean>;
+  /** the languages spoken in the footage (two-letter codes); they win over the person's Settings → AI → Voice
+   *  languages when its takes are transcribed. Missing or empty = the person's. */
+  languages?: string[];
 }
 
 /** A per-edit flag a plug-in declares (plug-in `editFlags`): a chip on the edit, saved with it. Shows nothing else. */
