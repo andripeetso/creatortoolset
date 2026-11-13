@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Crop, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, X } from "lucide-react";
+import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
 import {
@@ -254,13 +255,9 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   // a dragged edge lands on the playhead, a cut, or a line marker when it passes near one
   const snap = (edges: number[], df: number, skip?: string) => {
     if (!snapOn) return df;
-    const tol = (7 / pps) * fps;
     const at = [Math.round(time * fps), ...view.markers.map((m) => m.frame),
       ...items.filter((i) => i.key !== skip).flatMap((i) => [i.rec, i.rec + i.len])];
-    let best = 0;
-    let dist = tol;
-    for (const e of edges) for (const c of at) if (Math.abs(c - (e + df)) < dist) [dist, best] = [Math.abs(c - (e + df)), c - (e + df)];
-    return df + best;
+    return snapDelta(edges, df, at, (SNAP_PX / pps) * fps);
   };
 
   // ---- editing moves (split and the rest) ----

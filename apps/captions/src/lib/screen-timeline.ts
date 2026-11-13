@@ -1,12 +1,13 @@
 // The arithmetic of the screen recording editor's timeline (components/screen-editor/Timeline.tsx): dragging a zoom
 // or the ends of the kept part, where a new zoom fits, and the ruler's marks. Pure, so it is tested.
+import { dragSpan, type Grip } from "./clip-drag";
 import { MIN_ZOOM, type Zoom } from "./screen-recording";
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 const ms = (v: number) => Math.round(v * 1000) / 1000;
 
 /** Which part of a zoom a drag holds. */
-export type ZoomGrip = "body" | "start" | "end";
+export type ZoomGrip = Grip;
 
 /**
  * The zoom at `index` dragged by `dt` seconds from where the drag began (`zooms` is the list as it was then): moved
@@ -17,13 +18,7 @@ export function dragZoom(zooms: Zoom[], index: number, grip: ZoomGrip, dt: numbe
   if (!z) return zooms;
   const lo = index > 0 ? zooms[index - 1].end : 0;
   const hi = index < zooms.length - 1 ? zooms[index + 1].start : duration;
-  let { start, end } = z;
-  if (grip === "body") {
-    const length = end - start;
-    start = clamp(start + dt, lo, Math.max(lo, hi - length));
-    end = start + length;
-  } else if (grip === "start") start = clamp(start + dt, lo, end - MIN_ZOOM);
-  else end = clamp(end + dt, start + MIN_ZOOM, hi);
+  const { start, end } = dragSpan(z, grip, dt, { lo, hi, min: MIN_ZOOM });
   return zooms.map((o, i) => (i === index ? { ...o, start: ms(start), end: ms(end) } : o));
 }
 
