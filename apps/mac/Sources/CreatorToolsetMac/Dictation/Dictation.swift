@@ -162,8 +162,9 @@ struct TalkRouter {
 /// Before Accessibility is granted no tap can see the hold key, so the first hold would go unnoticed. This reads the
 /// modifier state ten times a second (no permission needed) and counts a hold of the key alone, long enough and with no
 /// key typed meanwhile (fn with an arrow is Page Up, not talking), as the first press.
+/// A second, longer than a talking hold needs once set up, so brushing fn doesn't start the setup and its download.
 func firstHoldCounts(heldFor: TimeInterval, secondsSinceKeyDown: TimeInterval) -> Bool {
-    heldFor >= Gesture.minimumHold && heldFor < 30 && secondsSinceKeyDown > heldFor
+    heldFor >= 1 && heldFor < 30 && secondsSinceKeyDown > heldFor
 }
 
 @MainActor
@@ -204,7 +205,9 @@ final class Dictation: ObservableObject {
     /// A permission the person has to give, shown in the pill until it is given.
     private var needs: String?
 
-    private lazy var pill = DictationPill()
+    private lazy var pill: DictationPill = { pillMade = true; return DictationPill() }()
+    private var pillMade = false
+    private var fetching: Task<Void, Never>?
     private lazy var sounds = DictationSounds()
     private var transcriber: WhisperKitTranscriber?
     private var controllerStore: DictationController?
@@ -228,12 +231,26 @@ final class Dictation: ObservableObject {
             }
         }
         Self.recordings.keep = prefs.keep
+        // History and Transcribe a file work from the first F14/F15, before any dictation
+        DictationHistory.model.transcribe = { [weak self] url in
+            guard let self else { throw TranscriberError.notLoaded }
+            let samples = try await Task.detached { try AudioFileLoader.load(url: url) }.value
+            guard !samples.isEmpty else { throw AudioFileLoader.LoaderError.invalidFormat }
+            return try await self.onDevice(samples)
+        }
+        TranscribeFile.model.transcribe = { [weak self] samples in
+            guard let self else { throw TranscriberError.notLoaded }
+            return try await self.onDevice(samples)
+        }
         apply()
     }
 
     private func apply() {
         guard prefs.on else {
             phase = .off
+            needs = nil
+            fetching?.cancel()
+            if pillMade { pill.hide() }
             FunctionKeys.shared.bind([])
             if monitorOn { monitor.stop(); monitorOn = false }
             unregisterF13()
@@ -250,6 +267,8 @@ final class Dictation: ObservableObject {
         } else {
             registerF13()
             watchFirstHold()
+            // granted in System Settings whenever: the taps come on then, no relaunch
+            watchTrust()
         }
         // used here before: load the model now, so the first dictation after a launch doesn't wait for it
         if UserDefaults.standard.bool(forKey: DictationPrefs.keys.used), modelOnDisk { Task { try? await currentTranscriber().warmUp() } }
@@ -415,24 +434,14 @@ final class Dictation: ObservableObject {
             recordings: Self.recordings,
             context: { [weak self] in TranscriptionContext(spokenLanguages: self?.spoken ?? []) }
         )
-        DictationHistory.model.transcribe = { [weak self] url in
-            guard let self else { throw TranscriberError.notLoaded }
-            let samples = try await Task.detached { try AudioFileLoader.load(url: url) }.value
-            guard !samples.isEmpty else { throw AudioFileLoader.LoaderError.invalidFormat }
-            return try await self.onDevice(samples)
-        }
-        TranscribeFile.model.transcribe = { [weak self] samples in
-            guard let self else { throw TranscriberError.notLoaded }
-            return try await self.onDevice(samples)
-        }
         controllerStore = made
         return made
     }
 
-    /// History and dropped files: on this Mac, once the model is here (a missing one starts the setup instead).
+    /// History and dropped files: on this Mac, once the model is here (a missing one starts downloading instead).
     private func onDevice(_ samples: [Float]) async throws -> String {
         guard modelOnDisk else {
-            setUp()
+            fetch(model)
             throw DictationSetupError.noModel
         }
         return try await controller().transcribeOnDevice(samples)
@@ -510,15 +519,19 @@ final class Dictation: ObservableObject {
                 self.trustWatch = nil
                 DictationLog.info("accessibility granted")
                 if self.prefs.on { self.installTaps() }
-                self.needs = nil
-                self.showSetup()
+                // only a setup in progress says Ready
+                if self.needs != nil {
+                    self.needs = nil
+                    self.showSetup()
+                }
             }
         }
     }
 
     /// The pill during setup: what to allow first, else the download, else ready.
     private func showSetup() {
-        if let needs { return pill.show(.message(needs)) }
+        // a minute, then it goes: declining must not leave it on every Space
+        if let needs { return pill.showMessage(needs, for: 60) }
         if let download {
             let m = ModelRegistry.model(download.id)
             return pill.show(.message("Downloading the speech model · \(modelSize(m.sizeMB)) · \(Int(download.progress * 100))%"))
@@ -535,7 +548,7 @@ final class Dictation: ObservableObject {
         guard download == nil, let variant = m.whisperKitID, ModelFiles.base(holding: variant) == nil else { return }
         download = (m.id, 0)
         let showing = m.id == prefs.model
-        Task {
+        fetching = Task {
             do {
                 let base = try ModelFiles.ownBase()
                 var last = -1
@@ -543,7 +556,8 @@ final class Dictation: ObservableObject {
                     let pct = Int(p.fractionCompleted * 100)
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
-                            guard pct != last else { return }
+                            // a cancelled download (dictation switched off) shows nothing more
+                            guard pct != last, Dictation.shared.download?.id == m.id else { return }
                             last = pct
                             Dictation.shared.download = (m.id, p.fractionCompleted)
                             if showing { Dictation.shared.showSetup() }
@@ -552,14 +566,17 @@ final class Dictation: ObservableObject {
                 }
                 DictationLog.info("downloaded \(m.id)")
                 download = nil
+                fetching = nil
                 if m.id == prefs.model {
-                    showSetup()
+                    if showing, needs == nil { pill.show(.message("Getting the speech model ready")) }
                     try? await currentTranscriber().warmUp()
+                    if showing { showSetup() }
                 }
             } catch {
-                DictationLog.error("download of \(m.id) failed: \(error)")
+                DictationLog.error("download of \(m.id) stopped: \(error)")
                 download = nil
-                if showing { pill.showMessage("The speech model didn't download. Press again to retry") }
+                fetching = nil
+                if showing, prefs.on, !Task.isCancelled { pill.showMessage("The speech model didn't download. Press again to retry") }
             }
         }
     }
@@ -622,7 +639,7 @@ final class Dictation: ObservableObject {
 
 enum DictationSetupError: LocalizedError {
     case noModel
-    var errorDescription: String? { "The speech model isn't on this Mac yet." }
+    var errorDescription: String? { "The speech model is downloading. Try again when it's done." }
 }
 
 /// Keeps `Dictation.phase` in step with the loop.

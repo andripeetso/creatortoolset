@@ -119,8 +119,8 @@ copy each one's licence next to the files they install.
 ## Dictation code in the Mac app
 
 The dictation in `apps/mac/Sources/CreatorToolsetMac/Dictation/` (talk keys, microphone capture, transcription,
-pasting at the cursor, the pill, History, Transcribe a file) is adapted from an open-source macOS dictation app
-published under this licence:
+pasting at the cursor, the pill, History, Transcribe a file) is adapted from Parrot, an open-source macOS dictation
+app by Humanitas Labs (https://github.com/humanitas-labs/parrot), published under this licence:
 
 ```
 MIT License

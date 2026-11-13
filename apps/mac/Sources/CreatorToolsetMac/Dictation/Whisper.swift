@@ -22,6 +22,17 @@ actor WhisperKitTranscriber: Transcriber {
     /// download's fraction done, 0 to 1, when there is anything to download.
     func warmUp(progress: (@Sendable (Double) -> Void)? = nil) async throws {
         if pipeline != nil || retired { return }
+        // one load at a time: a second caller (the first dictation, while the launch's load runs) waits for it
+        if let loading { return try await loading.value }
+        let task = Task { try await self.load(progress: progress) }
+        loading = task
+        defer { loading = nil }
+        try await task.value
+    }
+
+    private var loading: Task<Void, Error>?
+
+    private func load(progress: (@Sendable (Double) -> Void)?) async throws {
         guard let whisperKitID = model.whisperKitID else {
             throw TranscriberError.missingEngineID
         }

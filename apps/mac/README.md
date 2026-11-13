@@ -458,7 +458,8 @@ but nothing asks for a permission and nothing downloads until the first press of
   macOS, so its own brightness keys don't also act on them.
 - The first press: the pill at the bottom of the screen says what to allow (Microphone, then Accessibility, with the
   System Settings pane) and the speech model downloads with its size and progress there. Before Accessibility no key
-  tap can exist, so F13 is a Carbon hotkey and the hold key is read from the modifier state ten times a second.
+  tap can exist, so F13 is a Carbon hotkey and the hold key is read from the modifier state ten times a second (a hold of
+  1 s with no other key counts as the first press). Switching dictation off stops a download in progress.
 - Speech becomes text on this Mac with Whisper (WhisperKit, Core ML); the default model is Whisper Large v3 Turbo
   (1.6 GB) in `~/Library/Application Support/Creator Toolset/dictation/models`. A complete copy in the earlier
   dictation app's models folder is loaded where it is, never downloaded again or removed. Whisper is told the languages from the server's Voice settings (`GET /api/voice-prefs`) when it has

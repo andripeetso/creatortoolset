@@ -62,9 +62,10 @@ final class FunctionKeyTests: XCTestCase {
     }
 
     func testAFirstHoldBeforeAccessibilityNeedsTheKeyAloneAndLongEnough() {
-        XCTAssertTrue(firstHoldCounts(heldFor: 0.8, secondsSinceKeyDown: 5))
+        XCTAssertTrue(firstHoldCounts(heldFor: 1.5, secondsSinceKeyDown: 5))
         XCTAssertFalse(firstHoldCounts(heldFor: 0.1, secondsSinceKeyDown: 5), "a stray tap")
-        XCTAssertFalse(firstHoldCounts(heldFor: 0.8, secondsSinceKeyDown: 0.2), "fn with an arrow")
+        XCTAssertFalse(firstHoldCounts(heldFor: 0.6, secondsSinceKeyDown: 5), "brushing it")
+        XCTAssertFalse(firstHoldCounts(heldFor: 1.5, secondsSinceKeyDown: 0.2), "fn with an arrow")
         XCTAssertFalse(firstHoldCounts(heldFor: 60, secondsSinceKeyDown: 100), "a key left down")
     }
 }
