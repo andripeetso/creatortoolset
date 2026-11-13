@@ -16,7 +16,7 @@ import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, fres
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
-import { addPicture, cutOutPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
+import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureSize, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import { onTopic } from "@/lib/sync";
@@ -471,34 +471,68 @@ function DesignPage({ id }: { id: string }) {
     view.glide(zoomAt(v, to === "in" ? zoomStop(v.z, true) : to === "out" ? zoomStop(v.z, false) : to, room.w / 2, room.h / 2));
   };
 
-  const fromComputer = async (files: readonly File[]) => {
-    if (!design || !files.length) return;
+  /**
+   * Pictures from this computer (the Picture button, a paste, a drop). `drop`: where on the canvas they were let go.
+   * Let go over a frame, they are layers of that frame, the first with its middle at that point. Let go on empty
+   * canvas, each becomes a frame of its own, the picture's size, with the picture filling it. Without a `drop` they
+   * go onto the current frame, in its middle (a canvas with no frame yet gets its first one for them).
+   */
+  const fromComputer = async (given: readonly File[], drop?: { x: number; y: number }) => {
+    const files = given.filter(isPicture);
+    if (!design || !given.length) return;
+    if (!files.length) return setError("Only JPEG, PNG and WebP pictures can be put on a canvas");
+    const over = drop ? frames.findIndex((r) => drop.x >= r.x && drop.x <= r.x + r.w && drop.y >= r.y && drop.y <= r.y + r.h) : k;
+    const alone = !!drop && over < 0;
     // a canvas with no frame yet gets its first one for the pictures (the design's own size, in the middle of what is in view)
-    const first = base && here ? undefined : addFrame();
-    const onto = base?.id ?? first?.id;
-    const f = here ?? (first ? { w: first.w!, h: first.h! } : undefined);
-    if (!onto || !f) return;
+    const first = alone || (base && here) ? undefined : addFrame();
+    const onto = alone ? undefined : (pages[over]?.id ?? first?.id);
+    const f = alone ? undefined : (frames[over] ?? (first ? { x: first.x!, y: first.y!, w: first.w!, h: first.h! } : undefined));
+    if (!alone && (!onto || !f)) return;
     setError(null);
     try {
-      const made: { picture: string; w: number; h: number }[] = [];
+      const got: { picture: string; w: number; h: number }[] = [];
       for (const file of files) {
+        const size = await pictureSize(file);
         const picture = await addPicture(design.id, file);
         setDesign((d) => (d ? { ...d, pictures: [...d.pictures, picture] } : d));
-        const size = await new Promise<{ w: number; h: number }>((done) => {
-          const img = new Image();
-          img.onload = () => done({ w: img.naturalWidth, h: img.naturalHeight });
-          img.onerror = () => done({ w: 1, h: 1 });
-          img.src = pictureUrl(design.id, picture);
-        });
-        // at most 60 % of the frame's width, in the picture's own shape
-        const w = Math.round(Math.min(f.w * 0.6, size.w));
-        made.push({ picture, w, h: Math.round((w * size.h) / size.w) });
+        got.push({ picture, ...size });
       }
-      // onto the frame it was started on, as that frame is by now
-      put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round((f.w - m.w) / 2), y: Math.round((f.h - m.h) / 2), w: m.w, h: m.h })));
+      if (alone) {
+        const room = DESIGN_LIMITS.pages - latest.current.length;
+        if (room < got.length) setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
+        const fresh = pictureFrames(got.slice(0, Math.max(0, room)), drop.x, drop.y, got.map((_, n) => `p${Date.now().toString(36)}${n}`));
+        if (!fresh.length) return;
+        const from = latest.current.length;
+        change((all) => [...all, ...fresh]);
+        setTool("move");
+        pick(from, [], true, fresh.map((p) => p.id));
+        return;
+      }
+      // at most 60 % of the frame's width, in the picture's own shape; at the point they were let go, else in the middle
+      const made = got.map((g) => {
+        const w = Math.round(Math.min(f!.w * 0.6, g.w));
+        return { picture: g.picture, w, h: Math.round((w * g.h) / g.w) };
+      });
+      const cx = drop ? drop.x - f!.x : f!.w / 2;
+      const cy = drop ? drop.y - f!.y : f!.h / 2;
+      // onto the frame it was started on, as that frame is by now; several step down and to the right
+      put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round(cx - m.w / 2) + n * 24, y: Math.round(cy - m.h / 2) + n * 24, w: m.w, h: m.h })));
     } catch (e) {
       setError(message(e));
     }
+  };
+  /** Files held over the page: the canvas shows that it takes them. */
+  const [dropping, setDropping] = useState(false);
+  const hasFiles = (e: React.DragEvent) => [...e.dataTransfer.types].includes("Files");
+  /** Let go anywhere on the page: over the canvas they land where they were let go, over a panel on the current frame. */
+  const dropped = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setDropping(false);
+    const r = frame.current?.getBoundingClientRect();
+    const onCanvas = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    const v = view.get();
+    void fromComputer([...e.dataTransfer.files], onCanvas ? { x: (e.clientX - r.left - v.x) / v.z, y: (e.clientY - r.top - v.y) / v.z } : undefined);
   };
 
   /**
@@ -693,7 +727,18 @@ function DesignPage({ id }: { id: string }) {
   const none = !mine.length;
 
   return (
-    <div className="flex h-screen flex-col">
+    <div
+      className="flex h-screen flex-col"
+      // a file held over the page is the page's to take: without this the window would open the file instead
+      onDragOver={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!dropping) setDropping(true);
+      }}
+      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
+      onDrop={dropped}
+    >
       <AppBar tool="Designer" to="/design" trail={<span className="truncate font-normal text-zinc-500">{design.name}</span>}>
         {piece && (
           <Button size="sm" variant="ghost" asChild>
@@ -719,7 +764,7 @@ function DesignPage({ id }: { id: string }) {
       <div className="flex min-h-0 flex-1">
         <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
 
-        <div ref={frame} className="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+        <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           <h3 data-picked className="sr-only">
             Picked: {framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}

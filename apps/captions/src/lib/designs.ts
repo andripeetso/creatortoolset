@@ -1,4 +1,4 @@
-import type { Design, DesignListed, DesignPage, NewDesign } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type Design, type DesignListed, type DesignPage, type NewDesign } from "@contracts/design";
 
 /** The designer's calls to api/designs.ts. */
 
@@ -43,3 +43,35 @@ export async function addPicture(id: string, file: File): Promise<string> {
   });
   return (await send<{ id: string }>(`${base(id)}/pictures`, "POST", { name: file.name, type: file.type, data })).id;
 }
+
+/** The picture types a design takes. */
+export const isPicture = (f: File): boolean => /^image\/(jpeg|png|webp)$/.test(f.type);
+
+/** A picture file's own size in pixels; 1 × 1 when the browser cannot read it. */
+export function pictureSize(file: File): Promise<{ w: number; h: number }> {
+  return new Promise((done) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    const end = (w: number, h: number) => (URL.revokeObjectURL(url), done({ w: w || 1, h: h || 1 }));
+    img.onload = () => end(img.naturalWidth, img.naturalHeight);
+    img.onerror = () => end(1, 1);
+    img.src = url;
+  });
+}
+
+/**
+ * Frames made of pictures: each the picture's own size (fitted to what a frame may be), the picture filling it, laid in
+ * a row with the first one's middle at (x, y). What a picture dropped on empty canvas, or on the start screen, becomes.
+ */
+export function pictureFrames(pictures: readonly { picture: string; w: number; h: number }[], x: number, y: number, ids: readonly string[]): DesignPage[] {
+  let left: number | null = null;
+  return pictures.map((p, n) => {
+    const k = Math.min(1, DESIGN_LIMITS.frameMax / Math.max(p.w, p.h));
+    const w = Math.max(DESIGN_LIMITS.frameMin, Math.round(p.w * k));
+    const h = Math.max(DESIGN_LIMITS.frameMin, Math.round(p.h * k));
+    const fx: number = left ?? Math.round(x - w / 2);
+    left = fx + w + DESIGN_GAP;
+    return { id: ids[n]!, x: fx, y: Math.round(y - h / 2), w, h, background: "#ffffff", layers: [{ id: "l1", type: "image", picture: p.picture, fit: "cover", x: 0, y: 0, w, h }] };
+  });
+}
+
