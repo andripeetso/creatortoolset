@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Film, Magnet, MoveHorizontal, Pause, Play, Plus, Redo2, Repeat, SkipBack, SkipForward, Undo2, Volume2, VolumeX, ZoomIn } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { trimOf, type ScreenEvents, type ScreenLook, type Zoom } from "@/lib/screen-recording";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
@@ -12,7 +13,7 @@ import type { Player } from "./usePlayer";
 
 /** Follows a press until it lifts: `move` gets the distance from where it began, `end` whether it moved at all. */
 function drag(e: ReactPointerEvent<HTMLElement>, move: (dx: number, clientX: number) => void, end?: (moved: boolean) => void) {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || e.ctrlKey) return; // ⌃-click is the right click on a Mac: it opens the menu, not a drag
   const el = e.currentTarget;
   const from = e.clientX;
   let moved = false;
@@ -80,6 +81,8 @@ export function Timeline({
   const label = useRef<HTMLSpanElement>(null);
   const [ghost, setGhost] = useState<{ start: number; end: number } | null>(null);
   const [snapOn, setSnapOn] = useState(true);
+  /** The zoom the menu was opened on; null: the track between zooms. */
+  const [menuFor, setMenuFor] = useState<number | null>(null);
   const trim = trimOf(look, duration);
   // a second gets 240 px at most; zooming is only offered when it can get wider than it already is
   const axis = useTimeAxis({ scroller, seconds: duration, left: PAD, right: PAD, maxPps: 240, now: player.time });
@@ -136,6 +139,7 @@ export function Timeline({
 
   const grabZoom = (e: ReactPointerEvent<HTMLElement>, index: number, grip: ZoomGrip) => {
     e.stopPropagation();
+    if (e.ctrlKey) return;
     const before = look.zooms;
     const z = before[index];
     const edges = !z ? [] : grip === "body" ? [z.start, z.end] : [grip === "start" ? z.start : z.end];
@@ -280,13 +284,16 @@ export function Timeline({
               ))}
             </div>
 
-            {/* the zooms */}
+            {/* the zooms; a right click removes one or all of them */}
+            <ContextMenu onOpenChange={(open) => open || setGhost(null)}>
+            <ContextMenuTrigger asChild>
             <div
               className="relative mt-1.5 h-9 rounded-lg bg-zinc-900"
+              onContextMenu={(e) => e.target === e.currentTarget && setMenuFor(null)}
               onPointerMove={(e) => setGhost(e.target === e.currentTarget ? zoomSlot(look.zooms, timeAt(e.clientX), duration) : null)}
               onPointerLeave={() => setGhost(null)}
               onPointerDown={(e) => {
-                if (e.target !== e.currentTarget || e.button !== 0) return;
+                if (e.target !== e.currentTarget || e.button !== 0 || e.ctrlKey) return;
                 const slot = zoomSlot(look.zooms, timeAt(e.clientX), duration);
                 if (slot) addZoom(slot);
               }}
@@ -307,6 +314,7 @@ export function Timeline({
                   aria-pressed={picked === i}
                   aria-label={`Zoom ${clock(z.start, true)} to ${clock(z.end, true)}, ${Math.max(z.scale, floor).toFixed(1)} times`}
                   onPointerDown={(e) => grabZoom(e, i, "body")}
+                  onContextMenu={() => setMenuFor(i)}
                   onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPick(i))}
                   className={cn(
                     "absolute inset-y-1 flex cursor-grab items-center justify-center overflow-hidden rounded-md border text-[11px] font-medium tabular-nums active:cursor-grabbing",
@@ -322,6 +330,29 @@ export function Timeline({
                 </div>
               ))}
             </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-48">
+              {menuFor !== null && look.zooms[menuFor] && (
+                <ContextMenuItem
+                  onClick={() => {
+                    change({ zooms: look.zooms.filter((_, i) => i !== menuFor) });
+                    onPick(null);
+                  }}
+                >
+                  Remove this zoom
+                </ContextMenuItem>
+              )}
+              <ContextMenuItem
+                disabled={look.zooms.length === 0}
+                onClick={() => {
+                  change({ zooms: [] });
+                  onPick(null);
+                }}
+              >
+                Remove all zooms
+              </ContextMenuItem>
+            </ContextMenuContent>
+            </ContextMenu>
 
             {/* the playhead */}
             <div ref={head} className="pointer-events-none absolute inset-y-0 left-0 w-0">

@@ -340,12 +340,21 @@ describe("screen recording", () => {
   it("splits side by side into 62% screen and 38% camera", () => {
     const { screen, camera } = sideRects(1920, 1080, 0);
     const gap = 1080 * 0.012;
-    expect(screen.x).toBe(0);
-    expect(screen.w).toBeCloseTo(1920 * 0.62 - gap / 2);
-    expect(camera.x).toBeCloseTo(1920 * 0.62 + gap / 2);
+    expect(screen.x).toBeCloseTo(0);
+    expect(screen.w).toBeCloseTo((1920 - gap) * 0.62);
+    expect(camera.x).toBeCloseTo(screen.w + gap);
     expect(camera.x + camera.w).toBeCloseTo(1920);
-    expect(camera.w).toBeCloseTo(1920 * 0.38 - gap / 2);
     expect(camera.h).toBe(1080);
+  });
+
+  it("puts a narrow window right beside the camera, the pair centred, the camera as tall as the window", () => {
+    const { screen, camera } = sideRects(1920, 1080, 54, 0.38, 1);
+    expect(screen.w).toBeCloseTo(1080 - 108);
+    expect(camera.x - (screen.x + screen.w)).toBeCloseTo(54);
+    expect(screen.x - 0).toBeCloseTo(1920 - (camera.x + camera.w));
+    expect(camera.h).toBeCloseTo(screen.h);
+    // a wider camera takes more of the width
+    expect(sideRects(1920, 1080, 54, 0.5, 1).camera.w).toBeGreaterThan(camera.w);
   });
 
   it("draws no camera when the layout is hidden", () => {

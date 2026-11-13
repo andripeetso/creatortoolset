@@ -1029,7 +1029,7 @@ final class Recorder: ObservableObject {
 
     private func showBar(on screen: NSScreen) {
         closeBar()
-        let size = NSSize(width: 250, height: 44)
+        let size = NSSize(width: 290, height: 44)
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         panel.level = .statusBar
         panel.isFloatingPanel = true
@@ -1090,11 +1090,20 @@ struct RecorderBar: View {
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     Text(clockText(recorder.elapsed)).monospacedDigit().frame(width: 44, alignment: .leading)
                 }
+                // Stop first, right after the time and named: it is the button a take ends with
+                Button { recorder.stop() } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .padding(.horizontal, 10).frame(height: 28)
+                        .background(Color.red, in: Capsule())
+                        .contentShape(Capsule())
+                }.help("Stop (⌥⌘.)")
                 Button { recorder.togglePause() } label: {
                     Image(systemName: recorder.phase == .paused ? "play.fill" : "pause.fill")
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
                 }.help(recorder.phase == .paused ? "Resume" : "Pause")
-                Button { recorder.stop() } label: { Image(systemName: "stop.fill") }.help("Stop (⌥⌘.)")
-                Button { asking = true } label: { Image(systemName: "trash") }.help("Throw away")
+                Button { asking = true } label: {
+                    Image(systemName: "trash").frame(width: 28, height: 28).contentShape(Rectangle())
+                }.help("Throw away")
             case .saving:
                 ProgressView().controlSize(.small)
                 Text("Saving…")
