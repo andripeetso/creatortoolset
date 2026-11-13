@@ -34,7 +34,7 @@ import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
-import { useElapsed, WorkCards } from "./WorkCards";
+import { WorkCards, WorkingFor } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { ConfirmCards } from "./ConfirmCards";
@@ -942,7 +942,7 @@ export function Message({
     return (
       <div className="space-y-1">
         {/* a reply waiting for its videos or its turn, or sending a file, isn't working yet: its own line says so */}
-        <Steps steps={steps} since={m.wait || (m.send && sending) ? undefined : m.at} />
+        <Steps steps={steps} working={!m.wait && !(m.send && sending)} />
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
@@ -985,7 +985,7 @@ export function Message({
   return (
     <div className={cn("group/msg max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
       {/* words already coming in show it is alive: the row stays for a reply that has steps */}
-      <Steps steps={steps} since={working && steps.length ? m.at : undefined} />
+      <Steps steps={steps} working={working && !!steps.length} />
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
@@ -1073,8 +1073,9 @@ function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; o
               title="Open this chat"
             >
               <span className="min-w-0 flex-1 truncate">{p.title}</span>
-              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-label="Still answering" />}
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{ago(p.at)}</span>
+              {p.working && <Loader2 className="size-3.5 shrink-0 self-center text-[var(--tint)] motion-safe:animate-spin" aria-hidden />}
+              {/* a working chat's last message is the reply it is writing: its time is when the work started */}
+              <span className={cn("shrink-0 text-xs tabular-nums", p.working ? "text-[var(--tint)]" : "text-muted-foreground")}>{p.working ? <WorkingFor since={p.at} /> : ago(p.at)}</span>
             </button>
             {(p.settled || !p.working) && (
               <button
@@ -1124,19 +1125,17 @@ function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; o
   );
 }
 
-/** What the AI did, folded into one row. While it works (`since` set): the step it is on, a light running through it,
-    and the time once it passes ten seconds ("Working" before the first step). Once done: "N steps", opening to the list. */
-function Steps({ steps, since }: { steps: string[]; since?: number }) {
-  const working = since !== undefined;
-  const elapsed = useElapsed(since);
+/** What the AI did, folded into one row. While it works: the step it is on with a light running through it ("Working"
+    before the first step); how long it has taken is in Earlier chats, not counting here. Once done: "N steps", opening to the list. */
+function Steps({ steps, working = false }: { steps: string[]; working?: boolean }) {
   if (!steps.length && !working) return null;
   const last = steps[steps.length - 1];
   const label = working ? (last ? `${last}…` : "Working") : steps.length === 1 ? last : `${steps.length} steps`;
   return (
     <details className="group mt-1 mb-1.5 text-xs text-muted-foreground">
       <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", steps.length > 1 && "cursor-pointer hover:text-foreground")}>
-        <span className={cn("truncate tabular-nums", working && "ct-shimmer")} role={working ? "status" : undefined}>
-          {label + elapsed}
+        <span className={cn("truncate", working && "ct-shimmer")} role={working ? "status" : undefined}>
+          {label}
         </span>
         {steps.length > 1 && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
       </summary>

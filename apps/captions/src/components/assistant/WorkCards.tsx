@@ -51,18 +51,15 @@ function Status({ status }: { status: AssistantWork["status"] }) {
   return <Check className="size-4 shrink-0 text-emerald-500" aria-label="Done" />;
 }
 
-const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-
-/** " · 1:23" once a reply has taken more than ten seconds, put after its working line so a long wait never looks frozen. */
-export function useElapsed(since: number | undefined) {
+/** How long a chat has been working, "57s", "4m", "1h 5m", ticking: the Earlier chats list shows it in place of the time. */
+export function WorkingFor({ since }: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (since === undefined) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [since]);
-  if (since === undefined) return "";
+  }, []);
   // the server's clock and this one can differ: never below zero
   const s = Math.max(0, Math.floor((now - since) / 1000));
-  return s < 10 ? "" : ` · ${clock(s)}`;
+  const m = Math.floor(s / 60);
+  return <>Working {s < 60 ? `${s}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`}</>;
 }
