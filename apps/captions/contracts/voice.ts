@@ -61,6 +61,8 @@ export interface SttModel {
    * Parakeet's Hugging Face repository (FluidAudio). apps/mac Dictation/Whisper.swift ModelRegistry keeps the same ids.
    */
   coreml?: string;
+  /** A Mac's download size when its Core ML version differs from `mb` (`sizeOn`). */
+  coremlMb?: number;
   /** Download size, for a local model. */
   mb?: number;
   /**
@@ -89,7 +91,7 @@ export const STT_MODELS: SttModel[] = [
     page: "https://huggingface.co/openai/whisper-large-v3", licence: "Apache-2.0", download: "Systran/faster-whisper-large-v3", mb: 3090, languages: "many", computer: true },
   // its card lists 25 languages; on Estonian it got nearly half the words wrong, so it is offered for English only
   { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", by: "NVIDIA", about: "English only: the fastest, and the closest word times",
-    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", coreml: "FluidInference/parakeet-tdt-0.6b-v3-coreml", mb: 2550, languages: ["en"], computer: true },
+    page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", coreml: "FluidInference/parakeet-tdt-0.6b-v3-coreml", coremlMb: 494, mb: 2550, languages: ["en"], computer: true },
   { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Small and quick, the one the browser already uses",
     page: "https://huggingface.co/openai/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
   // a Mac's smaller ones (Dictation on a Mac): after the others, so none of them is a computer's default
@@ -109,6 +111,9 @@ export const STT_MODELS: SttModel[] = [
  */
 export const runsOn = (m: SttModel, os: string | undefined): boolean =>
   os === "mac" ? !!m.coreml : os ? !!m.download : !!m.coreml && !!m.download;
+
+/** The download size on a computer that runs `os`. */
+export const sizeOn = (m: SttModel, os: string | undefined): number | undefined => (os === "mac" ? m.coremlMb ?? m.mb : m.mb);
 
 export interface VoicePrefs {
   /** ISO 639-1 codes, the ones spoken in this person's videos; empty = detect it each time. */

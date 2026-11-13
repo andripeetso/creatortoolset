@@ -12,7 +12,7 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
 const { deviceOf, pairDevice, setDeviceKinds, setDeviceStt, touchDevice } = await import("./devices");
-const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS } = await import("./computer-transcribe");
+const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS, EDITOR_LIMITS } = await import("./computer-transcribe");
 const { availableEngines, resolvedOne, speechFor, speechJob, writeVoicePrefs } = await import("./speech");
 const { editorWordsFromComputer } = await import("../transcribe");
 const { saveMyKey } = await import("../my-keys");
@@ -67,6 +67,11 @@ describe("which computer gets a transcript", () => {
     expect(j.model).toBe("parakeet-tdt-0.6b-v3");
     await app.request(`/api/devices/relay/transcribe/${j.id}/fail`, json({ error: "Out of memory" }, as(mac.token)));
     await failed;
+    // the AI Editor's never go to a Mac (its Core ML Parakeet drops fillers the editor cuts at): with only the Mac
+    // holding Parakeet, an editor transcript says it waits for a computer, and the Mac is never handed it
+    await expect(transcribeOnComputer("ana", "parakeet-tdt-0.6b-v3", ["en"], audio, EDITOR_LIMITS)).rejects.toBeInstanceOf(ComputerOff);
+    expect(availableEngines("ana", "editor")).not.toContain("local");
+    expect(availableEngines("ana", "captions")).toContain("local");
   });
 
   it("with no computer that has the model on, it waits and says for what", async () => {

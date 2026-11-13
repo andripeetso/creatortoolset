@@ -153,8 +153,9 @@ async function device(file: string, status: string): Promise<Transcribed> {
 }
 
 /** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches; `soon`: the mic's limits. */
-async function computer(file: string, actor: string, model: string, languages: string[], soon: boolean): Promise<Transcribed> {
-  const { words, language } = await transcribeOnComputer(actor, model, languages, file, soon ? MIC_LIMITS : {});
+async function computer(file: string, actor: string, model: string, languages: string[], soon: boolean, editor: boolean): Promise<Transcribed> {
+  // the editor's never go to a Mac (computer-transcribe.ts isMac)
+  const { words, language } = await transcribeOnComputer(actor, model, languages, file, soon ? MIC_LIMITS : { noMac: editor });
   return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
 }
 
@@ -182,7 +183,7 @@ export async function transcribeFile(
     else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(wav ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])], soon);
     const t =
       route.provider === "device" ? await device(out, status)
-      : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon)
+      : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
       : await openai(out, route.key, languages);
     return { ...t, provider: route.provider, ...(route.provider === "computer" ? { model: route.model } : {}) };

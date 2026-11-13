@@ -91,6 +91,8 @@ interface Job {
   takeMs: number;
   /** handed out before the lower ones: a mic recording (2), captions (1), the AI Editor's (0.5), a library transcript (0) */
   rank: number;
+  /** never handed to a Mac (EDITOR_LIMITS) */
+  noMac: boolean;
   end: (r: TranscribeResult | Error) => void;
 }
 const jobs = new Map<number, Job>();
@@ -102,7 +104,13 @@ let lastId = 0;
  */
 export const COMPUTER_LIMITS = { checkMs: 15_000, unclaimedMs: 5 * 60_000, takeMs: 10 * 60_000 } as const;
 
-const onlineHolders = (owner: string, model: string) => speechComputers(owner).filter((d) => holds(d, model) && isOnline(d.id));
+/**
+ * The AI Editor cuts at "um" and restarts, which only Parakeet on a Linux helper is measured to keep; a Mac's Core ML
+ * Parakeet (Dictation) dropped one, so the editor's transcripts never go to a Mac (`noMac`).
+ */
+export const isMac = (d: Device) => d.report?.machine?.os === "mac";
+const onlineHolders = (owner: string, model: string, noMac = false) =>
+  speechComputers(owner).filter((d) => holds(d, model) && isOnline(d.id) && !(noMac && isMac(d)));
 const offLine = (model: string) => `Waits for a computer with ${nameOf(model)} to be on`;
 
 /** Throws ComputerOff when no computer of `owner` that has `model` is on: checked before the audio is cut. */
@@ -133,9 +141,9 @@ export const MIC_LIMITS = { claimMs: 4_000, takeMs: 15_000, checkMs: 1_000, exac
  * computer must take it in 15 s and answer in 30 s, under the proxy's 60 s; else the worker has Deepgram write it, as
  * it did before. Parakeet on a CPU hears 45 s in about 3 s.
  */
-export const EDITOR_LIMITS = { claimMs: 15_000, takeMs: 30_000, checkMs: 1_000, exact: true, rank: 0.5 } as const;
+export const EDITOR_LIMITS = { claimMs: 15_000, takeMs: 30_000, checkMs: 1_000, exact: true, rank: 0.5, noMac: true } as const;
 
-type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: number; exact?: boolean };
+type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: number; exact?: boolean; noMac?: boolean };
 
 /**
  * The words in `audio` (a WAV, 16 kHz mono 16-bit) heard by `model` on one of `owner`'s computers. Rejects with
@@ -146,7 +154,7 @@ export function transcribeOnComputer(
   owner: string, model: string, languages: string[], audio: string,
   limits: Limits = {},
 ): Promise<TranscribeResult> {
-  if (!onlineHolders(owner, model).length) return Promise.reject(new ComputerOff(offLine(model)));
+  if (!onlineHolders(owner, model, !!limits.noMac).length) return Promise.reject(new ComputerOff(offLine(model)));
   // 16 kHz mono 16-bit: 32,000 bytes a second; `exact`: no longer for a longer recording
   const least = limits.takeMs ?? COMPUTER_LIMITS.takeMs;
   const takeMs = limits.exact ? least : Math.max(least, (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32 * 3);
@@ -166,7 +174,7 @@ export function transcribeOnComputer(
       }
       if (!j.device && limits.claimMs && now - j.since > limits.claimMs) return end(new ComputerBusy(`No computer with ${nameOf(model)} took it in time.`));
       const working = [...jobs.values()].some((x) => x.owner === owner && x.device);
-      if (!j.device && (!onlineHolders(owner, model).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
+      if (!j.device && (!onlineHolders(owner, model, !!limits.noMac).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
     }, limits.checkMs ?? COMPUTER_LIMITS.checkMs);
     check.unref();
     const end = (r: TranscribeResult | Error) => {
@@ -175,7 +183,7 @@ export function transcribeOnComputer(
       if (r instanceof Error) reject(r);
       else resolve(r);
     };
-    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, rank: limits.rank ?? 0, end };
+    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, rank: limits.rank ?? 0, noMac: !!limits.noMac, end };
     jobs.set(id, j);
     void wakeEditorPolls();
   });
@@ -189,9 +197,9 @@ export function transcribeOnComputer(
  */
 function nextFor(d: Device, balance: Balance): Job | undefined {
   for (const j of [...jobs.values()].sort((a, b) => b.rank - a.rank)) {
-    if (j.owner !== d.owner || j.device || !holds(d, j.model)) continue;
+    if (j.owner !== d.owner || j.device || !holds(d, j.model) || (j.noMac && isMac(d))) continue;
     if (!balance.on) return j;
-    const best = strongest(onlineHolders(d.owner, j.model).concat(isOnline(d.id) ? [] : [d]), balance.weights)[0];
+    const best = strongest(onlineHolders(d.owner, j.model, j.noMac).concat(isOnline(d.id) ? [] : [d]), balance.weights)[0];
     if (best?.id === d.id) return j;
   }
   return undefined;
