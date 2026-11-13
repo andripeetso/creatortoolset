@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { jobTurn, type AuthVars } from "./auth";
-import { chatBusy, chatOfTurn, routeOf, runInChat } from "./assistant";
+import { chatBusy, chatOfTurn, routeOf, runInChat, setRunEnded } from "./assistant";
 import { announceSoon } from "./lib/announce-soon";
 import { deviceName, isOnline } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
@@ -154,6 +154,9 @@ async function finish(username: string, id: string, result: Omit<AutomationResul
     ref: id,
   }).catch(() => {});
 }
+
+// a run whose reply went on after a restart of the server (assistant.ts onAdopt) is recorded like any other
+setRunEnded((username, id, result) => void finish(username, id, result));
 
 /** Runs one task as a turn in its chat and records the result. Resolves once it is recorded. */
 export async function runAutomation(username: string, a: Automation, ready: { route: Route; url: string }): Promise<void> {

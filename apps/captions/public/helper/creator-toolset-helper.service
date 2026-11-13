@@ -1,0 +1,15 @@
+# The Creator Toolset helper as a systemd --user service (install.sh writes it with its folder in place of @DIR@).
+[Unit]
+Description=Creator Toolset helper (speech to text for your server)
+After=network-online.target
+
+[Service]
+Environment=CT_HELPER_HOME=@DIR@
+ExecStart=@DIR@/venv/bin/python @DIR@/helper.py run
+Restart=on-failure
+RestartSec=10
+# 3 = removed in Settings → Devices: pair again instead of retrying
+RestartPreventExitStatus=3
+
+[Install]
+WantedBy=default.target

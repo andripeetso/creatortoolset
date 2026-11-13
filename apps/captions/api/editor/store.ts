@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
+import { isLanguage } from "../../contracts/voice";
 import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
@@ -324,6 +325,9 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
     if (!collectionOk(username, ws, body.brollCollectionId)) throw new NoCollection("No such collection");
     out.brollCollectionId = body.brollCollectionId;
   }
+  // null or [] = the person's Voice languages again; anything not a list of codes is ignored
+  if (body.languages === null) out.languages = [];
+  else if (Array.isArray(body.languages) && body.languages.every(isLanguage)) out.languages = [...new Set(body.languages as string[])].slice(0, 5);
   const punch = num((body.framing as { punch?: unknown } | undefined)?.punch, 1, 2);
   if (punch !== undefined) out.framing = { punch };
   // only the flags a loaded plug-in declares, each one a boolean; the others are ignored

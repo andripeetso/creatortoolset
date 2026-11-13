@@ -4,6 +4,7 @@ import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, ThumbsUp, Tra
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
+import { LanguageSelect } from "@/components/LanguageSelect";
 import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -132,6 +133,15 @@ export default function EditorEditPage() {
             })}
           </section>
         )}
+
+        <label className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-zinc-500">Spoken in</span>
+          <LanguageSelect
+            value={edit.languages?.[0] ?? ""}
+            onChange={(code) => void act(patchEdit(id, { languages: code ? [code] : [] }))}
+            className="rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
+          />
+        </label>
 
         <section aria-label="Steps" className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Steps</h2>

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { CLOUD_MODEL_ID, MODELS, cloudStatus, detectDevice, storedEngine, transcribeAudio, transcribeCloud } from "./transcribe";
+import { CLOUD_MODEL_ID, MODELS, detectDevice, storedEngine, transcribeAudio } from "./transcribe";
 
 /**
- * Talk instead of type (the assistant's mic). Records with the browser, then writes it down with the same engine
- * the captions use: Deepgram when the account has its own key for it, else Whisper in the browser
- * (free, private; the model downloads once and stays cached). The words go into the message box, never straight
- * out: you read them before you send.
+ * Talk instead of type (the assistant's mic). Records with the browser, then the server writes it down with the engine
+ * chosen for talking to the assistant (Settings → AI → Voice; POST /api/transcribe/mic). When the server has none for
+ * this account, Whisper in the browser does it (free, private; the model downloads once and stays cached). The words go
+ * into the message box, never straight out: you read them before you send.
  */
 
 export type VoicePhase = "idle" | "recording" | "writing";
@@ -22,17 +22,18 @@ async function toPcm16k(blob: Blob): Promise<Float32Array> {
   return audio.getChannelData(0);
 }
 
-async function writeDown(pcm: Float32Array, onProgress: (p: number) => void): Promise<string> {
+async function writeDown(recording: Blob, onProgress: (p: number) => void): Promise<string> {
+  const res = await fetch("/api/transcribe/mic", { method: "POST", headers: { "Content-Type": recording.type || "application/octet-stream" }, body: recording });
+  if (res.ok) return ((await res.json()) as { text: string }).text;
+  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; chosen?: boolean };
+  // an engine the person picked that can't run says so; only Automatic falls back to the browser's model
+  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Couldn't write that down (${res.status})`);
+  // no engine on the server for this account: the captions' local model, else the first
   const engine = storedEngine();
-  const cloud = await cloudStatus();
-  // the captions' own pick wins; with no pick, the cloud when it's allowed (as Caption Studio does)
-  const useCloud = cloud.available && cloud.allowed && (engine === null || engine === CLOUD_MODEL_ID);
-  const words = useCloud
-    ? await transcribeCloud(pcm)
-    : // ponytail: a new worker loads the model (from the browser cache) on every message; keep one alive if that's slow
-      await transcribeAudio(pcm, engine && engine !== CLOUD_MODEL_ID ? engine : MODELS[0].id, null, await detectDevice(), {
-        onLoadProgress: (p) => onProgress(p),
-      }).promise;
+  // ponytail: a new worker loads the model (from the browser cache) on every message; keep one alive if that's slow
+  const words = await transcribeAudio(await toPcm16k(recording), engine && engine !== CLOUD_MODEL_ID ? engine : MODELS[0].id, null, await detectDevice(), {
+    onLoadProgress: (p) => onProgress(p),
+  }).promise;
   return words
     .map((w) => w.text.trim())
     .filter(Boolean)
@@ -123,7 +124,7 @@ export function useVoiceInput(onText: (text: string) => void) {
 
     setPhase("writing");
     try {
-      const text = await writeDown(await toPcm16k(new Blob(chunks, { type: recorder.mimeType })), setProgress);
+      const text = await writeDown(new Blob(chunks, { type: recorder.mimeType }), setProgress);
       if (text) textTo.current(text);
       else setError("Didn't catch anything. Try again a little closer to the mic.");
     } catch (e) {

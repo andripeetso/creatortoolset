@@ -49,8 +49,9 @@ describe("boot", () => {
     const res = await app.request("/api/health");
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["environment", "ok", "rssMb", "uptimeSec"]);
-    expect(body.ok).toBe(true);
+    // answering and working: counts of what a restart would end, for a deploy to wait on
+    expect(Object.keys(body).sort()).toEqual(["answering", "environment", "ok", "rssMb", "uptimeSec", "working"]);
+    expect(body).toMatchObject({ ok: true, answering: 0, working: 0 });
     // the data folder's own id, made once and kept
     const file = JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "environment.json"), "utf8"));
     expect(body.environment).toBe(file.id);

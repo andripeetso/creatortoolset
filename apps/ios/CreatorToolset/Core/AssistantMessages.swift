@@ -501,6 +501,12 @@ final class ReadAloud: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         voice.speak(utterance)
     }
 
+    /// Quiet at once: the mic is about to listen.
+    func stop() {
+        voice.stopSpeaking(at: .immediate)
+        reading = nil
+    }
+
     /// Markdown as it is said: link words without their address, no marks.
     nonisolated static func plain(_ markdown: String) -> String {
         markdown

@@ -240,6 +240,14 @@ final class NativeToolsTests: XCTestCase {
         XCTAssertEqual(try chats(todo: old, held: [key])[0].detail, "First cut is ready · next: B-roll")
     }
 
+    func testAnEditThatAsksTheLanguageSaysTheQuestion() throws {
+        let asking = Data(String(decoding: Self.todo, as: UTF8.self).replacingOccurrences(
+            of: #","hold":true"#, with: #","ask":"language","message":"I heard no speech in these clips. What language do you speak in them?""#).utf8)
+        let row = try chats(todo: asking)[0]
+        XCTAssertEqual(row.detail, "I heard no speech in these clips. What language do you speak in them?")
+        XCTAssertEqual(row.status, .yourGo)
+    }
+
     func testWhatIsNewToTell() throws {
         let rows = try chats()
         let first = AppNotifications.fresh(rows, shown: [])

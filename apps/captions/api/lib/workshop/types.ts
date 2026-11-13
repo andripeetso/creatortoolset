@@ -38,6 +38,9 @@ export interface Project {
   color?: string;
   /** Frameworks and rules (ids) switched off for this project; everything of the account is on unless listed. */
   off?: string[];
+  /** The languages spoken in its videos (two-letter codes): they win over the person's Settings → AI → Voice languages
+   *  for the transcripts this project asks for. Missing = the person's. */
+  languages?: string[];
   createdAt: number;
   updatedAt: number;
 }

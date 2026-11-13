@@ -176,6 +176,11 @@ export interface Device {
   report?: MacReport;
   /** the editor step kinds it runs (contracts/devices.ts); it is handed only these */
   kinds?: string[];
+  /**
+   * Speech models (contracts/voice.ts STT_MODELS ids) on a computer that declares TRANSCRIBE_KIND: what its owner asked it
+   * to keep (Download), and what it said it has and is downloading (its last claim).
+   */
+  stt?: { want: string[]; held: string[]; getting: string[] };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

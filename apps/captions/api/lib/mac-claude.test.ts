@@ -164,6 +164,10 @@ describe("Claude on the Mac", () => {
     expect(patienceMs(false, false)).toBe(15_000);
     expect(patienceMs(false, true)).toBe(180_000);
     expect(patienceMs(true, true)).toBe(600_000);
+    // right after a restart the Macs' relays are backing off (their polls were cut): a request made then waits for them
+    expect(patienceMs(false, false, 5_000)).toBe(45_000);
+    expect(patienceMs(true, false, 5_000)).toBe(600_000);
+    expect(patienceMs(false, false, 60_000)).toBe(15_000);
   });
 
   it("a running job keeps the Mac on: its posts count as polls", async () => {

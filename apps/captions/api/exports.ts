@@ -255,6 +255,8 @@ setInterval(() => void sweepExports(), 3600 * 1000).unref();
 
 const queue: string[] = [];
 let running = 0;
+/** Renders a restart of the server would end (they come back as failed): a deploy waits for 0 (/api/health). */
+export const exportsAtRisk = (): number => running + queue.length;
 
 function pump(): void {
   while (running < MAX_CONCURRENT && queue.length > 0) {

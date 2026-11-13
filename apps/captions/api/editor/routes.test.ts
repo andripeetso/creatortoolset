@@ -79,6 +79,18 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect((await call("other", "GET", `/api/editor/${id}`)).status).toBe(404);
   });
 
+  it("an edit carries the language spoken in it: set, changed, cleared back to the person's; a word that is no code is ignored", async () => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"], { languages: ["et", "et"] }));
+    const get = async () => (await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).languages;
+    expect(await get()).toEqual(["et"]);
+    await call("maker", "PATCH", `/api/editor/${id}`, { languages: ["Estonian"] });
+    expect(await get()).toEqual(["et"]);
+    await call("maker", "PATCH", `/api/editor/${id}`, { languages: ["fi"] });
+    expect(await get()).toEqual(["fi"]);
+    await call("maker", "PATCH", `/api/editor/${id}`, { languages: null });
+    expect(await get()).toEqual([]);
+  });
+
   it("the creator runs, stops and deletes an edit; nobody else reaches it", async () => {
     const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
     expect((await call("other", "POST", `/api/editor/${id}/run`, {})).status).toBe(404);

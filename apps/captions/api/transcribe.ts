@@ -1,9 +1,15 @@
+import { randomUUID } from "node:crypto";
+import { rm, writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { Hono } from "hono";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
+import { env } from "./lib/env";
+import { readVoicePrefs, speechFor } from "./lib/speech";
+import { NeedsKey, transcribeFile } from "./library/transcribe";
 import { captioning } from "./projects";
 
 /**
@@ -112,27 +118,34 @@ export function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
 const DG_URL = "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&utterances=true";
 
 /**
- * Asked in English first; a window English hears next to nothing of (under `SPARSE_WPS` words a second) is asked again
- * with the language detected, and keeps whichever heard more. Estonian asked as English came back as no words at all;
- * detection alone called a quiet English clip Spanish, so it is never the first ask.
+ * Asked first in the person's language (Settings → AI → Voice: their one language, else English when it is one of theirs
+ * or none is set, else detected); a window that ask hears next to nothing of (under `SPARSE_WPS` words a second) is asked
+ * again with the language detected, and keeps whichever heard more. Estonian asked as English came back as no words at
+ * all; detection alone called a quiet English clip Spanish, so it is not the first ask while English may be spoken.
  */
 export const SPARSE_WPS = 0.5;
 
 type Heard = { words: Word[]; language: string } | { error: string; status: number };
 
-/** `fillers`: keep "um", "uh". The language is the one heard ("en" unless detection heard more). */
-async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false): Promise<Heard> {
-  const english = await deepgramAsk(key, audio, fillers, false);
-  if ("error" in english) return english;
+/** The first ask for these languages: a code, or "detect". */
+export const firstAsk = (languages: string[]): string =>
+  languages.length === 1 ? languages[0] : !languages.length || languages.includes("en") ? "en" : "detect";
+
+/** `fillers`: keep "um", "uh". The language is the one heard. */
+async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false, languages: string[] = []): Promise<Heard> {
+  const ask = firstAsk(languages);
+  const first = await deepgramAsk(key, audio, fillers, ask);
+  if ("error" in first || ask === "detect") return first;
   const wav = parseWav(new Uint8Array(audio));
   const seconds = wav ? wav.pcm.length / (wav.sampleRate * 2) : Math.max(0, audio.byteLength - 44) / 32000;
-  if (english.words.length >= seconds * SPARSE_WPS) return english;
-  const other = await deepgramAsk(key, audio, fillers, true);
-  return "error" in other || other.words.length <= english.words.length ? english : other;
+  if (first.words.length >= seconds * SPARSE_WPS) return first;
+  const other = await deepgramAsk(key, audio, fillers, "detect");
+  return "error" in other || other.words.length <= first.words.length ? first : other;
 }
 
-async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, detect: boolean): Promise<Heard> {
-  const url = DG_URL + (detect ? "&detect_language=true" : "&language=en") + (fillers ? "&filler_words=true" : "");
+async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, ask: string): Promise<Heard> {
+  const detect = ask === "detect";
+  const url = DG_URL + (detect ? "&detect_language=true" : `&language=${ask}`) + (fillers ? "&filler_words=true" : "");
   const resp = await fetch(url, {
     method: "POST",
     headers: {
@@ -180,7 +193,7 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
       data.results?.channels?.[0]?.alternatives?.[0]?.words ?? [],
       data.results?.utterances,
     ),
-    language: (detect && data.results?.channels?.[0]?.detected_language) || "en",
+    language: detect ? data.results?.channels?.[0]?.detected_language || "en" : ask,
   };
 }
 
@@ -269,8 +282,9 @@ export function mergeOverlappingWindows(
 export async function transcribeWav(
   audio: Uint8Array | ArrayBuffer,
   user: SessionUser,
-  { fillers = false }: { fillers?: boolean } = {},
+  { fillers = false, languages }: { fillers?: boolean; languages?: string[] } = {},
 ): Promise<TranscriptionResult> {
+  const langs = languages?.length ? languages : readVoicePrefs(user.username).languages;
   const route = keyFor(user, "DEEPGRAM_API_KEY");
   if (route.missing) return { error: route.missing, status: 402 };
   const wav = parseWav(new Uint8Array(audio));
@@ -292,7 +306,7 @@ export async function transcribeWav(
       });
     }
     const results = await Promise.all(
-      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers)),
+      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers, langs)),
     );
     const heard: { words: Word[]; language: string }[] = [];
     for (const r of results) {
@@ -305,7 +319,7 @@ export async function transcribeWav(
     for (const h of heard) count.set(h.language, (count.get(h.language) ?? 0) + h.words.length);
     language = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "en";
   } else {
-    const r = await deepgramWords(route.key, audio, fillers);
+    const r = await deepgramWords(route.key, audio, fillers, langs);
     if ("error" in r) return { error: r.error, status: 502 };
     words = r.words;
     language = r.language;
@@ -339,4 +353,43 @@ transcribeApp.post("/", async (c) => {
   const result = await transcribeWav(audio, user);
   if ("error" in result) return c.json({ error: result.error }, result.status);
   return c.json(result);
+});
+
+/** Longest recording the mic takes: two minutes are 3.8 MB as the browser's WAV, under 1 MB as the phone's AAC. */
+const MIC_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Talking to the assistant (the web dock's mic and the phone's): a short recording in any format ffmpeg reads (WAV, the
+ * phone's m4a) → `{ text, language }`, written down by the engine the person chose for `mic` (Settings → AI → Voice,
+ * speechFor) in their languages. With no engine it answers NEEDS_KEY and what to add. The text is never sent anywhere
+ * from here: it goes into the message box.
+ */
+transcribeApp.post("/mic", async (c) => {
+  const user = c.get("user");
+  const s = speechFor(user, "mic");
+  if ("needs" in s) {
+    // `chosen`: the person picked this engine (Settings → AI → Voice), so a page says what it needs instead of
+    // quietly writing it down another way; on Automatic it may still use a model in the browser
+    const prefs = readVoicePrefs(user.username);
+    const chosen = (prefs.stt.per.mic ?? prefs.stt.default).engine !== "auto";
+    return c.json({ error: s.needs, code: "NEEDS_KEY", chosen }, 402);
+  }
+  if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Cloud transcription is locked for your account", code: "CLOUD_LOCKED" }, 403);
+  if (Number(c.req.header("content-length") ?? 0) > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
+  const audio = new Uint8Array(await c.req.arrayBuffer());
+  if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
+  if (audio.byteLength > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
+  const scratch = path.join(env.dataDir, "library", "scratch");
+  await mkdir(scratch, { recursive: true });
+  const src = path.join(scratch, `mic-${randomUUID()}`);
+  await writeFile(src, audio);
+  try {
+    const t = await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true });
+    return c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language });
+  } catch (e) {
+    if (e instanceof NeedsKey) return c.json({ error: e.message, code: "NEEDS_KEY" }, 402);
+    return c.json({ error: e instanceof Error ? e.message : "Couldn't write that down" }, 502);
+  } finally {
+    await rm(src, { force: true });
+  }
 });

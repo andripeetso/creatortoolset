@@ -8,9 +8,9 @@ import { aiApp } from "./ai";
 import { clipAgentApp } from "./clip-agent";
 import { clipsApp, resumeStoppedClips } from "./clips";
 import { documentsApp } from "./documents";
-import { enhanceApp } from "./enhance";
+import { enhanceApp, enhancesAtRisk } from "./enhance";
 import { exportApp, resolveFontsDir } from "./export";
-import { exportsApp } from "./exports";
+import { exportsApp, exportsAtRisk } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
 import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
@@ -43,6 +43,8 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp, resumeFromDisk } from "./assistant";
+import { answersAtRisk, leave } from "./lib/mac-claude";
+import { captionJobsAtRisk } from "./captions-job";
 import { sweepAll, uploadLinkApp } from "./assistant-files";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
@@ -50,7 +52,7 @@ import { providersApp } from "./providers";
 import { mcpApp, pluginToolsOf } from "./mcp";
 import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
-import { devicesApp } from "./devices";
+import { devicePairApp, devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
 import { connectState, tunnelHostname } from "./connect/state";
 import { startConnector } from "./connect/connector";
@@ -59,6 +61,7 @@ import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
 import { setupApp } from "./setup";
 import { workPrefsApp } from "./work-prefs";
+import { voicePrefsApp } from "./voice-prefs";
 import { captionLayoutApp } from "./caption-layout";
 import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPluginsList, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
 import { serverPlugins } from "./plugins.gen";
@@ -236,6 +239,10 @@ app.get("/api/health", (c) =>
     ok: true,
     environment: environmentOf(),
     uptimeSec: Math.round(process.uptime()),
+    // what a restart now would end, for a deploy to wait on: AI answers that stream straight to an open page (the
+    // assistant's go on over a restart: lib/mac-claude.ts), and renders, voice enhances and caption jobs
+    answering: answersAtRisk(),
+    working: exportsAtRisk() + enhancesAtRisk() + captionJobsAtRisk(),
     rssMb: Math.round(process.memoryUsage().rss / 1048576),
   }),
 );
@@ -266,6 +273,8 @@ if (hostedMode()) {
 mountPublicRoutes(app, serverPlugins);
 // a file the user's own AI sends with curl (MCP upload_file): the link in the path is its only credential
 app.route("/api/upload", uploadLinkApp);
+// a computer with no browser swaps its owner's one-time code for its token (devices.ts): the code is its only credential
+app.route("/api/devices/pair", devicePairApp);
 // a social sign-in's way back may land in the computer's browser, without the session: its state names the account
 app.route("/api/connectors", connectorsCallbackApp);
 // an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access
@@ -363,6 +372,8 @@ app.route("/api/my-keys", myKeysApp);
 app.route("/api/setup", setupApp);
 // how a person wants to work: in the app, in their own AI, or both (contracts/work-prefs.ts)
 app.route("/api/work-prefs", workPrefsApp);
+// Settings → AI → Voice: languages and the speech-to-text engine per use (contracts/voice.ts)
+app.route("/api/voice-prefs", voicePrefsApp);
 app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init)), serverPlugins));
@@ -530,5 +541,15 @@ if (env.isProduction) {
   if ("requestTimeout" in server) disableRequestTimeouts(server);
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
-  if (process.env.pm_id !== undefined) process.once("SIGINT", () => server.close(() => process.exit(0)));
+  // The computers' polls end at once and they ask the new process (lib/mac-claude.ts leave).
+  if (process.env.pm_id !== undefined)
+    process.once("SIGINT", () => {
+      leave();
+      server.close(() => process.exit(0));
+    });
+  // A container stop sends SIGTERM, and the first process of a container ignores it unless it handles it: the stop
+  // then waits its 10 s and kills, with the app still taking work it can't finish, and the server is away that much
+  // longer (the computers' relays retry a finished answer for about 20 s). Leave at once: what a restart must not lose
+  // is on disk already (upload parts, replies being written).
+  process.once("SIGTERM", () => process.exit(0));
 }

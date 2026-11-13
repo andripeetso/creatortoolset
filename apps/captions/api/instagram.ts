@@ -1663,6 +1663,13 @@ async function prepareSlide(
   slide.thumb = existsSync(thumb) ? `thumbs/${nn(slide.index)}.jpg` : undefined;
 }
 
+/**
+ * The languages a Workshop project asked a post's transcript in (transcribeForUser), read when its transcript is made;
+ * a post with none is heard in its owner's Voice languages.
+ */
+// ponytail: kept in memory; a restart before the transcript runs hears it in the owner's languages
+const askIn = new Map<string, string[]>();
+
 async function transcribeSlide(
   meta: PostMeta,
   slide: Slide,
@@ -1689,7 +1696,7 @@ async function transcribeSlide(
       wav,
     ]);
     const audio = await readFile(wav);
-    const result = await transcribeWav(audio, user);
+    const result = await transcribeWav(audio, user, { languages: askIn.get(id) });
     if ("error" in result) throw new Error(result.error);
     const words: TranscriptWord[] = result.words.map((w) => ({
       text: w.text,
@@ -4114,12 +4121,16 @@ export interface SourceIndexEntry {
  * Workshop: transcribe the posts that were never transcribed and wait for it
  * (up to `waitMs`), so the AI reads the words instead of an empty pull.
  */
-export async function transcribeForUser(ids: string[], user: SessionUser, waitMs = 90_000): Promise<void> {
+export async function transcribeForUser(ids: string[], user: SessionUser, waitMs = 90_000, languages?: string[]): Promise<void> {
   const metas = (await Promise.all(ids.map((id) => ownedMeta(id, user)))).filter(
     (m): m is PostMeta => !!m && !isJobDone(m.jobs, "transcript"),
   );
   if (!metas.length || !(await ingestGate(user.username)).ok) return;
+  // a project's language is the person's own speech: another creator's reel added as a source keeps its own (detected)
+  const links = languages?.length ? await accountProjects(user.username) : new Map<string, string>();
+  const own = languages?.length ? (await allAccounts()).filter((a) => a.owner === user.username && isMine(a, links)) : [];
   for (const meta of metas) {
+    if (languages?.length && own.some((a) => accountOwnsPost(a, meta))) askIn.set(meta.id, languages);
     meta.jobs = patchJob(meta.jobs, "transcript", { status: "pending" });
     queueOrFollowUp(meta, user, ["transcript"], {});
     await persist(meta);

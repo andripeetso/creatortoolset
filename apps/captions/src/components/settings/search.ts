@@ -1,4 +1,5 @@
 import { MY_KEYS, SERVICE_KEYS, type MyKeyEnv, type ServiceKeyEnv } from "@contracts/service-keys";
+import { SPEECH_USES, SPEECH_USE_NAMES, type SpeechUse } from "@contracts/voice";
 import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, type HomeTile } from "@contracts/tools";
 import type { SettingsPageId } from "./nav";
 
@@ -30,7 +31,6 @@ const STATIC_ROWS = [
   { section: "general", id: "confirm-deletes", title: "Ask before moving to trash or deleting a comment", keywords: ["trash", "delete", "confirm", "comment"] },
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "ask-fit", title: "Ask when dropped footage doesn't fit the open project", keywords: ["assistant", "drop", "footage", "project", "ask"] },
-  { section: "general", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
   { section: "general", id: "app-version", title: "Version", description: "Which Creator Toolset Mac app this is", keywords: ["version", "update", "release", "about", "mac app"], needs: "mac" },
   { section: "general", id: "usage-reports", title: "Send anonymous usage and crash reports", keywords: ["telemetry", "analytics", "crash", "privacy", "usage", "report", "mac app"], needs: "mac" },
@@ -49,6 +49,10 @@ const STATIC_ROWS = [
   { section: "providers", id: "default-ai", title: "Default AI", description: "Which AI does the work unless a tool picks another", keywords: ["provider", "default", "which ai", "model", "thinking"] },
   { section: "providers", id: "tool-ai", title: "A different AI for one tool", keywords: ["provider", "tool", "override", "use default", "model", "thinking"] },
   { section: "providers", id: "add-provider", title: "Add provider", keywords: ["install", "sign in", "claude", "codex", "cursor", "grok", "gemini"] },
+  // Voice: the languages in your videos, speech to text (one row per use, below) and read-aloud
+  { section: "voice", id: "voice-languages", title: "Languages spoken in your videos", keywords: ["language", "estonian", "english", "detect", "speech", "transcribe"] },
+  { section: "voice", id: "stt-default", title: "Speech to text", description: "Which engine turns speech into text, unless a use picks another", keywords: ["transcribe", "transcription", "stt", "whisper", "deepgram", "openai", "model", "engine", "default"] },
+  { section: "voice", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio", "text to speech", "tts"] },
   // Devices: the computers that run your AI, and the phones
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
@@ -99,8 +103,11 @@ const STATIC_ROWS = [
 /** The Home tools a person can switch: one row each in Appearance → Tools on Home. */
 export type HomeToolRowId = `home-tool-${HomeTile}`;
 
-/** Every id a row may carry: the static ones, plus one per API key, per server key and per switchable Home tool. */
-export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId | ServerKeyRowId | HomeToolRowId;
+/** One row per speech-to-text use in Voice. */
+export type SttUseRowId = `stt-use-${SpeechUse}`;
+
+/** Every id a row may carry: the static ones, plus one per API key, per server key, per switchable Home tool and per speech use. */
+export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId | ServerKeyRowId | HomeToolRowId | SttUseRowId;
 
 export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
   ...STATIC_ROWS,
@@ -110,6 +117,12 @@ export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
     title: HOME_TILE_NAMES[t],
     description: HOME_TILE_LINES[t],
     keywords: ["home", "tools", "tile", "switch"],
+  })),
+  ...SPEECH_USES.map((u) => ({
+    section: "voice" as const,
+    id: `stt-use-${u}` as SttUseRowId,
+    title: `Speech to text: ${SPEECH_USE_NAMES[u]}`,
+    keywords: ["transcribe", "stt", "engine", "model", "whisper", "deepgram"],
   })),
   ...MY_KEYS.map((k) => ({
     section: "keys" as const,

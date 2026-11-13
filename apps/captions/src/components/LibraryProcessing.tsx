@@ -51,6 +51,7 @@ export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
   const on = {
     server: "on this server, free",
     device: "on this computer, free",
+    computer: "on your own computer, free",
     deepgram: `on your Deepgram key, ${aboutUsd(s.usd)}`,
     openai: `on your OpenAI key, ${aboutUsd(s.usd)}`,
     api: `on your Anthropic key, ${aboutUsd(s.usd)}`,

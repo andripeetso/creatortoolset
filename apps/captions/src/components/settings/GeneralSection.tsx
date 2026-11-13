@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import { cachedUsage, clearAccountCache } from "@/lib/local-cache";
-import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { canRecordScreen } from "@/lib/mac-record";
 import { useWorkPrefs } from "@/lib/setup";
@@ -13,13 +12,12 @@ import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSectio
 const size = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
-/** Settings → General: the switches that have a reader, add-ons, and this computer's saved lists. */
+/** Settings → General: the switches that have a reader, and this computer's saved lists. */
 export function GeneralSection() {
   const mac = useThisMac(hasThisMac());
   return (
     <>
       <Working />
-      <AddOns />
       <ScreenRecording mac={canRecordScreen() ? mac : null} />
       <ThisComputer version={mac?.version} />
     </>
@@ -80,24 +78,6 @@ function AskFit() {
       title="Ask when dropped footage doesn't fit the open project"
       control={<Switch checked={prefs.askFit !== false} aria-label="Ask when dropped footage doesn't fit the open project" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
     />
-  );
-}
-
-/** The assistant's read-aloud add-on (lib/read-aloud.ts): off until switched on here; the voice downloads then. */
-function AddOns() {
-  const { on, loading, toggle } = useReadAloud();
-  if (!canSpeak()) return null;
-  return (
-    <Section title="Add-ons">
-      <Card>
-        <Row
-          id="read-aloud"
-          title="Read the assistant's replies aloud"
-          description={loading !== null ? `Downloading the voice · ${Math.round(loading * 100)}%` : "Downloads once, about 90 MB."}
-          control={<Switch checked={on} aria-label="Read the assistant's replies aloud" onCheckedChange={toggle} />}
-        />
-      </Card>
-    </Section>
   );
 }
 

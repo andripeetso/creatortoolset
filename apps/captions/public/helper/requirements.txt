@@ -1,0 +1,5 @@
+# Creator Toolset helper (helper.py). With an NVIDIA card install.sh adds CUDA 12's cuBLAS and cuDNN 9 for faster-whisper.
+faster-whisper>=1.1
+onnx-asr>=0.6
+huggingface_hub>=0.25
+numpy
