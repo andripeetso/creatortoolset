@@ -383,7 +383,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Creator Toolset films with your script on screen and scans the code that connects it to your server.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Creator Toolset connects to the Creator Toolset server on your computer.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Creator Toolset records sound with the videos you film.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Creator Toolset records sound with the videos you film, and what you say to the assistant so it can be written into your message.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Creator Toolset saves the takes you film into your Photos.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Creator Toolset shows your videos and photos so you can pick what to upload, and marks the ones already in your Media Library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -419,7 +419,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Creator Toolset films with your script on screen and scans the code that connects it to your server.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Creator Toolset connects to the Creator Toolset server on your computer.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Creator Toolset records sound with the videos you film.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Creator Toolset records sound with the videos you film, and what you say to the assistant so it can be written into your message.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Creator Toolset saves the takes you film into your Photos.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Creator Toolset shows your videos and photos so you can pick what to upload, and marks the ones already in your Media Library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
