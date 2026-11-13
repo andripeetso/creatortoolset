@@ -106,13 +106,23 @@ export function needComputerOn(owner: string, model: string): void {
 }
 
 /**
+ * A person waits on the page for captions: no computer took them in a minute (one busy with a long transcript), or one
+ * took them and has not answered in three minutes (or three times the audio's length), and they are made another way.
+ */
+export const CAPTION_LIMITS = { claimMs: 60_000, takeMs: 3 * 60_000 } as const;
+
+/**
  * The words in `audio` (a WAV, 16 kHz mono 16-bit) heard by `model` on one of `owner`'s computers. Rejects with
  * ComputerOff when none that has it is on (now, or while it waits), with the computer's own words when it fails.
+ * `limits.claimMs`: it fails when no computer took it in that time, whatever else they work on (CAPTION_LIMITS).
  */
-export function transcribeOnComputer(owner: string, model: string, languages: string[], audio: string): Promise<TranscribeResult> {
+export function transcribeOnComputer(
+  owner: string, model: string, languages: string[], audio: string,
+  limits: { claimMs?: number; takeMs?: number } = {},
+): Promise<TranscribeResult> {
   if (!onlineHolders(owner, model).length) return Promise.reject(new ComputerOff(offLine(model)));
   // 16 kHz mono 16-bit: 32,000 bytes a second
-  const takeMs = Math.max(COMPUTER_LIMITS.takeMs, (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32 * 3);
+  const takeMs = Math.max(limits.takeMs ?? COMPUTER_LIMITS.takeMs, (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32 * 3);
   return new Promise((resolve, reject) => {
     const id = ++lastId;
     // a computer that went off gives its transcript back; with none left that is on, the caller waits and tries again.
@@ -124,6 +134,7 @@ export function transcribeOnComputer(owner: string, model: string, languages: st
         void wakeEditorPolls();
       }
       if (j.device && now - j.since > j.takeMs) return end(new Error(`Your computer did not transcribe it in ${Math.round(j.takeMs / 60_000)} minutes.`));
+      if (!j.device && limits.claimMs && now - j.since > limits.claimMs) return end(new Error(`No computer with ${nameOf(model)} took it in time.`));
       const working = [...jobs.values()].some((x) => x.owner === owner && x.device);
       if (!j.device && (!onlineHolders(owner, model).length || (!working && now - j.since > COMPUTER_LIMITS.unclaimedMs))) end(new ComputerOff(offLine(model)));
     }, COMPUTER_LIMITS.checkMs);

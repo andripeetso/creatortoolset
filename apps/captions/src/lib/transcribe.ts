@@ -9,9 +9,11 @@ export const CLOUD_MODEL = {
 };
 
 export interface CloudStatus {
-  available: boolean; // a Deepgram key serves this account
+  available: boolean; // a Deepgram key serves this account, or its own computers do (`computers`)
   allowed: boolean; // this account may use it (admin, or unlocked by admin)
   why?: string; // when not available: the key to add
+  /** the server's engine is a model on the person's own computers (Settings → AI → Voice): its name */
+  computers?: string;
 }
 
 let cloudCache: CloudStatus | null = null;
@@ -24,12 +26,26 @@ export async function cloudStatus(): Promise<CloudStatus> {
       available: d.available === true,
       allowed: d.allowed === true,
       ...(typeof d.why === "string" ? { why: d.why } : {}),
+      ...(typeof d.computers === "string" ? { computers: d.computers } : {}),
     };
   } catch {
     cloudCache = { available: false, allowed: false };
   }
   return cloudCache;
 }
+
+/** The server engine's name in the pickers: the person's computers' model once cloudStatus said so. */
+export const cloudLabel = (): string =>
+  cloudCache?.computers ? `Your computers · ${cloudCache.computers}` : CLOUD_MODEL.label;
+
+/** Whether the server engine runs on the person's own computers (cloudStatus has answered). */
+export const onComputers = (): boolean => !!cloudCache?.computers;
+
+/**
+ * The server could not write it on the person's computers and has nothing else for them (no key), or their computers'
+ * run did not come back: the page writes it with its own model. The message is the quiet note it shows.
+ */
+export class UseBrowser extends Error {}
 
 /** Encode 16 kHz mono float PCM as a 16-bit WAV blob. */
 export function pcmToWav(pcm: Float32Array, sampleRate = 16000): Blob {
@@ -62,17 +78,23 @@ export function pcmToWav(pcm: Float32Array, sampleRate = 16000): Blob {
  * `name` (the video's file name) labels guest runs in Admin → Guests. `project`: the Caption Studio project it is
  * for, so the server can refuse a run for one it is captioning by itself.
  */
-export async function transcribeCloud(pcm: Float32Array, name = "", project = ""): Promise<Word[]> {
+export async function transcribeCloud(pcm: Float32Array, name = "", project = ""): Promise<{ words: Word[]; note?: string }> {
+  const browser = (why = "Your computers did not answer") => new UseBrowser(`${why}: written in this browser`);
   const res = await fetch(`/api/transcribe${project ? `?project=${encodeURIComponent(project)}` : ""}`, {
     method: "POST",
     headers: { "Content-Type": "audio/wav", "X-File-Name": encodeURIComponent(name) },
     body: pcmToWav(pcm),
+  }).catch((e: unknown) => {
+    // a run on the person's computers that never came back (the connection dropped): the page's own model writes it
+    throw onComputers() ? browser() : e;
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: "" }));
+    if (e.code === "USE_BROWSER" || (onComputers() && e.code !== "CAPTIONING")) throw browser(e.why);
     throw new Error(e.error || `Cloud transcription failed (${res.status})`);
   }
-  const { words } = (await res.json()) as {
+  const { words, note } = (await res.json()) as {
+    note?: string;
     words: {
       text: string;
       start: number;
@@ -81,15 +103,18 @@ export async function transcribeCloud(pcm: Float32Array, name = "", project = ""
       utterance?: number;
     }[];
   };
-  return words.map((w, i) => ({
-    id: i,
-    text: w.text,
-    start: w.start,
-    end: w.end,
-    timing: "aligned" as const,
-    ...(typeof w.confidence === "number" ? { confidence: w.confidence } : {}),
-    ...(typeof w.utterance === "number" ? { utterance: w.utterance } : {}),
-  }));
+  return {
+    words: words.map((w, i) => ({
+      id: i,
+      text: w.text,
+      start: w.start,
+      end: w.end,
+      timing: "aligned" as const,
+      ...(typeof w.confidence === "number" ? { confidence: w.confidence } : {}),
+      ...(typeof w.utterance === "number" ? { utterance: w.utterance } : {}),
+    })),
+    ...(note ? { note } : {}),
+  };
 }
 
 /**

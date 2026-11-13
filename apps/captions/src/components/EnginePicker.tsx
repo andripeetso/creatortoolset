@@ -5,6 +5,7 @@ import {
   CLOUD_MODEL,
   CLOUD_MODEL_ID,
   MODELS,
+  cloudLabel,
   cloudStatus,
 } from "@/lib/transcribe";
 
@@ -49,7 +50,7 @@ export function EnginePicker({ className }: { className?: string }) {
         const locked = m.id === CLOUD_MODEL_ID && (!cloud.allowed || !cloud.available);
         return (
           <option key={m.id} value={m.id} disabled={locked}>
-            {locked ? `🔒 ${m.label} — ${cloud.allowed ? (cloud.why ?? lockedNote) : lockedNote}` : m.label}
+            {locked ? `🔒 ${m.label} — ${cloud.allowed ? (cloud.why ?? lockedNote) : lockedNote}` : m.id === CLOUD_MODEL_ID ? cloudLabel() : m.label}
           </option>
         );
       })}

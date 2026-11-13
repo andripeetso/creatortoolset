@@ -10,8 +10,11 @@
 export const SPEECH_USES = ["captions", "transcripts", "editor", "mic"] as const;
 export type SpeechUse = (typeof SPEECH_USES)[number];
 
-/** The uses a model on the person's own computers runs today (api/library/transcribe.ts); the others never offer it. */
-export const COMPUTER_USES: readonly SpeechUse[] = ["transcripts"];
+/**
+ * The uses a model on the person's own computers runs today (api/library/transcribe.ts; captions: api/transcribe.ts
+ * POST /, which falls back to the person's other engines when their computers can't); the others never offer it.
+ */
+export const COMPUTER_USES: readonly SpeechUse[] = ["transcripts", "captions"];
 
 export const SPEECH_USE_NAMES: Record<SpeechUse, string> = {
   captions: "Captions",

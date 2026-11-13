@@ -10,13 +10,17 @@ import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
 import { readVoicePrefs, speechFor } from "./lib/speech";
 import { NeedsKey, transcribeFile } from "./library/transcribe";
+import { CAPTION_LIMITS, ComputerOff, transcribeOnComputer } from "./lib/computer-transcribe";
+import { STT_MODELS } from "../contracts/voice";
+import type { TranscribeResult } from "../contracts/devices";
 import { captioning } from "./projects";
 
 /**
  * Optional cloud transcription via Deepgram nova-3, on the key that serves the caller (my-keys.ts keyFor: their own
  * key from Settings → API keys, or the server's for the platform admin). The client then offers a "Cloud" engine in the model picker (better
  * accuracy + native word timestamps, no model download); without a key it says which one to add. On-device Whisper
- * remains available either way.
+ * remains available either way. When the person's captions run on their own computers (Settings → AI → Voice), the same
+ * route asks those first (captionsComputer).
  */
 export const transcribeApp = new Hono<{ Variables: AuthVars }>();
 
@@ -31,10 +35,42 @@ export function cloudTranscribeBlock(user: AuthVars["user"]): string | null {
   return keyFor(user, "DEEPGRAM_API_KEY").missing ?? null;
 }
 
+/**
+ * The model on the person's own computers their captions run on (Settings → AI → Voice, speechFor "captions"), or null:
+ * the engines captions used before (their Deepgram key, else the browser's model).
+ */
+export function captionsComputer(user: AuthVars["user"]): { model: string; languages: string[] } | null {
+  if (!mayUseCloud(user)) return null;
+  const s = speechFor(user, "captions");
+  return !("needs" in s) && s.engine === "local" && s.on === "computers" ? { model: s.model, languages: s.languages } : null;
+}
+
+/**
+ * The words from the person's own computers (lib/computer-transcribe.ts, the road Media Library transcripts take), or
+ * why not in a few words for the note the page shows when another engine wrote them.
+ */
+async function wordsFromComputer(owner: string, pc: { model: string; languages: string[] }, audio: ArrayBuffer): Promise<TranscribeResult | { why: string }> {
+  const scratch = path.join(env.dataDir, "library", "scratch");
+  await mkdir(scratch, { recursive: true });
+  const file = path.join(scratch, `captions-${randomUUID()}.wav`);
+  await writeFile(file, new Uint8Array(audio));
+  try {
+    return await transcribeOnComputer(owner, pc.model, pc.languages, file, CAPTION_LIMITS);
+  } catch (e) {
+    console.warn(`[transcribe] captions for ${owner} not from their computers: ${e instanceof Error ? e.message : e}`);
+    return { why: e instanceof ComputerOff ? "Your computers are off" : "Your computers could not do it" };
+  } finally {
+    await rm(file, { force: true });
+  }
+}
+
+/** `computers`: the captions run on the person's own computers, this model's name (the page's engine label). */
 transcribeApp.get("/available", (c) => {
   const user = c.get("user");
   const missing = keyFor(user, "DEEPGRAM_API_KEY").missing;
-  return c.json({ available: !missing, allowed: mayUseCloud(user), ...(missing ? { why: missing } : {}) });
+  const pc = captionsComputer(user);
+  const computers = pc && (STT_MODELS.find((m) => m.id === pc.model)?.name ?? pc.model);
+  return c.json({ available: !missing || !!pc, allowed: mayUseCloud(user), ...(computers ? { computers } : missing ? { why: missing } : {}) });
 });
 
 interface DgWord {
@@ -343,16 +379,25 @@ transcribeApp.post("/", async (c) => {
   if (captioning.has(c.req.query("project") ?? "")) {
     return c.json({ error: "This project's captions are already being made: they show here when they are ready", code: "CAPTIONING" }, 409);
   }
-  const accessError = cloudTranscribeBlock(user);
+  const pc = captionsComputer(user);
+  const accessError = pc ? null : cloudTranscribeBlock(user);
   if (accessError) {
     const locked = !mayUseCloud(user);
     return c.json({ error: accessError, code: locked ? "CLOUD_LOCKED" : "NEEDS_KEY" }, locked ? 403 : 402);
   }
   const audio = await c.req.arrayBuffer();
   if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
+  // on their own computers; when those can't, their Deepgram key, else the page's own model (USE_BROWSER), said quietly
+  let note: string | undefined;
+  if (pc) {
+    const r = await wordsFromComputer(user.username, pc, audio);
+    if (!("why" in r)) return c.json({ words: r.words, language: r.language ?? pc.languages[0] ?? null });
+    if (cloudTranscribeBlock(user)) return c.json({ error: r.why, code: "USE_BROWSER", why: r.why }, 503);
+    note = `${r.why}: written by Deepgram`;
+  }
   const result = await transcribeWav(audio, user);
   if ("error" in result) return c.json({ error: result.error }, result.status);
-  return c.json(result);
+  return c.json(note ? { ...result, note } : result);
 });
 
 /** Longest recording the mic takes: two minutes are 3.8 MB as the browser's WAV, under 1 MB as the phone's AAC. */

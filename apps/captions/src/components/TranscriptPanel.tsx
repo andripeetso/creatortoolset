@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { isEditorBusy, narrowerThanMatched, playerRef, useStudio } from "@/lib/store";
 import { aiStatus, type AiStatus } from "@/lib/refine";
-import { MODELS, CLOUD_MODEL, CLOUD_MODEL_ID } from "@/lib/transcribe";
+import { MODELS, CLOUD_MODEL_ID, cloudLabel } from "@/lib/transcribe";
 import { tokenize } from "@/lib/align";
 import type { Cue } from "@/lib/types";
 import { ScriptDialog } from "./ScriptDialog";
@@ -296,7 +296,7 @@ export function TranscriptPanel() {
   const [confirmRe, setConfirmRe] = useState(false);
   const engineLabel =
     model === CLOUD_MODEL_ID
-      ? CLOUD_MODEL.label
+      ? cloudLabel()
       : (MODELS.find((m) => m.id === model)?.label ?? model);
   const transcribing =
     status.phase === "extracting" ||

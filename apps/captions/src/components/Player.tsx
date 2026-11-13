@@ -22,6 +22,7 @@ import {
   CLOUD_MODEL_ID,
   MODELS,
   cloudStatus,
+  onComputers,
   storedEngine,
 } from "@/lib/transcribe";
 import { canUseCloud, useMe } from "@/lib/auth";
@@ -540,6 +541,15 @@ export function Player() {
   const editorBusy = useStudio(isEditorBusy);
   const cadenceRunOutcome = useStudio(activeCadenceOutcome);
   const refineError = useStudio((s) => s.refineError);
+  // another engine wrote the transcript (the person's computers were off): said quietly, for a few seconds
+  const transcribeNote = useStudio((s) => s.transcribeNote);
+  const [noteRead, setNoteRead] = useState<{ text: string } | null>(null);
+  const note = transcribeNote !== noteRead ? transcribeNote?.text : undefined;
+  useEffect(() => {
+    if (!transcribeNote) return;
+    const t = window.setTimeout(() => setNoteRead(transcribeNote), 8000);
+    return () => window.clearTimeout(t);
+  }, [transcribeNote]);
   const [cadenceComplete, setCadenceComplete] = useState(false);
   const cloudTranscribing =
     status.phase === "transcribing" && model === CLOUD_MODEL_ID;
@@ -751,6 +761,7 @@ export function Player() {
     cadenceComplete ||
     transcriptionComplete ||
     !!refineError ||
+    !!note ||
     (words.length === 0 &&
       (status.phase === "idle" || status.phase === "error"));
 
@@ -895,6 +906,7 @@ export function Player() {
             {transcriptionComplete && (
               <CloudTranscriptionStatus duration={duration} complete />
             )}
+            {note && <span className="text-xs text-zinc-400">{note}</span>}
             {status.phase === "checking" && <ScriptCheckProcessingStatus />}
             {(cadenceBusy || cadenceComplete) && (
               <CadenceProcessingStatus complete={cadenceComplete} />
@@ -1118,7 +1130,7 @@ export function CloudTranscriptionStatus({
     <EstimatedProcessingStatus
       operationKey="cloud-transcription"
       complete={complete}
-      title="Transcribing in the cloud…"
+      title={onComputers() ? "Transcribing on your computers…" : "Transcribing in the cloud…"}
       completeTitle="Transcription complete"
       completeDetail="Your captions are ready to review and edit."
       expectedSeconds={expectedSeconds}
@@ -1127,7 +1139,7 @@ export function CloudTranscriptionStatus({
       progressLabel="Estimated cloud transcription progress"
       workingMessage={
         durationLabel
-          ? `Still working — transcribing ${durationLabel} of audio in the cloud.`
+          ? `Still working — transcribing ${durationLabel} of audio ${onComputers() ? "on your computers" : "in the cloud"}.`
           : "Still working — turning the audio into editable captions."
       }
       completeMessage="Done — captions are ready to edit."

@@ -9,7 +9,7 @@ import { announceSoon } from "./lib/announce-soon";
 import { DEVICE_AUDIO, deviceTranscribes, transcribeOnDevice } from "./lib/device-transcribe";
 import { ffmpeg } from "./library/media/run";
 import { captioning, clipReadyToEdit, clipSourceFile, projectsApp } from "./projects";
-import { cloudTranscribeBlock, transcribeApp, userMayCloudTranscribe } from "./transcribe";
+import { captionsComputer, cloudTranscribeBlock, transcribeApp, userMayCloudTranscribe } from "./transcribe";
 import type { SessionUser } from "./users";
 import { storedStyle } from "../src/lib/export-request";
 import type { CaptionStyle, Cue, Word } from "../src/lib/types";
@@ -35,12 +35,13 @@ const RATE = 16000;
 
 /**
  * What transcribes for this person, as the page picks it for someone who never chose an engine: the cloud route
- * when it serves them, else this computer's own model when the server is on it (a locked account stays locked, as in
- * Video Notes); or the route's own words for why nothing can.
+ * when it serves them (their key, or their own computers: api/transcribe.ts captionsComputer), else this computer's own
+ * model when the server is on it (a locked account stays locked, as in Video Notes); or the route's own words for why
+ * nothing can.
  */
 export function captionEngine(user: SessionUser): { engine: Engine } | { refused: string } {
   const refused = cloudTranscribeBlock(user);
-  if (!refused) return { engine: "cloud" };
+  if (!refused || captionsComputer(user)) return { engine: "cloud" };
   return userMayCloudTranscribe(user) && deviceTranscribes() ? { engine: "device" } : { refused };
 }
 
@@ -72,8 +73,11 @@ function routesAs(user: SessionUser) {
   };
 }
 
-/** Transcribes the clip and saves its captions: how many lines it now has (the person's own, when they made them on the page meanwhile: theirs stay). */
-async function caption(user: SessionUser, projectId: string, clipId: string, engine: Engine): Promise<number> {
+/**
+ * Transcribes the clip and saves its captions: how many lines it now has (the person's own, when they made them on the
+ * page meanwhile: theirs stay), and `note` when another engine than theirs wrote them (their computers were off).
+ */
+async function caption(user: SessionUser, projectId: string, clipId: string, engine: Engine): Promise<{ lines: number; note?: string }> {
   const call = routesAs(user);
   const ask = async <T>(route: string, method?: string, body?: unknown) => {
     const r = await call<T>(route, method, body);
@@ -103,17 +107,29 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
     const n = b.byteLength >> 2;
     const pcm = b.byteOffset % 4 ? new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + n * 4)) : new Float32Array(b.buffer, b.byteOffset, n);
     // the words as the page keeps each engine's: the cloud's come timed, this computer's are approximate
-    const heard: Omit<Word, "id">[] =
-      engine === "cloud"
-        ? (await ask<{ words: Omit<Word, "id">[] }>("/api/transcribe", "POST", await readFile(wav))).words
-        : (await transcribeOnDevice(samples, projectId)).words.map((w) => ({ ...w, timing: "approximate" as const }));
+    let note: string | undefined;
+    let heard: Omit<Word, "id">[] | undefined;
+    if (engine === "cloud") {
+      const r = await call<{ words: Omit<Word, "id">[]; note?: string; why?: string }>("/api/transcribe", "POST", await readFile(wav));
+      // their computers could not and no key serves them: this computer's own model when the server is on it, as before
+      if (!r.ok && r.body.code === "USE_BROWSER" && deviceTranscribes()) {
+        engine = "device";
+        note = `${r.body.why}: written on this computer`;
+      } else if (!r.ok) {
+        throw new Error(r.body.code === "USE_BROWSER" ? `${r.body.why}. On the project's page, Transcribe runs in the browser` : r.body.error || "/api/transcribe could not answer");
+      } else {
+        heard = r.body.words;
+        note = r.body.note;
+      }
+    }
+    heard ??= (await transcribeOnDevice(samples, projectId)).words.map((w) => ({ ...w, timing: "approximate" as const }));
     const words: Word[] = heard.map((w, i) => ({ ...w, id: i + 1 }));
 
     for (let again = false; ; again = true) {
       const p = await ask<Project>(`/api/projects/${projectId}`);
       const clip = p.clips.find((c) => c.id === clipId);
       if (!clip) throw new Error("The clip is not in the project any more");
-      if (clip.words?.length || clip.cues?.length) return clip.cues?.length || clip.words!.length;
+      if (clip.words?.length || clip.cues?.length) return { lines: clip.cues?.length || clip.words!.length };
       // the look a project opens with on the page
       const style = storedStyle(clip.style);
       const auto = p.autoCadence ?? true;
@@ -149,7 +165,7 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
           },
         },
       });
-      if (saved.ok) return laid.cues.length;
+      if (saved.ok) return { lines: laid.cues.length, note };
       // the page saved in between: read it again once (their captions, if that is what they saved, stay)
       if (saved.body.code !== "REVISION_CONFLICT" || again) throw new Error(saved.body.error || "The captions could not be saved");
     }
@@ -171,9 +187,9 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
   announceSoon(user.username, "projects"); // Home's chip (api/activity.ts captioningWork)
   void caption(user, projectId, clipId, engine)
     .then(
-      (lines) =>
+      ({ lines, note }) =>
         lines
-          ? { status: "done" as const, detail: "Captions are ready", say: `The captions for “${name}” are ready.`, choices: ["Show me", "What do they say?"] }
+          ? { status: "done" as const, detail: note ?? "Captions are ready", say: `The captions for “${name}” are ready.`, choices: ["Show me", "What do they say?"] }
           : { status: "done" as const, detail: "No words were heard", say: `No words were heard in “${name}”, so it has no captions.`, choices: ["Show me"] },
       (e: unknown) => {
         // one plain sentence for the card and the chat

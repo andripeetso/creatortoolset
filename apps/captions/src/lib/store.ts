@@ -40,6 +40,7 @@ import type { PosSegment, TextOverlay } from "./types";
 import {
   transcribeAudio,
   transcribeCloud,
+  UseBrowser,
   detectDevice,
   persistEngine,
   storedEngine,
@@ -525,6 +526,11 @@ interface StudioState {
   refining: boolean;
   /** Last cadence-pass failure, shown in the style panel. */
   refineError: string | null;
+  /**
+   * The active clip's transcript was written by another engine than the person's (their computers were off): why, shown
+   * quietly for a while (Player). A new object each run, so the same words show again.
+   */
+  transcribeNote: { text: string } | null;
   /** Outcome of the most recent cadence request; drives truthful completion UI. */
   cadenceRunOutcome: "idle" | "running" | "completed" | "cancelled" | "failed";
   /** The clip the outcome above belongs to; read it through activeCadenceOutcome. */
@@ -1072,6 +1078,7 @@ function snapshotToLive(
     editingTextId: null,
     boxSelected: false,
     refineError: null,
+    transcribeNote: null,
     rangeSel: null,
     // a cadence pass keeps running through clip switches — its lock
     // applies only while its own clip is on screen
@@ -1130,6 +1137,40 @@ function probeVideoDims(
  * live editor) and for background clips (slot only, saved via the hook).
  * Resolves true when a fresh transcript landed (drives auto-cadence).
  */
+/**
+ * The page's own model on 16 kHz `pcm`: on the graphics card when there is one, and again on the processor when the
+ * card fails mid-way. English-only models reject an explicit language; the others detect it (language null).
+ */
+async function inBrowser(pcm: Float32Array, model: string, setStatus: (s: TranscribeStatus) => void): Promise<Word[]> {
+  const attempt = (device: "webgpu" | "wasm") =>
+    transcribeAudio(pcm, model, null, device, {
+      onLoadProgress: (progress) => setStatus({ phase: "loading", progress, detail: "" }),
+      onTranscribeStart: () => setStatus({ phase: "transcribing", progress: 0 }),
+    }).promise;
+  if ((await detectDevice()) !== "webgpu") return attempt("wasm");
+  try {
+    return await attempt("webgpu");
+  } catch (e) {
+    console.warn("[cap-transcribe] graphics card run failed, on the processor now:", e);
+    setStatus({ phase: "loading", progress: 0, detail: "" });
+    return attempt("wasm");
+  }
+}
+
+/**
+ * The server's engine (the person's key, or their own computers: Settings → AI → Voice). When their computers can't
+ * and the server has nothing else for them, the page's own model writes it, and `note` says so quietly.
+ */
+async function fromServer(pcm: Float32Array, name: string, project: string, setStatus: (s: TranscribeStatus) => void): Promise<{ words: Word[]; note?: string }> {
+  setStatus({ phase: "transcribing", progress: 0 });
+  try {
+    return await transcribeCloud(pcm, name, project);
+  } catch (e) {
+    if (!(e instanceof UseBrowser)) throw e;
+    return { words: await inBrowser(pcm, MODELS[0].id, setStatus), note: e.message };
+  }
+}
+
 async function transcribeClip(id: string): Promise<boolean> {
   const s = useStudio.getState();
   const clip = s.clips.find((c) => c.id === id);
@@ -1276,39 +1317,16 @@ async function transcribeClip(id: string): Promise<boolean> {
         }
       }
     }
+    if (isActive()) useStudio.setState({ transcribeNote: null });
+    let note: string | undefined;
     if (model === CLOUD_MODEL_ID) {
-      setStatus({ phase: "transcribing", progress: 0 });
       console.log(
         `[cap-transcribe] cloud request pcmBytes=${pcm.byteLength} wavBytes~${44 + pcm.length * 2}`,
       );
-      words = await transcribeCloud(pcm, clip.name, s.projectId ?? "");
-      console.log(`[cap-transcribe] cloud returned words=${words.length}`);
+      ({ words, note } = await fromServer(pcm, clip.name, s.projectId ?? "", setStatus));
+      console.log(`[cap-transcribe] cloud returned words=${words.length}${note ? ` (${note})` : ""}`);
     } else {
-      // English-only whisper models reject an explicit language/task;
-      // multilingual models auto-detect when language is null.
-      const language: string | null = null;
-      const attempt = (device: "webgpu" | "wasm") => {
-        const { promise } = transcribeAudio(pcm!, model, language, device, {
-          onLoadProgress: (progress) =>
-            setStatus({ phase: "loading", progress, detail: "" }),
-          onTranscribeStart: () =>
-            setStatus({ phase: "transcribing", progress: 0 }),
-        });
-        return promise;
-      };
-      const device = await detectDevice();
-      if (device === "webgpu") {
-        try {
-          words = await attempt("webgpu");
-        } catch (e) {
-          // the graphics card failed mid-way: the same run again on the processor
-          console.warn(`[cap-transcribe] clip=${id} graphics card run failed, on the processor now:`, e);
-          setStatus({ phase: "loading", progress: 0, detail: "" });
-          words = await attempt("wasm");
-        }
-      } else {
-        words = await attempt("wasm");
-      }
+      words = await inBrowser(pcm, model, setStatus);
     }
     // re-check the clip still exists (could be removed mid-transcription)
     const cur = useStudio.getState();
@@ -1358,6 +1376,7 @@ async function transcribeClip(id: string): Promise<boolean> {
         words,
         cues,
         status: completedStatus,
+        transcribeNote: note ? { text: note } : null,
         ...(model === CLOUD_MODEL_ID ? { pcm: null } : {}),
         ...(completedStatus.phase === "matching"
           ? { cadenceRunOutcome: "running" as const }
@@ -1473,6 +1492,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   refining: false,
   refiningClipId: null,
   refineError: null,
+  transcribeNote: null,
   cadenceRunOutcome: "idle",
   cadenceOutcomeClipId: null,
   cadenceApplied: false,
@@ -1556,6 +1576,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       refiningClipId: null,
       refining: false,
       refineError: null,
+      transcribeNote: null,
       cadenceRunOutcome: "idle",
       applyingMaster: false,
       applyMasterProgress: null,
@@ -2085,33 +2106,10 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       const slice = pcm.slice(a, b);
 
       const model = get().model;
-      let words: Word[];
-      if (model === CLOUD_MODEL_ID) {
-        setStatus({ phase: "transcribing", progress: 0 });
-        words = await transcribeCloud(slice, clip.name);
-      } else {
-        const attempt = (device: "webgpu" | "wasm") => {
-          const { promise } = transcribeAudio(slice, model, null, device, {
-            onLoadProgress: (progress) =>
-              setStatus({ phase: "loading", progress, detail: "" }),
-            onTranscribeStart: () =>
-              setStatus({ phase: "transcribing", progress: 0 }),
-          });
-          return promise;
-        };
-        const device = await detectDevice();
-        if (device === "webgpu") {
-          try {
-            words = await attempt("webgpu");
-          } catch (e) {
-            console.warn(`[cap-transcribe] clip=${id} graphics card run failed, on the processor now:`, e);
-            setStatus({ phase: "loading", progress: 0, detail: "" });
-            words = await attempt("wasm");
-          }
-        } else {
-          words = await attempt("wasm");
-        }
-      }
+      const words =
+        model === CLOUD_MODEL_ID
+          ? (await fromServer(slice, clip.name, "", setStatus)).words
+          : await inBrowser(slice, model, setStatus);
       // clip switched mid-flight — drop the answer
       if (get().activeClipId !== id) return;
       const nextId = wordIdGen(get().cues);
@@ -2977,6 +2975,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       refiningClipId: null,
       refining: false,
       refineError: null,
+      transcribeNote: null,
       cadenceRunOutcome: "idle",
       applyingMaster: false,
       applyMasterProgress: null,
