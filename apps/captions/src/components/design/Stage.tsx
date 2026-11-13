@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
-import { boundsOf, frameOf, freshIds, groupOf, intersects, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, boxPick, frameOf, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
 import { cn } from "@/lib/utils";
@@ -11,14 +11,18 @@ import { cn } from "@/lib/utils";
  * The canvas: every frame of the design where it lies, each drawn as it will be saved, and the hands on them.
  *   Frames      a frame is dragged by its name (it catches on the other frames' edges and middles), and resized by
  *               its handles once its name has picked it; the frame tool draws a new one. Its layers keep their
- *               place on the canvas while it is resized.
+ *               place on the canvas while it is resized. An empty frame, and a frame that is picked, is also taken
+ *               by its own area. Shift with a press on a name adds the frame to the picked ones or takes it out;
+ *               several picked frames move as one, and a press on one of them without a drag picks that one alone.
  *   Groups      a layer of a group picks the whole group, and they move as one; ⌘ (or Ctrl) with the click, or a
  *               double click, picks the one layer inside it.
  *   Move tool   click picks a layer (Shift adds or takes one), a drag moves what is picked (it catches on its
  *               frame's and the other layers' edges and middles, and where its gaps to its neighbours come out
  *               even, which are then shown with their size; Shift keeps one axis, Alt drags a copy) and, let
- *               go over another frame, leaves it in that frame; a drag from empty canvas draws a box round the
- *               layers to pick; a double click on words types in place.
+ *               go over another frame, leaves it in that frame; a drag from empty canvas draws a box, and what it
+ *               picks shows while it is drawn (hands.ts boxPick: a frame it covers whole, else the layers it
+ *               touches; ⌘ always the layers; Shift adds to what was picked); a double click on words types in
+ *               place.
  *   The pen     each press puts a point of a line down, a corner; dragged on from the press, the point gets two
  *               handles and the line curves through it. A press on the first point closes the line; Enter, Esc or a
  *               double click ends it open. A double click (or Enter) on a path shows its points: a point or a
@@ -72,6 +76,7 @@ export function Stage({
   version,
   selected,
   framed,
+  framedIds,
   onPick,
   onLive,
   onCommit,
@@ -106,7 +111,10 @@ export function Stage({
   selected: string[];
   /** the frame itself is picked (by its name) */
   framed: boolean;
-  onPick: (at: number, ids: string[], framed?: boolean) => void;
+  /** every frame that is picked, by its id (frame `at` among them); none when layers or nothing are */
+  framedIds: readonly string[];
+  /** `frames`: every frame picked, by id, when more than the one at `at` */
+  onPick: (at: number, ids: string[], framed?: boolean, frames?: string[]) => void;
   /** frames while a drag is under way (not a step to undo) */
   onLive: (pages: DesignPage[] | null) => void;
   /** frames once a drag or an edit ends (one step to undo, however many frames it changed; `merge`: joined to the step before it of the same name) */
@@ -500,26 +508,41 @@ export function Stage({
     );
   };
 
+  /** A box drawn from empty canvas: what it picks (hands.ts boxPick) is picked while it is drawn. Shift adds to what was picked before. */
   const marquee = (e: React.PointerEvent, k: number) => {
     const from = world(e);
-    let r: Rect | null = null;
+    const home = k >= 0 ? k : at;
+    const all = pages.map((p, n) => ({ rect: fr[n]!, layers: p.layers }));
+    const add = e.shiftKey;
+    let shown = "";
+    const pickNow = (ev: PointerEvent, r: Rect) => {
+      const got = boxPick(all, r, { home, deep: ev.metaKey || (ev.ctrlKey && !ON_A_MAC) });
+      let to: [number, string[], boolean, string[]?] = add ? [at, [...selected], framed, [...framedIds]] : [home, [], false];
+      if (got && "frames" in got) {
+        const ids = [...new Set([...(add ? framedIds : []), ...got.frames.map((n) => pages[n]!.id)])];
+        to = [pages.findIndex((p) => p.id === ids[0]), [], true, ids];
+      } else if (got) {
+        const ids = withGroups(pages[got.at]!.layers, got.layers);
+        to = [got.at, add && got.at === at && !framed ? [...new Set([...selected, ...ids])] : ids, false];
+      }
+      // told only when it is something else than at the last move
+      const key = JSON.stringify(to);
+      if (key === shown) return;
+      shown = key;
+      onPick(...to);
+    };
     drag(
       e,
       (ev) => {
         const to = world(ev);
-        r = { x: Math.min(from.x, to.x), y: Math.min(from.y, to.y), w: Math.abs(to.x - from.x), h: Math.abs(to.y - from.y) };
+        const r = { x: Math.min(from.x, to.x), y: Math.min(from.y, to.y), w: Math.abs(to.x - from.x), h: Math.abs(to.y - from.y) };
         setBand(r);
+        pickNow(ev, r);
       },
-      () => {
+      (moved) => {
         setBand(null);
-        const home = k >= 0 ? k : at;
-        // the frame the box began on first, then the others: the first with a layer in the box
-        for (const m of r ? [home, ...pages.map((_, n) => n).filter((n) => n !== home)] : []) {
-          const inFrame = { ...r!, x: r!.x - fr[m]!.x, y: r!.y - fr[m]!.y };
-          const ids = pages[m]!.layers.filter((l) => !l.hidden && !l.locked && intersects(boundsOf([l]), inFrame)).map((l) => l.id);
-          if (ids.length) return onPick(m, withGroups(pages[m]!.layers, ids));
-        }
-        onPick(home, []);
+        // a press that drew no box: nothing is picked any more (with Shift, what was picked stays)
+        if (!moved && !add) onPick(home, []);
       },
     );
   };
@@ -677,27 +700,38 @@ export function Stage({
     e.stopPropagation();
     if (typing.current) return typing.current.blur();
     box.current?.focus({ preventScroll: true });
-    onPick(k, [], true);
-    const p = pages[k]!;
+    const id = pages[k]!.id;
+    // Shift: this frame joins the picked ones, or leaves them; nothing is dragged
+    if (e.shiftKey && framedIds.length) {
+      const next = framedIds.includes(id) ? framedIds.filter((x) => x !== id) : [...framedIds, id];
+      const first = pages.findIndex((x) => x.id === next[0]);
+      return first < 0 ? onPick(k, []) : onPick(first, [], true, next);
+    }
+    // one of several picked frames: they all move, and a press without a drag picks this one alone
+    const many = framedIds.length > 1 && framedIds.includes(id);
+    if (!many) onPick(k, [], true);
+    const moving = pages.map((_, n) => n).filter((n) => (many ? framedIds.includes(pages[n]!.id) : n === k));
     const f = fr[k]!;
     const from = world(e);
-    const others = fr.filter((_, n) => n !== k);
-    let last: DesignPage | null = null;
+    const others = fr.filter((_, n) => !moving.includes(n));
+    let last: DesignPage[] | null = null;
     drag(
       e,
       (ev) => {
+        // the frame under the pointer is the one that catches on the frames standing still; the others keep their place beside it
         const m = moveOf(ev, from);
         const s = snapMove({ ...f, x: f.x + m.dx, y: f.y + m.dy }, others, SNAP / live.current.z);
-        const x = Math.round(f.x + m.dx + (m.lockX ? 0 : s.dx));
-        const y = Math.round(f.y + m.dy + (m.lockY ? 0 : s.dy));
-        setGuides({ ...(m.lockX || s.x === undefined ? {} : { x: s.x }), ...(m.lockY || s.y === undefined ? {} : { y: s.y }), span: boundsOf([...others, { ...f, x, y }]) });
-        last = { ...p, x, y };
-        onLive([last]);
+        const dx = Math.round(f.x + m.dx + (m.lockX ? 0 : s.dx)) - f.x;
+        const dy = Math.round(f.y + m.dy + (m.lockY ? 0 : s.dy)) - f.y;
+        setGuides({ ...(m.lockX || s.x === undefined ? {} : { x: s.x }), ...(m.lockY || s.y === undefined ? {} : { y: s.y }), span: boundsOf([...others, { ...f, x: f.x + dx, y: f.y + dy }]) });
+        last = moving.map((n) => ({ ...pages[n]!, x: fr[n]!.x + dx, y: fr[n]!.y + dy }));
+        onLive(last);
       },
-      () => {
+      (moved) => {
         setGuides(null);
         onLive(null);
-        if (last) onCommit([last]);
+        if (last) onCommit(last);
+        else if (!moved && many) onPick(k, [], true);
       },
     );
   };
@@ -760,6 +794,8 @@ export function Stage({
     if (tool === "pen") return penDown(e, p, k);
     if (tool === "frame") return make(e, -1);
     if (tool !== "move") return make(e, k >= 0 ? k : at);
+    // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it)
+    if (!hit && k >= 0 && (framedIds.includes(pages[k]!.id) || !pages[k]!.layers.some((l) => !l.hidden && !l.locked))) return moveFrame(e, k);
     if (!hit) return marquee(e, k);
     const mine = k === at ? selected : [];
     // a layer of a group picks the whole group; with ⌘ (or Ctrl) the one layer inside it
@@ -859,17 +895,19 @@ export function Stage({
               type="button"
               data-page-name={k}
               onPointerDown={(e) => moveFrame(e, k)}
-              className={cn("absolute -translate-y-full cursor-default truncate pb-1 text-left text-[11px] leading-4 outline-none focus-visible:underline", k === at ? "text-[#0d99ff]" : "text-zinc-500 hover:text-[#0d99ff] dark:text-[#b3b3b3]")}
+              className={cn("absolute -translate-y-full cursor-default truncate pb-1 text-left text-[11px] leading-4 outline-none focus-visible:underline", k === at || framedIds.includes(p.id) ? "text-[#0d99ff]" : "text-zinc-500 hover:text-[#0d99ff] dark:text-[#b3b3b3]")}
               style={{ left: view.x + fr[k]!.x * view.z, top: view.y + fr[k]!.y * view.z, maxWidth: Math.max(24, fr[k]!.w * view.z) }}
             >
               {pageName(p, k)}
             </button>
           ))}
-          {framed && here && (
+          {framed && here && framedIds.length < 2 && (
             <div data-frame-selection className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={onScreen(here)}>
               {handles(true)}
             </div>
           )}
+          {/* several frames picked: each is outlined, none has handles (they move, they are not resized together) */}
+          {framedIds.length > 1 && pages.map((p, n) => framedIds.includes(p.id) && <div key={p.id} data-frame-selection className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={onScreen(fr[n]!)} />)}
           {outlined.map((l, n) => l && <div key={n} className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={place(n === 0 ? hover!.k : at, l)} />)}
           {guides?.x !== undefined && <div className="pointer-events-none absolute w-px bg-[#ff3b30]" style={{ left: view.x + guides.x * view.z, top: view.y + guides.span.y * view.z, height: guides.span.h * view.z }} />}
           {guides?.y !== undefined && <div className="pointer-events-none absolute h-px bg-[#ff3b30]" style={{ left: view.x + guides.span.x * view.z, top: view.y + guides.y * view.z, width: guides.span.w * view.z }} />}
@@ -961,7 +999,7 @@ export function Stage({
               </div>
             </>
           )}
-          {framed && here && (
+          {framed && here && framedIds.length < 2 && (
             <div data-frame-size className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm px-1 text-[11px] leading-4 text-white" style={{ background: BLUE, left: view.x + (here.x + here.w / 2) * view.z, top: view.y + (here.y + here.h) * view.z + 6 }}>
               {here.w} × {here.h}
             </div>

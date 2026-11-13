@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -35,6 +35,8 @@ describe("the hands on the canvas", () => {
     // a new frame goes beside the rightmost one, level with the frame it was made from
     expect(besideFrames([box(0, 0, 1080, 1350), box(2000, 500, 1280, 720)], box(0, 0, 1080, 1350), { w: 1080, h: 1080 })).toEqual(box(3280 + DESIGN_GAP, 0, 1080, 1080));
     expect(besideFrames([], undefined, { w: 100, h: 50 })).toEqual(box(0, 0, 100, 50));
+    // the size may be a whole frame (a copy takes its original's): only its width and height are taken, never its place
+    expect(besideFrames([box(0, 0, 1080, 1350), box(1200, 40, 600, 600)], box(1200, 40, 600, 600), box(1200, 40, 600, 600))).toEqual(box(1800 + DESIGN_GAP, 40, 600, 600));
     expect(pageName({ id: "p1", background: "#fff", layers: [] }, 1)).toBe("Frame 2");
   });
 
@@ -157,5 +159,45 @@ describe("the hands on the canvas", () => {
     expect(layerName(shape)).toBe("Ellipse");
     expect(layerName({ ...shape, name: "Sun" })).toBe("Sun");
     expect(layerName({ id: "t", type: "text", text: "Roll\nthe mat out", font: "Inter", size: 40, color: "#111111", align: "left", x: 0, y: 0, w: 1, h: 1 })).toBe("Roll the mat out");
+  });
+});
+
+describe("what a box drawn across the canvas picks", () => {
+  const shape = (id: string, x: number, y: number, more: Partial<Layer> = {}): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x, y, w: 100, h: 100, ...more }) as Layer;
+  // three frames in a row, 1000 wide, 200 apart: the first two with layers, the third empty
+  const frames = [
+    { rect: { x: 0, y: 0, w: 1000, h: 1000 }, layers: [shape("a", 100, 100), shape("b", 700, 700)] },
+    { rect: { x: 1200, y: 0, w: 1000, h: 1000 }, layers: [shape("c", 50, 50), shape("gone", 400, 400, { hidden: true }), shape("held", 600, 600, { locked: true })] },
+    { rect: { x: 2400, y: 0, w: 1000, h: 1000 }, layers: [] as Layer[] },
+  ];
+  const box = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
+
+  it("a frame the box covers whole is picked itself, and every other frame the box touches with it", () => {
+    expect(boxPick(frames, box(-50, -50, 1100, 1100), { home: -1 })).toEqual({ frames: [0] });
+    expect(boxPick(frames, box(-50, -50, 2300, 1100), { home: -1 })).toEqual({ frames: [0, 1] });
+    // the first whole, the second only touched: both are frames, the second is not opened
+    expect(boxPick(frames, box(-50, -50, 1400, 1100), { home: -1 })).toEqual({ frames: [0, 1] });
+  });
+  it("a frame only partly in the box gives its layers the box touches, never a hidden or a locked one", () => {
+    expect(boxPick(frames, box(-50, -50, 300, 300), { home: -1 })).toEqual({ at: 0, layers: ["a"] });
+    expect(boxPick(frames, box(1100, -50, 900, 900), { home: -1 })).toEqual({ at: 1, layers: ["c"] });
+    expect(boxPick(frames, box(1500, 300, 400, 400), { home: 1 })).toBeNull();
+  });
+  it("layers are of one frame: the one the box began on when it touches any there, else the first it touches any in", () => {
+    const across = box(650, 0, 800, 900);
+    expect(boxPick(frames, across, { home: 1 })).toEqual({ at: 1, layers: ["c"] });
+    expect(boxPick(frames, across, { home: 0 })).toEqual({ at: 0, layers: ["b"] });
+    expect(boxPick(frames, across, { home: -1 })).toEqual({ at: 0, layers: ["b"] });
+  });
+  it("an empty frame is picked as soon as the box touches it, and one with only locked or hidden layers too", () => {
+    expect(boxPick(frames, box(2300, 400, 200, 200), { home: -1 })).toEqual({ frames: [2] });
+    expect(boxPick([{ rect: frames[1]!.rect, layers: frames[1]!.layers.slice(1) }], box(1100, 400, 200, 200), { home: -1 })).toEqual({ frames: [0] });
+  });
+  it("with ⌘ a box never picks a frame: always the layers it touches", () => {
+    expect(boxPick(frames, box(-50, -50, 1100, 1100), { home: -1, deep: true })).toEqual({ at: 0, layers: ["a", "b"] });
+    expect(boxPick(frames, box(2300, 400, 200, 200), { home: -1, deep: true })).toBeNull();
+  });
+  it("a box on nothing picks nothing", () => {
+    expect(boxPick(frames, box(0, 1500, 300, 300), { home: -1 })).toBeNull();
   });
 });

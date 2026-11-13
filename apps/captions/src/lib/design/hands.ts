@@ -28,7 +28,7 @@ export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
  */
 export const frameOf = (p: Pick<DesignPage, "x" | "y" | "w" | "h">, k: number, w: number, h: number): Rect => ({ x: p.x ?? k * (w + DESIGN_GAP), y: p.y ?? 0, w: p.w ?? w, h: p.h ?? h });
 /** Where a new frame of this size goes: beside the rightmost frame, level with `like` (the frame it is made from). */
-export const besideFrames = (frames: readonly Rect[], like: Rect | undefined, size: { w: number; h: number }): Rect => ({ x: frames.length ? Math.max(...frames.map((f) => f.x + f.w)) + DESIGN_GAP : 0, y: like?.y ?? 0, ...size });
+export const besideFrames = (frames: readonly Rect[], like: Rect | undefined, size: { w: number; h: number }): Rect => ({ x: frames.length ? Math.max(...frames.map((f) => f.x + f.w)) + DESIGN_GAP : 0, y: like?.y ?? 0, w: size.w, h: size.h });
 export const ZOOM = { min: 0.02, max: 32 } as const;
 const zoomIn = (z: number) => Math.min(ZOOM.max, Math.max(ZOOM.min, z));
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -208,6 +208,28 @@ export function freshIds(page: DesignPage, count: number): string[] {
 export const groupOf = (layers: readonly Layer[], l: Layer): string[] => (l.group ? layers.filter((x) => x.group === l.group).map((x) => x.id) : [l.id]);
 
 /** Ids widened to whole groups: with every layer that shares a group with one of them. */
+/**
+ * What a box drawn across the canvas picks. A frame the box covers whole is picked itself, and so is an empty frame the
+ * box touches (one with nothing in it to pick); once one frame is picked, every other frame the box touches is picked
+ * with it and not opened. With no frame picked, the layers the box touches are: those of the frame it began on (`home`)
+ * when it touches any there, else those of the first frame it touches any in (picked layers are always of one frame).
+ * `deep` (⌘ held): never a frame, always the layers.
+ */
+export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[] }[], box: Rect, o: { home: number; deep?: boolean }): { frames: number[] } | { at: number; layers: string[] } | null {
+  const touched = frames.map((_, k) => k).filter((k) => intersects(frames[k]!.rect, box));
+  const pickable = (l: Layer) => !l.hidden && !l.locked;
+  const covered = (f: Rect) => f.x >= box.x && f.y >= box.y && f.x + f.w <= box.x + box.w && f.y + f.h <= box.y + box.h;
+  if (!o.deep && touched.some((k) => covered(frames[k]!.rect) || !frames[k]!.layers.some(pickable))) return { frames: touched };
+  for (const k of [o.home, ...touched.filter((n) => n !== o.home)]) {
+    const f = frames[k];
+    if (!f) continue;
+    const inFrame = { ...box, x: box.x - f.rect.x, y: box.y - f.rect.y };
+    const layers = f.layers.filter((l) => pickable(l) && intersects(boundsOf([l]), inFrame)).map((l) => l.id);
+    if (layers.length) return { at: k, layers };
+  }
+  return null;
+}
+
 export function withGroups(layers: readonly Layer[], ids: readonly string[]): string[] {
   const groups = new Set(layers.filter((l) => l.group && ids.includes(l.id)).map((l) => l.group));
   return layers.filter((l) => ids.includes(l.id) || (l.group && groups.has(l.group))).map((l) => l.id);
