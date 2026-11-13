@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editedFrame, playPlan, renderPieces, splitView, voicePieces, type ItemEdit, type TimelineView } from "./edit-timeline";
+import { editedFrame, picturePieces, playPlan, renderPieces, splitView, voicePieces, type ItemEdit, type TimelineView } from "./edit-timeline";
 
 // The first three shots of a real AI edit (25 fps): each talent shot's voice is its own recording (R<k>vo), `ins` = the
 // in point in seconds. Shot 2 is the one whose voice was pulled out on Review's timeline.
@@ -63,5 +63,21 @@ describe("playing the edit from its originals", () => {
   it("a removed voice is silent and a moved one plays later from the same words", () => {
     expect(pieces([e("A1:149", { remove: true })]).map((p) => p.at)).toEqual([0, 226]);
     expect(pieces([e("A1:226", { move: 12 })])[2]).toEqual({ src: "R1vo", at: 238, frames: 54, offset: 3.44 });
+  });
+
+  it("a talent shot made longer plays its camera original past the cut's end, framed as cut, and B-roll still shows from the render", async () => {
+    const withRoll: TimelineView = { ...view, tracks: [
+      { ...view.tracks[0], items: view.tracks[0].items.map((i) => (i.key === "V1:149" ? { ...i, zoom: 1.3, tilt: 40 } : i)) },
+      view.tracks[1],
+      { id: "V2", name: "B-ROLL", items: [{ key: "V2:20", track: "V2", rec: 20, len: 30, label: "roll" }] },
+    ] };
+    const edits = [e("V1:149", { tail: 10 }), e("V1:226", { head: 5 })];
+    const plan = playPlan(withRoll, edits);
+    expect(picturePieces(splitView(withRoll, edits), edits, plan).map(({ key, at, frames, offset, zoom }) => [key, at, frames, offset, zoom])).toEqual([
+      ["V1:0", 0, 20, 9.36, 1],
+      ["V1:0", 50, 99, 11.36, 1], // under the B-roll the render shows
+      ["V1:149", 149, 87, 0, 1.3], // 77 frames of the cut and 10 more of the take
+      ["V1:226", 236, 59, 3.24, 1], // made 5 frames longer at its start: the take's 5 frames before it, then the shot
+    ]);
   });
 });

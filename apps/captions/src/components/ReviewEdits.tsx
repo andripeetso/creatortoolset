@@ -13,6 +13,7 @@ import {
   cropToFraming,
   framingToCrop,
   PLACEHOLDER_LOOKS,
+  picturePieces,
   playPlan,
   renderPieces,
   voicePieces,
@@ -242,6 +243,13 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       .filter((p) => originals.paths[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.paths[p.src]) })),
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
   ] : null;
+  // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
+  const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!)
+    .filter((p) => originals!.paths[p.src])
+    .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
+      const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
+      return { src: localMediaUrl(originals!.paths[src]), at, frames, offset, x: box.x, y: box.y, s: box.s };
+    }) : null;
   const planned = !!plan && (plan.skips.length + plan.mutes.length + plan.holds.length + plan.cards.length + plan.frames.length + plan.grades.length > 0);
   // the shot being graded plays the panel's grade over its whole span while the panel is open, in place of the shot's
   // planned grades (while the reframe window is open the picture takes no look)
@@ -261,6 +269,7 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       ...(shotLook ? [{ from: shotLook.from, to: shotLook.to, filter: `url(#${LIVE_GRADE})` }] : []),
     ],
     ...(sound ? { sound } : {}),
+    ...(picture?.length ? { picture } : {}),
   } : null;
   const playJson = JSON.stringify(play);
   // a new plan goes to the player; the page compares it with the last one, so a same plan costs nothing

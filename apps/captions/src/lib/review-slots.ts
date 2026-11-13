@@ -90,6 +90,7 @@ export class ReviewSlotBridge {
       looks: all.flatMap((p) => p.looks ?? []),
       // one sound for the whole edit: the first plan that plays it from the originals
       ...(all.find((p) => p.sound) ? { sound: all.find((p) => p.sound)!.sound } : {}),
+      ...(all.find((p) => p.picture) ? { picture: all.find((p) => p.picture)!.picture } : {}),
     };
   }
 

@@ -138,6 +138,12 @@ export interface ReviewPlayPlan {
    * set the video is muted and these play instead (lib/synced-sound.ts useEditSound).
    */
   sound?: { src: string; at: number; frames: number; offset: number }[];
+  /**
+   * The talent shots from their camera originals, on the same timeline as `sound`: `src` from `offset` seconds at frame
+   * `at` for `frames`, drawn in the box x, y (top-left) and s (size), fractions of the picture (the shot's framing).
+   * The page draws them over the render (components/OriginalsPicture.tsx).
+   */
+  picture?: { src: string; at: number; frames: number; offset: number; x: number; y: number; s: number }[];
 }
 
 /**

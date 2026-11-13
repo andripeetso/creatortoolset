@@ -98,6 +98,7 @@ import ReviewEdits, { REVIEW_TIMELINE_ID } from "@/components/ReviewEdits";
 import { ReviewSlotBridge } from "@/lib/review-slots";
 import { mutedAt, usePlanFollow } from "@/lib/review-play";
 import { resumeSound, useEditSound } from "@/lib/synced-sound";
+import { OriginalsPicture } from "@/components/OriginalsPicture";
 import { PlanOverlay } from "@/components/PlanOverlay";
 import { payloadError } from "@contracts/review-payload";
 import { useMe } from "@/lib/auth";
@@ -886,6 +887,8 @@ function Review({
                   onPause={() => setPlaying(false)}
                   onEnded={() => setPlaying(false)}
                 />
+                {/* an edit's talent shots from their camera originals, when it plays from them */}
+                <OriginalsPicture video={video} plan={plan} holding={holding} filter={lookNow?.filter} />
                 {plan && <PlanOverlay cards={plan.cards} fps={fps} time={time} holding={holding} playing={playing} rate={speed} />}
                 <svg
                   viewBox="0 0 1 1"

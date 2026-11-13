@@ -450,16 +450,19 @@ export function renderPieces(plan: Spans, frames: number, fps: number, src = "re
   return joined(playedSpans(0, frames, plan).map(([a, b]) => ({ src, at: editedFrame(plan, a), frames: b - a, offset: ms(a / fps) })), fps);
 }
 
+/** A shot as it plays from its camera original: a sound piece with the shot's framing (its own or the edit's reframe). */
+export type PicturePiece = SoundPiece & Framing & { key: string };
+
 /**
- * Each voice clip (A1, with its recording `src` and in point `ins`) on the edited timeline, from its recording: what the
- * picture skips is cut from it too, an edge pulled out plays the recording's words past it (into a hold, when the shot
- * was made longer with it), a move puts it that much later. `view` is the split view (splitView), so a cut clip's
- * pieces are clips of their own.
+ * The items of one track on the edited timeline, from their media (`src` from `ins` seconds): what the picture skips is
+ * cut from them too, an edge pulled out plays the media past it (into the hold, when the talent shot was made longer
+ * with it), a move puts it that much later. `view` is the split view (splitView), so a cut item's pieces are items of
+ * their own.
  */
-export function voicePieces(view: TimelineView, edits: ItemEdit[], plan: Spans): SoundPiece[] {
+function trackPieces(view: TimelineView, edits: ItemEdit[], plan: Spans, track: string): (SoundPiece & { it: TimelineItem; e?: ItemEdit })[] {
   const fps = view.fps;
-  const out: SoundPiece[] = [];
-  for (const it of view.tracks.find((t) => t.id === "A1")?.items ?? []) {
+  const out: (SoundPiece & { it: TimelineItem; e?: ItemEdit })[] = [];
+  for (const it of view.tracks.find((t) => t.id === track)?.items ?? []) {
     const e = edits.find((x) => x.key === it.key);
     if (!it.src || it.ins === undefined || e?.remove) continue;
     const [move, head, tail, slip] = [e?.move ?? 0, e?.head ?? 0, e?.tail ?? 0, e?.slip ?? 0];
@@ -468,17 +471,41 @@ export function voicePieces(view: TimelineView, edits: ItemEdit[], plan: Spans):
     const pieces: SoundPiece[] = playedSpans(it.rec + Math.max(0, -head), it.rec + it.len - Math.max(0, -tail), plan)
       .map(([a, b]) => ({ src, at: editedFrame(plan, a) + move, frames: b - a, offset: sec(a) }));
     if (!pieces.length) continue;
-    if (head > 0) pieces.unshift({ src, at: pieces[0].at - head, frames: head, offset: ms(pieces[0].offset - head / fps) });
+    if (head > 0) {
+      const first = pieces[0];
+      // the talent shot made longer at its start holds on its first frame: that time comes before the shot here
+      const held = plan.holds.some((h) => h.at === it.rec && h.frames === head);
+      pieces.unshift({ src, at: held ? first.at : first.at - head, frames: head, offset: ms(first.offset - head / fps) });
+      if (held) first.at += head;
+    }
     if (tail > 0) {
       const p = pieces.at(-1)!;
       pieces.push({ src, at: p.at + p.frames, frames: tail, offset: ms(p.offset + p.frames / fps) });
     }
-    // nothing before the recording's first second (an edge pulled out further than it has)
+    // nothing before the media's first second (an edge pulled out further than it has)
     const inside = pieces.map((p) => {
       const cut = p.offset < 0 ? Math.round(-p.offset * fps) : 0;
       return cut ? { ...p, at: p.at + cut, frames: p.frames - cut, offset: 0 } : p;
     }).filter((p) => p.frames > 0);
-    out.push(...joined(inside, fps));
+    out.push(...joined(inside, fps).map((p) => ({ ...p, it, e })));
   }
   return out.sort((a, b) => a.at - b.at);
+}
+
+/** Each voice clip (A1) on the edited timeline, from its recording. */
+export const voicePieces = (view: TimelineView, edits: ItemEdit[], plan: Spans): SoundPiece[] =>
+  trackPieces(view, edits, plan, "A1").map(({ src, at, frames, offset }) => ({ src, at, frames, offset }));
+
+/**
+ * Each talent shot (V1) on the edited timeline, from its camera original, framed as cut (or as reframed): where no
+ * B-roll or full card covers it, so those still show from the render.
+ */
+export function picturePieces(view: TimelineView, edits: ItemEdit[], plan: Spans): PicturePiece[] {
+  const covers = view.tracks.filter((t) => t.id[0] === "V" && t.id !== "V1" && t.id !== "V0").flatMap((t) => t.items)
+    .filter((i) => !edits.find((e) => e.key === i.key)?.remove)
+    .map((i): [number, number] => [editedFrame(plan, i.rec), editedFrame(plan, i.rec + i.len)]);
+  return trackPieces(view, edits, plan, "V1").flatMap(({ src, at, frames, offset, it, e }) => {
+    const f = e?.zoom !== undefined ? { zoom: e.zoom, pan: e.pan ?? 0, tilt: e.tilt ?? 0 } : { zoom: it.zoom ?? 1, pan: it.pan ?? 0, tilt: it.tilt ?? 0 };
+    return minus([at, at + frames], covers).map(([a, b]) => ({ key: it.key, src, at: a, frames: b - a, offset: ms(offset + (a - at) / view.fps), ...f }));
+  });
 }

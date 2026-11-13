@@ -175,6 +175,28 @@ export class SyncedSound {
 }
 
 /**
+ * The edited timeline's clock for a plan (seconds): the video's frame mapped through the plan's skips and holds, running
+ * on through a hold while the picture waits on its frame (`holding` = frames the page holds for, lib/review-play.ts).
+ */
+export function editedClock(el: HTMLVideoElement, plan: Pick<ReviewPlayPlan, "fps" | "skips" | "holds">, holding: { current: number }): Clock {
+  const fps = plan.fps || 25;
+  let held = { since: 0, at: 0 };
+  return () => {
+    const run = !el.paused && !el.ended && el.readyState >= 3;
+    const r = el.currentTime * fps;
+    const t = editedFrame(plan, r) / fps;
+    const h = holding.current > 0 ? plan.holds.find((x) => Math.abs(r - (x.at + 0.5)) < 1) : undefined;
+    if (h) { // the picture waits on its frame; the timeline runs on from where it stopped, for the hold's length
+      if (!held.since) held = { since: performance.now(), at: t - h.frames / fps };
+      const t1 = held.at + Math.min(h.frames / fps, ((performance.now() - held.since) / 1000) * el.playbackRate);
+      return { t: t1, run: true, rate: el.playbackRate, steady: false };
+    }
+    held = { since: 0, at: 0 };
+    return { t, run, rate: el.playbackRate, steady: true };
+  };
+}
+
+/**
  * An edit played from its originals (the plan's `sound`, frames on the edited timeline): its pieces on the edited
  * timeline's clock, which is the video's frame mapped through the plan's skips and holds, and runs on through a hold
  * while the picture waits. True while it plays its own sound (the page mutes the video then); false while loading or
@@ -190,21 +212,7 @@ export function useEditSound(video: RefObject<HTMLVideoElement | null>, plan: Re
     const el = video.current;
     if (!key || !el || !plan?.sound) return void setState({ live: false, error: "" });
     const fps = plan.fps || 25;
-    const spans = { skips: plan.skips, holds: plan.holds };
-    let held = { since: 0, at: 0 };
-    const clock: Clock = () => {
-      const run = !el.paused && !el.ended && el.readyState >= 3;
-      const r = el.currentTime * fps;
-      const t = editedFrame(spans, r) / fps;
-      const h = hold.current > 0 ? plan.holds.find((x) => Math.abs(r - (x.at + 0.5)) < 1) : undefined;
-      if (h) { // the picture waits on its frame; the timeline runs on from where it stopped, for the hold's length
-        if (!held.since) held = { since: performance.now(), at: t - h.frames / fps };
-        const t1 = held.at + Math.min(h.frames / fps, ((performance.now() - held.since) / 1000) * el.playbackRate);
-        return { t: t1, run: true, rate: el.playbackRate, steady: false };
-      }
-      held = { since: 0, at: 0 };
-      return { t, run, rate: el.playbackRate, steady: true };
-    };
+    const clock = editedClock(el, plan, hold);
     const s = new SyncedSound(el, clock);
     let gone = false;
     setState({ live: false, error: "" });
