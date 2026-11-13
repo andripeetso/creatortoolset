@@ -69,7 +69,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // askMediaFolder): { ask: folder } opens this app's open panel, { list: true }, { remove: folder };
         // answered with { granted: [folders] }
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "mediaAccess")
+        // Chat mode switched on or off (src/lib/chat-mode.ts washTo): the wave is drawn over the page (ChatWave.swift)
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "chatWave")
         installScripts()
+        _ = chatWave   // its shader compiles now, not on the first switch
     }
 
     @available(*, unavailable)
@@ -152,6 +155,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var site: (() -> URL)?
     /// A mediaAccess open panel is showing: a second ask while it is gets { granted: [] }.
     fileprivate var mediaPanelOpen = false
+    private lazy var chatWave = ChatWaveHost(self)
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
@@ -159,6 +163,12 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         if message.name == "thisMac" { return thisMac(message, replyHandler) }
         if message.name == "publishPack" { return publishPack(message, replyHandler) }
         if message.name == "mediaAccess" { return mediaAccess(message, replyHandler) }
+        if message.name == "chatWave" {
+            guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()) else {
+                return replyHandler(false, nil)
+            }
+            return chatWave.handle(message.body) { replyHandler($0, $1) }
+        }
         guard let ask = accountAsk(message.body, mainFrame: message.frameInfo.isMainFrame), let onAccount else { return replyHandler(["state": "off"], nil) }
         onAccount(ask) { replyHandler($0, nil) }
     }

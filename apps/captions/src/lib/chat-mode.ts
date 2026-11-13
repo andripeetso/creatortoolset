@@ -369,6 +369,8 @@ function things(x: number, y: number, most: number, pictures: boolean, within: P
  * beside it, a new chat's page goes) changes under the wave, in the screen the front is showing: such a change
  * follows a switch within a moment, and ending the wave for it left the switch with no effect at all.
  *
+ * In the Mac app the app draws the wave instead (macWash): the window's own picture bends at the front.
+ *
  * The page shown or hidden beside the chats, a new chat, a chat's first page: those happen all day, and an effect on
  * each of them was too much.
  */
@@ -382,13 +384,15 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
   // asked for twice (a page opened by two things at once): the switch on its way is the answer
   if (washing && !how.also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return;
   if (washing && !how.wash) return change();
-  if (!how.wash || washing || !document.startViewTransition || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+  const mac = macWave();
+  if (!how.wash || washing || (!mac && !document.startViewTransition) || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
     cutShort();
     return change();
   }
   const root = document.documentElement;
   // no button on screen: about where it stands in the chats' bar
   const { x, y } = middleOf(from) ?? middleOf() ?? { x: 28, y: 28 };
+  if (mac) return void macWash(mac, x, y, patch, change);
   // the front is the middle of the rim; it ends half a rim past the window's far corner, which is then all new
   const reach = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)) + RIM / 2;
   /** When (ms after the start) the front is `d` px from the button. */
@@ -426,6 +430,40 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
     // an animation of a picture holds its last frame: it goes with the pictures
     for (const a of document.getAnimations()) if ((a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition")) a.cancel();
   });
+}
+
+/** The Mac app draws the wave itself (apps/mac ChatWave.swift): it bends the window's own picture, which a page cannot. */
+interface MacWave {
+  postMessage(m: unknown): Promise<unknown>;
+}
+const macWave = (): MacWave | undefined =>
+  (window as unknown as { webkit?: { messageHandlers?: { chatWave?: MacWave } } }).webkit?.messageHandlers?.chatWave;
+
+/**
+ * The wave in the Mac app: a picture of the screen as it is goes up over the page, the page changes under it, and once
+ * that is on screen the app takes a picture of the new screen and the front goes. Chat mode switched again meanwhile
+ * (cutShort) ends it at once. No picture (an old app, no Metal): the page changes with no wave.
+ */
+async function macWash(mac: MacWave, x: number, y: number, patch: Partial<Stored>, change: () => void): Promise<void> {
+  const root = document.documentElement;
+  const run = { skipTransition: () => void mac.postMessage("stop").catch(() => {}) };
+  washing = run;
+  washingTo = patch;
+  try {
+    const up = await mac
+      .postMessage({ start: { x, y, dark: root.classList.contains("dark"), tint: getComputedStyle(root).getPropertyValue("--violet-600").trim() } })
+      .catch(() => false);
+    flushSync(change);
+    if (up !== true || washing !== run) return;
+    // the new screen is drawn before its picture is taken
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await mac.postMessage("drawn").catch(() => {});
+  } finally {
+    if (washing === run) {
+      washing = null;
+      washingTo = {};
+    }
+  }
 }
 
 /**
