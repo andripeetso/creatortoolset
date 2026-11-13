@@ -537,4 +537,9 @@ if (env.isProduction) {
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
   if (process.env.pm_id !== undefined) process.once("SIGINT", () => server.close(() => process.exit(0)));
+  // A container stop sends SIGTERM, and the first process of a container ignores it unless it handles it: the stop
+  // then waits its 10 s and kills, with the app still taking work it can't finish, and the server is away that much
+  // longer (the computers' relays retry a finished answer for about 20 s). Leave at once: what a restart must not lose
+  // is on disk already (upload parts, replies being written).
+  process.once("SIGTERM", () => process.exit(0));
 }

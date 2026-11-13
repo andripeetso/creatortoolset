@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 const DATA = (process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "assistant-restart-")));
 process.env.APP_SECRET = "assistant-test-secret";
 
+vi.setConfig({ testTimeout: 30_000 }); // each test loads the whole server twice and waits a second for a save
+
 type View = import("../contracts/assistant").AssistantView;
 type Job = { id: string; user: string; asks?: boolean; mcp: { token: string } };
 const json = (body: unknown, extra: Record<string, string> = {}) => ({ method: "POST", headers: { "content-type": "application/json", ...extra }, body: JSON.stringify(body) });
