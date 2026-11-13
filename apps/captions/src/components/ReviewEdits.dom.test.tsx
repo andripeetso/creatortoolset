@@ -34,6 +34,7 @@ vi.mock("./EditTimeline", async () => {
       onPlaceholder: (h: object | null) => void;
       onColor?: (item: unknown) => void;
       onReframe?: (item: unknown) => void;
+      onSelect?: (item: unknown, editing?: boolean, group?: unknown[]) => void;
     }) => {
       const first = p.view.tracks[0].items[0];
       return createElement("div", null,
@@ -42,6 +43,8 @@ vi.mock("./EditTimeline", async () => {
         createElement("button", { onClick: () => p.onEdit([[first, { remove: true }]]) }, "stub remove"),
         createElement("button", { onClick: () => p.onPlaceholder({ id: "h1", track: "V2", rec: 10, len: 20 }) }, "stub hole"),
         createElement("button", { onClick: () => p.onPlaceholder(null) }, "stub clear hole"),
+        createElement("button", { onClick: () => p.onSelect?.(first, true) }, "stub pick in Edit mode"),
+        createElement("button", { onClick: () => p.onSelect?.(first, false) }, "stub pick to comment"),
         createElement("button", { onClick: () => p.onColor?.(first) }, "stub colour"));
     },
   };
@@ -103,6 +106,7 @@ async function mount(
   version: object = { n: 1, fps: 25, timeline: true, edit },
   api: object = { timeline: async () => view },
   hooks?: ReviewTimelineSlot,
+  pin?: object,
 ) {
   const bridge = new ReviewSlotBridge();
   const bound = bridge.bind("tl");
@@ -116,7 +120,7 @@ async function mount(
     ...bound,
     preview: { setPlan: vi.fn(bound.preview.setPlan) },
   } as unknown as ReviewSlotContext;
-  await act(async () => root.render(<ReviewEdits {...ctx} hooks={hooks} />));
+  await act(async () => root.render(<ReviewEdits {...ctx} hooks={hooks} pin={pin as never} />));
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
@@ -358,6 +362,17 @@ describe("ReviewEdits panel", () => {
     await act(async () => root.unmount());
     expect(bridge.plan()).toBeNull();
     root = createRoot(host);
+  });
+});
+
+describe("picking a clip", () => {
+  it("tells the page whether it was picked in Edit mode, where the keys stay the timeline's and the comment box is left alone", async () => {
+    const onSelect = vi.fn();
+    await mount([], undefined, undefined, undefined, { selected: null, pins: {}, onSelect, onPin: () => {} });
+    await act(async () => button("stub pick in Edit mode")!.click());
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ key: "V1:0" }), undefined, true);
+    await act(async () => button("stub pick to comment")!.click());
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ key: "V1:0" }), undefined, false);
   });
 });
 

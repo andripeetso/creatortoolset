@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
-import { cleanEdits, playPlan, splitView, type ItemEdit } from "../../contracts/edit-timeline";
+import { cleanEdits, playPlan, splitView, voicePieces, type ItemEdit } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
 import { emptyTracks } from "./timeline";
 
@@ -117,6 +117,25 @@ describe("timeline edits made into a cut", () => {
     // every voice is its shot's: the same frames of the same take
     for (const a of out.tracks.A1.items) expect(shots.find((v) => v.link === a.link)).toMatchObject({ rec: a.rec, len: a.len, in: a.in, src: a.src });
     expect(Object.keys(out.sources).sort()).toEqual(["A", "R"]);
+  });
+
+  it("puts every voice where Review's player plays it from the recording", () => {
+    // cuts, a shot out, edges pulled in and a voice pulled in. (A shot pulled out takes its voice along in the cut; the
+    // player keeps that stretch silent until the voice is pulled out too, so it is not in this comparison.)
+    const edits = cleanEdits([{ key: "V1:0", tail: -7 }, { key: "V1:30", split: [44] }, { key: "V1:44", remove: true }, { key: "A1:60", head: -5 }, { key: "V1:60", tail: -3 }].map(edit));
+    const t = three();
+    const view = splitView(draftView(t), edits);
+    const played = voicePieces(view, edits, playPlan(view, edits));
+    // the cut's voice clips as the player's pieces: a clip that runs on from the one before, in time and in the take, is one
+    const mine: { src: string; at: number; frames: number; offset: number }[] = [];
+    for (const a of applyEdits(t, edits).tracks.A1.items) {
+      const last = mine.at(-1);
+      if (last && last.at + last.frames === a.rec && Math.abs(last.offset + last.frames / 30 - a.in / 60) < 1e-6) last.frames += a.len;
+      else mine.push({ src: a.src, at: a.rec, frames: a.len, offset: a.in / 60 });
+    }
+    expect(mine.map((p) => [p.src, p.at, p.frames])).toEqual(played.map((p) => [p.src, p.at, p.frames]));
+    mine.forEach((p, k) => expect(p.offset).toBeCloseTo(played[k]!.offset, 3));
+    expect(mine.length).toBeGreaterThan(2);
   });
 
   it("refuses what it can't make, naming each edit, and makes nothing", () => {

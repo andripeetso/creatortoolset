@@ -512,9 +512,10 @@ function Review({
     selected: shownClips[0] ? pinKey(shownClips[0]) : null,
     marked: shownClips.slice(1).map(pinKey),
     pins,
-    onSelect: (item: Clip | null, group?: Clip[]) => {
+    onSelect: (item: Clip | null, group?: Clip[], editing?: boolean) => {
       setAnchors(!item ? [] : group && group.length > 1 ? group.map(clipOf) : [clipOf(item)]);
-      if (item) composerBox.current?.focus();
+      // a clip picked to comment on takes the typing; one picked in Edit mode leaves the keys with the timeline
+      if (item && !editing) composerBox.current?.focus();
     },
     onPin: (key: string) => {
       const on = threads.filter((c) => clipsOf(c).some((a) => pinKey(a) === key)).sort((a, b) => b.createdAt - a.createdAt);

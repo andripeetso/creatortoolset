@@ -62,7 +62,8 @@ export interface TimelinePins {
   marked?: string[];
   pins: Record<string, number>;
   /** a click on a clip (Shift/⌘-click: `group` is every clip picked) */
-  onSelect: (item: TimelineItem | null, group?: TimelineItem[]) => void;
+  /** `editing`: picked in the timeline's Edit mode, where the keys stay the timeline's (Delete, Q / W, the nudges) */
+  onSelect: (item: TimelineItem | null, group?: TimelineItem[], editing?: boolean) => void;
   onPin: (key: string) => void;
   /** the comment's time range (seconds); a drag across empty lane space sets it */
   range?: [number, number] | null;
@@ -488,8 +489,8 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
         selected={pin?.selected}
         marked={pin?.marked}
         pins={pin?.pins}
-        onSelect={pin ? (item, _editing, group) => {
-          pin.onSelect(item ?? null, group);
+        onSelect={pin ? (item, editing, group) => {
+          pin.onSelect(item ?? null, group, editing);
           if (item) slots.current.player.pause();
         } : undefined}
         onPin={pin?.onPin}
