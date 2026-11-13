@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Image, Lock, LockOpen, PenTool, Plus, Square, Star, Triangle, Type } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Square, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { layerName, pageName } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
@@ -8,7 +8,8 @@ import { Tip } from "./Tip";
 /**
  * The layers list: every frame of the canvas with its layers under it, the front one on top. A click picks (Shift or
  * ⌘ adds or takes one), a double click on a name renames, the eye hides and the lock locks, and a row is dragged to a
- * new place: a layer among its frame's layers, a frame among the frames (where two frames lie over each other, the
+ * new place: a layer among its frame's layers, a frame among the frames. Layers of a group lie under a Group row,
+ * which picks them all; a layer's own row picks that layer alone (where two frames lie over each other, the
  * lower one in the list is drawn on top, and the list's order numbers the saved PNGs).
  */
 
@@ -152,14 +153,26 @@ export function LayersPanel({
                 {line(pageKey)}
               </div>
               {open &&
-                [...p.layers].reverse().map((l) => {
+                [...p.layers].reverse().map((l, n, shown) => {
                   const key = layerKey + l.id;
+                  // the first of a run of one group's layers gets the group's own row above it
+                  // (a group that is down to one layer is a single layer again)
+                  const members = l.group ? p.layers.filter((x) => x.group === l.group).map((x) => x.id) : [];
+                  const grouped = members.length > 1;
+                  const heads = grouped && shown[n - 1]?.group !== l.group;
+                  const allOn = k === at && members.length > 0 && members.every((id) => selected.includes(id));
                   const on = k === at && selected.includes(l.id);
                   const Icon = l.type === "shape" ? SHAPE[l.shape] : KIND[l.type];
                   const set = (patch: Partial<Layer>) => onPage({ ...p, layers: p.layers.map((x) => (x.id === l.id ? ({ ...x, ...patch } as Layer) : x)) });
                   return (
+                    <div key={l.id}>
+                    {heads && (
+                      <div role="treeitem" aria-label="Group" aria-selected={allOn} onClick={() => !dragging.current && onPick(k, members)} className={cn(ROW, "pl-9", allOn ? ON : "hover:bg-zinc-500/10")}>
+                        <Group className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+                        <span className="min-w-0 flex-1 truncate">Group</span>
+                      </div>
+                    )}
                     <div
-                      key={l.id}
                       role="treeitem"
                       data-row={key}
                       aria-label={layerName(l)}
@@ -184,7 +197,7 @@ export function LayersPanel({
                         onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
                       }}
                       onDoubleClick={() => setRenaming(key)}
-                      className={cn(ROW, "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
+                      className={cn(ROW, grouped ? "pl-14" : "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
                     >
                       <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
                       {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
@@ -195,6 +208,7 @@ export function LayersPanel({
                         {l.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                       </button>
                       {line(key)}
+                    </div>
                     </div>
                   );
                 })}

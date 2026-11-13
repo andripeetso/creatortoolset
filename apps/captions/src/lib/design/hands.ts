@@ -204,6 +204,35 @@ export function freshIds(page: DesignPage, count: number): string[] {
   return out;
 }
 
+/** The layers picked with a layer: every layer of its group, or itself alone. */
+export const groupOf = (layers: readonly Layer[], l: Layer): string[] => (l.group ? layers.filter((x) => x.group === l.group).map((x) => x.id) : [l.id]);
+
+/** Ids widened to whole groups: with every layer that shares a group with one of them. */
+export function withGroups(layers: readonly Layer[], ids: readonly string[]): string[] {
+  const groups = new Set(layers.filter((l) => l.group && ids.includes(l.id)).map((l) => l.group));
+  return layers.filter((l) => ids.includes(l.id) || (l.group && groups.has(l.group))).map((l) => l.id);
+}
+
+/** A group id these layers do not use yet (nor any in `also`). */
+export function freshGroup(layers: readonly Layer[], also: readonly string[] = []): string {
+  const taken = new Set([...layers.map((l) => l.group), ...also]);
+  for (let n = 1; ; n++) if (!taken.has(`g${n}`)) return `g${n}`;
+}
+
+/**
+ * Layers coming into a frame (pasted, copied, dragged in from another frame): a group of theirs whose id the frame
+ * already uses gets an id of its own, so they stay a group among themselves and do not join the one that is there.
+ */
+export function regroup<T extends Layer>(coming: readonly T[], there: readonly Layer[]): T[] {
+  const taken = new Set(there.map((l) => l.group));
+  const renamed = new Map<string, string>();
+  return coming.map((l) => {
+    if (!l.group || !taken.has(l.group)) return l;
+    if (!renamed.has(l.group)) renamed.set(l.group, freshGroup(there, [...renamed.values(), ...coming.map((c) => c.group ?? "")]));
+    return { ...l, group: renamed.get(l.group)! };
+  });
+}
+
 export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
 export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : SHAPE_NAMES[l.shape]);

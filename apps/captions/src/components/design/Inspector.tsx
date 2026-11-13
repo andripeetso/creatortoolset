@@ -20,10 +20,12 @@ import {
   Crop,
   FlipHorizontal2,
   FlipVertical2,
+  Group,
   Link2,
   Minus,
   Plus,
   RotateCcw,
+  Ungroup,
   Unlink2,
   WrapText,
 } from "lucide-react";
@@ -323,6 +325,8 @@ export function Inspector({
   onCrop,
   onCutOut,
   cutting,
+  onGroup,
+  onUngroup,
   colours,
   onDropper,
 }: {
@@ -353,6 +357,9 @@ export function Inspector({
   /** the picked picture's background taken away (a Mac of the person's own cuts it out); `cutting`: one is being cut */
   onCutOut: () => void;
   cutting: boolean;
+  /** the picked layers made one group, and the groups they are in taken apart */
+  onGroup: () => void;
+  onUngroup: () => void;
   /** the colours the design already uses, for the picker */
   colours: readonly string[];
   /** the next press on the canvas gives its colour to `take` */
@@ -412,7 +419,18 @@ export function Inspector({
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? `${picked.length} selected` : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : SHAPE_NAMES[one.shape]) : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? `Group of ${picked.length}` : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : SHAPE_NAMES[one.shape]) : "Frame"}</h2>
+        <div className="flex items-center">
+          {picked.some((l) => l.group && page.layers.filter((x) => x.group === l.group).length > 1) && (
+            <Tap label="Ungroup" onClick={onUngroup}>
+              <Ungroup className="h-3.5 w-3.5" />
+            </Tap>
+          )}
+          {picked.length > 1 && !(picked[0]!.group && picked.every((l) => l.group === picked[0]!.group)) && (
+            <Tap label="Group" onClick={onGroup}>
+              <Group className="h-3.5 w-3.5" />
+            </Tap>
+          )}
         <DropdownMenu>
           <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
             {Math.round(zoom * 100)}%
@@ -439,6 +457,7 @@ export function Inspector({
             <DropdownMenuItem onSelect={() => onZoom(2)}>Zoom to 200%</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
 
       {!box && (

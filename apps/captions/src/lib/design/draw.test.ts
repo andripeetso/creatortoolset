@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
+import { drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -56,8 +56,31 @@ describe("drawing a design", () => {
     expect(setText(six, measure).lines).toEqual(["aa bb cc dd ee", "ff"]);
     expect(setText({ ...six, balance: true }, measure).lines).toEqual(["aa bb cc", "dd ee ff"]);
     expect(setText({ ...six, w: 400, balance: true }, measure).lines).toEqual(["aa bb cc dd ee ff"]);
+    // a paragraph at a time: the text's own line breaks stay, and each paragraph that wraps is evened by itself
+    expect(setText({ ...six, text: "aa bb cc dd ee ff\ngg\nhh ii jj kk ll mm", balance: true }, measure).lines).toEqual(["aa bb cc", "dd ee ff", "gg", "hh ii jj", "kk ll mm"]);
     // capitals are measured as they are drawn
     expect(setText({ text: "ab", upper: true, size: 100, w: 100, h: 500 }, (s) => (s === "AB" ? 30 : 999)).lines).toEqual(["AB"]);
+  });
+
+  it("sets a layer's words once: drawn again as it is, one string is measured; a font that arrived since, or a changed layer, sets it again", () => {
+    const l = { id: "t", type: "text", text: "Roll the mat out and then the ramp", font: "Anton", size: 100, color: "#111111", align: "left", x: 0, y: 0, w: 120, h: 115, fit: "shrink", balance: true } as const;
+    let calls = 0;
+    let letter = 10;
+    const counted = (s: string) => (calls++, s.length * letter);
+    const first = setTextOnce(l, counted);
+    const cost = calls;
+    expect(cost).toBeGreaterThan(50);
+    calls = 0;
+    expect(setTextOnce(l, counted)).toBe(first);
+    expect(calls).toBe(1);
+    // its font arrived: every letter is narrower now, so it is set again, larger
+    letter = 5;
+    const again = setTextOnce(l, counted);
+    expect(again.size).toBeGreaterThan(first.size);
+    // the same words in another layer (the one a change made) are that layer's own
+    calls = 0;
+    setTextOnce({ ...l }, counted);
+    expect(calls).toBeGreaterThan(50);
   });
 
   it("gives the shapes with straight sides their corners inside the box: a triangle up, an arrow to the right, a five-pointed star", () => {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, inLayer, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
-import { boundsOf, frameOf, freshIds, intersects, pageName, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, frameOf, freshIds, groupOf, intersects, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { cn } from "@/lib/utils";
 
 /**
@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
  *   Frames      a frame is dragged by its name (it catches on the other frames' edges and middles), and resized by
  *               its handles once its name has picked it; the frame tool draws a new one. Its layers keep their
  *               place on the canvas while it is resized.
+ *   Groups      a layer of a group picks the whole group, and they move as one; ⌘ (or Ctrl) with the click, or a
+ *               double click, picks the one layer inside it.
  *   Move tool   click picks a layer (Shift adds or takes one), a drag moves what is picked (it catches on its
  *               frame's and the other layers' edges and middles, and where its gaps to its neighbours come out
  *               even, which are then shown with their size; Shift keeps one axis, Alt drags a copy) and, let
@@ -36,6 +38,8 @@ const BLUE = "#0d99ff";
 const TURN = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#fff" stroke-width="5"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g><g stroke="#000" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g></svg>')}") 11 11, crosshair`;
 
 type Point = { x: number; y: number };
+/** On a Mac, Ctrl with a click is the right click: only ⌘ picks inside a group there. */
+const ON_A_MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
 /** A line a moving thing caught on, in the canvas's own pixels, as long as `span`; and the gaps it sits evenly between. */
 type Guides = { x?: number; y?: number; span: Rect; gaps?: Gap[] };
 
@@ -344,7 +348,9 @@ export function Stage({
         // an id of its own in the frame it lands in
         const taken = new Set(host.layers.filter((l) => to !== k || copy || !ids.includes(l.id)).map((l) => l.id));
         const fresh = freshIds(host, moving.length);
-        const next = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id }));
+        const placed = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id }));
+        // copies, and layers landing in another frame, are a group among themselves, not part of one that is there
+        const next = to !== k || copy ? regroup(placed, host.layers.filter((l) => to !== k || copy || !ids.includes(l.id))) : placed;
         const home = copy ? p : { ...p, layers: p.layers.filter((l) => !moving.includes(l)) };
         last = to === k ? { pages: [copy ? { ...p, layers: [...p.layers, ...next] } : withLayers(p, next)], to, ids: next.map((l) => l.id) } : { pages: [home, { ...host, layers: [...host.layers, ...next] }], to, ids: next.map((l) => l.id) };
         onLive(last.pages);
@@ -355,7 +361,11 @@ export function Stage({
         if (last) {
           onCommit(last.pages);
           if (last.to !== k || copy) onPick(last.to, last.ids);
-        } else if (!moved && ids.length > 1) onPick(k, [hit]); // a click on one of several picked: that one alone
+        } else if (!moved && ids.length > 1) {
+          // a click on one of several picked: that one alone (with its group)
+          const one = p.layers.find((l) => l.id === hit);
+          onPick(k, one ? groupOf(p.layers, one) : [hit]);
+        }
       },
     );
   };
@@ -377,7 +387,7 @@ export function Stage({
         for (const m of r ? [home, ...pages.map((_, n) => n).filter((n) => n !== home)] : []) {
           const inFrame = { ...r!, x: r!.x - fr[m]!.x, y: r!.y - fr[m]!.y };
           const ids = pages[m]!.layers.filter((l) => !l.hidden && !l.locked && intersects(boundsOf([l]), inFrame)).map((l) => l.id);
-          if (ids.length) return onPick(m, ids);
+          if (ids.length) return onPick(m, withGroups(pages[m]!.layers, ids));
         }
         onPick(home, []);
       },
@@ -570,8 +580,11 @@ export function Stage({
     if (tool !== "move") return make(e, k >= 0 ? k : at);
     if (!hit) return marquee(e, k);
     const mine = k === at ? selected : [];
-    if (e.shiftKey) return onPick(k, mine.includes(hit.id) ? mine.filter((id) => id !== hit.id) : [...mine, hit.id]);
-    const ids = mine.includes(hit.id) ? mine : [hit.id];
+    // a layer of a group picks the whole group; with ⌘ (or Ctrl) the one layer inside it
+    const deep = e.metaKey || (e.ctrlKey && !ON_A_MAC);
+    const whole = deep ? [hit.id] : groupOf(pages[k]!.layers, hit);
+    if (e.shiftKey) return onPick(k, mine.includes(hit.id) ? mine.filter((id) => !whole.includes(id)) : [...new Set([...mine, ...whole])]);
+    const ids = mine.includes(hit.id) && !deep ? mine : whole;
     if (ids !== mine) onPick(k, ids);
     move(e, k, ids, hit.id);
   };
@@ -628,7 +641,7 @@ export function Stage({
             const p = world(e);
             const k = frameUnder(p);
             const hit = hitAt(k, p);
-            if (hit && !(k === at && selected.includes(hit.id))) onPick(k, [hit.id]);
+            if (hit && !(k === at && selected.includes(hit.id))) onPick(k, groupOf(pages[k]!.layers, hit));
           }}
           // nothing scrolls the canvas but its own view
           onScroll={(e) => e.currentTarget.scrollTo(0, 0)}
@@ -636,7 +649,9 @@ export function Stage({
             const p = world(e);
             const k = frameUnder(p);
             const hit = hitAt(k, p);
-            if (tool !== "move" || (hit?.type !== "text" && hit?.type !== "image")) return;
+            if (tool !== "move" || !hit) return;
+            // a double click goes into a group: the one layer under it
+            if (hit.type !== "text" && hit.type !== "image") return void (hit.group && onPick(k, [hit.id]));
             onPick(k, [hit.id]);
             if (hit.type === "text") onEdit(hit.id);
             else onCrop(hit.id);

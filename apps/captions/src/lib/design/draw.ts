@@ -94,8 +94,8 @@ const SMALLEST = 8;
 /**
  * How a text is set in its box: the size it is drawn at and its lines. The size is its own, or (when it shrinks to
  * fit) the largest up to its own at which every line fits the box's width and all of them its height, never under
- * SMALLEST. Balanced, its lines are broken at the narrowest width that takes no more lines, so they come out about
- * as long as each other. `base` gives a string's width at the layer's own size: a width at another size is that in
+ * SMALLEST. Balanced, each paragraph's lines are broken at the narrowest width that takes it no more lines, so they
+ * come out about as long as each other. `base` gives a string's width at the layer's own size: a width at another size is that in
  * proportion, so nothing is measured twice.
  */
 export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeight" | "spacing" | "w" | "h" | "fit" | "balance">, base: (s: string) => number): { size: number; lines: string[] } {
@@ -118,18 +118,40 @@ export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeig
     }
     k = lo;
   }
-  let lines = linesAt(k);
-  if (l.balance && lines.length > 1) {
-    let lo = 0;
-    let hi = l.w;
-    for (let n = 0; n < 10; n++) {
-      const mid = (lo + hi) / 2;
-      if (linesAt(k, mid).length <= lines.length) hi = mid;
-      else lo = mid;
-    }
-    lines = linesAt(k, hi);
-  }
+  // evened out a paragraph at a time: each of the text's own lines keeps its break, and is broken further (when it is
+  // too long) at the narrowest width that takes it no more lines
+  const lines = !l.balance
+    ? linesAt(k)
+    : text.split("\n").flatMap((para) => {
+        const wrap = (width: number) => wrapLines(para, width, widthAt(k));
+        const own = wrap(l.w);
+        if (own.length < 2) return own;
+        let lo = 0;
+        let hi = l.w;
+        for (let n = 0; n < 10; n++) {
+          const mid = (lo + hi) / 2;
+          if (wrap(mid).length <= own.length) hi = mid;
+          else lo = mid;
+        }
+        return wrap(hi);
+      });
   return { size: Math.round(l.size * k * 100) / 100, lines };
+}
+
+/**
+ * `setText`, kept a layer: a layer is drawn many times as it is (every redraw of the canvas while it is dragged
+ * about), and working out its size and lines again each time is most of what drawing words costs. What was worked
+ * out is used again while the layer is the same one and its words are as wide as they were then: a font that
+ * arrived since changes that width, and the layer is set again.
+ */
+const setOnce = new WeakMap<object, { wide: number; set: { size: number; lines: string[] } }>();
+export function setTextOnce(l: TextLayer, base: (s: string) => number): { size: number; lines: string[] } {
+  const wide = base(shownText(l));
+  const had = setOnce.get(l);
+  if (had?.wide === wide) return had.set;
+  const set = setText(l, base);
+  setOnce.set(l, { wide, set });
+  return set;
 }
 
 /** A string's width in a font, measured on a canvas kept for it (a browser's own; for where no drawing is under way, like the box words are typed in). */
@@ -146,7 +168,7 @@ export function measurer(font: string): (s: string) => number {
 function drawText(ctx: Ctx, given: TextLayer) {
   ctx.font = fontOf(given);
   ctx.textBaseline = "alphabetic";
-  const set = setText(given, (s) => ctx.measureText(s).width);
+  const set = setTextOnce(given, (s) => ctx.measureText(s).width);
   // from here on the layer at the size it is drawn at
   const l = set.size === given.size ? given : { ...given, size: set.size };
   ctx.font = fontOf(l);

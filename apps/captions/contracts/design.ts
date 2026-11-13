@@ -71,6 +71,8 @@ interface Box {
   /** mirrored left to right, top to bottom */
   flipX?: boolean;
   flipY?: boolean;
+  /** layers of a frame with the same group are picked and moved as one (a badge and its words) */
+  group?: string;
   /** what the layers list calls it; absent = what it is (a text's own words, "Rectangle", "Picture", "Drawing") */
   name?: string;
   /** kept in the design, but not drawn and not in the saved PNG */

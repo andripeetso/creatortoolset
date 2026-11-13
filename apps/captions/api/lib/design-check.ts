@@ -42,6 +42,9 @@ function retouched(raw: Record<string, unknown>): Pick<ImageLayer, "adjust" | "d
   };
 }
 
+/** A group's id as it is kept: lower case letters, digits and hyphens, at most 24. What a person or an AI called it is brought to that ("Hero_Badge" → "hero-badge"), so two layers given the same name are still one group; "" when nothing is left. */
+const groupId = (v: unknown): string => (typeof v === "string" ? v.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24).replace(/-+$/, "") : "");
+
 /** A span moved inside 0..page, and cut to the page when it is longer than it. */
 const inside = (at: number, size: number, page: number): [number, number] => (size >= page ? [0, page] : [Math.min(Math.max(at, 0), page - size), size]);
 
@@ -155,6 +158,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...(DESIGN_BLENDS.includes(raw.blend as never) ? { blend: raw.blend as (typeof DESIGN_BLENDS)[number] } : {}),
     ...(raw.flipX === true ? { flipX: true } : {}),
     ...(raw.flipY === true ? { flipY: true } : {}),
+    ...(groupId(raw.group) ? { group: groupId(raw.group) } : {}),
     ...(named(raw.name) ? { name: named(raw.name) } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),
     ...(raw.locked === true ? { locked: true } : {}),

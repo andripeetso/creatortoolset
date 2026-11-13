@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrames, pageName, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
 import { coloursOn } from "@/lib/design/colour";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
  * any others. Each frame is saved as a PNG of exactly its size. Every change is a step ⌘Z takes back, and is saved a
  * moment later.
  *
+ * ⌘G groups the picked layers, ⇧⌘G takes the group apart.
  * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
  * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
  * (in a picture: moves it inside its box) · lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
@@ -304,7 +305,8 @@ function DesignPage({ id }: { id: string }) {
     if (!target || !count) return null;
     if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers`), null;
     const ids = freshIds(target, count);
-    setPage({ ...target, layers: [...target.layers, ...make(ids)] });
+    // a group among the new layers stays a group among themselves (copies do not join the group they were copied from)
+    setPage({ ...target, layers: [...target.layers, ...regroup(make(ids), target.layers)] });
     pick(to, ids);
     return ids;
   };
@@ -356,6 +358,20 @@ function DesignPage({ id }: { id: string }) {
     if (!base || !mine.length) return;
     const rest = base.layers.filter((l) => !selected.includes(l.id));
     setPage({ ...base, layers: front ? [...rest, ...mine] : [...mine, ...rest] });
+  };
+  /** The picked layers as one group: picked and moved as one from now on, lying together where the frontmost of them was, in the order they had. */
+  const group = () => {
+    if (!base || mine.length < 2) return;
+    const id = freshGroup(base.layers);
+    const rest = base.layers.filter((l) => !selected.includes(l.id));
+    // the layers under the frontmost picked one that are not picked stay under the group
+    const under = base.layers.indexOf(mine.at(-1)!) - (mine.length - 1);
+    setPage({ ...base, layers: [...rest.slice(0, under), ...mine.map((l) => ({ ...l, group: id })), ...rest.slice(under)] });
+  };
+  /** Every group a picked layer is in, taken apart: its layers are single layers again, where they are. */
+  const ungroup = () => {
+    const groups = new Set(mine.map((l) => l.group).filter(Boolean));
+    if (base && groups.size) setPage({ ...base, layers: base.layers.map((l) => (l.group && groups.has(l.group) ? { ...l, group: undefined } : l)) });
   };
   const toggle = (flag: "hidden" | "locked") => {
     const all = mine.every((l) => l[flag]);
@@ -460,6 +476,7 @@ function DesignPage({ id }: { id: string }) {
       if (mod) {
         if (c === "KeyZ") run(() => step(!e.shiftKey));
         else if (c === "KeyD") run(duplicate);
+        else if (c === "KeyG") run(e.shiftKey ? ungroup : group);
         else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
         else if (c === "KeyC") copy(); // not stopped: words picked in a panel are still the browser's to copy
         else if (c === "KeyX" && has) run(() => (copy(), remove()));
@@ -632,6 +649,8 @@ function DesignPage({ id }: { id: string }) {
                   {item("Copy", "⌘C", copy, none)}
                   {item("Paste here", "⌘V", paste, !clip)}
                   {item("Duplicate", "⌘D", duplicate, none && !framed)}
+                  {item("Group", "⌘G", group, mine.length < 2)}
+                  {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => l.group && base.layers.filter((x) => x.group === l.group).length > 1))}
                   <ContextMenuSeparator />
                   {item("Bring to front", "]", () => order(true), none)}
                   {item("Send to back", "[", () => order(false), none)}
@@ -684,6 +703,8 @@ function DesignPage({ id }: { id: string }) {
           cropping={!!cropping}
           onCrop={(on) => setCropping(on && mine.length === 1 ? mine[0]!.id : null)}
           onCutOut={() => void cutOut()}
+          onGroup={group}
+          onUngroup={ungroup}
           cutting={cutting}
           colours={colours}
           onDropper={(take) => setDropper({ take })}

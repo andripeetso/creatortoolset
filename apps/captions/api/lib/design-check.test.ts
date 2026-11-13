@@ -152,6 +152,9 @@ describe("the designer's own fonts and a layer's shadow", () => {
     const [fitted, loose] = cleanPages([{ layers: [text({ fit: "shrink", balance: true }), text({ fit: "grow", balance: "yes" })] }], rules).pages[0]!.layers;
     expect(fitted).toMatchObject({ fit: "shrink", balance: true });
     expect(loose).not.toHaveProperty("fit");
+    // a group's id is kept as lower case letters, digits and hyphens: two layers called the same are one group whatever the spelling
+    const groups = cleanPages([{ layers: [text({ group: "badge-1" }), text({ group: "Hero_Badge!" }), text({ group: "hero badge" }), text({ group: "!!!" }), text({ group: 7 }), text({ group: "a".repeat(40) })] }], rules).pages[0]!.layers.map((l) => l.group);
+    expect(groups).toEqual(["badge-1", "hero-badge", "hero-badge", undefined, undefined, "a".repeat(24)]);
     expect(loose).not.toHaveProperty("balance");
     expect(wide).not.toHaveProperty("gradient");
     expect(wide).not.toHaveProperty("blend");

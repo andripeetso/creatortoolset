@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, snapSpacing, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -36,6 +36,23 @@ describe("the hands on the canvas", () => {
     expect(besideFrames([box(0, 0, 1080, 1350), box(2000, 500, 1280, 720)], box(0, 0, 1080, 1350), { w: 1080, h: 1080 })).toEqual(box(3280 + DESIGN_GAP, 0, 1080, 1080));
     expect(besideFrames([], undefined, { w: 100, h: 50 })).toEqual(box(0, 0, 100, 50));
     expect(pageName({ id: "p1", background: "#fff", layers: [] }, 1)).toBe("Frame 2");
+  });
+
+  it("groups: a layer picks its whole group, ids widen to whole groups, and layers coming into a frame keep to themselves", () => {
+    const l = (id: string, group?: string): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 10, h: 10, ...(group ? { group } : {}) });
+    const layers = [l("a", "g1"), l("b"), l("c", "g1"), l("d", "g2")];
+    expect(groupOf(layers, layers[0]!)).toEqual(["a", "c"]);
+    expect(groupOf(layers, layers[1]!)).toEqual(["b"]);
+    expect(withGroups(layers, ["b", "c"])).toEqual(["a", "b", "c"]);
+    expect(withGroups(layers, ["b"])).toEqual(["b"]);
+    expect(freshGroup(layers)).toBe("g3");
+    expect(freshGroup(layers, ["g3"])).toBe("g4");
+    // copies of a and c pasted into the same frame: a group of their own, not the one they were copied from
+    const pasted = regroup([l("e", "g1"), l("f", "g1"), l("h")], layers);
+    expect(pasted.map((x) => x.group)).toEqual(["g3", "g3", undefined]);
+    // two groups coming in whose ids are both taken: each its own new one; a group whose id is free keeps it
+    expect(regroup([l("e", "g1"), l("f", "g2"), l("h", "g9")], layers).map((x) => x.group)).toEqual(["g3", "g4", "g9"]);
+    expect(regroup([l("e", "g1")], [l("z", "g7")])[0]!.group).toBe("g1");
   });
 
   it("catches a moving box on even spacing: between two neighbours, or beside one at the gap it keeps to the next, and says which gaps are then equal", () => {
