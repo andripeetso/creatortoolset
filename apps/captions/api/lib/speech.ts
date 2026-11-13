@@ -103,6 +103,17 @@ export function speechFor(actor: Actor, use: SpeechUse, languages?: string[]): S
   return { engine, model, key: keyFor(actor, name).key, languages: langs };
 }
 
+/**
+ * What a job run on one of the person's own computers is told (the AI Editor's claim): the engine and model `speechFor`
+ * picks, never the key (that computer uses its own), and the languages, which go along even when no engine serves
+ * this account here.
+ */
+export function speechJob(actor: Actor, use: SpeechUse, languages?: string[]): { engine?: Engine; model?: string; languages: string[] } {
+  const s = speechFor(actor, use, languages);
+  if ("needs" in s) return { languages: languages?.length ? languages : readVoicePrefs(userOf(actor)).languages };
+  return { engine: s.engine, model: s.model, languages: s.languages };
+}
+
 /** Every use as it resolves now, for the Voice page. */
 export const resolvedFor = (actor: Actor): SttResolved[] =>
   SPEECH_USES.map((use) => {

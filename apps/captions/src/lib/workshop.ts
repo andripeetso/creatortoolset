@@ -37,13 +37,15 @@ export interface WorkshopProject {
   off?: string[];
   /** Where the brand posts: a handle per platform. Saved only, never fetched. */
   handles?: Partial<Record<SocialPlatform, string>>;
+  /** The languages spoken in its videos; missing = the person's Voice languages. */
+  languages?: string[];
   createdAt: number;
   updatedAt: number;
 }
 
 export type ProjectFields = Pick<
   WorkshopProject,
-  "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles"
+  "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles" | "languages"
 > & {
   accountId?: string | null;
 };

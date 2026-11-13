@@ -13,7 +13,7 @@ process.env.APP_SECRET = "editor-analyze-test-secret";
 
 const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
-const { saveTranscript } = await import("../library/transcribe");
+const { askVersionIn, saveTranscript } = await import("../library/transcribe");
 const { createEdit, readStep } = await import("./store");
 const { ENERGY_PER_SECOND, energyFile, readEnergy, sentencesOf } = await import("./analyze");
 const { tick } = await import("./worker");
@@ -41,8 +41,8 @@ async function seed(id: string, title: string, probe: object | null) {
 }
 
 /** Queues analyze for a new edit of `sources` and runs one step at `now`; returns the edit id and its analyze job. */
-async function analyze(sources: string[], now: number) {
-  const e = (await createEdit("mem-a", { sources }))!;
+async function analyze(sources: string[], now: number, extra: Record<string, unknown> = {}) {
+  const e = (await createEdit("mem-a", { sources, ...extra }))!;
   enqueueJob(libraryDb(), "mem-a", `${e.id}:`, "analyze", "mem-a", true, "edit_jobs");
   await tick(now);
   return { id: e.id, job: () => libraryDb().prepare("SELECT state, error, attempts, run_after FROM edit_jobs WHERE edit_id = ? AND kind = 'analyze'").get(e.id) as Record<string, unknown> };
@@ -150,6 +150,19 @@ describe("AI Editor analyze", () => {
       { kind: "analyze", state: "done" },
       { kind: "script", state: "queued" },
     ]);
+    d.prepare("DELETE FROM edit_jobs").run();
+  });
+
+  it("a take heard as silence is heard once more in the edit's own language; with none set, it says to pick one", async () => {
+    const d = libraryDb();
+    saveTranscript(d, "ver_early", "deepgram", "en", [], []);
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
+    const plain = await analyze(["ver_early"], Date.now());
+    expect(plain.job()).toMatchObject({ state: "failed", error: expect.stringMatching(/Pick the language it is spoken in on the edit/) });
+    const { job } = await analyze(["ver_early"], Date.now(), { languages: ["et"] });
+    expect(askVersionIn.get("ver_early")).toEqual(["et"]);
+    expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
+    expect(job()).toMatchObject({ state: "queued" });
     d.prepare("DELETE FROM edit_jobs").run();
   });
 });

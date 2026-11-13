@@ -26,6 +26,13 @@ describe("parseProjectInput", () => {
     expect(out.audience).toHaveLength(600);
     expect(out.knowledge).toEqual([]);
   });
+  it("keeps the languages spoken in its videos; none clears them back to the person's", () => {
+    const base = { name: "Tiny Acrobatics", audience: "", voice: "", cta: "", notes: "", knowledge: [], languages: ["et"] };
+    expect(parseProjectInput({}, base).languages).toEqual(["et"]);
+    expect(parseProjectInput({ languages: ["fi", "fi", "Finnish"] }, base).languages).toEqual(["fi"]);
+    expect(parseProjectInput({ languages: [] }, base).languages).toBeUndefined();
+    expect(parseProjectInput({ languages: null }, base).languages).toBeUndefined();
+  });
   it("requires a name", () => {
     expect(() => parseProjectInput({ audience: "parents" })).toThrow(/name/);
   });

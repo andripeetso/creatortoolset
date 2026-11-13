@@ -1113,7 +1113,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       const missing = [...new Set(postIds)].filter((id) => !index.find((e) => e.id === id)?.has.transcript);
       if (!missing.length) return;
       await progress({ stage: "packing" }, true);
-      await transcribeForUser(missing, user);
+      await transcribeForUser(missing, user, undefined, project?.languages);
       index = await sourceIndexForUser(ids, user);
     };
     // Sources the author tagged for this message come in whole: transcript and caption.
@@ -1911,6 +1911,7 @@ workshopApp.patch("/projects/:id", async (c) => {
     const { accountId, ...fields } = parseProjectInput(await c.req.json().catch(() => null), project);
     const next: Project = { ...project, ...fields, updatedAt: Date.now() };
     if (!fields.off) delete next.off;
+    if (!fields.languages) delete next.languages;
     if (accountId === null) delete next.accountId;
     else if (accountId) next.accountId = accountId;
     await writeJsonAtomic(projectPath(next.id), next);
@@ -2443,7 +2444,7 @@ workshopApp.post("/sessions", async (c) => {
     };
     await writeJsonAtomic(sessionMetaPath(meta.id), meta);
     if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes);
-    if (meta.sources.length) void transcribeForUser(meta.sources.map((x) => x.postId), user, 0).catch(() => {});
+    if (meta.sources.length) void readProject(projectId ?? "", user).then((p) => transcribeForUser(meta.sources.map((x) => x.postId), user, 0, p?.languages)).catch(() => {});
     return c.json(await sessionRecord(meta, user), 201);
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
@@ -2503,7 +2504,7 @@ workshopApp.patch("/sessions/:id", async (c) => {
     if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes, fromAiKey(c) ? "ai" : "user"); // after the status check: a refused PATCH writes nothing
     // a video just added starts its transcript now, so it's there by the time a reply reads the folder
     const added = (patch.sources ?? []).map((x) => x.postId).filter((id) => !meta.sources.some((x) => x.postId === id));
-    if (added.length) void transcribeForUser(added, user, 0).catch(() => {});
+    if (added.length) void readProject(next.projectId ?? "", user).then((p) => transcribeForUser(added, user, 0, p?.languages)).catch(() => {});
     // a post pasted or shared: checked now, not at the feed's next run (a plug-in answers; see pluginCheckPosted)
     const posted = patch.posted;
     if (posted && "shortcode" in posted) {

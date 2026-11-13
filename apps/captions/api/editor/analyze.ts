@@ -9,7 +9,7 @@ import { blobs, libraryDb } from "../library/db";
 import { enqueueJob, prepareFirst } from "../library/jobs";
 import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
-import { transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
+import { askVersionIn, transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { eyelineOf } from "./eyeline";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
@@ -128,6 +128,9 @@ interface SourceRow {
   title: string;
 }
 
+/** Versions heard again in an edit's own languages ("<version>|<languages>"): each is asked once, not on every look. */
+const askedAgain = new Set<string>();
+
 export async function analyzeStep({ edit, job, signal }: StepContext): Promise<void> {
   const db = libraryDb();
   const rows = edit.sources.map(
@@ -154,9 +157,19 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
       notes.push(`“${row.title}” has no sound: left out`);
       continue;
     }
+    const languages = edit.languages?.length ? edit.languages : undefined;
+    if (languages) askVersionIn.set(row.id, languages);
     const words = wordsOf(db, row.id);
-    if (words) {
+    // a take heard as silence (asked in another language) is heard once more in the language the edit names
+    const again = `${row.id}|${languages?.join(",")}`;
+    if (words && !(languages && !words.length && !askedAgain.has(again))) {
       ready.push({ row, probe, words });
+      continue;
+    }
+    if (words) {
+      askedAgain.add(again);
+      enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
+      wait = true;
       continue;
     }
     prepareFirst(row.id); // the edit waits on its transcript: before the library's other clips
@@ -192,6 +205,7 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
     const y = probe.vcodec ? await eyelineOf(row.id, () => blobs.localCopy(row.source_key), dims, signal) : null;
     if (y !== null) eyeline[row.id] = y;
   }
-  if (!sentences.length) throw new Error("No speech found in the footage");
+  if (!sentences.length)
+    throw new Error(edit.languages?.length ? "No speech found in the footage" : "No speech found in the footage. Pick the language it is spoken in on the edit, then run it again.");
   await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}) });
 }

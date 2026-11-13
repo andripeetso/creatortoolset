@@ -99,19 +99,20 @@ export function wordsOf(db: DatabaseSync, versionId: string): TimedWord[] | null
 
 export type Transcribed = { segments: Segment[]; words: TimedWord[]; language: string | null };
 
-async function deepgram(file: string, actor: string): Promise<Transcribed> {
+async function deepgram(file: string, actor: string, languages?: string[]): Promise<Transcribed> {
   const role = isAdminActor(actor) ? "admin" : (findUser(actor)?.role ?? "user");
-  const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers: true });
+  const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers: true, languages });
   if ("error" in r) throw new Error(r.error);
   const words = r.words.map((w) => ({ w: w.text, s: w.start, e: w.end, ...(w.confidence !== undefined ? { c: w.confidence } : {}) }));
   return { segments: wordsToSegments(r.words), words, language: r.language };
 }
 
 // ponytail: OpenAI's endpoint takes 25 MB, about 100 minutes of the 32 kbps audio sent here; longer files need chunks
-async function openai(file: string, key: string): Promise<Transcribed> {
+async function openai(file: string, key: string, languages?: string[]): Promise<Transcribed> {
   const form = new FormData();
   form.set("file", new Blob([await readFile(file)], { type: "audio/mp4" }), "audio.m4a");
   form.set("model", process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1");
+  if (languages?.length === 1) form.set("language", languages[0]!);
   form.set("response_format", "verbose_json");
   // both, or the answer has words and no segments; this model drops most false starts
   form.append("timestamp_granularities[]", "segment");
@@ -143,22 +144,29 @@ async function device(file: string, status: string): Promise<Transcribed> {
  * A file's transcript as its actor's key gives it, or this computer: the route first (no audio is cut without one),
  * then the provider. Throws NeedsKey without a route. `status` names an on-device run (a version's id) for deviceStatus.
  */
-export async function transcribeFile(src: string, actor: string | null, scratch: string, status: string = src): Promise<Transcribed & { provider: "deepgram" | "openai" | "device" }> {
+export async function transcribeFile(src: string, actor: string | null, scratch: string, status: string = src, languages?: string[]): Promise<Transcribed & { provider: "deepgram" | "openai" | "device" }> {
   const route = transcribeRoute(actor);
   await mkdir(scratch, { recursive: true });
   const out = path.join(scratch, `transcribe-${randomUUID()}.${route.provider === "deepgram" ? "wav" : route.provider === "openai" ? "m4a" : "f32"}`);
   try {
     if (route.provider === "device") await ffmpegTo(out, ["-i", src, ...DEVICE_AUDIO]);
     else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])]);
-    const t = route.provider === "device" ? await device(out, status) : route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
+    const t = route.provider === "device" ? await device(out, status) : route.provider === "deepgram" ? await deepgram(out, actor ?? "", languages) : await openai(out, route.key, languages);
     return { ...t, provider: route.provider };
   } finally {
     await rm(out, { force: true });
   }
 }
 
+/**
+ * The languages an AI Editor edit asked a version's transcript in (its `languages`, set by analyze before it queues the
+ * transcript); a version with none is heard in its actor's Voice languages.
+ */
+// ponytail: kept in memory; analyze sets it again each time it looks while it waits, so a restart only loses a run already started
+export const askVersionIn = new Map<string, string[]>();
+
 /** Transcribes one version's audio as its job's actor, and stores it. */
 export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
-  const { provider, segments, words, language } = await transcribeFile(src, actor, scratch, versionId);
+  const { provider, segments, words, language } = await transcribeFile(src, actor, scratch, versionId, askVersionIn.get(versionId));
   saveTranscript(db, versionId, provider, language, segments, words);
 }
