@@ -12,7 +12,7 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
 const { deviceOf, pairDevice, setDeviceKinds, setDeviceStt, touchDevice } = await import("./devices");
-const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS } = await import("./computer-transcribe");
+const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS, EDITOR_LIMITS } = await import("./computer-transcribe");
 const { availableEngines, resolvedOne, speechFor, speechJob, writeVoicePrefs } = await import("./speech");
 const { editorWordsFromComputer } = await import("../transcribe");
 const { saveMyKey } = await import("../my-keys");
@@ -67,6 +67,11 @@ describe("which computer gets a transcript", () => {
     expect(j.model).toBe("parakeet-tdt-0.6b-v3");
     await app.request(`/api/devices/relay/transcribe/${j.id}/fail`, json({ error: "Out of memory" }, as(mac.token)));
     await failed;
+    // the AI Editor's never go to a Mac (its Core ML Parakeet drops fillers the editor cuts at): with only the Mac
+    // holding Parakeet, an editor transcript says it waits for a computer, and the Mac is never handed it
+    await expect(transcribeOnComputer("ana", "parakeet-tdt-0.6b-v3", ["en"], audio, EDITOR_LIMITS)).rejects.toBeInstanceOf(ComputerOff);
+    expect(availableEngines("ana", "editor")).not.toContain("local");
+    expect(availableEngines("ana", "captions")).toContain("local");
   });
 
   it("with no computer that has the model on, it waits and says for what", async () => {
@@ -136,12 +141,14 @@ describe("speechFor with computers", () => {
   // the AI Editor cuts at restarts and "um"s: on a computer only with Parakeet (EDITOR_COMPUTER_MODEL), only when picked,
   // only for an edit in English alone; anything else stays on Deepgram, as before
   it("the AI Editor: offered a computer with Parakeet, never on Automatic, Deepgram for another model or language", async () => {
+    // the PC gets Parakeet too: a Mac never runs the editor's (isMac)
+    await claim(pc.token, ["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"]);
     writeVoicePrefs("ana", { languages: ["en"], stt: { default: { engine: "auto" }, per: { transcripts: null } } });
     const v = (await (await app.request("/api/voice-prefs", { headers: { authorization: key } })).json()) as { available: string[]; availableFor: Record<string, string[]>; resolved: { use: string }[] };
     expect(v.availableFor.transcripts).toContain("local");
     expect(v.availableFor.captions).toContain("local");
     expect(v.availableFor.mic).toContain("local");
-    expect(v.availableFor.editor).toContain("local");   // the Mac has Parakeet
+    expect(v.availableFor.editor).toContain("local");   // the PC has Parakeet
     expect(v.available).not.toContain("local");
     // Automatic with no key: the others run on a computer, the AI Editor is never sent there unasked
     expect(speechFor("ana", "transcripts")).toMatchObject({ engine: "local", on: "computers" });
@@ -173,6 +180,8 @@ describe("speechFor with computers", () => {
     writeVoicePrefs("ana", { stt: { per: { editor: { engine: "local" } } } });
     expect(speechFor("ana", "editor", ["et"])).toEqual({ needs: "Needs a Deepgram key", key: "DEEPGRAM_API_KEY" });
     writeVoicePrefs("ana", { languages: [], stt: { default: { engine: "auto" }, per: { editor: null, mic: null } } });
+    // the PC as the tests after this one know it: turbo only
+    await claim(pc.token, ["whisper-large-v3-turbo"]);
   });
 
   it("the AI Editor needs Parakeet itself: a computer with only Whisper is not offered for it", () => {
@@ -244,7 +253,7 @@ describe("Download and Remove", () => {
     await report(studio.token, { os: "mac", cpus: 10, memGb: 16, freeGb: 8 });
     setDeviceKinds(studio.device.id, [TRANSCRIBE_KIND]);
     // a Mac runs Core ML models, a Linux helper the others
-    expect((await want(studio.device.id, "parakeet-tdt-0.6b-v3", true)).status).toBe(400);
+    expect((await want(studio.device.id, "whisper-large-v3", true)).status).toBe(400);
     expect((await want(pc.device.id, "whisper-small", true)).status).toBe(400);
     // Download pressed before its first claim, with turbo already on it from before: both stay
     expect((await want(studio.device.id, "whisper-small", true)).status).toBe(200);

@@ -341,6 +341,7 @@ final class SetupGuide: ObservableObject {
             touched = true
             if let at = languages.firstIndex(of: code) { languages.remove(at: at) } else { languages.append(code) }
             d.setLanguages(languages, defaults: defaults)
+            d.prepareModel()  // the languages may choose another default model
         case .allowMicrophone: d.allowMicrophone()
         case .allowAccessibility: d.allowAccessibility()
         case .model(let id):
@@ -354,7 +355,10 @@ final class SetupGuide: ObservableObject {
     }
 
     /// Get Started, or the window closed by hand: set up, so later presses use the pill's steps.
-    fileprivate static func done() { UserDefaults.standard.set(true, forKey: DictationPrefs.keys.guided) }
+    fileprivate static func done() {
+        UserDefaults.standard.set(true, forKey: DictationPrefs.keys.guided)
+        Dictation.shared.keepModel()
+    }
 
     private func refresh() {
         let new = Self.read(languages: languages)
@@ -362,7 +366,6 @@ final class SetupGuide: ObservableObject {
     }
 
     private func start() {
-        Dictation.shared.prepareModel()
         refresh()
         if tick == nil {
             tick = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -377,6 +380,8 @@ final class SetupGuide: ObservableObject {
         Task {
             defaults = await Dictation.shared.defaultLanguages()
             if !touched { languages = Dictation.shared.prefs.languages ?? defaults }
+            // once the languages are known, which choose the default model
+            Dictation.shared.prepareModel()
             refresh()
         }
     }
@@ -404,6 +409,6 @@ private struct SetupGuideHost: View {
     @ObservedObject var guide: SetupGuide
     @ObservedObject private var dictation = Dictation.shared
     var body: some View {
-        SetupPageView(facts: guide.facts, model: dictation.prefs.model) { guide.act($0) }
+        SetupPageView(facts: guide.facts, model: dictation.model.id) { guide.act($0) }
     }
 }

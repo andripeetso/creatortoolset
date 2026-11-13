@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { ExternalLink, X } from "lucide-react";
-import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, runsOn, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
+import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, runsOn, sizeOn, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
@@ -136,13 +136,14 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
 const COMPUTER_MODELS = STT_MODELS.filter((m) => m.computer);
 
 /** A model's origin in one line: who made it, its licence, its size, its page. */
-function Origin({ m }: { m: SttModel }) {
+function Origin({ m, os }: { m: SttModel; os?: string }) {
+  const mb = sizeOn(m, os);
   return (
     <>
       {m.by ? `By ${m.by}` : null}
       {m.by ? " · " : null}
       {m.licence}
-      {m.mb ? ` · ${m.mb >= 1000 ? `${(m.mb / 1000).toFixed(1)} GB` : `${m.mb} MB`}` : null} ·{" "}
+      {mb ? ` · ${mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`}` : null} ·{" "}
       <a href={m.page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
         Model page
         <ExternalLink className="size-3" aria-hidden />
@@ -168,7 +169,7 @@ function OnMyComputers({ computers, want }: { computers: SttComputer[]; want: (c
                 <Row
                   key={m.id}
                   title={m.name}
-                  status={<Origin m={m} />}
+                  status={<Origin m={m} os={c.os} />}
                   control={
                     !has ? (
                       <Button size="sm" variant="outline" onClick={() => want(c.id, m.id, true)}>Download</Button>

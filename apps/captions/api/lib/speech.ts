@@ -3,7 +3,7 @@ import path from "node:path";
 import { env } from "./env";
 import { keyFor } from "../my-keys";
 import { deviceTranscribes } from "./device-transcribe";
-import { speechComputers } from "./computer-transcribe";
+import { isMac, speechComputers } from "./computer-transcribe";
 import { isOnline } from "./devices";
 import {
   DEFAULT_VOICE_PREFS, EDITOR_COMPUTER_MODEL, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
@@ -67,11 +67,11 @@ export function writeVoicePrefs(username: string, b: Record<string, unknown>): V
   return next;
 }
 
-/** The account's computers that `use` may run on: for the AI Editor only the ones that have EDITOR_COMPUTER_MODEL. */
+/** The account's computers that `use` may run on: for the AI Editor only the ones, not Macs (isMac), that have EDITOR_COMPUTER_MODEL. */
 function computersFor(actor: Actor, use: SpeechUse | undefined) {
   if (!use) return [];
   const mine = speechComputers(userOf(actor));
-  return use === "editor" ? mine.filter((d) => d.stt?.held.includes(EDITOR_COMPUTER_MODEL)) : mine;
+  return use === "editor" ? mine.filter((d) => d.stt?.held.includes(EDITOR_COMPUTER_MODEL) && !isMac(d)) : mine;
 }
 
 /**
