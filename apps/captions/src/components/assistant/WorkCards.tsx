@@ -53,19 +53,16 @@ function Status({ status }: { status: AssistantWork["status"] }) {
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-/** "Working · 1:23" once a reply has taken more than ten seconds, so a long wait never looks frozen. */
-export function Elapsed({ since }: { since: number }) {
+/** " · 1:23" once a reply has taken more than ten seconds, put after its working line so a long wait never looks frozen. */
+export function useElapsed(since: number | undefined) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (since === undefined) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [since]);
+  if (since === undefined) return "";
   // the server's clock and this one can differ: never below zero
   const s = Math.max(0, Math.floor((now - since) / 1000));
-  if (s < 10) return null;
-  return (
-    <p className="mb-1 text-xs text-muted-foreground tabular-nums motion-safe:animate-in motion-safe:fade-in">
-      Working · {clock(s)}
-    </p>
-  );
+  return s < 10 ? "" : ` · ${clock(s)}`;
 }

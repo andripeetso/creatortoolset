@@ -34,7 +34,7 @@ import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
-import { Elapsed, WorkCards } from "./WorkCards";
+import { useElapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { ConfirmCards } from "./ConfirmCards";
@@ -941,9 +941,8 @@ export function Message({
   if (working && !m.text)
     return (
       <div className="space-y-1">
-        <Steps steps={steps} working />
-        {/* a reply waiting for its videos or its turn isn't working yet: its wait line says what it waits for */}
-        {!m.wait && <Elapsed since={m.at} />}
+        {/* a reply waiting for its videos or its turn, or sending a file, isn't working yet: its own line says so */}
+        <Steps steps={steps} since={m.wait || (m.send && sending) ? undefined : m.at} />
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
@@ -958,9 +957,8 @@ export function Message({
             </button>
           </p>
         ) : (
-          m.wait && <p className="text-xs text-muted-foreground">{m.wait.text}</p>
+          m.wait && <p className="ct-shimmer w-fit text-xs text-muted-foreground">{m.wait.text}</p>
         )}
-        <Dots />
       </div>
     );
   const again = onRetry && (
@@ -986,8 +984,8 @@ export function Message({
     );
   return (
     <div className={cn("group/msg max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
-      <Steps steps={steps} working={working} />
-      {working && <Elapsed since={m.at} />}
+      {/* words already coming in show it is alive: the row stays for a reply that has steps */}
+      <Steps steps={steps} since={working && steps.length ? m.at : undefined} />
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
@@ -1126,16 +1124,20 @@ function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; o
   );
 }
 
-/** What the reply did on the way, one line per tool; while it works, the newest one pulses. */
-/** What the AI did, folded into one row: the step it is on while it works ("N steps" once done), opening to the whole list. */
-function Steps({ steps, working = false }: { steps: string[]; working?: boolean }) {
-  if (!steps.length) return null;
+/** What the AI did, folded into one row. While it works (`since` set): the step it is on, a light running through it,
+    and the time once it passes ten seconds ("Working" before the first step). Once done: "N steps", opening to the list. */
+function Steps({ steps, since }: { steps: string[]; since?: number }) {
+  const working = since !== undefined;
+  const elapsed = useElapsed(since);
+  if (!steps.length && !working) return null;
   const last = steps[steps.length - 1];
+  const label = working ? (last ? `${last}…` : "Working") : steps.length === 1 ? last : `${steps.length} steps`;
   return (
     <details className="group mt-1 mb-1.5 text-xs text-muted-foreground">
       <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", steps.length > 1 && "cursor-pointer hover:text-foreground")}>
-        {working && <span className="size-1.5 shrink-0 rounded-full bg-[var(--tint)] motion-safe:animate-pulse" aria-hidden />}
-        <span className={cn("truncate", working && "text-foreground")}>{working ? `${last}…` : steps.length === 1 ? last : `${steps.length} steps`}</span>
+        <span className={cn("truncate tabular-nums", working && "ct-shimmer")} role={working ? "status" : undefined}>
+          {label + elapsed}
+        </span>
         {steps.length > 1 && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
       </summary>
       {steps.length > 1 && (

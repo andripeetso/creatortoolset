@@ -29,6 +29,8 @@ it("folds the steps into one row: the current step while working, the count once
   expect(live).toContain("<summary");
   expect(live).toContain("Checking on the job…");
   expect(live).not.toContain("Checking what&#x27;s set up…");
+  // one row: the time goes after the step, no clock line or dots under it
+  expect(html({ id: "r", role: "assistant", text: "", at: Date.now() - 35_000, status: "thinking", steps })).toContain("Checking on the job… · 0:35");
   const done = html({ id: "r", role: "assistant", text: "Done.", at: Date.now(), status: "done", steps } as AssistantMessage);
   expect(done).toContain("3 steps");
 });
