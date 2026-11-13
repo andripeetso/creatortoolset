@@ -60,10 +60,11 @@ describe("which computer gets a transcript", () => {
     expect(await done).toEqual({ words: [{ text: "hello", start: 0, end: 0.4 }], language: "en" });
     // Parakeet only the Mac has: it goes there
     const p = transcribeOnComputer("ana", "parakeet-tdt-0.6b-v3", [], audio);
+    const failed = expect(p).rejects.toThrow("Out of memory");
     const j = (await claim(mac.token, ["whisper-large-v3-turbo", "parakeet-tdt-0.6b-v3"])).job!;
     expect(j.model).toBe("parakeet-tdt-0.6b-v3");
     await app.request(`/api/devices/relay/transcribe/${j.id}/fail`, json({ error: "Out of memory" }, as(mac.token)));
-    await expect(p).rejects.toThrow("Out of memory");
+    await failed;
   });
 
   it("with no computer that has the model on, it waits and says for what", async () => {
