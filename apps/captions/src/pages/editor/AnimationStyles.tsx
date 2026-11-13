@@ -75,7 +75,7 @@ interface Waiting {
  * One style's sheet. Pictures dropped anywhere on it are added: on a saved style at once, on a new one when it is
  * saved. A picture added here is an inspiration; "Made & liked" fills from the 👍 on an edit's cards.
  */
-function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
+export function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | null; onClose: () => void; onSaved: (saved: AnimationStyle) => Promise<unknown> }) {
   const [saved, setSaved] = useState(style);
   const [name, setName] = useState(style?.name ?? "");
   const [brief, setBrief] = useState(style?.brief ?? "");
@@ -108,8 +108,9 @@ function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | n
       return;
     }
     void run(async () => {
-      setSaved(await addStylePictures(saved.id, files));
-      await onSaved();
+      const s = await addStylePictures(saved.id, files);
+      setSaved(s);
+      await onSaved(s);
     });
   };
 
@@ -124,17 +125,18 @@ function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | n
       } catch (e) {
         // the style is there now, with the pictures that were taken before the one refused: the sheet stays on it
         setSaved((await listAnimationStyles()).styles.find((x) => x.id === s.id) ?? s);
-        await onSaved();
+        await onSaved(s);
         throw e;
       }
-      await onSaved();
+      await onSaved(s);
       onClose();
     });
 
   const take = (p: StylePicture) =>
     run(async () => {
-      setSaved(await removeStylePicture(saved!.id, p.id));
-      await onSaved();
+      const s = await removeStylePicture(saved!.id, p.id);
+      setSaved(s);
+      await onSaved(s);
     });
 
   const group = (kind: StylePicture["kind"]) => (saved?.pictures ?? []).filter((p) => p.kind === kind);
@@ -157,6 +159,7 @@ function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | n
           onDragLeave={() => setOver(false)}
           onDrop={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             setOver(false);
             add(e.dataTransfer.files);
           }}
@@ -167,8 +170,8 @@ function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | n
             <Input id="animation-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={STYLE_NAME_MAX} autoFocus={!style} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="animation-brief">What should the cards look like?</Label>
-            <Textarea id="animation-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={ANIMATION_BRIEF_MAX} placeholder="Big white words on deep blue. Slow moves, nothing bounces." />
+            <Label htmlFor="animation-brief">Describe the animation style</Label>
+            <Textarea id="animation-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={ANIMATION_BRIEF_MAX} placeholder="Big white words on deep blue, one idea at a time. Slow moves, nothing bounces. Numbers count up." />
           </div>
           {made.length > 0 && (
             <section aria-label="Made & liked" className="flex flex-col gap-2">
@@ -198,10 +201,12 @@ function AnimationSheet({ style, onClose, onSaved }: { style: AnimationStyle | n
                 e.target.value = "";
               }}
             />
-            <Button type="button" size="sm" variant="outline" className="self-start" disabled={busy} onClick={() => fileRef.current?.click()}>
-              <Plus className="h-3.5 w-3.5" />
-              Add pictures
-            </Button>
+            <div className={cn("flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-3 py-3", over ? "border-violet-500" : "border-zinc-500/30")}>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+                <Plus className="h-3.5 w-3.5" />
+                Add pictures
+              </Button>
+            </div>
           </section>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <Button type="submit" disabled={busy || !name.trim()} className="self-start">

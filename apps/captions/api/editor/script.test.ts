@@ -20,7 +20,7 @@ const { aiFor, completeWithFallback } = await import("../ai-complete");
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { whoFor } = await import("../library/describe");
-const { createEdit, readEdit, saveStep, viewOf } = await import("./store");
+const { createEdit, readEdit, saveEdit, saveStep, viewOf } = await import("./store");
 const { allocate, parseScript, scriptPrompt, takeMap } = await import("./script");
 const { tick } = await import("./worker");
 
@@ -126,6 +126,14 @@ describe("AI Editor script: the step", () => {
     expect(view.lines.map((l) => l.id)).toEqual(["L1", "L2"]);
     expect(view.plans.map((p) => p.name)).toEqual(["v1", "v2"]);
     expect(view.notes).toContain("Line L3 has no take in the footage: left out");
+    // nobody named the edit: it is named after the first line of its first version
+    expect(view.name).toBe(view.lines.find((l) => l.id === view.plans[0]!.lines[0]!.line)!.text);
+    // a name the person gave stays through the next run
+    await saveEdit({ ...readEdit(editId)!, name: "Crawlers" });
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, _u, _c, parse) => parse(JSON.stringify(answer)));
+    expect(await runScript()).toEqual({ state: "done", error: null });
+    expect(readEdit(editId)!.name).toBe("Crawlers");
   });
 
   it("with no AI route parks as needs_key with aiFor's own message", async () => {

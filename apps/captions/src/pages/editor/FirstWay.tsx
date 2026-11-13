@@ -109,7 +109,7 @@ export function FirstWay({ onDone }: { onDone: () => Promise<unknown> }) {
           title="Versions"
           control={<SettingsSelect label="Versions" value={String(versions)} onValueChange={(v) => setVersions(Number(v))} options={Array.from({ length: MAX_VERSIONS }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))} />}
         />
-        <Row title="Working size" control={<SettingsSelect label="Working size" value={size} onValueChange={setSize} options={SIZE_OPTIONS} />} />
+        <Row title="Video size" control={<SettingsSelect label="Video size" value={size} onValueChange={setSize} options={SIZE_OPTIONS} />} />
         {full && folders.length > 0 && (
           <Row
             title="B-roll folder"
