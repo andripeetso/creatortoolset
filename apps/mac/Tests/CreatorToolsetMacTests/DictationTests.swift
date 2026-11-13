@@ -374,3 +374,14 @@ final class DictationKeysTests: XCTestCase {
         XCTAssertFalse(set.release(0))
     }
 }
+
+final class EarlierAppTests: XCTestCase {
+    func testNoKeyIsRegisteredWhileTheEarlierAppRuns() {
+        XCTAssertTrue(Dictation.earlierAppRunning(in: ["com.apple.finder", Dictation.earlierAppID, nil]))
+        XCTAssertFalse(Dictation.earlierAppRunning(in: ["com.apple.finder", nil]))
+        XCTAssertTrue(Dictation.keysLive(on: true, paused: false, earlierAppOpen: false))
+        XCTAssertFalse(Dictation.keysLive(on: true, paused: false, earlierAppOpen: true), "it has the same keys")
+        XCTAssertFalse(Dictation.keysLive(on: true, paused: true, earlierAppOpen: false), "a key picker is open")
+        XCTAssertFalse(Dictation.keysLive(on: false, paused: false, earlierAppOpen: false))
+    }
+}

@@ -481,6 +481,9 @@ but nothing asks for a permission and nothing downloads until the first press of
 - Settings → AI → Voice → Dictation on the site shows and sets it (`thismac-dictation:<what>:<value>`,
   `Dictation.bridgeState`); the app keeps the values in `UserDefaults` (`dictation.*`). The earlier dictation app's
   choices are taken over once (F13–F16, with its hold key as Talk if it had one).
+- While that earlier app runs (by bundle id, `Dictation.earlierAppOpen`, from NSWorkspace's launch and quit
+  notifications) dictation here registers no key, Carbon or tap, and a recording or transcription in progress pastes
+  nothing; Settings says so in one line. Its keys come back when that app quits.
 
 ## Notifications and the Dock badge
 

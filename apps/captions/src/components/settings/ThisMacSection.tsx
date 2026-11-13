@@ -42,6 +42,8 @@ export type DictationState = {
   keys: Record<DictationAction, string>;
   /** the action whose key the app is waiting for */
   picking: DictationAction | null;
+  /** why no key works right now (another dictation app has them), one quiet line; missing in older Mac apps */
+  paused?: string | null;
   model: string;
   /** `here`: on this Mac; `removable`: this app downloaded it; `progress`: 0–1 while it downloads */
   models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;

@@ -79,6 +79,12 @@ describe("the dictation group", () => {
     expect(html).toContain(">Set up dictation</button>");
   });
 
+  it("says in one line why the keys are off while another dictation app is open", () => {
+    const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility", paused: "Off while your earlier dictation app is open" }) })} />);
+    expect(html).toContain("Off while your earlier dictation app is open");
+    expect(html).not.toContain("Needs");
+  });
+
   it("asks for a key while the app waits for one", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ picking: "history" }) })} />);
     expect(html).toContain("Press a key…");

@@ -211,6 +211,40 @@ final class Dictation: ObservableObject {
         }
     }
 
+    /// The dictation app this one grew out of, by bundle id. While it runs it has the same keys and pastes too, so
+    /// dictation here registers no key and pastes nothing until it quits.
+    nonisolated static let earlierAppID = "com.humanitas.parrot"
+
+    /// Whether the earlier dictation app is among these running apps' bundle ids.
+    nonisolated static func earlierAppRunning(in bundleIDs: [String?]) -> Bool { bundleIDs.contains(earlierAppID) }
+
+    /// Whether any key is registered: dictation on, no picker open, the earlier app not running.
+    nonisolated static func keysLive(on: Bool, paused: Bool, earlierAppOpen: Bool) -> Bool { on && !paused && !earlierAppOpen }
+
+    /// The earlier dictation app is running (`earlierAppRunning`), kept current from NSWorkspace's launch and quit
+    /// notifications. The one check for "another app has dictation's keys".
+    @Published private(set) var earlierAppOpen = false
+
+    private func watchEarlierApp() {
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Dictation.shared.checkEarlierApp() }
+            }
+        }
+        checkEarlierApp()
+    }
+
+    private func checkEarlierApp() {
+        let open = Self.earlierAppRunning(in: NSWorkspace.shared.runningApplications.map(\.bundleIdentifier))
+        guard open != earlierAppOpen else { return }
+        earlierAppOpen = open
+        DictationLog.info(open ? "earlier dictation app open: keys off" : "earlier dictation app quit: keys on")
+        // a recording or a transcription in progress pastes nothing
+        if open { controllerStore?.discard(); sync() }
+        applyKeys()
+    }
+
     /// A key picker or the guide's first step is open: no dictation key does anything.
     var keysPaused = false {
         didSet { if keysPaused != oldValue { applyKeys() } }
@@ -281,6 +315,7 @@ final class Dictation: ObservableObject {
             guard let self else { throw TranscriberError.notLoaded }
             return try await self.onDevice(samples)
         }
+        watchEarlierApp()
         apply()
     }
 
@@ -343,7 +378,7 @@ final class Dictation: ObservableObject {
     /// setup) and a watch for a first hold. Off, or a picker open: none.
     private func applyKeys() {
         unregisterCarbon()
-        let live = prefs.on && !keysPaused
+        let live = Self.keysLive(on: prefs.on, paused: keysPaused, earlierAppOpen: earlierAppOpen)
         let trusted = AXIsProcessTrusted()
         let pressed = DictationAction.allCases.compactMap { action -> (key: Shortcut, action: () -> Void)? in
             guard case .key(let s)? = prefs.keys[action] else { return nil }
@@ -445,7 +480,7 @@ final class Dictation: ObservableObject {
     }
 
     private func talk(_ input: TalkRouter.Input) {
-        guard prefs.on else { return }
+        guard prefs.on, !earlierAppOpen else { return }
         let recording = controllerStore?.state == .recording
         if !recording, input != .cancel, input != .holdCancel, !ready {
             // a hold asks only once it was a real hold (its release), never on a stray tap of fn
@@ -699,6 +734,8 @@ final class Dictation: ObservableObject {
             // each action's key as shown ("" = none), and the one whose picker is open
             "keys": Dictionary(uniqueKeysWithValues: DictationAction.allCases.map { ($0.rawValue, prefs.keys[$0]?.display ?? "") }),
             "picking": picking?.rawValue ?? NSNull(),
+            // why no key works right now, in one quiet line
+            "paused": earlierAppOpen ? "Off while your earlier dictation app is open" : NSNull(),
             "model": prefs.model,
             "models": ModelRegistry.shared.map { m -> [String: Any] in
                 let variant = m.whisperKitID ?? ""

@@ -28,7 +28,7 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
           id="dictation"
           title="Dictation"
           description="Talk, and the words go where the cursor is."
-          status={d.on && d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
+          status={!d.on ? undefined : d.paused ? d.paused : d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
           control={
             <>
               {d.on && <Button size="sm" variant="outline" onClick={() => set("guide")}>Set up dictation</Button>}
