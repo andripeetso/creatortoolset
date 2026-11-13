@@ -23,6 +23,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         "screen-look.json": "application/json",
         "screen.mp4": "video/mp4",
         "camera.mp4": "video/mp4",
+        "camera-faces.json": "application/json",
         "thumb.jpg": "image/jpeg",
     ]
     /// An open-ended range (`bytes=n-`) is cut to this many bytes, so a seek does not read the rest of the file.

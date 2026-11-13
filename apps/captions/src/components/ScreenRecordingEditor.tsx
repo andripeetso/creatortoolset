@@ -10,6 +10,7 @@ import {
   cameraPlace,
   defaultCamera,
   defaultLook,
+  faceFollower,
   normalizeLook,
   opaqueLook,
   outputSize,
@@ -17,6 +18,7 @@ import {
   pointerPath,
   trimOf,
   zoomFloor,
+  type FaceTrack,
   type FrameShape,
   type ScreenEvents,
   type ScreenLook,
@@ -28,6 +30,7 @@ import type { ScreenSource } from "@/lib/screen-source";
 import { Inspector, type InspectorTab } from "@/components/screen-editor/Inspector";
 import { Timeline } from "@/components/screen-editor/Timeline";
 import { Segmented } from "@/components/screen-editor/controls";
+import { useMacRecorderState } from "@/components/settings/ThisMacSection";
 import { usePlayer } from "@/components/screen-editor/usePlayer";
 
 /** A way out for the finished video. `run` gets it (`name` has no extension) and reports its own steps. */
@@ -106,7 +109,28 @@ export function ScreenRecordingEditor({
   const base = meta.name.replace(/\.(mp4|mov|m4v|webm)$/i, "");
 
   const path = useMemo(() => (events ? pointerPath(events) : []), [events]);
-  const player = usePlayer({ url: source.url, cameraUrl: source.cameraUrl, look, events, path, duration: meta.duration, width, height });
+  // Follow my face: where the face is in the camera (found before, or found now by the Mac app), and the cut that follows it
+  const [faceTrack, setFaceTrack] = useState<FaceTrack | null | undefined>(undefined);
+  const [finding, setFinding] = useState<number | null>(null);
+  useEffect(() => {
+    void sourceRef.current.faces?.().then(setFaceTrack, () => setFaceTrack(null));
+  }, [source.url]);
+  const follower = useMemo(() => faceFollower(faceTrack), [faceTrack]);
+  const mac = useMacRecorderState();
+  const canFind = !!source.findFaces && !!mac && !!mac.faces;
+  const findFaces = async () => {
+    if (finding !== null) return;
+    setFinding(0);
+    try {
+      setFaceTrack(await sourceRef.current.findFaces!((p) => setFinding(Math.round(p * 100))));
+    } catch (e) {
+      setFaceTrack(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFinding(null);
+    }
+  };
+  const player = usePlayer({ url: source.url, cameraUrl: source.cameraUrl, look, events, path, duration: meta.duration, width, height, faces: follower });
   // a recording filed without its length (one that stopped early) takes it from the file
   const duration = meta.duration > 0 ? meta.duration : player.mediaDuration;
   const loaded = useRef<{ events: ScreenEvents; look: ScreenLook | null } | null>(null);
@@ -236,6 +260,7 @@ export function ScreenRecordingEditor({
     const hit = e.button === 0 ? camAt(e) : null;
     if (!hit) return;
     const { cam, r, size, k } = hit;
+    if (cam.follow && follower) return; // the face decides where it looks; a scroll still goes closer
     const cut = cameraCut(size.width, size.height, r, cam, cam.mirror);
     const fw = cut.sw / size.width;
     const fh = cut.sh / size.height;
@@ -335,6 +360,7 @@ export function ScreenRecordingEditor({
         cameraFile: sourceRef.current.cameraFile,
         events,
         look,
+        faces: follower,
         ...out,
         trim: look.trim ? kept : undefined,
         alpha: !a,
@@ -543,6 +569,7 @@ export function ScreenRecordingEditor({
             player={player}
             aim={aim}
             hasCamera={!!source.cameraUrl}
+            faces={{ found: follower !== null, tried: faceTrack != null, can: canFind, finding, find: () => void findFaces() }}
             canClear={canClear}
             floor={floor}
           />
