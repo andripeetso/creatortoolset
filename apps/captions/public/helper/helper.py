@@ -6,7 +6,8 @@ its owner's Creator Toolset server, with models it downloads itself.
   helper.py run                    take transcripts until stopped (the systemd --user unit runs this)
 
 Its folder is $CT_HELPER_HOME, else ~/.local/share/creator-toolset-helper: config.json (the server and the token, mode
-0600) and models/<id>/ (one folder per model; a model is ready once its .done file is there). Nothing else is written.
+0600), models/<id>/ (one folder per model; a model is ready once its .done file is there) and hf/ (the download
+library's own cache). Nothing else is written.
 The road it speaks is the server's contracts/devices.ts (TRANSCRIBE_KIND).
 """
 import json
@@ -26,6 +27,8 @@ VERSION = "1"
 HOME = os.environ.get("CT_HELPER_HOME") or os.path.expanduser("~/.local/share/creator-toolset-helper")
 CONFIG = os.path.join(HOME, "config.json")
 MODELS = os.path.join(HOME, "models")
+# Hugging Face's own cache and logs go in this folder too, not ~/.cache
+os.environ.setdefault("HF_HOME", os.path.join(HOME, "hf"))
 KIND = "transcribe"
 # exit status when the server no longer knows this computer (removed in Devices): the unit does not restart on it
 REMOVED = 3
