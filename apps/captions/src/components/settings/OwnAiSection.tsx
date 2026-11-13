@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CliId, LocalAiRow, LocalAiView } from "@contracts/local-ai";
 import { Check, Copy, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,35 +20,44 @@ export const APPS: Record<AiApp, { name: string; logo?: string; after: string }>
 };
 
 /**
- * The AI apps that connect over the web: the person adds this server's address in the app, signs in here and presses
- * Allow (api/oauth.ts names their key after the app). Only a server the internet reaches, over https.
+ * ChatGPT and Claude, on a computer linked through Connect: they reach this computer through the Connect service's one
+ * address, and a person adds Creator Toolset from that app's own store. listing: its page there, once it is listed (an
+ * app release fills it in). A row shows only then, or while that app asks to connect (`?allow=<app>`, the link the
+ * Connect sign-in page opens), so nobody is sent to add it by address.
  */
 export const WEB_APPS = [
-  {
-    name: "ChatGPT",
-    logo: "codex",
-    open: () => "https://chatgpt.com/plugins",
-    steps: [
-      "Open ChatGPT's Plugins page, press + and choose Add custom MCP server. No + there? Turn on Developer mode in ChatGPT's Settings → Security and login first.",
-      "Name it Creator Toolset and paste this address under Connection, as the Server URL (Description stays empty):",
-      "Authentication: OAuth. Tick I understand and want to continue, then press Create as a plugin.",
-      "ChatGPT sends you here: sign in and press Allow.",
-    ],
-  },
-  {
-    name: "Claude",
-    logo: "claude",
-    // the add dialog, filled in; if Claude ignores the fields, the steps below still say what goes where
-    open: (url: string) => `https://claude.ai/customize/connectors?${new URLSearchParams({ modal: "add-custom-connector", connectorName: "Creator Toolset", connectorUrl: url })}`,
-    steps: [
-      "Open Claude's Connectors, press + Add and choose Add custom connector.",
-      "Name it Creator Toolset and paste this address as the server URL:",
-      "Press Continue, then Add, then Connect.",
-      "Claude sends you here: sign in and press Allow.",
-    ],
-  },
+  { name: "ChatGPT", logo: "codex", listing: "" as string },
+  { name: "Claude", logo: "claude", listing: "" as string },
 ] as const;
-const onTheWeb = () => typeof window !== "undefined" && window.location.protocol === "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
+/** The ChatGPT and Claude rows: only on a linked computer, for an app whose store lists Creator Toolset or that is asking now. Pure, so it is tested. */
+export const aiAppsShown = <T extends { name: string; listing: string }>(linked: boolean, apps: readonly T[], asking: string | null): T[] =>
+  linked ? apps.filter((a) => !!a.listing || a.name.toLowerCase() === asking?.toLowerCase()) : [];
+
+/**
+ * Where a ChatGPT or Claude row stands. The computer's Install only gets it ready: it counts as installed once the AI
+ * app has used the connection. Pure, so it is tested.
+ */
+export function webRowState(key?: { usedAt?: number }): "install" | "finish" | "installed" {
+  if (!key) return "install";
+  return key.usedAt ? "installed" : "finish";
+}
+
+/** Whether this computer is linked through Connect (GET /api/connect answers the Connect service's address for AI apps). */
+function useLinked(): boolean {
+  const [ai, setAi] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/connect")
+      .then((r) => (r.ok ? (r.json() as Promise<{ ai?: string | null }>) : null))
+      .then((j) => live && setAi(j?.ai ?? null))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  return !!ai;
+}
 
 const NAME = "creator-toolset";
 
@@ -118,11 +127,23 @@ export function useOwnAi() {
  */
 export function OwnAiSection() {
   const { keys, local, error, load, disconnect } = useOwnAi();
+  // back from finishing in ChatGPT or Claude: read the keys again, so the row says Installed
+  useEffect(() => {
+    const again = () => load();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const here = local?.local ? connectableRows(local) : [];
+  // ChatGPT or Claude asking to connect: the Connect sign-in page sends the person here with ?allow=<app>
+  const asking = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("allow");
+  const web = aiAppsShown(useLinked(), WEB_APPS, asking);
   // the apps with a row of their own above are not listed again under Installed in
-  const web = onTheWeb() ? WEB_APPS : [];
   const rowed = [...(local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name)), ...web.map((a) => a.name)];
+  const webRow = (a: (typeof WEB_APPS)[number]) => (
+    <WebAppRow key={a.name} app={a} asking={a.name.toLowerCase() === asking?.toLowerCase()} aiKey={newest(keys ?? [], a.name)} onDone={load} />
+  );
   const listed = (keys ?? []).filter((k) => !rowed.includes(k.name));
 
   return (
@@ -138,9 +159,7 @@ export function OwnAiSection() {
             {here.map((r) => (
               <LocalAppRow key={r.id} row={r} aiKey={keys.find((k) => k.name === r.name)} onDone={load} onDisconnect={disconnect} />
             ))}
-            {web.map((a) => (
-              <WebAppRow key={a.name} app={a} aiKey={newest(keys, a.name)} onDisconnect={disconnect} />
-            ))}
+            {web.map(webRow)}
             <OtherAppRow onMade={load} />
           </Card>
         ) : (
@@ -148,9 +167,7 @@ export function OwnAiSection() {
             {REMOTE_APPS.map((a) => (
               <RemoteAppRow key={a} app={a} aiKey={keys.find((k) => k.name === APPS[a].name)} onDone={load} onDisconnect={disconnect} />
             ))}
-            {web.map((a) => (
-              <WebAppRow key={a.name} app={a} aiKey={newest(keys, a.name)} onDisconnect={disconnect} />
-            ))}
+            {web.map(webRow)}
             <OtherAppRow onMade={load} />
           </Card>
         )}
@@ -276,62 +293,60 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
 const newest = (keys: AiKeyInfo[], name: string) => keys.filter((k) => k.name === name).sort((a, b) => b.at - a.at)[0];
 
 /**
- * ChatGPT or Claude. Neither takes a server from a link, so Install opens the steps in the row: what to press there,
- * the address with Copy, and a button that opens the right page. The row says Installed once the app has its key.
+ * ChatGPT or Claude on a linked computer. Install opens Creator Toolset's page in that app's store and gets this
+ * computer ready for it (POST /api/connect/ai): the person adds it there and signs in, and no password is asked of
+ * this computer. While the app asks to connect (`asking`), Allow does the same without opening the store. The row says
+ * Installed once the app has used the connection; Remove takes it back here and on the Connect service.
  */
-function WebAppRow({ app, aiKey, onDisconnect }: { app: (typeof WEB_APPS)[number]; aiKey?: AiKeyInfo; onDisconnect: (id: string) => Promise<unknown> }) {
-  const [open, setOpen] = useState(false);
-  const url = `${window.location.origin}/api/mcp`;
+function WebAppRow({ app, asking, aiKey, onDone }: { app: (typeof WEB_APPS)[number]; asking: boolean; aiKey?: AiKeyInfo; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [allowed, setAllowed] = useState(false);
+  const setGrant = (on: boolean) =>
+    fetch("/api/connect/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ app: app.name, on }) }).then((r) => json<{ ok: boolean }>(r));
+  const state = webRowState(aiKey);
+  const install = async () => {
+    // the store page is opened in the press itself: a window opened after waiting for an answer is one a browser or
+    // the Mac app refuses
+    if (!asking && app.listing) window.open(app.listing, "_blank", "noopener");
+    setBusy(true);
+    setFailed(null);
+    try {
+      await setGrant(true);
+      if (asking) setAllowed(true);
+    } catch (e) {
+      setFailed(msg(e));
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  };
+  const remove = () => setGrant(false).catch((e) => saveFailed(msg(e))).finally(onDone);
+  const subtitle =
+    state === "installed" && aiKey ? usedText(aiKey)
+    : asking && allowed ? "Allowed. It finishes by itself in your browser."
+    : asking ? `${app.name} asks to use Creator Toolset on this computer.`
+    : state === "finish" ? `Finish in ${app.name}: add Creator Toolset there, then Allow.`
+    : undefined;
   return (
-    <div>
-      <ListRow
-        icon={<ProviderLogo driver={app.logo} className="size-4" />}
-        title={app.name}
-        subtitle={aiKey ? usedText(aiKey) : undefined}
-        actions={
-          aiKey ? (
-            <>
-              <InUse>Installed</InUse>
-              <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
-            </>
-          ) : (
-            !open && (
-              <Button size="sm" onClick={() => setOpen(true)}>
-                Install
-              </Button>
-            )
-          )
-        }
-      />
-      {open && !aiKey && (
-        <div className="px-3 pb-3 sm:px-4">
-          <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-            {app.steps.map((step, i) => (
-              <li key={i}>
-                {step}
-                {i === 1 && (
-                  <div className="mt-2">
-                    <CommandBox text={url} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
-          <div className="mt-3 flex gap-2">
-            <Button size="sm" onClick={() => window.open(app.open(url), "_blank", "noopener")}>
-              Open {app.name}
-            </Button>
-            {/* an icon the app takes (ChatGPT: PNG, at most 10 KB) */}
-            <Button size="sm" variant="outline" asChild>
-              <a href="/icons/icon-256-small.png" download="Creator Toolset.png">Icon</a>
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Close
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+    <ListRow
+      icon={<ProviderLogo driver={app.logo} className="size-4" />}
+      title={app.name}
+      subtitle={subtitle}
+      status={failed ? <Status tone="broken">{failed}</Status> : undefined}
+      actions={
+        state === "installed" && aiKey ? (
+          <>
+            <InUse>Installed</InUse>
+            <DisconnectMenu k={aiKey} onDisconnect={remove} />
+          </>
+        ) : asking && allowed ? null : (
+          <Button size="sm" disabled={busy} onClick={() => void install()}>
+            {busy ? (asking ? "Allowing…" : "Installing…") : failed ? "Try again" : asking ? "Allow" : "Install"}
+          </Button>
+        )
+      }
+    />
   );
 }
 

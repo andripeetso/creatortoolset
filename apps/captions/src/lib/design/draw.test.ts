@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { drawingUrl, fontOf, inLayer, layerAt, lineHeightOf, shownText, sourceOf, wrapLines } from "./draw";
+import { drawingUrl, fontOf, inLayer, layerAt, lineHeightOf, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -13,6 +13,31 @@ describe("drawing a design", () => {
     expect(wrapLines("One\n\nTwo  three", 1000, measure)).toEqual(["One", "", "Two three"]);
     expect(wrapLines("Supercalifragilistic mat", 50, measure)).toEqual(["Supercalifragilistic", "mat"]);
     expect(wrapLines("", 50, measure)).toEqual([""]);
+  });
+
+  it("measures a line with its letter spacing (between the letters, not after the last), so it wraps where it is drawn", () => {
+    expect(textWidth({}, "Roll", measure)).toBe(40);
+    expect(textWidth({ spacing: 5 }, "Roll", measure)).toBe(55);
+    expect(textWidth({ spacing: 5 }, "", measure)).toBe(0);
+    // an emoji is one letter
+    expect(textWidth({ spacing: 5 }, "a👶", (s) => Array.from(s).length * 10)).toBe(25);
+    const spaced = (s: string) => textWidth({ spacing: 10 }, s, measure);
+    expect(wrapLines("Roll the mat", 120, measure)).toEqual(["Roll the mat"]);
+    expect(wrapLines("Roll the mat", 120, spaced)).toEqual(["Roll", "the", "mat"]);
+  });
+
+  it("gives the shapes with straight sides their corners inside the box: a triangle up, an arrow to the right, a five-pointed star", () => {
+    expect(shapePoints("triangle", 200, 100)).toEqual([[100, 0], [200, 100], [0, 100]]);
+    const arrow = shapePoints("arrow", 300, 100);
+    expect(arrow[3]).toEqual([300, 50]);
+    expect(arrow[2]).toEqual([200, 0]);
+    // a short arrow's head is at most half of it
+    expect(shapePoints("arrow", 100, 100)[2]).toEqual([50, 0]);
+    const star = shapePoints("star", 200, 200);
+    expect(star).toHaveLength(10);
+    expect(star[0]![0]).toBeCloseTo(100);
+    expect(star[0]![1]).toBeCloseTo(0);
+    for (const [x, y] of star) expect(x >= 0 && x <= 200 && y >= 0 && y <= 200).toBe(true);
   });
 
   it("names a text's font at its real weight and size, its line height and its shown letters", () => {

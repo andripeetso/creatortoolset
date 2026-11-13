@@ -785,6 +785,11 @@ export function AssistantDock() {
       {/* the message box shares the header's and the chat's left and right edges */}
       {chatting && (
         <div className="shrink-0 px-4 pt-1 pb-4">
+          {/* a question still waiting for a press sits over the message box, however far up its reply is (owner,
+              2026-11-12: he opened a chat that asked for his approval and could not see where); answered, it goes back
+              under its reply */}
+          <ApprovalCards approvals={view?.messages.flatMap((m) => m.approvals ?? []).filter((x) => x.status === "waiting")} />
+          <ConfirmCards confirms={view?.messages.flatMap((m) => m.confirms ?? []).filter((x) => x.status === "waiting")} onView={setView} />
           {queue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
               {queue.map((it, i) => (
@@ -850,6 +855,9 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
     </span>
   );
 }
+
+/** A reply's questions that were answered: the ones still waiting are over the message box. */
+const answered = <T extends { status: string }>(xs?: T[]) => xs?.filter((x) => x.status !== "waiting");
 
 export function Message({
   m,
@@ -938,8 +946,8 @@ export function Message({
         {!m.wait && <Elapsed since={m.at} />}
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
-        <ApprovalCards approvals={m.approvals} />
-        <ConfirmCards confirms={m.confirms} onView={onView} />
+        <ApprovalCards approvals={answered(m.approvals)} />
+        <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
         {m.send && sending ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="truncate" title={m.send.path}>
@@ -970,34 +978,24 @@ export function Message({
       <div>
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
-        <ApprovalCards approvals={m.approvals} />
-        <ConfirmCards confirms={m.confirms} onView={onView} />
+        <ApprovalCards approvals={answered(m.approvals)} />
+        <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
         <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
         {again}
       </div>
     );
   return (
     <div className={cn("group/msg max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
-      {working ? (
-        <Steps steps={steps} working />
-      ) : (
-        steps.length > 0 && (
-          <details className="group mb-1.5 text-xs text-muted-foreground">
-            <summary className="w-fit cursor-pointer list-none select-none hover:text-foreground">
-              {steps.length === 1 ? steps[0] : `${steps.length} steps`}
-              {steps.length > 1 && <span className="ml-1 inline-block transition-transform group-open:rotate-90">›</span>}
-            </summary>
-            {steps.length > 1 && <Steps steps={steps} />}
-          </details>
-        )
-      )}
+      <Steps steps={steps} working={working} />
       {working && <Elapsed since={m.at} />}
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
-      <ApprovalCards approvals={m.approvals} />
-        <ConfirmCards confirms={m.confirms} onView={onView} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
+      {/* the questions waiting for a press come under the words, as the reply says ("the card below"): the words
+          written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
+      <ApprovalCards approvals={answered(m.approvals)} />
+      <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
       {again}
       {onFolder && (
         <button
@@ -1129,27 +1127,27 @@ function PastList({ view, onOpen, onDelete, onSettle }: { view: AssistantView; o
 }
 
 /** What the reply did on the way, one line per tool; while it works, the newest one pulses. */
+/** What the AI did, folded into one row: the step it is on while it works ("N steps" once done), opening to the whole list. */
 function Steps({ steps, working = false }: { steps: string[]; working?: boolean }) {
   if (!steps.length) return null;
+  const last = steps[steps.length - 1];
   return (
-    <ul className="mt-1 mb-1.5 space-y-0.5 text-xs text-muted-foreground">
-      {steps.map((s, i) => {
-        const now = working && i === steps.length - 1;
-        return (
-          <li key={i} className="flex items-center gap-1.5 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-300">
-            <span className={cn("size-1.5 shrink-0 rounded-full", now ? "bg-[var(--tint)] motion-safe:animate-pulse" : "bg-muted-foreground/40")} aria-hidden />
-            <span className={cn(now && "text-foreground")}>
-              {s}
-              {now && "…"}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <details className="group mt-1 mb-1.5 text-xs text-muted-foreground">
+      <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", steps.length > 1 && "cursor-pointer hover:text-foreground")}>
+        {working && <span className="size-1.5 shrink-0 rounded-full bg-[var(--tint)] motion-safe:animate-pulse" aria-hidden />}
+        <span className={cn("truncate", working && "text-foreground")}>{working ? `${last}…` : steps.length === 1 ? last : `${steps.length} steps`}</span>
+        {steps.length > 1 && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
+      </summary>
+      {steps.length > 1 && (
+        <ul className="mt-1 ml-0.5 space-y-0.5 border-l border-border pl-2.5">
+          {steps.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }
-
-/** Thinking: three dots that bounce in turn. */
 function Dots() {
   return (
     <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Thinking">

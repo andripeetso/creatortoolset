@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { alignLayers, boundsOf, distribute, fitView, freshIds, layerName, pageLeft, PAGE_GAP, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { DESIGN_GAP } from "@contracts/design";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -21,12 +22,50 @@ describe("the hands on the canvas", () => {
     expect(zoomAt(v, 0, 0, 0).z).toBe(ZOOM.min);
   });
 
-  it("fits a box whole in the middle of the room, and lays the pages in a row", () => {
+  it("fits a box whole in the middle of the room", () => {
     const v = fitView({ x: 1200, y: 0, w: 1080, h: 1350 }, { w: 1000, h: 800 }, 50);
     expect(v.z).toBeCloseTo(700 / 1350);
     expect(v.x + (1200 + 540) * v.z).toBeCloseTo(500);
     expect(v.y + 675 * v.z).toBeCloseTo(400);
-    expect([pageLeft(0, 1080), pageLeft(2, 1080)]).toEqual([0, 2 * (1080 + PAGE_GAP)]);
+  });
+
+  it("gives every frame its place and size: its own, or (one from before frames had any) its place in the row", () => {
+    expect(frameOf({ x: -300, y: 40, w: 1280, h: 720 }, 3, 1080, 1350)).toEqual(box(-300, 40, 1280, 720));
+    expect(frameOf({}, 2, 1080, 1350)).toEqual(box(2 * (1080 + DESIGN_GAP), 0, 1080, 1350));
+    // a new frame goes beside the rightmost one, level with the frame it was made from
+    expect(besideFrames([box(0, 0, 1080, 1350), box(2000, 500, 1280, 720)], box(0, 0, 1080, 1350), { w: 1080, h: 1080 })).toEqual(box(3280 + DESIGN_GAP, 0, 1080, 1080));
+    expect(besideFrames([], undefined, { w: 100, h: 50 })).toEqual(box(0, 0, 100, 50));
+    expect(pageName({ id: "p1", background: "#fff", layers: [] }, 1)).toBe("Frame 2");
+  });
+
+  it("keeps both sides of a frame changed in two places: its place moved here, its layers designed there", () => {
+    const l = (id: string, x: number): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x, y: 0, w: 10, h: 10 });
+    const base: DesignPage = { id: "p1", x: 0, y: 0, w: 1080, h: 1350, background: "#ffffff", layers: [l("l1", 0)] };
+    const mine: DesignPage = { ...base, x: 900, y: -50 };
+    const theirs: DesignPage = { ...base, background: "#111111", layers: [l("l1", 40), l("l2", 80)] };
+    expect(mergeFrame(mine, base, theirs)).toEqual({ ...theirs, x: 900, y: -50 });
+    // the same thing changed in both: this window's stays
+    expect(mergeFrame({ ...base, layers: [l("l1", 7)] }, base, theirs).layers).toEqual([l("l1", 7)]);
+    // a name taken off here stays off; a frame this window made (the server never had it) is this window's whole
+    expect(mergeFrame({ ...base, name: undefined }, { ...base, name: "Cover" }, { ...theirs, name: "Cover" }).name).toBeUndefined();
+    expect(mergeFrame(mine, undefined, theirs)).toBe(mine);
+  });
+
+  it("does this window's work again on the design as the server has it: frames made, deleted, moved and reordered here, beside what changed there", () => {
+    const f = (id: string, more: Partial<DesignPage> = {}): DesignPage => ({ id, x: 0, y: 0, w: 100, h: 100, background: "#ffffff", layers: [], ...more });
+    const base = [f("a"), f("b"), f("c")];
+    const ids = (pages: DesignPage[]) => pages.map((p) => p.id).join();
+    // there: b recoloured and a frame added. Here: a moved, c deleted, a frame made
+    const theirs = [f("a"), f("b", { background: "#000000" }), f("c"), f("ai")];
+    const merged = mergeFrames([f("a", { x: 500 }), base[1]!, f("new")], base, theirs);
+    expect(ids(merged)).toBe("a,b,ai,new");
+    expect([merged[0]!.x, merged[1]!.background]).toEqual([500, "#000000"]);
+    // nothing done here: the server's, as it is (the very frames)
+    expect(mergeFrames(base, base, theirs)).toEqual(theirs);
+    // reordered here: this window's order, with the frame added there still in
+    expect(ids(mergeFrames([base[2]!, base[0]!, base[1]!], base, theirs))).toBe("c,a,b,ai");
+    // a frame deleted there is not brought back by a window that only still had it
+    expect(ids(mergeFrames(base, base, [f("a"), f("c")]))).toBe("a,c");
   });
 
   it("resizes about the opposite corner, through the layer's rotation; Shift keeps the shape, Alt the middle", () => {

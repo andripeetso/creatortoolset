@@ -310,3 +310,40 @@ describe("ReviewEdits panel", () => {
     root = createRoot(host);
   });
 });
+
+describe("Face (the face refinement strength)", () => {
+  it("a ?face= link opens it paused on that frame, fades over the video and keeps a new strength", async () => {
+    const stage = document.createElement("div");
+    const video = document.createElement("video");
+    stage.append(video);
+    document.body.append(stage);
+    const seek = vi.fn((t: number) => {
+      video.currentTime = t;
+      video.dispatchEvent(new Event("seeked"));
+    });
+    const face = { max: 2, still: vi.fn(async () => "blob:face"), strength: vi.fn(async () => 1.2), save: vi.fn(async () => {}) };
+    const bound = new ReviewSlotBridge().bind("tl");
+    const ctx = {
+      version: { n: 1, fps: 25, timeline: true, edit }, api: { timeline: async () => view },
+      player: { video: () => video, seek, pause: () => {} }, manage: true, sent: [], ...bound,
+    } as unknown as ReviewSlotContext;
+    await act(async () => root.render(<ReviewEdits {...ctx} hooks={{ face }} faceAt={150} />));
+    await act(async () => { await new Promise((r) => setTimeout(r, 450)); });
+
+    expect(seek).toHaveBeenCalledWith(6);
+    expect(host.textContent).toContain("Face refinement");
+    expect(face.still).toHaveBeenCalledWith(edit, "V1:100", 150, expect.anything());
+    const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect(slider.value).toBe("120");
+    expect(stage.querySelectorAll("div[style*='blob:face']")).toHaveLength(2);   // as filmed, and the full strength over it
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "80");
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("Use 80% for this edit")!.click());
+    expect(face.save).toHaveBeenCalledWith(edit, 0.8);
+    expect(host.textContent).toContain("A new version with this strength is on its way");
+    stage.remove();
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DESIGN_LIMITS } from "../../contracts/design";
-import { cleanPages, coverPage, plainPages, plainWords, safeSvg, slideWords } from "./design-check";
+import { cleanPages, coverPage, plainPages, plainWords, safeSvg, slideWords, withFrames } from "./design-check";
 
 const rules = { w: 1080, h: 1350, pictures: ["ab12cd34.jpg"] };
 const text = (more: object = {}) => ({ type: "text", x: 90, y: 100, w: 900, h: 300, text: "Roll the mat out", font: "Anton", size: 96, color: "#112233", align: "center", ...more });
@@ -121,6 +121,44 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(pages[0]!.layers[1]!.shadow).toEqual({ color: "#112233", opacity: 0.35, blur: 24, x: 0, y: 8 });
     expect(pages[0]!.layers[2]).not.toHaveProperty("shadow");
   });
+
+  it("keeps a gradient, letter spacing, a blend, a flip, a shape's kind and a picture's zoom and focus, each held to what can be drawn", () => {
+    const shape = (more: object) => ({ type: "shape", x: 0, y: 0, w: 100, h: 100, fill: "#ff0000", ...more });
+    const picture = (more: object) => ({ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, ...more });
+    const { pages, notes } = cleanPages(
+      [
+        {
+          background: "#101010",
+          gradient: { to: "#ABC", angle: 9000 },
+          layers: [
+            text({ spacing: 12.345, gradient: { to: "#00ff00" }, blend: "multiply", flipX: true, flipY: "yes" }),
+            text({ spacing: 5000, gradient: { to: "green", angle: 10 }, blend: "difference" }),
+            shape({ shape: "star", gradient: { to: "#0000ff80", angle: -45 } }),
+            shape({ shape: "hexagon", gradient: "sunset" }),
+            picture({ zoom: 2.5, focus: { x: -1, y: 0.25 } }),
+            picture({ zoom: 0.2, focus: "left" }),
+          ],
+        },
+      ],
+      rules,
+    );
+    expect(notes).toEqual([]);
+    expect(pages[0]).toMatchObject({ background: "#101010", gradient: { to: "#aabbcc", angle: 360 } });
+    const [spaced, wide, star, plain, close, whole] = pages[0]!.layers;
+    expect(spaced).toMatchObject({ spacing: 12.35, gradient: { to: "#00ff00", angle: 90 }, blend: "multiply", flipX: true });
+    expect(spaced).not.toHaveProperty("flipY");
+    expect(wide).toMatchObject({ spacing: 200 });
+    expect(wide).not.toHaveProperty("gradient");
+    expect(wide).not.toHaveProperty("blend");
+    expect(star).toMatchObject({ shape: "star", gradient: { to: "#0000ff", angle: -45 } });
+    expect(plain).toMatchObject({ shape: "rect" });
+    expect(plain).not.toHaveProperty("gradient");
+    expect(close).toMatchObject({ zoom: 2.5, focus: { x: 0, y: 0.25 } });
+    expect(whole).not.toHaveProperty("zoom");
+    expect(whole).not.toHaveProperty("focus");
+    // a text with nothing of these is as it was: no empty fields
+    expect(Object.keys(cleanPages([{ layers: [text({ spacing: 0 })] }], rules).pages[0]!.layers[0]!)).not.toContain("spacing");
+  });
 });
 
 describe("what the layers list keeps", () => {
@@ -158,6 +196,26 @@ describe("an AI's words on the page", () => {
   });
 });
 
+describe("frames on a canvas", () => {
+  const frame = (id: string, more: object = {}) => ({ id, background: "#ffffff", layers: [], ...more });
+  it("gives every frame a place and a size: none placed yet, in a row; a new one beside the rightmost; one sent without its place where it was", () => {
+    expect(withFrames([frame("a"), frame("b")], 1080, 1350).map((p) => [p.x, p.y, p.w, p.h])).toEqual([[0, 0, 1080, 1350], [1200, 0, 1080, 1350]]);
+    expect(withFrames([frame("a", { x: 50, y: 900, w: 640, h: 360 }), frame("b"), frame("c", { w: 200, h: 100 })], 1080, 1350).map((p) => [p.x, p.y, p.w, p.h])).toEqual([[50, 900, 640, 360], [810, 900, 1080, 1350], [2010, 900, 200, 100]]);
+    const was = [frame("a", { x: 7, y: 8, w: 300, h: 200, block: "b1" }), frame("b", { x: 500, y: 8, w: 300, h: 200 })];
+    expect(withFrames([frame("b"), frame("a")], 1080, 1350, was)).toEqual([was[1], was[0]]);
+  });
+  it("a frame's own size holds its layers, and its place and slide are kept when they are what they should be", () => {
+    const shape = { type: "shape", shape: "rect", fill: "#ff0000", x: 5000, y: 0, w: 10, h: 10 };
+    const { pages } = cleanPages([{ x: 12.6, y: -3, w: 640, h: 360, block: "b7", layers: [shape] }, { x: "left", w: 640, block: "not a block id!", layers: [shape] }], rules);
+    expect(pages[0]).toMatchObject({ x: 13, y: -3, w: 640, h: 360, block: "b7" });
+    expect(pages[0]!.layers[0]).toMatchObject({ x: 1280 });
+    expect(pages[1]).not.toHaveProperty("x");
+    expect(pages[1]).not.toHaveProperty("w");
+    expect(pages[1]).not.toHaveProperty("block");
+    expect(pages[1]!.layers[0]).toMatchObject({ x: 2160 });
+  });
+});
+
 describe("the pages a design starts with", () => {
   it("a carousel: each slide's first part as its headline and the rest under it, picture tokens taken out, every word kept", () => {
     const slides = ["Roll the mat out\n\nOn a soft floor, with you next to it.\n\n![a mat](pic:abc12345)", "Try it today"];
@@ -173,6 +231,7 @@ describe("the pages a design starts with", () => {
   it("a cover: the video's frame filling the page and its title over the lower part; no title, the frame alone", () => {
     const page = coverPage("ab12cd34.jpg", "Why the floor comes first", 1080, 1920);
     expect(page.layers[0]).toEqual({ id: "l1", type: "image", picture: "ab12cd34.jpg", fit: "cover", x: 0, y: 0, w: 1080, h: 1920 });
+    expect([page.x, page.y, page.w, page.h]).toEqual([0, 0, 1080, 1920]);
     expect(page.layers[1]).toMatchObject({ type: "text", text: "Why the floor comes first", upper: true, align: "center" });
     expect(cleanPages([page], { w: 1080, h: 1920, pictures: ["ab12cd34.jpg"] }).pages).toEqual([page]);
     expect(coverPage("ab12cd34.jpg", "  ", 1280, 720).layers).toHaveLength(1);

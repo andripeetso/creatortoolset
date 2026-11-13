@@ -30,6 +30,7 @@ import {
   passwordProblem,
   SIGNIN_NAME,
   isSignInProvider,
+  isAiAppKey,
   userForApiKey,
   verifyPassword,
   listUsers,
@@ -153,9 +154,15 @@ export function jobTokenUser(authorization: string | undefined): SessionUser | n
 /** The account an in-process MCP tool call runs as (mcp.ts sets it around each call; boot.ts reads it). Outside a tool call it is empty. */
 export const innerCall = new AsyncLocalStorage<SessionUser>();
 
-/** `Authorization: Bearer ctk_…` from a script or AI, at one key level (boot.ts decides what each reaches). */
-export function getApiKeyUser(authorization: string | undefined, level: KeyLevel = "review"): SessionUser | null {
+/**
+ * `Authorization: Bearer ctk_…` from a script or AI, at one key level (boot.ts decides what each reaches). `path`: the
+ * route asked for. A key an AI app got by signing in opens the MCP route and nothing else: the app only ever speaks
+ * MCP, and whoever holds a copy of such a key (the Connect broker keeps one to pass requests on) can do no more with it
+ * than the app can. The tools' own calls run as the account (innerCall), so they are not held by this.
+ */
+export function getApiKeyUser(authorization: string | undefined, level: KeyLevel = "review", path?: string): SessionUser | null {
   const key = /^Bearer (ctk_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1];
+  if (key && path !== undefined && path !== "/api/mcp" && isAiAppKey(key)) return null;
   const user = key ? userForApiKey(key, level) : null;
   return user && sessionOf(user);
 }

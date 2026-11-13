@@ -197,6 +197,17 @@ struct AssistantChatView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)
             }
+            // a question still waiting for a press, however far up its reply is (owner, 2026-11-12: he opened a chat
+            // marked Approval, saw no question, and deleted it)
+            let approvals = messages.flatMap { $0.approvals ?? [] }.filter { $0.status == "waiting" }
+            let confirms = messages.flatMap { $0.confirms ?? [] }.filter { $0.status == "waiting" }
+            if !approvals.isEmpty || !confirms.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(approvals) { AssistantApprovalCard(approval: $0) }
+                    ForEach(confirms) { AssistantConfirmCard(confirm: $0) }
+                }
+                .padding(.horizontal, 12)
+            }
             if model.offline { QuietNotice(text: "No connection").padding(.horizontal, 22) }
             if let notice = draft.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
             if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 22) }

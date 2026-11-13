@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { Circle, Download, Hand, ImagePlus, MousePointer2, Redo2, Square, Type, Undo2 } from "lucide-react";
+import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { AppBar } from "@/components/AppBar";
-import { Inspector } from "@/components/design/Inspector";
+import { Inspector, type ExportAs } from "@/components/design/Inspector";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
-import { alignLayers, boundsOf, distribute, fitView, freshIds, layerName, pageLeft, pageName, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshIds, layerName, mergeFrames, pageName, zoomAt, type Align, type Rect, type View } from "@/lib/design/hands";
 import { coloursOn } from "@/lib/design/colour";
-import { addPicture, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
+import { addPicture, DesignChanged, getDesign, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import { onTopic } from "@/lib/sync";
@@ -21,13 +21,14 @@ import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { cn } from "@/lib/utils";
 
 /**
- * The designer (/design/:id): a canvas with every page of the design on it, the layers list on its left, the
- * properties of what is picked on its right and the tools under it. The person's AI designs here through the
- * assistant beside the page (the designer's tools, api/mcp-tools/designs.ts): what it writes shows on the canvas at
- * once, as layers like any others. Each page is saved as a PNG of exactly its size. Every change is a step ⌘Z takes
- * back, and is saved a moment later.
+ * The designer (/design/:id): one canvas a design, with its frames lying where the person put them (a carousel's
+ * slides, a cover, a thumbnail, each of its own size), the layers list on its left, the properties of what is picked
+ * on its right and the tools under it. The person's AI designs here through the assistant beside the page (the
+ * designer's tools, api/mcp-tools/designs.ts): what it writes shows on the canvas at once, as frames and layers like
+ * any others. Each frame is saved as a PNG of exactly its size. Every change is a step ⌘Z takes back, and is saved a
+ * moment later.
  *
- * Keys: V move, H hand, R rectangle, O ellipse, T text · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
+ * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
  * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
  * lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
  */
@@ -40,11 +41,15 @@ const typingIn = (t: EventTarget | null) => t instanceof HTMLElement && ((t inst
 const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["move", "Move", "V", MousePointer2],
   ["hand", "Hand", "H", Hand],
+  ["frame", "Frame", "F", Frame],
   ["rect", "Rectangle", "R", Square],
   ["ellipse", "Ellipse", "O", Circle],
+  ["triangle", "Triangle", "", Triangle],
+  ["star", "Star", "", Star],
+  ["arrow", "Arrow", "", ArrowRight],
   ["text", "Text", "T", Type],
 ];
-const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyR: "rect", KeyO: "ellipse", KeyT: "text" };
+const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 // the panels' colours. The app's zinc greys mirror in the light theme (tailwind.config.js), so zinc-50 is the ink in both
@@ -66,7 +71,7 @@ export default function DesignRoute() {
 function DesignPage({ id }: { id: string }) {
   const [design, setDesign] = useState<Design | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
-  const [live, setLive] = useState<Page | null>(null);
+  const [live, setLive] = useState<Page[] | null>(null);
   const [at, setAt] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [framed, setFramed] = useState(false);
@@ -111,20 +116,23 @@ function DesignPage({ id }: { id: string }) {
     return () => ro.disconnect();
   }, [opened]);
 
-  // opened on its first page, whole
+  // opened on its first frame, whole
   const placed = useRef(false);
   useEffect(() => {
-    if (placed.current || !design || !room) return;
+    if (placed.current || !design || !room || !design.pages[0]) return;
     placed.current = true;
-    setView(fitView({ x: 0, y: 0, w: design.width, h: design.height }, room));
+    setView(fitView(frameOf(design.pages[0], 0, design.width, design.height), room));
   }, [design, room]);
 
   const pages = useMemo(() => hist?.now ?? [], [hist]);
   const k = Math.max(0, Math.min(at, pages.length - 1));
-  /** The page the picked layers are on: as saved (what a change starts from), and as shown (mid-drag). */
+  /** The frame the picked layers are on: as saved (what a change starts from), and as shown (mid-drag). */
   const base = pages[k];
-  const shown = useMemo(() => (live ? pages.map((p) => (p.id === live.id ? live : p)) : pages), [pages, live]);
+  const shown = useMemo(() => (live ? pages.map((p) => live.find((l) => l.id === p.id) ?? p) : pages), [pages, live]);
   const page = shown[k];
+  /** Where every frame lies on the canvas, and the one the picked layers are on. */
+  const frames = useMemo(() => (design ? pages.map((p, n) => frameOf(p, n, design.width, design.height)) : []), [pages, design]);
+  const here = frames[k];
   const mine = base ? base.layers.filter((l) => selected.includes(l.id)) : [];
   const colours = useMemo(() => coloursOn(pages), [pages]);
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
@@ -144,27 +152,36 @@ function DesignPage({ id }: { id: string }) {
   }, [pages, design, loaded]);
 
   /**
-   * What the server has of this design, as far as this window knows: the pages as they were last read from it or
-   * sent to it (the very objects, so a page changed here since is one that is not among them), and when it was last
-   * changed there.
+   * What the server has of this design, as far as this window knows: the frames as they were last read from it or
+   * sent to it (what this window changed since is the difference to them), and when it was last changed there.
    */
   const server = useRef<{ pages: Page[]; at: number }>({ pages: [], at: 0 });
   /** The pages not sent yet. */
   const unsaved = useRef<Page[] | null>(null);
+  /** What a change made somewhere else does with the design as the server has it now (set further down, once it can be). */
+  const remote = useRef<(d: Design) => boolean>(() => false);
+  /** The saves, one after another: each says the design's last change this window knows of, which the one before it may have made. */
+  const saving = useRef<Promise<void>>(Promise.resolve());
   const send = useCallback(
     (pages: Page[]) => {
       unsaved.current = null;
       setSaved("saving");
-      return saveDesign(id, { pages }).then(
-        (d) => {
-          server.current = { pages, at: d.updatedAt };
-          setSaved(unsaved.current ? "unsaved" : "saved");
-        },
-        (e) => {
-          unsaved.current ??= pages;
-          setSaved("unsaved");
-          setError(message(e));
-        },
+      saving.current = saving.current.then(() =>
+        saveDesign(id, { pages, since: server.current.at }).then(
+          (d) => {
+            server.current = { pages, at: d.updatedAt };
+            setSaved(unsaved.current ? "unsaved" : "saved");
+          },
+          (e) => {
+            // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
+            // window's changes are done again on the design as it is now, and that is saved: a moment later when
+            // the canvas changed with it (as any change is), at once when it did not
+            if (e instanceof DesignChanged) return void (remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
+            unsaved.current ??= pages;
+            setSaved("unsaved");
+            setError(message(e));
+          },
+        ),
       );
     },
     [id],
@@ -176,21 +193,30 @@ function DesignPage({ id }: { id: string }) {
     if (first.current) return void (first.current = false);
     unsaved.current = hist.now;
     setSaved("unsaved");
-    const t = setTimeout(() => void send(hist.now), 700);
+    const t = setTimeout(() => send(hist.now), 700);
     return () => clearTimeout(t);
     // the pages alone: the design's other fields change when it is saved, and saving must not save again
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hist?.now]);
-  // Leaving sends what that moment had not sent yet. Another page of the app: a save like any other (the app goes on
-  // running, so it finishes). The window closing: a save the browser carries on with after the page is gone, which
-  // it only does for a small one (64 KB); a bigger design is sent the plain way, and may not get there.
+  // Leaving sends what that moment had not sent yet. Another page of the app: a save after the ones under way (the
+  // app goes on running, so it finishes), and one refused because the design changed somewhere else in that moment is
+  // made again on top of that change. The window closing: a save the browser carries on with after the page is gone,
+  // which it only does for a small one (64 KB); a bigger design is sent the plain way, and may not get there.
   useEffect(() => {
     const flush = (closing: boolean) => {
       const pages = unsaved.current;
       unsaved.current = null;
       if (!pages) return;
-      const body = JSON.stringify({ pages });
-      void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: closing && body.length < 60_000, headers: { "content-type": "application/json" }, body }).catch(() => {});
+      if (closing) {
+        const body = JSON.stringify({ pages });
+        return void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: body.length < 60_000, headers: { "content-type": "application/json" }, body }).catch(() => {});
+      }
+      saving.current = saving.current.then(() =>
+        saveDesign(id, { pages, since: server.current.at }).then(
+          () => {},
+          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: mergeFrames(pages, server.current.pages, e.design.pages), since: e.design.updatedAt }).then(() => {}, () => {}) : undefined),
+        ),
+      );
     };
     const closing = () => flush(true);
     window.addEventListener("pagehide", closing);
@@ -214,7 +240,9 @@ function DesignPage({ id }: { id: string }) {
     setLive(null);
     setHist((h) => (!h ? h : join ? { ...h, now: fn(h.now) } : histChange(h, fn)));
   }, []);
-  const setPage = useCallback((next: Page, merge?: string) => change((all) => all.map((p) => (p.id === next.id ? next : p)), merge), [change]);
+  /** Frames changed in one step: each takes the place of the one with its id. */
+  const setPages = useCallback((next: readonly Page[], merge?: string) => change((all) => all.map((p) => next.find((n) => n.id === p.id) ?? p), merge), [change]);
+  const setPage = useCallback((next: Page, merge?: string) => setPages([next], merge), [setPages]);
   const pick = useCallback((to: number, ids: string[], frame = false) => {
     merging.current = null;
     setAt(to);
@@ -228,33 +256,35 @@ function DesignPage({ id }: { id: string }) {
     setHist((h) => (h ? (back ? histUndo(h) : histRedo(h)) : h));
   };
 
-  // A change made somewhere else (the assistant designing the pages, another window) is shown at once, as a step ⌘Z
+  // A change made somewhere else (the assistant designing the frames, another window) is shown at once, as a step ⌘Z
   // takes back. This window's own saves are not told back to it (lib/sync.ts), and a notice about another design, or
-  // an answer that comes late, changes nothing (the design is no newer than what this window knows). A page changed
-  // here and not sent yet stays as it is here, and is then sent: the hand that was on it is never thrown away. Every
-  // other page is the server's, and what came from the server is not saved back.
-  useEffect(
-    () =>
-      onTopic("designs", () => {
-        getDesign(id).then(
-          (d) => {
-            if (d.updatedAt <= server.current.at) return;
-            const known = server.current.pages;
-            const mine = latest.current.filter((p) => !known.includes(p));
-            const merged = [...d.pages.map((p) => mine.find((m) => m.id === p.id) ?? p), ...mine.filter((m) => !d.pages.some((p) => p.id === m.id))];
-            const same = JSON.stringify(merged) === JSON.stringify(latest.current);
-            // the pages this window holds that are the server's: the server's own when they go on the canvas, else the ones here
-            server.current = { pages: same ? latest.current.filter((p) => !mine.includes(p)) : d.pages, at: d.updatedAt };
-            setDesign(d);
-            if (same) return;
-            if (!mine.length) first.current = true;
-            change(() => merged);
-          },
-          () => {},
-        );
-      }),
-    [id, change],
-  );
+  // an answer that comes late, changes nothing (the design is no newer than what this window knows). What was changed
+  // here and not sent yet stays as it is here, and is then sent: the hand that was on it is never thrown away. That
+  // goes by what was changed (mergeFrame): a frame dragged aside here while its layers were designed there keeps its
+  // new place and gets the new layers. Every other frame is the server's, and what came from the server is not saved back.
+  useEffect(() => {
+    /** The design as the server has it now, onto this window. True: the canvas changed (and is saved again when this window had changes of its own). */
+    remote.current = (d) => {
+      if (d.updatedAt <= server.current.at) return false;
+      const had = latest.current;
+      const merged = mergeFrames(had, server.current.pages, d.pages);
+      server.current = { pages: d.pages, at: d.updatedAt };
+      setDesign(d);
+      const text = JSON.stringify(merged);
+      // nothing of this window's is left to send: what is on the canvas is what the server has
+      if (text === JSON.stringify(d.pages)) {
+        unsaved.current = null;
+        setSaved("saved");
+      }
+      if (text === JSON.stringify(had)) return false;
+      if (text === JSON.stringify(d.pages)) first.current = true;
+      // at once for whatever is sent before the canvas is drawn again
+      latest.current = merged;
+      change(() => merged);
+      return true;
+    };
+    return onTopic("designs", () => void getDesign(id).then((d) => remote.current(d), () => {}));
+  }, [id, change]);
 
   /** The saved page with every picked layer through `fn`. */
   const through = (fn: (l: Layer) => Layer): Page | null => (base ? { ...base, layers: base.layers.map((l) => (selected.includes(l.id) ? fn(l) : l)) } : null);
@@ -264,24 +294,39 @@ function DesignPage({ id }: { id: string }) {
   };
   const arrange = (next: Layer[]) => base && setPage({ ...base, layers: base.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
 
-  /** New layers on a page, picked; null (and it says why) when the page is full. */
+  /** New layers on a frame, picked; null (and it says why) when the frame is full. */
   const put = (to: number, count: number, make: (ids: string[]) => Layer[]): string[] | null => {
     const target = latest.current[to];
     if (!target || !count) return null;
-    if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A page holds at most ${DESIGN_LIMITS.layers} layers`), null;
+    if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers`), null;
     const ids = freshIds(target, count);
     setPage({ ...target, layers: [...target.layers, ...make(ids)] });
     pick(to, ids);
     return ids;
   };
-  const textLayer = (id: string, text: string, r: Rect): Layer => ({ id, type: "text", text, font: "Inter", size: Math.round((design?.width ?? 1080) * 0.06), color: "#111111", align: "left", ...r });
+  /** Words on a frame `width` wide: their size goes by it. */
+  const textLayer = (id: string, text: string, r: Rect, width: number): Layer => ({ id, type: "text", text, font: "Inter", size: Math.round(width * 0.06), color: "#111111", align: "left", ...r });
 
-  const addPage = (like?: Page) => {
-    if (!base) return;
-    if (pages.length >= DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} pages`);
-    const fresh: Page = { ...(like ?? { background: base.background, layers: [] }), id: `p${Date.now().toString(36)}` };
-    change((all) => [...all.slice(0, k + 1), fresh, ...all.slice(k + 1)]);
-    pick(k + 1, [], true);
+  /**
+   * A new frame, picked. `like`: a copy of that frame. `rect`: where the frame tool drew it; without one it goes beside
+   * the rightmost frame, the size of the frame it was made from, and the canvas moves to show it.
+   */
+  const addFrame = (like?: Page, rect?: Rect) => {
+    if (!base || !here) return;
+    if (pages.length >= DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
+    const r = rect ?? besideFrames(frames, here, here);
+    // a copy is a frame of its own: the carousel slide its original draws stays the original's
+    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base.background, layers: [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
+    change((all) => [...all, fresh]);
+    pick(pages.length, [], true);
+    if (!rect && room) setView((v) => ({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z }));
+  };
+  /** A box drawn with the frame tool: a click makes a frame the size of the current one, a drag the size drawn. */
+  const makeFrame = (r: Rect, dragged: boolean) => {
+    setTool("move");
+    if (!here) return;
+    const fit = (n: number) => Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(n)));
+    addFrame(undefined, { x: Math.round(r.x), y: Math.round(r.y), w: dragged ? fit(r.w) : here.w, h: dragged ? fit(r.h) : here.h });
   };
   const movePage = (from: number, to: number) => {
     if (from === to) return;
@@ -302,7 +347,7 @@ function DesignPage({ id }: { id: string }) {
     }
   };
   // a copy lies on what it copies, picked: the next drag takes it away
-  const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framed && base ? addPage(base) : undefined);
+  const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framed && base ? addFrame(base) : undefined);
   const order = (front: boolean) => {
     if (!base || !mine.length) return;
     const rest = base.layers.filter((l) => !selected.includes(l.id));
@@ -322,26 +367,27 @@ function DesignPage({ id }: { id: string }) {
       // no clipboard here: the layers are kept all the same
     }
   };
-  /** The copied layers onto this page, where they were on theirs. A picture this design does not have stays behind. */
+  /** The copied layers onto this frame, where they were on theirs. A picture this design does not have stays behind. */
   const paste = () => {
     const layers = (clip?.layers ?? []).filter((l) => l.type !== "image" || design?.pictures.includes(l.picture));
     put(k, layers.length, (ids) => layers.map((l, n) => ({ ...l, id: ids[n]! })));
   };
 
   const zoom = (to: "in" | "out" | "fit" | "selection" | number) => {
-    if (!design || !room) return;
-    const one = { x: pageLeft(k, design.width), y: 0, w: design.width, h: design.height };
-    if (to === "fit") return setView(fitView({ ...one, x: 0, w: pageLeft(pages.length - 1, design.width) + design.width }, room));
+    if (!room || !here) return;
+    // fit: every frame of the canvas
+    if (to === "fit") return setView(fitView(boundsOf(frames), room));
     if (to === "selection") {
       const b = mine.length ? boundsOf(mine) : null;
-      return setView(fitView(b ? { ...b, x: b.x + one.x } : one, room));
+      return setView(fitView(b ? { ...b, x: b.x + here.x, y: b.y + here.y } : here, room));
     }
     setView((v) => zoomAt(v, to === "in" ? v.z * 2 : to === "out" ? v.z / 2 : to, room.w / 2, room.h / 2));
   };
 
   const fromComputer = async (files: readonly File[]) => {
-    if (!design || !base || !files.length) return;
+    if (!design || !base || !here || !files.length) return;
     const onto = base.id;
+    const f = here;
     setError(null);
     try {
       const made: { picture: string; w: number; h: number }[] = [];
@@ -354,12 +400,12 @@ function DesignPage({ id }: { id: string }) {
           img.onerror = () => done({ w: 1, h: 1 });
           img.src = pictureUrl(design.id, picture);
         });
-        // at most 60 % of the page's width, in the picture's own shape
-        const w = Math.round(Math.min(design.width * 0.6, size.w));
+        // at most 60 % of the frame's width, in the picture's own shape
+        const w = Math.round(Math.min(f.w * 0.6, size.w));
         made.push({ picture, w, h: Math.round((w * size.h) / size.w) });
       }
-      // onto the page it was started on, as that page is by now
-      put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round((design.width - m.w) / 2), y: Math.round((design.height - m.h) / 2), w: m.w, h: m.h })));
+      // onto the frame it was started on, as that frame is by now
+      put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round((f.w - m.w) / 2), y: Math.round((f.h - m.h) / 2), w: m.w, h: m.h })));
     } catch (e) {
       setError(message(e));
     }
@@ -367,17 +413,18 @@ function DesignPage({ id }: { id: string }) {
 
   /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
   const make = (to: number, r: Rect, dragged: boolean) => {
-    if (!design) return;
+    const f = frames[to];
+    if (!f || tool === "move" || tool === "hand" || tool === "frame") return;
     const words = tool === "text";
-    const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? design.width / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? design.width * 0.08 : 100)) };
-    const ids = put(to, 1, ([id]) => [words ? textLayer(id!, "Text", b) : { id: id!, type: "shape", shape: tool === "ellipse" ? "ellipse" : "rect", fill: "#d9d9d9", ...b }]);
+    const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? f.w / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? f.w * 0.08 : 100)) };
+    const ids = put(to, 1, ([id]) => [tool === "text" ? textLayer(id!, "Text", b, f.w) : { id: id!, type: "shape", shape: tool, fill: "#d9d9d9", ...b }]);
     setTool("move");
     if (ids && words) setEditing(ids[0]!);
   };
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (typingIn(e.target) || !base || !design) return;
+      if (typingIn(e.target) || !base || !design || !here) return;
       const mod = e.metaKey || e.ctrlKey;
       const c = e.code;
       const has = mine.length > 0;
@@ -392,7 +439,7 @@ function DesignPage({ id }: { id: string }) {
         else if (e.shiftKey && c === "KeyL" && has) run(() => toggle("locked"));
         return; // ⌘V is the page's paste event (below); everything else is the browser's
       }
-      if (e.altKey) return void (has && ALIGN_KEYS[c] && run(() => arrange(alignLayers(mine, ALIGN_KEYS[c]!, { w: design.width, h: design.height }))));
+      if (e.altKey) return void (has && ALIGN_KEYS[c] && run(() => arrange(alignLayers(mine, ALIGN_KEYS[c]!, here))));
       if (e.shiftKey && c === "Digit1") return run(() => zoom("fit"));
       if (e.shiftKey && c === "Digit2") return run(() => zoom("selection"));
       if (e.shiftKey && c === "Digit0") return run(() => zoom(1));
@@ -401,9 +448,11 @@ function DesignPage({ id }: { id: string }) {
       if (!e.shiftKey && TOOL_KEYS[c]) return run(() => setTool(TOOL_KEYS[c]!));
       if (e.key === "Escape") return run(() => (dropper ? setDropper(null) : tool !== "move" ? setTool("move") : pick(k, [])));
       if (e.key === "Delete" || e.key === "Backspace") return run(remove);
-      if (!has) return;
       const by = ARROWS[e.key];
       const far = e.shiftKey ? 10 : 1;
+      // the frame itself is picked: the arrows move it
+      if (by && !has && framed) return run(() => setPage({ ...base, x: here.x + by[0] * far, y: here.y + by[1] * far }));
+      if (!has) return;
       if (by) run(() => patch((l) => ({ ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "text") run(() => setEditing(mine[0]!.id));
       else if (c === "BracketRight") run(() => order(true));
@@ -412,13 +461,13 @@ function DesignPage({ id }: { id: string }) {
       else if (!e.shiftKey && /^Digit\d$/.test(c)) run(() => patch((l) => ({ ...l, opacity: c === "Digit0" ? undefined : Number(c.slice(5)) / 10 })));
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (typingIn(e.target) || !design) return;
+      if (typingIn(e.target) || !design || !here) return;
       const text = e.clipboardData?.getData("text/plain") ?? "";
       const files = [...(e.clipboardData?.files ?? [])].filter((f) => /^image\/(jpeg|png|webp)$/.test(f.type));
       if (clip && (!clip.wrote || text === clip.text)) paste();
       else if (files.length) void fromComputer(files);
-      // words copied somewhere else become a text layer in the middle of the page
-      else if (text.trim()) put(k, 1, ([id]) => [textLayer(id!, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(design.width / 4), y: Math.round(design.height * 0.4), w: Math.round(design.width / 2), h: Math.round(design.height * 0.2) })]);
+      // words copied somewhere else become a text layer in the middle of the frame
+      else if (text.trim()) put(k, 1, ([id]) => [textLayer(id!, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(here.w / 4), y: Math.round(here.h * 0.4), w: Math.round(here.w / 2), h: Math.round(here.h * 0.2) }, here.w)]);
       else return;
       e.preventDefault();
     };
@@ -430,14 +479,15 @@ function DesignPage({ id }: { id: string }) {
     };
   });
 
-  const exportPngs = async (only?: number) => {
+  const exportPngs = async (only?: number, as: ExportAs = { jpeg: false, scale: 1 }) => {
     if (!design) return;
     setError(null);
+    const type = as.jpeg ? "image/jpeg" : "image/png";
     try {
       const files: { name: string; data: Uint8Array }[] = [];
       for (const [n, p] of pages.entries()) {
         if (only !== undefined && n !== only) continue;
-        // every picture and drawing of the page is there first: a page is never saved with a grey box where one goes
+        // every picture and drawing of the frame is there first: a frame is never saved with a grey box where one goes
         for (const l of p.layers) {
           const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
           if (!img || (img.complete && img.naturalWidth)) continue;
@@ -448,22 +498,26 @@ function DesignPage({ id }: { id: string }) {
             img.addEventListener("error", () => fail(gone), { once: true });
           });
         }
+        // each frame at its own size (or twice it)
+        const f = frames[n]!;
         const c = document.createElement("canvas");
-        c.width = design.width;
-        c.height = design.height;
-        drawPage(c.getContext("2d")!, p, design.width, design.height, loaded);
-        const blob = await new Promise<Blob | null>((done) => c.toBlob(done, "image/png"));
+        c.width = f.w * as.scale;
+        c.height = f.h * as.scale;
+        const ctx = c.getContext("2d")!;
+        ctx.setTransform(as.scale, 0, 0, as.scale, 0, 0);
+        drawPage(ctx, p, f.w, f.h, loaded);
+        const blob = await new Promise<Blob | null>((done) => c.toBlob(done, type, 0.92));
         if (!blob) throw new Error(`${pageName(p, n)} could not be saved as a picture`);
-        files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
+        files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}${as.scale > 1 ? `@${as.scale}x` : ""}.${as.jpeg ? "jpg" : "png"}`, data: new Uint8Array(await blob.arrayBuffer()) });
       }
-      if (files.length === 1) downloadBlob(files[0]!.name, new Blob([files[0]!.data as BlobPart], { type: "image/png" }));
+      if (files.length === 1) downloadBlob(files[0]!.name, new Blob([files[0]!.data as BlobPart], { type }));
       else downloadBlob(`${fileName(design.name)}.zip`, zipStored(files));
     } catch (e) {
       setError(message(e));
     }
   };
 
-  if (!design || !hist || !base || !page) {
+  if (!design || !hist || !base || !page || !here) {
     return (
       <div className="flex min-h-screen flex-col">
         <AppBar tool="Designer" />
@@ -506,9 +560,18 @@ function DesignPage({ id }: { id: string }) {
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
 
       <div className="flex min-h-0 flex-1">
-        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addPage()} />
+        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
 
         <div ref={frame} className="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+          {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
+          <h3 data-picked className="sr-only">
+            Picked: frame {pageName(page, k)} (id {page.id})
+            {picked.length > 0 &&
+              `, ${picked.length === 1 ? "layer" : "layers"} ${picked
+                .slice(0, 8)
+                .map((l) => `${layerName(l)} (id ${l.id})`)
+                .join(", ")}`}
+          </h3>
           {room && (
             <Stage
               pages={shown}
@@ -524,9 +587,10 @@ function DesignPage({ id }: { id: string }) {
               framed={framed}
               onPick={pick}
               onLive={setLive}
-              onCommit={setPage}
+              onCommit={setPages}
               tool={tool}
               onMake={make}
+              onMakeFrame={makeFrame}
               editing={editing}
               onEdit={setEditing}
               pointed={pointed}
@@ -573,14 +637,18 @@ function DesignPage({ id }: { id: string }) {
           at={k}
           count={pages.length}
           picked={picked}
-          onPreview={(fn) => setLive(fn ? through(fn) : null)}
+          onPreview={(fn) => {
+            const next = fn && through(fn);
+            setLive(next ? [next] : null);
+          }}
           onPatch={patch}
           onPage={setPage}
-          onAlign={(how) => arrange(alignLayers(mine, how, { w: design.width, h: design.height }))}
+          onPagePreview={(next) => setLive(next ? [next] : null)}
+          onAlign={(how) => arrange(alignLayers(mine, how, here))}
           onDistribute={(axis) => arrange(distribute(mine, axis))}
           zoom={view.z}
           onZoom={zoom}
-          onExport={(only) => void exportPngs(only)}
+          onExport={(only, as) => void exportPngs(only, as)}
           colours={colours}
           onDropper={(take) => setDropper({ take })}
         />

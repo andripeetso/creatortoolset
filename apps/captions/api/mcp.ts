@@ -84,6 +84,11 @@ variations, a caption (post description) and a pinned comment. Two ways to write
 own writer, which reads the project, the user's posts and past rewrites (it runs on a paired Mac and can take minutes), or
 change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
 
+Designer: the user's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers they then
+edit by hand. You do the designing: design_get lists the designs and reads one (every frame with its layers, a picture
+of it, and how a design is written and changed), design_make starts one, design_update changes whole frames or
+single layers and shows you the result. Look at what you made and fix it before you say it is done.
+
 Review: his videos waiting for feedback, their versions and timed comments (with the frame each points at).
 Resolve a comment only once the change it asks for is made. review_set_approval marks a video approved or sent back.
 
@@ -1387,8 +1392,8 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  * past this account (a link for other people, a pull from Instagram). A tool in none of them (a plug-in's) is labelled
  * as one that can remove, so an AI app asks before it runs.
  */
-const READS = new Set("captions_get captions_list editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait navigate show_video offer_choices".split(" "));
-const REPLACES = new Set("delete_scheduled_task design_layers editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_sources workshop_update_session".split(" "));
+const READS = new Set("captions_get captions_list design_get editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait navigate show_video offer_choices".split(" "));
+const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_sources workshop_update_session".split(" "));
 const ADDS = new Set("channel_posts instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_retry editor_run editor_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project".split(" "));
 const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);

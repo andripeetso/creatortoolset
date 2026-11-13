@@ -38,7 +38,7 @@ export function createChallenge(d: LinkDeps, accountId: string) {
 
 // A body signed with a computer's own key: public_key (base64 SPKI Ed25519), payload (the JSON text it signed),
 // signature (base64 over the payload bytes). The signature is checked before the payload is parsed.
-function signedBody(body: Record<string, unknown>): { key: KeyObject; p: Record<string, unknown> } {
+export function signedBody(body: Record<string, unknown>): { key: KeyObject; p: Record<string, unknown> } {
   const { public_key, payload, signature } = body;
   if (typeof public_key !== 'string' || typeof payload !== 'string' || typeof signature !== 'string') {
     throw new HttpError(400, 'bad_request');
@@ -208,6 +208,9 @@ export function ticketFor(d: LinkDeps, accountId: string, computerId: string) {
 export async function removeComputer(d: { db: DatabaseSync; cf: Cloudflare }, row: { id: string; tunnel_id: string; dns_id: string }) {
   if (row.dns_id) await d.cf.deleteDns(row.dns_id);
   if (row.tunnel_id) await d.cf.deleteTunnel(row.tunnel_id);
+  // its AI app connections go with it (gateway.ts)
+  d.db.prepare('DELETE FROM ai_tokens WHERE grant_id IN (SELECT id FROM ai_grants WHERE computer_id = ?)').run(row.id);
+  d.db.prepare('DELETE FROM ai_grants WHERE computer_id = ?').run(row.id);
   d.db.prepare('DELETE FROM computers WHERE id = ?').run(row.id);
 }
 

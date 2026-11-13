@@ -1,7 +1,7 @@
-import type { DesignPage, Layer } from "@contracts/design";
+import { DESIGN_GAP, type DesignPage, type Layer } from "@contracts/design";
 
 /**
- * What the hands on the canvas work out, as plain functions: where the pages lie, the view (pan and zoom), a layer's
+ * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
  * bounds through its rotation, resizing about the opposite corner, catching on edges and middles, lining up and
  * spacing out. Nothing here touches the screen, so each rule is checked by a plain test.
  */
@@ -22,9 +22,13 @@ export interface View {
 export type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
 
-/** The pages lie in a row on the canvas, this many design pixels apart. */
-export const PAGE_GAP = 120;
-export const pageLeft = (k: number, width: number): number => k * (width + PAGE_GAP);
+/**
+ * Where a frame lies on the canvas, and its size. The server gives every frame these; one without (a design as an
+ * older window still holds it) lies in the row it always lay in, at the design's own size.
+ */
+export const frameOf = (p: Pick<DesignPage, "x" | "y" | "w" | "h">, k: number, w: number, h: number): Rect => ({ x: p.x ?? k * (w + DESIGN_GAP), y: p.y ?? 0, w: p.w ?? w, h: p.h ?? h });
+/** Where a new frame of this size goes: beside the rightmost frame, level with `like` (the frame it is made from). */
+export const besideFrames = (frames: readonly Rect[], like: Rect | undefined, size: { w: number; h: number }): Rect => ({ x: frames.length ? Math.max(...frames.map((f) => f.x + f.w)) + DESIGN_GAP : 0, y: like?.y ?? 0, ...size });
 export const ZOOM = { min: 0.02, max: 32 } as const;
 const zoomIn = (z: number) => Math.min(ZOOM.max, Math.max(ZOOM.min, z));
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -156,6 +160,44 @@ export function freshIds(page: DesignPage, count: number): string[] {
   return out;
 }
 
+export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
-export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.shape === "ellipse" ? "Ellipse" : "Rectangle");
-export const pageName = (p: DesignPage, k: number): string => p.name ?? `Page ${k + 1}`;
+export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : SHAPE_NAMES[l.shape]);
+export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
+
+/**
+ * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was
+ * changed here stays, everything else is the server's. So a frame dragged aside while its layers were designed
+ * somewhere else keeps both its new place and its new layers.
+ * ponytail: the layers are one thing; both sides changing the same frame's layers keeps this window's. Layer by layer when that bites.
+ */
+export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
+  if (!base) return mine;
+  const out: Record<string, unknown> = { ...theirs };
+  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "layers"] as const) {
+    if (JSON.stringify(mine[f]) === JSON.stringify(base[f])) continue;
+    if (mine[f] === undefined) delete out[f];
+    else out[f] = mine[f];
+  }
+  return out as unknown as DesignPage;
+}
+
+/**
+ * A design's frames as the server has them now (`theirs`), with what this window did since it last agreed with the
+ * server (`base` → `mine`) done to them again: a frame changed here keeps that change (mergeFrame), one made here is
+ * there, one deleted here stays deleted, and the order is this window's when it reordered them.
+ */
+export function mergeFrames(mine: readonly DesignPage[], base: readonly DesignPage[], theirs: readonly DesignPage[]): DesignPage[] {
+  const baseOf = new Map(base.map((p) => [p.id, p]));
+  const mineOf = new Map(mine.map((p) => [p.id, p]));
+  const kept = theirs.filter((p) => mineOf.has(p.id) || !baseOf.has(p.id)).map((p) => (mineOf.has(p.id) ? mergeFrame(mineOf.get(p.id)!, baseOf.get(p.id), p) : p));
+  const made = mine.filter((p) => !baseOf.has(p.id) && !theirs.some((t) => t.id === p.id));
+  const all = [...kept, ...made];
+  // reordered here: the frames both sides have go in this window's order, the others stay where they are
+  const common = (list: readonly DesignPage[]) => list.filter((p) => baseOf.has(p.id) && mineOf.has(p.id)).map((p) => p.id);
+  if (common(mine).join() === common(base).join()) return all;
+  const order = common(mine).filter((id) => all.some((p) => p.id === id));
+  const byId = new Map(all.map((p) => [p.id, p]));
+  let n = 0;
+  return all.map((p) => (order.includes(p.id) ? byId.get(order[n++]!)! : p));
+}

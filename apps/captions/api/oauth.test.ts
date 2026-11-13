@@ -77,6 +77,14 @@ describe("OAuth for the MCP server", () => {
     expect(t.token_type).toBe("Bearer");
     expect((await mcp(`Bearer ${t.access_token}`)).status).toBe(200);
     expect(findUser("oauthowner")!.aiKeys?.map((k) => k.name)).toContain("Chat Example");
+    // it speaks MCP and nothing else: the account's other routes stay shut to it, where a pasted Full key opens them
+    const sessions = (authorization: string) => app.request("/api/workshop/sessions", { headers: { authorization } });
+    expect((await sessions(`Bearer ${t.access_token}`)).status).toBe(401);
+    expect((await app.request("/api/review/assets", { headers: { authorization: `Bearer ${t.access_token}` } })).status).toBe(401);
+    expect((await sessions(`Bearer ${newApiKey(findUser("oauthowner")!, "full")}`)).status).toBe(200);
+    // and its tools still do their work, as the account
+    const made = await app.request("/api/mcp", { method: "POST", headers: { authorization: `Bearer ${t.access_token}`, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "workshop_new_session", arguments: { title: "Through MCP" } } }) });
+    expect(((await made.json()) as { result: { isError?: boolean } }).result.isError).toBeUndefined();
     // once only
     expect((await token({ code: again.code, client_id: reg.client_id, code_verifier: again.verifier })).status).toBe(400);
   });

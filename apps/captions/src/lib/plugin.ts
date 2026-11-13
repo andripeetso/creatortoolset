@@ -204,6 +204,9 @@ export type ReviewEditRef = { project: string; draft: string };
  * - `camera`: on an AI edit, the whole camera frame shown under Reframe (a video URL), once it is there; Reframe is
  *   offered only where this is set. Rejects with a message the panel shows.
  * - `look`: on an AI edit, the Color panel's full-quality frame and clip of a shot (frame `at`).
+ * - `face`: on an AI edit, the timeline's Face (face refinement strength): `still` = frame `at` of a shot as filmed
+ *   (left half) and retouched at `max` x the edit's look (right half), one image URL the page fades between; `strength`
+ *   = the edit's now (1 = its look), `save` keeps a new one for the edit. Face is offered only where this is set.
  */
 export interface ReviewTimelineSlot {
   clipSrc?: (clip: number) => string;
@@ -211,6 +214,12 @@ export interface ReviewTimelineSlot {
   look?: {
     still: (edit: ReviewEditRef, key: string, at: number, signal?: AbortSignal) => Promise<Still>;
     clip: (edit: ReviewEditRef, key: string, at: number, signal?: AbortSignal) => Promise<string>;
+  };
+  face?: {
+    max: number;
+    still: (edit: ReviewEditRef, key: string, at: number, signal?: AbortSignal) => Promise<string>;
+    strength: (edit: ReviewEditRef) => Promise<number>;
+    save: (edit: ReviewEditRef, strength: number) => Promise<void>;
   };
 }
 
@@ -254,7 +263,7 @@ export type ReviewActionEntry = ReviewActionSlot & { key: string; pluginId: stri
 /** The timeline editor's plug-in parts: each one from the first plug-in that gives it (see ReviewTimelineSlot). */
 export function reviewTimelineOf(plugins: WebPlugin[]): ReviewTimelineSlot {
   const pick = <K extends keyof ReviewTimelineSlot>(k: K) => plugins.find((p) => p.review?.timeline?.[k])?.review?.timeline?.[k];
-  return { clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look") };
+  return { clipSrc: pick("clipSrc"), camera: pick("camera"), look: pick("look"), face: pick("face") };
 }
 
 /** The Review panels and toolbar buttons this account may see: a gated one is left out while its gate is off (canUse). */

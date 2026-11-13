@@ -12,7 +12,7 @@ import { onTopic } from "@/lib/sync";
 
 /**
  * The Designer's start (/design): every design of this account, newest first, each opening in the designer
- * (/design/:id), and New design for blank pages in one of the picture sizes. A carousel piece's design is started
+ * (/design/:id), and New design for a canvas with one blank frame of a picture size. A carousel piece's design is started
  * from the piece (Design, beside Visualize in the Content Workshop), a cover from a video in Finals: both are listed
  * here too. A design made or changed somewhere else (the assistant, another window) shows without a reload.
  */
@@ -73,7 +73,7 @@ export default function DesignsPage() {
         {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
         {designs?.length === 0 && (
           <p className="py-16 text-center text-sm text-zinc-500">
-            No designs yet. New design starts blank pages; Design on a carousel piece in the <Link to="/workshop" className="underline">Content Workshop</Link> starts from its slides.
+            No designs yet. New design starts a blank canvas; Design on a carousel piece in the <Link to="/workshop" className="underline">Content Workshop</Link> starts from its slides.
           </p>
         )}
         <ul aria-label="Designs" className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
@@ -99,7 +99,7 @@ export default function DesignsPage() {
                     <p className="truncate text-sm font-medium">{d.name}</p>
                   )}
                   <p className="truncate text-xs text-zinc-500">
-                    {d.pages} {d.pages === 1 ? "page" : "pages"} · {d.width} × {d.height}
+                    {d.pages} {d.pages === 1 ? "frame" : "frames"}
                     {madeFrom(d) && ` · ${madeFrom(d)}`}
                   </p>
                 </div>
@@ -122,7 +122,7 @@ export default function DesignsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
-            <AlertDialogDescription>Its pages and the pictures added to it are deleted for good. PNGs you saved stay where you saved them.</AlertDialogDescription>
+            <AlertDialogDescription>Its frames and the pictures added to it are deleted for good. PNGs you saved stay where you saved them.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it</AlertDialogCancel>

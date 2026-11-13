@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LocalAiRow } from "@contracts/local-ai";
-import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome } from "./OwnAiSection";
+import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome, webRowState, aiAppsShown, WEB_APPS } from "./OwnAiSection";
+
 
 const url = "https://studio.example.com/api/mcp";
 const key = "ctk_" + "a".repeat(48);
@@ -49,4 +50,21 @@ describe("how Install ends on a server that is not this computer", () => {
     expect(installOutcome(undefined, { macApp: false, commands: true })).toBe("command");
     expect(installOutcome(undefined, { macApp: false, commands: false })).toEqual({ failed: NEEDS_MAC_APP });
   });
+});
+
+
+
+it("ChatGPT and Claude rows: only on a linked computer, once that store lists Creator Toolset or while that app asks", () => {
+  const apps = [{ name: "ChatGPT", listing: "" }, { name: "Claude", listing: "https://claude.ai/directory/creator-toolset" }];
+  expect(aiAppsShown(true, apps, null).map((a) => a.name)).toEqual(["Claude"]);
+  expect(aiAppsShown(true, apps, "chatgpt").map((a) => a.name)).toEqual(["ChatGPT", "Claude"]);
+  expect(aiAppsShown(false, apps, "chatgpt")).toEqual([]);
+  // neither store lists it today: a linked computer shows a row only while that app asks
+  expect(aiAppsShown(true, WEB_APPS, null)).toEqual([]);
+});
+
+it("a ChatGPT or Claude row is installed once the app has used the connection, not when the computer got ready", () => {
+  expect(webRowState()).toBe("install");
+  expect(webRowState({})).toBe("finish");
+  expect(webRowState({ usedAt: 1 })).toBe("installed");
 });

@@ -80,12 +80,13 @@ async function draw(d: Design, pages: DesignPage[], which: number[], dir: string
     const tab = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
     await tab.goto(rendererUrl(), { waitUntil: "load" });
     await tab.waitForFunction(() => Boolean((globalThis as unknown as RendererWindow).designRenderer), undefined, { timeout: 10_000 });
-    const scale = Math.min(1, WIDTH / d.width);
     const pictures: PagePicture[] = [];
     for (const n of which) {
       const page = pages[n - 1];
       if (!page) continue;
-      const spec: PictureSpec = { width: d.width, height: d.height, page, pictures: await smallPictures(page, dir), scale };
+      // each frame at its own size, no wider than the picture's width
+      const width = page.w ?? d.width;
+      const spec: PictureSpec = { width, height: page.h ?? d.height, page, pictures: await smallPictures(page, dir), scale: Math.min(1, WIDTH / width) };
       pictures.push({ page: n, ...(await tab.evaluate((s) => (globalThis as unknown as RendererWindow).designRenderer!.draw(s), spec)) });
     }
     return { pictures };

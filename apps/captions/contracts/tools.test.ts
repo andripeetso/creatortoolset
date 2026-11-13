@@ -55,7 +55,7 @@ describe("TOOL_NEEDS readiness", () => {
     for (const t of TOOLS) expect(Array.isArray(TOOL_NEEDS[t])).toBe(true);
     expect(toolsUsing("DEEPGRAM_API_KEY")).toEqual(["captions", "media", "editor", "notes", "guides"]);
     expect(toolsUsing("apify")).toEqual(["instagram"]);
-    expect(TOOLS.filter(usesAi)).toEqual(["instagram", "workshop", "captions", "media", "editor", "design", "notes", "guides"]);
+    expect(TOOLS.filter(usesAi)).toEqual(["instagram", "workshop", "captions", "media", "editor", "notes", "guides"]);
   });
 });
 
