@@ -6,7 +6,7 @@ import { deviceTranscribes } from "./device-transcribe";
 import { speechComputers } from "./computer-transcribe";
 import { isOnline } from "./devices";
 import {
-  COMPUTER_USES, DEFAULT_VOICE_PREFS, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
+  DEFAULT_VOICE_PREFS, EDITOR_COMPUTER_MODEL, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
   type SpeechUse, type SttChoice, type SttEngine, type SttResolved, type VoicePrefs,
 } from "../../contracts/voice";
 
@@ -67,18 +67,22 @@ export function writeVoicePrefs(username: string, b: Record<string, unknown>): V
   return next;
 }
 
-/** The account's computers that `use` may run on: none for a use that does not route to computers yet (COMPUTER_USES). */
-const computersFor = (actor: Actor, use: SpeechUse | undefined) => (use && COMPUTER_USES.includes(use) ? speechComputers(userOf(actor)) : []);
+/** The account's computers that `use` may run on: for the AI Editor only the ones that have EDITOR_COMPUTER_MODEL. */
+function computersFor(actor: Actor, use: SpeechUse | undefined) {
+  if (!use) return [];
+  const mine = speechComputers(userOf(actor));
+  return use === "editor" ? mine.filter((d) => d.stt?.held.includes(EDITOR_COMPUTER_MODEL)) : mine;
+}
 
 /**
- * Engines that can serve `use` for this account now: a key it has, the server itself, or (for COMPUTER_USES) a computer
- * of its own with a speech model. No use: the ones every use can run.
+ * Engines that can serve `use` for this account now: a key it has, the server itself (not the AI Editor), or a computer
+ * of its own with a speech model (computersFor). No use: the ones every use can run.
  */
 export function availableEngines(actor: Actor, use?: SpeechUse): Engine[] {
   const out: Engine[] = [];
   if (!keyFor(actor, "DEEPGRAM_API_KEY").missing) out.push("deepgram");
   if (!keyFor(actor, "OPENAI_API_KEY").missing) out.push("openai");
-  if (deviceTranscribes() || computersFor(actor, use).some((d) => d.stt?.held.length)) out.push("local");
+  if ((use !== "editor" && deviceTranscribes()) || computersFor(actor, use).some((d) => d.stt?.held.length)) out.push("local");
   return out;
 }
 
@@ -92,12 +96,14 @@ const NEEDS: Record<Engine, string> = {
   local: "Needs a speech model on one of your computers",
 };
 const KEY: Partial<Record<Engine, "DEEPGRAM_API_KEY" | "OPENAI_API_KEY">> = { deepgram: "DEEPGRAM_API_KEY", openai: "OPENAI_API_KEY" };
-/** A use that does not route to computers yet, asked to run on one (COMPUTER_USES). */
-const COMPUTERS_ONLY_FOR = "Speech models on your computers do captions, Media Library transcripts and the assistant's mic only";
+/** Why the AI Editor, set to run on the person's computers, runs on Deepgram (the row's quiet line). */
+const EDITOR_ENGLISH_ONLY = "On your computers only edits in English: this runs on Deepgram";
+const EDITOR_MODEL_ONLY = "On your computers only with Parakeet: this runs on Deepgram";
+const englishOnly = (langs: string[]) => langs.length === 1 && langs[0] === "en";
 
 /** `on`: a local model runs on the server itself (lib/device-transcribe.ts) or on the person's computers (lib/computer-transcribe.ts). */
 export type Speech =
-  | { engine: "deepgram" | "openai"; model: string; key: string; languages: string[] }
+  | { engine: "deepgram" | "openai"; model: string; key: string; languages: string[]; note?: string }
   | { engine: "local"; model: string; languages: string[]; on: "server" | "computers" };
 
 /**
@@ -107,42 +113,50 @@ export type Speech =
  * server's own; else one on a computer that is off.
  */
 function localFor(actor: Actor, use: SpeechUse, chosen: string | undefined, langs: string[]): { model: string; on: "server" | "computers" } | { needs: string } {
-  const routed = COMPUTER_USES.includes(use);
   const mine = computersFor(actor, use);
   const kept = (id: string) => mine.filter((d) => d.stt?.held.includes(id));
   if (chosen) {
     const m = STT_MODELS.find((x) => x.id === chosen)!;
     if (!m.computer) return deviceTranscribes() ? { model: chosen, on: "server" } : { needs: NEEDS.local };
-    if (!routed) return { needs: COMPUTERS_ONLY_FOR };
     return kept(chosen).length ? { model: chosen, on: "computers" } : { needs: `Needs ${m.name} on one of your computers` };
   }
   const hears = (m: (typeof STT_MODELS)[number]) => m.languages === "many" || (langs.length > 0 && langs.every((l) => m.languages.includes(l)));
   const fit = STT_MODELS.filter((m) => m.computer && hears(m) && kept(m.id).length);
   const on = fit.find((m) => kept(m.id).some((d) => isOnline(d.id))) ?? (deviceTranscribes() ? undefined : fit[0]);
   if (on) return { model: on.id, on: "computers" };
-  return deviceTranscribes() ? { model: "whisper-base", on: "server" } : { needs: routed ? NEEDS.local : COMPUTERS_ONLY_FOR };
+  return deviceTranscribes() ? { model: "whisper-base", on: "server" } : { needs: NEEDS.local };
+}
+
+/** The AI Editor on Deepgram, with why (`note`), when its computers can't hear this edit. */
+function onDeepgram(actor: Actor, languages: string[], note: string): Speech | { needs: string; key: "DEEPGRAM_API_KEY" } {
+  const k = keyFor(actor, "DEEPGRAM_API_KEY");
+  return k.missing ? { needs: NEEDS.deepgram, key: "DEEPGRAM_API_KEY" } : { engine: "deepgram", model: "nova-3", key: k.key, languages, note };
 }
 
 /**
  * What `use` runs on for `actor`: their choice for that use, else their default; `auto` is the first that serves them
  * (Deepgram, OpenAI, a model on their own computers: localFor). `languages` (a project's or an edit's) win over the person's. Null + why when
  * nothing can serve them.
+ * The AI Editor runs on their computers only when they chose it (never on `auto`), with EDITOR_COMPUTER_MODEL, for an
+ * edit in English alone; any other model or language is Deepgram, as the editor ran before (onDeepgram).
  */
 export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: string[]): Speech | { needs: string; key?: "DEEPGRAM_API_KEY" | "OPENAI_API_KEY" } {
   const prefs = readVoicePrefs(userOf(actor));
   const choice = (use !== "default" && prefs.stt.per[use]) || prefs.stt.default;
   const langs = languages?.length ? languages : prefs.languages;
   const can = availableEngines(actor, use === "default" ? "transcripts" : use);
-  const engine = choice.engine === "auto" ? can[0] : choice.engine;
+  const engine = choice.engine === "auto" ? can.find((e) => use !== "editor" || e !== "local") : choice.engine;
   if (!engine) return { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" };
-  // the default row stands for every use: a local model on it is read as the transcripts' (the one use computers serve)
+  // the default row stands for every use: a local model on it is read as the transcripts'
   const as: SpeechUse = use === "default" ? "transcripts" : use;
-  // local asked of a use that can't run on computers: a model on one would not help, so it says that
-  if (!can.includes(engine)) {
-    if (engine === "local" && !COMPUTER_USES.includes(as)) return { needs: COMPUTERS_ONLY_FOR };
-    return { needs: NEEDS[engine], ...(KEY[engine] ? { key: KEY[engine] } : {}) };
-  }
   const chosen = (choice.engine === engine && choice.model) || undefined;
+  if (engine === "local" && use === "editor") {
+    const why = chosen && chosen !== EDITOR_COMPUTER_MODEL ? EDITOR_MODEL_ONLY : englishOnly(langs) ? null : EDITOR_ENGLISH_ONLY;
+    if (why) return onDeepgram(actor, langs, why);
+    const l = localFor(actor, use, EDITOR_COMPUTER_MODEL, langs);
+    return "needs" in l ? l : { engine, ...l, languages: langs };
+  }
+  if (!can.includes(engine)) return { needs: NEEDS[engine], ...(KEY[engine] ? { key: KEY[engine] } : {}) };
   if (engine === "local") {
     const l = localFor(actor, as, chosen, langs);
     return "needs" in l ? l : { engine, ...l, languages: langs };
@@ -155,7 +169,8 @@ export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: 
 /** One use (or the default) as it resolves now, for the Voice page. */
 export function resolvedOne(actor: Actor, use: SpeechUse | "default"): SttResolved {
   const s = speechFor(actor, use);
-  return "needs" in s ? { use, ...s } : { use, engine: s.engine, model: s.model };
+  if ("needs" in s) return { use, ...s };
+  return { use, engine: s.engine, model: s.model, ...(s.engine !== "local" && s.note ? { note: s.note } : {}) };
 }
 
 /**

@@ -11,9 +11,11 @@ vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
 
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
-const { pairDevice, setDeviceKinds, touchDevice } = await import("./devices");
-const { strongest, transcribeOnComputer, ComputerOff, COMPUTER_LIMITS } = await import("./computer-transcribe");
-const { speechFor, writeVoicePrefs } = await import("./speech");
+const { deviceOf, pairDevice, setDeviceKinds, setDeviceStt, touchDevice } = await import("./devices");
+const { strongest, transcribeOnComputer, transcriptWaits, ComputerOff, COMPUTER_LIMITS } = await import("./computer-transcribe");
+const { availableEngines, resolvedOne, speechFor, speechJob, writeVoicePrefs } = await import("./speech");
+const { editorWordsFromComputer } = await import("../transcribe");
+const { saveMyKey } = await import("../my-keys");
 
 const ana = createUser("ana", "password1");
 const key = `Bearer ${newApiKey(ana, "full")}`;
@@ -131,28 +133,88 @@ describe("speechFor with computers", () => {
     expect(speechFor("ana", "transcripts")).toEqual({ needs: "Needs a speech model on one of your computers" });
   });
 
-  // transcripts, captions and the mic run on computers (COMPUTER_USES): the AI Editor is not offered them or sent there
-  it("the other uses never offer or pick a model on a computer", async () => {
-    writeVoicePrefs("ana", { stt: { default: { engine: "auto" }, per: { transcripts: null } } });
-    const v = (await (await app.request("/api/voice-prefs", { headers: { authorization: key } })).json()) as { available: string[]; availableFor: Record<string, string[]> };
+  // the AI Editor cuts at restarts and "um"s: on a computer only with Parakeet (EDITOR_COMPUTER_MODEL), only when picked,
+  // only for an edit in English alone; anything else stays on Deepgram, as before
+  it("the AI Editor: offered a computer with Parakeet, never on Automatic, Deepgram for another model or language", async () => {
+    writeVoicePrefs("ana", { languages: ["en"], stt: { default: { engine: "auto" }, per: { transcripts: null } } });
+    const v = (await (await app.request("/api/voice-prefs", { headers: { authorization: key } })).json()) as { available: string[]; availableFor: Record<string, string[]>; resolved: { use: string }[] };
     expect(v.availableFor.transcripts).toContain("local");
     expect(v.availableFor.captions).toContain("local");
     expect(v.availableFor.mic).toContain("local");
-    expect(v.availableFor.editor).not.toContain("local");
+    expect(v.availableFor.editor).toContain("local");   // the Mac has Parakeet
     expect(v.available).not.toContain("local");
-    // auto with no key: transcripts, captions and the mic run on a computer, the AI Editor says what to add
+    // Automatic with no key: the others run on a computer, the AI Editor is never sent there unasked
     expect(speechFor("ana", "transcripts")).toMatchObject({ engine: "local", on: "computers" });
     expect(speechFor("ana", "captions")).toMatchObject({ engine: "local", on: "computers" });
     expect(speechFor("ana", "mic")).toMatchObject({ engine: "local", on: "computers" });
     expect(speechFor("ana", "editor")).toEqual({ needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" });
-    // local by default, or a computer's model chosen for a use: it says what the computers do
-    writeVoicePrefs("ana", { stt: { default: { engine: "local" } } });
-    expect(speechFor("ana", "editor")).toEqual({ needs: "Speech models on your computers do captions, Media Library transcripts and the assistant's mic only" });
-    writeVoicePrefs("ana", { stt: { per: { editor: { engine: "local", model: "whisper-large-v3-turbo" } } } });
-    expect(speechFor("ana", "editor")).toEqual({ needs: "Speech models on your computers do captions, Media Library transcripts and the assistant's mic only" });
-    writeVoicePrefs("ana", { stt: { per: { editor: null, mic: { engine: "local", model: "whisper-large-v3-turbo" } } } });
-    expect(speechFor("ana", "mic")).toMatchObject({ engine: "local", model: "whisper-large-v3-turbo", on: "computers" });
-    writeVoicePrefs("ana", { stt: { default: { engine: "auto" }, per: { mic: null } } });
+    // picked, for an English edit: Parakeet on her computers, and the worker is told so (never a key)
+    writeVoicePrefs("ana", { stt: { per: { editor: { engine: "local" } } } });
+    expect(speechFor("ana", "editor")).toEqual({ engine: "local", model: "parakeet-tdt-0.6b-v3", on: "computers", languages: ["en"] });
+    expect(speechJob("ana", "editor", ["en"])).toEqual({ engine: "local", model: "parakeet-tdt-0.6b-v3", languages: ["en"] });
+    // an edit in another language, in two, or in none known: Deepgram, and the row says why
+    saveMyKey("ana", "DEEPGRAM_API_KEY", "dg-ana");
+    const english = "On your computers only edits in English: this runs on Deepgram";
+    expect(speechFor("ana", "editor", ["et"])).toEqual({ engine: "deepgram", model: "nova-3", key: "dg-ana", languages: ["et"], note: english });
+    expect(speechJob("ana", "editor", ["en", "et"])).toEqual({ engine: "deepgram", model: "nova-3", languages: ["en", "et"] });
+    writeVoicePrefs("ana", { languages: [] });
+    expect(resolvedOne("ana", "editor")).toEqual({ use: "editor", engine: "deepgram", model: "nova-3", note: english });
+    // another model on computers: Deepgram too
+    writeVoicePrefs("ana", { languages: ["en"], stt: { per: { editor: { engine: "local", model: "whisper-large-v3-turbo" } } } });
+    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", note: "On your computers only with Parakeet: this runs on Deepgram" });
+    // the Default set to computers counts as picked
+    writeVoicePrefs("ana", { stt: { default: { engine: "local" }, per: { editor: null } } });
+    expect(speechFor("ana", "editor")).toMatchObject({ engine: "local", model: "parakeet-tdt-0.6b-v3", on: "computers" });
+    // with a key, Automatic stays on Deepgram
+    writeVoicePrefs("ana", { stt: { default: { engine: "auto" } } });
+    expect(speechFor("ana", "editor")).toMatchObject({ engine: "deepgram", model: "nova-3" });
+    saveMyKey("ana", "DEEPGRAM_API_KEY", null);
+    // no Deepgram key and an edit Parakeet can't hear: the plain need
+    writeVoicePrefs("ana", { stt: { per: { editor: { engine: "local" } } } });
+    expect(speechFor("ana", "editor", ["et"])).toEqual({ needs: "Needs a Deepgram key", key: "DEEPGRAM_API_KEY" });
+    writeVoicePrefs("ana", { languages: [], stt: { default: { engine: "auto" }, per: { editor: null, mic: null } } });
+  });
+
+  it("the AI Editor needs Parakeet itself: a computer with only Whisper is not offered for it", () => {
+    const solo = pairDevice("eli", "Tiny Laptop");
+    setDeviceKinds(solo.device.id, [TRANSCRIBE_KIND]);
+    setDeviceStt(solo.device.id, { want: [], held: ["whisper-large-v3-turbo"], getting: [], claimed: true });
+    writeVoicePrefs("eli", { languages: ["en"], stt: { per: { editor: { engine: "local" } } } });
+    expect(availableEngines("eli", "editor")).not.toContain("local");
+    expect(availableEngines("eli", "captions")).toContain("local");
+    expect(speechFor("eli", "editor")).toEqual({ needs: "Needs Parakeet TDT 0.6B v3 on one of your computers" });
+    expect(speechJob("eli", "editor")).toEqual({ languages: ["en"] });   // the worker stays on Deepgram
+  });
+});
+
+describe("an edit's sound goes only to its owner's computers", () => {
+  it("an edit by A never reaches B's computer, even when only B's has Parakeet on", async () => {
+    createUser("abe", "password1");
+    createUser("bea", "password1");
+    const a = pairDevice("abe", "Abe's PC");
+    const b = pairDevice("bea", "Bea's PC");
+    await report(a.token, { os: "linux", cpus: 8, memGb: 16, freeGb: 20 });
+    await report(b.token, { os: "linux", cpus: 64, memGb: 128, freeGb: 90, gpu: "RTX", gpuMemGb: 48 });
+    for (const who of ["abe", "bea"]) writeVoicePrefs(who, { languages: ["en"], stt: { per: { editor: { engine: "local" } } } });
+    const parakeet = ["parakeet-tdt-0.6b-v3"];
+    // only B's computer has Parakeet: A's edit is not sent to any computer
+    expect((await claim(b.token, parakeet)).job).toBeNull();
+    expect(await editorWordsFromComputer("abe", ["en"], new Uint8Array([1, 2, 3]))).toEqual({ why: "Not set to run on your computers" });
+    expect((await claim(b.token, parakeet)).job).toBeNull();
+    // A's computer gets Parakeet too and stays quiet: A's window waits for it; B's stronger computer is never handed it
+    await claim(a.token, parakeet);
+    const words = editorWordsFromComputer("abe", ["en"], new TextEncoder().encode("RIFF-abe"));
+    await vi.waitFor(() => expect(transcriptWaits(deviceOf(a.device.id)!, { on: true, weights: {} })).toBe(true));
+    expect((await claim(b.token, parakeet)).job).toBeNull();
+    const got = (await claim(a.token, parakeet)).job!;
+    expect(got).toMatchObject({ kind: TRANSCRIBE_KIND, model: "parakeet-tdt-0.6b-v3", languages: ["en"] });
+    // its sound only to A's computer, and only A's computer can answer it
+    expect((await app.request(`/api/devices/relay/transcribe/${got.id}`, { headers: as(b.token) })).status).toBe(404);
+    expect(await (await app.request(`/api/devices/relay/transcribe/${got.id}`, { headers: as(a.token) })).text()).toBe("RIFF-abe");
+    const um = { words: [{ text: "Uh,", start: 0, end: 0.3 }, { text: "if", start: 0.4, end: 0.5 }], language: "en" };
+    expect((await app.request(`/api/devices/relay/transcribe/${got.id}`, json(um, as(b.token)))).status).toBe(404);
+    expect((await app.request(`/api/devices/relay/transcribe/${got.id}`, json(um, as(a.token)))).status).toBe(200);
+    expect(await words).toEqual(um);   // no confidence: Parakeet has none
   });
 });
 

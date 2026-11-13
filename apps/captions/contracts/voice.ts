@@ -11,11 +11,11 @@ export const SPEECH_USES = ["captions", "transcripts", "editor", "mic"] as const
 export type SpeechUse = (typeof SPEECH_USES)[number];
 
 /**
- * The uses a model on the person's own computers runs today (api/library/transcribe.ts; captions: api/transcribe.ts
- * POST /, the mic: POST /mic, each of which falls back to the person's other engines when their computers can't); the
- * others never offer it.
+ * The model the AI Editor may run on the person's own computers, for English edits only: it keeps restarts and "um"/"uh"
+ * as their own words, which the editor cuts at (Whisper drops them). Every other model, and every other language, leaves
+ * the editor on Deepgram (api/lib/speech.ts).
  */
-export const COMPUTER_USES: readonly SpeechUse[] = ["transcripts", "captions", "mic"];
+export const EDITOR_COMPUTER_MODEL = "parakeet-tdt-0.6b-v3";
 
 export const SPEECH_USE_NAMES: Record<SpeechUse, string> = {
   captions: "Captions",
@@ -118,7 +118,8 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = { languages: [], stt: { default: 
 
 /** What one use runs on now, for the page: the engine that will be asked, or why none can be. */
 export type SttResolved =
-  | { use: SpeechUse | "default"; engine: Exclude<SttEngine, "auto">; model: string }
+  /** `note`: why it runs on another engine than the one chosen (the AI Editor on Deepgram), one quiet line */
+  | { use: SpeechUse | "default"; engine: Exclude<SttEngine, "auto">; model: string; note?: string }
   /** `key`: the key that would serve it (its button opens that row of API keys); none for a local engine. */
   | { use: SpeechUse | "default"; needs: string; key?: "DEEPGRAM_API_KEY" | "OPENAI_API_KEY" };
 
@@ -129,8 +130,8 @@ export interface VoiceView extends VoicePrefs {
   resolvedDefault: SttResolved;
   /**
    * Engines that can serve every use now (a key, or a model on the server itself), so a page that reads one list never
-   * offers a use what it can't run. `availableFor` is per use: a model on the person's computers serves only the uses
-   * in COMPUTER_USES, so `local` may be in a use's list and not in this one.
+   * offers a use what it can't run. `availableFor` is per use: the AI Editor runs on the person's computers only with
+   * EDITOR_COMPUTER_MODEL, so `local` may be in a use's list and not in this one.
    */
   available: Exclude<SttEngine, "auto">[];
   availableFor: Record<SpeechUse, Exclude<SttEngine, "auto">[]>;
