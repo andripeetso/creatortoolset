@@ -180,6 +180,8 @@ describe("speechFor with computers", () => {
     writeVoicePrefs("ana", { stt: { per: { editor: { engine: "local" } } } });
     expect(speechFor("ana", "editor", ["et"])).toEqual({ needs: "Needs a Deepgram key", key: "DEEPGRAM_API_KEY" });
     writeVoicePrefs("ana", { languages: [], stt: { default: { engine: "auto" }, per: { editor: null, mic: null } } });
+    // the PC as the tests after this one know it: turbo only
+    await claim(pc.token, ["whisper-large-v3-turbo"]);
   });
 
   it("the AI Editor needs Parakeet itself: a computer with only Whisper is not offered for it", () => {
