@@ -53,13 +53,23 @@ final class SpeechModels {
         ModelRegistry.shared.filter(\.onDisk).map(\.id)
     }
 
+    /// The model dictation has loaded now, as last seen (`claim` looks again each time and claims once more on a change).
+    private var ready: [String] = []
+
     /// The claim's fields: what it has, what it is getting (downloading, waiting, or failed a little while ago, so the
-    /// server does not ask again on every poll), and what its person got here since the last claim.
+    /// server does not ask again on every poll), what its person got here since the last claim, and what it has loaded
+    /// (`ready`: a mic recording, which it hears at once or refuses, is sent only to a Mac that has its model loaded).
     func claim() -> [String: Any] {
         let held = Self.held()
         let getting = ([Dictation.shared.download?.id].compactMap { $0 } + queue + failed.keys.sorted()).filter { !held.contains($0) }
+        Task { @MainActor in
+            let now = await Dictation.shared.loadedModels()
+            guard now != self.ready else { return }
+            self.ready = now
+            self.changed()
+        }
         return ["models": held, "getting": Array(NSOrderedSet(array: getting)) as? [String] ?? getting,
-                "asked": UserDefaults.standard.stringArray(forKey: Self.askedKey) ?? []]
+                "asked": UserDefaults.standard.stringArray(forKey: Self.askedKey) ?? [], "ready": ready]
     }
 
     /// The server took the claim that carried `sent`: its asked ones are the server's now.

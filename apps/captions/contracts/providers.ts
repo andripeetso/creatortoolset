@@ -180,7 +180,9 @@ export interface Device {
    * Speech models (contracts/voice.ts STT_MODELS ids) on a computer that declares TRANSCRIBE_KIND: what its owner asked it
    * to keep (Download), and what it said it has and is downloading (its last claim; `claimed`: it has claimed since).
    */
-  stt?: { want: string[]; held: string[]; getting: string[]; claimed?: true };
+  /** `ready`: the models a Mac has loaded now, so it can hear a recording someone waits on at once (the mic); absent:
+   * not said (another computer, or an older Mac app) */
+  stt?: { want: string[]; held: string[]; getting: string[]; claimed?: true; ready?: string[] };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

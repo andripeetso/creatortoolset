@@ -204,6 +204,32 @@ describe("speechFor with computers", () => {
   });
 });
 
+describe("the mic on a Mac: only with dictation's model loaded", () => {
+  it("offers its computers for the mic only where a Mac has the model loaded, says why otherwise, and never hands one a mic recording it can't hear", async () => {
+    createUser("mia", "password1");
+    const studio = pairDevice("mia", "Tiny Mia Mac");
+    await report(studio.token, { os: "mac", cpus: 10, memGb: 16, freeGb: 8 });
+    setDeviceKinds(studio.device.id, [TRANSCRIBE_KIND]);
+    const claimWith = async (ready?: string[]) =>
+      (await (await app.request("/api/devices/relay/editor/claim", json({ kinds: [TRANSCRIBE_KIND], models: ["whisper-large-v3-turbo"], getting: [], asked: [], ...(ready ? { ready } : {}) }, as(studio.token)))).json()) as { job: { soon?: boolean } | null };
+    // its dictation is off (nothing loaded): captions may run there, the mic is not offered it
+    await claimWith([]);
+    expect(availableEngines("mia", "captions")).toContain("local");
+    expect(availableEngines("mia", "mic")).not.toContain("local");
+    writeVoicePrefs("mia", { languages: ["en"], stt: { per: { mic: { engine: "local", model: "whisper-large-v3-turbo" } } } });
+    expect(speechFor("mia", "mic")).toEqual({ needs: "Needs dictation on with Whisper large-v3 turbo on your Mac" });
+    await expect(transcribeOnComputer("mia", "whisper-large-v3-turbo", ["en"], "x.wav", MIC_LIMITS)).rejects.toBeInstanceOf(ComputerOff);
+    // loaded: offered, and the recording goes there
+    await claimWith(["whisper-large-v3-turbo"]);
+    expect(availableEngines("mia", "mic")).toContain("local");
+    expect(speechFor("mia", "mic")).toMatchObject({ engine: "local", model: "whisper-large-v3-turbo", on: "computers" });
+    // an older Mac app says nothing: as before
+    await claimWith();
+    expect(availableEngines("mia", "mic")).toContain("local");
+    writeVoicePrefs("mia", { languages: [], stt: { per: { mic: null } } });
+  });
+});
+
 describe("an edit's sound goes only to its owner's computers", () => {
   it("an edit by A never reaches B's computer, even when only B's has Parakeet on", async () => {
     createUser("abe", "password1");
