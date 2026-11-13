@@ -982,10 +982,12 @@ export function Message({
       {working && <Elapsed since={m.at} />}
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
-      <ApprovalCards approvals={m.approvals} />
-        <ConfirmCards confirms={m.confirms} onView={onView} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
+      {/* the questions waiting for a press come under the words, as the reply says ("the card below"): the words
+          written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
+      <ApprovalCards approvals={m.approvals} />
+      <ConfirmCards confirms={m.confirms} onView={onView} />
       {again}
       {onFolder && (
         <button
