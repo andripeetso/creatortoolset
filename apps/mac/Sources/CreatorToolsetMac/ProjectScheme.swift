@@ -26,6 +26,13 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         "camera-faces.json": "application/json",
         "thumb.jpg": "image/jpeg",
     ]
+    /// The cursors a recording saw (Recorder.swift CursorLog): cursor-<n>.png.
+    static func cursorType(_ name: String) -> String? {
+        guard name.hasPrefix("cursor-"), name.hasSuffix(".png") else { return nil }
+        let n = name.dropFirst(7).dropLast(4)
+        return !n.isEmpty && n.count <= 3 && n.allSatisfy(\.isNumber) ? "image/png" : nil
+    }
+
     /// An open-ended range (`bytes=n-`) is cut to this many bytes, so a seek does not read the rest of the file.
     static let openRangeCap: Int64 = 8 << 20
     private static let chunk: Int64 = 1 << 20
@@ -94,7 +101,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
             }
         }
         let name = String(url.path.dropFirst())
-        guard let type = Self.types[name], let project = ProjectStore.project(id: url.host ?? "", root: root) else {
+        guard let type = Self.types[name] ?? Self.cursorType(name), let project = ProjectStore.project(id: url.host ?? "", root: root) else {
             return reply(task, url, 404)
         }
         stream(project.folder.appendingPathComponent(name), type: type, url, range: range, task: task)

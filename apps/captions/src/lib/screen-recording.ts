@@ -14,7 +14,16 @@ export type ScreenEvents = {
   releases?: [number, number, number][];
   /** The sound tracks in file order ("mic", "system"); the export keeps the first. */
   audio?: string[];
+  /** The recording's pixels per point (Mac app, from 0.15.38): the pointer is drawn at its real size. */
+  scale?: number;
+  /** Each system cursor the recording saw, saved beside it as cursor-<i>.png: [width, height, hot x, hot y] in points. */
+  cursors?: [number, number, number, number][];
+  /** [t, i]: from t on the pointer looked like cursors[i]. */
+  cursorAt?: [number, number][];
 };
+
+/** The real pointer's look for drawFrame: the recording's cursors (`events.cursors`) as images, in their order; null while one loads. */
+export type CursorImages = (CanvasImageSource | null)[];
 
 /** A zoom: from `start` to `end` (s), `scale`× towards (x, y) (0–1 of the recorded picture). */
 export type Zoom = { start: number; end: number; x: number; y: number; scale: number };
@@ -337,8 +346,8 @@ export function defaultLook(events: ScreenEvents, duration: number): ScreenLook 
   return {
     zooms: autoZooms(events, duration),
     follow: true,
-    pointer: 1.6,
-    smooth: 0.4,
+    pointer: 1,
+    smooth: 0.25,
     hideIdle: true,
     clickRings: true,
     background: "violet",
@@ -422,15 +431,21 @@ const smoothed = new WeakMap<[number, number, number][], Map<string, Float32Arra
  * drawn there, and the smoothing alone leaves the arrow beside the ring when the hand was moving just before or
  * after. The same at any frame rate.
  */
-export function smoothPointer(path: [number, number, number][], t: number, window: number, presses: ScreenEvents["clicks"] = NONE) {
+export function smoothPointer(
+  path: [number, number, number][],
+  t: number,
+  window: number,
+  presses: ScreenEvents["clicks"] = NONE,
+  releases: NonNullable<ScreenEvents["releases"]> = NONE,
+) {
   if (window <= 0.01 || path.length < 2) return pointerAt(path, t);
   let kept = smoothed.get(path);
   if (!kept) smoothed.set(path, (kept = new Map()));
-  const key = `${window}|${presses.length}`;
+  const key = `${window}|${presses.length}|${releases.length}`;
   let xy = kept.get(key);
   if (!xy) {
     if (kept.size >= 4) kept.clear(); // a slider being dragged asks for one window after another
-    xy = smoothPath(path, window, presses);
+    xy = smoothPath(path, window, presses, releases);
     kept.set(key, xy);
   }
   const n = xy.length / 2;
@@ -443,7 +458,7 @@ export function smoothPointer(path: [number, number, number][], t: number, windo
 const SETTLE = 1.5; // the smoothed path runs this many windows past each end of the log: the arrow sets off and comes to rest inside it
 
 /** The whole path smoothed, x and y in turn, every STEP from SETTLE windows before its first point to as long after its last. */
-function smoothPath(path: [number, number, number][], window: number, presses: ScreenEvents["clicks"]): Float32Array {
+function smoothPath(path: [number, number, number][], window: number, presses: ScreenEvents["clicks"], releases: NonNullable<ScreenEvents["releases"]>): Float32Array {
   const from = path[0][0] - SETTLE * window;
   const n = Math.max(2, Math.ceil((path[path.length - 1][0] + SETTLE * window - from) / STEP) + 1);
   const xy = new Float32Array(n * 2);
@@ -452,6 +467,7 @@ function smoothPath(path: [number, number, number][], window: number, presses: S
     xy[2 * i] = p.x;
     xy[2 * i + 1] = p.y;
   }
+  const raw = xy.slice();
   // Each pass lets a point give way to its neighbour, as a weight on a spring gives way: twice forwards, then twice
   // backwards, which takes the lag of the forward passes out again. 0.144: the four passes together spread a point
   // as far as an even average over `window` seconds would.
@@ -476,7 +492,41 @@ function smoothPath(path: [number, number, number][], window: number, presses: S
       }
     }
   }
+  // A drag (from a press to its release: a selection, a slider, a window moved) is drawn exactly as the hand went, with
+  // the smoothed path fading into it over PIN each side: what is being selected follows the real pointer, and a
+  // smoothed one ran beside it.
+  for (const [a, b] of drags(presses, releases)) {
+    for (let j = Math.max(0, Math.ceil((a - PIN - from) / STEP)); j <= Math.min(n - 1, Math.floor((b + PIN - from) / STEP)); j++) {
+      const t = from + j * STEP;
+      const out = t < a ? (a - t) / PIN : t > b ? (t - b) / PIN : 0;
+      const w = out <= 0 ? 1 : (1 - out * out) ** 2;
+      xy[2 * j] += (raw[2 * j] - xy[2 * j]) * w;
+      xy[2 * j + 1] += (raw[2 * j + 1] - xy[2 * j + 1]) * w;
+    }
+  }
   return xy;
+}
+
+/** Each press with the release that ends it, as [press, release] in seconds: a press with no release before the next press is no drag. */
+export function drags(presses: ScreenEvents["clicks"], releases: NonNullable<ScreenEvents["releases"]>): [number, number][] {
+  const out: [number, number][] = [];
+  const ups = releases.map((r) => r[0]).sort((x, y) => x - y);
+  const downs = presses.map((p) => p[0]).sort((x, y) => x - y);
+  let u = 0;
+  downs.forEach((d, i) => {
+    while (u < ups.length && ups[u] < d) u++;
+    if (u < ups.length && ups[u] < (downs[i + 1] ?? Infinity)) out.push([d, ups[u]]);
+  });
+  return out;
+}
+
+/** The cursor the recording showed at t: an index into `events.cursors`, or null with none logged. */
+export function cursorAt(events: Pick<ScreenEvents, "cursors" | "cursorAt">, t: number): number | null {
+  const at = events.cursorAt;
+  if (!events.cursors?.length || !at?.length) return null;
+  let i = 0;
+  while (i + 1 < at.length && at[i + 1][0] <= t) i++;
+  return at[i][1];
 }
 
 /** Seconds since the pointer last moved (or clicked). */
@@ -1035,6 +1085,8 @@ export function drawFrame(
     quality?: ImageSmoothingQuality;
     /** The part `src` of the recording's frame already drawn `w`×`h` at the top left of an image (the preview's graphics-card reader); null = draw `source`. */
     picture?: (src: Rect, w: number, h: number) => CanvasImageSource | null;
+    /** The recording's own pointer: where buttons came up, its pixels per point, its cursors and their images. */
+    pointer?: { events: Pick<ScreenEvents, "releases" | "scale" | "cursors" | "cursorAt">; images?: CursorImages };
   } = {},
 ) {
   const { width: outW, height: outH } = ctx.canvas;
@@ -1096,17 +1148,30 @@ export function drawFrame(
     }
   }
 
-  const p = smoothPointer(path, t, look.smooth, clicks);
+  const real = opts.pointer?.events;
+  const p = smoothPointer(path, t, look.smooth, clicks, real?.releases ?? NONE);
   let alpha = 1;
   if (look.hideIdle) alpha = 1 - Math.min(1, Math.max(0, (stillFor(path, t) - IDLE) / 0.4));
   if (p && !look.pointerHidden && alpha > 0 && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1) {
     const at = toOut(p.x, p.y);
-    // a real pointer is ~1.3% of the display's height; it grows with the zoom like the rest of the screen
-    const h = srcH * 0.013 * look.pointer * k * 1.25;
     // a press shrinks it a touch
     const pressed = clicks.some(([ct]) => t - ct >= 0 && t - ct < 0.15);
-    const s = h * (pressed ? 0.85 : 1);
+    // the output's pixels per point of the screen: Size 1 is the pointer as it was on the screen, and it grows with the
+    // zoom like the rest of the screen. A log without the scale: a real pointer is ~1.3% of a display's height.
+    const perPoint = real?.scale ? real.scale * k * look.pointer * (pressed ? 0.85 : 1) : 0;
+    const shown = cursorAt(real ?? {}, t);
+    const shape = shown !== null ? real?.cursors?.[shown] : undefined;
+    const image = shown !== null ? opts.pointer?.images?.[shown] : null;
     ctx.globalAlpha = alpha;
+    if (image && shape && perPoint > 0) {
+      // the cursor macOS showed, as it looked (its own outline and shadow), its hot spot where the pointer is
+      const [w, h, hx, hy] = shape;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(image, at.x - hx * perPoint, at.y - hy * perPoint, w * perPoint, h * perPoint);
+      ctx.globalAlpha = 1;
+    } else {
+    // the macOS arrow is ~22 points tall
+    const s = perPoint > 0 ? 22 * perPoint : srcH * 0.013 * look.pointer * k * 1.25 * (pressed ? 0.85 : 1);
     ctx.beginPath();
     ARROW.forEach(([x, y], i) => (i ? ctx.lineTo(at.x + x * s, at.y + y * s) : ctx.moveTo(at.x + x * s, at.y + y * s)));
     ctx.closePath();
@@ -1121,6 +1186,7 @@ export function drawFrame(
     ctx.strokeStyle = "#fff";
     ctx.stroke();
     ctx.globalAlpha = 1;
+    }
   }
   ctx.restore();
 

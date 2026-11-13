@@ -25,6 +25,57 @@ struct ScreenEvents: Codable {
     var clicks: [[Double]] = []   // [t, x, y], the press
     var releases: [[Double]] = [] // [t, x, y], the button coming up again: a drag lasts from its press to here
     var audio: [String] = []      // the sound tracks in file order: "mic", then "system" (the Mac's sound) or "device" (a phone's)
+    var scale: Double?            // the recording's pixels per point: the real pointer's size in the picture
+    var cursors: [[Double]]?      // each system cursor seen, saved as cursor-<i>.png: [width, height, hot x, hot y] in points
+    var cursorAt: [[Double]]?     // [t, i]: from t on the pointer looked like cursors[i]
+}
+
+/// The system cursor (the one macOS shows, over any app) as it changes while a recording runs: each new shape is saved
+/// once as cursor-<i>.png in the recording's folder, so the editor draws the pointer that was really there, an I-beam
+/// over text and a hand over a link, at its real size. Looked at no more than every 80 ms.
+@MainActor final class CursorLog {
+    private var known: [Int: Int] = [:]
+    private var lastLook = -1.0
+    private var current = -1
+    private let folder: URL
+
+    init(folder: URL) { self.folder = folder }
+
+    /// The cursor at `time` when it changed: its index and, the first time it is seen, its size and hot spot in points.
+    func look(at time: TimeInterval) -> (index: Int, shape: [Double]?)? {
+        guard time - lastLook >= 0.08 else { return nil }
+        lastLook = time
+        guard let cursor = NSCursor.currentSystem else { return nil }
+        let image = cursor.image
+        var box = NSRect(origin: .zero, size: image.size)
+        guard let cg = image.cgImage(forProposedRect: &box, context: nil, hints: nil), let bytes = cg.dataProvider?.data as Data? else { return nil }
+        var hasher = Hasher()
+        hasher.combine(bytes)
+        hasher.combine(cursor.hotSpot.x)
+        hasher.combine(cursor.hotSpot.y)
+        let key = hasher.finalize()
+        if let i = known[key] {
+            guard i != current else { return nil }
+            current = i
+            return (i, nil)
+        }
+        // four times its size in points: still sharp inside a zoom
+        let w = Int(image.size.width * 4), h = Int(image.size.height * 4)
+        guard w > 0, h > 0, let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
+                                                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return nil }
+        rep.size = image.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        let i = known.count
+        guard let png = rep.representation(using: .png, properties: [:]),
+              (try? png.write(to: folder.appendingPathComponent("cursor-\(i).png"))) != nil else { return nil }
+        known[key] = i
+        current = i
+        return (i, [image.size.width, image.size.height, cursor.hotSpot.x, cursor.hotSpot.y].map { (Double($0) * 100).rounded() / 100 })
+    }
 }
 
 /// The pointer at `location` (NSEvent.mouseLocation: global points, origin bottom left of the main display) as 0–1 of
@@ -302,9 +353,27 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideoD
         }
     }
 
-    /// The pointer moved (`click` = a button went down, `release` = it came up again), as 0–1 of the display.
-    func note(x: Double, y: Double, click: Bool, release: Bool = false) {
-        let now = hostNow()
+    /// The recorded rect is `pointsWide` points wide: the pixels per point, for the pointer's real size.
+    func setPointScale(pointsWide: Double) {
+        guard pointsWide > 0 else { return }
+        queue.async { self.events.scale = (Double(self.events.width) / pointsWide * 1000).rounded() / 1000 }
+    }
+
+    /// The system cursor became cursors[`index`] at `time` (an event's timestamp: the host clock in seconds); `shape` the first time it is seen.
+    func noteCursor(_ index: Int, shape: [Double]?, at time: TimeInterval) {
+        let now = CMTime(seconds: time, preferredTimescale: 1_000_000_000)
+        queue.async {
+            if let shape { self.events.cursors = (self.events.cursors ?? []) + [shape] }
+            // before the first frame: from the start
+            let t = self.offset.map { max(0, ((now - $0).seconds * 1000).rounded() / 1000) } ?? 0
+            self.events.cursorAt = (self.events.cursorAt ?? []) + [[t, Double(index)]]
+        }
+    }
+
+    /// The pointer moved (`click` = a button went down, `release` = it came up again), as 0–1 of the display. `time` is the
+    /// event's own timestamp (the host clock in seconds): when it happened, not when this app got to it.
+    func note(x: Double, y: Double, click: Bool, release: Bool = false, at time: TimeInterval? = nil) {
+        let now = time.map { CMTime(seconds: $0, preferredTimescale: 1_000_000_000) } ?? hostNow()
         queue.async {
             guard self.pausedAt == nil, let offset = self.offset else { return }
             let t = ((now - offset).seconds * 1000).rounded() / 1000
@@ -661,7 +730,7 @@ final class Recorder: ObservableObject {
             self.capture = capture
             self.project = project
             phone = nil   // the recording has its session now, and stops it
-            if let feed { watchPointer(capture, rect: feed.rect) }   // a device has no pointer
+            if let feed { watchPointer(capture, rect: feed.rect, folder: project.folder) }   // a device has no pointer
             saver = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
                 capture.eventsSoFar { events in try? project.writeEvents(JSONEncoder().encode(events)) }
             }
@@ -741,14 +810,17 @@ final class Recorder: ObservableObject {
     /// The start in progress; `finish()` clears it, so a start interrupted by Stop or Throw away gives up.
     private var starting: UUID?
 
-    private func watchPointer(_ capture: AnyObject, rect: CGRect) {
+    private func watchPointer(_ capture: AnyObject, rect: CGRect, folder: URL) {
         guard #available(macOS 15.0, *), let capture = capture as? Capture else { return }
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        capture.setPointScale(pointsWide: rect.width)
+        let cursors = CursorLog(folder: folder)
         let handle = { [weak self] (event: NSEvent) in
             let p = normalizedPointer(NSEvent.mouseLocation, display: rect, mainHeight: mainHeight)
             let own = self?.ownWindows() ?? []
             capture.note(x: p.x, y: p.y, click: logsClick(event.type, on: event.window, own: own),
-                         release: logsRelease(event.type, on: event.window, own: own))
+                         release: logsRelease(event.type, on: event.window, own: own), at: event.timestamp)
+            if let seen = cursors.look(at: event.timestamp) { capture.noteCursor(seen.index, shape: seen.shape, at: event.timestamp) }
         }
         // pointer events need no permission (key presses would: not logged)
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .rightMouseDown,

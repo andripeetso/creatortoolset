@@ -18,6 +18,7 @@ import {
   pointerPath,
   trimOf,
   zoomFloor,
+  type CursorImages,
   type FaceTrack,
   type FrameShape,
   type ScreenEvents,
@@ -116,6 +117,25 @@ export function ScreenRecordingEditor({
     void sourceRef.current.faces?.().then(setFaceTrack, () => setFaceTrack(null));
   }, [source.url]);
   const follower = useMemo(() => faceFollower(faceTrack), [faceTrack]);
+  // the pointer as it really looked: the cursors the recording saved (an I-beam over text, a hand over a link)
+  const [cursorImages, setCursorImages] = useState<CursorImages | undefined>(undefined);
+  useEffect(() => {
+    const shapes = events?.cursors ?? [];
+    const at = sourceRef.current.cursor;
+    if (!shapes.length || !at) return;
+    let gone = false;
+    void Promise.all(
+      shapes.map((_, i) =>
+        fetch(at(i))
+          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+          .then((b) => createImageBitmap(b))
+          .catch(() => null),
+      ),
+    ).then((images) => !gone && setCursorImages(images));
+    return () => {
+      gone = true;
+    };
+  }, [events]);
   const mac = useMacRecorderState();
   const canFind = !!source.findFaces && !!mac && !!mac.faces;
   const findFaces = async () => {
@@ -130,7 +150,7 @@ export function ScreenRecordingEditor({
       setFinding(null);
     }
   };
-  const player = usePlayer({ url: source.url, cameraUrl: source.cameraUrl, look, events, path, duration: meta.duration, width, height, faces: follower });
+  const player = usePlayer({ url: source.url, cameraUrl: source.cameraUrl, look, events, path, duration: meta.duration, width, height, faces: follower, cursors: cursorImages });
   // a recording filed without its length (one that stopped early) takes it from the file
   const duration = meta.duration > 0 ? meta.duration : player.mediaDuration;
   const loaded = useRef<{ events: ScreenEvents; look: ScreenLook | null } | null>(null);
@@ -361,6 +381,7 @@ export function ScreenRecordingEditor({
         events,
         look,
         faces: follower,
+        cursors: cursorImages,
         ...out,
         trim: look.trim ? kept : undefined,
         alpha: !a,

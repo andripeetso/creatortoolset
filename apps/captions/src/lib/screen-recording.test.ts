@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cameraCut, cameraPlace, splitLook, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { cursorAt, drags, cameraCut, cameraPlace, splitLook, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -390,6 +390,27 @@ describe("screen recording", () => {
     // the camera on the left, and Beside as it was
     expect(cameraPlace(look, { ...cam, left: true }, 1920, 1080, 1)?.r).toEqual({ x: 0, y: 0, w: 840, h: 1080 });
     expect(splitLook(look, { ...cam, layout: "side" }, 1920, 1080, 1).look).toBe(look);
+  });
+
+  it("draws a drag exactly as the hand went, and the cursor the recording showed", () => {
+    // a selection: pressed at 1 s, dragged in a zigzag to 2 s, let go; smoothing would cut the corners
+    const path: [number, number, number][] = [];
+    for (let t = 0; t <= 3; t += 1 / 30) path.push([t, t < 1 ? 0.2 : t > 2 ? 0.6 : 0.2 + (t - 1) * 0.4, t > 1 && t < 2 ? 0.5 + (Math.round(t * 10) % 2) * 0.05 : 0.5]);
+    const presses: [number, number, number][] = [[1, 0.2, 0.5]];
+    const releases: [number, number, number][] = [[2, 0.6, 0.5]];
+    expect(drags(presses, releases)).toEqual([[1, 2]]);
+    expect(drags(presses, [])).toEqual([]);
+    for (const t of [1.25, 1.5, 1.75]) {
+      const exact = pointerAt(path, t)!;
+      const drawn = smoothPointer(path, t, 0.4, presses, releases)!;
+      expect(Math.abs(drawn.x - exact.x)).toBeLessThan(0.002);
+      expect(Math.abs(drawn.y - exact.y)).toBeLessThan(0.002);
+    }
+    // without the release it is told about, the zigzag is smoothed away
+    expect(Math.abs(smoothPointer(path, 1.5, 0.4, presses)!.y - pointerAt(path, 1.5)!.y)).toBeGreaterThan(0.01);
+    const cursors = { cursors: [[28, 40, 5, 5], [23, 22, 12, 11]] as [number, number, number, number][], cursorAt: [[0, 0], [1.2, 1], [2.5, 0]] as [number, number][] };
+    expect([0.5, 1.2, 2, 3].map((t) => cursorAt(cursors, t))).toEqual([0, 1, 1, 0]);
+    expect(cursorAt({}, 1)).toBeNull();
   });
 
   it("cuts the camera where it is aimed, inside the picture, mirrored as seen", () => {
