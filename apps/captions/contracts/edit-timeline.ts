@@ -492,9 +492,13 @@ function trackPieces(view: TimelineView, edits: ItemEdit[], plan: Spans, track: 
   return out.sort((a, b) => a.at - b.at);
 }
 
+/** The clips of these audio tracks on the edited timeline, each from its own file. */
+export const soundPieces = (view: TimelineView, edits: ItemEdit[], plan: Spans, tracks: string[]): SoundPiece[] =>
+  tracks.flatMap((t) => trackPieces(view, edits, plan, t)).map(({ src, at, frames, offset }) => ({ src, at, frames, offset }))
+    .sort((a, b) => a.at - b.at);
+
 /** Each voice clip (A1) on the edited timeline, from its recording. */
-export const voicePieces = (view: TimelineView, edits: ItemEdit[], plan: Spans): SoundPiece[] =>
-  trackPieces(view, edits, plan, "A1").map(({ src, at, frames, offset }) => ({ src, at, frames, offset }));
+export const voicePieces = (view: TimelineView, edits: ItemEdit[], plan: Spans): SoundPiece[] => soundPieces(view, edits, plan, ["A1"]);
 
 /**
  * Each talent shot (V1) on the edited timeline, from its camera original, framed as cut (or as reframed): where no

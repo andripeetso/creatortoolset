@@ -17,7 +17,7 @@ import {
   picturePieces,
   playPlan,
   renderPieces,
-  voicePieces,
+  soundPieces,
   type PlayCard,
   splitView,
   stackEdits,
@@ -236,23 +236,25 @@ function Edits({ asset, version, api, player, composer, history, preview, sent, 
   const plan = view && previewOn
     ? playPlan(splitView(view, playEdits), playEdits, [...sentHoles, ...(hole ? [{ ...hole, text: text.trim() || hole.text }] : [])])
     : null;
-  // played from the originals: each voice clip from its recording, the rest of the sound (music, effects) from the cut's
-  // own stem between the skips and holds; only while there are edits (else the cut plays as rendered, its voice controls on)
+  // played from the originals, only while there are edits (else the cut plays as rendered, its voice controls on): each
+  // voice clip from its recording and the rest of the sound (music, effects) from the cut's own stem between the skips
+  // and holds; a version without stems (an imported timeline) plays every audio lane from its files
+  const soundLanes = version.stems ? ["A1"] : (view?.tracks ?? []).filter((t) => t.id[0] === "A").map((t) => t.id);
   // the voice clips' files: all found = played from them; else the header offers to find them
   const voiceFiles = [...new Set((view?.tracks.find((t) => t.id === "A1")?.items ?? []).flatMap((i) => i.src && originals?.paths[i.src] ? [i.src] : []))];
   const filesFound = voiceFiles.filter((s) => originals?.found[s]).length;
   const originalsOn = voiceFiles.length > 0 && filesFound === voiceFiles.length;
   const sound = view && plan && originals && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
-    ...voicePieces(splitView(view, playEdits), playEdits, plan)
+    ...soundPieces(splitView(view, playEdits), playEdits, plan, soundLanes)
       .filter((p) => originals.found[p.src]).map((p) => ({ ...p, src: localMediaUrl(originals.found[p.src]) })),
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
   ] : null;
   // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
   const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!)
-    .filter((p) => originals!.paths[p.src])
+    .filter((p) => originals!.found[p.src])
     .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
       const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
-      return { src: localMediaUrl(originals!.paths[src]), at, frames, offset, x: box.x, y: box.y, s: box.s };
+      return { src: localMediaUrl(originals!.found[src]), at, frames, offset, x: box.x, y: box.y, s: box.s };
     }) : null;
   const planned = !!plan && (plan.skips.length + plan.mutes.length + plan.holds.length + plan.cards.length + plan.frames.length + plan.grades.length > 0);
   // the shot being graded plays the panel's grade over its whole span while the panel is open, in place of the shot's
