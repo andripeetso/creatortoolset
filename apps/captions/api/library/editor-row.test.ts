@@ -24,7 +24,7 @@ const { pairDevice } = await import("../lib/devices");
 const { writeVoicePrefs } = await import("../lib/speech");
 const { saveMyKey } = await import("../my-keys");
 const { libraryDb } = await import("./db");
-const { askVersionIn, editorRoute, heardForEditor, transcribeRoute, transcribeVersion, versionRoute } = await import("./transcribe");
+const { askVersionIn, editorRoute, heardForEditor, saveTranscript, transcribeRoute, transcribeVersion, versionRoute } = await import("./transcribe");
 
 const PARAKEET = "parakeet-tdt-0.6b-v3";
 const TURBO = "whisper-large-v3-turbo";
@@ -153,6 +153,8 @@ describe("an edit's transcript goes only to its owner's computers", () => {
   });
 
   it("what Abe's computer can't do is made on the library's engine, and the transcript is made all the same", async () => {
+    // a clip with no transcript yet: the library's engine makes it (one that has one keeps it: the next test)
+    libraryDb().prepare("DELETE FROM transcripts WHERE version_id = 'ver_r'").run();
     saveMyKey("abe", "DEEPGRAM_API_KEY", "dg-abe");
     writeVoicePrefs("abe", { languages: ["en"], stt: { per: { editor: { engine: "local" } } } });
     await claim(abePc.token, [PARAKEET, TURBO]);
@@ -169,6 +171,48 @@ describe("an edit's transcript goes only to its owner's computers", () => {
     expect(saved("ver_r")).toMatchObject({ provider: "deepgram", model: null });
     // tried once for the editor: analyze does not ask for it again
     expect(heardForEditor.has(`ver_r|computer:${PARAKEET}`)).toBe(true);
+    await claim(abePc.token, [TURBO]);
+  });
+
+  it("a clip that has a transcript keeps it when Abe's computers can't hear it again: nothing is bought twice", async () => {
+    saveMyKey("abe", "DEEPGRAM_API_KEY", "dg-abe");
+    // the clip's library transcript, made by Deepgram
+    askVersionIn.clear();
+    await transcribeVersion(libraryDb(), "ver_r", wav, "abe", dir);
+    expect(saved("ver_r")).toMatchObject({ provider: "deepgram" });
+    urls.length = 0;
+    // the editor row moves to Parakeet on Abe's computers, which has it, and that computer is off
+    writeVoicePrefs("abe", { languages: ["en"], stt: { per: { editor: { engine: "local" } } } });
+    await claim(abePc.token, [PARAKEET, TURBO]);
+    askVersionIn.set("ver_r", { by: "abe", languages: ["en"] });
+    const now = Date.now();
+    const later = vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60_000);
+    try {
+      await transcribeVersion(libraryDb(), "ver_r", wav, "abe", dir);
+    } finally {
+      later.mockRestore();
+    }
+    expect(urls).toEqual([]);
+    expect(saved("ver_r")).toMatchObject({ provider: "deepgram" });
+    expect(heardForEditor.has(`ver_r|computer:${PARAKEET}`)).toBe(true);
+    await claim(abePc.token, [TURBO]);
+  });
+
+  it("a clip heard as silence (no words) is not kept: with the computers off the library's engine hears it again", async () => {
+    saveMyKey("abe", "DEEPGRAM_API_KEY", "dg-abe");
+    saveTranscript(libraryDb(), "ver_r", "deepgram", "en", [], []);
+    writeVoicePrefs("abe", { languages: ["en"], stt: { per: { editor: { engine: "local" } } } });
+    await claim(abePc.token, [PARAKEET, TURBO]);
+    askVersionIn.set("ver_r", { by: "abe", languages: ["en"] });
+    const now = Date.now();
+    const later = vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60_000);
+    try {
+      await transcribeVersion(libraryDb(), "ver_r", wav, "abe", dir);
+    } finally {
+      later.mockRestore();
+    }
+    expect(urls).toEqual([expect.stringMatching(/deepgram.*filler_words=true/)]);
+    expect(saved("ver_r")).toMatchObject({ provider: "deepgram" });
     await claim(abePc.token, [TURBO]);
   });
 });

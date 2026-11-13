@@ -228,7 +228,7 @@ export const editorKey = (versionId: string, r: Route) => `${versionId}|${r.prov
 /**
  * Transcribes one version's audio as its job's actor, and stores it. Asked by an AI Editor edit its actor started, it
  * runs where the editor row says (editorRoute); what the person's computers can't do is made on the library's engine,
- * and the transcript is made all the same. The library keeps one transcript a clip (Finals, search): the one the
+ * and the transcript is made all the same, unless the clip already has one with words: that one is kept. The library keeps one transcript a clip (Finals, search): the one the
  * editor's choice made is that clip's library transcript too, with the provider and model that made it.
  */
 export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
@@ -242,6 +242,13 @@ export async function transcribeVersion(db: DatabaseSync, versionId: string, src
   } catch (e) {
     if (editor?.provider !== "computer") throw e;
     console.warn(`[transcribe] ${versionId} for ${actor}'s edit not on their computers: ${e instanceof Error ? e.message : e}`);
+    // a clip that already has a transcript with words keeps it: the library's engine would only buy the same words
+    // again (a computer that is off asks again after every server restart: heardForEditor lives in memory)
+    if (wordsOf(db, versionId)?.length) {
+      heardForEditor.add(editorKey(versionId, editor));
+      if (askVersionIn.get(versionId) === ask) askVersionIn.delete(versionId);
+      return;
+    }
     t = await make();
   }
   if (editor) heardForEditor.add(editorKey(versionId, editor));
