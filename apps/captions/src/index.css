@@ -295,6 +295,29 @@ html[data-chat-mode="full"] main { display: none; }
    from the right (a drawer). */
 html[data-chat-mode] main .fixed:is(.inset-0, .inset-x-0):not([class*="left-auto"]) { left: var(--chat-w); }
 html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5rem); }
+/* A switch of chat mode's layout (washTo, lib/chat-mode.ts): the picture of the screen as it was stays put and the new
+   screen shows through a round, soft-rimmed mask that grows from the button (its size and place are animated there;
+   nothing of it shows before that starts). */
+html.chat-wash::view-transition-old(root),
+html.chat-wash::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.chat-wash::view-transition-new(root) {
+  /* solid up to a rim 120px wide (RIM, lib/chat-mode.ts) */
+  -webkit-mask: radial-gradient(circle closest-side, #000 calc(100% - 120px), transparent) 0 0 / 0 0 no-repeat;
+  mask: radial-gradient(circle closest-side, #000 calc(100% - 120px), transparent) 0 0 / 0 0 no-repeat;
+}
+/* The light on the front: a soft ring, white in the dark and the project's colour on a light screen. --light is how
+   strong it is (0: no light, the front is the two screens' soft meeting alone). Its size is animated in script. */
+.chat-wash-front {
+  --light: 0.1;
+  position: fixed;
+  z-index: 70;
+  border-radius: 50%;
+  pointer-events: none;
+  background: rgb(var(--violet-600) / var(--light));
+  -webkit-mask: radial-gradient(circle closest-side, transparent 64%, #000 86%, transparent);
+  mask: radial-gradient(circle closest-side, transparent 64%, #000 86%, transparent);
+}
+.dark .chat-wash-front { background: rgb(255 255 255 / var(--light)); }
 /* In the Mac app the window's buttons sit over the chats' own bar (data-chat-bar), so the page's bar gives up the room
    it kept for them. */
 html.mac-app:not(.mac-full) [data-chat-bar] { padding-left: 84px; }

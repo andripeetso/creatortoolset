@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { create } from "zustand";
 
 /**
@@ -141,7 +142,8 @@ export function useChatModeLayout(active: boolean): ChatLayout {
     return () => window.removeEventListener("resize", on);
   }, []);
   const layout = chatLayout({ w, page }, win, need);
-  useEffect(() => {
+  // before the browser draws: a switch is one picture of the old screen and one of the new (washTo)
+  useLayoutEffect(() => {
     if (!active) return;
     const root = document.documentElement;
     root.dataset.chatMode = layout.full ? "full" : "";
@@ -187,35 +189,127 @@ export function useChatModeKey(enabled: boolean): void {
   }, [enabled]);
 }
 
-/**
- * Turn chat mode on or off from a button. Everything on screen gets a small push away from the button as a wave
- * passes it, then settles back (the switch itself is instant; the push only shows it happened).
- */
+/** Turn chat mode on or off from its button (⌘J: the one on screen). */
 export function toggleChatMode(from?: HTMLElement | null): void {
-  const { on, set } = useChatMode.getState();
-  const r = from?.getBoundingClientRect();
-  set({ on: !on });
-  if (r && r.width) requestAnimationFrame(() => requestAnimationFrame(() => wave(r.left + r.width / 2, r.top + r.height / 2, !on)));
+  washTo({ on: !useChatMode.getState().on }, from);
+}
+
+/** How long the wash takes, from the press to the new screen all there (ms). */
+export const WASH = 900;
+/** How wide the front's soft rim is (px; index.css has the same number). */
+const RIM = 120;
+/** How far the front pushes what it passes (px, right next to the button). */
+const PUSH = 12;
+/** How long a pushed thing takes to settle (ms). */
+const SETTLE = 640;
+/** How far across its reach the front is (0 to 1) at `t` of the wash (0 to 1): a little quicker off the button than at the end. */
+export const frontAt = (t: number): number => 1 - (1 - t) ** 1.35;
+/** When (0 to 1 of the wash) the front is `d` of its reach away from the button: frontAt the other way round. */
+export const frontReaches = (d: number): number => 1 - (1 - Math.min(1, Math.max(0, d))) ** (1 / 1.35);
+
+/** The wash on screen now, if one is. */
+let washing: { skipTransition(): void } | null = null;
+
+/** The middle of `el`, or of the chat-mode button on screen. */
+function middleOf(el?: Element | null): { x: number; y: number } | null {
+  const r = (el ?? [...document.querySelectorAll("[data-chat-toggle]")].find((b) => b.getBoundingClientRect().width))?.getBoundingClientRect();
+  return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+}
+
+/**
+ * Change how chat mode shares the window (on or off, the page shown or hidden) from a button. The screen as it was
+ * stays where it is and the new one washes over it from the button outwards, a soft-rimmed round front that crosses the
+ * window in WASH; what the front passes is pushed a little away from the button and settles back. With no button
+ * (⌘J on a screen whose bar has none) it starts where the button stands afterwards. Changed again while a wash runs, or
+ * where motion is turned down, the new screen is there at once.
+ */
+export function washTo(patch: Partial<Stored>, from?: Element | null): void {
+  const { set } = useChatMode.getState();
+  if (washing || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    washing?.skipTransition();
+    return set(patch);
+  }
+  const pressed = middleOf(from);
+  const go = (picture: string | null) => {
+    const { x, y } = pressed ?? middleOf() ?? { x: 0, y: 0 };
+    wash(x, y, picture);
+  };
+  if (!document.startViewTransition) {
+    // no picture of the old screen to wash over: the chats show from the button, and everything gets its push
+    set(patch);
+    requestAnimationFrame(() => requestAnimationFrame(() => go(null)));
+    return;
+  }
+  const root = document.documentElement;
+  // index.css: while this class is on, the two pictures are not cross-faded and the new one has its round mask
+  root.classList.add("chat-wash");
+  // the screen has to be the new one by the time this returns (useChatModeLayout puts the layout on <html> in a
+  // layout effect, so one synchronous render does it)
+  const t = document.startViewTransition(() => flushSync(() => set(patch)));
+  washing = t;
+  t.ready.then(
+    () => go("::view-transition-new(root)"),
+    () => {},
+  );
+  void t.finished.finally(() => {
+    washing = null;
+    root.classList.remove("chat-wash");
+    // the mask's and the old picture's animations hold their last frame: they go with the pictures
+    for (const a of document.getAnimations()) if ((a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition")) a.cancel();
+  });
 }
 
 const PUSHED = "[data-appbar] > *, [data-chat-panel] li, [data-chat-panel] header > *, #root :is(section, article, li, h1, h2, img, video, [data-tile])";
-/** How far the wave reaches per ms, and how far it pushes (px) right next to the button. */
-const SPEED = 2.6;
-const PUSH = 6;
 
-export function wave(x: number, y: number, opening: boolean): void {
-  if (typeof window === "undefined" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-  const panel = document.querySelector<HTMLElement>("[data-chat-panel]");
-  // opening: the chats show from the button outwards, a quick round reveal
-  if (opening && panel?.animate) {
-    const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-    const px = x - panel.getBoundingClientRect().left;
-    panel.animate([{ clipPath: `circle(0px at ${px}px ${y}px)` }, { clipPath: `circle(${far}px at ${px}px ${y}px)` }], {
-      duration: 380,
-      easing: "cubic-bezier(.2,.8,.2,1)",
+/**
+ * The front from (x, y) and the pushes behind it. `picture`: the pseudo-element that holds the new screen, shown
+ * through a round mask that grows (index.css gives it the mask; its size and place are animated here); null where there
+ * is no such picture, and the chats alone are shown from the button. A ring of light rides on the front.
+ */
+function wash(x: number, y: number, picture: string | null): void {
+  const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  // the front is the middle of the rim; it ends half a rim past the window's far corner, which is then all new
+  const reach = far + RIM / 2;
+  const STEPS = 30;
+  const at = Array.from({ length: STEPS + 1 }, (_, i) => reach * frontAt(i / STEPS));
+  const root = document.documentElement;
+  if (picture) {
+    const frames = at.map((f) => {
+      const s = `${2 * f + RIM}px`;
+      const p = `${x - f - RIM / 2}px ${y - f - RIM / 2}px`;
+      return { maskSize: `${s} ${s}`, maskPosition: p, webkitMaskSize: `${s} ${s}`, webkitMaskPosition: p };
     });
+    root.animate(frames, { duration: WASH, pseudoElement: picture, fill: "both" });
+    // the old screen gives a little as the front leaves the button
+    const origin = `${x}px ${y}px`;
+    root.animate(
+      [
+        { transform: "scale(1)", transformOrigin: origin },
+        { transform: "scale(1.012)", transformOrigin: origin },
+      ],
+      { duration: WASH, pseudoElement: "::view-transition-old(root)", fill: "both", easing: "ease-out" },
+    );
+  } else {
+    const panel = document.querySelector<HTMLElement>("[data-chat-panel]");
+    const px = x - (panel?.getBoundingClientRect().left ?? 0);
+    panel?.animate?.(
+      at.map((f) => ({ clipPath: `circle(${f}px at ${px}px ${y}px)` })),
+      { duration: WASH },
+    );
   }
-  const reach = Math.hypot(innerWidth, innerHeight);
+  // the light on the front: a ring (index.css .chat-wash-front) whose brightest part stands at the front, fading as it spreads
+  const ring = document.body.appendChild(document.createElement("div"));
+  ring.className = "chat-wash-front";
+  const BASE = 400;
+  Object.assign(ring.style, { left: `${x - BASE / 2}px`, top: `${y - BASE / 2}px`, width: `${BASE}px`, height: `${BASE}px` });
+  ring.animate(
+    // the ring is brightest at 0.86 of its radius
+    at.map((f, i) => ({ transform: `scale(${f / 0.86 / (BASE / 2)})`, opacity: Math.min(1, 2.4 * (1 - i / STEPS)) })),
+    { duration: WASH, fill: "both" },
+  ).finished.then(
+    () => ring.remove(),
+    () => ring.remove(),
+  );
   const els = [...document.querySelectorAll<HTMLElement>(PUSHED)]
     .map((el) => ({ el, r: el.getBoundingClientRect() }))
     .filter(({ r }) => r.width > 8 && r.height > 8 && r.width * r.height < innerWidth * innerHeight * 0.4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth)
@@ -224,18 +318,18 @@ export function wave(x: number, y: number, opening: boolean): void {
     const dx = r.left + r.width / 2 - x;
     const dy = r.top + r.height / 2 - y;
     const d = Math.hypot(dx, dy) || 1;
-    const k = PUSH * (1 - 0.55 * Math.min(1, d / reach));
+    const k = PUSH * (1 - 0.5 * Math.min(1, d / far));
     const ux = (dx / d) * k;
     const uy = (dy / d) * k;
+    const pushed = { transform: `translate(${ux}px, ${uy}px)` };
+    const back = { transform: `translate(${-ux * 0.2}px, ${-uy * 0.2}px)` };
+    const rest = { transform: "translate(0, 0)" };
     el.animate(
-      [
-        { transform: "translate(0, 0)" },
-        { transform: `translate(${ux}px, ${uy}px)`, offset: 0.3 },
-        { transform: `translate(${-ux * 0.25}px, ${-uy * 0.25}px)`, offset: 0.65 },
-        { transform: "translate(0, 0)" },
-      ],
+      // under the new screen's mask a thing is at its furthest as the front shows it, then settles; with no mask it
+      // is in plain sight all along, so it starts from where it stands
+      picture ? [pushed, { ...back, offset: 0.55 }, rest] : [rest, { ...pushed, offset: 0.3 }, { ...back, offset: 0.65 }, rest],
       // added to whatever transform the element has of its own (a centred dialog, a hover lift), never replacing it
-      { duration: 520, delay: d / SPEED, easing: "ease-out", composite: "add" },
+      { duration: SETTLE, delay: WASH * frontReaches(d / reach), easing: "cubic-bezier(.3,.7,.3,1)", composite: "add", fill: "backwards" },
     );
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatLayout, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
+import { chatLayout, frontAt, frontReaches, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
 
 const fresh = { w: 0, page: true };
 
@@ -37,5 +37,15 @@ describe("paneBelow", () => {
     expect(paneBelow(1024)).toBe("lt-xl lt-2xl");
     expect(paneBelow(1600)).toBe("");
     expect(paneBelow(MIN_PAGE)).toBe("lt-md lt-lg lt-xl lt-2xl");
+  });
+});
+
+describe("the wash's front", () => {
+  it("starts at the button, ends at its reach, and frontReaches says when it is where", () => {
+    expect(frontAt(0)).toBe(0);
+    expect(frontAt(1)).toBe(1);
+    for (const t of [0.1, 0.35, 0.6, 0.9]) expect(frontReaches(frontAt(t))).toBeCloseTo(t, 6);
+    // past its reach: the end, never later
+    expect(frontReaches(1.4)).toBe(1);
   });
 });

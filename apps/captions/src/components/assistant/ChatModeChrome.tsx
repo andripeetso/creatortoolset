@@ -3,7 +3,7 @@ import { PanelLeft, PanelRight, PanelRightClose, SquarePen, X } from "lucide-rea
 import type { AssistantChat } from "@contracts/assistant";
 import { HomeLink } from "@/components/HomeLink";
 import { UserMenu } from "@/components/UserMenu";
-import { LIST_W, MIN_PAGE, previewChatWidth, useChatMode, type ChatLayout } from "@/lib/chat-mode";
+import { LIST_W, MIN_PAGE, previewChatWidth, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./ChatList";
 import { ChatModeButton } from "./ChatModeButton";
@@ -96,7 +96,6 @@ export function ChatHeader({
   onList: () => void;
   children?: ReactNode;
 }) {
-  const set = useChatMode((s) => s.set);
   return (
     <header {...(layout.list ? {} : { "data-chat-bar": "" })} className="flex h-14 shrink-0 items-center gap-1.5 border-b pr-3 pl-3 select-none">
       {!layout.list && (
@@ -117,7 +116,7 @@ export function ChatHeader({
       {!layout.forced && <button
         type="button"
         className={iconBtn}
-        onClick={() => set({ page: layout.full })}
+        onClick={(e) => washTo({ page: layout.full }, e.currentTarget)}
         aria-pressed={!layout.full}
         aria-label={layout.full ? "Show the page beside the chats" : "Hide the page: only chats"}
         title={layout.full ? "Show the page" : "Only chats"}
@@ -152,8 +151,8 @@ export function ChatEdge() {
         setDrag(false);
         const { set } = useChatMode.getState();
         const win = document.documentElement.clientWidth || window.innerWidth;
-        if (e.clientX < 200) set({ on: false });
-        else if (e.clientX > win - MIN_PAGE / 2) set({ page: false });
+        if (e.clientX < 200) washTo({ on: false }, e.currentTarget);
+        else if (e.clientX > win - MIN_PAGE / 2) washTo({ page: false }, e.currentTarget);
         else set({ w: previewChatWidth(e.clientX) });
       }}
       onDoubleClick={() => useChatMode.getState().set({ w: 0 })}
