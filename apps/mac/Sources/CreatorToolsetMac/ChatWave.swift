@@ -109,18 +109,21 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float2 t = float2(-n.y, n.x);
     // where this point is against the front: below 0 the new screen, above 0 the one that was
     float x = (r - front) / w;
-    float lens = exp(-2.2 * x * x);
-    // gathering: the screen round the button is drawn in toward it, most a little way out, none at the button itself
-    float near = exp(-(r * r) / (reach * reach));
-    float pull = gather * near;
     // well behind the front: the page itself shows
-    if (x < -2.4 && pull < 0.002) return float4(0.0);
+    if (x < -2.4) return float4(0.0);
+    float lens = exp(-2.2 * x * x);
 
-    // how far toward the button this point's picture is drawn from (the screen is pulled in, never pushed out)
+    // How far toward the button this point's picture is drawn from: the screen is pulled in, never pushed out. While
+    // it gathers, the screen round the button is drawn in (most a little way out, none at the button itself) and held
+    // so until the front reaches it; the front takes it from there and lets it go behind. So each point moves in once
+    // and back once.
+    float ahead = smoothstep(-0.6, 0.2, x);
+    float held = 0.16 * r * gather * exp(-(r * r) / (reach * reach)) * ahead;
     float lensShift = bend * lens;
-    float shift = lensShift + 0.22 * gather * r * near;
-    // out of focus where the two screens meet, so they dissolve into each other and no text is seen twice
-    float soft = blur * (exp(-5.0 * x * x) + 0.35 * pull);
+    float shift = max(lensShift, held);
+    // out of focus where the two screens meet, so they dissolve into each other and no text is seen twice; nothing
+    // ahead of the front is
+    float soft = blur * exp(-5.0 * x * x);
     float m = smoothstep(-0.3, 0.3, x);
     float3 col = float3(0.0);
     float total = 0.0;
@@ -155,7 +158,6 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
         col = mix(col, float3(1.0), core * 0.45);
     }
     float alpha = smoothstep(-2.4, -1.6, x);
-    alpha = max(alpha, step(0.002, pull));
     return float4(col * alpha, alpha);
 }
 """
@@ -191,9 +193,11 @@ enum WaveClock {
         let width = (70 + 50 * u) * s
         // the front's middle ends past the far corner by the part of the front that still bends the picture
         let front = (0.3 * u + 0.7 * u * u) * (far + 2.4 * width)
-        let held = 1 - smooth(0, 0.3, Double(u))
+        // the screen stays gathered until the front reaches it (the shader lets each point go there); the light at the
+        // button goes into the front
+        let fading = 1 - smooth(0, 0.3, Double(u))
         return WaveMoment(front: front, width: width, bend: 22 * s * smooth(0, 0.12, Double(u)), split: 0.07,
-                          gather: held, reach: 260 * s, light: 0.8 * (1 - 0.4 * u), blur: 10 * s, bloom: held, done: u >= 1)
+                          gather: 1, reach: 260 * s, light: 0.8 * (1 - 0.4 * u), blur: 10 * s, bloom: fading, done: u >= 1)
     }
 }
 
