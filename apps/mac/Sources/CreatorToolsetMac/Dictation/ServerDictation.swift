@@ -70,3 +70,60 @@ struct ServerDictationError: UserFacingError, LocalizedError, Equatable {
     let userMessage: String
     var errorDescription: String? { userMessage }
 }
+
+/// A speech server of the person's own, by address (Settings → AI → Voice → Dictation → Speech server; empty for
+/// everyone by default): each recording is POSTed to it as a WAV first and its `{"text": …}` used. When it can't be
+/// reached in time, the recording goes to this Mac's model (DictationController).
+struct SpeechServerTranscriber: Transcriber {
+    let endpoint: URL
+    var modelID: String { "speech server" }
+
+    private struct Response: Decodable { let text: String }
+
+    /// An address with http(s) and a host, or nil (empty, or not one).
+    static func url(_ text: String) -> URL? {
+        guard let url = URL(string: text.trimmingCharacters(in: .whitespaces)), ["http", "https"].contains(url.scheme ?? ""),
+              url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
+    /// Quick to give up when the server is off, with time for a long recording.
+    static func timeout(seconds: TimeInterval) -> TimeInterval { 4 + seconds * 0.25 }
+
+    /// The first connection after launch can fail with "offline" while macOS checks Local Network access, so that
+    /// error is tried once more.
+    func transcribe(_ audio: [Float], context: TranscriptionContext) async throws -> Transcript {
+        do {
+            return Transcript(text: try await post(audio))
+        } catch let error as URLError where error.code == .notConnectedToInternet {
+            try await Task.sleep(nanoseconds: 300_000_000)
+            return Transcript(text: try await post(audio))
+        }
+    }
+
+    /// Opens the connection early (its /health), so the first dictation doesn't pay for it.
+    func warmUp() async {
+        var request = URLRequest(url: endpoint.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("health"))
+        request.timeoutInterval = 5
+        for attempt in 1...10 {
+            if (try? await URLSession.shared.data(for: request)) != nil {
+                return DictationLog.info("speech server reachable (attempt \(attempt))")
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        DictationLog.warning("speech server not reachable; this Mac's model until it is")
+    }
+
+    private func post(_ audio: [Float]) async throws -> String {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = Self.timeout(seconds: Double(audio.count) / AudioCapture.targetSampleRate)
+        let body = WAVWriter.data(samples: audio, sampleRate: Int(AudioCapture.targetSampleRate))
+        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode(Response.self, from: data).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

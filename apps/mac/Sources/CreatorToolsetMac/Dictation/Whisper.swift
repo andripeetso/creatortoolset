@@ -80,6 +80,9 @@ actor WhisperKitTranscriber: Transcriber {
     /// Whether the model is in memory.
     var isLoaded: Bool { pipeline != nil }
 
+    /// Whether a complete copy is on this Mac, so loading it downloads nothing.
+    nonisolated var onDisk: Bool { model.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }
+
     /// Frees the model after a swap to another one. A load still running
     /// finishes and is dropped, and a later `warmUp` returns at once.
     func unload() async {
@@ -455,6 +458,20 @@ enum LanguageDetector {
 protocol Transcriber: Sendable {
     var modelID: String { get }
     func transcribe(_ audio: [Float], context: TranscriptionContext) async throws -> Transcript
+}
+
+/// A transcriber whose model has to load before it writes anything (this Mac's Whisper): the loop waits for it, and
+/// says so (DictationController).
+protocol LoadingTranscriber: Transcriber {
+    /// A complete copy is on this Mac, so loading downloads nothing.
+    var onDisk: Bool { get }
+    func loaded() async -> Bool
+    func load() async throws
+}
+
+extension WhisperKitTranscriber: LoadingTranscriber {
+    func loaded() async -> Bool { isLoaded }
+    func load() async throws { try await warmUp() }
 }
 
 /// What the transcriber is told about the dictation beyond the audio.

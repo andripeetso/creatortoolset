@@ -4,7 +4,12 @@
 import Foundation
 
 enum AppLog {
-    static let path = NSHomeDirectory() + "/Library/Logs/Creator Toolset\(AppIdentity.tag()).log"
+    /// Under XCTest a file of its own in the temporary folder, so tests never write to the person's log.
+    static let path = underTests ? NSTemporaryDirectory() + "creator-toolset-tests.log"
+        : NSHomeDirectory() + "/Library/Logs/Creator Toolset\(AppIdentity.tag()).log"
+
+    /// Running inside `swift test`: nothing registers keys, taps or watchers, and nothing loads a model by itself.
+    static let underTests = NSClassFromString("XCTestCase") != nil
 
     static func write(_ line: String) {
         append(Data("\(ISO8601DateFormatter().string(from: Date())) \(line)\n".utf8), to: path)

@@ -3,32 +3,34 @@ import SwiftUI
 import XCTest
 @testable import CreatorToolsetMac
 
-/// The dictation setup guide's steps drawn to PNGs, light and dark, for a look by eye:
+/// The dictation setup page drawn to PNGs, light and dark, for a look by eye:
 /// `GUIDE_SHOTS=<folder> swift test --filter SetupGuideShotsTests`. Skipped without GUIDE_SHOTS.
 @MainActor
 final class SetupGuideShotsTests: XCTestCase {
-    func testGuideShots() throws {
+    func testSetupPageShots() throws {
         guard let folder = ProcessInfo.processInfo.environment["GUIDE_SHOTS"] else { throw XCTSkip("GUIDE_SHOTS is not set") }
-        let base = GuideFacts(talkKey: "Hold fn", talkHint: "Hold fn to talk", modelName: "Whisper Large v3 Turbo", modelSize: "1.6 GB")
-        var halfway = base
+        let fresh = SetupFacts(talkKey: "F13", line: SetupFacts.line(for: .key(.function(105, "F13"))), languages: ["en"],
+                               speech: "This Mac · Whisper Large v3 Turbo", modelSize: "1.6 GB", progress: 0.42)
+        var halfway = fresh
         halfway.microphone = true
-        var downloading = halfway
-        downloading.progress = 0.42
-        var offered = downloading
-        offered.serverOffered = true
-        var server = offered
-        server.engine = .server
-        var picking = base
-        picking.picking = true
-        let shots: [(String, Int, GuideFacts)] = [
-            ("1-talk-key", 0, base), ("1-talk-key-picking", 0, picking),
-            ("2-allow", 1, halfway), ("3-engine", 2, downloading), ("3-engine-choice", 2, offered),
-            ("3-engine-server", 2, server), ("4-try", 3, halfway),
-        ]
-        for (name, step, facts) in shots {
+        halfway.languages = ["en", "et"]
+        var done = halfway
+        done.accessibility = true
+        done.progress = nil
+        done.modelHere = true
+        var server = done
+        server.speech = "Your server"
+        server.leavesMac = true
+        var hold = fresh
+        hold.talkKey = "Hold fn"
+        hold.line = SetupFacts.line(for: .hold(.fn))
+        hold.microphoneDenied = true
+        hold.progress = nil
+        let shots: [(String, SetupFacts)] = [("fresh", fresh), ("halfway", halfway), ("ready", done), ("server", server), ("hold", hold)]
+        for (name, facts) in shots {
             for dark in [false, true] {
                 let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
-                let view = SetupGuideView(step: .constant(step), facts: facts) { _ in }
+                let view = SetupPageView(facts: facts) { _ in }
                     .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, dark ? .dark : .light)
                 let host = NSHostingView(rootView: view)

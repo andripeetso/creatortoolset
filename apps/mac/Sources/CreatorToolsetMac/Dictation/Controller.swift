@@ -47,6 +47,8 @@ final class DictationController {
     private let capture: Capturing
     /// Replaced by `replaceTranscriber` when the model changes.
     private(set) var transcriber: Transcriber
+    /// The person's own speech server, tried before `transcriber`; nil when none is set.
+    var remote: Transcriber?
     private let observers: [DictationObserver]
     private let delivery: Delivering
     /// Where recordings are saved before they are transcribed.
@@ -143,6 +145,7 @@ final class DictationController {
         lastStarted += 1
         let id = lastStarted
         let transcriber = self.transcriber
+        let remote = self.remote
         let context = self.context()
         let recordings = self.recordings
         // On disk before transcription, so a failure can be retried from History.
@@ -151,7 +154,7 @@ final class DictationController {
             let started = CFAbsoluteTimeGetCurrent()
             do {
                 // The transcriber is an actor; this await runs off the main actor.
-                let transcript = try await Self.transcribe(samples, context: context, local: transcriber)
+                let transcript = try await transcribe(samples, context: context, local: transcriber, remote: remote, id: id)
                 let transcribed = CFAbsoluteTimeGetCurrent()
                 let elapsed = transcribed - started
                 // Never log the transcript itself: the agent's log is a file on disk.
@@ -194,10 +197,27 @@ final class DictationController {
         }
     }
 
-    /// The on-device model, which gets one more try before the dictation fails.
-    private static func transcribe(
-        _ samples: [Float], context: TranscriptionContext, local: Transcriber
+    /// The speech server first when there is one, then the on-device model, which gets one more try before the
+    /// dictation fails. A model still loading is waited for, and the pill says so instead of counting seconds.
+    private func transcribe(
+        _ samples: [Float], context: TranscriptionContext, local: Transcriber, remote: Transcriber?, id: Int
     ) async throws -> Transcript {
+        if let remote {
+            do {
+                return try await remote.transcribe(samples, context: context)
+            } catch {
+                DictationLog.warning("speech server didn't answer (\(error.localizedDescription)), using \(local.modelID)")
+            }
+        }
+        if let model = local as? LoadingTranscriber {
+            // with a server and no model on this Mac, nothing downloads by itself: the recording waits in History
+            if remote != nil, !model.onDisk { throw SpeechServerDown() }
+            if !(await model.loaded()) {
+                tell(id) { $0.dictationWaitingForModel() }
+                try await model.load()
+                tell(id) { $0.dictationTranscribing() }
+            }
+        }
         do {
             return try await local.transcribe(samples, context: context)
         } catch {
@@ -206,6 +226,12 @@ final class DictationController {
             DictationLog.error("transcription failed: \(error), retrying on-device")
             return try await local.transcribe(samples, context: context)
         }
+    }
+
+    /// Only the newest transcription, still running and not cancelled, changes what the pill says.
+    private func tell(_ id: Int, _ call: (DictationObserver) -> Void) {
+        guard state == .transcribing, id == lastStarted, id > discardedThrough else { return }
+        observers.forEach(call)
     }
 
     /// A saved recording or a dropped file, on this Mac with the current model.
@@ -280,6 +306,11 @@ enum DictationError: Error {
     case cancelled
 }
 
+/// The speech server didn't answer and this Mac has no model to fall back on.
+struct SpeechServerDown: UserFacingError {
+    var userMessage: String { "Your speech server didn't answer" }
+}
+
 /// The cancel key (F16) threw away a recording or a transcription in progress.
 struct Discarded: UserFacingError {
     var userMessage: String { "Cancelled" }
@@ -297,6 +328,8 @@ protocol DictationObserver: AnyObject {
     func dictationStarted()
     /// The hotkey was released; the capture is being transcribed.
     func dictationTranscribing()
+    /// The model is still loading (the first time in a new app it takes a few minutes); transcribing comes after.
+    func dictationWaitingForModel()
     /// The transcript was delivered.
     func dictationFinished(_ result: DictationResult)
     /// Nothing reached the cursor: capture failed (`CaptureError`), no audio
@@ -308,6 +341,7 @@ protocol DictationObserver: AnyObject {
 extension DictationObserver {
     func dictationStarted() {}
     func dictationTranscribing() {}
+    func dictationWaitingForModel() {}
     func dictationFinished(_ result: DictationResult) {}
     func dictationFailed(_ error: Error) {}
 }

@@ -53,6 +53,8 @@ export type DictationState = {
   models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;
   keep: number;
   sounds: boolean;
+  /** the person's own speech server, tried before this Mac's model ("" = none); missing in older Mac apps */
+  server?: string;
   /** the permission still to give, or null */
   needs: "Microphone" | "Accessibility" | null;
 };

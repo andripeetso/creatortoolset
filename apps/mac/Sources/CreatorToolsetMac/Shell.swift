@@ -131,7 +131,6 @@ final class Shell: NSObject, ObservableObject {
         if Recorder.available { RecordShortcut.shared.install(recorder) }
         // after the recording shortcut: its hotkey handler runs first and passes on every other hotkey
         Dictation.shared.languages = { [weak self] in await self?.voiceLanguages() }
-        Dictation.shared.serverEngines = { [weak self] in await self?.voiceKeyEngines() ?? [] }
         Dictation.shared.site = { [weak self] in self?.hasServer == true ? await self?.client() : nil }
         // this Mac's dictation models are its speech models on the Voice page: a change here is claimed at once
         SpeechModels.shared.onChange = { [weak self] in self?.runner?.modelsChanged() }

@@ -113,7 +113,7 @@ final class DictationPrefsTests: XCTestCase {
         XCTAssertEqual(DictationPrefs.load(d).keep, 1)
     }
 
-    func testImportTakesTheEarlierAppsChoicesButNeverItsServer() throws {
+    func testImportTakesTheEarlierAppsChoices() throws {
         let json = """
         {"hotkey":{"key":"f13"},"model":{"id":"whisper-small"},
          "extras":{"keepRecordings":25,"sounds":false,"server":"http://tiny-acrobatics.example:7886/api/transcribe"}}
@@ -124,6 +124,24 @@ final class DictationPrefsTests: XCTestCase {
         XCTAssertEqual(p.keep, 25)
         XCTAssertFalse(p.sounds)
         XCTAssertTrue(p.on)
+    }
+
+    func testTheEarlierAppsSpeechServerComesOverApartAndOnlyWhenItIsOne() {
+        let with = #"{"extras":{"server":" http://tiny-acrobatics.example:7886/api/transcribe "}}"#
+        XCTAssertEqual(DictationPrefs.earlierServer(settings: Data(with.utf8)), "http://tiny-acrobatics.example:7886/api/transcribe")
+        XCTAssertNil(DictationPrefs.earlierServer(settings: Data(#"{"extras":{"server":""}}"#.utf8)))
+        XCTAssertNil(DictationPrefs.earlierServer(settings: Data(#"{"extras":{"server":"not an address"}}"#.utf8)))
+        XCTAssertNil(DictationPrefs.earlierServer(settings: nil))
+        XCTAssertEqual(DictationPrefs().importing(settings: Data(with.utf8), legacyKey: nil).server, "", "only `earlierServer` takes it")
+        let d = defaults()
+        var p = DictationPrefs()
+        p.server = "http://tiny-acrobatics.example:7886/api/transcribe"
+        p.languages = ["et", "en"]
+        p.save(d)
+        XCTAssertEqual(DictationPrefs.load(d), p)
+        p.languages = nil
+        p.save(d)
+        XCTAssertNil(DictationPrefs.load(d).languages, "no ticks: back to the server's or the Mac's languages")
     }
 
     func testImportFallsBackToTheOlderKeyAndKeepsDefaultsForTheRest() {
@@ -310,6 +328,195 @@ final class DictationControllerTests: XCTestCase {
     }
 }
 
+/// The person's own speech server first, this Mac's model when it doesn't answer, and the pill while the model loads.
+@MainActor
+final class SpeechServerTests: XCTestCase {
+    private final class FakeCapture: Capturing {
+        var recording = false
+        func start() throws { recording = true }
+        func finish() throws -> [Float] {
+            defer { recording = false }
+            return recording ? [Float](repeating: 0.1, count: 16_000) : []
+        }
+        func stop() -> [Float] { (try? finish()) ?? [] }
+    }
+
+    private final class Delivered: Delivering {
+        var texts: [String] = []
+        func deliver(_ text: String, focusAtStart: FocusSnapshot?) throws { texts.append(text) }
+    }
+
+    /// This Mac's model, stood in for: it answers "from this Mac", and loads only when `finishLoading` is called.
+    private actor LocalModel: LoadingTranscriber {
+        let modelID = "local"
+        nonisolated let onDisk: Bool
+        private var isLoaded: Bool
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        private(set) var calls = 0
+        init(loaded: Bool = true, onDisk: Bool = true) { isLoaded = loaded; self.onDisk = onDisk }
+        func loaded() async -> Bool { isLoaded }
+        func load() async throws {
+            if isLoaded { return }
+            await withCheckedContinuation { waiting.append($0) }
+        }
+        func finishLoading() { isLoaded = true; waiting.forEach { $0.resume() }; waiting = [] }
+        var loading: Bool { !waiting.isEmpty }
+        func transcribe(_ audio: [Float], context: TranscriptionContext) async throws -> Transcript {
+            calls += 1
+            return Transcript(text: "from this Mac")
+        }
+    }
+
+    @MainActor private final class Said: DictationObserver {
+        var events: [String] = []
+        func dictationStarted() { events.append("listening") }
+        func dictationTranscribing() { events.append("transcribing") }
+        func dictationWaitingForModel() { events.append("getting the model ready") }
+        func dictationFinished(_ result: DictationResult) { events.append("done") }
+        func dictationFailed(_ error: Error) { events.append("failed: \(DictationPill.message(for: error) ?? "")") }
+    }
+
+    private var dir: URL!
+
+    override func setUp() async throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-server-\(UUID().uuidString)")
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @MainActor
+    private func dictate(local: LocalModel, server: URL?, said: Said? = nil) async -> (DictationController, Delivered) {
+        let delivered = Delivered()
+        let c = DictationController(capture: FakeCapture(), transcriber: local, observers: [said ?? Said()], delivery: delivered,
+                                    recordings: DictationRecordings(directory: dir))
+        c.focus = { nil }
+        c.remote = server.map(SpeechServerTranscriber.init)
+        c.press()
+        c.release()
+        return (c, delivered)
+    }
+
+    @MainActor
+    private func waitFor(_ check: () async -> Bool) async {
+        for _ in 0..<1000 where !(await check()) { try? await Task.sleep(nanoseconds: 5_000_000) }
+    }
+
+    @MainActor
+    func testTheServerIsAskedFirstWithTheRecordingAsAWav() async throws {
+        let site = FakeSite()
+        site.answer = { _ in (200, #"{"text":" from the server "}"#) }
+        let local = LocalModel()
+        let (c, delivered) = await dictate(local: local, server: site.url.appendingPathComponent("api/transcribe"))
+        await waitFor { c.state == .idle }
+        XCTAssertEqual(delivered.texts, ["from the server"])
+        let calls = await local.calls
+        XCTAssertEqual(calls, 0, "this Mac's model is not asked")
+        let request = try XCTUnwrap(site.requests.first)
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.path, "/api/transcribe")
+        XCTAssertEqual(request.headers.first { $0.key.lowercased() == "content-type" }?.value, "audio/wav")
+        XCTAssertEqual(String(decoding: request.body.prefix(4), as: UTF8.self), "RIFF")
+    }
+
+    @MainActor
+    func testAServerThatFailsOrIsOffFallsBackToThisMac() async throws {
+        let site = FakeSite()
+        site.answer = { _ in (500, #"{"error":"busy"}"#) }
+        let (c, delivered) = await dictate(local: LocalModel(), server: site.url.appendingPathComponent("api/transcribe"))
+        await waitFor { c.state == .idle }
+        XCTAssertEqual(delivered.texts, ["from this Mac"])
+        // nothing listens there at all
+        let off = URL(string: "http://127.0.0.1:9/api/transcribe")!
+        let (c2, delivered2) = await dictate(local: LocalModel(), server: off)
+        await waitFor { c2.state == .idle }
+        XCTAssertEqual(delivered2.texts, ["from this Mac"])
+    }
+
+    @MainActor
+    func testWithAServerDownAndNoModelHereNothingDownloadsAndHistoryKeepsIt() async {
+        let off = URL(string: "http://127.0.0.1:9/api/transcribe")!
+        let said = Said()
+        let local = LocalModel(loaded: false, onDisk: false)
+        let (c, delivered) = await dictate(local: local, server: off, said: said)
+        await waitFor { c.state == .idle }
+        XCTAssertEqual(delivered.texts, [])
+        let loading = await local.loading
+        XCTAssertFalse(loading)
+        XCTAssertEqual(said.events.last, "failed: Your speech server didn't answer · saved in History")
+    }
+
+    @MainActor
+    func testThePillSaysTheModelIsGettingReadyInsteadOfCountingSeconds() async {
+        let said = Said()
+        let local = LocalModel(loaded: false)
+        let (c, delivered) = await dictate(local: local, server: nil, said: said)
+        await waitFor { await local.loading }
+        XCTAssertEqual(said.events, ["listening", "transcribing", "getting the model ready"])
+        await local.finishLoading()
+        await waitFor { c.state == .idle }
+        XCTAssertEqual(said.events, ["listening", "transcribing", "getting the model ready", "transcribing", "done"])
+        XCTAssertEqual(delivered.texts, ["from this Mac"])
+    }
+
+    @MainActor
+    func testACancelWhileTheModelLoadsKeepsThePillQuietAndTheRecordingInHistory() async {
+        let said = Said()
+        let local = LocalModel(loaded: false)
+        let (c, delivered) = await dictate(local: local, server: nil, said: said)
+        await waitFor { await local.loading }
+        c.discard()
+        await local.finishLoading()
+        let recordings = DictationRecordings(directory: dir)
+        await waitFor { recordings.recent().first?.text != nil }
+        XCTAssertEqual(said.events, ["listening", "transcribing", "getting the model ready", "failed: Cancelled"])
+        XCTAssertEqual(delivered.texts, [])
+        XCTAssertEqual(recordings.recent().first?.text, "from this Mac")
+    }
+
+    func testAddressesAndTimeouts() {
+        XCTAssertNotNil(SpeechServerTranscriber.url("http://tiny-acrobatics.example:7886/api/transcribe"))
+        XCTAssertNil(SpeechServerTranscriber.url(""))
+        XCTAssertNil(SpeechServerTranscriber.url("tiny-acrobatics.example"))
+        XCTAssertNil(SpeechServerTranscriber.url("ftp://tiny-acrobatics.example/x"))
+        XCTAssertEqual(SpeechServerTranscriber.timeout(seconds: 0), 4)
+        XCTAssertEqual(SpeechServerTranscriber.timeout(seconds: 20), 9)
+    }
+}
+
+final class SetupPageTests: XCTestCase {
+    func testTheLineFollowsTheTalkKey() {
+        XCTAssertEqual(SetupFacts.line(for: .key(.function(105, "F13"))), "Press F13, speak, press again.")
+        XCTAssertEqual(SetupFacts.line(for: .hold(.fn)), "Hold fn, speak, and let go.")
+        XCTAssertEqual(SetupFacts.line(for: nil), "Choose a talk key, then speak.")
+        XCTAssertEqual(SetupFacts.summary(["English"]), "English")
+        XCTAssertEqual(SetupFacts.summary(["English", "Estonian", "Finnish"]), "English +2")
+    }
+
+    func testLanguagesListTheMacsAndTickedFirst() {
+        let menu = LanguageChecklist.menu(preferred: ["en", "xx"], ticked: ["et"])
+        XCTAssertEqual(menu.mac, ["en", "et"], "unknown codes are left out")
+        XCTAssertFalse(menu.common.contains("en"))
+        XCTAssertFalse(menu.more.contains("et"))
+    }
+
+    /// The menu bar's Dictate while the other dictation app has the keys: it quits that app and switches dictation on
+    /// here (it used to quit and stop there, leaving dictation off for someone who had switched it off).
+    @MainActor
+    func testDictateWhileTheOtherAppIsOpenQuitsItAndTurnsDictationOn() {
+        let d = Dictation.shared
+        let was = d.prefs.on
+        defer { d.command("on", was ? "1" : "0"); d.earlierAppOpen = false }
+        d.command("on", "0")
+        d.earlierAppOpen = true
+        var quits = 0
+        d.toggle { quits += 1 }
+        XCTAssertEqual(quits, 1)
+        XCTAssertTrue(d.prefs.on)
+    }
+}
+
 final class DictationKeysTests: XCTestCase {
     private let optionSpace = KeyBinding.key(Shortcut(keyCode: 49, carbonModifiers: 2048, display: "⌥Space"))
 
@@ -320,18 +527,6 @@ final class DictationKeysTests: XCTestCase {
         DictationKeys().save(d)
         XCTAssertTrue(DictationKeys.isSaved(d), "the next launch must not put the first keys back")
         XCTAssertEqual(DictationKeys.load(d), DictationKeys())
-    }
-
-    func testTryItSaysWhatIsMissing() {
-        var f = GuideFacts(talkKey: "F13", talkHint: "Press F13 to talk", modelName: "M", modelSize: "1 GB")
-        XCTAssertEqual(f.missing, "Allow the microphone first (step 2).")
-        f.microphone = true
-        f.accessibility = true
-        XCTAssertEqual(f.missing, "Download the speech model first (step 3).")
-        f.progress = 0.5
-        XCTAssertEqual(f.missing, "The speech model is downloading · 50%")
-        f.modelHere = true
-        XCTAssertNil(f.missing)
     }
 
     func testFirstKeysFollowTheKeyboard() {
@@ -405,7 +600,7 @@ final class EarlierAppTests: XCTestCase {
         XCTAssertFalse(Dictation.keysLive(on: true, paused: true, earlierAppOpen: false), "a key picker is open")
         XCTAssertFalse(Dictation.keysLive(on: false, paused: false, earlierAppOpen: false))
         // the menu row says why a click does nothing while the earlier app has the keys
-        XCTAssertEqual(Dictation.menuTitle(phase: .off, earlierAppOpen: true), EarlierDictationApp.pausedLine)
+        XCTAssertEqual(Dictation.menuTitle(phase: .off, earlierAppOpen: true), EarlierDictationApp.switchLine)
         XCTAssertEqual(Dictation.menuTitle(phase: .off, earlierAppOpen: false), "Dictate")
     }
 }
@@ -415,7 +610,7 @@ final class EarlierAppTests: XCTestCase {
 final class DictationBridgeStateTests: XCTestCase {
     func testTheSettingsAnswerBuildsWithEveryField() {
         let state = Dictation.shared.bridgeState()
-        for key in ["on", "keys", "picking", "paused", "engine", "model", "models", "keep", "sounds", "needs"] {
+        for key in ["on", "keys", "picking", "paused", "engine", "model", "models", "keep", "sounds", "server", "needs"] {
             XCTAssertNotNil(state[key], "missing \(key)")
         }
     }

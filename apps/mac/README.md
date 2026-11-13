@@ -458,7 +458,9 @@ its process stop it, after up to 20 s). See also "Not checked yet".
 ## Dictation
 
 Talk, and the words are pasted where the cursor is, in any app (`Dictation/`). On for everyone from the first launch,
-but nothing asks for a permission and nothing downloads until the first press of a talk key.
+but nothing asks for a permission and nothing downloads until the first press of a talk key. A model already on this
+Mac loads at launch, in the background, so the keys work at once (the first load in a new app takes minutes while Core
+ML compiles it, then about 2 s).
 
 - Four keys, each the person's own (`Dictation/DictationKeys.swift`): **Talk** (a key or combination taps to start and
   stop, or a modifier like fn or right ⌥ is held while talking; a hold shorter than 0.3 s, or one with another key,
@@ -470,13 +472,20 @@ but nothing asks for a permission and nothing downloads until the first press of
 - Each key is chosen in the key picker the recording shortcut also uses: a key with ⌘, ⌥ or ⌃, or a function key
   alone; Talk also takes a modifier pressed and let go on its own. A key another action or the recording shortcut has
   is refused with a sentence. While the picker is open no key works, so pressing one chooses it.
-- The first press of Talk opens the setup guide (`Dictation/SetupGuide.swift`, once; again from Settings' Set up
-  dictation): the talk key, Microphone and Accessibility with ticks, where speech turns into text (this Mac with the
-  model's download, or the server's engine once that is wired: `DictationEngine.serverWired`), and a box to try it.
-  Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
+- The first press of Talk, or the menu bar's Dictate, opens the setup page (`Dictation/SetupGuide.swift`) until it was
+  gone through once (Get Started, or closed); Settings' Set up opens it any time. One page: the talk key, the languages
+  (the server's Voice languages, else the Mac's, until ticked), Microphone and Accessibility with their own Allow,
+  where speech turns into text (this Mac's model with its download, or your speech server), and Get Started once both
+  permissions are given. Opening it starts loading the model, or downloading it when it is not here (with a speech
+  server it is what dictation falls back on). Nothing opens it by itself at launch. Later presses while something is missing use the pill at the bottom of the screen: what to allow, with the System
   Settings pane, and the download's progress. Before Accessibility no key tap can exist, so the keys are Carbon
   hotkeys and the hold key is read from the modifier state ten times a second (a hold of 1 s with no other key counts
   as the first press). Switching dictation off stops a download in progress.
+- A speech server of the person's own (Settings → Speech server, empty by default; the earlier dictation app's is
+  taken over once): each recording is POSTed to it as a WAV and its `{"text"}` used; when it doesn't answer in
+  4 s plus a quarter of the recording's length, this Mac's model writes it down. With no model on this Mac, nothing
+  downloads then: the recording waits in History. While the model is still loading, the pill says "Getting the speech
+  model ready" instead of counting seconds.
 - Speech becomes text on this Mac with Whisper (WhisperKit, Core ML); the default model is Whisper Large v3 Turbo
   (1.6 GB) in `~/Library/Application Support/Creator Toolset/dictation/models`. A complete copy in the earlier
   dictation app's models folder is loaded where it is, never downloaded again or removed. Whisper is told the languages from the server's Voice settings (`GET /api/voice-prefs`) when it has
@@ -488,7 +497,8 @@ but nothing asks for a permission and nothing downloads until the first press of
   choices are taken over once (F13–F16, with its hold key as Talk if it had one).
 - While that earlier app runs (by bundle id, `Dictation.earlierAppOpen`, from NSWorkspace's launch and quit
   notifications) dictation here registers no key, Carbon or tap, and a recording or transcription in progress pastes
-  nothing; Settings says so in one line. Its keys come back when that app quits.
+  nothing; Settings says so in one line. Its keys come back when that app quits. The menu bar's Dictate then reads
+  "Dictate here": a click quits that app and switches dictation on here.
 
 ## Notifications and the Dock badge
 
