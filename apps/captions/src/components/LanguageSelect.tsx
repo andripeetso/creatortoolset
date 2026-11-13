@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
  * → Voice; none there = English, as api/transcribe.ts hears it). Saved as `languages: [code]` (none: []). A short
  * list you can type into, so 30 languages never fill the screen.
  */
-export function LanguageSelect({ id, value, onChange, disabled, className }: {
+export function LanguageSelect({ id, value, onChange, disabled, className, placeholder }: {
   id?: string;
+  /** The label of "" in place of the person's own languages (a question's "Other…"): every language is then listed. */
+  placeholder?: string;
   value: string;
   onChange: (code: string) => void;
   disabled?: boolean;
@@ -20,9 +22,9 @@ export function LanguageSelect({ id, value, onChange, disabled, className }: {
 }) {
   const [open, setOpen] = useState(false);
   const mine = useVoice().data?.languages ?? [];
-  const usual = mine.length ? mine.map(languageName).join(", ") : "English";
+  const usual = placeholder ?? (mine.length ? mine.map(languageName).join(", ") : "English");
   // the default already names a single language: it is not listed twice
-  const one = mine.length <= 1 ? (mine[0] ?? "en") : null;
+  const one = !placeholder && mine.length <= 1 ? (mine[0] ?? "en") : null;
   const rest = SPOKEN_LANGUAGES.filter((c) => c !== one);
   const isDefault = !value || value === one;
   const pick = (code: string) => {
@@ -45,7 +47,7 @@ export function LanguageSelect({ id, value, onChange, disabled, className }: {
             <CommandItem value={`${usual} default`} onSelect={() => pick("")}>
               <Check className={cn("size-3.5", isDefault ? "" : "opacity-0")} />
               {usual}
-              <span className="ml-auto text-xs text-muted-foreground">default</span>
+              {!placeholder && <span className="ml-auto text-xs text-muted-foreground">default</span>}
             </CommandItem>
             {rest.map((c) => (
               <CommandItem key={c} value={languageName(c)} onSelect={() => pick(c)}>
