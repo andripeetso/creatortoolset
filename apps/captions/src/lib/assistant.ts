@@ -111,6 +111,11 @@ export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURI
 /** This chat is on screen now: what ended in it is no longer unread (the list's Done mark, on every device). */
 export const seenChat = (id: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/seen`, "POST");
 export const settleChat = (id: string, settled: boolean) => call<unknown>(`/chats/${encodeURIComponent(id)}/settle`, "POST", { settled });
+/** A chat's own changes from its menu in the list: pinned to the top, put away until a time (null: back now), named, marked as not looked at. */
+export const pinChat = (id: string, pinned: boolean, at?: number) => call<unknown>(`/chats/${encodeURIComponent(id)}/pin`, "POST", { pinned, ...(at ? { at } : {}) });
+export const snoozeChat = (id: string, until: number | null) => call<unknown>(`/chats/${encodeURIComponent(id)}/snooze`, "POST", { until });
+export const renameChat = (id: string, title: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/title`, "POST", { title });
+export const unreadChat = (id: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/unread`, "POST");
 /** Allow or deny something the reply asked to do on the Mac. */
 /** Yes or No to a question the assistant put before deleting, publishing or sending something. */
 export const answerConfirm = (id: string, yes: boolean) => call<AssistantView>(`/confirms/${encodeURIComponent(id)}`, "POST", { yes });

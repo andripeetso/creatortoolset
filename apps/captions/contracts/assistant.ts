@@ -10,6 +10,11 @@
  *   GET  /api/assistant/chats/:id        → AssistantView of that chat (`past` is empty there: the list is GET /chats)
  *   POST /api/assistant/chats/:id/turn   → AssistantTurnInput, 202 with that chat's view (404: the chat is gone)
  *   POST /api/assistant/chats/:id/settle { settled: boolean } → { chats }: done with it, kept (`settled` in the lists)
+ *   GET  /api/assistant/chats/search?q=  → { matches: [{ id, title, at, in, snippet }] }: titles, then what was said
+ *   POST /api/assistant/chats/:id/pin    { pinned: boolean, at?: ms } → { chats }: at the top of the list
+ *   POST /api/assistant/chats/:id/snooze { until: ms | null } → { chats }: out of the list until then (null: back now)
+ *   POST /api/assistant/chats/:id/title  { title } → { chats }: its name
+ *   POST /api/assistant/chats/:id/unread → { chats }: its newest finished reply counts as not looked at
  * Replies in different chats are written at the same time, up to 3 per account (MAX_RUNNING, api/assistant.ts); in one
  * chat one at a time, in order. Stop ({ reply }), approvals and confirms are found by their own ids in any chat.
  */
@@ -224,6 +229,16 @@ export interface AssistantChat {
   unread?: true;
   /** Settled (POST /chats/:id/settle) and nothing new in it since: folded away on every device. */
   settled?: true;
+  /** Pinned (POST /chats/:id/pin), and when: at the top of the list on every device, the newest pin first. Pinning
+   *  un-settles a chat and ends its snooze; settling un-pins it. */
+  pinned?: number;
+  /** Put away until this time (ms; POST /chats/:id/snooze): out of the list till then. It is back sooner when it
+   *  asks something or a reply in it fails, and when the person sends a message in it. */
+  snoozed?: number;
+  /** Back from being put away and not looked at since. */
+  woke?: true;
+  /** What it last made or opened: its newest card (an edit, a Workshop session, a Review video). */
+  on?: Pick<AssistantWork, "kind" | "title">;
 }
 
 export interface AssistantView {

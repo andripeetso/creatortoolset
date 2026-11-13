@@ -14,8 +14,10 @@ import { create } from "zustand";
  */
 
 const KEY = "ct-chat-mode";
-/** The chats list beside the open chat. */
+/** The list of chats beside the open chat: its width until its edge is dragged, and the least and most it can be given. */
 export const LIST_W = 280;
+export const LIST_MIN = 220;
+export const LIST_MAX = 480;
 /** The open chat's column at its narrowest. */
 export const MIN_CHAT = 340;
 /** The page at its narrowest (the sm breakpoint: a page beside the chats is never laid out as on a phone). A window with
@@ -28,6 +30,8 @@ type Stored = {
   on: boolean;
   /** The chats' width as dragged; 0 = half the window. */
   w: number;
+  /** The list's width as dragged (its own edge); 0 = LIST_W. */
+  lw: number;
   /** The page shows beside the chats (off: only chats). Your own choice: the bar's button. */
   page: boolean;
   /**
@@ -40,9 +44,10 @@ type Stored = {
 const stored = (): Stored => {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<Stored> | null;
-    return { on: s?.on === true, w: typeof s?.w === "number" && s.w > 0 ? s.w : 0, page: s?.page !== false, bare: s?.bare === true };
+    const px = (v: unknown) => (typeof v === "number" && v > 0 ? v : 0);
+    return { on: s?.on === true, w: px(s?.w), lw: px(s?.lw), page: s?.page !== false, bare: s?.bare === true };
   } catch {
-    return { on: false, w: 0, page: true, bare: false };
+    return { on: false, w: 0, lw: 0, page: true, bare: false };
   }
 };
 
@@ -63,7 +68,7 @@ export const useChatMode = create<ChatModeState>((set) => ({
   need: 0,
   set: (patch) =>
     set((s) => {
-      const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, page: patch.page ?? s.page, bare: patch.bare ?? s.bare };
+      const next: Stored = { on: patch.on ?? s.on, w: patch.w ?? s.w, lw: patch.lw ?? s.lw, page: patch.page ?? s.page, bare: patch.bare ?? s.bare };
       try {
         localStorage.setItem(KEY, JSON.stringify(next));
       } catch {
@@ -112,19 +117,23 @@ export interface ChatLayout {
   forced: boolean;
   /** The list stands beside the open chat: there is room for both (else it opens over the chat from its button). */
   list: boolean;
+  /** The list's width there: as dragged, less where the open chat would get under its least. */
+  listW: number;
 }
 
 /**
  * How the window `win` wide is shared. The page never gets less than MIN_PAGE nor the open chat less than MIN_CHAT;
  * `need` is what the screen on show asks for itself (usePageNeeds), given as far as the chat's least allows.
  */
-export function chatLayout(s: Pick<Stored, "w" | "page"> & { bare?: boolean }, win: number, need = 0): ChatLayout {
+export function chatLayout(s: Pick<Stored, "w" | "page"> & { bare?: boolean; lw?: number }, win: number, need = 0): ChatLayout {
   const forced = win - MIN_PAGE < MIN_CHAT;
   const full = !s.page || forced || !!s.bare;
   const room = win - Math.max(MIN_PAGE, Math.min(need, win - MIN_CHAT));
   // half the window until the edge is dragged
   const chat = full ? win : Math.min(Math.max(s.w || Math.round(win / 2), MIN_CHAT), room);
-  return { chat, full, forced, list: chat - LIST_W >= MIN_CHAT };
+  // the list gives way to the open chat, down to its own least, before it folds away
+  const listW = Math.min(Math.min(Math.max(s.lw || LIST_W, LIST_MIN), LIST_MAX), chat - MIN_CHAT);
+  return { chat, full, forced, list: listW >= LIST_MIN, listW };
 }
 
 /**
@@ -150,6 +159,7 @@ export function useChatModeLayout(active: boolean): ChatLayout {
   const w = useChatMode((s) => s.w);
   const page = useChatMode((s) => s.page);
   const bare = useChatMode((s) => s.bare);
+  const lw = useChatMode((s) => s.lw);
   const need = useChatMode((s) => s.need);
   const [win, setWin] = useState(pageWidth);
   useEffect(() => {
@@ -157,7 +167,7 @@ export function useChatModeLayout(active: boolean): ChatLayout {
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
-  const layout = chatLayout({ w, page, bare }, win, need);
+  const layout = chatLayout({ w, page, bare, lw }, win, need);
   // before the browser draws: a switch is one picture of the old screen and one of the new (washTo)
   useLayoutEffect(() => {
     if (!active) return;

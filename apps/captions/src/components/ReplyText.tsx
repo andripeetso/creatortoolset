@@ -41,7 +41,8 @@ function AppLink({ href, className, children }: { href: string; className: strin
         // a modified click still opens a tab, as any link does
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
-        navigate(href);
+        // a link to another chat (/?chat=<id>) opens that chat and leaves the page where it is
+        navigate(/^\/\?chat=[^&#]+$/.test(href) ? { search: href.slice(1) } : href);
       }}
     >
       {children}

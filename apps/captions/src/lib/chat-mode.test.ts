@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bareNow, chatLayout, frontAt, frontReaches, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
+import { bareNow, chatLayout, frontAt, frontReaches, LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow } from "./chat-mode";
 
 const fresh = { w: 0, page: true };
 
 describe("chatLayout", () => {
   it("is half the window until the edge is dragged, then what was dragged", () => {
-    expect(chatLayout(fresh, 1440)).toEqual({ chat: 720, full: false, forced: false, list: true });
+    expect(chatLayout(fresh, 1440)).toEqual({ chat: 720, full: false, forced: false, list: true, listW: LIST_W });
     expect(chatLayout({ ...fresh, w: 760 }, 1440).chat).toBe(760);
   });
   it("keeps the list beside the chat while half the window has room for both", () => {
@@ -21,7 +21,7 @@ describe("chatLayout", () => {
     expect(chatLayout({ ...fresh, w: 500 }, 1440).list).toBe(false);
   });
   it("takes the whole window when the page is hidden or the window has no room for both", () => {
-    expect(chatLayout({ ...fresh, page: false }, 1440)).toEqual({ chat: 1440, full: true, forced: false, list: true });
+    expect(chatLayout({ ...fresh, page: false }, 1440)).toEqual({ chat: 1440, full: true, forced: false, list: true, listW: LIST_W });
     expect(chatLayout(fresh, MIN_CHAT + MIN_PAGE - 1)).toMatchObject({ chat: MIN_CHAT + MIN_PAGE - 1, full: true, forced: true });
   });
   it("gives a screen the width it says it needs, as far as the chat's least allows", () => {
@@ -57,6 +57,22 @@ describe("paneBelow", () => {
     expect(paneBelow(1024)).toBe("lt-xl lt-2xl");
     expect(paneBelow(1600)).toBe("");
     expect(paneBelow(MIN_PAGE)).toBe("lt-md lt-lg lt-xl lt-2xl");
+  });
+});
+
+describe("the list of chats' own width", () => {
+  const fresh = { w: 0, page: true };
+  it("is as its edge was dragged, between its least and its most", () => {
+    expect(chatLayout({ ...fresh, lw: 340 }, 1440).listW).toBe(340);
+    expect(chatLayout({ ...fresh, page: false, lw: 40 }, 1440).listW).toBe(LIST_MIN);
+    expect(chatLayout({ ...fresh, page: false, lw: 2000 }, 1440).listW).toBe(LIST_MAX);
+  });
+
+  it("gives way to the open chat before it folds away: the chat never gets under its least", () => {
+    // half of 1440 is 720 for both: the list can have 720 less the chat's least
+    expect(chatLayout({ ...fresh, lw: 460 }, 1440)).toMatchObject({ list: true, listW: 720 - MIN_CHAT });
+    expect(chatLayout({ ...fresh, w: MIN_CHAT + LIST_MIN }, 1440)).toMatchObject({ list: true, listW: LIST_MIN });
+    expect(chatLayout({ ...fresh, w: MIN_CHAT + LIST_MIN - 1 }, 1440).list).toBe(false);
   });
 });
 

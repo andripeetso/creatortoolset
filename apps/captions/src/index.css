@@ -276,6 +276,17 @@ html[data-chat-mode="full"] main { display: none; }
    from the right (a drawer). */
 html[data-chat-mode] main .fixed:is(.inset-0, .inset-x-0):not([class*="left-auto"]) { left: var(--chat-w); }
 html[data-chat-mode] nav[aria-label="Updates"] { left: calc(var(--chat-w) + 0.5rem); }
+/* A chat's row in the list (ChatList.tsx): its time and its buttons share one place at the row's end. The buttons take
+   it while the pointer is on the row, a key has the focus in it, or a menu of the row is open; the place is as wide as
+   the one on show, so only the chat's name gets shorter and nothing ever lies over it. Not on a click's own focus: a
+   row that was pressed would keep its buttons after the pointer had left. */
+.chat-row-do { position: absolute; inset-block: 0; right: 0; opacity: 0; pointer-events: none; }
+.chat-row:is([data-menu], :has(:focus-visible)) .chat-row-do { position: static; opacity: 1; pointer-events: auto; }
+.chat-row:is([data-menu], :has(:focus-visible)) .chat-row-when { position: absolute; right: 0; opacity: 0; pointer-events: none; }
+@media (any-hover: hover) {
+  .chat-row:hover .chat-row-do { position: static; opacity: 1; pointer-events: auto; }
+  .chat-row:hover .chat-row-when { position: absolute; right: 0; opacity: 0; pointer-events: none; }
+}
 /* Chat mode turned on or off (washTo, lib/chat-mode.ts): the picture of the screen as it was stays put and the new
    screen shows through a round, soft-rimmed mask that grows from the button (its size and place are animated there;
    nothing of it shows before that starts). No picture is cross-faded: each is moved and faded from there. */

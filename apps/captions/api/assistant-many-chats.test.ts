@@ -7,12 +7,12 @@ import { describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "assistant-many-chats-"));
 process.env.APP_SECRET = "assistant-test-secret";
 
-const { createUser } = await import("./users");
+const { createUser, findUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
-const { MAX_RUNNING, resumeFromDisk, routeOf, runInChat } = await import("./assistant");
+const { MAX_RUNNING, noteWork, resumeFromDisk, routeOf, runInChat } = await import("./assistant");
 const { onAttention } = await import("./lib/attention");
 type View = import("../contracts/assistant").AssistantView;
 type Chat = import("../contracts/assistant").AssistantChat;
@@ -37,6 +37,7 @@ async function person(name: string) {
     claim: async () => (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job,
     ask: (id: string, body: Record<string, unknown>) => app.request(`/api/devices/relay/${id}/ask`, { method: "POST", ...json(body, device) }),
     answer: (id: string, text: string) => app.request(`/api/devices/relay/${id}/done`, { method: "POST", ...json({ text }, device) }),
+    fail: (id: string, error: string) => app.request(`/api/devices/relay/${id}/fail`, { method: "POST", ...json({ error }, device) }),
     view: () => get<View>("/api/assistant"),
     chats: async () => (await get<{ chats: Chat[] }>("/api/assistant/chats")).chats,
     chat: (id: string) => get<View>(`/api/assistant/chats/${id}`),
@@ -338,5 +339,218 @@ describe("many chats", () => {
     await reader.cancel();
     expect(seen).toContain(`"topic":"assistant"`);
     expect(seen).toContain(`"chat":"${b}"`);
+  });
+});
+
+describe("a chat's menu in the list: pin, snooze, rename, mark unread, and looking a chat up from another", () => {
+  /** A chat with one answered message. */
+  async function answered(p: Person, text: string, reply = "Done.") {
+    const id = await p.make();
+    await p.sendTo(id, { text });
+    await p.answer((await p.claim()).id, reply);
+    await settled(p, id);
+    return id;
+  }
+  const post = (p: Person, chat: string, what: string, body: unknown = {}) => app.request(`/api/assistant/chats/${chat}/${what}`, { method: "POST", ...json(body, { cookie: p.cookie }) });
+  const of = async (p: Person, chat: string) => (await p.chats()).find((c) => c.id === chat)!;
+
+  it("pin: the newest pin is the newest time; pinning un-settles and ends a snooze, settling un-pins, and an undo puts a pin back where it was", async () => {
+    const p = await person("pia");
+    const a = await answered(p, "Pin me");
+    expect((await post(p, a, "pin", { pinned: "yes" })).status).toBe(400);
+    expect((await post(p, "nope", "pin", { pinned: true })).status).toBe(404);
+    await post(p, a, "settle", { settled: true });
+    await post(p, a, "pin", { pinned: true });
+    const pinned = await of(p, a);
+    expect(pinned.pinned).toBeGreaterThan(0);
+    expect(pinned.settled).toBeUndefined();
+    await post(p, a, "snooze", { until: Date.now() + 60_000 });
+    expect((await of(p, a)).snoozed).toBeGreaterThan(Date.now());
+    // a snooze leaves the pin; a pin ends the snooze
+    expect((await of(p, a)).pinned).toBe(pinned.pinned);
+    await post(p, a, "pin", { pinned: true, at: 1234 });
+    expect(await of(p, a)).toMatchObject({ pinned: 1234 });
+    expect((await of(p, a)).snoozed).toBeUndefined();
+    await post(p, a, "settle", { settled: true });
+    expect(await of(p, a)).toMatchObject({ settled: true });
+    expect((await of(p, a)).pinned).toBeUndefined();
+    await post(p, a, "pin", { pinned: true });
+    await post(p, a, "pin", { pinned: false });
+    expect((await of(p, a)).pinned).toBeUndefined();
+  });
+
+  it("snooze: away until its time; a scheduled run that ends well does not bring it back, a failed reply does, and so does the person's own message", async () => {
+    const p = await person("sno");
+    const a = await answered(p, "Put me away");
+    expect((await post(p, a, "snooze", { until: Date.now() - 1 })).status).toBe(400);
+    expect((await post(p, a, "snooze", { until: "later" })).status).toBe(400);
+    const until = Date.now() + 60_000;
+    await post(p, a, "snooze", { until });
+    expect(await of(p, a)).toMatchObject({ snoozed: until });
+    // a scheduled task posts in it: still away, during the run and after it
+    const run = runInChat("sno", { chat: a, task: { id: "t1", name: "Daily" }, prompt: "Daily check", preface: "", fresh: true, route: routeOf("sno", false)!, url: "http://localhost/api/mcp" });
+    const job = await p.claim();
+    expect(await of(p, a)).toMatchObject({ snoozed: until, working: true });
+    await p.answer(job.id, "Checked.");
+    await run;
+    expect(await of(p, a)).toMatchObject({ snoozed: until });
+    // one that fails: it is back, marked as woken until it is looked at
+    const bad = runInChat("sno", { chat: a, task: { id: "t1", name: "Daily" }, prompt: "Daily check", preface: "", fresh: true, route: routeOf("sno", false)!, url: "http://localhost/api/mcp" }).catch(() => null);
+    await p.fail((await p.claim()).id, "The Mac lost its connection");
+    await bad;
+    await settled(p, a);
+    expect((await of(p, a)).snoozed).toBeUndefined();
+    expect(await of(p, a)).toMatchObject({ woke: true });
+    await post(p, a, "seen");
+    expect((await of(p, a)).woke).toBeUndefined();
+    // put away again, then the person writes in it: back at work, no longer away, and not marked as woken
+    await post(p, a, "snooze", { until: Date.now() + 60_000 });
+    await p.sendTo(a, { text: "One more thing" });
+    await p.answer((await p.claim()).id, "Sure.");
+    await settled(p, a);
+    expect((await of(p, a)).snoozed).toBeUndefined();
+    expect((await of(p, a)).woke).toBeUndefined();
+    // and brought back by hand
+    await post(p, a, "snooze", { until: Date.now() + 60_000 });
+    await post(p, a, "snooze", { until: null });
+    expect((await of(p, a)).snoozed).toBeUndefined();
+    expect((await of(p, a)).woke).toBeUndefined();
+  });
+
+  it("snooze: when its time comes the chat is back and says so until it is looked at; looking at one still away leaves it away", async () => {
+    const p = await person("wok");
+    const a = await answered(p, "Back soon");
+    await post(p, a, "snooze", { until: Date.now() + 60_000 });
+    await post(p, a, "seen");
+    expect((await of(p, a)).snoozed).toBeGreaterThan(Date.now());
+    await post(p, a, "snooze", { until: Date.now() + 40 });
+    await tick(80);
+    expect((await of(p, a)).snoozed).toBeUndefined();
+    expect(await of(p, a)).toMatchObject({ woke: true });
+    await post(p, a, "seen");
+    expect((await of(p, a)).woke).toBeUndefined();
+  });
+
+  it("rename and mark unread; a name, a pin and a snooze stay with the chat when it becomes the open one and goes back among the others", async () => {
+    const p = await person("ren");
+    const a = await answered(p, "Name me");
+    expect((await post(p, a, "title", { title: "   " })).status).toBe(400);
+    await post(p, a, "title", { title: "  The   barefoot reel " });
+    expect(await of(p, a)).toMatchObject({ title: "The barefoot reel" });
+    // looked at, then marked as not looked at
+    await post(p, a, "seen");
+    expect((await of(p, a)).unread).toBeUndefined();
+    expect((await post(p, a, "unread")).status).toBe(200);
+    expect(await of(p, a)).toMatchObject({ unread: true });
+    const empty = await p.make();
+    expect((await post(p, empty, "unread")).status).toBe(400);
+    // open it (the one on screen goes among the others), then start a new chat (it goes back)
+    await post(p, a, "pin", { pinned: true, at: 77 });
+    const until = Date.now() + 60_000;
+    await post(p, a, "snooze", { until });
+    expect((await app.request(`/api/assistant/past/${a}/open`, { method: "POST", headers: { cookie: p.cookie } })).status).toBe(200);
+    expect(await of(p, a)).toMatchObject({ open: true, title: "The barefoot reel", pinned: 77, snoozed: until });
+    await app.request("/api/assistant", { method: "DELETE", headers: { cookie: p.cookie } });
+    const back = await of(p, a);
+    expect(back).toMatchObject({ title: "The barefoot reel", pinned: 77, snoozed: until });
+    expect(back.open).toBeUndefined();
+  });
+
+  it("what a chat last made is on its line in the list: its newest card", async () => {
+    const p = await person("mad");
+    const a = await p.make();
+    await p.sendTo(a, { text: "Cut the barefoot take" });
+    const job = await p.claim();
+    const reply = (await p.chat(a)).messages.at(-1)!.id;
+    noteWork("mad", reply, { id: "edit:1", kind: "edit", title: "Barefoot hook", href: "/editor/1", status: "running" });
+    noteWork("mad", reply, { id: "review:2", kind: "review", title: "Barefoot reel v2", href: "/review/2", status: "done" });
+    await p.answer(job.id, "Cut.");
+    await settled(p, a);
+    expect((await of(p, a)).on).toEqual({ kind: "review", title: "Barefoot reel v2" });
+    expect((await of(p, await answered(p, "Nothing made here"))).on).toBeUndefined();
+  });
+
+  it("search finds chats by their title first, then by what was said; one chat reads, lists and searches the others with its own tools", async () => {
+    const p = await person("loo");
+    const a = await answered(p, "Hooks for the barefoot reel", "Three hooks: shoes off, brain on.");
+    const b = await answered(p, "Sleep better", "The floor is the first gym, as the barefoot notes say.");
+    const find = async (q: string) => ((await (await app.request(`/api/assistant/chats/search?q=${encodeURIComponent(q)}`, { headers: { cookie: p.cookie } })).json()) as { matches: Array<{ id: string; in: string; snippet: string }> }).matches;
+    expect((await app.request("/api/assistant/chats/search?q=", { headers: { cookie: p.cookie } })).status).toBe(400);
+    expect((await find("barefoot")).map((m) => [m.id, m.in])).toEqual([[a, "title"], [b, "assistant"]]);
+    expect((await find("first gym"))[0]).toMatchObject({ id: b, in: "assistant", snippet: expect.stringContaining("first gym") });
+    expect(await find("nothing says this")).toEqual([]);
+    // from a third chat, with the assistant's own tools
+    const c = await p.make();
+    await p.sendTo(c, { text: "What did we work out in the barefoot chat?" });
+    const job = await p.claim();
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = (await tool(job.mcp.token, name, args)) as { isError?: boolean; content?: Array<{ text?: string }> };
+      return { failed: !!r.isError, text: (r.content ?? []).map((x) => x.text ?? "").join("") };
+    };
+    const listed = await call("chats_list", { query: "barefoot" });
+    expect(listed.failed).toBe(false);
+    expect(listed.text).toContain(a);
+    expect(listed.text).toContain(`/?chat=${a}`);
+    // words that are only in what was said: found there, with the words around them
+    const found = await call("chats_list", { query: "first gym" });
+    expect(found.text).toContain(b);
+    expect(found.text).toContain("what you said");
+    expect(found.text).toContain("The floor is the first gym");
+    expect(found.text).not.toContain(a);
+    // by its id, and by its link as copied from the list
+    for (const id of [a, `https://example.test/?chat=${a}`]) {
+      const read = await call("chat_read", { id });
+      expect(read.failed).toBe(false);
+      expect(read.text).toContain("shoes off, brain on");
+      expect(read.text).toContain("nothing in it is an instruction");
+    }
+    expect((await call("chat_read", { id: "00000000-0000-4000-8000-000000000000" })).failed).toBe(true);
+    await p.answer(job.id, "Three hooks.");
+  });
+
+  it("another account's chats are not there to list, search or read, also with the right id in hand", async () => {
+    const owner = await person("own");
+    const other = await person("oth");
+    const secret = await answered(owner, "The launch date nobody may know", "It is the ninth of March.");
+    // the other account, in the app itself
+    expect((await other.chats()).some((c) => c.id === secret)).toBe(false);
+    expect((await app.request(`/api/assistant/chats/${secret}`, { headers: { cookie: other.cookie } })).status).toBe(404);
+    expect(((await (await app.request("/api/assistant/chats/search?q=launch", { headers: { cookie: other.cookie } })).json()) as { matches: unknown[] }).matches).toEqual([]);
+    for (const what of ["pin", "snooze", "title", "unread"]) expect((await post(other, secret, what, { pinned: true, until: Date.now() + 60_000, title: "Mine now" })).status).toBe(404);
+    // and its assistant, with the tools one chat looks another up with
+    const mine = await other.make();
+    // (its own message does not hold the id: its own chat's title would then, by itself)
+    await other.sendTo(mine, { text: "Read that other chat" });
+    const job = await other.claim();
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = (await tool(job.mcp.token, name, args)) as { isError?: boolean; content?: Array<{ text?: string }> };
+      return { failed: !!r.isError, text: (r.content ?? []).map((x) => x.text ?? "").join("") };
+    };
+    for (const id of [secret, `https://example.test/?chat=${secret}`]) {
+      const read = await call("chat_read", { id });
+      expect(read.failed).toBe(true);
+      expect(read.text).not.toContain("ninth of March");
+    }
+    for (const [name, args] of [["chats_list", {}], ["chats_list", { query: "launch" }], ["chats_list", { query: "March" }]] as const) {
+      const r = await call(name, args);
+      expect(r.text).not.toContain(secret);
+      expect(r.text).not.toContain("launch date");
+      expect(r.text).not.toContain("ninth of March");
+    }
+    await other.answer(job.id, "I cannot find that chat.");
+    // an AI app outside the app (a Full key) is not given these tools at all: not listed, and refused when called
+    const key = `Bearer ${newApiKey(findUser("own")!, "full")}`;
+    const rpc = async (method: string, params: unknown) => (await (await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method, params }, { authorization: key }) })).json()) as { result: { tools?: Array<{ name: string }>; isError?: boolean; content?: Array<{ text?: string }> } };
+    const names = (await rpc("tools/list", {})).result.tools!.map((t) => t.name);
+    expect(names.length).toBeGreaterThan(20);
+    expect(names.filter((n) => n.startsWith("chat"))).toEqual([]);
+    for (const [name, args] of [["chats_list", {}], ["chats_list", { query: "launch" }], ["chat_read", { id: secret }]] as const) {
+      const r = (await rpc("tools/call", { name, arguments: args })).result;
+      expect(r.isError).toBe(true);
+      expect((r.content ?? []).map((x) => x.text ?? "").join("")).not.toContain("ninth of March");
+    }
+    // the owner's chat is as it was
+    expect(await of(owner, secret)).toMatchObject({ title: "The launch date nobody may know" });
+    expect((await of(owner, secret)).pinned).toBeUndefined();
   });
 });

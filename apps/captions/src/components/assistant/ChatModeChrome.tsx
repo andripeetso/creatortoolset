@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { PanelLeft, PanelRight, PanelRightClose, SquarePen, X } from "lucide-react";
 import type { AssistantChat } from "@contracts/assistant";
 import { HomeActivity } from "@/components/HomeActivity";
@@ -7,7 +7,7 @@ import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { canUse, useMe } from "@/lib/auth";
-import { LIST_W, MIN_PAGE, previewChatWidth, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
+import { LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, previewChatWidth, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./ChatList";
 import { ChatModeButton } from "./ChatModeButton";
@@ -23,6 +23,40 @@ function NewChatButton({ onNew, disabled }: { onNew: () => void; disabled: boole
 }
 
 /**
+ * The list's right edge: drag it to make the list of chats wider or narrower, as far as the open chat beside it keeps
+ * its least (for more, the chats' own edge gives them more of the window). A double-click gives it its usual width.
+ */
+function ListEdge({ most, onDrag }: { most: number; onDrag: (w: number | null) => void }) {
+  const [drag, setDrag] = useState(false);
+  const width = (e: ReactPointerEvent<HTMLElement>) => Math.round(Math.min(Math.max(e.clientX - (e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0), LIST_MIN), most));
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Make the list of chats wider or narrower"
+      title="Drag to resize · double-click for its usual width"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDrag(true);
+      }}
+      onPointerMove={(e) => drag && onDrag(width(e))}
+      onPointerUp={(e) => {
+        if (!drag) return;
+        setDrag(false);
+        useChatMode.getState().set({ lw: width(e) });
+        onDrag(null);
+      }}
+      onDoubleClick={() => useChatMode.getState().set({ lw: 0 })}
+      // just past the list's edge, not on it: the list's scroll bar stands at that edge, and is not this handle's to take
+      className="group absolute inset-y-0 left-full z-10 w-2 cursor-col-resize touch-none"
+    >
+      <span className={cn("absolute inset-y-0 -left-px w-px transition-colors", drag ? "bg-[var(--tint)]" : "group-hover:bg-[var(--tint)]")} />
+    </div>
+  );
+}
+
+/**
  * The left column of chat mode: the app's name (the way Home), every chat, then the project, the account and Activity. It stands beside the open chat
  * while there is room; narrower, it opens over the chat from the list button (`onClose` then closes it again).
  */
@@ -33,6 +67,7 @@ export function ChatsAside({
   canNew,
   reload,
   onClose,
+  layout,
 }: {
   chats: AssistantChat[] | null;
   onOpen: (id: string) => Promise<unknown> | void;
@@ -41,8 +76,12 @@ export function ChatsAside({
   canNew: boolean;
   reload: () => void;
   onClose?: () => void;
+  /** Beside the open chat: how the window is shared (the list's width, and how wide its edge can drag it). */
+  layout?: ChatLayout;
 }) {
   const me = useMe();
+  // the width while the list's edge is dragged
+  const [dragged, setDragged] = useState<number | null>(null);
   // the same people Home's bar shows the project to
   const projects = canUse(me, "instagram") || canUse(me, "workshop");
   const pick = <A extends unknown[]>(fn: (...a: A) => Promise<unknown> | void) => (...a: A) => {
@@ -54,16 +93,17 @@ export function ChatsAside({
       {onClose && <div className="absolute inset-0 z-20 bg-black/40 motion-safe:animate-in motion-safe:fade-in" onClick={onClose} aria-hidden />}
       <aside
         aria-label="Chats"
-        style={{ width: LIST_W }}
+        style={{ width: dragged ?? layout?.listW ?? LIST_W }}
         className={cn(
-          "flex min-h-0 shrink-0 flex-col border-r bg-popover",
+          "relative flex min-h-0 shrink-0 flex-col border-r bg-popover",
           onClose && "absolute inset-y-0 left-0 z-20 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4 motion-safe:duration-200",
         )}
       >
         {/* as high as the page's bar: the Mac app's window buttons sit at its start (index.css, data-chat-bar) */}
         <header data-chat-bar className="flex h-14 shrink-0 items-center gap-1 pr-2 pl-3 select-none">
           <ChatModeButton />
-          <HomeLink className="min-w-0 truncate" />
+          {/* gives way before the buttons do: in the Mac app the window's buttons take 84px of a narrow list's bar */}
+          <HomeLink className="min-w-0 shrink truncate" />
           <span className="flex-1" />
           <NewChatButton onNew={() => void pick(onNew)()} disabled={!canNew} />
           {onClose && (
@@ -84,6 +124,7 @@ export function ChatsAside({
             <HomeActivity />
           </div>
         </footer>
+        {layout && <ListEdge most={Math.min(LIST_MAX, layout.chat - MIN_CHAT)} onDrag={setDragged} />}
       </aside>
     </>
   );
@@ -113,7 +154,7 @@ export function ChatHeader({
   children?: ReactNode;
 }) {
   return (
-    <header {...(layout.list ? {} : { "data-chat-bar": "" })} className="flex h-14 shrink-0 items-center gap-1.5 border-b pr-3 pl-3 select-none">
+    <header {...(layout.list ? {} : { "data-chat-bar": "" })} className="flex h-14 shrink-0 items-center gap-1.5 pr-3 pl-3 select-none">
       {!layout.list && (
         <>
           <ChatModeButton />

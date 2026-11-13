@@ -101,7 +101,15 @@ interface Chat {
   settled?: number;
   /** When the person last sent a message in it or looked at it (POST /chats/:id/seen): a reply that ended later is unread. */
   seen?: number;
+  /** Pinned to the top of the list (POST /chats/:id/pin): when. */
+  pinned?: number;
+  /** Put away until a time (POST /chats/:id/snooze), `at` when that was done. It is back when the time comes, or
+   *  sooner when it asks something or a reply in it fails (isSnoozed); it is kept until the person has looked. */
+  snooze?: { until: number; at: number };
 }
+
+/** What a chat keeps besides its messages, on its way among the earlier chats and back to being the open one. */
+const kept = (c: Omit<Chat, "id" | "messages" | "made">) => ({ title: c.title, task: c.task, settled: c.settled, seen: c.seen, pinned: c.pinned, snooze: c.snooze });
 
 interface Conv {
   /** The open chat's id, title and task (it keeps them going into `past` and coming back). */
@@ -110,6 +118,8 @@ interface Conv {
   task?: string;
   settled?: number;
   seen?: number;
+  pinned?: number;
+  snooze?: { until: number; at: number };
   messages: AssistantMessage[];
   /** One key asked for (ask_secret), account-wide; `turn` is the reply that asked (its chat shows the box). */
   pending?: { env: string; why: string; at: number; turn?: string };
@@ -159,25 +169,28 @@ const titleOf = (messages: AssistantMessage[]) => {
 
 /** The conversation on screen goes into the history (when it has anything) and a fresh one starts; one pushed past PAST_KEPT goes with its pictures. */
 function archive(username: string, conv: Conv): void {
-  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, title: conv.title, task: conv.task, settled: conv.settled, seen: conv.seen }, ...(conv.past ?? [])]);
+  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, ...kept(conv) }, ...(conv.past ?? [])]);
   // a page this chat asked for goes with it; one another chat asked for waits for that chat
   if (!conv.navigateChat || conv.navigateChat === conv.id) conv.navigate = conv.navigateChat = undefined;
   conv.id = randomUUID();
-  conv.title = conv.task = conv.settled = conv.seen = undefined;
+  conv.title = conv.task = conv.settled = conv.seen = conv.pinned = conv.snooze = undefined;
   conv.messages = [];
 }
 
 /** The history capped at PAST_KEPT: the oldest scheduled-task chats go first, so runs never push the person's own chats out. */
 function keepPast(username: string, conv: Conv, all: Chat[]): void {
+  // never a pinned chat nor one put away till later: those were kept on purpose
+  const stays = (c: Chat) => !!c.pinned || (!!c.snooze && c.snooze.until > Date.now());
   const out: Chat[] = [];
-  for (let i = all.length - 1, over = all.length - PAST_KEPT; i >= 0 && over > 0; i--) {
-    if (!all[i]!.task) continue;
-    out.push(all[i]!);
-    over--;
-  }
-  const left = all.filter((c) => !out.includes(c));
-  out.push(...left.slice(PAST_KEPT));
-  conv.past = left.slice(0, PAST_KEPT);
+  let over = all.length - PAST_KEPT;
+  for (const goes of [(c: Chat) => !!c.task && !stays(c), (c: Chat) => !stays(c)])
+    for (let i = all.length - 1; i >= 0 && over > 0; i--) {
+      const c = all[i]!;
+      if (out.includes(c) || !goes(c)) continue;
+      out.push(c);
+      over--;
+    }
+  conv.past = all.filter((c) => !out.includes(c));
   for (const p of out) dropImages(username, p.messages);
 }
 
@@ -732,10 +745,25 @@ function unread(c: Chat): boolean {
 }
 
 const isSettled = (conv: Conv, c: Chat) => c.settled !== undefined && (c.messages.at(-1)?.at ?? 0) <= c.settled && !working(c) && !asking(conv, c);
+/**
+ * Put away and still away: its time has not come, nothing in it asks the person, and no reply in it failed since.
+ * A reply that ends well does not bring it back (a scheduled task posts in its chat on every run); the person's own
+ * message does (sendTurn takes the snooze away).
+ */
+const isSnoozed = (conv: Conv, c: Chat, now = Date.now()) =>
+  !!c.snooze && c.snooze.until > now && !asking(conv, c, now) && !c.messages.some((m) => m.role === "assistant" && m.status === "error" && (m.started ?? m.at) + (m.took ?? 0) > c.snooze!.at);
+/** What a chat last made or opened: its newest card. */
+const onOf = (c: Chat) => {
+  for (let i = c.messages.length - 1; i >= 0; i--) {
+    const w = c.messages[i]!.work?.at(-1);
+    if (w) return { kind: w.kind, title: w.title };
+  }
+  return undefined;
+};
 
 function chatList(username: string): AssistantChat[] {
   const conv = load(username);
-  const all: Chat[] = [{ id: conv.id!, title: conv.title, task: conv.task, settled: conv.settled, seen: conv.seen, messages: conv.messages }, ...(conv.past ?? [])];
+  const all: Chat[] = [{ id: conv.id!, ...kept(conv), messages: conv.messages }, ...(conv.past ?? [])];
   return all
     .map((c) => {
       const line = ([...c.messages].reverse().find((m) => m.text.trim())?.text ?? "").replace(/\s+/g, " ").trim();
@@ -750,6 +778,9 @@ function chatList(username: string): AssistantChat[] {
         ...(asking(conv, c) ? { asks: true as const } : {}),
         ...(unread(c) ? { unread: true as const } : {}),
         ...(isSettled(conv, c) ? { settled: true as const } : {}),
+        ...(c.pinned ? { pinned: c.pinned } : {}),
+        ...(isSnoozed(conv, c) ? { snoozed: c.snooze!.until } : c.snooze ? { woke: true as const } : {}),
+        ...(onOf(c) ? { on: onOf(c) } : {}),
       };
     })
     .sort((a, b) => b.at - a.at);
@@ -1478,6 +1509,8 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const now = Date.now();
   // whoever sends has seen the chat up to here: the reply to this is unread until they look again
   chat.seen = now;
+  // and is back at work in it: a chat put away till later is no longer away
+  chat.snooze = undefined;
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
   const asked: AssistantMessage = {
     id: randomUUID(),
@@ -1528,6 +1561,35 @@ assistantApp.post("/chats", (c) => {
   return c.json({ id: chat.id }, 201);
 });
 
+/**
+ * Chats that have every word of ?q=: in the title first, then in what was said (a chat's newest message that has
+ * them), newest first in each. { matches: [{ id, title, at, in: "title" | "user" | "assistant", snippet }] }.
+ * Registered before /chats/:id, which would read "search" as an id.
+ */
+assistantApp.get("/chats/search", (c) => {
+  const u = c.get("user");
+  const words = (c.req.query("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.join("").length) return c.json({ error: "Say q: the words to find" }, 400);
+  const conv = load(u.username);
+  const has = (text: string) => words.every((w) => text.toLowerCase().includes(w));
+  const all: Chat[] = [{ id: conv.id!, ...kept(conv), messages: conv.messages }, ...(conv.past ?? [])].filter((x) => x.messages.length);
+  const row = (x: Chat, where: "title" | "user" | "assistant", text: string, at: number) => {
+    const line = text.replace(/\s+/g, " ").trim();
+    const hit = Math.max(0, line.toLowerCase().indexOf(words[0]!) - 60);
+    return { id: x.id, title: x.title ?? titleOf(x.messages), at, in: where, snippet: `${hit ? "…" : ""}${line.slice(hit, hit + 240)}${line.length > hit + 240 ? "…" : ""}` };
+  };
+  const newest = (x: Chat) => x.messages.at(-1)?.at ?? 0;
+  const byTitle = all.filter((x) => has(x.title ?? titleOf(x.messages))).sort((a, b) => newest(b) - newest(a));
+  const bySaid = all
+    .filter((x) => !byTitle.includes(x))
+    .flatMap((x) => {
+      const m = [...x.messages].reverse().find((m) => (m.role === "user" || m.role === "assistant") && has(m.text));
+      return m ? [row(x, m.role as "user" | "assistant", m.text, m.at)] : [];
+    })
+    .sort((a, b) => b.at - a.at);
+  return c.json({ matches: [...byTitle.map((x) => row(x, "title", x.title ?? titleOf(x.messages), newest(x))), ...bySaid].slice(0, 50) });
+});
+
 assistantApp.get("/chats/:id", (c) => {
   const u = c.get("user");
   const chat = chatOf(load(u.username), c.req.param("id"));
@@ -1545,18 +1607,76 @@ assistantApp.post("/chats/:id/settle", async (c) => {
   const chat = chatOf(conv, c.req.param("id"));
   if (!chat) return c.json({ error: "That conversation is gone" }, 404);
   chat.settled = b.settled ? (chat.messages.at(-1)?.at ?? Date.now()) : undefined;
+  // done with it: it is no longer pinned nor put away till later
+  if (b.settled) chat.pinned = chat.snooze = undefined;
   save(u.username);
   tell(u.username);
   return c.json({ chats: chatList(u.username) });
 });
 
+/** A chat's own change from its menu in the list: what `change` does to it, then every device's list is told. */
+async function changeChat(c: Context<{ Variables: AuthVars }>, change: (chat: Chat, body: Record<string, unknown>) => string | void) {
+  const u = c.get("user");
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+  const chat = chatOf(load(u.username), c.req.param("id"));
+  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  const refused = change(chat, body);
+  if (refused) return c.json({ error: refused }, 400);
+  save(u.username);
+  tell(u.username);
+  return c.json({ chats: chatList(u.username) });
+}
+
+/** Pin a chat to the top of the list, or let it go: { pinned: boolean, at?: ms }. */
+assistantApp.post("/chats/:id/pin", (c) =>
+  changeChat(c, (chat, b) => {
+    if (typeof b.pinned !== "boolean") return "Say pinned: true or false";
+    // `at`: the place it had among the pinned (an undo puts it back there); else the newest pin, which is first
+    chat.pinned = b.pinned ? (typeof b.at === "number" && b.at > 0 ? b.at : Date.now()) : undefined;
+    // a pinned chat is one in use: it is neither settled nor put away
+    if (b.pinned) chat.settled = chat.snooze = undefined;
+  }),
+);
+
+/** Put a chat away until a time: { until: ms }, or bring it back now: { until: null }. Something new in it brings it back sooner. */
+assistantApp.post("/chats/:id/snooze", (c) =>
+  changeChat(c, (chat, b) => {
+    if (b.until === null) return void (chat.snooze = undefined);
+    if (typeof b.until !== "number" || !(b.until > Date.now())) return "Say until: a time to come (ms), or null";
+    chat.snooze = { until: b.until, at: Date.now() };
+  }),
+);
+
+/** Name a chat: { title }. */
+assistantApp.post("/chats/:id/title", (c) =>
+  changeChat(c, (chat, b) => {
+    const title = typeof b.title === "string" ? b.title.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+    if (!title) return "A chat's name cannot be empty";
+    chat.title = title;
+  }),
+);
+
+/** Mark a chat as not looked at: its newest finished reply counts as new again (looking at the chat clears it). */
+assistantApp.post("/chats/:id/unread", (c) =>
+  changeChat(c, (chat) => {
+    const m = [...chat.messages].reverse().find((x) => x.role === "assistant" && x.status !== "thinking");
+    if (!m) return "Nothing was answered in it yet";
+    chat.seen = (m.started ?? m.at) + (m.took ?? 0) - 1;
+  }),
+);
+
 /** The person is looking at this chat now: what ended in it up to here is no longer unread (a quiet write, nobody is told). */
 assistantApp.post("/chats/:id/seen", (c) => {
   const u = c.get("user");
-  const chat = chatOf(load(u.username), c.req.param("id"));
+  const conv = load(u.username);
+  const chat = chatOf(conv, c.req.param("id"));
   if (!chat) return c.json({ error: "That conversation is gone" }, 404);
   chat.seen = Date.now();
+  // one that came back from being put away has now been looked at: its "Woke" mark goes (every list is told)
+  const woke = !!chat.snooze && !isSnoozed(conv, chat);
+  if (woke) chat.snooze = undefined;
   save(u.username);
+  if (woke) tell(u.username);
   return c.json({ ok: true });
 });
 
@@ -1653,7 +1773,7 @@ assistantApp.post("/past/:id/open", (c) => {
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   archive(u.username, conv);
-  Object.assign(conv, { id: found.id, title: found.title, task: found.task, settled: found.settled, seen: found.seen, messages: found.messages });
+  Object.assign(conv, { id: found.id, ...kept(found), messages: found.messages });
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });

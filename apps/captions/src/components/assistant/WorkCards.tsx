@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { CalendarClock, Captions, Check, Clapperboard, Film, Link2, Loader2, NotebookText, PenLine, X, type LucideIcon } from "lucide-react";
+import { Check, Link2, Loader2, X } from "lucide-react";
 import type { AssistantWork } from "@contracts/assistant";
 import { cn } from "@/lib/utils";
+import { WORK_ICONS } from "./work-icons";
 
-const ICONS: Record<AssistantWork["kind"], LucideIcon> = { workshop: PenLine, edit: Clapperboard, review: Film, automation: CalendarClock, link: Link2, notes: NotebookText, captions: Captions };
 
 /** What the reply started or opened (a Workshop session, an edit, a link): a card each, the whole card opens it. */
 export function WorkCards({ work, className }: { work?: AssistantWork[]; className?: string }) {
@@ -13,7 +13,7 @@ export function WorkCards({ work, className }: { work?: AssistantWork[]; classNa
   return (
     <ul className={cn("my-1.5 space-y-1.5", className)}>
       {work.map((w) => {
-        const Icon = ICONS[w.kind] ?? Link2;
+        const Icon = WORK_ICONS[w.kind] ?? Link2;
         const external = /^https?:\/\//.test(w.href);
         return (
           <li key={w.id} className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300">

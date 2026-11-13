@@ -763,7 +763,7 @@ export function AssistantDock() {
           Drop pictures, videos or a folder
         </div>
       )}
-      {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} />}
+      {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} layout={layout} />}
       {chatMode && !layout.list && listOpen && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} onClose={() => setListOpen(false)} />}
       <div className={cn("flex min-w-0 flex-1 flex-col", !chatMode && "contents")}>
       {chatMode ? (

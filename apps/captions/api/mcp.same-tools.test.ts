@@ -35,6 +35,8 @@ const toolsOf = async (authorization: string) =>
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
 const ADDED = ["upload_file", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update"];
+/** The tools only the app's own assistant gets since: an outside AI key is never given them, so its list does not move. */
+const DOCK_ADDED = ["chats_list", "chat_read"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
 const OPENED = ["use_file"];
 const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
@@ -49,7 +51,7 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     const outside = await toolsOf(fullKey);
     await app.request(`/api/devices/relay/${job.id}/done`, json({ text: "Done." }, { authorization: `Bearer ${mac.token}` }));
 
-    const main = (list: Tool[]) => list.filter((t) => !ADDED.includes(t.name));
+    const main = (list: Tool[]) => list.filter((t) => !ADDED.includes(t.name) && !DOCK_ADDED.includes(t.name));
     const mainOutside = (list: Tool[]) => main(list).filter((t) => !OPENED.includes(t.name));
     if (process.env.UPDATE_GOLDEN) writeFileSync(file, `${JSON.stringify({ system: job.system, user: job.user, dock: main(dock), outside: mainOutside(outside).map((t) => t.name) } satisfies Golden, null, 1)}\n`);
     const golden = JSON.parse(readFileSync(file, "utf8")) as Golden;
@@ -65,6 +67,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     expect(dock.filter((t) => ADDED.includes(t.name)).map((t) => t.name)).toEqual(ADDED);
     expect(outside.filter((t) => ADDED.includes(t.name))).toEqual(dock.filter((t) => ADDED.includes(t.name)));
     expect(outside.filter((t) => OPENED.includes(t.name))).toEqual(dock.filter((t) => OPENED.includes(t.name)));
+    // and these for the app's own assistant alone
+    expect(dock.filter((t) => DOCK_ADDED.includes(t.name)).map((t) => t.name)).toEqual(DOCK_ADDED);
+    expect(outside.some((t) => DOCK_ADDED.includes(t.name))).toBe(false);
     // what every turn of every person now carries: say so in the commit when a number moves
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
@@ -81,7 +86,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // voice_make adds 497 (the script spoken in one of the person's ElevenLabs voices, a take for a video with nothing filmed; its
     // 315-byte description, text, voice and name)
     // animation_style_save adds 419 (an animation style set up by talking: its 219-byte description, id, name, brief and pictures)
-    expect(bytes(dock) - bytes(main(dock))).toBe(4508);
+    // chats_list and chat_read add 705, in the dock only (one chat looks the person's other chats up: finds them, by
+    // words too, and reads one; their 207- and 205-byte descriptions, query, id, limit and before)
+    expect(bytes(dock) - bytes(main(dock))).toBe(5213);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
     expect(bytes(outside) - bytes(mainOutside(outside))).toBe(5725);
   });
