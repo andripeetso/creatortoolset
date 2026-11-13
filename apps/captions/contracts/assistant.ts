@@ -25,6 +25,10 @@ export interface AssistantMessage {
   at: number;
   /** An assistant reply: thinking until it's done or fails. */
   status?: "thinking" | "done" | "error";
+  /** A reply: when it began working (one queued or waiting for its videos starts later than `at`). The dock's "Working for" counts from it. */
+  started?: number;
+  /** A reply that ended: how long it worked (ms), shown as "Worked for 1m 12s". */
+  took?: number;
   /** What the reply did on the way, one line per tool it used ("Looking through Review"), shown as it works. */
   steps?: string[];
   /** What the reply started or opened that the user can look at (a Workshop session, an edit, a link): a card each. */
