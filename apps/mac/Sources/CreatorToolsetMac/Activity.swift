@@ -95,6 +95,7 @@ struct ActivityPanel: View {
     @ObservedObject var shell: Shell
     @ObservedObject private var recorder: Recorder
     @ObservedObject private var quick = RecordShortcut.shared
+    @ObservedObject private var dictation = Dictation.shared
     let checkForUpdates: () -> Void
 
     init(shell: Shell, checkForUpdates: @escaping () -> Void) {
@@ -122,6 +123,10 @@ struct ActivityPanel: View {
                 PanelMenuRow(title: live ? "Stop Recording" : "Record Screen", shortcut: quick.shortcut?.display) { recorder.toggle() }
                     .disabled(recorder.phase == .saving)
             }
+            // what the talk key does, from here: start, stop (the words go where the cursor was), or wait for the words
+            PanelMenuRow(title: dictation.phase == .recording ? "Stop Dictating" : dictation.phase == .transcribing ? "Writing it down…" : "Dictate",
+                         shortcut: dictation.talkKeyText) { dictation.toggle() }
+                .disabled(dictation.phase == .transcribing)
             PanelMoreRow { MoreMenu(shell: shell, checkForUpdates: checkForUpdates) }
         }
         .onAppear { Task { await shell.refresh() } }

@@ -19,6 +19,7 @@ final class PanelShotsTests: XCTestCase {
             PanelBody(active: active, forYou: forYou) {
                 PanelMenuRow(title: "Open Creator Toolset") {}
                 PanelMenuRow(title: recording ? "Stop Recording" : "Record Screen", shortcut: "⌥⇧R", highlighted: lit) {}
+                PanelMenuRow(title: "Dictate", shortcut: "F13 or hold fn") {}
                 PanelMoreRow { Button("Quit") {} }
             }
         }
