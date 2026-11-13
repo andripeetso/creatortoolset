@@ -993,6 +993,13 @@ export function nextPosId(): number {
 /** Shortest allowed position segment, seconds. */
 const MIN_POS_SEG = 0.2;
 
+/** Whether the caption sections can be split at `t`: not at the clip's very ends, and with sections there, inside one and off its ends. */
+export function canSplitPosAt(posSegments: PosSegment[], duration: number, t: number): boolean {
+  if (duration <= 0) return false;
+  if (posSegments.length === 0) return t >= MIN_POS_SEG && t <= duration - MIN_POS_SEG;
+  return posSegments.some((s) => t >= s.start + MIN_POS_SEG && t <= s.end - MIN_POS_SEG);
+}
+
 let textId = 1;
 /** Keep generated text ids clear of ids loaded from a saved session. */
 export function bumpTextIdCounter(min: number): void {
@@ -1655,9 +1662,8 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       clipSlots.set(id, snap);
     }
     set({ activeClipId: id, ...snapshotToLive(clip, snap) });
-    // Decode lightweight server proxies opportunistically. Raw local sources
-    // are decoded only when the user explicitly starts transcription.
-    if (!clip.videoUrl.startsWith("blob:")) void get().ensureAudio();
+    // Decode lightweight server proxies opportunistically (ensureAudio leaves raw local sources alone).
+    void get().ensureAudio();
   },
 
   moveClip: (from, to) => {
@@ -1978,23 +1984,39 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   ensureAudio: async () => {
     const url = get().videoUrl;
     const clipId = get().activeClipId;
-    if (get().pcm || !url) return;
+    // A video still only on this computer is decoded when its transcription starts, not before. And a read already
+    // under way for this clip is the one: a second call would stop it and download the whole video again.
+    if (get().pcm || !url || url.startsWith("blob:")) return;
+    if (clipId && activeAudioPreparation?.clipId === clipId) return;
     const controller = new AbortController();
     if (clipId) {
       activeAudioPreparation?.controller.abort();
       activeAudioPreparation = { clipId, controller };
     }
+    // the clip is what the result belongs to: its address may change under the read (the editing copy arriving)
+    const shown = () => get().activeClipId === clipId;
     try {
-      const blob = await fetch(url).then((r) => r.blob());
-      const { pcm, peaks, duration } = await extractAudio(
-        new File([blob], get().fileName),
-        undefined,
-        controller.signal,
-      );
-      if (get().videoUrl !== url) return;
-      set({ pcm, peaks, duration: get().duration || duration });
+      // ponytail: the whole editing copy is downloaded for its sound; a server-made waveform if long videos make this heavy
+      const res = await fetch(url, { signal: controller.signal });
+      // not on the server (yet): nothing is known about the clip's sound, and a new address for it is asked again
+      if (!res.ok) return;
+      const blob = await res.blob();
+      try {
+        const { pcm, peaks, duration } = await extractAudio(
+          new File([blob], get().fileName),
+          undefined,
+          controller.signal,
+        );
+        if (!shown()) return;
+        set({ pcm, peaks, duration: get().duration || duration });
+      } catch {
+        // The video is there and gave no sound (no audio track, a sound this browser can't decode): the clip has no
+        // sound picture, said as an empty one, and the timeline keeps no lane for it. A read that was stopped (a
+        // transcription or another clip took over) says nothing about the clip.
+        if (!controller.signal.aborted && shown() && !get().peaks) set({ peaks: new Float32Array(0) });
+      }
     } catch {
-      // no audio track / undecodable — the timeline just has no waveform
+      // the download failed or was stopped: nothing is known about the clip's sound
     } finally {
       if (activeAudioPreparation?.controller === controller) {
         activeAudioPreparation = null;
@@ -2772,9 +2794,8 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   splitPosAt: (t) => {
     if (isEditorBusy(get())) return;
     const { posSegments, duration } = get();
-    if (duration <= 0) return;
+    if (!canSplitPosAt(posSegments, duration, t)) return;
     if (posSegments.length === 0) {
-      if (t < MIN_POS_SEG || t > duration - MIN_POS_SEG) return;
       pushUndo(get());
       set({
         posSegments: [
