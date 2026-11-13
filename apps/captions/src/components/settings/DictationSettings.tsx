@@ -56,7 +56,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
           status={!d.on ? undefined : d.paused ? d.paused : d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
           control={
             <>
-              {d.on && <Button size="sm" variant="outline" onClick={() => set("guide")}>Set up</Button>}
+              {d.on && <Button size="sm" variant="outline" onClick={() => set("guide")}>Open setup</Button>}
               <Switch checked={d.on} aria-label="Dictation" onCheckedChange={(on) => set("on", on ? "1" : "0")} />
             </>
           }
