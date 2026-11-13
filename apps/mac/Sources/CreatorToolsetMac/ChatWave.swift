@@ -90,6 +90,7 @@ struct U {
     float4 b;   // front (px from the button), half width of the front (px), how far it bends (px), colour split
     float4 c;   // gathered (0 to 1), how far round the button that reaches (px), light (0 to 1), blur (px)
     float4 d;   // the project's colour (0 to 1), 1 on a dark screen
+    float4 e;   // the light at the button (0 to 1)
 };
 
 fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
@@ -143,7 +144,7 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     // the light rides just behind the middle of the front; while the screen gathers it is a small glow at the button
     // A wide halo in the project's colour and a narrow core near white: on a dark screen the light, on a light one a
     // sheen over what the front bends
-    float bloom = gather * exp(-(r * r) / (0.09 * reach * reach));
+    float bloom = u.e.x * exp(-(r * r) / (0.09 * reach * reach));
     float halo = clamp(light * (exp(-2.8 * (x + 0.15) * (x + 0.15)) + bloom), 0.0, 1.0);
     float core = clamp(light * (exp(-16.0 * (x + 0.08) * (x + 0.08)) + 0.6 * bloom * bloom), 0.0, 1.0);
     if (dark > 0.5) {
@@ -163,6 +164,8 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
 struct WaveMoment {
     var front: Float, width: Float, bend: Float, split: Float
     var gather: Float, reach: Float, light: Float, blur: Float
+    /// The light at the button: up within a few frames of the press, so the press is answered at once.
+    var bloom: Float = 0
     var done: Bool
 }
 
@@ -178,9 +181,11 @@ enum WaveClock {
             let t = min(max((v - e0) / (e1 - e0), 0), 1)
             return Float(t * t * (3 - 2 * t))
         }
+        // the light at the button: up at once, and gone into the front as it leaves
+        let lit = Float(1 - pow(1 - min(ms / 80, 1), 3))
         if ms < gather {
             let g = smooth(0, gather, ms)
-            return WaveMoment(front: -1e6, width: 70 * s, bend: 0, split: 0.07, gather: g, reach: 260 * s, light: 0.8, blur: 10 * s, done: false)
+            return WaveMoment(front: -1e6, width: 70 * s, bend: 0, split: 0.07, gather: g, reach: 260 * s, light: 0.8, blur: 10 * s, bloom: lit, done: false)
         }
         let u = Float(min((ms - gather) / sweep, 1))
         let width = (70 + 50 * u) * s
@@ -188,7 +193,7 @@ enum WaveClock {
         let front = (0.3 * u + 0.7 * u * u) * (far + 2.4 * width)
         let held = 1 - smooth(0, 0.3, Double(u))
         return WaveMoment(front: front, width: width, bend: 22 * s * smooth(0, 0.12, Double(u)), split: 0.07,
-                          gather: held, reach: 260 * s, light: 0.8 * (1 - 0.4 * u), blur: 10 * s, done: u >= 1)
+                          gather: held, reach: 260 * s, light: 0.8 * (1 - 0.4 * u), blur: 10 * s, bloom: held, done: u >= 1)
     }
 }
 
@@ -238,6 +243,7 @@ final class WaveRenderer {
             SIMD4(m.front, m.width, m.bend, m.split),
             SIMD4(m.gather, m.reach, m.light, m.blur),
             SIMD4(tint.x, tint.y, tint.z, dark ? 1 : 0),
+            SIMD4(m.bloom, 0, 0, 0),
         ]
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride * u.count, index: 0)
