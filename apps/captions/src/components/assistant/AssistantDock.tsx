@@ -41,6 +41,7 @@ import { WorkPicker } from "./WorkPicker";
 import { useChatPage } from "./useChatPage";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
+import { LimitBanner } from "./LimitBanner";
 import { ConfirmCards } from "./ConfirmCards";
 import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
 import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
@@ -971,6 +972,11 @@ export function AssistantDock() {
               ))}
             </ul>
           )}
+          {/* the newest reply was stopped by a usage limit: when it resets, and what happens then */}
+          {view && last?.status === "error" && last.limit && !busy && (
+            <LimitBanner chat={view.id} limit={last.limit} snoozed={view.snoozed} />
+          )}
+          <div className="relative">
           <Composer
             draft={draft}
             setDraft={setDraft}
@@ -987,6 +993,7 @@ export function AssistantDock() {
             waiting={busy || thinking}
             autoFocus
           />
+          </div>
         </div>
       )}
       {/* a new chat's suggestions under the box; as tall as the room above it, so the box sits in the middle */}
@@ -1154,7 +1161,7 @@ export function Message({
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
-      {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
+      {m.status === "error" ? <p className={m.limit || isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {/* the questions waiting for a press come under the words, as the reply says ("the card below"): the words
           written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
       <ApprovalCards approvals={answered(m.approvals)} />

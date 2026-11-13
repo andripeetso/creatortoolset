@@ -61,6 +61,7 @@ function Working() {
           }
         />
         <AskFit />
+        <UsageLimits />
       </Card>
     </Section>
   );
@@ -78,6 +79,28 @@ function AskFit() {
       title="Ask when dropped footage doesn't fit the open project"
       control={<Switch checked={prefs.askFit !== false} aria-label="Ask when dropped footage doesn't fit the open project" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
     />
+  );
+}
+
+/** What a chat does when a usage limit stops its reply (work-prefs autoResume, snoozeLimited); each chat's banner changes its own. */
+function UsageLimits() {
+  const prefs = useWorkPrefs((s) => s.prefs);
+  if (!prefs) return null;
+  return (
+    <>
+      <Row
+        id="auto-resume-limited"
+        title="Resume after usage limits"
+        description="Automatically resume chats when their usage limits reset. You can cancel auto-resume in each chat."
+        control={<Switch checked={prefs.autoResume !== false} aria-label="Resume after usage limits" onCheckedChange={(on) => void useWorkPrefs.getState().put({ autoResume: on })} />}
+      />
+      <Row
+        id="snooze-limited"
+        title="Snooze until limits reset"
+        description="Snooze chats until their usage limits reset. Turn on auto-resume to continue the chat after the reset."
+        control={<Switch checked={prefs.snoozeLimited === true} aria-label="Snooze until limits reset" onCheckedChange={(on) => void useWorkPrefs.getState().put({ snoozeLimited: on })} />}
+      />
+    </>
   );
 }
 

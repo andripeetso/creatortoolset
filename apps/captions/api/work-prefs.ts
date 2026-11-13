@@ -43,6 +43,11 @@ export function writeWorkPrefs(username: string, b: Record<string, unknown>): Wo
     if (typeof b.askFit !== "boolean") return "askFit is true or false";
     next.askFit = b.askFit;
   }
+  for (const k of ["autoResume", "snoozeLimited"] as const) {
+    if (b[k] === undefined) continue;
+    if (typeof b[k] !== "boolean") return `${k} is true or false`;
+    next[k] = b[k];
+  }
   const file = fileOf(username);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(`${file}.tmp`, JSON.stringify(next));

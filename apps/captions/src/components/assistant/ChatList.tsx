@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { AlarmClock, AlarmClockOff, Check, ChevronDown, Clock, Loader2, Pin, PinOff, Search, Trash2, Undo2, X } from "lucide-react";
+import { AlarmClock, AlarmClockOff, Check, ChevronDown, CircleAlert, Clock, Loader2, Pin, PinOff, Search, Trash2, Undo2, X } from "lucide-react";
 import type { AssistantChat } from "@contracts/assistant";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -285,6 +285,11 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
                       <span className="flex items-center gap-1.5 text-[rgb(var(--violet-600))]">
                         <Loader2 className="size-3 motion-safe:animate-spin" aria-label="Working" />
                         <WorkingFor since={c.at} compact />
+                      </span>
+                    ) : c.limited ? (
+                      <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400" title="A usage limit stopped its reply">
+                        <CircleAlert className="size-3" aria-hidden />
+                        Limited
                       </span>
                     ) : c.woke && !c.open ? (
                       <span className="flex items-center gap-1 font-medium text-amber-500">

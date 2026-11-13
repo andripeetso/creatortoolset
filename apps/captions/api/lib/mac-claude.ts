@@ -5,7 +5,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
 import { EDITOR_HINT } from "../../contracts/devices";
-import { limitLine, limitMessage } from "../../contracts/plans";
+import { limitLine, limitMessage, limitResetAt } from "../../contracts/plans";
 import { env, keepsOverRestart } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
@@ -156,6 +156,8 @@ export const MAC_MISS = new Set<MacErrorKind>(["unclaimed", "limit"]);
 export class MacClaudeError extends Error {
   /** what the run had used before it failed (the relay sends the CLI's usage with a fail) */
   usage?: MacUsage;
+  /** a usage limit or rate limit turned it away; `until` is when it opens again, when the refusal said (limitResetAt) */
+  limited?: { until: number | null };
   constructor(message: string, readonly kind: MacErrorKind) {
     super(message);
     this.name = "MacClaudeError";
@@ -607,6 +609,9 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     if (b.limit === true) console.warn(`[ai] ${r.label ?? "a call"}: usage limit (${error})`); // the CLI's own words, for the log only
     const err = b.limit === true ? new MacClaudeError(limitMessage(error, tool), "limit") : new MacClaudeError(r.provider?.driver && r.provider.driver !== "claude" ? error : `Claude on the Mac: ${error}`, b.gone === true ? "gone" : "failed"); // the other CLIs' errors name themselves ("Codex: …")
     err.usage = usage;
+    // a plan's window, or a 429 on the way (a gateway's "rate_limit_error … (reset after 37m41s)"): it can go on later
+    const raw = String(b.error ?? "");
+    if (b.limit === true || /\b429\b|rate_limit_error/.test(raw)) err.limited = { until: limitResetAt(raw) };
     r.fail(err);
     return c.json({ ok: true });
   });

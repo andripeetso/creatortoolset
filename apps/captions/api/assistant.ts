@@ -133,7 +133,15 @@ interface Conv {
   past?: Chat[];
   /** What each turn that hasn't started needs to start, by its reply's id (it survives a restart). Never sent to the dock. */
   held?: Record<string, Held>;
+  /** What a reply a usage limit stopped needs to carry on when the limit resets, by its id (pump: "Continue where you left
+   *  off."); gone once anything else is said in its chat. Never sent to the dock. */
+  resume?: Record<string, Resume>;
 }
+
+type Resume = Pick<Held, "url" | "admin" | "memory" | "skills">;
+
+/** What a chat says by itself when a usage limit that stopped its reply has reset. */
+export const CONTINUE = "Continue where you left off.";
 
 /** A turn sent before its videos were in, while the reply before it in its chat was being written, or past MAX_RUNNING: started by pump(). */
 interface Held {
@@ -717,6 +725,7 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     // a chat made by POST /chats shows here once it has a message
     past: chat ? [] : (conv.past ?? []).filter((p) => p.messages.length).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(working(p) ? { working: true as const } : {}), ...(isSettled(conv, p) ? { settled: true as const } : {}) })),
     pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
+    ...(isSnoozed(conv, chat ?? (conv as Chat)) ? { snoozed: (chat ?? conv).snooze!.until } : {}),
     navigate: (!conv.navigateChat || conv.navigateChat === (chat?.id ?? conv.id) ? conv.navigate : undefined) ?? null,
     sendNow: true,
     videosLater: true,
@@ -780,6 +789,7 @@ function chatList(username: string): AssistantChat[] {
         ...(isSettled(conv, c) ? { settled: true as const } : {}),
         ...(c.pinned ? { pinned: c.pinned } : {}),
         ...(isSnoozed(conv, c) ? { snoozed: c.snooze!.until } : c.snooze ? { woke: true as const } : {}),
+        ...(c.messages.at(-1)?.limit ? { limited: true as const } : {}),
         ...(onOf(c) ? { on: onOf(c) } : {}),
       };
     })
@@ -920,7 +930,8 @@ async function ended(turn: string, answer: Promise<string>): Promise<string> {
   try {
     return await answer;
   } catch (e) {
-    throw new Error((e instanceof Error ? e.message : String(e)).replace(/ctj_[a-f0-9]{48}/g, ""));
+    const limited = (e as { limited?: unknown } | null)?.limited;
+    throw Object.assign(new Error((e instanceof Error ? e.message : String(e)).replace(/ctj_[a-f0-9]{48}/g, "")), limited ? { limited } : {});
   } finally {
     revokeJobTokens(turn);
   }
@@ -992,6 +1003,12 @@ onAdopt("assistant", (open) => {
       })()),
     ).then(() => {
       const [task, m] = [taskOf(username, turn), messageOf(username, turn)];
+      // stopped by a usage limit: nothing was kept to carry on with, so it waits for "Resume at reset" (its route keeps it)
+      if (m?.limit?.resume) {
+        m.limit.resume = undefined;
+        save(username);
+        tell(username);
+      }
       if (task && m) runEnded?.(username, task.id, { status: m.status === "error" ? "error" : "done", text: m.text, chat: chatOfTurn(username, turn) ?? undefined });
     });
   }
@@ -1018,13 +1035,16 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     const m = messageOf(username, replyId);
     // stopped: what it had written stays, marked as stopped
     if (stop.signal.aborted) Object.assign(m ?? {}, { status: "done", text: m?.text ? `${m.text}\n\n*Stopped.*` : "*Stopped.*" });
-    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed." });
+    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed.", ...limitOf(username, e) });
   } finally {
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
     if (m) {
       expireApprovals(m, 0);
       m.took = Date.now() - started;
+      // stopped by a usage limit: put away till it resets, when the person asked for that (Settings)
+      const chat = chatWith(load(username), replyId);
+      if (chat && m.limit?.until && m.limit.until > Date.now() && readWorkPrefs(username).snoozeLimited) chat.snooze = { until: m.limit.until, at: Date.now() };
     }
     sayLater(username, replyId);
     runsOf(username).delete(replyId);
@@ -1041,6 +1061,17 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     void pump(username);
   }
 }
+
+/** A reply a usage limit stopped: when it resets, and whether the chat carries on by itself then (Settings, on by default). */
+function limitOf(username: string, e: unknown): Pick<AssistantMessage, "limit"> {
+  const limited = (e as { limited?: { until: number | null } } | null)?.limited;
+  if (!limited) return {};
+  const until = limited.until ?? undefined;
+  return { limit: { ...(until ? { until } : {}), ...(until && readWorkPrefs(username).autoResume !== false ? { resume: true as const } : {}) } };
+}
+
+/** The chat a message is in, the open one included. */
+const chatWith = (conv: Conv, id: string): Chat | undefined => [conv as Chat, ...(conv.past ?? [])].find((c) => c.messages.some((m) => m.id === id));
 
 /* ---- turns that wait: for their message's videos, or for the reply before them ---- */
 
@@ -1165,10 +1196,34 @@ async function pumpOnce(username: string): Promise<void> {
     ),
   );
   // from here on nothing awaits: the conversation is read and changed in one go
-  const held = conv.held ?? {};
   const t = Date.now();
   let changed = false;
   let soonest = Infinity;
+  // a reply a usage limit stopped, still the newest in its chat: once the limit resets (and the chat is no longer put
+  // away), the chat says "Continue where you left off." by itself and that turn waits here like any other
+  for (const [id, r] of Object.entries(conv.resume ?? {})) {
+    const chat = chatWith(conv, id);
+    const m = chat?.messages.at(-1);
+    if (!chat || m?.id !== id || !m.limit?.until) {
+      delete conv.resume![id];
+      changed = true;
+      continue;
+    }
+    if (!m.limit.resume || isSettled(conv, chat) || asking(conv, chat, t)) continue;
+    const due = Math.max(m.limit.until, isSnoozed(conv, chat, t) ? chat.snooze!.until : 0);
+    if (due > t) {
+      soonest = Math.min(soonest, due);
+      continue;
+    }
+    delete conv.resume![id];
+    chat.snooze = undefined;
+    const asked: AssistantMessage = { id: randomUUID(), role: "user", text: CONTINUE, at: t };
+    const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: t + 1, status: "thinking" };
+    chat.messages.push(asked, reply);
+    (conv.held ??= {})[reply.id] = { ask: asked.id, files: [], pasted: [], ...r, at: t };
+    changed = true;
+  }
+  const held = conv.held ?? {};
   // replies being written now, in every chat: up to MAX_RUNNING at once
   let busy = runsOf(username).size;
   // a chat with a reply that waits (for its videos, the reply before it, or a free place) holds the messages after it there: another chat goes on
@@ -1257,7 +1312,13 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
-  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
+  void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills).then(() => {
+    // a usage limit stopped it: what it needs to carry on when the limit resets (pump)
+    if (!messageOf(username, reply.id)?.limit?.until) return;
+    (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, memory: h.memory, skills: h.skills };
+    save(username);
+    void pump(username);
+  });
   return true;
 }
 
@@ -1323,7 +1384,8 @@ export function resumeFromDisk(): void {
     return;
   }
   for (const f of names) {
-    if (!readFileSync(path.join(dirOf(), f), "utf-8").includes('"held":{"')) continue;
+    const text = readFileSync(path.join(dirOf(), f), "utf-8");
+    if (!text.includes('"held":{"') && !text.includes('"resume":{"')) continue;
     const username = f.slice(0, -5);
     cache.delete(username);
     void pump(username);
@@ -1646,6 +1708,31 @@ assistantApp.post("/chats/:id/snooze", (c) =>
     chat.snooze = { until: b.until, at: Date.now() };
   }),
 );
+
+/**
+ * A reply a usage limit stopped, the chat's newest: { resume: true } carries on when the limit resets, false doesn't.
+ * Its banner's "Resume at reset" and "Cancel auto-resume".
+ */
+assistantApp.post("/chats/:id/limit", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { resume?: unknown } | null;
+  if (typeof b?.resume !== "boolean") return c.json({ error: "Say resume: true or false" }, 400);
+  const found = () => {
+    const m = chatOf(load(u.username), c.req.param("id"))?.messages.at(-1);
+    return m?.limit?.until ? m : null;
+  };
+  if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
+  // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
+  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: await memoryBlock(u), skills: skillLines(await dockSkills(u.username), "tool") } : null;
+  const m = found();
+  if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
+  if (r) (load(u.username).resume ??= {})[m.id] = r;
+  m.limit!.resume = b.resume ? true : undefined;
+  save(u.username);
+  tell(u.username);
+  void pump(u.username);
+  return c.json({ chats: chatList(u.username) });
+});
 
 /** Name a chat: { title }. */
 assistantApp.post("/chats/:id/title", (c) =>
