@@ -504,7 +504,13 @@ export function ScreenRecordingEditor({
           {look && (
             <div className="flex justify-center pt-3">
               <div className="w-80">
-                <Segmented label="Frame shape" value={look.shape} options={SHAPES} onChange={(shape) => change({ shape })} />
+                {/* a split shares a frame of its own shape: no Auto */}
+                <Segmented
+                  label="Frame shape"
+                  value={look.shape}
+                  options={source.cameraUrl && look.camera?.layout === "split" ? SHAPES.filter((s) => s.id !== "source") : SHAPES}
+                  onChange={(shape) => change({ shape })}
+                />
               </div>
             </div>
           )}
