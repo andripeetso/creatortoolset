@@ -1,14 +1,13 @@
 import { Hono, type Context } from "hono";
 import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
-import { MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
-import { foundIn, saidInChat } from "../assistant";
-import { innerCall, jobTurn, type AuthVars } from "../auth";
+import { innerCall, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
 import { ZipFile } from "yazl";
 import { toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
+import { notTyped } from "./own-words";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
@@ -96,27 +95,8 @@ editorApp.get("/styles", (c) => c.json(stylesView(c.get("user").username)));
 
 const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
 
-/**
- * A style's notes go into the script prompt of every later edit in that style, so no AI writes them. A save that comes
- * from a reply the assistant is writing (it carries that reply's job token) keeps notes only when they stand in
- * something the person typed in that chat: the check a remembered fact is held to (saidInChat, foundIn, and its
- * shortest quote, so notes are never put together a word at a time), and what is kept is their wording. A scheduled
- * run has nobody typing, so it saves no notes. A save from the person's own page, or from their own AI with an access
- * key, is theirs and is not checked. True when the save is refused.
- */
-function notesNotTyped(c: C, b: Record<string, unknown>): boolean {
-  const auth = c.req.header("authorization");
-  if (!/^Bearer ctj_/.test(auth ?? "")) return false;
-  const said = saidInChat(c.get("user").username, jobTurn(auth) ?? "") ?? [];
-  for (const k of ["notes", "addNotes"]) {
-    const sent = b[k];
-    if (typeof sent !== "string" || !sent.trim()) continue;
-    const typed = tidy(sent).length < MEMORY_QUOTE_MIN ? null : said.map((m) => foundIn(sent, m.text)).find((t) => !!t);
-    if (!typed) return true;
-    b[k] = typed;
-  }
-  return false;
-}
+/** An editing style's notes are the person's own words, also when the assistant saves them (own-words.ts). True when the save is refused. */
+const notesNotTyped = (c: C, b: Record<string, unknown>): boolean => notTyped(c, b, ["notes", "addNotes"]);
 
 /** A new style from the fields sent, or with `fromEdit` from an edit of the caller's own (its choices, never its brief, script or footage). */
 editorApp.post("/styles", async (c) => {

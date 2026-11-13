@@ -14,22 +14,28 @@ import { cn } from "@/lib/utils";
  * The AI Editor's Animation styles tab: the person's styles as cards, and the sheet one is made and changed in. A style
  * is a name, a brief in their own words and pictures: the ones they add (inspirations) and stills of cards they liked
  * on an edit (made). `open` is the style in the sheet, "new" for a new one; the page owns it, so its own
- * "New animation style" button opens the same sheet.
+ * "New animation style" button opens the same sheet. `onChat`: an AI answers in the assistant, so a first style is set
+ * up by talking to it (the empty tab's button), with the form one quiet button away.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export type OpenAnimation = AnimationStyle | "new" | null;
 
-export function AnimationStyles({ styles, open, onOpen, onChanged }: { styles: AnimationStyle[]; open: OpenAnimation; onOpen: (s: OpenAnimation) => void; onChanged: () => Promise<unknown> }) {
+export function AnimationStyles({ styles, open, onOpen, onChanged, onChat }: { styles: AnimationStyle[]; open: OpenAnimation; onOpen: (s: OpenAnimation) => void; onChanged: () => Promise<unknown>; onChat?: () => void }) {
   return (
     <>
       {styles.length === 0 ? (
-        <div className="flex justify-center py-16">
-          <Button size="sm" onClick={() => onOpen("new")}>
+        <div className="flex flex-col items-center gap-2 py-16">
+          <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
             <Plus className="h-4 w-4" />
             New animation style
           </Button>
+          {onChat && (
+            <Button size="sm" variant="ghost" className="text-zinc-500" onClick={() => onOpen("new")}>
+              Use a form
+            </Button>
+          )}
         </div>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -60,7 +66,7 @@ export function AnimationStyles({ styles, open, onOpen, onChanged }: { styles: A
           ))}
         </ul>
       )}
-      {open && <AnimationSheet key={open === "new" ? "new" : open.id} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
+      {open && <AnimationSheet key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
     </>
   );
 }

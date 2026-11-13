@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { droppedFiles, isMediaFile } from "@/components/assistant/draft";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { showAssistantNotice, useAssistant } from "@/lib/assistant";
 import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -42,6 +43,20 @@ import { FromScript } from "./editor/FromScript";
 
 /** The videos and recordings of a drop or a file choice; a browser's own list is gone after the event, so this is read at once. */
 const footageOf = (files: FileList | null | undefined): File[] => Array.from(files ?? []).filter(isMediaFile);
+
+/**
+ * A first style is set up by talking to the assistant: its question shows in the chat, and the next message carries
+ * which style it is about (the quote the assistant is told the person pointed at), so the AI saves it with its own
+ * tool and the style's sheet opens (api/mcp-tools/editor-styles.ts). Nothing is sent until the person writes.
+ */
+const STYLE_CHAT = {
+  editing: { about: "New editing style", ask: "Describe how you like your videos edited: the pace, what stays in and what goes, how long, how many versions. Say it your way and I'll set up the style." },
+  animation: { about: "New animation style", ask: "Describe the animation style you want, and drop in pictures of animations you like. Say it your way and I'll set up the style." },
+} as const;
+function styleChat(kind: keyof typeof STYLE_CHAT): void {
+  useAssistant.getState().setQuote(STYLE_CHAT[kind].about);
+  showAssistantNotice({ text: STYLE_CHAT[kind].ask });
+}
 const fileDrag = (e: { dataTransfer: DataTransfer | null }) => !!e.dataTransfer?.types.includes("Files");
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -96,6 +111,33 @@ export default function EditorPage() {
   const [openAnimation, setOpenAnimation] = useState<OpenAnimation>(null);
   const asked = params.get("tab");
   const tab = asked === "styles" || asked === "animation" ? asked : "edits";
+  // an AI answers in the assistant: a first style is set up by talking to it
+  const chat = useAssistant((s) => s.connected);
+  // /editor?tab=styles|animation&style=<id> opens that style's sheet (the assistant, after it saved one). The style is
+  // read from the server then, never from the saved list, so the sheet shows what was just saved; then the address is
+  // the tab's own again
+  const wanted = tab === "edits" ? null : params.get("style");
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    const done = () => live && setParams({ tab }, { replace: true });
+    if (tab === "styles")
+      void listStyles().then((v) => {
+        const found = v.styles.find((x) => x.id === wanted);
+        if (live && found) setOpenStyle(found);
+        void styleList.refresh();
+        done();
+      }, done);
+    else
+      void listAnimationStyles().then((v) => {
+        const found = v.styles.find((x) => x.id === wanted);
+        if (live && found) setOpenAnimation(found);
+        void animationList.refresh();
+        done();
+      }, done);
+    return () => void (live = false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, tab]);
   // on the window, so a file let go beside the sheet or on the dimmed page is taken too and never opens in the window
   useEffect(() => {
     if (tab !== "edits") return;
@@ -152,7 +194,7 @@ export default function EditorPage() {
         </AppBar>
         <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
           {tabs}
-          {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} />}
+          {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} onChat={chat ? () => styleChat("animation") : undefined} />}
           {!animationList.data && animationList.error && <p className="text-sm text-red-400">{animationList.error}</p>}
         </main>
       </div>
@@ -173,7 +215,7 @@ export default function EditorPage() {
         </AppBar>
         <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
           {tabs}
-          {styleList.data && <EditingStyles styles={styleList.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styleList.refresh} />}
+          {styleList.data && <EditingStyles styles={styleList.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styleList.refresh} onChat={chat ? () => styleChat("editing") : undefined} />}
           {!styleList.data && styleList.error && <p className="text-sm text-red-400">{styleList.error}</p>}
         </main>
       </div>

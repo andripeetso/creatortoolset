@@ -124,6 +124,24 @@ describe("Duplicate", () => {
   });
 });
 
+describe("An empty Editing styles tab when an AI answers in the assistant", () => {
+  it("its button starts the chat, and Use a form opens the sheet", async () => {
+    let chats = 0;
+    const before = opened.length;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<EditingStyles styles={[]} open={null} onOpen={(s) => opened.push(s)} onChanged={async () => {}} onChat={() => chats++} />));
+    await flush();
+    const buttons = [...host.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["New editing style", "Use a form"]);
+    act(() => buttons[0]!.click());
+    expect([chats, opened.length]).toEqual([1, before]);
+    act(() => buttons[1]!.click());
+    expect([chats, opened.at(-1)]).toEqual([1, "new"]);
+  });
+});
+
 describe("The style sheet", () => {
   it("a new style: the grade, the folder and the steps are drawn when there is a choice, and an untouched grade and steps are not sent", async () => {
     await render([], "new");
