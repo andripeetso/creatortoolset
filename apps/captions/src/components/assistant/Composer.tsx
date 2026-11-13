@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { createPortal } from "react-dom";
 import { ArrowUp, Camera, Check, FileText, Film, Folder, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
+import { tell, useMicMode } from "@/components/settings/ThisMacSection";
 import { attachScreen } from "@/lib/assistant";
 import { canSnapshot } from "@/lib/page-context";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -57,6 +58,8 @@ export function Composer({
     setDraft((d) => ({ ...d, text: d.text.trim() ? `${d.text.trimEnd()} ${said}` : said }));
     requestAnimationFrame(() => box.current?.focus());
   });
+  // in the Mac app the mic is the way into its own dictation, and gone once that is set up (the talk key types here)
+  const { mic, watch } = useMicMode();
 
   // the box grows with what you write, up to a few lines
   useLayoutEffect(() => {
@@ -318,16 +321,18 @@ export function Composer({
                 <Paperclip className="size-4" />
               </button>
             )}
-            <button
-              type="button"
-              onClick={voice.toggle}
-              disabled={writing}
-              className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
-              aria-label="Talk instead of typing"
-              title="Talk instead of typing"
-            >
-              <Mic className="size-4" />
-            </button>
+            {mic !== "none" && (
+              <button
+                type="button"
+                onClick={mic === "setup" ? () => { tell("dictation:guide"); watch(); } : voice.toggle}
+                disabled={writing}
+                className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
+                aria-label={mic === "setup" ? "Dictation, in any app" : "Talk instead of typing"}
+                title={mic === "setup" ? "Dictation, in any app" : "Talk instead of typing"}
+              >
+                <Mic className="size-4" />
+              </button>
+            )}
             {waiting && empty ? (
               <button type="button" onClick={onStop} className={cn(iconBtn, "bg-foreground text-background hover:opacity-80")} aria-label="Stop the reply" title="Stop">
                 <Square className="size-3 fill-current" />

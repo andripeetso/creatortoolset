@@ -853,6 +853,8 @@ final class Dictation: ObservableObject {
             "picking": picking?.rawValue ?? NSNull(),
             // why no key works right now, in one quiet line
             "paused": earlierAppOpen ? "Off while your earlier dictation app is open" : NSNull(),
+            // the setup page was gone through and everything it asks for is here: the site's mic then makes way for the keys
+            "setUp": UserDefaults.standard.bool(forKey: DictationPrefs.keys.guided) && ready,
             "engine": DictationEngine.serverWired ? prefs.engine.rawValue : NSNull(),
             "model": model.id,
             "models": ModelRegistry.shared.map { m -> [String: Any] in

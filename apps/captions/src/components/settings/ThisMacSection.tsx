@@ -46,6 +46,8 @@ export type DictationState = {
   picking: DictationAction | null;
   /** why no key works right now (another dictation app has them), one quiet line; missing in older Mac apps */
   paused?: string | null;
+  /** the setup page was gone through and it has what it needs (permissions, a model or server); missing in older Mac apps */
+  setUp?: boolean;
   /** who writes the words down: this Mac's model, or the server's engine (POST /api/transcribe/mic); missing in older Mac apps */
   engine?: "mac" | "server";
   model: string;
@@ -90,6 +92,33 @@ export function useMacRecorderState(): NonNullable<ThisMacState["recorder"]> | f
     return () => window.removeEventListener("mac-this", handle);
   }, []);
   return has;
+}
+
+/**
+ * What a message box's mic does in this window: `record` as on the web (a browser, a Mac app without dictation or too
+ * old to say whether it is set up, or one that has not answered yet), `none` when the Mac's dictation is set up and on (or the earlier dictation app types for
+ * them) so the talk key does it, `setup` when a click opens dictation's setup page. After that click, `watch()` asks the
+ * app again every 3 s until it is set up.
+ */
+export function useMicMode(): { mic: "record" | "none" | "setup"; watch: () => void } {
+  const user = useAuth((s) => s.me?.username ?? null);
+  const [d, setD] = useState<DictationState | undefined>(() => (hasThisMac() ? readCached<ThisMacState>(user, SAVED)?.dictation : undefined));
+  const [watching, setWatching] = useState(false);
+  useEffect(() => {
+    if (!hasThisMac()) return;
+    const handle = (e: Event) => setD((e as CustomEvent<ThisMacState>).detail?.dictation);
+    window.addEventListener("mac-this", handle);
+    tell("state");
+    return () => window.removeEventListener("mac-this", handle);
+  }, []);
+  // an older Mac app (no setUp) still has the four-step guide: its mic records as before
+  const mic = !d || d.setUp === undefined ? "record" : d.paused || (d.on && d.setUp) ? "none" : "setup";
+  useEffect(() => {
+    if (!watching || mic !== "setup") return;
+    const timer = setInterval(() => tell("state"), 3000);
+    return () => clearInterval(timer);
+  }, [watching, mic]);
+  return { mic, watch: () => setWatching(true) };
 }
 
 /**
