@@ -178,9 +178,9 @@ export interface Device {
   kinds?: string[];
   /**
    * Speech models (contracts/voice.ts STT_MODELS ids) on a computer that declares TRANSCRIBE_KIND: what its owner asked it
-   * to keep (Download), and what it said it has and is downloading (its last claim).
+   * to keep (Download), and what it said it has and is downloading (its last claim; `claimed`: it has claimed since).
    */
-  stt?: { want: string[]; held: string[]; getting: string[] };
+  stt?: { want: string[]; held: string[]; getting: string[]; claimed?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

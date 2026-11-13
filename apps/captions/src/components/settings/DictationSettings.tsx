@@ -11,7 +11,7 @@ const NAMES: Record<DictationAction, string> = { talk: "Talk", history: "History
  * Dictation on this Mac (apps/mac Dictation.swift): shown only where the app reports it. The app keeps every value; each
  * change goes to it as `dictation:<what>:<value>` and comes back in its next answer.
  */
-export function Dictation({ mac }: { mac: ThisMacState | null }) {
+export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serverNeeds?: string }) {
   const d = mac?.dictation;
   if (!d) return null;
   const set = (what: string, value = "") => tell(`dictation:${what}:${value}`);
@@ -45,7 +45,23 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
           <>
             <Row id="dictation-key-talk" title="Talk" description="Tap to start and stop, or hold a key like fn while you talk." control={key("talk")} />
             <Row id="dictation-key-cancel" title="Cancel" description="Stops a recording, and nothing is pasted." control={key("cancel")} />
-            <Row
+            {d.engine && (
+              <Row
+                id="dictation-engine"
+                title="Engine"
+                description={d.engine === "server" ? "Your Deepgram or OpenAI key, as Talking to the assistant uses them." : undefined}
+                status={d.engine === "server" && serverNeeds ? <Status tone="attention">{serverNeeds}</Status> : undefined}
+                control={
+                  <SettingsSelect
+                    label="Engine"
+                    value={d.engine}
+                    onValueChange={(v) => set("engine", v)}
+                    options={[{ value: "mac", label: "This Mac" }, { value: "server", label: "Your server" }]}
+                  />
+                }
+              />
+            )}
+            {d.engine !== "server" && <Row
               id="dictation-model"
               title="Speech model"
               status={model && model.progress !== null ? `Downloading · ${Math.round(model.progress * 100)}%` : undefined}
@@ -61,7 +77,7 @@ export function Dictation({ mac }: { mac: ThisMacState | null }) {
                   />
                 </>
               }
-            />
+            />}
             <Row
               id="dictation-history"
               title="History"

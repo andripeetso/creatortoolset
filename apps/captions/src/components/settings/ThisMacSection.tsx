@@ -44,11 +44,15 @@ export type DictationState = {
   picking: DictationAction | null;
   /** why no key works right now (another dictation app has them), one quiet line; missing in older Mac apps */
   paused?: string | null;
+  /** who writes the words down: this Mac's model, or the server's engine (POST /api/transcribe/mic); missing in older Mac apps */
+  engine?: "mac" | "server";
   model: string;
   /** `here`: on this Mac; `removable`: this app downloaded it; `progress`: 0–1 while it downloads */
   models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;
   keep: number;
   sounds: boolean;
+  /** why it is off for now (the other dictation app is open, it takes the same keys), or null; missing in older Mac apps */
+  paused?: string | null;
   /** the permission still to give, or null */
   needs: "Microphone" | "Accessibility" | null;
 };

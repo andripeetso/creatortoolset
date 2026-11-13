@@ -100,7 +100,8 @@ actor WhisperKitTranscriber: Transcriber {
         let trimTime = CFAbsoluteTimeGetCurrent() - started
 
         let detectStarted = CFAbsoluteTimeGetCurrent()
-        let (language, detected) = await chooseLanguage(input, context: context, pipeline: pipeline)
+        let spoken = context.spokenLanguages.isEmpty ? SpokenLanguage.preferredCodes() : context.spokenLanguages
+        let (language, detected) = await chooseLanguage(input, setting: context.language, spoken: spoken, pipeline: pipeline)
         let detectTime = detected ? CFAbsoluteTimeGetCurrent() - detectStarted : 0
 
         let options = tuning.decodingOptions(
@@ -122,16 +123,31 @@ actor WhisperKitTranscriber: Transcriber {
         return Transcript(text: text, timings: timings)
     }
 
+    /// A transcript for the server (TranscribeJob.swift): every word with its start and end in seconds from the
+    /// audio's first sample, and the language heard. Among `languages` when given, else among every language the model
+    /// knows. The audio is used as it is, never trimmed or padded, so the times are the recording's own.
+    func words(_ audio: [Float], languages: [String]) async throws -> (words: [HeardWord], language: String?) {
+        if pipeline == nil { try await warmUp() }
+        guard let pipeline else { throw TranscriberError.notLoaded }
+        let (language, _) = await chooseLanguage(audio, setting: nil, spoken: languages, pipeline: pipeline)
+        var options = tuning.decodingOptions(language: language, promptTokens: nil, audioSeconds: Double(audio.count) / Double(WhisperKit.sampleRate))
+        options.wordTimestamps = true
+        let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
+        let words = results.flatMap { $0.segments.flatMap { $0.words ?? [] } }
+            .map { HeardWord(text: $0.word, start: Double($0.start), end: Double($0.end)) }
+        return (words, language ?? results.first?.language ?? (model.isMultilingual ? nil : model.languages.first))
+    }
+
     /// The language to decode `input` in, or nil for none, and whether
     /// detection ran. Logs what detection heard and what was chosen, as
     /// codes, never text.
     private func chooseLanguage(
         _ input: [Float],
-        context: TranscriptionContext,
+        setting: String?,
+        spoken: [String],
         pipeline: WhisperKit
     ) async -> (language: String?, detected: Bool) {
-        let spoken = context.spokenLanguages.isEmpty ? SpokenLanguage.preferredCodes() : context.spokenLanguages
-        switch SpokenLanguage.plan(setting: context.language, spoken: spoken, model: model) {
+        switch SpokenLanguage.plan(setting: setting, spoken: spoken, model: model) {
         case .none:
             return (nil, false)
         case .fixed(let code):
@@ -230,6 +246,9 @@ struct WhisperTuning: Equatable, @unchecked Sendable {
 
     /// WhisperKit's defaults.
     static let baseline = WhisperTuning()
+
+    /// A transcript with word times (TranscribeJob.swift): the compute units of `standard`, with nothing cut or added.
+    static let words = WhisperTuning(melCompute: .cpuOnly)
 
     static let standard = WhisperTuning(
         melCompute: .cpuOnly,
@@ -480,6 +499,13 @@ enum ModelRegistry {
     static func model(_ id: String?) -> TranscriptionModel {
         id.flatMap(find) ?? find(standardID)!
     }
+}
+
+/// One word heard, with its times in seconds from the audio's start.
+struct HeardWord: Equatable, Sendable {
+    var text: String
+    var start: Double
+    var end: Double
 }
 
 struct TranscriberTimings: Equatable, Sendable {

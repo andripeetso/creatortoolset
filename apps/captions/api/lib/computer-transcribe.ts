@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { TRANSCRIBE_KIND, parseTranscribeResult, type DeviceJob, type TranscribeResult } from "../../contracts/devices";
 import { DEFAULT_WEIGHT, type Balance, type Device } from "../../contracts/providers";
-import { STT_MODELS } from "../../contracts/voice";
+import { STT_MODELS, runsOn } from "../../contracts/voice";
 import { deviceOf, isOnline, listDevices, setDeviceStt } from "./devices";
 import { wakeEditorPolls } from "./mac-claude";
 
@@ -42,11 +42,16 @@ export function strongest(devices: Device[], weights: Balance["weights"]): Devic
 }
 
 /**
- * What a computer said in its claim: the models it has and is downloading. Its owner's wishes start as what it has,
- * so a model put there before is never deleted unasked.
+ * What a computer said in its claim: the models it has and is downloading, and `asked`, the ones its person got on the
+ * computer itself (a Mac's Dictation). Its owner's wishes follow what was done there: at its first claim they take in
+ * what it has (a model put there before is never deleted unasked), the asked ones are added, and one that went from it
+ * (removed there) is dropped, so it is not downloaded again.
  */
-export function declareModels(d: Device, held: string[], getting: string[]): void {
-  setDeviceStt(d.id, { want: d.stt?.want ?? held, held, getting });
+export function declareModels(d: Device, held: string[], getting: string[], asked: string[] = []): void {
+  const s = d.stt;
+  const gone = s?.claimed ? s.held.filter((m) => !held.includes(m) && !getting.includes(m)) : [];
+  const want = [...new Set([...(s?.want ?? []), ...(s?.claimed ? [] : held), ...asked])].filter((m) => !gone.includes(m));
+  setDeviceStt(d.id, { want, held, getting, claimed: true });
 }
 
 /** Whether the models its owner wants differ from what the computer said: then it is hinted, claims, and is told. */
@@ -60,7 +65,9 @@ export function modelsOutOfStep(d: Device): boolean {
 export function wantModel(owner: string, id: string, model: string, keep: boolean): string | null {
   const d = deviceOf(id);
   if (d?.owner !== owner || !d.kinds?.includes(TRANSCRIBE_KIND)) return "Not one of your computers that run speech models";
-  if (!isComputerModel(model)) return `${model} is not a model a computer downloads`;
+  const m = STT_MODELS.find((x) => x.id === model && x.computer);
+  if (!m) return `${model} is not a model a computer downloads`;
+  if (keep && !runsOn(m, d.report?.machine?.os)) return `${m.name} does not run on ${d.name}`;
   const want = (d.stt?.want ?? d.stt?.held ?? []).filter((m) => m !== model);
   setDeviceStt(id, { held: [], getting: [], ...d.stt, want: keep ? [...want, model] : want });
   void wakeEditorPolls();

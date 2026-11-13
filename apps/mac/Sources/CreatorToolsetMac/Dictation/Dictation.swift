@@ -41,9 +41,11 @@ enum ModelFiles {
         }
     }
 
-    /// The download base that holds a complete copy of `variant`: this app's first, then the earlier app's.
-    static func base(holding variant: String, bases: [URL] = [DictationPaths.base, DictationPaths.earlier]) -> URL? {
-        bases.first { isComplete(folder(variant, in: $0)) }
+    /// The download base that holds a complete copy of `variant`: this app's first, then the earlier app's (unless it
+    /// was set aside, `SpeechModels.setAside`).
+    static func base(holding variant: String, bases: [URL]? = nil) -> URL? {
+        let all = bases ?? [DictationPaths.base] + (SpeechModels.isSetAside(variant) ? [] : [DictationPaths.earlier])
+        return all.first { isComplete(folder(variant, in: $0)) }
     }
 
     static func ownBase() throws -> URL {
@@ -70,21 +72,14 @@ func modelSize(_ mb: Int) -> String {
     mb >= 1000 ? String(format: "%.1f GB", Double(mb) / 1000) : "\(mb) MB"
 }
 
-/// Where dictation turns speech into text. The setup guide offers `.server` only once `serverWired` is true: the
-/// dictation itself on the server's engine is built on its own branch, which flips the flag and reads `prefs.engine`.
-enum DictationEngine: String {
-    case thisMac = "mac"
-    case server
-    static let serverWired = false
-}
-
 /// Dictation's settings, kept in UserDefaults; Settings → AI → Voice → Dictation only shows and sets them.
 struct DictationPrefs: Equatable {
     var on = true
     /// Saved apart, one per action (DictationKeys.save); until then, hold fn (`Dictation.start` picks the first keys).
     var keys = DictationKeys.holdFn
-    var engine = DictationEngine.thisMac
     var model = ModelRegistry.standardID
+    /// Who writes the words down: this Mac's model (works with no server), or the server's engine (ServerDictation.swift).
+    var engine = DictationEngine.thisMac
     /// Recordings kept in History.
     var keep = 10
     var sounds = true
@@ -263,6 +258,8 @@ final class Dictation: ObservableObject {
 
     /// The languages the person speaks (the server's Voice settings), or nil when it has none. Set by the Shell.
     var languages: (() async -> [String]?)?
+    /// The site with the window's session, for the server's engine. Set by the Shell.
+    var site: (() async -> Site?)?
     private var spoken: [String] = []
     private var spokenAt = Date.distantPast
 
@@ -326,10 +323,13 @@ final class Dictation: ObservableObject {
     }
 
     private func apply() {
-        guard prefs.on else {
+        watchEarlierApp()
+        let paused = prefs.on && EarlierDictationApp.isRunning()
+        guard EarlierDictationApp.listens(on: prefs.on, earlierRunning: paused) else {
             phase = .off
             needs = nil
-            fetching?.cancel()
+            // paused for the earlier app: a model downloading goes on
+            if !paused { fetching?.cancel() }
             if pillMade { pill.hide() }
             applyKeys()
             trustWatch?.invalidate(); trustWatch = nil
@@ -343,7 +343,7 @@ final class Dictation: ObservableObject {
         // granted in System Settings whenever: the taps come on then, no relaunch
         if !AXIsProcessTrusted() { watchTrust() }
         // used here before: load the model now, so the first dictation after a launch doesn't wait for it
-        if UserDefaults.standard.bool(forKey: DictationPrefs.keys.used), modelOnDisk { Task { try? await currentTranscriber().warmUp() } }
+        if UserDefaults.standard.bool(forKey: DictationPrefs.keys.used), prefs.engine == .thisMac, modelOnDisk { Task { try? await currentTranscriber().warmUp() } }
     }
 
     private func update(_ change: (inout DictationPrefs) -> Void) {
@@ -357,9 +357,10 @@ final class Dictation: ObservableObject {
         if prefs.model != old.model, let transcriber {
             // the next dictation loads the new one; one running finishes with the old
             self.transcriber = nil
-            controllerStore?.replaceTranscriber(currentTranscriber())
+            controllerStore?.replaceTranscriber(engineTranscriber())
             Task { await transcriber.unload() }
         }
+        if prefs.engine != old.engine { controllerStore?.replaceTranscriber(engineTranscriber()) }
         if prefs.on != old.on || prefs.keys != old.keys { apply() }
     }
 
@@ -528,9 +529,9 @@ final class Dictation: ObservableObject {
         sounds.enabled = prefs.sounds
         let made = DictationController(
             capture: capture,
-            transcriber: currentTranscriber(),
+            transcriber: engineTranscriber(),
             observers: [pill, sounds, PhaseObserver(), FailureAlert()],
-            delivery: TextDelivery(mode: .paste),
+            delivery: UnlessEarlierApp(TextDelivery(mode: .paste)),
             recordings: Self.recordings,
             context: { [weak self] in TranscriptionContext(spokenLanguages: self?.spoken ?? []) }
         )
@@ -540,11 +541,16 @@ final class Dictation: ObservableObject {
 
     /// History and dropped files: on this Mac, once the model is here (a missing one starts downloading instead).
     private func onDevice(_ samples: [Float]) async throws -> String {
-        guard modelOnDisk else {
+        guard prefs.engine == .server || modelOnDisk else {
             fetch(model)
             throw DictationSetupError.noModel
         }
         return try await controller().transcribeOnDevice(samples)
+    }
+
+    /// What the next dictation, History and a dropped file use: the server's engine, or this Mac's model.
+    private func engineTranscriber() -> Transcriber {
+        prefs.engine == .server ? ServerTranscriber(site: { await Dictation.shared.site?() }) : currentTranscriber()
     }
 
     private func currentTranscriber() -> WhisperKitTranscriber {
@@ -571,7 +577,7 @@ final class Dictation: ObservableObject {
     var modelOnDisk: Bool { model.whisperKitID.flatMap { ModelFiles.base(holding: $0) } != nil }
 
     var ready: Bool {
-        MicrophoneAccess.status == .authorized && AXIsProcessTrusted() && modelOnDisk
+        MicrophoneAccess.status == .authorized && AXIsProcessTrusted() && (prefs.engine == .server || modelOnDisk)
     }
 
     /// The first press of the talk key while something is missing: the setup guide the very first time, after that the
@@ -630,7 +636,7 @@ final class Dictation: ObservableObject {
     /// What the first press (or Settings' Allow) does: the model starts downloading, and the pill says the first thing
     /// the person has to allow, with the right System Settings pane. Pressing again after each step goes on.
     func setUp() {
-        if !modelOnDisk, download == nil { fetch(model) }
+        if prefs.engine == .thisMac, !modelOnDisk, download == nil { fetch(model) }
         switch MicrophoneAccess.status {
         case .notDetermined:
             needs = "Allow the microphone to dictate"
@@ -696,10 +702,16 @@ final class Dictation: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) }
     }
 
-    /// Downloads `m` into this app's folder, with its progress in the pill (while setting up) and in Settings.
-    func fetch(_ m: TranscriptionModel) {
-        guard download == nil, let variant = m.whisperKitID, ModelFiles.base(holding: variant) == nil else { return }
+    /// Downloads `m` into this app's folder, with its progress in the pill (while setting up) and in Settings. The one
+    /// Download: Settings' Dictation row, a first dictation and the Voice page's (through the server, SpeechModels.swift).
+    /// `asked`: the person got it on this Mac, so the server keeps it. One set aside comes back without a download.
+    func fetch(_ m: TranscriptionModel, asked: Bool = true) {
+        guard download == nil, let variant = m.whisperKitID else { return }
+        if asked { SpeechModels.shared.asked(m.id) }
+        if SpeechModels.restore(variant) { return SpeechModels.shared.changed() }
+        guard ModelFiles.base(holding: variant) == nil else { return }
         download = (m.id, 0)
+        SpeechModels.shared.changed()
         let showing = m.id == prefs.model
         fetching = Task {
             do {
@@ -720,6 +732,7 @@ final class Dictation: ObservableObject {
                 DictationLog.info("downloaded \(m.id)")
                 download = nil
                 fetching = nil
+                SpeechModels.shared.finished(m.id, ok: true)
                 if m.id == prefs.model {
                     if showing, needs == nil { pill.show(.message("Getting the speech model ready")) }
                     try? await currentTranscriber().warmUp()
@@ -729,6 +742,7 @@ final class Dictation: ObservableObject {
                 DictationLog.error("download of \(m.id) stopped: \(error)")
                 download = nil
                 fetching = nil
+                SpeechModels.shared.finished(m.id, ok: false)
                 if showing, prefs.on, !Task.isCancelled { pill.showMessage("The speech model didn't download. Press again to retry") }
             }
         }
@@ -745,19 +759,22 @@ final class Dictation: ObservableObject {
             "picking": picking?.rawValue ?? NSNull(),
             // why no key works right now, in one quiet line
             "paused": earlierAppOpen ? "Off while your earlier dictation app is open" : NSNull(),
+            "engine": DictationEngine.serverWired ? prefs.engine.rawValue : NSNull(),
             "model": prefs.model,
             "models": ModelRegistry.shared.map { m -> [String: Any] in
                 let variant = m.whisperKitID ?? ""
+                let here = ModelFiles.base(holding: variant) != nil
                 return [
                     "id": m.id, "name": m.displayName, "size": modelSize(m.sizeMB),
-                    "here": ModelFiles.base(holding: variant) != nil,
-                    // only this app's own download can be removed here
-                    "removable": ModelFiles.isOwn(variant) && download?.id != m.id,
+                    "here": here,
+                    // the earlier app's copy is set aside, never deleted (`remove`)
+                    "removable": here && download?.id != m.id,
                     "progress": (download?.id == m.id ? download?.progress : nil) ?? NSNull(),
                 ]
             },
             "keep": prefs.keep,
             "sounds": prefs.sounds,
+            "paused": prefs.on && EarlierDictationApp.isRunning() ? EarlierDictationApp.pausedLine : NSNull(),
             "needs": (!prefs.on ? nil
                 : MicrophoneAccess.status != .authorized ? "Microphone"
                 : !AXIsProcessTrusted() ? "Accessibility" : nil) ?? NSNull(),
@@ -771,6 +788,7 @@ final class Dictation: ObservableObject {
         case "pick": if let action = DictationAction(rawValue: value) { pick(action) }
         case "guide": SetupGuide.show()
         case "model": if ModelRegistry.find(value) != nil { update { $0.model = value } }
+        case "engine": if let e = DictationEngine(rawValue: value) { update { $0.engine = e } }
         case "download": if let m = ModelRegistry.find(value) { fetch(m) }
         case "remove": remove(value)
         case "keep": if let n = Int(value), (1...500).contains(n) { update { $0.keep = n } }
@@ -782,14 +800,18 @@ final class Dictation: ObservableObject {
         }
     }
 
-    private func remove(_ id: String) {
+    /// The one Remove (Settings' Dictation row, or the Voice page's through the server): this app's own copy is
+    /// deleted; the earlier app's is set aside, never deleted.
+    func remove(_ id: String) {
         guard let m = ModelRegistry.find(id), let variant = m.whisperKitID, download?.id != id else { return }
+        let drop = { ModelFiles.remove(variant); SpeechModels.setAside(variant) }
         if id == prefs.model, let transcriber {
             self.transcriber = nil
-            controllerStore?.replaceTranscriber(currentTranscriber())
-            Task { await transcriber.unload(); ModelFiles.remove(variant) }
+            controllerStore?.replaceTranscriber(engineTranscriber())
+            Task { await transcriber.unload(); drop(); SpeechModels.shared.changed() }
         } else {
-            ModelFiles.remove(variant)
+            drop()
+            SpeechModels.shared.changed()
         }
     }
 }

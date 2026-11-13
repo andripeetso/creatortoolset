@@ -43,7 +43,8 @@ export const CUTOUT_KIND = "cutout";
  * The kind that turns speech into text with a model downloaded on the person's own computer (api/lib/computer-transcribe.ts),
  * for the Media Library's transcripts when their engine is `local` (api/lib/speech.ts speechFor). Not an edit step: it is
  * listed, hinted and claimed on the road above, with what the computer holds in the claim:
- *   claim { kinds: [..., "transcribe"], models: [ids it has], getting: [ids it is downloading] }
+ *   claim { kinds: [..., "transcribe"], models: [ids it has], getting: [ids it is downloading],
+          asked?: [ids its person got on it itself since its last claim (a Mac's Dictation)] }
  *     → { job, models: [ids its owner wants on it] }   it downloads each wanted one it lacks (STT_MODELS `download`, a
  *       Hugging Face repository) and deletes each it has that is not wanted, then claims again
  *   GET  transcribe/:id            → the audio: WAV, 16 kHz mono 16-bit; the job's `model` and `languages` say how
@@ -125,6 +126,8 @@ export interface DeviceClaimBody {
   /** with TRANSCRIBE_KIND: the speech models it has, and the ones it is downloading now */
   models?: string[];
   getting?: string[];
+  /** the ones its person got on the computer itself since its last claim; one that went from it was removed there */
+  asked?: string[];
 }
 
 /** A step handed to a device: its job id, its kind, and the edit it belongs to ("" variant = the whole edit). */
