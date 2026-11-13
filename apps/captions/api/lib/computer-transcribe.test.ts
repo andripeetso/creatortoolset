@@ -140,7 +140,7 @@ describe("speechFor with computers", () => {
     expect(v.available).not.toContain("local");
     // auto with no key: the transcripts run on a computer, the others say what to add
     expect(speechFor("ana", "transcripts")).toMatchObject({ engine: "local", on: "computers" });
-    expect(speechFor("ana", "captions")).toEqual({ needs: "Add your Deepgram (or OpenAI) key in Settings → API keys" });
+    expect(speechFor("ana", "captions")).toEqual({ needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" });
     // local by default, or a computer's model chosen for a use: it says the computers do transcripts only
     writeVoicePrefs("ana", { stt: { default: { engine: "local" } } });
     expect(speechFor("ana", "editor")).toEqual({ needs: "Speech models on your computers do Media Library transcripts only" });
