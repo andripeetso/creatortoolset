@@ -168,7 +168,7 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
   (the last row of the Plug-ins list) is off. Every 5 s the app stats the folders the plug-ins were switched on from.
   A folder that is the same at two looks in a row is sent to the server's prepare (a copy and a test build; nothing
   runs). A copy that builds waits until the server has nothing running, then the record takes its fingerprint and the
-  server restarts; the window goes back to the page it was on. "Nothing running" is: no row in the menu bar's Active
+  server restarts; the window goes back to the page it was on. "Nothing running" is: no row in the menu bar's Running
   list (a Workshop reply being written, a plug-in's work, an AI request on this Mac), the recorder closed, and no
   program started by the server still running (ffmpeg, a build). It does not see an upload in flight or work inside
   the server that starts no program. A version that doesn't build is left out and its row says why. A plug-in taken
@@ -339,15 +339,19 @@ failed, the last AI job or poll failed, or the data disk is nearly full (`menuSt
 colour image, not a template, with a light rim so it reads on light and dark menu bars. A count between the mark and
 the dot says how many things wait for you. A click opens a panel (`Activity.swift`):
 
-- **Active**: Workshop replies being written and this Mac's AI requests, each with "Working" on the right;
-- **For you**: Workshop sessions with a new reply ("Ready"); a row opens its page in the window;
+- **Running**: Workshop replies being written, plug-in work and this Mac's AI requests, each with "Working" on the right;
+- **Waiting on you**: Workshop sessions with a new reply ("Ready") and plug-in items waiting; a row opens its page in
+  the window. A part shows its label only when it has rows; with neither, one quiet line says so;
 - the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
-- **Open Creator Toolset**, and a gear with "AI on this Mac: …", "Server on this Mac: …", **Use this Mac for my
-  AI**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings, **Open at login**,
-  **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
+- menu rows (`PanelMenuRow`: a title, its key in grey on the right): **Open Creator Toolset**, **Record Screen**
+  (**Stop Recording** while it records) and **Settings & More**, which holds "AI on this Mac: …", "Server on this
+  Mac: …", **Use this Mac for my AI**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings,
+  **Open at login**, **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
+
+`PANEL_SHOTS=<folder> swift test --filter PanelShotsTests` draws the panel with sample rows, light and dark, to PNGs.
 
 Closing the last window takes the app out of the Dock and the app switcher; it stays in the menu bar. A copy in
-/Applications opens at login (on once by default; the gear's switch turns it off).
+/Applications opens at login (on once by default; the switch in Settings & More turns it off).
 
 ## Runs your AI
 
@@ -446,6 +450,30 @@ this macOS has it, but nothing here can watch a lookup); the proxy for a bare ad
 would be real traffic; a name goes to the proxy); a script that takes memory without end (the limit and the end of
 its process stop it, after up to 20 s). See also "Not checked yet".
 
+## Dictation
+
+Talk, and the words are pasted where the cursor is, in any app (`Dictation/`). On for everyone from the first launch,
+but nothing asks for a permission and nothing downloads until the first press of a talk key.
+
+- **F13** starts and stops. **Holding fn** (or the key chosen in Settings, or Off) talks while it is held; a tap
+  shorter than 0.3 s, or a hold with another key, does nothing. **F14** opens History (the last recordings: copy a
+  transcript, transcribe a failed one again), **F15** Transcribe a file (audio or video, on this Mac), **F16** cancels
+  the recording or the transcription in progress (nothing is pasted; History still gets it). F13–F16 are taken from
+  macOS, so its own brightness keys don't also act on them.
+- The first press: the pill at the bottom of the screen says what to allow (Microphone, then Accessibility, with the
+  System Settings pane) and the speech model downloads with its size and progress there. Before Accessibility no key
+  tap can exist, so F13 is a Carbon hotkey and the hold key is read from the modifier state ten times a second (a hold of
+  1 s with no other key counts as the first press). Switching dictation off stops a download in progress.
+- Speech becomes text on this Mac with Whisper (WhisperKit, Core ML); the default model is Whisper Large v3 Turbo
+  (1.6 GB) in `~/Library/Application Support/Creator Toolset/dictation/models`. A complete copy in the earlier
+  dictation app's models folder is loaded where it is, never downloaded again or removed. Whisper is told the languages from the server's Voice settings (`GET /api/voice-prefs`) when it has
+  them, else it chooses among the Mac's own languages.
+- The text is pasted with ⌘V through the clipboard, which is put back once the app has read it; a password field
+  gets nothing. Recordings and transcripts are kept in `dictation/recordings` (the last 10 by default).
+- Settings → General → Dictation on the site shows and sets it (`thismac-dictation:<what>:<value>`,
+  `Dictation.bridgeState`); the app keeps the values in `UserDefaults` (`dictation.*`). The earlier dictation app's
+  choices are taken over once (its F13 means hold to talk is Off here).
+
 ## Notifications and the Dock badge
 
 Every 30 s the app asks `GET /api/review/notifications`. Each new unread item becomes a banner
@@ -504,6 +532,9 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   the owner's password, data location).
 - `Sources/CreatorToolsetMac/Plugins.swift`: plug-ins (the asks, Switch on's alert, the record in the Keychain, the
   paused flag, the server's environment and the five-crash rule).
+- `Sources/CreatorToolsetMac/Dictation/`: dictation (`Dictation.swift` the settings, the first press and the keys'
+  routing; `Keys.swift` the taps; `Audio.swift`, `HALInput.swift` the microphone; `Whisper.swift` the model;
+  `Controller.swift` the loop; `Paste.swift` the paste; `Pill.swift`; `History.swift` History and Transcribe a file).
 - `Sources/CreatorToolsetMac/Logic.swift`: the pure helpers the tests cover.
 - `Tests/CreatorToolsetMacTests/LogicTests.swift`: the pure helpers (site address, cookies, downloads, notes).
 - `Tests/CreatorToolsetMacTests/AlphaVideoTests.swift`: the see-through video (the packed download's name and

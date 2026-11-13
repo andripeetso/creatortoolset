@@ -25,10 +25,27 @@ export type ThisMacState = {
   computer?: string;
   host?: string;
   device?: string | null;
+  /** Settings → General → Dictation (apps/mac Dictation.swift `bridgeState`); missing in older Mac apps */
+  dictation?: DictationState;
   /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
   version?: string;
   /** the app's last answer, kept on this device: it has not answered in this window yet */
   saved?: true;
+};
+
+/** Dictation on this Mac, as the app keeps it; the page sets it with `thismac-dictation:<what>:<value>`. */
+export type DictationState = {
+  on: boolean;
+  /** the key held to talk, or "off" */
+  hold: string;
+  holdKeys: Array<{ id: string; name: string }>;
+  model: string;
+  /** `here`: on this Mac; `removable`: this app downloaded it; `progress`: 0–1 while it downloads */
+  models: Array<{ id: string; name: string; size: string; here: boolean; removable: boolean; progress: number | null }>;
+  keep: number;
+  sounds: boolean;
+  /** the permission still to give, or null */
+  needs: "Microphone" | "Accessibility" | null;
 };
 
 /** Where the app's last answer is kept (lib/local-cache), so a page that shows it paints at once. */
