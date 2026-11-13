@@ -121,6 +121,18 @@ describe("timeline import", () => {
     }
   });
 
+  it("a clip or track switched off in the editing app comes through as off (it never shows or sounds)", () => {
+    const off = JSON.parse(OTIO);
+    off.tracks.children[0].children[0].enabled = false; // talent A
+    off.tracks.children[1].enabled = false; // the whole B-roll track
+    const v = importTimeline("Cut.otio", JSON.stringify(off));
+    const item = (track: string, rec: number) => v.tracks.find((t) => t.id === track)!.items.find((i) => i.rec === rec)!;
+    expect(item("V1", 0).off).toBe(true);
+    expect(item("V1", 50).off).toBeUndefined();
+    expect(item("V2", 20).off).toBe(true);
+    expect(importTimeline("Cut.otio", OTIO).tracks.flatMap((t) => t.items).some((i) => i.off)).toBe(false);
+  });
+
   it("an EDL (video track only) lines up with them, at the video's frame rate or its own guess", () => {
     expect(shape(importTimeline("Cut.edl", EDL, 25))).toEqual([want[1]]);
     expect(importTimeline("Cut.edl", EDL).fps).toBe(25); // frame numbers up to 24 → 25 fps

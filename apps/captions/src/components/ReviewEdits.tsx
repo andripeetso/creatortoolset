@@ -288,7 +288,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
   ] : null;
   // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
-  const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!)
+  const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!, (s) => !!originals!.found[s])
     .filter((p) => originals!.found[p.src])
     .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
       const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);

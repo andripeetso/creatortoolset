@@ -35,6 +35,8 @@ export interface TimelineItem {
   from?: string;
   /** a copy (paste, Option-drag): the key of the item it copies */
   copyOf?: string;
+  /** switched off in its timeline (a clip or its track disabled): it never shows or sounds */
+  off?: boolean;
 }
 
 export interface TimelineView {
@@ -464,7 +466,7 @@ function trackPieces(view: TimelineView, edits: ItemEdit[], plan: Spans, track: 
   const out: (SoundPiece & { it: TimelineItem; e?: ItemEdit })[] = [];
   for (const it of view.tracks.find((t) => t.id === track)?.items ?? []) {
     const e = edits.find((x) => x.key === it.key);
-    if (!it.src || it.ins === undefined || e?.remove) continue;
+    if (!it.src || it.ins === undefined || e?.remove || it.off) continue;
     const [move, head, tail, slip] = [e?.move ?? 0, e?.head ?? 0, e?.tail ?? 0, e?.slip ?? 0];
     const src = it.src;
     const sec = (r: number) => ms(it.ins! + (r - it.rec + slip) / fps);
@@ -501,15 +503,30 @@ export const soundPieces = (view: TimelineView, edits: ItemEdit[], plan: Spans, 
 export const voicePieces = (view: TimelineView, edits: ItemEdit[], plan: Spans): SoundPiece[] => soundPieces(view, edits, plan, ["A1"]);
 
 /**
- * Each talent shot (V1) on the edited timeline, from its camera original, framed as cut (or as reframed): where no
- * B-roll or full card covers it, so those still show from the render.
+ * The picture as an editing app shows it, from the originals: at each moment the topmost switched-on clip, from its
+ * file, framed as cut (or as reframed), its edges pulled out playing the file past them. Where that clip's file can't
+ * be played (`playable` false: not found, a graphic, a catalog clip) nothing is given, so the render shows there and
+ * nothing under it shows through.
  */
-export function picturePieces(view: TimelineView, edits: ItemEdit[], plan: Spans): PicturePiece[] {
-  const covers = view.tracks.filter((t) => t.id[0] === "V" && t.id !== "V1" && t.id !== "V0").flatMap((t) => t.items)
-    .filter((i) => !edits.find((e) => e.key === i.key)?.remove)
-    .map((i): [number, number] => [editedFrame(plan, i.rec), editedFrame(plan, i.rec + i.len)]);
-  return trackPieces(view, edits, plan, "V1").flatMap(({ src, at, frames, offset, it, e }) => {
-    const f = e?.zoom !== undefined ? { zoom: e.zoom, pan: e.pan ?? 0, tilt: e.tilt ?? 0 } : { zoom: it.zoom ?? 1, pan: it.pan ?? 0, tilt: it.tilt ?? 0 };
-    return minus([at, at + frames], covers).map(([a, b]) => ({ key: it.key, src, at: a, frames: b - a, offset: ms(offset + (a - at) / view.fps), ...f }));
-  });
+export function picturePieces(view: TimelineView, edits: ItemEdit[], plan: Spans, playable: (src: string) => boolean = () => true): PicturePiece[] {
+  const lanes = view.tracks.filter((t) => /^V\d+$/.test(t.id)).sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)));
+  const taken: [number, number][] = [];
+  const out: PicturePiece[] = [];
+  for (const lane of lanes) {
+    const pieces = trackPieces(view, edits, plan, lane.id);
+    for (const { src, at, frames, offset, it, e } of pieces) {
+      if (!playable(src)) continue;
+      const f = e?.zoom !== undefined ? { zoom: e.zoom, pan: e.pan ?? 0, tilt: e.tilt ?? 0 } : { zoom: it.zoom ?? 1, pan: it.pan ?? 0, tilt: it.tilt ?? 0 };
+      for (const [a, b] of minus([at, at + frames], taken)) out.push({ key: it.key, src, at: a, frames: b - a, offset: ms(offset + (a - at) / view.fps), ...f });
+    }
+    // what this layer covers, played from a file or not, hides the layers under it
+    taken.push(...pieces.map((p): [number, number] => [p.at, p.at + p.frames]));
+    for (const i of lane.items) {
+      const e = edits.find((x) => x.key === i.key);
+      if (i.off || e?.remove || pieces.some((p) => p.it === i)) continue;
+      const span = editedSpan(i, e);
+      taken.push([editedFrame(plan, span.rec), editedFrame(plan, span.rec + span.len)]);
+    }
+  }
+  return out.sort((a, b) => a.at - b.at);
 }
