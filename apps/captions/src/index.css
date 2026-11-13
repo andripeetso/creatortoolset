@@ -283,11 +283,12 @@ html:has(button[data-assistant-dock][data-corner="bl"]) [data-sonner-toaster] { 
    when it outgrows the card. No rule here. */
 
 /* Chat mode (lib/chat-mode.ts): the chats stand at the left of the window, --chat-w wide, and the page moves over by as
-   much. The chats carry the chat-mode button and, while their list stands beside the chat (data-chat-list), the app's
-   name and the account: a page's own bar leaves those out then. */
+   much. The chats carry the chat-mode button and, while their list stands beside the chat (data-chat-list), what
+   belongs to the whole app and not to one page: its name, the project, Activity, the plan warning and the account. A
+   page's own bar leaves those out then. */
 html[data-chat-mode] body { padding-left: var(--chat-w); }
 html[data-chat-mode] main [data-chat-toggle] { display: none; }
-html[data-chat-list] main :is([data-home-link], [data-user-menu]) { display: none; }
+html[data-chat-list] main :is([data-home-link], [data-user-menu], [data-project-switcher], [data-activity], [data-plan-pill]) { display: none; }
 /* Only chats: the page is not drawn at all. */
 html[data-chat-mode="full"] main { display: none; }
 /* What a page pins to the window from edge to edge (its own dialogs and drop overlays, a selection bar centred at the
