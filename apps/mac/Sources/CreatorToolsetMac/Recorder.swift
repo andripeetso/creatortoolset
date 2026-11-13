@@ -907,18 +907,43 @@ final class Recorder: ObservableObject {
             return alert("Couldn't save the video", error.localizedDescription)
         }
         guard RecordPrefs.keepStreams else { return }
-        let base = url.deletingPathExtension()
-        let beside = { (part: String, ext: String) in URL(fileURLWithPath: "\(base.path) (\(part)).\(ext)") }
+        Task { await writeStreams(project, base: url.deletingPathExtension()) }
+    }
+
+    /// Every stream of a recording as its own file in a folder you choose (the page's "Save the streams…"): the screen
+    /// with the voice, the camera, each sound track and the pointer's log, all named after the recording.
+    func saveStreams(_ project: LocalProject) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Save Here"
+        panel.message = "The screen, the camera, the voice and the clicks of \"\(project.name)\" go into this folder as separate files."
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        let base = folder.appendingPathComponent(project.name)
         Task {
             do {
-                if FileManager.default.fileExists(atPath: project.cameraURL.path) { try replace(beside("camera", "mp4"), with: project.cameraURL) }
-                let names = (try? JSONDecoder().decode(ScreenEvents.self, from: Data(contentsOf: project.eventsURL)))?.audio ?? []
-                try await saveSoundTracks(of: project.screenURL, names: names) { name in
-                    beside(name == "mic" ? "voice" : name == "device" ? "device sound" : "Mac sound", "m4a")
-                }
+                try replace(URL(fileURLWithPath: "\(base.path) (screen).mp4"), with: project.screenURL)
+                try replace(URL(fileURLWithPath: "\(base.path) (clicks).json"), with: project.eventsURL)
             } catch {
-                alert("Couldn't save the separate streams", error.localizedDescription)
+                return alert("Couldn't save the streams", error.localizedDescription)
             }
+            await writeStreams(project, base: base)
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: "\(base.path) (screen).mp4")])
+        }
+    }
+
+    /// The camera and each sound track beside `base`: "<base> (camera).mp4", "<base> (voice).m4a", "<base> (Mac sound).m4a".
+    private func writeStreams(_ project: LocalProject, base: URL) async {
+        let beside = { (part: String, ext: String) in URL(fileURLWithPath: "\(base.path) (\(part)).\(ext)") }
+        do {
+            if FileManager.default.fileExists(atPath: project.cameraURL.path) { try replace(beside("camera", "mp4"), with: project.cameraURL) }
+            let names = (try? JSONDecoder().decode(ScreenEvents.self, from: Data(contentsOf: project.eventsURL)))?.audio ?? []
+            try await saveSoundTracks(of: project.screenURL, names: names) { name in
+                beside(name == "mic" ? "voice" : name == "device" ? "device sound" : "Mac sound", "m4a")
+            }
+        } catch {
+            alert("Couldn't save the separate streams", error.localizedDescription)
         }
     }
 

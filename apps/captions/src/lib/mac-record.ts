@@ -46,6 +46,7 @@ export type RecorderMessage =
   | "alpha-stop"
   | `share:${string}:${ShareDest}`
   | `reveal:${string}`
+  | `streams:${string}`
   | `delete:${string}`
   | `trash:${string}`;
 

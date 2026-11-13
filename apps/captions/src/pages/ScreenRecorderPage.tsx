@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Circle, FolderOpen, MoreHorizontal, ScreenShare, Trash2 } from "lucide-react";
+import { Circle, FolderOpen, Layers, MoreHorizontal, ScreenShare, Trash2 } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { Picture } from "@/components/Picture";
 import { Button } from "@/components/ui/button";
@@ -95,6 +95,9 @@ function RecordingActions({ r, onThrowAway }: { r: LocalRecording; onThrowAway: 
               {sh.label}
             </DropdownMenuItem>
           ))}
+          <DropdownMenuItem onSelect={() => tellRecorder(`streams:${r.id}`)}>
+            <Layers /> Save the streams…
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => tellRecorder(`reveal:${r.id}`)}>
             <FolderOpen /> Show in Finder
           </DropdownMenuItem>
