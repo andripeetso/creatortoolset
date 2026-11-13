@@ -43,6 +43,8 @@ export interface ReviewVersion {
   timeline?: boolean;
   /** (managers) the AI Editor draft it previews: its timeline, camera view and grade come from the editor. */
   edit?: { project: string; draft: string };
+  /** (managers) the app's own AI Editor draft it was rendered from: its timeline edits can be made into the next version. */
+  draft?: { edit: string; name: string };
   /** (managers) a link back to what made it (a plug-in's own page). */
   source?: { kind: string; id: string; label: string; href: string };
   /** Its sound in parts (v<n>/stems/): the player's voice controls. */

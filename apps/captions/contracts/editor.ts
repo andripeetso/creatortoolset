@@ -13,6 +13,7 @@
  *   GET    /api/editor/:id/drafts/:name    → Draft
  *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|zip   the draft for the user's own editor (a download)
  *   POST   /api/editor/:id/drafts/:name/review   renders the draft's preview again and files it in Review (the creator) → Edit
+ *   POST   /api/editor/:id/drafts/:name/cut      { asset, n, edits } (the creator): Review's timeline edits on that version cut into the draft, with no AI → Edit; its next version is made
  *   GET    /api/editor/:id/sentences       → Sentence[] (what analyze found, for playing a take)
  *   PUT    /api/editor/:id/lines           PlansPatch (the creator): takes swapped or lines reordered → Edit; redrafts what changed
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)

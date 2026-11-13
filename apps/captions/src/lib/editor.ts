@@ -1,5 +1,6 @@
 import type { StepsView } from "@contracts/editor-steps";
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
+import type { ItemEdit } from "@contracts/edit-timeline";
 import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
@@ -67,6 +68,8 @@ export const setEyeline = (id: string, versionId: string, y: number) => send<Edi
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);
 export const reviewDraft = (id: string, name: string) => send<Edit>(`${base(id)}/drafts/${name}/review`, "POST");
+/** Review's timeline edits on version `n` of the draft's Review video, cut into the draft: its next version is made from them. */
+export const makeCut = (id: string, name: string, body: { asset: string; n: number; edits: ItemEdit[] }) => send<Edit>(`${base(id)}/drafts/${name}/cut`, "POST", body);
 /** A version's cards (contracts/editor.ts): a card's still, the 👍 that keeps it in the animation style, and making them again. */
 export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
 export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");

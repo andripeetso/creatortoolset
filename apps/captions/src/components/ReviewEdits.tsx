@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewEditRef, ReviewPlayCard, ReviewPlayPlan, ReviewSlotContext, ReviewTimelineSlot } from "@/lib/plugin";
 import { CameraView, RecropBox } from "@/components/RecropBox";
-import { EditTimeline, type Placeholder } from "@/components/EditTimeline";
+import { toast } from "sonner";
+import { EditTimeline, type Placeholder, type TimelineRules } from "@/components/EditTimeline";
+import { makeCut } from "@/lib/editor";
 import { GradeFilter, GradePanel } from "@/components/GradePanel";
 import { FacePanel } from "@/components/FacePanel";
 import type { Grade } from "@contracts/grade";
@@ -42,6 +44,8 @@ import {
 // Everyone who can watch the version sees it and can pin a comment to a clip (`pin`, from the page); the edit tools
 // are the managers'. The reframe window and full-quality colour need the
 // AI edit behind the version and a plug-in that sends its camera files (`hooks`, lib/plugin.ts ReviewTimelineSlot).
+// On a cut the app's own AI Editor made (`version.draft`), Make the next version cuts the edits into it as they are,
+// with no AI (api/editor/edits.ts), and the timeline offers only the edits that makes (OWN_RULES).
 
 /** The id the editor's data goes under on a comment (`plugins[id]`); no plug-in may take it. */
 export const REVIEW_TIMELINE_ID = "timeline-edits";
@@ -68,6 +72,9 @@ export default function ReviewEdits(ctx: ReviewSlotContext & { hooks?: ReviewTim
   return <Edits key={version.n} {...ctx} hooks={ctx.hooks ?? {}} edit={version.edit} />;
 }
 
+/** What the app's own AI Editor cuts into a version: a voice stays with its picture (cut, pulled in or taken out), the layers stay as they are. */
+const OWN_RULES: TimelineRules = { can: (it, mode) => it.track !== "A1" || mode === "head" || mode === "tail", layers: false };
+
 const framingOf = (i: TimelineItem): Framing => ({ zoom: i.zoom ?? 1, pan: i.pan ?? 0, tilt: i.tilt ?? 0 });
 const secs = (s: number) => `${s.toFixed(1)}s`;
 // the SVG filter id of a grade span, by its place in the plan (the plan is rebuilt on each render, so an index is stable)
@@ -87,13 +94,16 @@ const toCard = (c: PlayCard, manage: boolean, clipSrc?: (clip: number) => string
   ...(manage && clipSrc && c.clip !== undefined ? { src: clipSrc(c.clip), at: c.at } : {}),
 });
 
-function Edits({ version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
+function Edits({ asset, version, api, player, composer, history, preview, sent, edit, manage, hooks, pin, faceAt }: ReviewSlotContext & { edit?: ReviewEditRef; hooks: ReviewTimelineSlot; pin?: TimelinePins; faceAt?: number | null }) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [hist, setHist] = useState<Hist<Pending>>(() => freshHist(EMPTY_PENDING));
   const [crop, setCrop] = useState<{ item: TimelineItem; box: CropBox } | null>(null);
   // the edit being dragged (an edge or a slip plays as it goes), and the preview: the planned edits play over the old cut
   const [live, setLive] = useState<[TimelineItem, Partial<ItemEdit>][] | null>(null);
   const [previewOn, setPreviewOn] = useState(true);
+  // a cut of the app's own AI Editor: its timeline edits can be made into the next version, and it is being asked for
+  const own = manage ? version.draft : undefined;
+  const [making, setMaking] = useState(false);
   // the talent shot being graded (the colour panel, opened from the timeline's Color) and the grade it shows while you work
   const [colour, setColour] = useState<TimelineItem | null>(null);
   const [liveGrade, setLiveGrade] = useState<Grade | null>(null);
@@ -189,6 +199,17 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
   const setHole = (v: Placeholder | null) => change((p) => ({ ...p, hole: v }));
   const undo = () => setHist(histUndo);
   const redo = () => setHist(histRedo);
+  const makeNext = () => {
+    if (!own) return;
+    setMaking(true);
+    makeCut(own.edit, own.name, { asset: asset.id, n: version.n, edits: planEdits })
+      .then(() => {
+        setHist(freshHist(EMPTY_PENDING));
+        setCrop(null);
+        toast.success("Making the next version from your edits. It shows up here once it is rendered.");
+      }, (e: Error) => toast.error(e.message || "Couldn't make the next version"))
+      .finally(() => setMaking(false));
+  };
 
   // the camera frame from the plug-in (it may have to make it first); a newer ask or leaving the page stops the last one
   const askCamera = () => {
@@ -297,7 +318,16 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
       {grades.map((g, i) => <GradeFilter key={gradeId(i)} id={gradeId(i)} from={g.was} to={g.grade} />)}
       {shotLook && <GradeFilter id={LIVE_GRADE} from={shotLook.was} to={shotLook.grade} />}
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] text-zinc-500">{manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}</div>
+        <div className="text-[11px] text-zinc-500">
+          {own ? "Timeline edits: make the next version from them, or send them with a comment" : manage ? "Timeline edits: sent with your next comment" : "Click a clip to comment on it"}
+        </div>
+        {own && planEdits.length > 0 && !crop && (
+          <button type="button" disabled={making || !!hole} onClick={makeNext}
+            title={hole ? "A placeholder goes with a comment: send it or drop it first" : "Cut the next version from these timeline edits as you made them, with no AI"}
+            className="ml-auto rounded-full bg-violet-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-violet-500 disabled:opacity-40">
+            {making ? "Starting…" : "Make the next version"}
+          </button>
+        )}
         {(planned || !previewOn) && !crop && (
           <button type="button" onClick={() => setPreviewOn((v) => !v)}
             title="Play your timeline edits and placeholders on this cut (cards where B-roll or a placeholder goes, cut frames skipped, longer shots held, reframes zoomed)"
@@ -393,7 +423,8 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
             slots.current.player.pause();
           },
           onReframe: edit && hooks.camera && w && h ? reframe : undefined,
-          onColor: (item: TimelineItem) => {
+          // a per-shot grade is not something the app's own AI Editor cuts in: not offered on its cuts
+          onColor: own ? undefined : (item: TimelineItem) => {
             slots.current.player.pause();
             setCrop(null);
             const f = time * fps;
@@ -403,6 +434,7 @@ function Edits({ version, api, player, composer, history, preview, sent, edit, m
           },
           onFace: edit && hooks.face ? (item: TimelineItem) => openFace(item) : undefined,
           history: { back: hist.past.length, ahead: hist.future.length, undo, redo },
+          rules: own ? OWN_RULES : undefined,
         } : {})}
       />
     </div>

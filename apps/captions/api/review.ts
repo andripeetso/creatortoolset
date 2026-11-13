@@ -132,6 +132,8 @@ interface Version {
   timelineFile?: string;
   /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. */
   edit?: { project: string; draft: string };
+  /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. */
+  draft?: { edit: string; name: string };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
@@ -907,6 +909,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       timeline: !!v.timelineFile,
       ...(manage && v.timelineFile ? { timelineFile: v.timelineFile } : {}),
       ...(manage && v.edit ? { edit: v.edit } : {}),
+      ...(manage && v.draft ? { draft: v.draft } : {}),
       ...(manage && v.source ? { source: v.source } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
@@ -1028,7 +1031,7 @@ export function fileVideo(id: string, projectId: string): Promise<Meta | null> {
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; edit?: { project: string; draft: string }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1067,6 +1070,7 @@ export async function addVersion(
       progress: 0.02,
       ...(options.relay ? { relay: { ...options.relay, bytes: v.bytes } } : {}),
       ...(v.edit ? { edit: v.edit } : {}),
+      ...(v.draft ? { draft: v.draft } : {}),
       ...(v.source ? { source: v.source } : {}),
       createdAt: now,
     });
@@ -1329,7 +1333,7 @@ reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
   const n = Number(c.req.param("n"));
   const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
   if (!v || !version) return c.json({ error: "Not found" }, 404);
-  if (version.edit) return c.json({ error: "An AI edit has its own timeline" }, 409);
+  if (version.edit || version.draft) return c.json({ error: "An AI edit has its own timeline" }, 409);
   const name = cleanText(c.req.query("name"), 160) || "timeline";
   // refuse on the declared length before any of the body is read
   if (Number(c.req.header("content-length") ?? 0) > MAX_TIMELINE_BYTES) {

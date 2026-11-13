@@ -16,7 +16,8 @@ const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { NeedsKey } = await import("../library/transcribe");
 const { STEPS, tick } = await import("./worker");
-const { readStep, saveDraft, saveStep } = await import("./store");
+const { readDraft, readStep, saveDraft, saveFiled, saveStep } = await import("./store");
+const { emptyTracks } = await import("./timeline");
 
 const cookies: Record<string, string> = {};
 async function login(username: string) {
@@ -137,6 +138,42 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     const e = await json<Edit>(call("maker", "POST", `/api/editor/${id}/drafts/v1/review`));
     expect(e.jobs.map((j) => [j.kind, j.variant, j.state])).toEqual([["preview", "v1", "queued"]]);
     expect(e.previews).toEqual({});
+    await call("maker", "POST", `/api/editor/${id}/stop`);
+  });
+
+  it("POST drafts/:name/cut cuts Review's timeline edits into the draft and queues its next version; the edits as made, or none", async () => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
+    await call("maker", "POST", `/api/editor/${id}/stop`);
+    const tracks = emptyTracks();
+    for (const k of [0, 1, 2]) {
+      tracks.V1.items.push({ src: "ver_a1", in: k * 100, len: 30, rec: k * 30, link: `c${k}` });
+      tracks.A1.items.push({ src: "ver_a1", in: k * 100, len: 30, rec: k * 30, link: `c${k}` });
+    }
+    const timeline = { name: "Hook v1", fps: 30, width: 1080, height: 1920, tracks, markers: [], sources: { ver_a1: { versionId: "ver_a1", name: "Take", fps: 30, tc: 0, dur: 900, w: 1080, h: 1920 } } };
+    await saveDraft(id, "v1", { timeline, notes: ["A note the draft step wrote"] });
+    const cut = (body: object, user = "maker") => call(user, "POST", `/api/editor/${id}/drafts/v1/cut`, body);
+    const edits = [{ key: "V1:30", label: "Second line", remove: true }, { key: "V1:60", label: "Third line", head: -10 }];
+    // not filed in Review yet, then filed as version 2 of its Review video
+    expect((await cut({ asset: "rev-1", n: 2, edits })).status).toBe(409);
+    await saveStep(id, "review", { v1: { assetId: "rev-1", n: 2 } });
+    expect(await json(cut({ asset: "rev-1", n: 2, edits }))).toMatchObject({ code: "conflict", error: expect.stringContaining("filed before") });
+    await saveFiled(id, "rev-1", 2, { variant: "v1", timeline });
+    expect((await cut({ asset: "rev-1", n: 2, edits }, "other")).status).toBe(404);
+    // an older version's edits, no edits, and an edit that can't be made change nothing
+    expect((await cut({ asset: "rev-1", n: 1, edits })).status).toBe(409);
+    expect((await cut({ asset: "rev-1", n: 2, edits: [] })).status).toBe(400);
+    const refused = await cut({ asset: "rev-1", n: 2, edits: [...edits, { key: "A1:0", label: "First voice", move: 5 }] });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).error).toBe("First voice: a voice stays with its picture, it can only be cut or taken out");
+    expect(readDraft(id, "v1")!.timeline.tracks.V1.items).toHaveLength(3);
+
+    const e = await json<Edit>(cut({ asset: "rev-1", n: 2, edits }));
+    expect(e.jobs.filter((j) => j.state === "queued").map((j) => [j.kind, j.variant])).toEqual([["post", "v1"]]);
+    const d = readDraft(id, "v1")!;
+    expect(d.timeline.tracks.V1.items.map((i) => [i.rec, i.len, i.in])).toEqual([[0, 30, 0], [30, 20, 210]]);
+    expect(d.notes).toEqual(["A note the draft step wrote", "Cut by hand in Review: 2 timeline edits on version 2"]);
+    // while that version is being made, a second cut waits
+    expect(await json(cut({ asset: "rev-1", n: 2, edits }))).toMatchObject({ code: "conflict", error: "This version is still being made" });
     await call("maker", "POST", `/api/editor/${id}/stop`);
   });
 

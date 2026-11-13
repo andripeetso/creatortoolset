@@ -16,7 +16,8 @@ const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { emptyTracks } = await import("./timeline");
-const { createEdit, readStep, saveDraft } = await import("./store");
+const { createEdit, readDraft, readFiled, readStep, saveDraft } = await import("./store");
+const { applyEdits } = await import("./edits");
 const { piecesOf, previewSize, renderPreview, shotFilter } = await import("./preview");
 const { tick } = await import("./worker");
 
@@ -127,8 +128,8 @@ describe("AI Editor preview", () => {
     await saveDraft(e.id, "v1", { timeline: timeline(), notes: [] });
     const d = libraryDb();
     let clock = 10 ** 13;
-    const run = async () => {
-      enqueueJob(d, "mem-a", `${e.id}:v1`, "preview", "mem-a", true, "edit_jobs");
+    const run = async (kind = "preview") => {
+      enqueueJob(d, "mem-a", `${e.id}:v1`, kind, "mem-a", true, "edit_jobs");
       // the file step waits for Review to read the new version: the clock moves on past each deferral
       for (let i = 0; i < 400; i++) {
         const left = d.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(e.id);
@@ -154,5 +155,19 @@ describe("AI Editor preview", () => {
     const again = (await readMeta(filed.assetId))!;
     expect(readStep(e.id, "review")!.v1).toEqual({ assetId: filed.assetId, n: 2 });
     expect(again.versions.map((v) => v.n)).toEqual([1, 2]);
-  }, 120_000);
+
+    // each version is marked as this draft's, has the draft's timeline under its player, and keeps the timeline it was rendered from
+    expect(again.versions[1]).toMatchObject({ draft: { edit: e.id, name: "v1" }, timelineFile: "v1-2.view.json" });
+    expect(readFiled(e.id, filed.assetId, 2)).toEqual({ variant: "v1", timeline: timeline() });
+    expect(readFiled(e.id, "../../etc", 2)).toBeNull();
+
+    // timeline edits cut into that timeline render as the next version: the second shot out leaves half a second
+    const cut = applyEdits(readFiled(e.id, filed.assetId, 2)!.timeline, [{ key: "V1:15", label: "Second shot", remove: true }]);
+    await saveDraft(e.id, "v1", { timeline: cut, notes: [] });
+    expect((await run("post")).map((j) => j.state)).toEqual(["done", "done", "done"]);
+    const third = (await readMeta(filed.assetId))!.versions[2]!;
+    expect(third).toMatchObject({ n: 3, status: "ready", timelineFile: "v1-3.view.json" });
+    expect(Math.abs(third.duration - 0.5)).toBeLessThanOrEqual(1 / 30 + 0.03);
+    expect(readDraft(e.id, "v1")!.timeline.tracks.V1.items).toHaveLength(1);
+  }, 180_000);
 });
