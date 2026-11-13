@@ -114,6 +114,13 @@ describe("search ranking", () => {
     expect(searchSettings("recording shortcut", ALL, undefined, false, true)[0]?.id).toBe("recording-shortcut");
   });
 
+  it("finds the Screen Recorder's settings only in a Mac app that has them, on that tool's page", () => {
+    const has = (mac: boolean, recorder: boolean) => searchSettings("camera quality", ALL, undefined, false, mac, recorder).find((h) => h.id === "recorder-camera-quality");
+    expect(has(true, false)).toBeUndefined();
+    expect(has(false, true)).toBeUndefined();
+    expect(has(true, true)).toMatchObject({ section: "tools", sub: "record" });
+  });
+
   it("finds nothing in a section this install does not show (team on a local server)", () => {
     const local = new Map([...ALL].filter(([id]) => id !== "team" && id !== "admin"));
     expect(searchSettings("invite", local).some((h) => h.section === "team")).toBe(false);

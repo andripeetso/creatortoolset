@@ -64,6 +64,27 @@ const SAVED = "mac-this";
 export const tell = (what: string) => postToApp(`thismac-${what}`);
 
 /**
+ * Whether this Mac app has the Screen Recorder's settings and Save the streams… (it reports `recorder`; 0.15.38 and
+ * later): true, false, or null while an app that has not answered in this window may still say so. False outside the
+ * app. Asks the app once, without polling; its last answer on this device counts at once.
+ */
+export function useMacRecorder(): boolean | null {
+  const user = useAuth((s) => s.me?.username ?? null);
+  const [has, setHas] = useState<boolean | null>(() => {
+    if (!hasThisMac()) return false;
+    return readCached<ThisMacState>(user, SAVED)?.recorder ? true : null;
+  });
+  useEffect(() => {
+    if (!hasThisMac()) return;
+    const handle = (e: Event) => setHas(!!(e as CustomEvent<ThisMacState>).detail?.recorder);
+    window.addEventListener("mac-this", handle);
+    tell("state");
+    return () => window.removeEventListener("mac-this", handle);
+  }, []);
+  return has;
+}
+
+/**
  * The app's state, polled while a Settings page that shows it is open: its last answer at once (`saved`), then each new
  * one. `on` = false (a browser, or a page that does not need it) reads nothing and sends nothing.
  */

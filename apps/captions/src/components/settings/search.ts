@@ -20,7 +20,7 @@ export interface SearchRow {
   description?: string;
   keywords?: readonly string[];
   /** Only shown where sign-in is required (this install has accounts). Not offered by search elsewhere. */
-  needs?: "sign-in" | "mac";
+  needs?: "sign-in" | "mac" | "mac-recorder";
 }
 
 /** The API key rows are one per service in contracts/service-keys.ts (MY_KEYS), so their ids come from it. */
@@ -34,9 +34,9 @@ const STATIC_ROWS = [
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "ask-fit", title: "Ask when dropped footage doesn't fit the open project", keywords: ["assistant", "drop", "footage", "project", "ask"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
-  { section: "tools", sub: "record", id: "recorder-streams", title: "Save the streams separately", description: "Screen, camera, voice and Mac sound as their own files (Screen Recorder)", keywords: ["record", "screen recorder", "camera", "streams", "separate", "files", "ai", "mac app"], needs: "mac" },
-  { section: "tools", sub: "record", id: "recorder-screen-quality", title: "Screen quality", description: "How sharp the Screen Recorder records the screen", keywords: ["record", "screen recorder", "quality", "resolution", "4k", "1080p", "size", "mac app"], needs: "mac" },
-  { section: "tools", sub: "record", id: "recorder-camera-quality", title: "Camera quality", description: "How sharp the Screen Recorder records the camera", keywords: ["record", "screen recorder", "camera", "webcam", "quality", "resolution", "4k", "1080p", "720p", "mac app"], needs: "mac" },
+  { section: "tools", sub: "record", id: "recorder-streams", title: "Save the streams separately", description: "Screen, camera, voice and Mac sound as their own files (Screen Recorder)", keywords: ["record", "screen recorder", "camera", "streams", "separate", "files", "ai", "mac app"], needs: "mac-recorder" },
+  { section: "tools", sub: "record", id: "recorder-screen-quality", title: "Screen quality", description: "How sharp the Screen Recorder records the screen", keywords: ["record", "screen recorder", "quality", "resolution", "4k", "1080p", "size", "mac app"], needs: "mac-recorder" },
+  { section: "tools", sub: "record", id: "recorder-camera-quality", title: "Camera quality", description: "How sharp the Screen Recorder records the camera", keywords: ["record", "screen recorder", "camera", "webcam", "quality", "resolution", "4k", "1080p", "720p", "mac app"], needs: "mac-recorder" },
   { section: "voice", id: "dictation", title: "Dictation", description: "Talk, and the words go where the cursor is (Mac app)", keywords: ["dictate", "dictation", "speech", "voice", "talk", "transcribe", "whisper", "set up", "setup", "guide", "mac app"], needs: "mac" },
   { section: "voice", id: "dictation-key-talk", title: "Talk key", description: "Tap to start and stop, or hold a key like fn while you talk", keywords: ["dictation", "fn", "globe", "option", "hold", "key", "shortcut", "push to talk", "f13", "mac app"], needs: "mac" },
     { section: "voice", id: "dictation-key-cancel", title: "Cancel key", keywords: ["dictation", "cancel", "key", "shortcut", "f16", "mac app"], needs: "mac" },
@@ -175,6 +175,8 @@ export function searchSettings(
   index: readonly SearchRow[] = SETTINGS_SEARCH_INDEX,
   signInRequired = false,
   macApp = false,
+  /** The Mac app has the Screen Recorder's settings (rows with needs "mac-recorder"). */
+  macRecorder = false,
 ): SearchHit[] {
   const q = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (!q) return [];
@@ -182,7 +184,8 @@ export function searchSettings(
   const rows: Array<SearchRow & { sectionTitle: string }> = [];
   for (const r of index) {
     const sectionTitle = sections.get(r.section);
-    if (sectionTitle !== undefined && (!r.needs || (r.needs === "mac" ? macApp : signInRequired))) rows.push({ ...r, sectionTitle });
+    const shown = !r.needs || (r.needs === "mac" ? macApp : r.needs === "mac-recorder" ? macApp && macRecorder : signInRequired);
+    if (sectionTitle !== undefined && shown) rows.push({ ...r, sectionTitle });
   }
   // a section by its own title (plug-in sections have no rows in the index)
   for (const [section, title] of sections) rows.push({ section: section as SettingsPageId, id: "", title, sectionTitle: title });

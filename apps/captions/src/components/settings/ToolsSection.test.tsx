@@ -55,6 +55,9 @@ describe("Settings → Tools", () => {
     for (const t of ["workshop", "instagram", "captions", "editor"] as const) expect(hasToolPage(t, null)).toBe(true);
     expect(hasToolPage("enhance", null)).toBe(false);
     expect(hasToolPage("enhance", { steps: [engine as never], canAdd: true })).toBe(true);
+    // the Screen Recorder has a page only in a Mac app that has its settings (one that reports `recorder`)
+    expect(hasToolPage("record", null)).toBe(false);
+    expect(hasToolPage("record", null, true)).toBe(true);
     expect(skillPlacesOf("editor")).toEqual(["editor.script"]);
     expect(skillPlacesOf("workshop")).toEqual(["workshop.write", "workshop.review"]);
     expect(skillPlacesOf("review")).toEqual([]);
