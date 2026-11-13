@@ -144,6 +144,40 @@ describe("many chats", () => {
     expect((await p.chats()).find((c) => c.id === b)?.settled).toBeUndefined();
   });
 
+  it("unread: a reply that ended since you sent or looked marks its chat, and looking at it clears the mark", async () => {
+    const p = await person("una");
+    const b = await p.make();
+    await p.sendTo(b, { text: "Tell me when it is done" });
+    // still being written: working, not unread
+    expect((await p.chats()).find((c) => c.id === b)).toMatchObject({ working: true });
+    expect((await p.chats()).find((c) => c.id === b)?.unread).toBeUndefined();
+    await p.answer((await p.claim()).id, "It is done.");
+    await settled(p, b);
+    expect((await p.chats()).find((c) => c.id === b)?.unread).toBe(true);
+    expect((await app.request("/api/assistant/chats/nope/seen", { method: "POST", headers: { cookie: p.cookie } })).status).toBe(404);
+    await tick(5);
+    expect((await app.request(`/api/assistant/chats/${b}/seen`, { method: "POST", headers: { cookie: p.cookie } })).status).toBe(200);
+    expect((await p.chats()).find((c) => c.id === b)?.unread).toBeUndefined();
+  });
+
+  it("navigate: the page a reply asks for opens in its own chat, never under the chat that is open", async () => {
+    const p = await person("nav");
+    const b = await p.make();
+    await p.sendTo(b, { text: "Open the Workshop for me" });
+    const job = await p.claim();
+    expect((await tool(job.mcp.token, "navigate", { path: "/workshop" })).isError).toBeFalsy();
+    // the open chat is another one: its page stays where it is
+    expect((await p.view()).navigate).toBeNull();
+    expect((await p.chat(b)).navigate).toBe("/workshop");
+    await p.answer(job.id, "Opened.");
+    await settled(p, b);
+    // that chat becomes the open one: now the page is asked for, once
+    const opened = (await (await app.request(`/api/assistant/past/${b}/open`, { method: "POST", headers: { cookie: p.cookie } })).json()) as View;
+    expect(opened.navigate).toBe("/workshop");
+    await app.request("/api/assistant/navigated", { method: "POST", headers: { cookie: p.cookie } });
+    expect((await p.view()).navigate).toBeNull();
+  });
+
   it(`the cap: ${MAX_RUNNING} replies at once, the next waits in send order and starts when one ends; the list says which are working`, async () => {
     const p = await person("bo");
     const ids = [await p.make(), await p.make(), await p.make(), await p.make()];

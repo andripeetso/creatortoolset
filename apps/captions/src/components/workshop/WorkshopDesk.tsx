@@ -60,14 +60,14 @@ export function DeskControls({
   // wraps on a phone: the chips in the bar's action row must not set the row's width (408 px on a 390 px screen)
   return (
     <div className="flex max-w-full flex-wrap items-center gap-1 sm:flex-nowrap">
-      <button type="button" className={btn(layout.geometry === "stacked" && !layout.focus)} onClick={() => onChange((d) => setGeometry(d, "stacked"))} aria-pressed={layout.geometry === "stacked" && !layout.focus} aria-label="Stacked" title="Stacked">
-        <Rows2 className="mr-1 inline h-3 w-3 chat:mr-0" /><span className="chat:hidden"> Stacked</span>
+      <button type="button" className={btn(layout.geometry === "stacked" && !layout.focus)} onClick={() => onChange((d) => setGeometry(d, "stacked"))} aria-pressed={layout.geometry === "stacked" && !layout.focus}>
+        <Rows2 className="mr-1 inline h-3 w-3" /> Stacked
       </button>
-      <button type="button" className={btn(layout.geometry === "columns" && !layout.focus)} onClick={() => onChange((d) => setGeometry(d, "columns"))} aria-pressed={layout.geometry === "columns" && !layout.focus} aria-label="Columns" title="Columns">
-        <Columns2 className="mr-1 inline h-3 w-3 chat:mr-0" /><span className="chat:hidden"> Columns</span>
+      <button type="button" className={btn(layout.geometry === "columns" && !layout.focus)} onClick={() => onChange((d) => setGeometry(d, "columns"))} aria-pressed={layout.geometry === "columns" && !layout.focus}>
+        <Columns2 className="mr-1 inline h-3 w-3" /> Columns
       </button>
-      <button type="button" className={btn(focused)} onClick={() => onChange((d) => enterFocus(d, "writing"))} aria-pressed={focused} aria-label="Focus" title="Writing only — Esc to restore">
-        <Maximize2 className="mr-1 inline h-3 w-3 chat:mr-0" /><span className="chat:hidden"> Focus</span>
+      <button type="button" className={btn(focused)} onClick={() => onChange((d) => enterFocus(d, "writing"))} aria-pressed={focused} title="Writing only — Esc to restore">
+        <Maximize2 className="mr-1 inline h-3 w-3" /> Focus
       </button>
       <span className="mx-0.5 h-4 w-px bg-border" />
       <div

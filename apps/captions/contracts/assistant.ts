@@ -220,6 +220,8 @@ export interface AssistantChat {
   working?: true;
   /** A reply in it waits for the person: an Allow / Deny, a Yes / No card, or a key's box. */
   asks?: true;
+  /** Its newest reply ended after the person last sent a message in it or looked at it (POST /chats/:id/seen). */
+  unread?: true;
   /** Settled (POST /chats/:id/settle) and nothing new in it since: folded away on every device. */
   settled?: true;
 }
