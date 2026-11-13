@@ -131,23 +131,27 @@ describe("speechFor with computers", () => {
     expect(speechFor("ana", "transcripts")).toEqual({ needs: "Needs a speech model on one of your computers" });
   });
 
-  // transcripts and captions run on computers (COMPUTER_USES): no other use is offered them or sent there
+  // transcripts, captions and the mic run on computers (COMPUTER_USES): the AI Editor is not offered them or sent there
   it("the other uses never offer or pick a model on a computer", async () => {
     writeVoicePrefs("ana", { stt: { default: { engine: "auto" }, per: { transcripts: null } } });
     const v = (await (await app.request("/api/voice-prefs", { headers: { authorization: key } })).json()) as { available: string[]; availableFor: Record<string, string[]> };
     expect(v.availableFor.transcripts).toContain("local");
     expect(v.availableFor.captions).toContain("local");
-    for (const use of ["editor", "mic"]) expect(v.availableFor[use]).not.toContain("local");
+    expect(v.availableFor.mic).toContain("local");
+    expect(v.availableFor.editor).not.toContain("local");
     expect(v.available).not.toContain("local");
-    // auto with no key: transcripts and captions run on a computer, the others say what to add
+    // auto with no key: transcripts, captions and the mic run on a computer, the AI Editor says what to add
     expect(speechFor("ana", "transcripts")).toMatchObject({ engine: "local", on: "computers" });
     expect(speechFor("ana", "captions")).toMatchObject({ engine: "local", on: "computers" });
+    expect(speechFor("ana", "mic")).toMatchObject({ engine: "local", on: "computers" });
     expect(speechFor("ana", "editor")).toEqual({ needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" });
     // local by default, or a computer's model chosen for a use: it says what the computers do
     writeVoicePrefs("ana", { stt: { default: { engine: "local" } } });
-    expect(speechFor("ana", "editor")).toEqual({ needs: "Speech models on your computers do captions and Media Library transcripts only" });
-    writeVoicePrefs("ana", { stt: { per: { mic: { engine: "local", model: "whisper-large-v3-turbo" } } } });
-    expect(speechFor("ana", "mic")).toEqual({ needs: "Speech models on your computers do captions and Media Library transcripts only" });
+    expect(speechFor("ana", "editor")).toEqual({ needs: "Speech models on your computers do captions, Media Library transcripts and the assistant's mic only" });
+    writeVoicePrefs("ana", { stt: { per: { editor: { engine: "local", model: "whisper-large-v3-turbo" } } } });
+    expect(speechFor("ana", "editor")).toEqual({ needs: "Speech models on your computers do captions, Media Library transcripts and the assistant's mic only" });
+    writeVoicePrefs("ana", { stt: { per: { editor: null, mic: { engine: "local", model: "whisper-large-v3-turbo" } } } });
+    expect(speechFor("ana", "mic")).toMatchObject({ engine: "local", model: "whisper-large-v3-turbo", on: "computers" });
     writeVoicePrefs("ana", { stt: { default: { engine: "auto" }, per: { mic: null } } });
   });
 });

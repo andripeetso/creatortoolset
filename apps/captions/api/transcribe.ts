@@ -8,8 +8,8 @@ import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
-import { readVoicePrefs, speechFor } from "./lib/speech";
-import { NeedsKey, transcribeFile } from "./library/transcribe";
+import { availableEngines, readVoicePrefs, speechFor } from "./lib/speech";
+import { NeedsKey, transcribeFile, type Route } from "./library/transcribe";
 import { CAPTION_LIMITS, ComputerBusy, ComputerOff, transcribeOnComputer } from "./lib/computer-transcribe";
 import { STT_MODELS } from "../contracts/voice";
 import type { TranscribeResult } from "../contracts/devices";
@@ -49,6 +49,10 @@ export function captionsComputer(user: AuthVars["user"]): { model: string; langu
  * The words from the person's own computers (lib/computer-transcribe.ts, the road Media Library transcripts take), or
  * why not in a few words for the note the page shows when another engine wrote them.
  */
+/** Why the person's computers did not write it, in a few words (the note a page shows). */
+const computersWhy = (e: unknown) =>
+  e instanceof ComputerOff ? "Your computers are off" : e instanceof ComputerBusy ? "Your computers are busy" : "Your computers could not do it";
+
 async function wordsFromComputer(owner: string, pc: { model: string; languages: string[] }, audio: ArrayBuffer): Promise<TranscribeResult | { why: string }> {
   const scratch = path.join(env.dataDir, "library", "scratch");
   await mkdir(scratch, { recursive: true });
@@ -58,7 +62,7 @@ async function wordsFromComputer(owner: string, pc: { model: string; languages: 
     return await transcribeOnComputer(owner, pc.model, pc.languages, file, CAPTION_LIMITS);
   } catch (e) {
     console.warn(`[transcribe] captions for ${owner} not from their computers: ${e instanceof Error ? e.message : e}`);
-    return { why: e instanceof ComputerOff ? "Your computers are off" : e instanceof ComputerBusy ? "Your computers are busy" : "Your computers could not do it" };
+    return { why: computersWhy(e) };
   } finally {
     await rm(file, { force: true });
   }
@@ -400,14 +404,28 @@ transcribeApp.post("/", async (c) => {
   return c.json(note ? { ...result, note } : result);
 });
 
+/**
+ * What writes the mic down when the person's computers can't: the first engine that serves them without a computer
+ * (their Deepgram key, their OpenAI key, the server's own model when it runs on its owner's computer), and its name for
+ * the note; null when there is none.
+ */
+function micFallback(user: AuthVars["user"]): { route: Route; by: string } | null {
+  const e = availableEngines(user).find((x) => x === "local" || mayUseCloud(user));
+  if (e === "local") return { route: { provider: "device" }, by: "written by this server's model" };
+  if (!e) return null;
+  return { route: { provider: e, key: keyFor(user, e === "deepgram" ? "DEEPGRAM_API_KEY" : "OPENAI_API_KEY").key }, by: `written by ${e === "deepgram" ? "Deepgram" : "OpenAI"}` };
+}
+
 /** Longest recording the mic takes: two minutes are 3.8 MB as the browser's WAV, under 1 MB as the phone's AAC. */
 const MIC_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * Talking to the assistant (the web dock's mic and the phone's): a short recording in any format ffmpeg reads (WAV, the
  * phone's m4a) → `{ text, language }`, written down by the engine the person chose for `mic` (Settings → AI → Voice,
- * speechFor) in their languages. With no engine it answers NEEDS_KEY and what to add. The text is never sent anywhere
- * from here: it goes into the message box.
+ * speechFor) in their languages. With no engine it answers NEEDS_KEY and what to add. On their own computers, when
+ * those can't (off, busy, slow, failing: MIC_LIMITS) it is written another way (micFallback) with a `note` saying so,
+ * and with no other way it answers NEEDS_KEY with `why`, never `chosen`, so the web dock writes it in the browser.
+ * The text is never sent anywhere from here: it goes into the message box.
  */
 transcribeApp.post("/mic", async (c) => {
   const user = c.get("user");
@@ -428,9 +446,21 @@ transcribeApp.post("/mic", async (c) => {
   await mkdir(scratch, { recursive: true });
   const src = path.join(scratch, `mic-${randomUUID()}`);
   await writeFile(src, audio);
+  const said = (t: Awaited<ReturnType<typeof transcribeFile>>, note?: string) =>
+    c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language, ...(note ? { note } : {}) });
   try {
-    const t = await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true });
-    return c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language });
+    if (s.engine === "local" && s.on === "computers") {
+      try {
+        return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true }));
+      } catch (e) {
+        const why = computersWhy(e);
+        console.warn(`[transcribe] mic for ${user.username} not from their computers: ${e instanceof Error ? e.message : e}`);
+        const other = micFallback(user);
+        if (!other) return c.json({ error: `${why}. Needs a Deepgram key`, code: "NEEDS_KEY", chosen: false, why }, 402);
+        return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true, route: other.route }), `${why}: ${other.by}`);
+      }
+    }
+    return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true }));
   } catch (e) {
     if (e instanceof NeedsKey) return c.json({ error: e.message, code: "NEEDS_KEY" }, 402);
     return c.json({ error: e instanceof Error ? e.message : "Couldn't write that down" }, 502);

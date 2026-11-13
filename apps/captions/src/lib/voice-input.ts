@@ -22,10 +22,14 @@ async function toPcm16k(blob: Blob): Promise<Float32Array> {
   return audio.getChannelData(0);
 }
 
-async function writeDown(recording: Blob, onProgress: (p: number) => void): Promise<string> {
+/**
+ * The words, and `note` when another engine than the chosen one wrote them (the person's computers couldn't): the
+ * server's own note, or why its computers didn't when the browser wrote it.
+ */
+export async function writeDown(recording: Blob, onProgress: (p: number) => void): Promise<{ text: string; note?: string }> {
   const res = await fetch("/api/transcribe/mic", { method: "POST", headers: { "Content-Type": recording.type || "application/octet-stream" }, body: recording });
-  if (res.ok) return ((await res.json()) as { text: string }).text;
-  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; chosen?: boolean };
+  if (res.ok) return (await res.json()) as { text: string; note?: string };
+  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; chosen?: boolean; why?: string };
   // an engine the person picked that can't run says so; only Automatic falls back to the browser's model
   if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Couldn't write that down (${res.status})`);
   // no engine on the server for this account: the captions' local model, else the first
@@ -34,10 +38,11 @@ async function writeDown(recording: Blob, onProgress: (p: number) => void): Prom
   const words = await transcribeAudio(await toPcm16k(recording), engine && engine !== CLOUD_MODEL_ID ? engine : MODELS[0].id, null, await detectDevice(), {
     onLoadProgress: (p) => onProgress(p),
   }).promise;
-  return words
+  const text = words
     .map((w) => w.text.trim())
     .filter(Boolean)
     .join(" ");
+  return e.why ? { text, note: `${e.why}: written in the browser` } : { text };
 }
 
 export function useVoiceInput(onText: (text: string) => void) {
@@ -124,9 +129,12 @@ export function useVoiceInput(onText: (text: string) => void) {
 
     setPhase("writing");
     try {
-      const text = await writeDown(new Blob(chunks, { type: recorder.mimeType }), setProgress);
+      const { text, note } = await writeDown(new Blob(chunks, { type: recorder.mimeType }), setProgress);
       if (text) textTo.current(text);
-      else setError("Didn't catch anything. Try again a little closer to the mic.");
+      // a note (another engine wrote it because the person's computers couldn't) is not an error: the dock's only line
+      // for the mic is its red error line, so the note stays unsaid there and the words simply arrive
+      void note;
+      setError(text ? null : "Didn't catch anything. Try again a little closer to the mic.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't write that down");
     }

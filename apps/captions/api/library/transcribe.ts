@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
-import { needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
+import { MIC_LIMITS, needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
 import { speechFor } from "../lib/speech";
 import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
@@ -45,7 +45,7 @@ export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]
   return r;
 }
 
-type Route = { provider: "deepgram" | "openai"; key: string } | { provider: "device" } | { provider: "computer"; model: string; languages: string[] };
+export type Route = { provider: "deepgram" | "openai"; key: string } | { provider: "device" } | { provider: "computer"; model: string; languages: string[] };
 
 /**
  * What transcribes `use` for `actor` (lib/speech.ts speechFor): their key, this computer when the server is on it, or a
@@ -148,9 +148,9 @@ async function device(file: string, status: string): Promise<Transcribed> {
   return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
 }
 
-/** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches. */
-async function computer(file: string, actor: string, model: string, languages: string[]): Promise<Transcribed> {
-  const { words, language } = await transcribeOnComputer(actor, model, languages, file);
+/** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches; `soon`: the mic's limits. */
+async function computer(file: string, actor: string, model: string, languages: string[], soon: boolean): Promise<Transcribed> {
+  const { words, language } = await transcribeOnComputer(actor, model, languages, file, soon ? MIC_LIMITS : {});
   return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
 }
 
@@ -158,16 +158,16 @@ async function computer(file: string, actor: string, model: string, languages: s
  * A file's transcript as its actor's key gives it, or this computer: the route first (no audio is cut without one),
  * then the provider. Throws NeedsKey without a route. `status` names an on-device run (a version's id) for deviceStatus.
  * `use` picks the engine (Settings → AI → Voice); `fillers` keeps "um" and "uh" (the AI Editor cuts at them); `soon`: a
- * person is waiting for it (the mic), so its audio is cut before the queued long runs.
+ * person is waiting for it (the mic), so its audio is cut before the queued long runs and a computer must take it at
+ * once (MIC_LIMITS). `route`: this engine instead of the one `use` picks (the mic's fallback when its computers can't).
  */
 export async function transcribeFile(
   src: string,
   actor: string | null,
   scratch: string,
   status: string = src,
-  { use = "transcripts", fillers = true, soon = false, languages }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[] } = {},
+  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use) }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route } = {},
 ): Promise<Transcribed & { provider: Route["provider"] }> {
-  const route = transcribeRoute(actor, use);
   // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
   if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
   await mkdir(scratch, { recursive: true });
@@ -178,7 +178,7 @@ export async function transcribeFile(
     else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(wav ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])], soon);
     const t =
       route.provider === "device" ? await device(out, status)
-      : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages)
+      : route.provider === "computer" ? await computer(out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon)
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
       : await openai(out, route.key, languages);
     return { ...t, provider: route.provider };
