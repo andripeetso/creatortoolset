@@ -25,6 +25,7 @@ import {
   useAssistant,
 } from "@/lib/assistant";
 import { bareNow, useChatMode, useChatModeKey, useChatModeLayout, washTo } from "@/lib/chat-mode";
+import { historyDepth } from "@/lib/history-depth";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
@@ -272,12 +273,18 @@ export function AssistantDock() {
   // the page is not on show (only chats, or a new chat's start) and a link is followed (a card, the app's name, a page
   // the assistant opens): the page shows
   const route = pathname + search;
-  const routeWas = useRef(route);
+  // the page's address, as last seen (null until the first one that is not a dialog's)
+  const routeWas = useRef<string | null>(null);
   const forcedFull = useRef(false);
   forcedFull.current = showChatMode && layout.forced;
   useEffect(() => {
-    if (routeWas.current === route) return;
+    // Settings, Projects and Community open over the whole window (App.tsx): they are not the page. One opened from
+    // the chats stands over them, and when it closes the page is where and as it was
+    if (historyDepth.modal.has(window.history.state?.idx ?? 0)) return;
+    const was = routeWas.current;
     routeWas.current = route;
+    // the first page seen (the app loaded on it, or on a dialog over it) is no link followed
+    if (was === null || was === route) return;
     const cm = useChatMode.getState();
     if (!cm.on) return;
     // a window with no room for the page beside the chats: the page is what was asked for, the assistant floats over it

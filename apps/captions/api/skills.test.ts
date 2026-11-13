@@ -435,9 +435,10 @@ describe("who may write a skill", () => {
 describe("a skill saved before skills had a place", () => {
   it("is the assistant's, as it was: the same line, skill_read gives its text byte for byte, nothing is checked or written on read, and the Workshop no longer gets it", async () => {
     await clear();
+    // the project is made first: a message says which one is open, and the two turns compared below must say the same
+    const w = await workshop("Tiny Acrobatics");
     const before = await dockTurn();
     await before.end();
-    const w = await workshop("Tiny Acrobatics");
     const plain = await writerTurn(w);
     await fail(w, plain);
 

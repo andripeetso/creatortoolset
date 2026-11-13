@@ -55,6 +55,16 @@ async function pick(from: "page" | "frame", name: string) {
   await act(async () => { (item as HTMLElement).click(); });
 }
 
+describe("the project picker's menu", () => {
+  it("has the way to a new project: the form, not the list", () => {
+    act(() => {
+      host!.querySelector("#frame button")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }));
+    });
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent?.includes("New project"));
+    expect(item?.getAttribute("href")).toBe("/projects?add=1");
+  });
+});
+
 describe("the project picker under the chats", () => {
   it("does what the page's own picker does, once", async () => {
     useChatMode.setState({ pane: 700 });

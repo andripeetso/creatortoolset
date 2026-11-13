@@ -140,7 +140,8 @@ interface Held {
   url: string;
   admin: boolean;
   at: number;
-  /** The line that asks whether dropped footage fits the open project (askFit), as it was when the message was sent. */
+  /** What the message says about the project, as it was when the message was sent: which one is open (projectLine), or
+   *  with dropped footage the question whether it belongs there (fitLine, askFit). */
   fit?: string;
   /** A reply that carries on once a file on the user's computer is on this server (askSend): the tool it goes to. */
   send?: AssistantFileUse;
@@ -798,6 +799,14 @@ const FIT_OFF_SAID = "That answer turned the question off (Settings, General has
 export const fitLine = (project: string) =>
   `The project open in the app is ${JSON.stringify(project)}. If the footage clearly doesn't belong there (by its file names, what the user said and, once read, what is said in it), say so in one line and offer_choices "${FIT_NEW}" / ${JSON.stringify(`Keep it in ${project}`)} / "${FIT_OFF}" ("${FIT_OFF}" turns this question off by itself).`;
 
+/**
+ * Told with every message sent while a project is open: which one, and its id. The tools that take a project use the
+ * app's current one when they get none, and that may be another by the time a tool runs (the project is the account's,
+ * not the chat's: picked for a new chat, it is picked for every chat).
+ */
+export const projectLine = (project: { id: string; name: string }) =>
+  `The user's current project is ${JSON.stringify(project.name.replace(/\s+/g, " ").trim().slice(0, 60))} (id ${project.id}). Work in it unless they name another: give this id to a tool that takes a project.`;
+
 /** The prompt: the recent messages, what came with the newest one, then the reply it is for. */
 function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
   const newest = input ? [...messages].reverse().find((m) => m.role === "user") : undefined;
@@ -1410,8 +1419,10 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
   if (fitOff) writeWorkPrefs(u.username, { askFit: false });
-  const project = (files.length || input.paths.length || input.local.length) && readWorkPrefs(u.username).askFit !== false ? await currentProject(u).catch(() => undefined) : undefined;
-  const fit = fitOff ? FIT_OFF_SAID : project ? fitLine(project.name) : undefined;
+  const project = await currentProject(u).catch(() => undefined);
+  const footage = files.length || input.paths.length || input.local.length;
+  // the project is named once: by the question whether dropped footage belongs there, else by its own line
+  const fit = fitOff ? FIT_OFF_SAID : !project ? undefined : footage && readWorkPrefs(u.username).askFit !== false ? fitLine(project.name) : projectLine(project);
   const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
   if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
