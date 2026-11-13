@@ -7,18 +7,22 @@ import { clampZoom, fitPps, maxZoomOf, scrollForZoom, scrollToFollow } from "./t
  * where the playhead is when asked (a timeline that moves its playhead without a render has no time to hand over as a
  * value); `follow` is for whoever hears the time move.
  *
- * `left` and `right` are the px of the scroller's content before 0:00 and after the end; `maxPps` the widest a second gets.
+ * `left` and `right` are the px of the scroller's content before 0:00 and after the end; `maxPps` the widest a second
+ * gets. A timeline that doesn't open on its whole length gives `startPps`, the width of a second it opens at (never
+ * narrower than the whole length fitted, never wider than `maxPps`): taken once the length is known, and again for a
+ * new length.
  */
-export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, now }: {
+export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, now, startPps }: {
   scroller: RefObject<HTMLElement | null>;
   seconds: number;
   left?: number;
   right?: number;
   maxPps: number;
   now: () => number;
+  startPps?: number;
 }) {
   const [width, setWidth] = useState(600);
-  const [zoom, setZoom] = useState(1);
+  const [asked, setZoom] = useState(1);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -29,6 +33,8 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
   }, [scroller]);
   const base = fitPps(width, seconds, left, right);
   const maxZoom = maxZoomOf(base, maxPps);
+  // never past the widest a second gets, also when the scroller got wider or the length shorter since the zoom was set
+  const zoom = Math.min(asked, maxZoom);
   const pps = base * zoom;
 
   // several wheel events can land before a render, so the latest zoom and the scroll it wants live here
@@ -45,9 +51,19 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
   const zoomBy = (factor: number) => zoomTo(live.current.zoom * factor);
   const zoomRef = useRef(zoomBy);
   useLayoutEffect(() => {
-    Object.assign(live.current, { base, maxPps, now });
+    Object.assign(live.current, { zoom, base, maxPps, now });
     zoomRef.current = zoomBy;
   });
+  // the width it opens at: measured on the scroller itself, since the first render has no width yet
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !startPps || !(seconds > 0)) return;
+    const fit = fitPps(el.clientWidth, seconds, left, right);
+    const z = clampZoom(startPps / fit, fit, maxPps);
+    live.current.zoom = z;
+    setZoom(z);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per length
+  }, [seconds, scroller]);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && live.current.scroll !== null) el.scrollLeft = live.current.scroll;

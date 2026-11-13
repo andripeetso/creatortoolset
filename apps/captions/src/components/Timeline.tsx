@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Layers,
   Loader2,
@@ -19,6 +19,7 @@ import {
 import { isEditorBusy, playerRef, useStudio } from "@/lib/store";
 import { useShareTheme } from "@/components/ShareTheme";
 import { fmtTimecode } from "@/lib/ass";
+import { useTimeAxis } from "@/lib/use-time-axis";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +36,8 @@ const EDGE_GRAB_PX = 5;
 const SNAP_PX = 6;
 const MIN_TEXT_DUR = 0.2;
 const MAX_ZOOM = 300;
+/** Px a second the timeline opens at. */
+const START_PPS = 60;
 /** Browsers cap canvas dimensions (~16384px) — wider canvases silently
  *  die and paint white, so the zoom must stop before width × dpr hits it. */
 const MAX_CANVAS_PX = 15000;
@@ -83,14 +86,27 @@ export function Timeline() {
   const retranscribeRange = useStudio((s) => s.retranscribeRange);
   const transcribing = editorBusy;
 
-  const [pxPerSec, setPxPerSec] = useState(60);
-  const [viewportW, setViewportW] = useState(0);
   const [showLayers, setShowLayers] = useState(
     () => posSegments.length > 0 || texts.length > 0
   );
   const [selectedPosId, setSelectedPosId] = useState<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The time axis the app's timelines share (lib/use-time-axis.ts): ⌥ + scroll or a pinch zooms about the playhead,
+  // ⌘ + scroll pans, = / - zoom and \ fits the clip. It opens at START_PPS (on the whole clip when that is wider),
+  // never gets narrower than the viewport, and stops where the canvas (duration × px a second) would be too wide to
+  // allocate: a 3 min clip at 300 px/s would need 54k px and break.
+  const axis = useTimeAxis({
+    scroller: scrollRef,
+    seconds: duration,
+    startPps: START_PPS,
+    maxPps: duration > 0 ? Math.min(MAX_ZOOM, MAX_CANVAS_PX / duration / (window.devicePixelRatio || 1)) : MAX_ZOOM,
+    now: () => useStudio.getState().currentTime,
+  });
+  const pxPerSec = axis.pps;
+  // the key handler below is set up once: it reaches the axis as it is now through this
+  const axisRef = useRef(axis);
+  axisRef.current = axis;
   const dragging = useRef<Drag | null>(null);
   // undo snapshot is taken on the first real drag movement, not on
   // pointerdown — clicking a clip just to select it costs no undo step
@@ -342,87 +358,6 @@ export function Timeline() {
     draw();
   }, [draw]);
 
-  // zooming out stops at fit-to-width: the tracks never get narrower than
-  // the viewport
-  useEffect(() => {
-    const sc = scrollRef.current;
-    if (!sc) return;
-    const measure = () => setViewportW(sc.clientWidth);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(sc);
-    return () => ro.disconnect();
-  }, []);
-  const minZoom =
-    viewportW > 0 && duration > 0
-      ? Math.min(MAX_ZOOM, viewportW / duration)
-      : 10;
-  // the canvas is duration × pxPerSec wide — cap zoom so it stays
-  // allocatable (a 3min clip at 300px/s would need 54k px and break)
-  const maxZoom =
-    duration > 0
-      ? Math.max(
-          minZoom,
-          Math.min(
-            MAX_ZOOM,
-            MAX_CANVAS_PX / duration / (window.devicePixelRatio || 1)
-          )
-        )
-      : MAX_ZOOM;
-  useEffect(() => {
-    setPxPerSec((z) => Math.max(z, minZoom));
-  }, [minZoom]);
-  useEffect(() => {
-    setPxPerSec((z) => Math.min(z, maxZoom));
-  }, [maxZoom]);
-
-  // zoom anchored to the playhead: keep it at the same viewport x while
-  // zooming (or center it when it's off-screen)
-  const zoomAnchor = useRef<number | null>(null);
-  // several wheel events can land before a render: the latest zoom lives here
-  const liveZoom = useRef(pxPerSec);
-  const applyZoom = (nz: number) => {
-    const z = Math.max(minZoom, Math.min(maxZoom, nz));
-    if (z === liveZoom.current) return;
-    const sc = scrollRef.current;
-    if (sc && zoomAnchor.current === null) {
-      const vx = currentTime * pxPerSec - sc.scrollLeft;
-      zoomAnchor.current =
-        vx >= 0 && vx <= sc.clientWidth ? vx : sc.clientWidth / 2;
-    }
-    liveZoom.current = z;
-    setPxPerSec(z);
-  };
-  useEffect(() => {
-    const sc = scrollRef.current;
-    if (!sc || zoomAnchor.current === null) return;
-    sc.scrollLeft = currentTime * pxPerSec - zoomAnchor.current;
-    zoomAnchor.current = null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pxPerSec]);
-  const zoomRef = useRef(applyZoom);
-  useLayoutEffect(() => {
-    liveZoom.current = pxPerSec;
-    zoomRef.current = applyZoom;
-  });
-  // ⌥ + scroll or a pinch zooms about the playhead, ⌘ + scroll pans (Review)
-  useEffect(() => {
-    const sc = scrollRef.current;
-    if (!sc) return;
-    const onWheel = (e: WheelEvent) => {
-      if (e.altKey || (e.ctrlKey && !e.metaKey)) {
-        e.preventDefault(); // a pinch arrives as Ctrl + wheel
-        const f = Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) * 0.006);
-        zoomRef.current(liveZoom.current * f);
-      } else if (e.metaKey) {
-        e.preventDefault();
-        sc.scrollLeft += e.deltaY + e.deltaX;
-      }
-    };
-    sc.addEventListener("wheel", onWheel, { passive: false });
-    return () => sc.removeEventListener("wheel", onWheel);
-  }, []);
-
   // playback speed and J / K / L shuttle, as in Review: L plays 2×, again
   // 4×, 8×; J the same backwards (the picture steps back: a video can't
   // play in reverse); K stops; 1 / 2 / 3 the same
@@ -507,10 +442,7 @@ export function Timeline() {
       if (k === "k" || k === "2") shuttleTo(0);
       else if (k === "l" || k === "3") shuttleTo(sh > 0 ? Math.min(sh * 2, 8) : 2);
       else if (k === "j" || k === "1") shuttleTo(sh < 0 ? Math.max(sh * 2, -8) : -2);
-      else if (k === "=" || k === "+") zoomRef.current(liveZoom.current * 1.4);
-      else if (k === "-") zoomRef.current(liveZoom.current / 1.4);
-      else if (k === "\\") zoomRef.current(0);
-      else return;
+      else if (!axisRef.current.key(e)) return; // = / - zoom, \ fits the clip
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
@@ -519,12 +451,8 @@ export function Timeline() {
 
   // follow playhead while playing
   useEffect(() => {
-    const sc = scrollRef.current;
-    if (!sc || !playing) return;
-    const x = currentTime * pxPerSec;
-    if (x < sc.scrollLeft + 40 || x > sc.scrollLeft + sc.clientWidth - 80) {
-      sc.scrollLeft = x - sc.clientWidth * 0.3;
-    }
+    if (playing) axis.follow(currentTime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follow reads the axis as it is now
   }, [currentTime, playing, pxPerSec]);
 
   // selecting a text elsewhere (e.g. clicking it on the video) drops the
@@ -986,7 +914,7 @@ export function Timeline() {
         )}
         <div className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => applyZoom(pxPerSec / 1.4)}
+            onClick={() => axis.zoomBy(1 / 1.5)}
             title="Zoom out (-) · ⌥ scroll or pinch zooms, \ fits"
             className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
@@ -994,15 +922,15 @@ export function Timeline() {
           </button>
           <input
             type="range"
-            min={minZoom}
-            max={maxZoom}
+            min={axis.base}
+            max={axis.base * axis.maxZoom}
             step="any"
             value={pxPerSec}
-            onChange={(e) => applyZoom(Number(e.target.value))}
+            onChange={(e) => axis.zoomTo(Number(e.target.value) / axis.base)}
             className="h-1 w-24 accent-violet-500"
           />
           <button
-            onClick={() => applyZoom(pxPerSec * 1.4)}
+            onClick={() => axis.zoomBy(1.5)}
             title="Zoom in (=)"
             className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
@@ -1193,8 +1121,11 @@ export function Timeline() {
           snapPending.current = false;
         }}
       >
+        {/* its size on the page is set here, not only when it is drawn: a zoom puts the scroll back in place before
+            the next draw, and the scroller must already be as wide as the zoom makes it */}
         <canvas
           ref={canvasRef}
+          style={{ width, height: canvasH }}
           className={`block ${editorBusy ? "cursor-wait" : "cursor-text"}`}
         />
       </div>
