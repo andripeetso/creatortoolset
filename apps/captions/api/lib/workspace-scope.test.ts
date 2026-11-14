@@ -38,6 +38,6 @@ it("keeps each workspace's things to it, by the window's header", async () => {
 });
 
 it("a chat's own workspace wins over the window's header", async () => {
-  const r = await workspaceScope.run("first", () => get({ "x-ct-workspace": "second" }));
+  const r = await workspaceScope.run({ id: "first" }, () => get({ "x-ct-workspace": "second" }));
   expect(r).toEqual({ ws: "first", here: ["a", "old"] });
 });

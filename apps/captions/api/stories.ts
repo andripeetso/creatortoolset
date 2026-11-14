@@ -4,6 +4,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import type { SessionUser } from "./users";
 
 /**
@@ -16,6 +17,8 @@ export const storiesApp = new Hono<{ Variables: AuthVars }>();
 export interface StorySplit {
   id: string;
   owner: string;
+  /** The workspace it was made in (none: from before workspaces, the first brand's). */
+  projectId?: string;
   /** The video's file name (a local file is asked for again by it). */
   name: string;
   /** The library version it was opened from (a local file has none). */
@@ -76,11 +79,12 @@ function fields(body: Record<string, unknown>, duration: number): Partial<StoryS
 
 storiesApp.get("/", async (c) => {
   const user = c.get("user");
+  const keep = await inCurrentWorkspace(user);
   const names = await readdir(DIR).catch(() => [] as string[]);
   const splits = await Promise.all(names.filter((n) => n.endsWith(".json")).map((n) => read(n.slice(0, -5))));
   return c.json(
     splits
-      .filter((s): s is StorySplit => !!s && s.owner === user.username)
+      .filter((s): s is StorySplit => !!s && s.owner === user.username && (!keep || keep(s.projectId)))
       .sort((a, b) => b.updatedAt - a.updatedAt),
   );
 });
@@ -99,9 +103,11 @@ storiesApp.post("/", async (c) => {
   if (typeof f === "string") return c.json({ error: f }, 400);
   if (!f.name || !f.cuts || f.target === undefined) return c.json({ error: "A split needs a name, its cuts and the story length" }, 400);
   const now = Date.now();
+  const projectId = await currentWorkspaceId(c.get("user"));
   const split: StorySplit = {
     id: randomUUID(),
     owner: c.get("user").username,
+    ...(projectId ? { projectId } : {}),
     name: f.name,
     ...(clip !== undefined ? { clip: clip as string } : {}),
     cuts: f.cuts,

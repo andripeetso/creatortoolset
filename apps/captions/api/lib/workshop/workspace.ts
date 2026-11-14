@@ -110,7 +110,11 @@ export async function ownedProject(id: string, user: SessionUser): Promise<Proje
  * The workspace a chat's reply works in (assistant.ts, mcp.ts): while it is set, it is the current one for this call
  * and everything it calls, whatever the app has open. Never written down: the app's own pick stays as it was.
  */
-export const workspaceScope = new AsyncLocalStorage<string>();
+export const workspaceScope = new AsyncLocalStorage<{ id: string; turn?: string }>();
+
+/** A chat's reply switched workspace (setCurrentProjectId inside its scope): the chat moves there too (assistant.ts). */
+let chatMoves: ((username: string, turn: string, id: string) => void) | undefined;
+export const onChatMoves = (fn: typeof chatMoves) => void (chatMoves = fn);
 
 export interface Workspace {
   currentProjectId: string | null;
@@ -121,7 +125,7 @@ export interface Workspace {
 export async function getWorkspace(user: SessionUser): Promise<Workspace> {
   const projects = await ownedProjects(user.username);
   const marker = (await readUserMarker(user.username)) ?? {};
-  const scoped = workspaceScope.getStore();
+  const scoped = workspaceScope.getStore()?.id;
   let current = scoped && projects.some((p) => p.id === scoped) ? scoped : marker.currentProjectId;
   if (current && !projects.some((p) => p.id === current)) current = undefined;
   if (!current && projects[0]) {
@@ -145,6 +149,12 @@ export async function setCurrentProjectId(
     throw new Error("Not found");
   }
   await writeUserMarker(user.username, { ...marker, currentProjectId: projectId });
+  // asked by a chat's reply: the chat, and the rest of this call, work there from now on
+  const scope = workspaceScope.getStore();
+  if (scope) {
+    scope.id = projectId;
+    if (scope.turn) chatMoves?.(user.username, scope.turn, projectId);
+  }
   return getWorkspace(user);
 }
 

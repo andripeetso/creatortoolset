@@ -14,7 +14,7 @@ export const WORKSPACE_HEADER = "x-ct-workspace";
 export const inRequestWorkspace: MiddlewareHandler = (c, next) => {
   const id = c.req.header(WORKSPACE_HEADER);
   if (!id || workspaceScope.getStore() !== undefined) return next();
-  return workspaceScope.run(id, next);
+  return workspaceScope.run({ id }, next);
 };
 
 /** The workspace this request works in; undefined for a person with no workspace. */

@@ -27,6 +27,8 @@ import {
 import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
 import { findUser, USERNAME_RE, type SessionUser } from "./users";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
@@ -158,6 +160,8 @@ interface Meta {
   owner: string;
   /** The project (folder) it's filed in; absent = top level. */
   projectId?: string;
+  /** The workspace it was made in (absent: from before workspaces); a filed video is in its folder's (inWorkspace). */
+  workspace?: string;
   versions: Version[];
   share?: Share;
   approval: { status: Approval; by?: string; at?: number };
@@ -210,12 +214,14 @@ type Ref = { id: string; name: string; mime: string; bytes: number; kind: "image
 const REFS_PER_VERSION = 100;
 
 /** `direct`: the upload's object in the server's bucket (the upload relay's "direct" kind), finished by complete. */
-export type UploadInit = UploadState & { assetId?: string; projectId?: string; direct?: { key: string; uploadId: string }; relay?: { id: string; vid: string } };
+export type UploadInit = UploadState & { assetId?: string; projectId?: string; workspace?: string; direct?: { key: string; uploadId: string }; relay?: { id: string; vid: string } };
 
 interface Project {
   id: string;
   name: string;
   owner: string;
+  /** The workspace it was made in (absent: from before workspaces). */
+  workspace?: string;
   share?: Share;
   createdAt: number;
 }
@@ -328,6 +334,23 @@ function updateProjects<T>(fn: (list: Project[]) => T): Promise<T> {
 
 const ownsProject = async (owner: string, pid: unknown) =>
   typeof pid === "string" && (await readProjects()).some((p) => p.id === pid && p.owner === owner);
+
+/** A video filed in a folder is in the folder's workspace, and stays in it when taken out again. */
+const folderWorkspace = async (pid: string | undefined) => (pid ? (await readProjects()).find((p) => p.id === pid)?.workspace : undefined);
+const setWorkspace = (m: Meta, ws: string | undefined) => (ws ? (m.workspace = ws) : delete m.workspace);
+
+/**
+ * Which of the person's videos and folders are in the workspace this request works in: a video filed in a folder is in
+ * the folder's, so a folder never shows without its videos. A view filter: a video opened by its id still opens.
+ */
+async function inWorkspace(username: string) {
+  const keep = await inCurrentWorkspace({ username } as SessionUser);
+  const folders = new Map((await readProjects()).map((p) => [p.id, p.workspace]));
+  return {
+    video: (m: Meta) => !keep || keep(m.projectId && folders.has(m.projectId) ? folders.get(m.projectId) : m.workspace),
+    folder: (p: Project) => !keep || keep(p.workspace),
+  };
+}
 
 // ---------- media processing ----------
 
@@ -506,8 +529,9 @@ let chain = Promise.resolve();
 /** This account's videos being prepared, for Home (api/activity.ts). */
 export async function reviewWork(username: string) {
   const metas = await Promise.all([...queued].map(async (key) => [key, await readMeta(key.split("/")[0]!)] as const));
+  const here = await inWorkspace(username);
   return metas.flatMap(([key, m]) => {
-    const v = m?.owner === username ? m.versions.find((x) => `${m.id}/${x.n}` === key && x.status === "processing") : undefined;
+    const v = m?.owner === username && here.video(m) ? m.versions.find((x) => `${m.id}/${x.n}` === key && x.status === "processing") : undefined;
     return v ? [{ id: key, assetId: m!.id, name: m!.name, progress: v.progress }] : [];
   });
 }
@@ -940,7 +964,8 @@ const assetName = (file: string) => file.replace(/\.[a-z0-9]{2,4}$/i, "") || "Un
 
 reviewApp.get("/", async (c) => {
   const user = c.get("user");
-  const metas = (await allMetas()).filter((m) => m.owner === user.username);
+  const here = await inWorkspace(user.username);
+  const metas = (await allMetas()).filter((m) => m.owner === user.username && here.video(m));
   metas.sort((a, b) => b.updatedAt - a.updatedAt);
   const out = await Promise.all(
     metas.map(async (m) => {
@@ -987,6 +1012,8 @@ export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<R
     owner: user.username,
     assetId,
     projectId: projectId as string | undefined,
+    // a new video is the window's workspace's (said now: a relay's complete may come without it); a version is its video's
+    ...(assetId ? {} : { workspace: await currentWorkspaceId(user) }),
   };
 }
 
@@ -1022,21 +1049,25 @@ reviewApp.post("/uploads/:uid/parts/:partNumber", (c) => {
  * Add a version (a new video when `assetId` is absent) and fill its source
  * with `place` (an upload assembles its parts into it).
  */
-/** File a loose video in a project (one filed by hand stays where it is). */
-export function fileVideo(id: string, projectId: string): Promise<Meta | null> {
+/** File a loose video in a project (one filed by hand stays where it is); it is in the project's workspace then. */
+export async function fileVideo(id: string, projectId: string): Promise<Meta | null> {
+  const ws = await folderWorkspace(projectId);
   return updateMeta(id, (m) => {
-    m.projectId ??= projectId;
+    if (m.projectId) return;
+    m.projectId = projectId;
+    setWorkspace(m, ws);
   });
 }
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string }; draft?: { edit: string; name: string }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
   const id = assetId ?? randomUUID();
   const now = Date.now();
+  const workspace = v.workspace ?? (await folderWorkspace(v.projectId));
   if (!assetId) {
     await mkdir(assetDir(id), { recursive: true });
     await writeJson(metaPath(id), {
@@ -1044,6 +1075,7 @@ export async function addVersion(
       name: assetName(v.name),
       owner: v.owner,
       ...(v.projectId ? { projectId: v.projectId } : {}),
+      ...(workspace ? { workspace } : {}),
       versions: [],
       approval: { status: "none" },
       createdAt: now,
@@ -1121,6 +1153,7 @@ export async function finishUpload(
         mime: state.mime,
         bytes: state.total,
         projectId: state.projectId,
+        workspace: state.workspace,
       },
       place,
       options,
@@ -1470,10 +1503,14 @@ reviewApp.patch("/assets/:id", async (c) => {
     return c.json({ error: "That project is gone" }, 404);
   }
   let oldToken: string | undefined;
+  const ws = typeof projectId === "string" ? await folderWorkspace(projectId) : undefined;
   const meta = await updateMeta(v.meta.id, (m) => {
     if (name) m.name = name;
     if (projectId === null) delete m.projectId;
-    else if (typeof projectId === "string") m.projectId = projectId;
+    else if (typeof projectId === "string") {
+      m.projectId = projectId;
+      setWorkspace(m, ws);
+    }
     if (share) ({ share: m.share, oldToken } = patchShare(m.share, share));
     if (typeof body?.finished === "boolean") m.done = { finished: body.finished, at: Date.now() };
   });
@@ -1525,8 +1562,9 @@ async function trashedFor(c: Context<{ Variables: AuthVars }>): Promise<Meta | n
 reviewApp.get("/trash", async (c) => {
   const user = c.get("user");
   const ids = await readdir(path.join(ROOT, "trash")).catch(() => [] as string[]);
+  const here = await inWorkspace(user.username);
   const metas = (await Promise.all(ids.map(readTrashed))).filter(
-    (m): m is Meta => !!m && m.owner === user.username,
+    (m): m is Meta => !!m && m.owner === user.username && here.video(m),
   );
   metas.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
   return c.json(metas.map((m) => ({ ...publicAsset(m, true), deletedAt: m.deletedAt })));
@@ -1790,6 +1828,7 @@ reviewApp.post("/assets/:id/unstack", async (c) => {
         name: assetName(s.version.name),
         owner: meta.owner,
         ...(meta.projectId ? { projectId: meta.projectId } : {}),
+        ...(meta.workspace ? { workspace: meta.workspace } : {}),
         versions: [{ ...s.version, n: 1, madeFrom: undefined }],
         approval: { status: "none" },
         createdAt: now,
@@ -1874,14 +1913,17 @@ reviewApp.post("/assets/:id/v/:n/clear-earlier", async (c) => {
 
 reviewApp.get("/projects", async (c) => {
   const user = c.get("user");
-  return c.json((await readProjects()).filter((p) => p.owner === user.username));
+  const here = await inWorkspace(user.username);
+  return c.json((await readProjects()).filter((p) => p.owner === user.username && here.folder(p)));
 });
 
 reviewApp.post("/projects", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
   const name = cleanText(body?.name, 160);
   if (!name) return c.json({ error: "Name the project first" }, 400);
-  const project: Project = { id: randomUUID(), name, owner: c.get("user").username, createdAt: Date.now() };
+  const user = c.get("user");
+  const workspace = await currentWorkspaceId(user);
+  const project: Project = { id: randomUUID(), name, owner: user.username, ...(workspace ? { workspace } : {}), createdAt: Date.now() };
   await updateProjects((list) => list.push(project));
   return c.json(project);
 });
@@ -2016,13 +2058,18 @@ export function setApproval(id: string, status: Approval, by: string, only?: App
   });
 }
 
-/** The user's project with this name, made when missing. Spaces, case and punctuation don't count. */
-export function projectNamed(owner: string, name: string): Promise<string> {
+/**
+ * The user's project with this name, made when missing. Spaces, case and punctuation don't count. With a workspace,
+ * one in that workspace; without, any (a heartbeat's call has no window), and one made is the request's workspace's.
+ */
+export async function projectNamed(owner: string, name: string, workspace?: string): Promise<string> {
   const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const ws = workspace ?? (await currentWorkspaceId({ username: owner } as SessionUser));
+  const keep = workspace ? await inProjectOf({ username: owner } as SessionUser, workspace) : null;
   return updateProjects((list) => {
-    const found = list.find((p) => p.owner === owner && key(p.name) === key(name));
+    const found = list.find((p) => p.owner === owner && key(p.name) === key(name) && (!keep || keep(p.workspace)));
     if (found) return found.id;
-    const project: Project = { id: randomUUID(), name, owner, createdAt: Date.now() };
+    const project: Project = { id: randomUUID(), name, owner, ...(ws ? { workspace: ws } : {}), createdAt: Date.now() };
     list.push(project);
     return project.id;
   });
@@ -2076,8 +2123,9 @@ export async function notifyReady(id: string, by: string, text: string): Promise
 /** The owner's videos marked Needs review: the home page's to-do list. */
 export async function waitingFor(owner: string): Promise<{ asset: string; name: string; project?: string; at: number }[]> {
   const projects = new Map((await readProjects()).map((p) => [p.id, p.name]));
+  const here = await inWorkspace(owner);
   return (await allMetas())
-    .filter((m) => m.owner === owner && !m.deletedAt && m.approval.status === "needs_review")
+    .filter((m) => m.owner === owner && here.video(m) && !m.deletedAt && m.approval.status === "needs_review")
     .sort((a, b) => (b.approval.at ?? b.updatedAt) - (a.approval.at ?? a.updatedAt))
     .map((m) => ({ asset: m.id, name: m.name, ...(m.projectId && projects.get(m.projectId) ? { project: projects.get(m.projectId) } : {}),
       at: m.approval.at ?? m.updatedAt }));

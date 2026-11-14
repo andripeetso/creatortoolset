@@ -6,6 +6,7 @@
  */
 
 import type { EnhanceStatus } from "@contracts/enhance";
+import { currentWorkspace } from "./current-workspace";
 
 /** An engine's card on the Enhance page. A plug-in adds its own with addEnhanceEngine (its web.tsx). */
 export interface EngineCard {
@@ -153,6 +154,9 @@ export function uploadEnhance(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `/api/enhance?name=${encodeURIComponent(file.name)}&${passes(engine, then)}`);
     xhr.responseType = "json";
+    // the fetch wrapper (sync.ts) can't tag a raw XHR: the session is made in this window's workspace
+    const ws = currentWorkspace();
+    if (ws) xhr.setRequestHeader("X-CT-Workspace", ws);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable)
         onProgress(Math.round((e.loaded / e.total) * 100));

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -14,7 +14,8 @@ vi.mock("./lib/nvidia-voice", async (orig) => ({
   ...(await orig<typeof import("./lib/nvidia-voice")>()),
   studioVoice: async (_key: string, x: Float32Array) => x,
 }));
-const { enhanceApp, ENHANCE_MOVES } = await import("./enhance");
+const { enhanceApp, ENHANCE_MOVES, enhancing, enhanceHost } = await import("./enhance");
+const { inRequestWorkspace, inCurrentWorkspace } = await import("./lib/workspace-scope");
 const { saveMyKey } = await import("./my-keys");
 const { IllegalTransition, move } = await import("./lib/transition");
 
@@ -25,6 +26,7 @@ app.use("*", async (c, next) => {
   c.set("user", { username: as, role: as === "local" ? "admin" : "user", cloud: false, off: [] });
   await next();
 });
+app.use("*", inRequestWorkspace);
 app.route("/", enhanceApp);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,5 +153,35 @@ describe("Audio Enhancer passes and strength", () => {
     expect(existsSync(path.join(process.env.DATA_DIR!, "enhance", s.id, "blend-60.m4a"))).toBe(true);
     const full = await app.request(`/${s.id}/download?mix=1`, as("local"));
     expect(full.headers.get("content-disposition")).toMatch(/mix-enhanced\.m4a/);
+  });
+});
+
+describe("Audio Enhancer workspaces", () => {
+  it("keeps each workspace's sessions to it; one from before workspaces is the first brand's; by id still opens", async () => {
+    const data = process.env.DATA_DIR!;
+    const projects = path.join(data, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    for (const [id, at] of [["ws-a", 1], ["ws-b", 2]] as const)
+      writeFileSync(path.join(projects, `${id}.json`), JSON.stringify({ id, owner: "tinyws", name: id, createdAt: at, updatedAt: at }));
+    const old = { id: "tinyws-old-1", name: "old.wav", owner: "tinyws", hasVideo: false, duration: 1, bytes: 1, status: "done", progress: 1, createdAt: 1, updatedAt: 1 };
+    mkdirSync(path.join(data, "enhance", old.id), { recursive: true });
+    writeFileSync(path.join(data, "enhance", old.id, "meta.json"), JSON.stringify(old));
+    const inWs = (ws: string, method = "GET", body?: RequestInit["body"]): RequestInit => ({ method, headers: { "x-as": "tinyws", "x-ct-workspace": ws }, body });
+
+    const made = await read(app.request("/?engine=elevenlabs&name=new.wav", inWs("ws-b", "POST", tone(1))));
+    expect(made).toMatchObject({ name: "new.wav", projectId: "ws-b" });
+    const names = async (ws: string) => (await read(app.request("/", inWs(ws)))).map((m: { name: string }) => m.name);
+    expect(await names("ws-b")).toEqual(["new.wav"]);
+    expect(await names("ws-a")).toEqual(["old.wav"]);
+    expect((await app.request(`/${made.id}`, inWs("ws-a"))).status).toBe(200);
+
+    // Home's running row follows the same filter
+    const user = { username: "tinyws", role: "user", cloud: false, off: [] } as never;
+    await enhanceHost.persist({ ...old, id: "tinyws-away-1", projectId: "ws-b", status: "queued", remote: { state: "waiting", at: 1 } } as never);
+    const { workspaceScope } = await import("./lib/workshop/workspace");
+    const running = (ws: string) => workspaceScope.run(ws, async () => enhancing("tinyws", await inCurrentWorkspace(user)).map((m) => m.id));
+    expect(await running("ws-a")).toEqual([]);
+    expect(await running("ws-b")).toEqual(["tinyws-away-1"]);
+    await enhanceHost.persist({ ...old, id: "tinyws-away-1", status: "done" } as never); // leaves Home's running rows as they were
   });
 });
