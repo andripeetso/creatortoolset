@@ -52,6 +52,8 @@ const plan = (a: Analysis, target: number, cuts: Cut[]) => {
   return planCuts(a, target, mine).map((t) => ({ t, mine: mine.includes(t) }));
 };
 
+const pctOf = (p: number) => Math.round(p * 100);
+
 export default function StorySplitterPage() {
   const [params, setParams] = useSearchParams();
   const me = useMe();
@@ -90,7 +92,10 @@ export default function StorySplitterPage() {
     const label = "Finding cuts, pauses and beats";
     setBusy({ label, p: 0 });
     try {
-      const a = analyse(await readSignals(blob, (p) => run.current === my && setBusy({ label, p })));
+      // one re-render per percent, not one per frame
+      const a = analyse(
+        await readSignals(blob, (p) => run.current === my && setBusy((b) => (b && pctOf(b.p) === pctOf(p) ? b : { label, p }))),
+      );
       if (run.current !== my) return;
       setAnalysis(a);
       if (split && Math.abs(split.duration - a.duration) < 0.5) {
@@ -245,7 +250,9 @@ export default function StorySplitterPage() {
     try {
       const base = baseName(source.name);
       const ts = cuts.map((c) => c.t);
-      const zip = await renderStories(source.blob, ts, analysis.duration, base, (story, p) => setExporting({ story, p }));
+      const zip = await renderStories(source.blob, ts, analysis.duration, base, (story, p) =>
+        setExporting((e) => (e && e.story === story && pctOf(e.p) === pctOf(p) ? e : { story, p })),
+      );
       downloadBlob(`${base}-stories.zip`, zip);
       // kept on download: a new split, or the open one's new cuts
       if (lists) {
