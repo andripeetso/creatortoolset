@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { toggleChatMode, useChatMode } from "./chat-mode";
+import { clickChatMode, holdChatMode, toggleChatMode, useChatMode } from "./chat-mode";
 import { persistChatWave } from "./settings";
 
 /** The Mac app's side of the wave (ChatWave.swift), answering as told; what the page asked, and whether chat mode was
@@ -56,7 +56,7 @@ describe("chat mode switched in the Mac app", () => {
       return Promise.resolve(true);
     });
     (window as unknown as { webkit: object }).webkit = { messageHandlers: { chatWave: { postMessage } } };
-    return { asked, end: () => waves.shift()?.(true) };
+    return { asked, postMessage, end: () => waves.shift()?.(true) };
   }
 
   it("pressed again while the wave runs: the wave goes on to its end, then it switches back with a wave of its own", async () => {
@@ -86,6 +86,27 @@ describe("chat mode switched in the Mac app", () => {
     await settled();
     expect(useChatMode.getState().on).toBe(true);
     expect(mac.asked).toEqual(["start", "drawn"]);
+  });
+
+  it("pressed with the mouse: switches as it goes down, the app is told it is held, and the click after it is the same press", async () => {
+    const mac = slowMacApp();
+    holdChatMode(null);
+    await settled();
+    expect(useChatMode.getState().on).toBe(true);
+    expect(mac.asked).toEqual(["start", "drawn"]);
+    expect((mac.postMessage.mock.calls[0][0] as { start: { hold: boolean } }).start.hold).toBe(true);
+    clickChatMode(null, { detail: 1 });
+    expect(mac.asked).toEqual(["start", "drawn"]);
+    mac.end();
+    await settled();
+    expect(useChatMode.getState().on).toBe(true);
+    // Enter or Space on the button (a click with no count) is a press of its own: a click, no hold
+    clickChatMode(null, { detail: 0 });
+    await settled();
+    expect(useChatMode.getState().on).toBe(false);
+    expect((mac.postMessage.mock.calls.at(-2)?.[0] as { start: { hold: boolean } }).start.hold).toBe(false);
+    mac.end();
+    await settled();
   });
 
   it("with the wave switched off in Settings → Appearance, it switches at once and asks the app for nothing", async () => {
