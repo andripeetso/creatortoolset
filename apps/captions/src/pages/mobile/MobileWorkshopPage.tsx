@@ -138,8 +138,8 @@ export default function MobileWorkshopPage() {
           )}
         </section>
 
-        {/* a first visit: the projects take their place under the sessions once those are known (or their read failed), so they never move */}
-        {(!allowed || list.data !== null || !!list.error) && <ProjectList />}
+        {/* a first visit: the workspace takes its place under the sessions once those are known (or their read failed), so it never moves */}
+        {(!allowed || list.data !== null || !!list.error) && <ProjectList current />}
       </div>
     </div>
   );

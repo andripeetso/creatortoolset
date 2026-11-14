@@ -19,12 +19,16 @@ import { PROJECT_ACCOUNTS_KEY, PROJECT_COLORS, projectColor, useWorkspace } from
 const secondary =
   "flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50";
 
-/** Create, edit, switch, and delete workspace projects. */
-export function ProjectList() {
-  const projects = useWorkspace((s) => s.projects);
+/**
+ * Create, edit, switch, and delete workspaces (the switcher's Manage workspaces window). `current`: the Content
+ * Workshop's tab, only the workspace this window is in, to edit; making, switching and deleting are the switcher's.
+ */
+export function ProjectList({ current: only }: { current?: boolean } = {}) {
+  const all = useWorkspace((s) => s.projects);
   const loaded = useWorkspace((s) => s.loaded);
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const select = useWorkspace((s) => s.select);
+  const projects = only ? all.filter((p) => p.id === currentProjectId) : all;
   const [editing, setEditing] = useState<string | "new" | null>(null);
   // the project just created in the form: it stays open on it, for its accounts, with Done
   const [made, setMade] = useState<string | null>(null);
@@ -33,10 +37,10 @@ export function ProjectList() {
   // current one; a platform sign-in comes back there); then the parameter goes
   useEffect(() => {
     const edit = params.get("add") === "1" ? "new" : params.get("edit");
-    if (!edit) return;
+    if (!edit || only) return;
     setEditing(edit);
     setParams((p) => (p.delete("add"), p.delete("edit"), p), { replace: true });
-  }, [params, setParams]);
+  }, [params, setParams, only]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // every project's accounts, from their saved copy (warmed at sign-in), live
@@ -68,9 +72,9 @@ export function ProjectList() {
     <section>
       <div className="mb-3 flex items-center justify-between">
         <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-          Instructions and context the AI should already know
+          {only ? "What the AI should already know in this workspace" : "Instructions and context the AI should already know"}
         </p>
-        {!making && (
+        {!making && !only && (
           <button type="button" disabled={busy} onClick={() => setEditing("new")} className={secondary}>
             <Plus className="h-3.5 w-3.5" /> New workspace
           </button>
@@ -83,7 +87,7 @@ export function ProjectList() {
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (
           <p className="py-10 text-center text-sm text-zinc-600">
-            No workspaces yet. Analyzer and Workshop both use the current one.
+            {only ? "No workspace yet. Make one in the workspace menu at the top right." : "No workspaces yet. Analyzer and Workshop both use the current one."}
           </p>
         ) : null}
         {projects.map((p) =>
@@ -99,7 +103,8 @@ export function ProjectList() {
               busy={busy}
               onUse={() => void select(p.id)}
               onEdit={() => setEditing(p.id)}
-              onDelete={() => void run(() => deleteProject(p.id))}
+              onDelete={only ? undefined : () => void run(() => deleteProject(p.id))}
+              badge={!only}
             />
           ),
         )}
@@ -117,6 +122,7 @@ function ProjectRow({
   onUse,
   onEdit,
   onDelete,
+  badge,
 }: {
   project: WorkshopProject;
   account?: InstagramAccount;
@@ -125,7 +131,10 @@ function ProjectRow({
   busy: boolean;
   onUse: () => void;
   onEdit: () => void;
-  onDelete: () => void;
+  /** Absent: no Delete (the Workshop's tab; the switcher's window deletes). */
+  onDelete?: () => void;
+  /** The Current badge, for the list of them all. */
+  badge: boolean;
 }) {
   const blurb = foldProjectInstructions(p);
   const handles = Object.entries(p.handles ?? {}).filter((e): e is [string, string] => Boolean(e[1]));
@@ -139,7 +148,7 @@ function ProjectRow({
         <p className="flex items-center gap-2 text-sm text-zinc-100">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(p)].dot}`} />
           <span className="truncate">{p.name}</span>
-          {current ? (
+          {current && badge ? (
             <span className="shrink-0 rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">Current</span>
           ) : null}
         </p>
@@ -163,14 +172,16 @@ function ProjectRow({
       <button type="button" onClick={onEdit} className={secondary} disabled={busy}>
         <Pencil className="h-3 w-3" /> Edit
       </button>
-      <ConfirmButton
-        label="Delete"
-        confirmLabel="Click again"
-        disabled={busy}
-        onConfirm={onDelete}
-        className="rounded-md px-2 py-1.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-50"
-        armedClassName="!bg-red-500/10 !text-red-200"
-      />
+      {onDelete ? (
+        <ConfirmButton
+          label="Delete"
+          confirmLabel="Click again"
+          disabled={busy}
+          onConfirm={onDelete}
+          className="rounded-md px-2 py-1.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-50"
+          armedClassName="!bg-red-500/10 !text-red-200"
+        />
+      ) : null}
     </div>
   );
 }

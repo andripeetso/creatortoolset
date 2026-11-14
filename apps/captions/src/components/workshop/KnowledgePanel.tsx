@@ -91,6 +91,7 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
  */
 export function KnowledgePanel() {
   const projects = useWorkspace((s) => s.projects);
+  const here = useWorkspace((s) => s.currentProjectId);
   // a saved list, live: a read running on the Mac saves as it goes, and each save refetches it (lib/local-cache)
   const { items: sources, setItems: setSources, error: loadError } = useCachedList<KnowledgeSource>("workshop/sources", listSources);
   const [open, setOpen] = useState<string | null>(null);
@@ -103,6 +104,8 @@ export function KnowledgePanel() {
 
 
   const put = (s: KnowledgeSource) => setSources((list) => (list.some((x) => x.id === s.id) ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]));
+  // kept to another workspace: it leaves this one's list, as the server's would
+  const moved = (s: KnowledgeSource) => (s.projectId && here && s.projectId !== here ? setSources((l) => l.filter((x) => x.id !== s.id)) : put(s));
   const act = (p: Promise<unknown>) => p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const add = async (files: FileList | File[] | null) => {
@@ -206,7 +209,7 @@ export function KnowledgePanel() {
               open={open === s.id}
               projects={projects}
               onToggle={() => setOpen(open === s.id ? null : s.id)}
-              onSave={(fields) => act(patchSource(s.id, fields).then(put))}
+              onSave={(fields) => act(patchSource(s.id, fields).then(moved))}
               onRead={() => void act(readSourceAgain(s.id).then(put))}
               onDelete={() => act(deleteSource(s.id).then(() => setSources((l) => l.filter((x) => x.id !== s.id))))}
               onProject={(pid) => toggleProject(pid, s.id)}

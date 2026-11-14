@@ -32,6 +32,7 @@ import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARC
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
 import { scriptsOwnerFor } from "./lib/workspaces";
+import { inCurrentWorkspace } from "./lib/workspace-scope";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -1976,7 +1977,12 @@ workshopApp.delete("/projects/:id", async (c) => {
 
 const noKnowledge = (user: SessionUser) => user.role === "visitor";
 
-workshopApp.get("/sources", async (c) => c.json(await listSources(c.get("user"))));
+/** The Knowledge tab: every workspace's sources, and the ones kept to this workspace (one kept to a deleted one shows in the first brand). */
+workshopApp.get("/sources", async (c) => {
+  const user = c.get("user");
+  const here = await inCurrentWorkspace(user);
+  return c.json((await listSources(user)).filter((s) => !s.projectId || !here || here(s.projectId)));
+});
 
 workshopApp.get("/sources/:id/text", async (c) => {
   const s = await readSource(c.req.param("id"), c.get("user"));
