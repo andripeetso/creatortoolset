@@ -61,9 +61,10 @@ export const deleteAnimationStyle = (id: string, kind: StyleKind = "animation") 
 export const stylePictureUrl = (id: string, pictureId: string, kind: StyleKind = "animation") => `${stylesAt(kind)}/${id}/pictures/${pictureId}`;
 export const removeStylePicture = (id: string, pictureId: string, kind: StyleKind = "animation") => send<AnimationStyle>(stylePictureUrl(id, pictureId, kind), "DELETE");
 /** Adds pictures to a style, each as an inspiration. */
-export async function addStylePictures(id: string, files: File[], kind: StyleKind = "animation"): Promise<AnimationStyle> {
+export async function addStylePictures(id: string, files: File[], kind: StyleKind = "animation", made = false): Promise<AnimationStyle> {
   const form = new FormData();
   for (const f of files) form.append("file", f);
+  if (made) form.append("made", "1");
   const r = await fetch(`${stylesAt(kind)}/${id}/pictures`, { method: "POST", body: form });
   const out = (await r.json().catch(() => ({}))) as AnimationStyle & { error?: string };
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);

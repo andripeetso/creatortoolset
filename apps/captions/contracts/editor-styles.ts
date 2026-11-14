@@ -113,7 +113,7 @@ export interface EditStyleCopy {
  *   POST   /api/editor/animation-styles                     { name, brief? } → AnimationStyle
  *   PUT    /api/editor/animation-styles/:id                 { name?, brief? }, or `addBrief`: a line added under its brief → AnimationStyle
  *   DELETE /api/editor/animation-styles/:id                 → { ok: true }
- *   POST   /api/editor/animation-styles/:id/pictures        multipart, `file` once or more → AnimationStyle (each one an inspiration)
+ *   POST   /api/editor/animation-styles/:id/pictures        multipart, `file` once or more → AnimationStyle (each one an inspiration; a carousel style's with `made`: 1, made & liked)
  *   POST   /api/editor/animation-styles/:id/pictures/chat   { newest: n } → { style, added }: the assistant's own call, from a reply it is
  *                                                           writing. The newest n pictures the person sent in that chat become inspirations
  * A brief saved from a reply the assistant is writing is kept only when the person typed it in that chat (api/editor/own-words.ts).
@@ -144,7 +144,7 @@ export const PICTURE_MAX_BYTES = 300_000;
 
 export interface StylePicture {
   id: string;
-  /** `made`: a still of a card this account's Mac drew and the person liked. `inspiration`: a picture they added. */
+  /** `made`: a still of a card this account's Mac drew and the person liked, or of a carousel style's, a Designer frame they liked. `inspiration`: a picture they added. */
   kind: "made" | "inspiration";
   at: number;
   /** the picture of an assistant chat it was added from: that one is never added to the style twice */

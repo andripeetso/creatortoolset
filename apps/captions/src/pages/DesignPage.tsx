@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
+import { toast } from "sonner";
 import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
+import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
 import { FramePresets } from "@/components/design/FramePresets";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
@@ -9,7 +11,7 @@ import { usePageNeeds } from "@/lib/chat-mode";
 import { LayersPanel } from "@/components/design/LayersPanel";
 import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
-import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/components/ui/context-menu";
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
 import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
@@ -18,6 +20,8 @@ import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureSize, pictureUrl, saveDesign } from "@/lib/designs";
 import { downloadBlob } from "@/lib/download";
+import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
+import { useCachedLoad } from "@/lib/local-cache";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
@@ -99,6 +103,10 @@ function DesignPage({ id }: { id: string }) {
   const view = useRef(viewStore()).current;
   const [pointed, setPointed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
+  // the same saved copy as the Designer's Carousel styles tab, so a style made here is in that list too. Read when the
+  // page opens and after a frame is added: not again at each save of this design
+  const carouselStyles = useCachedLoad<AnimationStylesView>("/api/designs/styles", () => listAnimationStyles("carousel"), { topic: [] });
   const [saved, setSaved] = useState<"saved" | "saving" | "unsaved">("saved");
   /** The dropper is out: the next press on the canvas gives its colour to `take`. */
   const [dropper, setDropper] = useState<{ take: (hex: string) => void } | null>(null);
@@ -676,35 +684,67 @@ function DesignPage({ id }: { id: string }) {
     };
   });
 
+  /** Frame `n` as a picture, exactly as it is drawn (at its own size, or `scale` times it). */
+  const frameBlob = async (n: number, type: string, scale: number): Promise<Blob> => {
+    const p = pages[n]!;
+    // every picture and drawing of the frame is there first: a frame is never saved with a grey box where one goes
+    for (const l of p.layers) {
+      const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
+      if (!img || (img.complete && img.naturalWidth)) continue;
+      const gone = new Error(`A picture on ${pageName(p, n)} could not be loaded: nothing was saved`);
+      if (img.complete) throw gone;
+      await new Promise<void>((ok, fail) => {
+        img.addEventListener("load", () => ok(), { once: true });
+        img.addEventListener("error", () => fail(gone), { once: true });
+      });
+    }
+    const f = frames[n]!;
+    const c = document.createElement("canvas");
+    c.width = f.w * scale;
+    c.height = f.h * scale;
+    const ctx = c.getContext("2d")!;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    drawPage(ctx, p, f.w, f.h, loaded, true);
+    const blob = await new Promise<Blob | null>((done) => c.toBlob(done, type, 0.92));
+    if (!blob) throw new Error(`${pageName(p, n)} could not be saved as a picture`);
+    return blob;
+  };
+
+  /** The frame he liked goes into a carousel style's Made & liked: a new one named after the design when `to` is null. */
+  const likeFrame = async (n: number, to: AnimationStyle | null) => {
+    if (!design || !pages[n]) return;
+    setError(null);
+    try {
+      // drawn first: a frame that cannot be drawn makes no style
+      const blob = await frameBlob(n, "image/jpeg", 1);
+      let style = to;
+      if (!style) {
+        // named after the design, and never like one there is: an AI finds a style by its name
+        const taken = new Set((carouselStyles.data?.styles ?? []).map((s) => s.name.toLowerCase()));
+        const stem = (design.name.trim() || "Carousel style").slice(0, STYLE_NAME_MAX - 3);
+        let name = stem;
+        for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${stem} ${i}`;
+        style = await createAnimationStyle({ name, brief: "" }, "carousel");
+      }
+      await addStylePictures(style.id, [new File([blob], "frame.jpg", { type: "image/jpeg" })], "carousel", true);
+      void carouselStyles.refresh().catch(() => {});
+      const at = `/design?tab=styles&style=${style.id}`;
+      toast(`${pageName(pages[n]!, n)} is in ${style.name}`, { action: { label: "Open", onClick: () => navigate(at) } });
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
   const exportPngs = async (only?: number | readonly number[], as: ExportAs = { jpeg: false, scale: 1 }) => {
     if (!design) return;
     setError(null);
     const type = as.jpeg ? "image/jpeg" : "image/png";
     try {
       const files: { name: string; data: Uint8Array }[] = [];
-      for (const [n, p] of pages.entries()) {
+      for (const n of pages.keys()) {
         if (only !== undefined && !(typeof only === "number" ? n === only : only.includes(n))) continue;
-        // every picture and drawing of the frame is there first: a frame is never saved with a grey box where one goes
-        for (const l of p.layers) {
-          const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
-          if (!img || (img.complete && img.naturalWidth)) continue;
-          const gone = new Error(`A picture on ${pageName(p, n)} could not be loaded: nothing was exported`);
-          if (img.complete) throw gone;
-          await new Promise<void>((ok, fail) => {
-            img.addEventListener("load", () => ok(), { once: true });
-            img.addEventListener("error", () => fail(gone), { once: true });
-          });
-        }
         // each frame at its own size (or twice it)
-        const f = frames[n]!;
-        const c = document.createElement("canvas");
-        c.width = f.w * as.scale;
-        c.height = f.h * as.scale;
-        const ctx = c.getContext("2d")!;
-        ctx.setTransform(as.scale, 0, 0, as.scale, 0, 0);
-        drawPage(ctx, p, f.w, f.h, loaded, true);
-        const blob = await new Promise<Blob | null>((done) => c.toBlob(done, type, 0.92));
-        if (!blob) throw new Error(`${pageName(p, n)} could not be saved as a picture`);
+        const blob = await frameBlob(n, type, as.scale);
         files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}${as.scale > 1 ? `@${as.scale}x` : ""}.${as.jpeg ? "jpg" : "png"}`, data: new Uint8Array(await blob.arrayBuffer()) });
       }
       if (files.length === 1) downloadBlob(files[0]!.name, new Blob([files[0]!.data as BlobPart], { type }));
@@ -823,6 +863,19 @@ function DesignPage({ id }: { id: string }) {
                   {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
                   <ContextMenuSeparator />
                   {item("Delete", "⌫", remove, none && !framed)}
+                  <ContextMenuSeparator />
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={!base} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Add to a carousel style</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-56">
+                      {(carouselStyles.data?.styles ?? []).map((s) => (
+                        <ContextMenuItem key={s.id} onSelect={() => void likeFrame(k, s)}>
+                          {s.name}
+                        </ContextMenuItem>
+                      ))}
+                      {!!carouselStyles.data?.styles.length && <ContextMenuSeparator />}
+                      {item("New carousel style", "", () => void likeFrame(k, null))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
                 </ContextMenuContent>
               }
             />

@@ -229,12 +229,17 @@ function stylesApp(kind: StyleKind) {
 
   app.delete("/:id", async (c) => ((await deleteAnimation(c.get("user").username, c.req.param("id"), kind)) ? c.json({ ok: true }) : c.json(notFound, 404)));
 
-  /** Pictures the person adds: each `file` of the form becomes an inspiration. Whatever else the form says is not read. */
+  /**
+   * Pictures the person adds: each `file` of the form becomes an inspiration. A carousel style also takes `made`: the
+   * Designer's frame the person liked, drawn as they see it, goes into its Made & liked (an animation style's come only
+   * from 👍 on a card, cards/routes.ts). Whatever else the form says is not read.
+   */
   app.post("/:id/pictures", async (c) => {
     const user = c.get("user").username;
     const id = c.req.param("id");
     if (!ofKind(user, id) || !ID.test(id)) return c.json(notFound, 404);
     const form = await c.req.parseBody({ all: true }).catch(() => ({}) as Record<string, unknown>);
+    const as = kind === "carousel" && form.made === "1" ? "made" : "inspiration";
     const files = [form.file].flat().filter((f): f is File => f instanceof File);
     if (!files.length) return c.json({ error: "Send the picture as file", code: "invalid" }, 400);
     let style: AnimationStyle | null = null;
@@ -244,7 +249,7 @@ function stylesApp(kind: StyleKind) {
       const tmp = path.join(dir, `${randomUUID()}.upload`);
       await mkdir(dir, { recursive: true });
       await writeFile(tmp, Buffer.from(await f.arrayBuffer()));
-      const added = await addPicture(user, id, tmp, "inspiration").finally(() => rm(tmp, { force: true }));
+      const added = await addPicture(user, id, tmp, as).finally(() => rm(tmp, { force: true }));
       if (!added) return c.json(notFound, 404);
       if (typeof added === "string") return c.json({ error: added, code: "invalid" }, 400);
       style = added;

@@ -33,7 +33,7 @@ cardsApp.get("/:id/cards/:variant/:card/still", async (c) => {
   return new Response(bytes, { headers: { "Content-Type": "image/png", "Cache-Control": "no-store" } });
 });
 
-/** 👍: the card's middle still, as the Mac drew it, goes into the style's Made & liked. This is the only way a picture becomes `made`. */
+/** 👍: the card's middle still, as the Mac drew it, goes into the style's Made & liked. This is the only way an animation style's picture becomes `made`. */
 cardsApp.post("/:id/cards/:variant/:card/like", async (c) => {
   const { id, variant, card } = c.req.param();
   const user = c.get("user").username;

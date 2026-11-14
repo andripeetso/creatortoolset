@@ -225,4 +225,17 @@ describe.skipIf(rootReplaced)("carousel styles", () => {
     expect(await carousels("maker")).toEqual([]);
     expect((await json<AnimationStylesView>(call("maker", "GET", "/api/editor/animation-styles"))).styles.map((s) => s.id)).toContain(anim.id);
   });
+
+  it("take a Designer frame the person liked into Made & liked; an animation style's come only from 👍 on a card", async () => {
+    const mine = await json<AnimationStyle>(call("maker", "POST", at, { name: "Liked frames" }));
+    const send = (url: string) => {
+      const form = new FormData();
+      form.append("made", "1");
+      form.append("file", new File([readFileSync(small)], "frame.jpg"));
+      return json<AnimationStyle>(app.request(`${url}/pictures`, { method: "POST", headers: { cookie: cookies.maker! }, body: form }));
+    };
+    expect((await send(`${at}/${mine.id}`)).pictures.map((p) => p.kind)).toEqual(["made"]);
+    const anim = await json<AnimationStyle>(call("maker", "POST", "/api/editor/animation-styles", { name: "Cards only" }));
+    expect((await send(`/api/editor/animation-styles/${anim.id}`)).pictures.map((p) => p.kind)).toEqual(["inspiration"]);
+  });
 });
