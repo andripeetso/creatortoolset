@@ -316,8 +316,9 @@ html.chat-wash::view-transition-group(chat-wash-light) {
   background-size: 0 0;
 }
 /* In the Mac app the window's buttons sit over the chats' own bar (data-chat-bar), so the page's bar gives up the room
-   it kept for them. */
-html.mac-app:not(.mac-full) [data-chat-bar] { padding-left: 84px; }
+   it kept for them; the chats' bar keeps the same room, so its chat-mode button and name stand where the page's bar has
+   them (switching chat mode moves neither). */
+html.mac-app:not(.mac-full) [data-chat-bar] { padding-left: 92px; }
 html.mac-app[data-chat-mode] main [data-titlebar] { padding-left: 1rem; }
 
 html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }

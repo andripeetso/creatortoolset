@@ -99,9 +99,11 @@ export function ChatsAside({
           onClose && "absolute inset-y-0 left-0 z-20 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4 motion-safe:duration-200",
         )}
       >
-        {/* as high as the page's bar: the Mac app's window buttons sit at its start (index.css, data-chat-bar) */}
-        <header data-chat-bar className="flex h-14 shrink-0 items-center gap-1 pr-2 pl-3 select-none">
-          <ChatModeButton />
+        {/* as high as the page's bar: the Mac app's window buttons sit at its start (index.css, data-chat-bar). The button
+            and the name stand exactly where the page's bar has them, so switching chat mode moves neither (owner, 11-13:
+            "the button underneath my mouse should not move") */}
+        <header data-chat-bar className="flex h-14 shrink-0 items-center gap-1 pr-2 pl-3 select-none sm:pl-4">
+          <ChatModeButton className="mr-1" />
           {/* gives way before the buttons do: in the Mac app the window's buttons take 84px of a narrow list's bar */}
           <HomeLink className="min-w-0 shrink truncate" />
           <span className="flex-1" />
@@ -154,7 +156,7 @@ export function ChatHeader({
   children?: ReactNode;
 }) {
   return (
-    <header {...(layout.list ? {} : { "data-chat-bar": "" })} className="flex h-14 shrink-0 items-center gap-1.5 pr-3 pl-3 select-none">
+    <header {...(layout.list ? {} : { "data-chat-bar": "" })} className={cn("flex h-14 shrink-0 items-center gap-1.5 pr-3 pl-3 select-none", !layout.list && "sm:pl-4")}>
       {!layout.list && (
         <>
           <ChatModeButton />

@@ -294,7 +294,11 @@ function middleOf(el?: Element | null): { x: number; y: number } | null {
 
 /** What counts as one thing on a screen: what the front moves by itself. A thing inside another moves with it. Not a
  *  video or a canvas: a player sizes itself to its page a moment after the page has its new width, and stays put. */
-const THINGS = "[data-appbar] > *, [data-chat-panel] header > *, :is(#root, [data-chat-panel]) :is(button, a[href], li, h1, h2, h3, p, img, textarea, input, [data-tile])";
+const THINGS = ":is(#root, [data-chat-panel]) :is(button, a[href], li, h1, h2, h3, p, img, textarea, input, [data-tile])";
+/** The bars at the top are the window's own: nothing in them moves (owner, 11-13: "the button underneath my mouse
+ *  should not move"). Their chat-mode button and name stand at the same place in both layouts, so the front only
+ *  shows the new bar where the old one was. */
+const BARS = "[data-titlebar], [data-appbar], [data-chat-bar], [data-chat-panel] header";
 
 interface Thing {
   el: HTMLElement;
@@ -320,7 +324,7 @@ function things(x: number, y: number, most: number, pictures: boolean, within: P
   let last: Element | null = null;
   for (const el of within.querySelectorAll<HTMLElement>(THINGS)) {
     // in document order, so what is inside the thing before it comes right after it
-    if (last?.contains(el)) continue;
+    if (last?.contains(el) || el.closest(BARS)) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 12 || r.height < 12 || r.width * r.height > innerWidth * innerHeight * 0.2) continue;
     if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) continue;

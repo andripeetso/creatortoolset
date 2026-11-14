@@ -1329,7 +1329,8 @@ function Header({
       {manage ? (
         <>
           {/* as in the app's bar: chat mode's one button, first (in chat mode it stands at the top of the chats) */}
-          {me && !isPhoneHub() && <ChatModeButton className="-mr-1" />}
+          {/* the name 8px after it, as in the app's bar (gap-2) */}
+          {me && !isPhoneHub() && <ChatModeButton />}
           <HomeLink />
           <HistoryArrows />
           <Link to={libraryPath} className="shrink-0 text-sm font-semibold tracking-tight text-zinc-500 hover:text-zinc-200">
