@@ -1,9 +1,9 @@
-// What the chat-mode wave sounds like (ChatWave.swift), made here sample by sample (no sound files). While the button is
-// held: air rushing in toward it, rising and louder the deeper the screen is drawn in, a low tone spooling up under it,
-// throbbing and straining as it goes wild. When it pops: a thump falling in pitch and a rush of air going out, bigger the
-// longer it was held; after a long hold a boom under them. A click draws nothing in and makes no sound. It follows the
-// wave's own switch (Settings → Appearance → Chat mode) and the Mac's volume. Owner, 2026-11-14: "can there be sound
-// effects of like sucking in and then letting go ... a building sound effect that reacts to how long it's being held".
+// What the chat-mode wave sounds like (ChatWave.swift), made here sample by sample (no sound files): light and round, as
+// on a phone, never a boom (owner, 11-14: "more like social media ... a bubble bop ... smoother sounds", not "like an
+// explosion"). While the button is held: a soft tone rising as the bubble grows, wobbling a little as it goes wild. When
+// it pops: a bubble's bop, a short round tone chirping up; a bigger, lower one the longer it was held, and after a long
+// hold two small ones after it. A click draws nothing in and makes no sound. It follows the wave's own switch
+// (Settings → Appearance → Chat mode) and the Mac's volume.
 import AVFoundation
 import os
 
@@ -15,70 +15,61 @@ struct WaveSynth {
     var held: Float = 0
     var wild: Float = 0
 
-    private var h: Float = 0, w: Float = 0, t: Float = 0
-    private var seed: UInt32 = 0x9E37_79B9
-    private var low: Float = 0, band: Float = 0, tone: Float = 0
-    private var popAge: Float = 10, popLoud: Float = 0, popSize: Float = 0, popWild: Float = 0
-    private var thump: Float = 0, sub: Float = 0, air: Float = 0
+    /// The tone's loudness and pitch follow what is held (the pitch only upward: let go, the tone fades where it is).
+    private var h: Float = 0, pitch: Float = 0, w: Float = 0, t: Float = 0, tone: Float = 0
+    /// The bubbles of the pop: when each starts after the pop (s), its pitch (Hz), how loud, how quickly it dies away (s),
+    /// and where its wave is.
+    private var bubbles: [(at: Float, f: Float, loud: Float, dies: Float, phase: Float)] = []
+    private var popAge: Float = 10
 
     init(rate: Float) { self.rate = rate }
 
     /// It pops: `drawnIn` is how deep the screen was drawn in when the button was let go (0 for a click: silent).
     mutating func pop(drawnIn: Float, wild: Float) {
         let x = min(max((drawnIn - 0.05) / 0.75, 0), 1)
-        popLoud = x * x * (3 - 2 * x)
-        popSize = min(drawnIn / 2.6, 1.4)
-        popWild = wild
+        let loud = x * x * (3 - 2 * x)
+        guard loud > 0 else { return }
+        // the deeper it was drawn in, the bigger the bubble: lower, a little longer
+        let size = min(drawnIn / 2.6, 1.2)
+        let f = 560 - 160 * size, dies = 0.045 + 0.035 * size
+        bubbles = [(0, f, loud, dies, 0)]
+        if wild > 0 {
+            bubbles.append((0.075, f * 1.55, 0.5 * loud * wild, dies * 0.8, 0))
+            bubbles.append((0.14, f * 2.05, 0.32 * loud * wild, dies * 0.7, 0))
+        }
         popAge = 0
-        thump = 0
-        sub = 0
-    }
-
-    private mutating func noise() -> Float {
-        seed ^= seed << 13
-        seed ^= seed >> 17
-        seed ^= seed << 5
-        return Float(seed) / Float(UInt32.max) * 2 - 1
     }
 
     mutating func next() -> Float {
         let dt = 1 / rate, tau = 2 * Float.pi
         t += dt
-        let follow = 1 - exp(-dt / 0.03)
+        let follow = 1 - exp(-dt / 0.04)
         h += (held - h) * follow
+        if held > pitch { pitch += (held - pitch) * follow }
+        if held == 0 && h < 0.001 { pitch = 0 }
         w += (wild - w) * follow
         var out: Float = 0
-        // air rushing in: noise through a band that rises with the pull, a low tone spooling up under it; louder and
-        // higher all the way to the longest hold
-        let level = min(h / 3.6, 1)
-        let n = noise()
-        let f = 260 * pow(2, 2.6 * level) * (1 + 0.04 * w * sin(t * tau * 7))
-        let q = 1.6 + 2.2 * w
-        let fc = 2 * sin(Float.pi * min(f, rate / 6) / rate)
-        low += fc * band
-        band += fc * (n - low - band / q)
-        tone += tau * 62 * pow(2, 1.6 * level) * (1 + 0.03 * w * sin(t * tau * 11)) * dt
-        if tone > tau { tone -= tau }
-        let throb = 1 - 0.5 * w * (0.5 + 0.5 * sin(t * tau * (9 + 5 * w)))
-        let loud = 0.35 * level + 0.65 * level * level
-        out += (1.1 * band / q + 0.22 * sin(tone)) * loud * throb
-        // the pop: a thump falling in pitch, air rushing out and darkening; after a long hold a boom under them
-        if popAge < 3 && popLoud > 0 {
-            popAge += dt
-            let a = popAge
-            thump += tau * (48 + (150 - 40 * popSize) * exp(-a / 0.045)) * dt
-            if thump > tau { thump -= tau }
-            let cut = 300 + 4200 * exp(-a / (0.06 + 0.15 * popSize))
-            air += (n - air) * (1 - exp(-tau * cut * dt))
-            sub += tau * 36 * dt
-            if sub > tau { sub -= tau }
-            let attack = min(a / 0.004, 1)
-            out += popLoud * attack * (0.55 * sin(thump) * exp(-a / (0.07 + 0.18 * popSize + 0.15 * popWild))
-                + 0.45 * air * exp(-a / (0.12 + 0.3 * popSize + 0.3 * popWild)))
-            out += 0.4 * popLoud * popWild * sin(sub) * exp(-a / 0.4) * min(a / 0.02, 1)
+        // while held: a soft round tone rising as the bubble grows, wobbling a little as it goes wild
+        let level = min(h / 3.6, 1), rise = min(pitch / 3.6, 1)
+        if level > 0.0005 {
+            tone += tau * 220 * pow(2, 1.25 * rise) * (1 + (0.006 + 0.025 * w) * sin(t * tau * 5.5)) * dt
+            if tone > tau { tone -= tau }
+            let wobble = 1 - 0.35 * w * (0.5 + 0.5 * sin(t * tau * 8))
+            out += 0.22 * (0.2 * level + 0.8 * level * level) * wobble * (sin(tone) + 0.12 * sin(2 * tone))
         }
-        // (a half-second hold's pop peaks about as loud as the Mac's own "Pop", the longest hold's about as its "Tink")
-        return tanh(out * 1.3) * 0.4
+        // the pop: each bubble a round tone chirping up, there at once and gone within a moment
+        if popAge < 1 {
+            popAge += dt
+            for i in bubbles.indices {
+                let a = popAge - bubbles[i].at
+                guard a > 0 else { continue }
+                bubbles[i].phase += tau * bubbles[i].f * (1 + 1.3 * (1 - exp(-a / 0.02))) * dt
+                if bubbles[i].phase > tau { bubbles[i].phase -= tau }
+                out += 0.9 * bubbles[i].loud * min(a / 0.0015, 1) * exp(-a / bubbles[i].dies) * sin(bubbles[i].phase)
+            }
+        }
+        // (its pop peaks about as loud as the Mac's own "Pop")
+        return tanh(out * 1.2) * 0.4
     }
 }
 
