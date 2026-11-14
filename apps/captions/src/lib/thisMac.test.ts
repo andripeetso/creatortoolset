@@ -95,12 +95,15 @@ describe("a call that needs a Mac of the person's own", () => {
     expect([asked, calls, said]).toEqual([["state", "start"], 3, ["Ana's Mac Studio is unreachable. Doing it on this Mac."]]);
   });
 
-  it("when the Mac it can't reach is this one, says this Mac isn't connected", async () => {
-    bridgeWith(async () => ({ aiOn: true, paired: true, device: "dev-studio" }));
-    const said: string[] = [];
-    let calls = 0;
-    await onThisMac(async () => (++calls < 2 ? Promise.reject(away(studio)) : "ok"), { wait: 1, onHere: (t) => said.push(t) });
-    expect(said).toEqual(["This Mac isn't connected to this server. Connecting it and doing it here."]);
+  it("when the Mac it can't reach is this one, or this Mac is not on this server yet, says this Mac isn't connected", async () => {
+    // this Mac is the one the server named; and this Mac has no id on this server (the one named may be it, paired by an older app)
+    for (const device of ["dev-studio", null]) {
+      bridgeWith(async (m) => (m === "state" ? { aiOn: false, paired: false, device } : { aiOn: true, paired: true, device: "dev-new" }));
+      const said: string[] = [];
+      let calls = 0;
+      await onThisMac(async () => (++calls < 2 ? Promise.reject(away(studio)) : "ok"), { wait: 1, onHere: (t) => said.push(t) });
+      expect(said, String(device)).toEqual(["This Mac isn't connected to this server. Connecting it and doing it here."]);
+    }
   });
 
   it("Stop ends the waiting", async () => {

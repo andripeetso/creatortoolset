@@ -45,7 +45,10 @@ export async function onThisMac<T>(run: () => Promise<T>, opts: { onHere?: (why:
     const bridge = thisMacBridge();
     if (!bridge || !noMac(e)) throw e;
     const here = await bridge.postMessage("state").catch(() => null);
-    opts.onHere?.(e.device && e.device.id !== here?.device ? `${e.device.name} is unreachable. Doing it on this Mac.` : "This Mac isn't connected to this server. Connecting it and doing it here.");
+    // another Mac is named only when this one is on this server under an id of its own: a Mac not on it yet (no id here)
+    // may well be the one the server knows by name, from an older app or an earlier pairing
+    const other = e.device && here?.device && e.device.id !== here.device;
+    opts.onHere?.(other ? `${e.device!.name} is unreachable. Doing it on this Mac.` : "This Mac isn't connected to this server. Connecting it and doing it here.");
     const s = await startThisMac();
     if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not be switched on for it: ${s.problem}` : e.message);
     // the server sees the Mac at its first call, a moment after it is switched on
