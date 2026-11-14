@@ -45,7 +45,8 @@ describe("ProjectForm variant setup", () => {
     expect(fullHtml).toContain("Instructions");
     expect(fullHtml).toContain("Write it for me");
     expect(fullHtml).not.toContain("Where do you post?");
-    expect(fullHtml).toContain('placeholder="Tiny Acrobatics"');
+    // no sample name in the box: the label says what goes there
+    expect(fullHtml).not.toContain("Tiny Acrobatics");
   });
 
   it("a new project shows no knowledge switches", () => {
@@ -55,7 +56,7 @@ describe("ProjectForm variant setup", () => {
   it("the name and the button belong to the form, so Enter submits it and never another row's button", () => {
     const id = /<form id="([^"]+)"/.exec(fullHtml)?.[1];
     expect(id).toBeTruthy();
-    expect(fullHtml).toMatch(new RegExp(`<input form="${id}"[^>]*placeholder="Tiny Acrobatics"`));
+    expect(fullHtml).toMatch(new RegExp(`<input form="${id}"[^>]*required`));
     expect(fullHtml).toMatch(new RegExp(`type="submit" form="${id}"`));
   });
 });

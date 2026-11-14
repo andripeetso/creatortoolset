@@ -27,7 +27,7 @@ it("a file dropped on the instructions shows at the top of the box; saving with 
   expect(e.defaultPrevented).toBe(true);
   expect(host.querySelector('[aria-label="Remove about.md"]')).toBeTruthy();
 
-  const name = host.querySelector<HTMLInputElement>('input[placeholder="Tiny Acrobatics"]')!;
+  const name = host.querySelector<HTMLInputElement>('input[required]')!;
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Tiny");
     name.dispatchEvent(new Event("input", { bubbles: true }));

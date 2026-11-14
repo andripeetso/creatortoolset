@@ -206,7 +206,7 @@ export function ProjectForm({
           required
           value={f.name}
           onChange={set("name")}
-          placeholder={setup ? "My brand" : "Tiny Acrobatics"}
+          placeholder={setup ? "My brand" : undefined}
           className={`${input} mt-1`}
         />
       </label>
