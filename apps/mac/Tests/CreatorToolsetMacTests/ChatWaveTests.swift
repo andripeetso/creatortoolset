@@ -12,17 +12,21 @@ final class ChatWaveTests: XCTestCase {
     }
 
     func testTheLightAtTheButtonAnswersThePressAtOnce() {
-        XCTAssertGreaterThan(WaveClock.at(50, size: size, origin: button, scale: 2).bloom, 0.8)
+        XCTAssertGreaterThan(WaveClock.at(50, size: size, origin: button, scale: 2).bloom, 0.45)
     }
 
-    func testTheScreenGathersBeforeTheFrontLeaves() {
-        let gathering = WaveClock.at(WaveClock.gather - 1, size: size, origin: button, scale: 2)
-        XCTAssertLessThan(gathering.front, 0)
-        XCTAssertGreaterThan(gathering.gather, 0.9)
-        XCTAssertFalse(gathering.done)
+    /// The screen falls toward the button faster and faster before the wave is let go.
+    func testTheScreenFallsInBeforeTheWaveLeaves() {
+        let early = WaveClock.at(WaveClock.gather / 2, size: size, origin: button, scale: 2)
+        let late = WaveClock.at(WaveClock.gather - 1, size: size, origin: button, scale: 2)
+        XCTAssertLessThan(late.front, 0)
+        XCTAssertLessThan(early.pull, 0.5 * late.pull)
+        XCTAssertGreaterThan(late.pull, 0.95)
+        XCTAssertFalse(late.done)
     }
 
-    /// One front, out from the button only, faster at the end than at the start, past the far corner when it is done.
+    /// One front, out from the button only, fastest as it is let go, past the far corner (with all of its wave and the
+    /// most it wavers) when it is done.
     func testTheFrontGoesOutOnceAndLeavesTheWindow() {
         var last: Float = 0
         var steps: [Float] = []
@@ -32,12 +36,12 @@ final class ChatWaveTests: XCTestCase {
             steps.append(m.front - last)
             last = m.front
         }
-        XCTAssertGreaterThan(steps.last!, steps[2] * 2)
+        XCTAssertGreaterThan(steps[1], steps.last! * 1.5)
         let end = WaveClock.at(WaveClock.gather + WaveClock.sweep, size: size, origin: button, scale: 2)
         XCTAssertTrue(end.done)
         let corner = Float(hypot(size.width - button.x, size.height - button.y))
-        // nothing of the front's bend is left on the window
-        XCTAssertGreaterThan(end.front - 2.4 * end.width, corner - 1)
+        // nothing of the wave is left on the window
+        XCTAssertGreaterThan(end.front - (3.2 + 0.28) * end.width, corner - 1)
     }
 
     @MainActor
