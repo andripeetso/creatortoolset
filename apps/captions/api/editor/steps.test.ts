@@ -61,6 +61,7 @@ describe("Settings → Tools → AI Editor's steps", () => {
     expect(bundledPlugins().filter((b) => !b.kind)).toEqual([]);
     expect(Object.fromEntries(bundledPlugins().map((b) => [b.folder, b.kind]))).toMatchObject({
       "adobe-enhance": "enhance",
+      "blur-faces": "tool",
       colour: "editor",
       "face-blur": "editor",
       "face-refine": "editor",

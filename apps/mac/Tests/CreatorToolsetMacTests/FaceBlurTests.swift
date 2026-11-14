@@ -1,0 +1,244 @@
+import AVFoundation
+import CoreImage
+import ImageIO
+import UniformTypeIdentifiers
+import XCTest
+@testable import CreatorToolsetMac
+
+/// A scratch folder for one test, removed at the end.
+private func scratch() throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("face-blur-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+}
+
+/// A plain light-yellow video drawn here (no person in it): `frames` frames at 30 fps, 320×240, with a location in its
+/// metadata.
+private func makeVideo(_ url: URL, frames: Int = 30) async throws {
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let location = AVMutableMetadataItem()
+    location.identifier = .quickTimeMetadataLocationISO6709
+    location.value = "+59.4370+024.7536/" as NSString
+    writer.metadata = [location]
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 240])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 320, kCVPixelBufferHeightKey as String: 240,
+    ])
+    writer.add(input)
+    XCTAssertTrue(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+    for f in 0..<frames {
+        while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+        var buffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+        CVPixelBufferLockBaseAddress(buffer!, [])
+        let base = CVPixelBufferGetBaseAddress(buffer!)!.assumingMemoryBound(to: UInt8.self)
+        let row = CVPixelBufferGetBytesPerRow(buffer!)
+        for y in 0..<240 { for x in 0..<320 { let p = base + y * row + x * 4; p[0] = 120; p[1] = 220; p[2] = 230; p[3] = 255 } }
+        CVPixelBufferUnlockBaseAddress(buffer!, [])
+        XCTAssertTrue(adaptor.append(buffer!, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: 30)))
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    XCTAssertEqual(writer.status, .completed)
+}
+
+/// Every frame of a video: its time and the brightness (0…255) of its centre pixel.
+private func centres(_ url: URL) async throws -> [(time: Double, value: Int)] {
+    let asset = AVURLAsset(url: url)
+    let track = try await asset.loadTracks(withMediaType: .video).first!
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+    reader.add(output)
+    reader.startReading()
+    var out: [(Double, Int)] = []
+    while let sample = output.copyNextSampleBuffer() {
+        guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        let p = base + (CVPixelBufferGetHeight(buffer) / 2) * CVPixelBufferGetBytesPerRow(buffer) + (CVPixelBufferGetWidth(buffer) / 2) * 4
+        out.append((CMSampleBufferGetPresentationTimeStamp(sample).seconds, (Int(p[0]) + Int(p[1]) + Int(p[2])) / 3))
+        CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+    }
+    return out
+}
+
+/// A solid cover in the middle of the frame, showing from `start` to `end`.
+private func middleCover(_ start: Double, _ end: Double) -> Cover {
+    var cover = Cover(path: [PathSample(time: start, rect: NormRect(cx: 0.5, cy: 0.5, w: 0.25, h: 0.25 * 320 / 240))], start: start, end: end)
+    LookPreset(look: .solid).apply(to: &cover)
+    return cover
+}
+
+final class FaceBlurAskTests: XCTestCase {
+    func testAsks() {
+        XCTAssertEqual(faceBlurAsk("faceblur:hello"), .hello)
+        XCTAssertEqual(faceBlurAsk(#"faceblur:start:{"files":["/Users/a/b: c.mov"],"mode":"some","look":"mosaic"}"#),
+                       .start(files: ["/Users/a/b: c.mov"], mode: .some, look: .mosaic))
+        XCTAssertEqual(faceBlurAsk(#"faceblur:choose:{"job":"j","path":"/x.jpg","blur":["F2"]}"#), .choose(job: "j", path: "/x.jpg", blur: ["F2"]))
+        XCTAssertEqual(faceBlurAsk(#"faceblur:choose:{"job":"j","path":"/x.jpg","blur":[],"error":"No AI is connected."}"#),
+                       .choose(job: "j", path: "/x.jpg", blur: [], error: "No AI is connected."))
+        XCTAssertEqual(faceBlurAsk(#"faceblur:choose:{"job":"j","path":"/x.jpg","blur":[],"error":""}"#), .choose(job: "j", path: "/x.jpg", blur: []))
+        XCTAssertEqual(faceBlurAsk("faceblur:state:j1"), .state(job: "j1"))
+        XCTAssertEqual(faceBlurAsk("faceblur:cancel:j1"), .cancel(job: "j1"))
+        XCTAssertEqual(faceBlurAsk("faceblur:show:/a/b:c.mp4"), .show(path: "/a/b:c.mp4"))
+        // malformed or unknown: nil
+        XCTAssertNil(faceBlurAsk(#"faceblur:start:{"files":["/a.mov"],"mode":"every","look":"blur"}"#))
+        XCTAssertNil(faceBlurAsk(#"faceblur:start:{"files":[],"mode":"all","look":"blur"}"#))
+        XCTAssertNil(faceBlurAsk(#"faceblur:start:{"files":["/a.mov"],"mode":"all","look":"emoji"}"#))
+        XCTAssertNil(faceBlurAsk("faceblur:state"))
+        XCTAssertNil(faceBlurAsk("faceblur:hello:x"))
+        XCTAssertNil(faceBlurAsk("faceblur:delete:/a"))
+        XCTAssertNil(faceBlurAsk("plugin:on:x"))
+    }
+
+    func testOutputNames() {
+        let source = URL(fileURLWithPath: "/Movies/Beach day.MOV")
+        XCTAssertEqual(CoverPipeline.outputURL(for: source, kind: .video, exists: { _ in false }).path, "/Movies/Beach day blurred.mp4")
+        let taken: Set<String> = ["/Movies/Beach day blurred.mp4", "/Movies/Beach day blurred 2.mp4"]
+        XCTAssertEqual(CoverPipeline.outputURL(for: source, kind: .video, exists: taken.contains).path, "/Movies/Beach day blurred 3.mp4")
+        XCTAssertEqual(CoverPipeline.outputURL(for: URL(fileURLWithPath: "/P/a.heic"), kind: .photo, exists: { _ in false }).path, "/P/a blurred.jpg")
+    }
+
+    func testRefusals() throws {
+        let dir = try scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let photo = dir.appendingPathComponent("p.jpg"), text = dir.appendingPathComponent("t.txt")
+        try Data([0xFF]).write(to: photo)
+        try Data("x".utf8).write(to: text)
+        XCTAssertNil(FaceBlurJobs.refusal([photo.path], allowed: [photo.path]))
+        XCTAssertEqual(FaceBlurJobs.refusal([photo.path], allowed: []), "Pick p.jpg in this app first: Face Blur takes only files chosen or dropped here.")
+        XCTAssertEqual(FaceBlurJobs.refusal([text.path], allowed: [text.path]), "t.txt isn't a photo or a video.")
+        XCTAssertEqual(FaceBlurJobs.refusal([dir.path], allowed: [dir.path]), "\(dir.lastPathComponent) can't be read.")
+    }
+}
+
+final class FaceBlurEngineTests: XCTestCase {
+    /// One face moving slowly across a second, plus a one-frame flicker elsewhere: one track, start to end.
+    func testTracksFromDetections() {
+        let frame = CGSize(width: 640, height: 480)
+        let builder = TrackBuilder(frame: frame)
+        for f in 0..<30 {
+            let t = Double(f) / 30
+            var faces = [FaceDetection(rect: NormRect(cx: 0.3 + t * 0.1, cy: 0.4, w: 0.12, h: 0.16), angle: 0, score: 0.9)]
+            if f == 12 { faces.append(FaceDetection(rect: NormRect(cx: 0.8, cy: 0.8, w: 0.05, h: 0.07), angle: 0, score: 0.6)) }
+            builder.ingest(time: t, detections: faces)
+        }
+        let covers = builder.covers(scanStart: 0, scanEnd: 1, preset: LookPreset())
+        XCTAssertEqual(covers.count, 1)
+        XCTAssertEqual(covers[0].start, 0)
+        XCTAssertEqual(covers[0].end, 1)
+        // a cover at every moment of the track, around the face
+        for f in 0...30 {
+            let at = covers[0].placement(at: Double(f) / 30)
+            XCTAssertNotNil(at)
+            XCTAssertEqual(at!.rect.cx, 0.3 + Double(min(f, 29)) / 300, accuracy: 0.02)
+        }
+        XCTAssertEqual(CoverPipeline.note(covers[0], kind: .video), "middle centre of the frame; 12% of its width; seen for 1.0 s")
+        XCTAssertEqual(CoverPipeline.moments(covers[0]).count, 3)
+    }
+
+    /// Every frame inside the cover's span is covered, every frame outside it is the source's own, and no frame is lost.
+    func testEveryFrameInTheSpanIsCovered() async throws {
+        let dir = try scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("plain.mov"), out = dir.appendingPathComponent("plain blurred.mp4")
+        try await makeVideo(source)
+        let scan = FaceScan(kind: .video, covers: [middleCover(0.3, 0.7)], faces: [ScannedFace(id: "F1", picture: "", note: "")])
+        try await CoverPipeline.write(scan, from: source, blur: ["F1"], to: out) { _ in }
+        let frames = try await centres(out)
+        XCTAssertEqual(frames.count, 30)
+        for f in frames {
+            if f.time > 0.31 && f.time < 0.69 { XCTAssertLessThan(f.value, 80, "uncovered at \(f.time)") }
+            if f.time < 0.28 || f.time > 0.72 { XCTAssertGreaterThan(f.value, 150, "covered at \(f.time)") }
+        }
+        // no location (or any other source metadata) in the copy, and no partial file left beside it
+        let metadata = try await AVURLAsset(url: out).load(.metadata)
+        XCTAssertFalse(metadata.contains { $0.identifier == .quickTimeMetadataLocationISO6709 })
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix(".") }, [])
+
+        // a face not chosen stays as it is, and writing again replaces the same copy
+        try await CoverPipeline.write(scan, from: source, blur: [], to: out) { _ in }
+        let plain = try await centres(out)
+        XCTAssertTrue(plain.allSatisfy { $0.value > 150 })
+    }
+
+    /// A photo: the face covered, and none of the original's metadata (location, camera, date) in the copy.
+    func testPhotoIsCoveredWithoutMetadata() throws {
+        let dir = try scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("plain.jpg"), out = dir.appendingPathComponent("plain blurred.jpg")
+        let ctx = CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.setFillColor(CGColor(red: 0.9, green: 0.85, blue: 0.5, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        let dest = CGImageDestinationCreateWithURL(source as CFURL, UTType.jpeg.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, ctx.makeImage()!, [
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 59.437, kCGImagePropertyGPSLatitudeRef: "N"],
+            kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: "2026:01:02 10:00:00"],
+        ] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+
+        var cover = Cover(path: [PathSample(time: 0, rect: NormRect(cx: 0.5, cy: 0.5, w: 0.3, h: 0.4))], start: 0, end: 0)
+        LookPreset(look: .solid).apply(to: &cover)
+        let scan = FaceScan(kind: .photo, covers: [cover], faces: [ScannedFace(id: "F1", picture: "", note: "")])
+        let done = expectation(description: "written")
+        Task {
+            try await CoverPipeline.write(scan, from: source, blur: ["F1"], to: out) { _ in }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 30)
+
+        let written = CGImageSourceCreateWithURL(out as CFURL, nil)!
+        let props = CGImageSourceCopyPropertiesAtIndex(written, 0, nil) as! [CFString: Any]
+        XCTAssertNil(props[kCGImagePropertyGPSDictionary])
+        XCTAssertNil((props[kCGImagePropertyExifDictionary] as? [CFString: Any])?[kCGImagePropertyExifDateTimeOriginal])
+        let image = CGImageSourceCreateImageAtIndex(written, 0, nil)!
+        let pixels = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                               bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        pixels.draw(image.cropping(to: CGRect(x: 200, y: 150, width: 1, height: 1))!, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let p = pixels.data!.assumingMemoryBound(to: UInt8.self)
+        XCTAssertLessThan(Int(p[0]), 80)
+    }
+
+    /// A face's picture is a JPEG under the cap, its crops side by side.
+    func testFacePicture() throws {
+        let ctx = CGContext(data: nil, width: 640, height: 480, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 640, height: 480))
+        let frame = ctx.makeImage()!
+        let crop = CoverPipeline.crop(frame, NormRect(cx: 0.95, cy: 0.5, w: 0.2, h: 0.2 * 640 / 480))
+        XCTAssertLessThanOrEqual(crop.width, 128)   // stopped at the frame's edge
+        let data = try XCTUnwrap(Data(base64Encoded: CoverPipeline.picture([crop, crop, crop])))
+        XCTAssertLessThanOrEqual(data.count, CoverPipeline.maxPictureBytes)
+        let image = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(data as CFData, nil)!, 0, nil)!
+        XCTAssertEqual(image.width, 3 * CoverPipeline.tile)
+    }
+
+    /// The page's road on this Mac: start, read the state until done, a copy beside the original. The video drawn here
+    /// has no face, so its copy is written straight away even in "some" mode.
+    @MainActor
+    func testJobWritesTheCopy() async throws {
+        let dir = try scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("plain.mov")
+        try await makeVideo(source, frames: 10)
+        let jobs = FaceBlurJobs()
+        let start = jobs.answer(#"faceblur:start:{"files":["\#(source.path)"],"mode":"some","look":"blur"}"#, allowed: [source.path])
+        let job = try XCTUnwrap(start["job"] as? String)
+        var state: [String: Any] = [:]
+        for _ in 0..<600 {
+            state = jobs.answer("faceblur:state:\(job)", allowed: [])
+            if state["done"] as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let item = try XCTUnwrap((state["items"] as? [[String: Any]])?.first)
+        XCTAssertEqual(item["stage"] as? String, "done", "\(item)")
+        XCTAssertEqual(item["out"] as? String, dir.appendingPathComponent("plain blurred.mp4").path)
+        XCTAssertEqual((item["faces"] as? [Any])?.count, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("plain blurred.mp4").path))
+        XCTAssertNotNil(jobs.answer("faceblur:choose:{\"job\":\"nope\",\"path\":\"/x\",\"blur\":[]}", allowed: [])["problem"])
+    }
+}

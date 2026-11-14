@@ -91,6 +91,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     /// The Finder items of a drop on this window: a page only gets a dropped item's contents, so the assistant asks for
     /// these ("dropped") to point at a folder where it lies instead of uploading it. Only a real drop hands them over.
     private var drag = DragPaths()
+    /// The files of the drops the page asked about ("dropped"): Face Blur takes these (FaceBlurBridge.swift).
+    private(set) var droppedFiles: [URL] = []
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         drag.entered(droppedItems(sender.draggingPasteboard))
@@ -380,10 +382,14 @@ extension AppWebView {
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".
     fileprivate func thisMac(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
-              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask), let onThisMacAsk else {
+              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask), let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }
-        if ask == "dropped" { return replyHandler(["items": drag.take()], nil) }
+        if ask == "dropped" {
+            let items = drag.take()
+            droppedFiles = rememberPicks(items.compactMap { $0["folder"] as? Bool == false ? ($0["path"] as? String).map(URL.init(fileURLWithPath:)) : nil }, in: droppedFiles)
+            return replyHandler(["items": items], nil)
+        }
         onThisMacAsk(ask) { replyHandler($0, nil) }
     }
 }
