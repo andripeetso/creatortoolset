@@ -1877,7 +1877,9 @@ workshopApp.post("/projects", async (c) => {
  * the accounts it names. Facts, not a voice.
  */
 const DRAFT_LINKS = 5;
-const DRAFT_TEXT = 60_000;
+/** What was typed plus the dropped text files' words (FILES_TEXT in ProjectForm.tsx), and how many files come with it. */
+const DRAFT_TEXT = 160_000;
+const MAX_FILES = 30;
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
   const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown } | null;
@@ -1885,7 +1887,7 @@ workshopApp.post("/projects/draft-notes", async (c) => {
   const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
   const files = (Array.isArray(body?.files) ? body.files : [])
     .filter((f): f is { name: string; data: string } => typeof f?.name === "string" && typeof f?.data === "string")
-    .slice(0, 5);
+    .slice(0, MAX_FILES);
   const links = [...new Set(text.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
   const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
   // each part on its own: one that can't be read is said, the rest still drafts
@@ -1907,7 +1909,7 @@ workshopApp.post("/projects/draft-notes", async (c) => {
     ),
     ...files.map((f) =>
       documentText(f.name, Buffer.from(f.data, "base64")).then(
-        (t) => `The file ${f.name}:\n${t.slice(0, 20_000)}`,
+        (t) => `The file ${f.name}:\n${t.slice(0, Math.max(2_000, Math.min(20_000, Math.floor(DRAFT_TEXT / files.length))))}`,
         (e: unknown) => `(${f.name} could not be read: ${errorMessage(e)})`,
       ),
     ),

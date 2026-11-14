@@ -16,6 +16,7 @@ import { PROJECT_COLORS, projectColor, type ProjectColor } from "@/lib/workspace
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { LanguageSelect } from "../LanguageSelect";
 import { CtMark } from "../CtMark";
+import { droppedFiles } from "../assistant/draft";
 
 const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes: "", accountId: null };
 
@@ -44,6 +45,10 @@ export function setupProjectFields(
 const DOC = /\.(docx|odt|epub)$/i;
 const ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.odt,.epub,text/*,application/pdf";
 const readable = (file: File) => DOC.test(file.name) || ["text", "pdf"].includes(attachKind(file));
+/** At most this many files to write from (a dropped folder brings all of its own); MAX_FILES in api/workshop.ts. */
+const MAX_FILES = 30;
+/** What the files' words may come to together; DRAFT_TEXT in api/workshop.ts. */
+const FILES_TEXT = 150_000;
 
 /**
  * A project: name, colour, its accounts, the instructions always in the prompt (written for you from whatever you drop
@@ -103,11 +108,22 @@ export function ProjectForm({
       }
       return { ...cur, [id]: "" };
     });
-  const addFiles = (files: FileList | File[]) => {
+  // a folder's files it can't read (pictures, videos) are left out quietly; a loose one is named
+  const addFiles = (files: FileList | File[], folder = false) => {
     const list = [...files];
     const bad = list.filter((x) => !readable(x));
-    setError(bad.length ? `Can't read ${bad.map((x) => x.name).join(", ")}: drop text, PDF, Word, OpenDocument or EPUB` : null);
-    setDropped((cur) => [...cur, ...list.filter(readable)].slice(0, 5));
+    const ok = list.filter(readable);
+    const room = MAX_FILES - dropped.length;
+    setError(
+      bad.length && !folder
+        ? `Can't read ${bad.map((x) => x.name).join(", ")}: drop text, PDF, Word, OpenDocument or EPUB`
+        : folder && !ok.length
+          ? "Nothing in that folder to read: text, PDF, Word, OpenDocument or EPUB"
+          : ok.length > room
+            ? `Only the first ${MAX_FILES} files are read`
+            : null,
+    );
+    setDropped((cur) => [...cur, ...ok].slice(0, MAX_FILES));
   };
   // only files: dragged or pasted text still lands in the box
   const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
@@ -124,9 +140,11 @@ export function ProjectForm({
       const accountIds = [initial?.accountId, ...known.filter((a) => handles.has(a.username.toLowerCase())).map((a) => a.id)].filter((x): x is string => !!x);
       let text = context.trim();
       const files: Array<{ name: string; data: string }> = [];
+      // each file an even share of the words, so the last of a folder isn't cut off
+      const share = Math.max(2_000, Math.min(20_000, Math.floor(FILES_TEXT / Math.max(1, dropped.length))));
       for (const file of dropped) {
         if (DOC.test(file.name)) files.push({ name: file.name, data: await fileBase64(file) });
-        else text += `\n\nThe file ${file.name}:\n${(attachKind(file) === "pdf" ? await pdfText(file) : await file.text()).slice(0, 20_000)}`;
+        else text += `\n\nThe file ${file.name}:\n${(attachKind(file) === "pdf" ? await pdfText(file) : await file.text()).slice(0, share)}`;
       }
       const { notes } = await draftProjectNotes({ name: f.name, text, accountIds, files });
       if (!alive.current) return;
@@ -271,7 +289,11 @@ export function ProjectForm({
               setOver(false);
               if (!hasFiles(e) || locked) return;
               e.preventDefault();
-              addFiles(e.dataTransfer.files);
+              // a dropped folder is opened into its files (and its folders' files)
+              void droppedFiles(e.dataTransfer).then(
+                ({ files, folder }) => alive.current && addFiles(files, folder),
+                (err: unknown) => alive.current && setError(`Can't open that folder: ${err instanceof Error ? err.message : String(err)}`),
+              );
             }}
             onPaste={(e) => {
               if (!e.clipboardData.files.length || locked) return;
@@ -320,7 +342,7 @@ export function ProjectForm({
                 onClick={() => pick.current?.click()}
                 disabled={locked}
                 aria-label="Add files"
-                title="Add files: text, PDF, Word, OpenDocument or EPUB (or drop them here)"
+                title="Add files: text, PDF, Word, OpenDocument or EPUB (or drop them, or a folder, here)"
                 className="flex size-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
               >
                 <Paperclip className="size-4" />
