@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Loader2, Paperclip, Sparkles, X } from "lucide-react";
+import { Loader2, Paperclip, X } from "lucide-react";
 import { PLATFORMS, type SocialPlatform } from "@contracts/connectors";
 import { listAccounts } from "@/lib/instagram";
 import {
@@ -21,6 +21,7 @@ import { pdfText } from "@/lib/pdf-text";
 import { PROJECT_COLORS, projectColor, type ProjectColor } from "@/lib/workspace";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { LanguageSelect } from "../LanguageSelect";
+import { CtMark } from "../CtMark";
 
 const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes: "", accountId: null };
 
@@ -47,6 +48,7 @@ export function setupProjectFields(
 }
 
 const DOC = /\.(docx|odt|epub)$/i;
+const ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.odt,.epub,text/*,application/pdf";
 const readable = (file: File) => DOC.test(file.name) || ["text", "pdf"].includes(attachKind(file));
 
 /**
@@ -93,6 +95,7 @@ export function ProjectForm({
   const [context, setContext] = useState("");
   const [dropped, setDropped] = useState<File[]>([]);
   const [drafting, setDrafting] = useState(false);
+  const [over, setOver] = useState(false);
   const pick = useRef<HTMLInputElement>(null);
   // the <form> holds no rows of its own: the accounts' buttons sit in this box too, and inside a form the first of them
   // would be what Enter presses. The name, the handles and the submit button belong to it by `form=`.
@@ -121,7 +124,12 @@ export function ProjectForm({
     const bad = list.filter((x) => !readable(x));
     setError(bad.length ? `Can't read ${bad.map((x) => x.name).join(", ")}: drop text, PDF, Word, OpenDocument or EPUB` : null);
     setDropped((cur) => [...cur, ...list.filter(readable)].slice(0, 5));
+    // a file is something to write the instructions from: it opens the box that does
+    if (list.some(readable)) setWriting(true);
   };
+  const closeWriting = () => (setWriting(false), setContext(""), setDropped([]));
+  // only files: dragged or pasted text still lands in the box under it
+  const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
   const canWrite = !!context.trim() || dropped.length > 0 || !!initial?.accountId;
   const write = async () => {
     setError(null);
@@ -140,9 +148,7 @@ export function ProjectForm({
       const { notes } = await draftProjectNotes({ name: f.name, text, accountIds, files });
       if (!alive.current) return;
       setF((cur) => ({ ...cur, notes: cur.notes.trim() ? `${cur.notes.trim()}\n\n${notes}` : notes }));
-      setWriting(false);
-      setContext("");
-      setDropped([]);
+      closeWriting();
     } catch (err) {
       if (alive.current) setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -181,6 +187,11 @@ export function ProjectForm({
         e.preventDefault();
         setError(null);
         if (setup && !f.name.trim()) return;
+        // what was dropped in to write from would be lost without a word
+        if (writing && (dropped.length || context.trim())) {
+          setError("Write the instructions from what you dropped in first, or close that box.");
+          return;
+        }
         setPending(true);
         // the project's Analyzer account (f.accountId) goes back as it was: accounts are connected below, not typed here
         void Promise.resolve(onSave(setup ? setupProjectFields(f, where) : { ...f, audience: "", voice: "", cta: "" }))
@@ -272,9 +283,41 @@ export function ProjectForm({
         </div>
       )}
       {!setup && (
-        <div className="text-[11px] text-zinc-400">
-          <span className="flex items-center justify-between">
-            <label htmlFor="project-notes">Instructions</label>
+        <div
+          className={`-m-1.5 rounded-lg p-1.5 text-[11px] text-zinc-400 ${over ? "bg-violet-500/10 outline-dashed outline-1 outline-violet-500/60" : ""}`}
+          onDragOver={(e) => {
+            if (!hasFiles(e) || locked) return;
+            e.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOver(false)}
+          onDrop={(e) => {
+            setOver(false);
+            if (!hasFiles(e) || locked) return;
+            e.preventDefault();
+            addFiles(e.dataTransfer.files);
+          }}
+          onPaste={(e) => {
+            if (!e.clipboardData.files.length || locked) return;
+            e.preventDefault();
+            addFiles(e.clipboardData.files);
+          }}
+        >
+          <span className="flex items-center gap-1">
+            <label htmlFor="project-notes" className="flex-1">
+              Instructions
+            </label>
+            <input ref={pick} type="file" multiple hidden accept={ACCEPT} onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
+            <button
+              type="button"
+              onClick={() => pick.current?.click()}
+              disabled={locked}
+              title="Text, PDF, Word, OpenDocument or EPUB. Or drop them here."
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
+            >
+              <Paperclip className="h-3 w-3" />
+              Add files
+            </button>
             {!writing ? (
               <button
                 type="button"
@@ -282,20 +325,13 @@ export function ProjectForm({
                 disabled={locked}
                 className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-violet-300 hover:bg-zinc-800 disabled:opacity-40"
               >
-                <Sparkles className="h-3 w-3" />
+                <CtMark className="h-3 w-3" />
                 Write it for me
               </button>
             ) : null}
           </span>
           {writing ? (
-            <div
-              className="mt-1 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 p-2"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                addFiles(e.dataTransfer.files);
-              }}
-            >
+            <div className="mt-1 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 p-2">
               <textarea
                 autoFocus
                 value={context}
@@ -316,13 +352,8 @@ export function ProjectForm({
                   ))}
                 </div>
               ) : null}
-              <div className="mt-1.5 flex items-center gap-2">
-                <input ref={pick} type="file" multiple hidden onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
-                <button type="button" disabled={drafting} onClick={() => pick.current?.click()} className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
-                  <Paperclip className="h-3 w-3" /> Add a file
-                </button>
-                <span className="flex-1" />
-                <button type="button" disabled={drafting} onClick={() => setWriting(false)} className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
+              <div className="mt-1.5 flex items-center justify-end gap-2">
+                <button type="button" disabled={drafting} onClick={closeWriting} className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
                   Close
                 </button>
                 <button
@@ -331,7 +362,7 @@ export function ProjectForm({
                   disabled={drafting || !canWrite}
                   className="flex items-center gap-1 rounded-md bg-violet-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
                 >
-                  {drafting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  {drafting ? <Loader2 className="h-3 w-3 animate-spin" /> : <CtMark className="h-3 w-3" />}
                   Write the instructions
                 </button>
               </div>
@@ -342,7 +373,7 @@ export function ProjectForm({
             value={f.notes}
             onChange={set("notes")}
             maxLength={PROJECT_NOTES_MAX}
-            placeholder="Who you write for, how you sound, what never to say."
+            placeholder="Who you write for, how you sound, what never to say. Or drop files here to write it from them."
             // grows with the text: one scroll for the window, not a second one inside the box
             className={`${input} mt-1 min-h-28 resize-none [field-sizing:content]`}
           />
