@@ -81,10 +81,10 @@ import { type EditPair, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
-import { addToFinals, finalsLinkedTo, libraryOf, linkFinalsPiece } from "./library/finals";
+import { addToFinals, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
 import { probe as probeMedia } from "./library/media/probe";
 import { libraryDb } from "./library/db";
-import { libraryRole } from "./library/access";
+import { ensureLibrary, libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
   buildLayoutPrompt,
@@ -4337,7 +4337,8 @@ async function finalsOfShare(token: string): Promise<void> {
       const file = path.join(deliveryDir(meta.id, d.id), d.name);
       const { width, height } = await probeMedia(file);
       const out = await addToFinals(
-        { owner: share.owner, libraryId: libraryOf(share.owner), label: meta.title || share.title, item: d.name, kind: "export", width, height },
+        // the Finals of the session's own workspace ("": the account's first library, for a session from before workspaces)
+        { owner: share.owner, libraryId: (await ensureLibrary(share.owner, meta.projectId ?? "")) ?? "", label: meta.title || share.title, item: d.name, kind: "export", width, height },
         { file, filename: d.name },
       );
       if (!out.ok) throw new Error(out.error);

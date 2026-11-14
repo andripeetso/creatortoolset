@@ -115,7 +115,7 @@ export async function makeVoice(user: AuthVars["user"], input: { text: string; v
     const title = (input.name?.trim() || `Voice: ${text.replace(/\s+/g, " ").split(" ").slice(0, 7).join(" ")}`).replace(/[/\\]/g, " ").slice(0, 100);
     const file = path.join(dir, "voice.mp3");
     await writeFile(file, Buffer.from(await res.arrayBuffer()));
-    ensureLibrary(user.username);
+    await ensureLibrary(user.username);
     const saved = await saveToLibrary(user.username, file, `${title}.mp3`, [], undefined, true);
     if (!saved) throw new VoiceError("This account has no Media Library it may add to.");
     if ("error" in saved) throw new VoiceError(saved.error, 502);

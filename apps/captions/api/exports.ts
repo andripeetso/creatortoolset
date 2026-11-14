@@ -26,7 +26,8 @@ import { ffmpegCommand } from "./ffmpeg-runtime";
 import { env } from "./lib/env";
 import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from "./media-store";
 import { saveToLibrary } from "./library/routes";
-import { addToFinals, belowHd, libraryOf, type FinalsOutcome } from "./library/finals";
+import { addToFinals, belowHd, type FinalsOutcome } from "./library/finals";
+import { ensureLibrary } from "./library/access";
 import { type SessionUser, bumpUsage } from "./users";
 import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
@@ -758,7 +759,8 @@ async function sendToFinals(job: Job): Promise<void> {
     out = await addToFinals(
       {
         owner: job.owner!,
-        libraryId: libraryOf(job.owner!),
+        // the Finals of the workspace the render was made in ("": the account's first library, as before workspaces)
+        libraryId: (await ensureLibrary(job.owner!, job.params.workspace ?? "")) ?? "",
         label: job.params.finalsLabel ?? job.filename,
         item: null,
         kind: "export",

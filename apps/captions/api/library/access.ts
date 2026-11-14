@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
 import { announce } from "../lib/sync";
-import { findUser, listUsers, LOCAL_USER, mayUse } from "../users";
+import { inProjectOf } from "../lib/project-of";
+import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
+import { findUser, listUsers, LOCAL_USER, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb } from "./db";
 import { assetRef, canSee } from "./sources";
 
@@ -36,18 +38,47 @@ export function libraryChanged(libraryId: string): void {
   announce(accounts.find((u) => homeOf(u) === row.workspace_id) ?? row.workspace_id, "library");
 }
 
+/** Which of the account's libraries are in a workspace: `projectId`, else the one this request works in (inProjectOf). */
+const scopeOf = (username: string, projectId?: string) => {
+  const user = { username } as SessionUser;
+  return projectId === undefined ? inCurrentWorkspace(user) : inProjectOf(user, projectId);
+};
+
+type LibraryRow = { id: string; name: string; storage_kind: string; settings: string };
+
+function librariesIn(username: string, keep: ((own?: string) => boolean) | null): LibraryRow[] {
+  const rows = libraryDb()
+    .prepare("SELECT id, name, storage_kind, settings, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
+    .all(homeOf(username)) as (LibraryRow & { ws: string | null })[];
+  return rows.filter((r) => !keep || keep(r.ws ?? undefined));
+}
+
 /**
- * The account's own local library, made silently the first time something needs one (Finals, the Home readiness, the
- * Media Library): "Library". Nothing when it has one already or may not use the Media Library.
+ * The account's libraries in one workspace, oldest first: `projectId`, else the one this request works in. A library is
+ * a workspace's by its settings.projectId; one from before workspaces is the first brand's (project-of.ts). Every one of
+ * the account's for a person with no workspace, or a `projectId` that is not theirs ("" too).
  */
-export function ensureLibrary(username: string): void {
+export async function librariesHere(username: string, projectId?: string): Promise<LibraryRow[]> {
+  return librariesIn(username, await scopeOf(username, projectId));
+}
+
+/**
+ * The workspace's own local library (`projectId`, else the one this request works in), made silently the first time
+ * something needs one (Finals, the Home readiness, the Media Library): "Library". Its id, or null when the account may
+ * not use the Media Library.
+ */
+export async function ensureLibrary(username: string, projectId?: string): Promise<string | null> {
   const account = findUser(username);
-  if (account && !mayUse(account, "media")) return;
-  const home = homeOf(username);
-  if (libraryDb().prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1").get(home)) return;
+  if (account && !mayUse(account, "media")) return null;
+  const [keep, ws] = await Promise.all([scopeOf(username, projectId), projectId ?? currentWorkspaceId({ username } as SessionUser)]);
+  // nothing is awaited between the look and the insert: two pages asking at once never make two
+  const found = librariesIn(username, keep)[0];
+  if (found) return found.id;
+  const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   libraryDb()
-    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)")
-    .run(`lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`, home, Date.now());
+    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'Library', 'local', ?, ?)")
+    .run(id, homeOf(username), JSON.stringify(keep && ws ? { projectId: ws } : {}), Date.now());
+  return id;
 }
 
 /**

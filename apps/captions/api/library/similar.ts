@@ -46,20 +46,22 @@ export interface SimilarResult {
   pending: number; // versions still without a fingerprint (queued now)
 }
 
-/** `phashes` (one per second) against every fingerprinted current version in the caller's libraries. */
-export function similarTo(username: string, phashes: string[], exclude?: string): SimilarResult {
+/** `phashes` (one per second) against every fingerprinted current version in the caller's libraries (`libraries`: only those). */
+export function similarTo(username: string, phashes: string[], exclude?: string, libraries?: string[]): SimilarResult {
   const account = findUser(username);
   // as libraryRole: the Media Library switched off for the account means nothing of it, here too
   if (!phashes.length || (account && !mayUse(account, "media"))) return { matches: [], checked: 0, pending: 0 };
   const d = libraryDb();
-  const rows = d
+  const rows = (
+    d
     .prepare(
       `SELECT a.id AS asset_id, a.library_id, a.title, v.id AS version_id, f.inline FROM assets a
        JOIN libraries l ON l.id = a.library_id JOIN asset_versions v ON v.id = a.current_version_id
        LEFT JOIN derivatives f ON f.version_id = v.id AND f.kind = 'fingerprint'
        WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND a.kind = 'video' AND v.state = 'ready'`,
     )
-    .all(homeOf(username)) as { asset_id: string; library_id: string; title: string; version_id: string; inline: string | null }[];
+    .all(homeOf(username)) as { asset_id: string; library_id: string; title: string; version_id: string; inline: string | null }[]
+  ).filter((r) => !libraries || libraries.includes(r.library_id));
   const matches: SimilarMatch[] = [];
   let pending = 0;
   let checked = 0;
@@ -174,8 +176,8 @@ export function similarToPosted(username: string, phashes: string[], speech?: Cl
   return { matches: matches.slice(0, TOP), checked, pending, voice: { on: !!clip, checked: voiced, note } };
 }
 
-/** A library version against the rest of its workspace's libraries. Null when it has no fingerprint yet. */
-export function similar(username: string, versionId: string): SimilarResult | null {
+/** A library version against the rest of the caller's libraries (`libraries`: only those). Null when it has no fingerprint yet. */
+export function similar(username: string, versionId: string, libraries?: string[]): SimilarResult | null {
   const f = libraryDb()
     .prepare(
       `SELECT a.library_id, f.inline FROM derivatives f JOIN asset_versions v ON v.id = f.version_id JOIN assets a ON a.id = v.asset_id
@@ -183,5 +185,5 @@ export function similar(username: string, versionId: string): SimilarResult | nu
     )
     .get(versionId) as { library_id: string; inline: string | null } | undefined;
   if (!f?.inline || !libraryRole(username, f.library_id)) return null;
-  return similarTo(username, (JSON.parse(f.inline) as Fingerprint).phash, versionId);
+  return similarTo(username, (JSON.parse(f.inline) as Fingerprint).phash, versionId, libraries);
 }

@@ -548,7 +548,8 @@ export default function LibraryPage() {
                   ))}
                 </div>
               )}
-              <LibraryFacetBar facets={libraryFacets("library")} value={facets} onChange={setFacets} />
+              {/* a plug-in's facets narrow its source's items: with no source of it here (another workspace's library), none */}
+              {sources.length > 0 && <LibraryFacetBar facets={libraryFacets("library")} value={facets} onChange={setFacets} />}
             </div>
 
             <LibraryProgressBar libraryId={library.id} />
