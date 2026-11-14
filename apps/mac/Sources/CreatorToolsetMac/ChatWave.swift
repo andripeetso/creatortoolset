@@ -35,9 +35,16 @@ final class ChatWaveHost {
         case "drawn":
             guard let view, let wave else { return reply(true, nil) }
             drawn = reply
-            view.takeSnapshot(with: nil) { [weak wave] image, _ in
-                guard let wave else { return }
-                if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+            // The picture of the new screen is taken just before the wave is let go, not now: what the page fills in a
+            // moment after the switch (the list of chats, the open chat's messages) is there by then, and the picture
+            // of the screen as it was hides the page until that moment anyway.
+            let wait = max(0, WaveClock.gather - 140 - wave.elapsed) / 1000
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak view, weak wave] in
+                guard let view, let wave, wave.superview != nil else { return }
+                view.takeSnapshot(with: nil) { [weak wave] image, _ in
+                    guard let wave else { return }
+                    if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+                }
             }
         case "stop":
             wave?.finish()
@@ -325,6 +332,9 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     required init(coder: NSCoder) { fatalError("not used") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Milliseconds since the wave went up.
+    var elapsed: Double { (CACurrentMediaTime() - started) * 1000 }
 
     func setNew(_ image: CGImage) {
         renderer.now = try? renderer.texture(image)
