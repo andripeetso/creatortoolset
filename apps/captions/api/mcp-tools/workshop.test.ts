@@ -105,7 +105,8 @@ describe("a session's notes", () => {
     const id = String(s.id);
     // the page has opened the session: its Notes document exists, made from the notes it started with
     const before = await notesOnPage(cookie, id);
-    expect(before.blocks.map((b) => b.text)).toEqual(["the idea"]);
+    // an AI's notes are its own from the start: the writer reads them as an AI's, never as the author's
+    expect(before.blocks.map((b) => [b.text, b.author])).toEqual([["the idea", "ai"]]);
 
     await tool(key, "workshop_update_session", { session: id, notes: "Film it in the hall.\n\nAsk about the mat." });
     const after = await notesOnPage(cookie, id);

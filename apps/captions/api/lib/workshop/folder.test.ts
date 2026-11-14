@@ -82,6 +82,13 @@ describe("libraryFiles", () => {
 });
 
 describe("sessionText", () => {
+  it("says which Notes an AI wrote, so its research is never read as the author's own", () => {
+    const notes = newDocument("n1", "s1", "notes", "Notes", { text: "Keep posts short.", author: "ai", now: 1 });
+    const mine = newDocument("n2", "s2", "notes", "Notes", { text: "Film in the hall.", author: "user", now: 1 });
+    expect(sessionText({ title: "Launch", createdAt: 1, updatedAt: 1 }, undefined, [notes], [])).toContain("(written by an AI, not the author)\nKeep posts short.");
+    expect(sessionText({ title: "Launch", createdAt: 1, updatedAt: 1 }, undefined, [mine], [])).not.toContain("written by an AI");
+  });
+
   it("carries the pieces as they stand, the author's edits and the whole conversation", () => {
     const doc = newDocument("d1", "s1", "carousel", "Carousel", { text: "Slide one", now: 1 });
     doc.userEdits = [{ blockId: "b1", from: "This is why", fromAuthor: "ai", to: "Slide one", at: 2 }];

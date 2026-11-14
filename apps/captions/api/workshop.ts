@@ -2472,7 +2472,12 @@ workshopApp.post("/sessions", async (c) => {
       updatedAt: now,
     };
     await writeJsonAtomic(sessionMetaPath(meta.id), meta);
-    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes);
+    if (patch.notes !== undefined) {
+      // an AI's notes stay the AI's: the Notes document is made now, so its block is marked so (the writer read an
+      // assistant's research there as the author's own notes, 2026-11-14)
+      if (fromAiKey(c)) await ensureDocuments(meta);
+      await writeNotes(meta.id, patch.notes, fromAiKey(c) ? "ai" : "user");
+    }
     if (meta.sources.length) void readProject(projectId ?? "", user).then((p) => transcribeForUser(meta.sources.map((x) => x.postId), user, 0, p?.languages)).catch(() => {});
     return c.json(await sessionRecord(meta, user), 201);
   } catch (e) {

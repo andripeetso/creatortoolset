@@ -233,7 +233,9 @@ function editLine(e: UserEdit): string {
 function docText(d: Document): string {
   const out: string[] = [`### ${d.title} (${d.kind})`, ""];
   if (d.hooks?.length) out.push("Hook variations:", ...d.hooks.map((h) => `- ${h.text}`), "");
-  out.push(d.blocks.length ? d.blocks.map((b) => b.text).join("\n\n---\n\n") : "(empty)");
+  // notes an AI wrote (an assistant's research) are said to be its, never read as the author's own
+  const by = (b: Document["blocks"][number]) => (d.kind === "notes" && b.author === "ai" ? "(written by an AI, not the author)\n" : "");
+  out.push(d.blocks.length ? d.blocks.map((b) => by(b) + b.text).join("\n\n---\n\n") : "(empty)");
   if (d.caption?.text) out.push("", `Description: ${d.caption.text}`);
   if (d.pinned?.text) out.push("", `Pinned comment: ${d.pinned.text}`);
   const edits = d.userEdits ?? [];
