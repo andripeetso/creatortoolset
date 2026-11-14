@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Loader2, Paperclip, X } from "lucide-react";
+import { FileText, Loader2, Paperclip, Undo2, X } from "lucide-react";
 import { PLATFORMS, type SocialPlatform } from "@contracts/connectors";
 import { listAccounts } from "@/lib/instagram";
 import {
@@ -90,10 +90,9 @@ export function ProjectForm({
   const [frameworks, setFrameworks] = useState<WorkshopFramework[]>([]);
   const [rules, setRules] = useState<WorkshopRule[]>([]);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
-  // "Write it for me": what the person drops in, and the drafting of the instructions from it
-  const [writing, setWriting] = useState(false);
-  const [context, setContext] = useState("");
+  // files dropped on the instructions, to write them from ("Write it for me"); and what the box held before it did
   const [dropped, setDropped] = useState<File[]>([]);
+  const [before, setBefore] = useState<{ notes: string; files: File[] } | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [over, setOver] = useState(false);
   const pick = useRef<HTMLInputElement>(null);
@@ -124,18 +123,17 @@ export function ProjectForm({
     const bad = list.filter((x) => !readable(x));
     setError(bad.length ? `Can't read ${bad.map((x) => x.name).join(", ")}: drop text, PDF, Word, OpenDocument or EPUB` : null);
     setDropped((cur) => [...cur, ...list.filter(readable)].slice(0, 5));
-    // a file is something to write the instructions from: it opens the box that does
-    if (list.some(readable)) setWriting(true);
   };
-  const closeWriting = () => (setWriting(false), setContext(""), setDropped([]));
-  // only files: dragged or pasted text still lands in the box under it
+  // only files: dragged or pasted text still lands in the box
   const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
-  const canWrite = !!context.trim() || dropped.length > 0 || !!initial?.accountId;
+  const canWrite = !!f.notes.trim() || dropped.length > 0 || !!initial?.accountId;
   const write = async () => {
     setError(null);
     setDrafting(true);
     try {
       // an @handle the Analyzer already reads brings its bio and posts; the project's own Instagram always does
+      // what is in the box (a description, links, @handles, instructions so far) is read with the files, and the draft takes its place
+      const context = f.notes;
       const handles = new Set((context.match(/@[\w.]+/g) ?? []).map((h) => h.slice(1).toLowerCase()));
       const known = handles.size ? await listAccounts("", { projectId: null }).catch(() => []) : [];
       const accountIds = [initial?.accountId, ...known.filter((a) => handles.has(a.username.toLowerCase())).map((a) => a.id)].filter((x): x is string => !!x);
@@ -147,8 +145,9 @@ export function ProjectForm({
       }
       const { notes } = await draftProjectNotes({ name: f.name, text, accountIds, files });
       if (!alive.current) return;
-      setF((cur) => ({ ...cur, notes: cur.notes.trim() ? `${cur.notes.trim()}\n\n${notes}` : notes }));
-      closeWriting();
+      setBefore({ notes: context, files: dropped });
+      setF((cur) => ({ ...cur, notes }));
+      setDropped([]);
     } catch (err) {
       if (alive.current) setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -188,8 +187,8 @@ export function ProjectForm({
         setError(null);
         if (setup && !f.name.trim()) return;
         // what was dropped in to write from would be lost without a word
-        if (writing && (dropped.length || context.trim())) {
-          setError("Write the instructions from what you dropped in first, or close that box.");
+        if (dropped.length) {
+          setError("Write the instructions from the files first (Write it for me), or remove them.");
           return;
         }
         setPending(true);
@@ -283,103 +282,100 @@ export function ProjectForm({
         </div>
       )}
       {!setup && (
-        <div
-          className={`-m-1.5 rounded-lg p-1.5 text-[11px] text-zinc-400 ${over ? "bg-violet-500/10 outline-dashed outline-1 outline-violet-500/60" : ""}`}
-          onDragOver={(e) => {
-            if (!hasFiles(e) || locked) return;
-            e.preventDefault();
-            setOver(true);
-          }}
-          onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOver(false)}
-          onDrop={(e) => {
-            setOver(false);
-            if (!hasFiles(e) || locked) return;
-            e.preventDefault();
-            addFiles(e.dataTransfer.files);
-          }}
-          onPaste={(e) => {
-            if (!e.clipboardData.files.length || locked) return;
-            e.preventDefault();
-            addFiles(e.clipboardData.files);
-          }}
-        >
-          <span className="flex items-center gap-1">
-            <label htmlFor="project-notes" className="flex-1">
-              Instructions
-            </label>
-            <input ref={pick} type="file" multiple hidden accept={ACCEPT} onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
-            <button
-              type="button"
-              onClick={() => pick.current?.click()}
-              disabled={locked}
-              title="Text, PDF, Word, OpenDocument or EPUB. Or drop them here."
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
-            >
-              <Paperclip className="h-3 w-3" />
-              Add files
-            </button>
-            {!writing ? (
+        <div className="text-[11px] text-zinc-400">
+          <label htmlFor="project-notes">Instructions</label>
+          {/* one box, like the chat's: files dropped, pasted or picked show at its top, the clip and Write it for me at its foot */}
+          <div
+            className={`mt-1 rounded-2xl border bg-zinc-950 transition-colors focus-within:border-zinc-600 ${over ? "border-zinc-500 bg-zinc-900" : "border-zinc-800"}`}
+            onDragOver={(e) => {
+              if (!hasFiles(e) || locked) return;
+              e.preventDefault();
+              setOver(true);
+            }}
+            onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOver(false)}
+            onDrop={(e) => {
+              setOver(false);
+              if (!hasFiles(e) || locked) return;
+              e.preventDefault();
+              addFiles(e.dataTransfer.files);
+            }}
+            onPaste={(e) => {
+              if (!e.clipboardData.files.length || locked) return;
+              e.preventDefault();
+              addFiles(e.clipboardData.files);
+            }}
+          >
+            {dropped.length ? (
+              <div className="flex flex-wrap gap-2 px-3 pt-3">
+                {dropped.map((file, i) => (
+                  <div key={`${file.name}-${i}`} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={file.name}>
+                    <div className="flex h-14 max-w-52 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-[11px]">
+                      <FileText className="size-4 shrink-0 text-[var(--tint)]" aria-hidden />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-foreground">{file.name}</span>
+                        <span className="block uppercase text-muted-foreground">{file.name.split(".").pop()}</span>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${file.name}`}
+                      disabled={drafting}
+                      onClick={() => setDropped((cur) => cur.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 rounded-full border bg-background p-0.5 text-muted-foreground opacity-0 shadow-sm hover:text-foreground focus-visible:opacity-100 group-hover/chip:opacity-100 [@media(hover:none)]:opacity-100"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <textarea
+              id="project-notes"
+              value={f.notes}
+              onChange={(e) => (set("notes")(e), setBefore(null))}
+              maxLength={PROJECT_NOTES_MAX}
+              disabled={drafting}
+              placeholder="Who you write for, how you sound, what never to say. Or drop in links, @handles and files, and have it written for you."
+              // grows with the text: one scroll for the window, not a second one inside the box
+              className="block min-h-24 w-full resize-none bg-transparent px-3.5 pt-3 text-sm text-zinc-100 outline-none [field-sizing:content] placeholder:text-zinc-600"
+            />
+            <div className="flex items-center gap-1 px-2 pb-2">
+              <input ref={pick} type="file" multiple hidden accept={ACCEPT} onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
               <button
                 type="button"
-                onClick={() => setWriting(true)}
+                onClick={() => pick.current?.click()}
                 disabled={locked}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-violet-300 hover:bg-zinc-800 disabled:opacity-40"
+                aria-label="Add files"
+                title="Add files: text, PDF, Word, OpenDocument or EPUB (or drop them here)"
+                className="flex size-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
               >
-                <CtMark className="h-3 w-3" />
-                Write it for me
+                <Paperclip className="size-4" />
               </button>
-            ) : null}
-          </span>
-          {writing ? (
-            <div className="mt-1 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 p-2">
-              <textarea
-                autoFocus
-                value={context}
-                onChange={(e) => setContext(e.target.value)}
-                disabled={drafting}
-                placeholder="Drop in anything about it: a description, links, @handles, old posts, a document."
-                className={`${input} min-h-24 resize-none [field-sizing:content]`}
-              />
-              {dropped.length ? (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {dropped.map((file, i) => (
-                    <span key={`${file.name}-${i}`} className="flex items-center gap-1 rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
-                      {file.name}
-                      <button type="button" aria-label={`Remove ${file.name}`} disabled={drafting} onClick={() => setDropped((cur) => cur.filter((_, j) => j !== i))}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <div className="mt-1.5 flex items-center justify-end gap-2">
-                <button type="button" disabled={drafting} onClick={closeWriting} className="rounded px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800">
-                  Close
-                </button>
+              <span className="flex-1" />
+              <span className="px-1 text-[10px] tabular-nums text-zinc-600" title="Always in the prompt, so keep it short">
+                {f.notes.length.toLocaleString("en-US")}/{PROJECT_NOTES_MAX.toLocaleString("en-US")}
+              </span>
+              {before ? (
                 <button
                   type="button"
-                  onClick={() => void write()}
-                  disabled={drafting || !canWrite}
-                  className="flex items-center gap-1 rounded-md bg-violet-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                  onClick={() => (setF((cur) => ({ ...cur, notes: before.notes })), setDropped(before.files), setBefore(null))}
+                  className="flex h-8 items-center gap-1 rounded-full px-2.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
                 >
-                  {drafting ? <Loader2 className="h-3 w-3 animate-spin" /> : <CtMark className="h-3 w-3" />}
-                  Write the instructions
+                  <Undo2 className="size-3.5" /> Undo
                 </button>
-              </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void write()}
+                disabled={locked || !canWrite}
+                title="Write the instructions from what is in the box and the files"
+                className="flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
+              >
+                {drafting ? <Loader2 className="size-3.5 animate-spin" /> : <CtMark className="size-3.5" />}
+                {drafting ? "Writing…" : "Write it for me"}
+              </button>
             </div>
-          ) : null}
-          <textarea
-            id="project-notes"
-            value={f.notes}
-            onChange={set("notes")}
-            maxLength={PROJECT_NOTES_MAX}
-            placeholder="Who you write for, how you sound, what never to say. Or drop files here to write it from them."
-            // grows with the text: one scroll for the window, not a second one inside the box
-            className={`${input} mt-1 min-h-28 resize-none [field-sizing:content]`}
-          />
-          <span className="mt-0.5 block text-[10px] text-zinc-600">
-            {f.notes.length}/{PROJECT_NOTES_MAX} — always in the prompt, so keep it short.
-          </span>
+          </div>
         </div>
       )}
       {error ? <p className="text-[10px] text-red-400">{error}</p> : null}
