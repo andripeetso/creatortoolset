@@ -40,6 +40,16 @@ export const CARDS_DRAW_KIND = "cards-draw";
 export const CUTOUT_KIND = "cutout";
 
 /**
+ * The kind that splits a still picture into what a design is made of (api/lib/cutouts.ts; the Mac app's Split.swift): its
+ * words, read with where each line lies, its colour and how heavy its letters are; each piece that stands out, cut out;
+ * and what is left, with the words and pieces painted over. The road is the cut-out's, its answer is SplitLayout:
+ *   GET  cutout/:id                             → the picture (PNG, JPEG or HEIC)
+ *   POST cutout/:id        multipart `layout` (SplitLayout, JSON), `background` (PNG), `piece0`, `piece1`… (PNG) → DeviceEnded
+ *   POST cutout/:id/fail   { error }            → DeviceEnded
+ */
+export const SPLIT_KIND = "split";
+
+/**
  * The kind that turns speech into text with a model downloaded on the person's own computer (api/lib/computer-transcribe.ts),
  * for the Media Library's transcripts when their engine is `local` (api/lib/speech.ts speechFor). Not an edit step: it is
  * listed, hinted and claimed on the road above, with what the computer holds in the claim:

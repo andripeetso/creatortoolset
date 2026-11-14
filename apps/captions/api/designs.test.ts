@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Design, DesignAnswer, DesignListed, DesignSummary } from "../contracts/design";
+import type { Design, DesignAnswer, DesignListed, DesignSummary, SplitAnswer } from "../contracts/design";
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "designs-"));
 process.env.DATA_DIR = dataDir;
@@ -15,7 +15,7 @@ const { createAnimation, pictureFile } = await import("./editor/animation-styles
 const { change } = await import("./editor/styles");
 const { ffmpegCommand } = await import("./ffmpeg-runtime");
 const { blobs, libraryDb } = await import("./library/db");
-const { CUTOUT_KIND } = await import("../contracts/devices");
+const { CUTOUT_KIND, SPLIT_KIND } = await import("../contracts/devices");
 const { claimCutout, cutoutFailed, cutoutSent, heldCutout } = await import("./lib/cutouts");
 const { pairDevice, setDeviceKinds, touchDevice } = await import("./lib/devices");
 const { createUser } = await import("./users");
@@ -493,7 +493,7 @@ describe("designs: a picture's background taken away", () => {
     const sent = heldCutout(mac.id, job!.id)!;
     const out = result(sent);
     if (typeof out === "string") cutoutFailed(mac.id, job!.id, out);
-    else cutoutSent(mac.id, job!.id, out);
+    else cutoutSent(mac.id, job!.id, { cutout: out });
     return sent;
   };
 
@@ -553,6 +553,53 @@ describe("designs: a picture's background taken away", () => {
     expect([kept.readUInt32BE(16), kept.readUInt32BE(20)]).toEqual([2560, 1920]);
     expect(kept.length).toBeLessThan(heavy.length);
   }, 120_000);
+});
+
+describe("designs: a picture split into layers", () => {
+  const png = (w: number, h: number, colour = "red") => execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", `color=c=${colour}:s=${w}x${h}`, "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"]);
+  const line = { text: "Floor first.", x: 0.08, y: 0.16, w: 0.67, h: 0.09, color: "#ffffff", ink: 0.27 };
+
+  it("keeps what the Mac made as pictures of the design and answers the lines; a layout it cannot read fails in words", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
+    const first = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "slide", type: "image/png", data: png(108, 135, "navy").toString("base64") })).body.id;
+    const mac = pairDevice("jordan", "Jordan's split Mac").device;
+    // a Mac that cuts out but does not split has an app older than the split
+    setDeviceKinds(mac.id, [CUTOUT_KIND]);
+    touchDevice(mac.id);
+    const old = await call<{ error: string }>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {});
+    expect([old.status, old.body.error]).toEqual([400, "Needs the newest Creator Toolset Mac app"]);
+    setDeviceKinds(mac.id, [CUTOUT_KIND, SPLIT_KIND]);
+    const answer = async (form: Record<string, Buffer | string>) => {
+      let job = null as ReturnType<typeof claimCutout>;
+      for (let n = 0; n < 200 && !(job = claimCutout(mac, [CUTOUT_KIND, SPLIT_KIND])); n++) await new Promise((r) => setTimeout(r, 10));
+      expect(job!.kind).toBe(SPLIT_KIND);
+      expect(heldCutout(mac.id, job!.id)!.mime).toBe("image/png");
+      return cutoutSent(mac.id, job!.id, form);
+    };
+    const asked = call<SplitAnswer>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {});
+    const [bg, piece] = [png(108, 135, "navy"), png(20, 20, "yellow")];
+    expect(await answer({ layout: JSON.stringify({ lines: [line], pieces: [{ x: 0.5, y: 0.6, w: 0.2, h: 0.15 }] }), background: bg, piece0: piece })).toBeNull();
+    const made = await asked;
+    expect(made.status).toBe(200);
+    expect(made.body.lines).toEqual([line]);
+    expect(made.body.pieces).toEqual([{ x: 0.5, y: 0.6, w: 0.2, h: 0.15, picture: expect.stringMatching(/^[0-9a-f]{8}\.png$/) }]);
+    expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pictures).toEqual([first, made.body.background, made.body.pieces[0]!.picture]);
+    as = "jordan";
+    expect(Buffer.from(await (await app.request(`/api/designs/${d.id}/pictures/${made.body.pieces[0]!.picture}`)).arrayBuffer()).equals(piece)).toBe(true);
+
+    // a line with a box outside the picture or a colour that is none is left out, and lines past the cap: the rest stands
+    const many = call<SplitAnswer>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {});
+    const lines = [{ ...line, x: 1.4 }, { ...line, color: "white" }, ...Array.from({ length: 61 }, (_, n) => ({ ...line, text: `Line ${n + 1}` }))];
+    expect(await answer({ layout: JSON.stringify({ lines, pieces: [] }), background: bg })).toBeNull();
+    expect((await many).body.lines.map((l) => l.text)).toEqual(Array.from({ length: 60 }, (_, n) => `Line ${n + 1}`));
+    // a piece the layout names and the form lacks, or no layout: refused, nothing kept
+    for (const form of [{ layout: JSON.stringify({ lines: [], pieces: [{ x: 0, y: 0, w: 1, h: 1 }] }), background: bg }, { layout: "not json", background: bg }]) {
+      const refused = call<{ error: string }>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {});
+      expect(await answer(form)).toMatch(/^Your Mac sent no/);
+      expect((await refused).body.error).toMatch(/^Your Mac sent no/);
+    }
+    expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pictures).toHaveLength(4);
+  }, 60_000);
 });
 
 describe("designs: blank frames, limits, and what does not get lost", () => {

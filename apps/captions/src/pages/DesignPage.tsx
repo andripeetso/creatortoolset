@@ -18,7 +18,8 @@ import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, fres
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
-import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureSize, pictureUrl, saveDesign } from "@/lib/designs";
+import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureSize, pictureUrl, saveDesign, splitPicture } from "@/lib/designs";
+import { splitLayers } from "@/lib/design/split";
 import { downloadBlob } from "@/lib/download";
 import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -573,6 +574,33 @@ function DesignPage({ id }: { id: string }) {
     }
   };
 
+  /** The picked picture split into layers by a Mac of the person's own (lib/design/split.ts): one step ⌘Z takes back. */
+  const split = async () => {
+    const l = mine.length === 1 ? mine[0]! : null;
+    if (!design || !base || l?.type !== "image" || cutting) return;
+    const img = loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined;
+    if (!img?.naturalWidth) return setError("The picture is not loaded yet: try again in a moment");
+    const onto = base.id;
+    setCutting(true);
+    setError(null);
+    try {
+      const a = await splitPicture(design.id, l.picture);
+      setDesign((d) => (d ? { ...d, pictures: [...d.pictures, a.background, ...a.pieces.map((p) => p.picture)] } : d));
+      // onto the frame as it is by now: the Mac took a while
+      const page = latest.current.find((p) => p.id === onto);
+      if (page?.layers.some((x) => x.id === l.id && x.type === "image")) {
+        const next = splitLayers(page, l.id, { width: img.naturalWidth, height: img.naturalHeight }, a);
+        setPage(next);
+        setSelected(next.layers.filter((x) => !page.layers.some((y) => y.id === x.id)).map((x) => x.id));
+        if (!a.lines.length && !a.pieces.length) setError("Your Mac found no words and nothing that stands out in this picture: it is as it was, under the name Background");
+      }
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setCutting(false);
+    }
+  };
+
   /** A line drawn with the pen, as a layer: closed, a filled shape; open, a line alone. */
   const makePath = (to: number, path: { x: number; y: number; w: number; h: number; points: { x: number; y: number; in?: [number, number]; out?: [number, number] }[]; closed: boolean }) => {
     const { closed, ...rest } = path;
@@ -863,6 +891,12 @@ function DesignPage({ id }: { id: string }) {
                   {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
                   <ContextMenuSeparator />
                   {item("Delete", "⌫", remove, none && !framed)}
+                  {mine.length === 1 && mine[0]!.type === "image" && (
+                    <>
+                      <ContextMenuSeparator />
+                      {item(cutting ? "Your Mac is on it" : "Split into layers", "", () => void split(), cutting)}
+                    </>
+                  )}
                   <ContextMenuSeparator />
                   <ContextMenuSub>
                     <ContextMenuSubTrigger disabled={!base} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Add to a carousel style</ContextMenuSubTrigger>
@@ -925,6 +959,7 @@ function DesignPage({ id }: { id: string }) {
           cropping={!!cropping}
           onCrop={(on) => setCropping(on && mine.length === 1 ? mine[0]!.id : null)}
           onCutOut={() => void cutOut()}
+          onSplit={() => void split()}
           onGroup={group}
           onUngroup={ungroup}
           cutting={cutting}

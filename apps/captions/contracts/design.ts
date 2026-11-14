@@ -16,6 +16,7 @@
  *   GET    /api/designs/:id/look        ?frames=<id>,<id> → { pictures: [{ page, jpeg (base64), spills }], why? }: the frames as small pictures, for the AI to look at
  *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP); or { version, t }: that moment of a library video, copied in
  *   POST   /api/designs/:id/pictures/:pid/cutout   → { id }: that picture with its background taken away, as a new picture of the design (cut by a Mac of the person's own)
+ *   POST   /api/designs/:id/pictures/:pid/split    → SplitAnswer: that picture split into its words, its pieces and what is behind them (by a Mac of the person's own)
  *   GET    /api/designs/:id/pictures/:pid
  * A picture layer names a picture in the design's own folder by its id, never an address: a video's frame and anything
  * else from the library is copied in, so a design keeps what it shows.
@@ -272,6 +273,31 @@ export type NewDesign = { format: DesignFormat; name?: string; /** the brand pro
 export interface DesignFont {
   id: string;
   family: string;
+}
+
+/** Where a part of a picture lies, as fractions of the picture's width and height (0 to 1). */
+export interface SplitBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+/** A line of words a Mac read in a picture (SPLIT_KIND, contracts/devices.ts): its box, its colour, and its ink, how much of its box the letters cover (0 to 1: heavy letters cover more). */
+export interface SplitLine extends SplitBox {
+  text: string;
+  color: string;
+  ink: number;
+}
+/** What a Mac made of a picture: its lines, and the box of each piece it cut out (piece0, piece1… in that order). */
+export interface SplitLayout {
+  lines: SplitLine[];
+  pieces: SplitBox[];
+}
+/** POST /api/designs/:id/pictures/:pid/split: the picture with its words and pieces painted over, each piece, and the lines, all now pictures of the design. */
+export interface SplitAnswer {
+  background: string;
+  pieces: (SplitBox & { picture: string })[];
+  lines: SplitLine[];
 }
 
 export interface PictureSpec {

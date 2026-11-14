@@ -369,6 +369,7 @@ export function Inspector({
   cropping,
   onCrop,
   onCutOut,
+  onSplit,
   cutting,
   onGroup,
   onUngroup,
@@ -404,6 +405,8 @@ export function Inspector({
   onCrop: (on: boolean) => void;
   /** the picked picture's background taken away (a Mac of the person's own cuts it out); `cutting`: one is being cut */
   onCutOut: () => void;
+  /** the picked picture split into its words, its pieces and what is behind them (a Mac of the person's own does it) */
+  onSplit: () => void;
   cutting: boolean;
   /** the picked layers made one group, and the groups they are in taken apart */
   onGroup: () => void;
@@ -949,9 +952,14 @@ export function Inspector({
                   </button>
                 ) : (
                   <button type="button" disabled={cutting} onClick={onCutOut} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
-                    {cutting ? "Cutting it out" : "Remove background"}
+                    {cutting ? "Your Mac is on it" : "Remove background"}
                   </button>
                 ))}
+              {one?.type === "image" && (
+                <button type="button" disabled={cutting} onClick={onSplit} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
+                  Split into layers
+                </button>
+              )}
             </Section>
           )}
           {image && (

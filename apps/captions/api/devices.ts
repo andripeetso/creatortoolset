@@ -4,7 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, parseKinds, parseModels, RESOLVE_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy } from "./editor/engine";
 import { cardsDraw, saveCard } from "./editor/cards/device";
@@ -78,7 +78,7 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing
   // the Resolve bridge is switched on by a pack with Resolve items (the owner's Resolve plug-in or a downloaded one)
   const granted = kinds.includes(RESOLVE_KIND) && (await resolveGranted(d.owner));
-  const claimable = [...claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted), ...kinds.filter((k) => k === CUTOUT_KIND || k === TRANSCRIBE_KIND)];
+  const claimable = [...claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted), ...kinds.filter((k) => k === CUTOUT_KIND || k === SPLIT_KIND || k === TRANSCRIBE_KIND)];
   setDeviceKinds(d.id, claimable);
   return balancedKinds(d, claimable);
 }
@@ -97,7 +97,7 @@ async function editorWaits(device: string, listed: unknown): Promise<boolean> {
  * or a transcript it would be handed (lib/computer-transcribe.ts); a computer whose wanted speech models changed is told too.
  */
 const waits = async (d: Device, kinds: string[]) =>
-  waitsForDevice(d.owner, kinds) || (kinds.includes(CUTOUT_KIND) && cutoutWaits(d.owner)) ||
+  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) ||
   (kinds.includes(TRANSCRIBE_KIND) && (modelsOutOfStep(d) || transcriptWaits(d, await readBalance(d.owner))));
 /** The answer to done and fail: `editor: true` when another step this device could claim waits, so it claims at once. */
 const ended = async (d: Device, ok: boolean) => ({ ok, ...(ok && (await waits(d, await balancedKinds(d, d.kinds ?? []))) ? { editor: true } : {}) });
@@ -133,7 +133,7 @@ devicesApp.post("/relay/editor/job/:id/cards/:cardId", async (c) => {
   return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json({ ok: true });
 });
 
-// a cut-out (contracts/devices.ts CUTOUT_KIND): the picture, and the PNG the Mac made of it or why it could not
+// a cut-out or a split (contracts/devices.ts CUTOUT_KIND, SPLIT_KIND): the picture, and what the Mac made of it or why it could not
 devicesApp.get("/relay/cutout/:id", (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
@@ -144,7 +144,10 @@ devicesApp.post("/relay/cutout/:id", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
-  const wrong = cutoutSent(d.id, jobId(c), form.cutout instanceof File ? Buffer.from(await form.cutout.arrayBuffer()) : null);
+  const sent: Record<string, Buffer | string> = {};
+  for (const [k, v] of Object.entries(form)) if (v instanceof File) sent[k] = Buffer.from(await v.arrayBuffer());
+  else if (typeof v === "string") sent[k] = v;
+  const wrong = cutoutSent(d.id, jobId(c), sent);
   return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json(await ended(d, true));
 });
 devicesApp.post("/relay/cutout/:id/fail", async (c) => {

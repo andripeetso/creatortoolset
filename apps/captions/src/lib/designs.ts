@@ -1,4 +1,4 @@
-import { DESIGN_GAP, DESIGN_LIMITS, type Design, type DesignListed, type DesignPage, type NewDesign } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type Design, type DesignListed, type DesignPage, type NewDesign, type SplitAnswer } from "@contracts/design";
 
 /** The designer's calls to api/designs.ts. */
 
@@ -32,6 +32,8 @@ export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures
 
 /** One of the design's pictures with its background taken away, as a new picture of the design: its id. Cut by a Mac of the person's own; the error says what is missing when none is on. */
 export const cutOutPicture = async (id: string, picture: string) => (await send<{ id: string }>(`${base(id)}/pictures/${picture}/cutout`, "POST", {})).id;
+/** The picture split by a Mac of the person's own: what is behind its words and pieces, each piece, and its lines (lib/design/split.ts makes them layers). */
+export const splitPicture = (id: string, picture: string) => send<SplitAnswer>(`${base(id)}/pictures/${picture}/split`, "POST", {});
 
 /** A picture from this computer into the design's own folder, as it is (no shrinking, transparency kept); answers its id. */
 export async function addPicture(id: string, file: File): Promise<string> {

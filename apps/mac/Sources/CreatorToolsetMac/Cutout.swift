@@ -34,6 +34,29 @@ enum Cutout {
 
     /// `picture` as a PNG with everything but its subject see-through, upright and at most `maxSide` on its long side.
     static func png(_ picture: Data) throws -> Data {
+        let image = try upright(picture, maxSide: maxSide)
+        let handler = VNImageRequestHandler(cgImage: image)
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        try handler.perform([request])
+        guard let found = request.results?.first, !found.allInstances.isEmpty else { throw Refused(why: "Nothing in this picture stands out from its background.") }
+        let masked = CIImage(cvPixelBuffer: try found.generateMaskedImage(ofInstances: found.allInstances, from: handler, croppedToInstancesExtent: false))
+        guard let cut = CIContext().createCGImage(masked, from: masked.extent) else { throw Refused(why: "The cut-out could not be made into a PNG.") }
+        let out = try encoded(cut)
+        guard out.count <= maxResult else { throw Refused(why: "The cut-out is over \(maxResult / 1_000_000) MB.") }
+        return out
+    }
+
+    /// `image` as PNG bytes.
+    static func encoded(_ image: CGImage) throws -> Data {
+        let out = NSMutableData()
+        guard let png = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else { throw Refused(why: "The picture could not be made into a PNG.") }
+        CGImageDestinationAddImage(png, image, nil)
+        guard CGImageDestinationFinalize(png) else { throw Refused(why: "The picture could not be made into a PNG.") }
+        return out as Data
+    }
+
+    /// `picture` decoded once, turned the way the camera held it, at most `maxSide` on its long side; refused in words when it is no picture this takes.
+    static func upright(_ picture: Data, maxSide: Int) throws -> CGImage {
         guard picture.count <= maxBytes else { throw Refused(why: "The picture is over \(maxBytes / 1_000_000) MB.") }
         guard let source = CGImageSourceCreateWithData(picture as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let type = CGImageSourceGetType(source) as String?, types.contains(type), CGImageSourceGetCount(source) > 0
@@ -47,19 +70,7 @@ enum Cutout {
             kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: min(max(width, height), maxSide), kCGImageSourceShouldCacheImmediately: true,
         ] as CFDictionary) else { throw Refused(why: "The picture could not be read.") }
-        let handler = VNImageRequestHandler(cgImage: image)
-        let request = VNGenerateForegroundInstanceMaskRequest()
-        try handler.perform([request])
-        guard let found = request.results?.first, !found.allInstances.isEmpty else { throw Refused(why: "Nothing in this picture stands out from its background.") }
-        let masked = CIImage(cvPixelBuffer: try found.generateMaskedImage(ofInstances: found.allInstances, from: handler, croppedToInstancesExtent: false))
-        let out = NSMutableData()
-        guard let cut = CIContext().createCGImage(masked, from: masked.extent),
-              let png = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil)
-        else { throw Refused(why: "The cut-out could not be made into a PNG.") }
-        CGImageDestinationAddImage(png, cut, nil)
-        guard CGImageDestinationFinalize(png) else { throw Refused(why: "The cut-out could not be made into a PNG.") }
-        guard out.length <= maxResult else { throw Refused(why: "The cut-out is over \(maxResult / 1_000_000) MB.") }
-        return out as Data
+        return image
     }
 }
 

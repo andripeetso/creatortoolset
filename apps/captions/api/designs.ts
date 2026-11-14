@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type SplitAnswer } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
@@ -10,7 +10,7 @@ import { animationStyles, carouselApp, carouselStyles } from "./editor/animation
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
-import { cutOut } from "./lib/cutouts";
+import { cutOut, splitPicture } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
 import { smallJpeg } from "./lib/small-jpeg";
@@ -710,43 +710,77 @@ designsApp.post("/:id/pictures", (c) =>
 /** The longest side a cut-out is kept at when it comes back too heavy to keep whole: more than any frame shows. */
 const CUT_SIDE = 2560;
 
+/** The picture `pid` of the design as bytes a Mac takes (a WebP goes as a PNG), with `tmp` free for the work. */
+async function forMac(d: Design, pid: string, tmp: string): Promise<Buffer> {
+  if (!PICTURE.test(pid) || !d.pictures.includes(pid)) throw new DesignError("Not found", 404);
+  const dir = picturesOf(d.owner, d.id);
+  if (!pid.endsWith(".webp")) return readFile(path.join(dir, pid));
+  await ffmpeg(["-y", "-i", path.join(dir, pid), "-frames:v", "1", "-f", "image2", "-c:v", "png", tmp], true);
+  return readFile(tmp);
+}
+
+/** A PNG a Mac made, kept smaller when it is over a picture's cap (a cut-out is often several times its photo's weight). */
+async function keepable(png: Buffer, tmp: string, what: string): Promise<Buffer> {
+  if (png.length <= DESIGN_LIMITS.pictureBytes) return png;
+  const whole = `${tmp}.whole.png`;
+  await writeFile(whole, png);
+  await ffmpeg(["-y", "-i", whole, "-frames:v", "1", "-vf", `scale=w='min(${CUT_SIDE},iw)':h='min(${CUT_SIDE},ih)':force_original_aspect_ratio=decrease`, "-f", "image2", "-c:v", "png", tmp], true).finally(() => rm(whole, { force: true }));
+  const out = await readFile(tmp);
+  if (out.length > 2 * DESIGN_LIMITS.pictureBytes) throw new DesignError(`${what} is too heavy to keep in a design`);
+  return out;
+}
+
+const fromMac = async <T>(ask: Promise<T>): Promise<T> => {
+  try {
+    return await ask;
+  } catch (e) {
+    throw new DesignError(e instanceof Error ? e.message : String(e));
+  }
+};
+
 // A picture of the design with its background taken away, as a new picture of the design (the first one stays: the
 // layer that shows the cut-out names it, so the background can be put back). The cutting is done by a Mac of the
 // person's own (lib/cutouts.ts): nothing leaves their machines, and without such a Mac the answer says what is missing.
 designsApp.post("/:id/pictures/:pid/cutout", (c) =>
   answer(c, async () => {
     const d = await mine(c);
-    const pid = c.req.param("pid");
-    if (!PICTURE.test(pid) || !d.pictures.includes(pid)) throw new DesignError("Not found", 404);
     if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
-    const dir = picturesOf(d.owner, d.id);
-    const tmp = path.join(dir, `.cut-${randomBytes(6).toString("hex")}.png`);
+    const tmp = path.join(picturesOf(d.owner, d.id), `.cut-${randomBytes(6).toString("hex")}.png`);
     try {
-      // a WebP is not a picture the Mac takes: it goes as a PNG
-      let bytes = await readFile(path.join(dir, pid));
-      if (pid.endsWith(".webp")) {
-        await ffmpeg(["-y", "-i", path.join(dir, pid), "-frames:v", "1", "-f", "image2", "-c:v", "png", tmp], true);
-        bytes = await readFile(tmp);
-      }
-      let cut: Buffer;
-      try {
-        cut = await cutOut(d.owner, bytes);
-      } catch (e) {
-        throw new DesignError(e instanceof Error ? e.message : String(e));
-      }
-      // a cut-out is a PNG, often several times its photo's weight: one over the cap for a picture is kept smaller
-      if (cut.length > DESIGN_LIMITS.pictureBytes) {
-        const whole = `${tmp}.whole.png`;
-        await writeFile(whole, cut);
-        await ffmpeg(["-y", "-i", whole, "-frames:v", "1", "-vf", `scale=w='min(${CUT_SIDE},iw)':h='min(${CUT_SIDE},ih)':force_original_aspect_ratio=decrease`, "-f", "image2", "-c:v", "png", tmp], true).finally(() => rm(whole, { force: true }));
-        cut = await readFile(tmp);
-        if (cut.length > 2 * DESIGN_LIMITS.pictureBytes) throw new DesignError("The cut-out is too heavy to keep in a design");
-      }
+      const cut = await keepable(await fromMac(cutOut(d.owner, await forMac(d, c.req.param("pid"), tmp))), tmp, "The cut-out");
       // onto the design as it is now: the cutting took a while, and a hand or an AI may have changed it meanwhile
       const now = (await read(d.owner, d.id)) ?? d;
       const id = await addPicture(now, cut, "png");
       await save({ ...now, updatedAt: stamp(now) });
       return { id };
+    } finally {
+      await rm(tmp, { force: true });
+    }
+  }),
+);
+
+/**
+ * A picture split into what a design is made of, by a Mac of the person's own (lib/cutouts.ts): what is left behind its
+ * words and pieces, and each piece, become pictures of the design; the lines come back as the Mac read them. Which
+ * layers they make is the page's to say (src/lib/design/split.ts). The biggest pieces are kept when the design has no
+ * room for all of them.
+ */
+designsApp.post("/:id/pictures/:pid/split", (c) =>
+  answer(c, async (): Promise<SplitAnswer> => {
+    const d = await mine(c);
+    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+    const tmp = path.join(picturesOf(d.owner, d.id), `.split-${randomBytes(6).toString("hex")}.png`);
+    try {
+      const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
+      const now = (await read(d.owner, d.id)) ?? d;
+      if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: take one out first`);
+      const background = await addPicture(now, await keepable(made.background, tmp, "The picture behind"), "png");
+      const room = DESIGN_LIMITS.pictures - now.pictures.length;
+      const biggest = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, room).sort((a, b) => a.n - b.n);
+      const pieces: SplitAnswer["pieces"] = [];
+      for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, await keepable(made.pieces[n]!, tmp, "A piece"), "png") });
+      await save({ ...now, updatedAt: stamp(now) });
+      return { background, pieces, lines: made.layout.lines };
     } finally {
       await rm(tmp, { force: true });
     }
