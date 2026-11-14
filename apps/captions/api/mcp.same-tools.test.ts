@@ -34,7 +34,7 @@ const toolsOf = async (authorization: string) =>
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
-const ADDED = ["upload_file", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update"];
+const ADDED = ["upload_file", "workshop_project_update", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update"];
 /** The tools only the app's own assistant gets since: an outside AI key is never given them, so its list does not move. */
 const DOCK_ADDED = ["chats_list", "chat_read"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
@@ -88,8 +88,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // animation_style_save adds 419 (an animation style set up by talking: its 219-byte description, id, name, brief and pictures)
     // chats_list and chat_read add 705, in the dock only (one chat looks the person's other chats up: finds them, by
     // words too, and reads one; their 207- and 205-byte descriptions, query, id, limit and before)
-    expect(bytes(dock) - bytes(main(dock))).toBe(5249);
+    // workshop_project_update adds 699 (a project's name, instructions, colour and language changed in a chat: its 322-byte
+    // description, project, name, instructions, the sixteen colours and language)
+    expect(bytes(dock) - bytes(main(dock))).toBe(5948);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(5761);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(6460);
   });
 });

@@ -1,8 +1,10 @@
 import { parseInstagramUrl } from "../lib/instagram/url";
 import { parseYoutubeUrl } from "../lib/youtube/url";
+import { PROJECT_COLORS } from "../lib/workshop/validate";
 import { type Args, pick, str, ToolError, type ToolContext, type ToolModule } from "./types";
 
-// The Content Workshop's tools that api/mcp.ts does not have yet: a session's sources, and the current project.
+// The Content Workshop's tools that api/mcp.ts does not have yet: a session's sources, the current project, and a project's
+// own settings.
 
 type Source = { postId: string; addedAt: number; note?: string };
 type Post = Args & { id: string; shortcode?: string };
@@ -66,6 +68,21 @@ async function sources(a: Args, ctx: ToolContext) {
   };
 }
 
+/** A project's name, instructions, colour or language, as its form saves them; none named = the current project. */
+async function projectUpdate(a: Args, ctx: ToolContext) {
+  const id = a.project ? String(a.project) : (await ctx.json<{ currentProjectId: string | null }>("/api/workshop/workspace")).currentProjectId;
+  if (!id) throw new ToolError("There is no project yet: give a project's id (workshop_projects lists them).");
+  const body: Args = {};
+  if (a.name !== undefined) body.name = a.name;
+  // the instructions are one text: the old audience, voice and CTA fields are folded into it, as the form does
+  if (a.instructions !== undefined) Object.assign(body, { notes: a.instructions, audience: "", voice: "", cta: "" });
+  if (a.color !== undefined) body.color = a.color;
+  if (a.language !== undefined) body.languages = a.language ? [a.language] : [];
+  if (!Object.keys(body).length) throw new ToolError("Nothing to change: give name, instructions, color or language.");
+  const next = await ctx.json<Args>(`/api/workshop/projects/${encodeURIComponent(id)}`, "PATCH", body);
+  return { project: pick({ ...next, instructions: next.notes }, ["id", "name", "instructions", "color", "languages"]) };
+}
+
 export const workshopTools: ToolModule = {
   defs: [
     {
@@ -78,9 +95,19 @@ export const workshopTools: ToolModule = {
       description: "Switch the Workshop's current project (its id from workshop_projects): new sessions start in it, and the app opens in it next time. A window that is open stays in its own project.",
       inputSchema: { type: "object", properties: { project: str }, required: ["project"] },
     },
+    {
+      name: "workshop_project_update",
+      description:
+        'Change a Workshop project: its name, its instructions (the text always in its prompt; this replaces it whole, so read it with workshop_projects first and keep what holds), its colour, or the language spoken in its videos (a two-letter code, "" = the person\'s own). Only what you give changes. No project = the current one.',
+      inputSchema: {
+        type: "object",
+        properties: { project: str, name: str, instructions: str, color: { type: "string", enum: [...PROJECT_COLORS] }, language: str },
+      },
+    },
   ],
   handlers: {
     workshop_sources: sources,
+    workshop_project_update: projectUpdate,
     workshop_set_project: async (a, ctx) => {
       // the route reads an empty id as "no current project": never what switching means
       if (!a.project) throw new ToolError("Give the project's id: workshop_projects lists them.");
@@ -88,5 +115,5 @@ export const workshopTools: ToolModule = {
       return { current: pick(w.projects.find((p) => p.id === w.currentProjectId) ?? {}, ["id", "name"]) };
     },
   },
-  steps: { workshop_sources: "Going through the session's sources", workshop_set_project: "Switching the project" },
+  steps: { workshop_sources: "Going through the session's sources", workshop_set_project: "Switching the project", workshop_project_update: "Changing the project" },
 };

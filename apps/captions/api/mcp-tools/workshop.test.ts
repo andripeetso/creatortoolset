@@ -212,6 +212,28 @@ describe("workshop_set_project", () => {
   });
 });
 
+describe("workshop_project_update", () => {
+  it("writes a project's instructions, name, colour and language, the current one when none is named, and only hers", async () => {
+    const cookie = await cookieOf("ana");
+    const made = await page(cookie, "/api/workshop/projects", "POST", { name: "Puppy school", audience: "new dog owners", notes: "Short." });
+    const id = String(made.id);
+    await tool(key, "workshop_set_project", { project: id });
+
+    const out = await tool(key, "workshop_project_update", { instructions: "For new dog owners. Never promise results.", color: "lime", language: "et" });
+    expect(out.value).toEqual({ project: { id, name: "Puppy school", instructions: "For new dog owners. Never promise results.", color: "lime", languages: ["et"] } });
+    // the old audience field is folded in, as the form does: the prompt reads the instructions once
+    const saved = (await page<Row[]>(cookie, "/api/workshop/projects")).find((p) => p.id === id)!;
+    expect(saved).toMatchObject({ notes: "For new dog owners. Never promise results.", audience: "", color: "lime", languages: ["et"] });
+
+    expect((await tool(key, "workshop_project_update", { project: id, name: "Puppy class", language: "" })).value).toEqual({
+      project: { id, name: "Puppy class", instructions: "For new dog owners. Never promise results.", color: "lime" },
+    });
+    expect((await tool(key, "workshop_project_update", { project: id })).error).toBe("Nothing to change: give name, instructions, color or language.");
+    const nicos = String((await page(await cookieOf("nico"), "/api/workshop/projects", "POST", { name: "Nico's" })).id);
+    expect((await tool(key, "workshop_project_update", { project: nicos, name: "Mine now" })).error).toBe("Not found, or not this account's.");
+  });
+});
+
 describe("the writer the assistant asked", { timeout: 30_000 }, () => {
   type Stream = (system: string, user: string, signal: AbortSignal, parse: (t: string) => unknown) => Promise<unknown>;
   /** The writer's answer waits until `release`; `reached` says the turn got to the model. A Stop ends it as the real stream ends. */
