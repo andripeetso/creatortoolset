@@ -366,8 +366,9 @@ export function ProjectForm({
           />
         </div>
       )}
-      {/* Cancel / Save stay in view at the bottom while the form scrolls */}
-      {!formId && <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
+      {/* Cancel / Save stay in view at the bottom while the form scrolls. -bottom-4 is the Projects window's own bottom
+          padding (py-4): stuck at 0 the bar would stop above it, and the text would scroll by underneath */}
+      {!formId && <div className="sticky -bottom-4 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
         {onCancel && !made && (
           <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
             Cancel
