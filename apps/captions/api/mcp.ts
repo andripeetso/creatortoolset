@@ -419,8 +419,10 @@ export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
 
 const pick = (row: Args, keys: string[]) => Object.fromEntries(keys.filter((k) => row[k] != null && row[k] !== "" && !(Array.isArray(row[k]) && !(row[k] as unknown[]).length)).map((k) => [k, row[k]]));
 const linesOf = (blocks: unknown) => ((blocks as Args[] | undefined) ?? []).map((b) => ({ id: b.id, text: b.text }));
+/** A piece as the tools give it; href opens its session on this piece (the page's ?doc=), not on the first one. */
 const piece = (d: Args) => ({
   ...pick(d, ["id", "kind", "title", "locked"]),
+  ...(d.sessionId ? { href: `/workshop/sessions/${d.sessionId}?doc=${d.id}` } : {}),
   blocks: linesOf(d.blocks),
   ...((d.hooks as unknown[] | undefined)?.length ? { hooks: linesOf(d.hooks) } : {}),
   ...(d.caption ? { caption: (d.caption as Args).text } : {}),
@@ -1210,8 +1212,9 @@ const kindTitle = (kind: unknown) => String(kind ?? "job").replace(/^./, (c) => 
  * id, so following it updates its card. only = update a card that's there, add none.
  */
 export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; only?: boolean } | null {
-  const session = (id: unknown, title: string, status: AssistantWork["status"], detail?: string): AssistantWork => ({
-    id: `workshop:${id}`, kind: "workshop", title, href: `/workshop/sessions/${id}`, status, ...(detail ? { detail } : {}),
+  // doc: the piece the card is about, which the session opens on
+  const session = (id: unknown, title: string, status: AssistantWork["status"], detail?: string, doc?: unknown): AssistantWork => ({
+    id: `workshop:${id}`, kind: "workshop", title, href: `/workshop/sessions/${id}${doc ? `?doc=${doc}` : ""}`, status, ...(detail ? { detail } : {}),
   });
   switch (name) {
     case "workshop_new_session":
@@ -1221,7 +1224,7 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
       const reply = (r.reply ?? {}) as Args;
       const status = reply.status === "thinking" ? "running" : reply.status === "error" ? "failed" : "done";
       const detail = status === "running" ? WRITING : status === "failed" ? String(reply.error ?? "The writer stopped") : "The writer is done";
-      return { card: session(a.session, String((r.piece as Args | undefined)?.title ?? "Workshop session"), status, detail) };
+      return { card: session(a.session, String((r.piece as Args | undefined)?.title ?? "Workshop session"), status, detail, a.piece ?? (r.piece as Args | undefined)?.id) };
     }
     case "workshop_session": {
       const chat = (r.chat as Args[] | undefined) ?? [];
