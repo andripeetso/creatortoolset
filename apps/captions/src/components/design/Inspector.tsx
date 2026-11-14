@@ -813,9 +813,15 @@ export function Inspector({
                     onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
                     onBlur={(e) => {
                       const words = e.currentTarget.value.replace(/\s+/g, " ").trim();
-                      if (words !== (one.marks?.[0]?.words ?? "")) onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ color: l.marks[0]!.color, ...(words ? { words } : {}) }, ...l.marks.slice(1)] } : l));
+                      if (words !== (one.marks?.[0]?.words ?? "")) onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, words: words || undefined }, ...l.marks.slice(1)] } : l));
                     }}
                     className={cn(FIELD, "w-full text-[11px] outline-none placeholder:text-zinc-400")}
+                  />
+                  <Choice
+                    label="Where the stroke lies"
+                    value={one.marks[0].low ? "low" : "full"}
+                    options={[["full", "Behind the letters"], ["low", "Sitting low"]] as const}
+                    onPick={(v) => onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, low: v === "low" ? true : undefined }, ...l.marks.slice(1)] } : l))}
                   />
                 </>
               )}

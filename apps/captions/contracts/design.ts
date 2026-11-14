@@ -126,9 +126,10 @@ export interface TextLayer extends Box {
   outline?: { color: string; width: number };
   /**
    * highlighter strokes behind its words: each a phrase of the text (every place it is in, wherever it wraps) and the
-   * stroke's colour; one without `words` goes behind every line
+   * stroke's colour; one without `words` goes behind every line. `low`: the stroke sits low, over the small letters and a
+   * little under the line, the tall letters standing out of it, in place of behind all of them
    */
-  marks?: { color: string; words?: string }[];
+  marks?: { color: string; words?: string; low?: true }[];
 }
 
 export interface ImageLayer extends Box {

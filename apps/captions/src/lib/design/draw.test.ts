@@ -196,6 +196,10 @@ describe("a text's highlighter strokes", () => {
     const [b] = markBoxes([{ words: "Small ones", color: "#f2b63c" }], lines, 20, 30, 5, () => 0, width, { up: 17, down: 0 });
     expect([Math.round(b!.y * 10) / 10, Math.round(b!.h * 10) / 10]).toEqual([7, 21]);
   });
+  it("a low stroke sits over the small letters and a little under the line they stand on, the tall ones standing out of it", () => {
+    // the third line's letters stand on 86 and reach 14.4 over it: from 86 - 0.72 × 14.4 to 86 + 2.8, as wide as a stroke behind all of them
+    expect(boxes([{ words: "the floor", color: "#f2b63c", low: true }], lines)).toEqual([[-2.8, 75.6, 105.6, 13.2, "#f2b63c"]]);
+  });
   it("without words, a stroke behind every line, each as wide as its line and where the line is set", () => {
     const centred = (line: string) => (300 - width(line)) / 2;
     expect(boxes([{ color: "#f2b63c" }], lines, centred).map((b) => [b[0], b[2]])).toEqual([[37.2, 225.6], [52.2, 195.6], [97.2, 105.6]]);

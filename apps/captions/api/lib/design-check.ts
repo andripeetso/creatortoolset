@@ -49,13 +49,13 @@ const strokeMore = (v: unknown): Partial<Stroke> => {
 };
 
 /** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
-function marks(v: unknown): { marks?: { color: string; words?: string }[] } {
+function marks(v: unknown): { marks?: { color: string; words?: string; low?: true }[] } {
   const list = (Array.isArray(v) ? v : [])
     .filter(obj)
     .slice(0, DESIGN_LIMITS.marks)
     .map((m) => {
       const words = typeof m.words === "string" ? m.words.replace(/\s+/g, " ").trim().slice(0, 200) : "";
-      return { color: sixDigits(color(m.color, "#f2b63c")), ...(words ? { words } : {}) };
+      return { color: sixDigits(color(m.color, "#f2b63c")), ...(words ? { words } : {}), ...(m.low === true ? { low: true as const } : {}) };
     });
   return list.length ? { marks: list } : {};
 }

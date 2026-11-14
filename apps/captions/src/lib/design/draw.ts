@@ -210,7 +210,7 @@ export function markBoxes(
   const out: { x: number; y: number; w: number; h: number; color: string }[] = [];
   const pad = size * 0.14;
   const over = size * 0.1;
-  const box = (k: number, from: number, to: number, color: string) => {
+  const box = (k: number, from: number, to: number, m: { color: string; low?: true }) => {
     const line = lines[k]!;
     if (to <= from || !line.slice(from, to).trim()) return;
     // the words' left end is where their last letter ends, less their own width: right with letters spaced apart too,
@@ -218,7 +218,9 @@ export function markBoxes(
     const wide = width(line.slice(from, to));
     // the line the letters stand on is where drawText puts it: 0.8 of the size under the top of the letters' own room
     const foot = top + k * lh + (lh - size) / 2 + size * 0.8;
-    out.push({ x: left(line) + width(line.slice(0, to)) - wide - pad, y: foot - ink.up - over, w: wide + 2 * pad, h: ink.up + ink.down + 2 * over, color });
+    // low: over the small letters and a little under the line they stand on, the tall letters standing out of it
+    const y = m.low ? foot - ink.up * 0.72 : foot - ink.up - over;
+    out.push({ x: left(line) + width(line.slice(0, to)) - wide - pad, y, w: wide + 2 * pad, h: foot + (m.low ? size * 0.14 : ink.down + over) - y, color: m.color });
   };
   // the lines end to end with one space between them: where a phrase is found there says which lines it is on
   // ponytail: found by its small letters, place for place. A letter whose small form is longer (the Turkish İ) moves
@@ -233,20 +235,20 @@ export function markBoxes(
   for (const m of marks ?? []) {
     const words = m.words?.replace(/\s+/g, " ").trim().toLowerCase();
     if (!words) {
-      lines.forEach((line, k) => box(k, 0, line.length, m.color));
+      lines.forEach((line, k) => box(k, 0, line.length, m));
       continue;
     }
     for (let at = all.indexOf(words); at >= 0; at = all.indexOf(words, at + words.length)) {
       // the stroke takes in what closes its last word (a full stop, a comma, a closing quote): cut off before it, it looks torn
       let end = at + words.length;
       while (end < all.length && /[.,!?:;…”")\]]/.test(all[end]!)) end++;
-      lines.forEach((line, k) => box(k, Math.max(0, at - starts[k]!), Math.min(line.length, end - starts[k]!), m.color));
+      lines.forEach((line, k) => box(k, Math.max(0, at - starts[k]!), Math.min(line.length, end - starts[k]!), m));
     }
   }
   return out;
 }
 
-function drawText(ctx: Ctx, given: TextLayer) {
+function drawText(ctx: Ctx, given: TextLayer, cast = false) {
   ctx.font = fontOf(given);
   ctx.textBaseline = "alphabetic";
   const set = setTextOnce(given, (s) => ctx.measureText(s).width);
@@ -257,13 +259,14 @@ function drawText(ctx: Ctx, given: TextLayer) {
   const lines = set.lines;
   const lh = lineHeightOf(l);
   const top = l.valign === "middle" ? (l.h - lines.length * lh) / 2 : l.valign === "bottom" ? l.h - lines.length * lh : 0;
-  // the highlighter's strokes lie under the words, as high as this text's own letters are drawn
-  const drawn = l.marks?.length ? lines.map((line) => ctx.measureText(line)) : [];
+  // the highlighter's strokes lie under the words, as high as this text's own letters are drawn. They are ink on the
+  // ground: flat, with no shadow of their own (`cast`: the pass that draws only the layer's shadow leaves them out)
+  const drawn = l.marks?.length && !cast ? lines.map((line) => ctx.measureText(line)) : [];
   const up = Math.max(0, ...drawn.map((m) => m.actualBoundingBoxAscent));
   const down = Math.max(0, ...drawn.map((m) => m.actualBoundingBoxDescent));
-  for (const b of markBoxes(l.marks, lines, l.size, lh, top, (line) => (l.align === "center" ? (l.w - textWidth(l, line, measure)) / 2 : l.align === "right" ? l.w - textWidth(l, line, measure) : 0), (s) => textWidth(l, s, measure), up > 0 ? { up, down } : undefined)) {
+  for (const b of markBoxes(cast ? undefined : l.marks, lines, l.size, lh, top, (line) => (l.align === "center" ? (l.w - textWidth(l, line, measure)) / 2 : l.align === "right" ? l.w - textWidth(l, line, measure) : 0), (s) => textWidth(l, s, measure), up > 0 ? { up, down } : undefined)) {
     ctx.beginPath();
-    roundedRect(ctx, b.x, b.y, b.w, b.h, l.size * 0.07);
+    roundedRect(ctx, b.x, b.y, b.w, b.h, l.size * 0.02);
     ctx.fillStyle = b.color;
     ctx.fill();
   }
@@ -525,7 +528,7 @@ function strokeAlong(ctx: Ctx, s: Stroke | undefined, trace: () => void, w: numb
 
 /** A layer in its own box. `cast`: only what throws its shadow (a picture's whole box, not the picture cut to its corners). */
 function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
-  if (l.type === "text") drawText(ctx, l);
+  if (l.type === "text") drawText(ctx, l, cast);
   else if (l.type === "shape") {
     ctx.beginPath();
     shapePath(ctx, l);

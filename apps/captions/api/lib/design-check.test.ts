@@ -303,7 +303,7 @@ describe("a text's highlighter strokes", () => {
       [
         {
           layers: [
-            text({ marks: [{ words: "  the   mat ", color: "#FC0" }, { color: "yellow" }, { words: 7 }, "a stroke", { words: "x".repeat(900), color: "#abcdef" }] }),
+            text({ marks: [{ words: "  the   mat ", color: "#FC0", low: true }, { color: "yellow", low: "yes" }, { words: 7 }, "a stroke", { words: "x".repeat(900), color: "#abcdef" }] }),
             text({ marks: Array.from({ length: 30 }, () => ({ words: "mat", color: "#ffcc00" })) }),
             text({ marks: [] }),
             { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, marks: [{ color: "#ffcc00" }] },
@@ -312,7 +312,7 @@ describe("a text's highlighter strokes", () => {
       ],
       rules,
     ).pages[0]!.layers;
-    expect(l).toMatchObject({ marks: [{ words: "the mat", color: "#ffcc00" }, { color: "#f2b63c" }, { color: "#f2b63c" }, { words: "x".repeat(200), color: "#abcdef" }] });
+    expect((l as { marks: unknown[] }).marks).toEqual([{ words: "the mat", color: "#ffcc00", low: true }, { color: "#f2b63c" }, { color: "#f2b63c" }, { words: "x".repeat(200), color: "#abcdef" }]);
     expect(many).toMatchObject({ type: "text" });
     expect((many as { marks: unknown[] }).marks).toHaveLength(DESIGN_LIMITS.marks);
     expect(none).not.toHaveProperty("marks");
