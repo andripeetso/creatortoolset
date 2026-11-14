@@ -88,6 +88,8 @@ function DesignPage({ id }: { id: string }) {
   // the layers, the canvas and what is picked side by side: beside the chats (chat mode) the page asks for that much
   usePageNeeds(920);
   const [design, setDesign] = useState<Design | null>(null);
+  /** The name in the top bar while it is being typed (null: not being typed, the design's own name shows). */
+  const [naming, setNaming] = useState<string | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLive] = useState<Page[] | null>(null);
   const [at, setAt] = useState(0);
@@ -856,6 +858,23 @@ function DesignPage({ id }: { id: string }) {
     </ContextMenuItem>
   );
   const none = !mine.length;
+  /** The typed name, saved (Enter or leaving the field). Empty or unchanged keeps the old one. */
+  const rename = (typed: string) => {
+    setNaming(null);
+    const name = typed.trim().slice(0, DESIGN_LIMITS.name);
+    const old = design.name;
+    if (!name || name === old) return;
+    const was = server.current.at;
+    setDesign((d) => (d ? { ...d, name } : d));
+    saveDesign(design.id, { name }).then(
+      // the save moves the design's updatedAt; the frames' next save goes from it unless another save came between
+      (d) => void (server.current.at === was && (server.current = { ...server.current, at: d.updatedAt })),
+      (e) => {
+        setDesign((d) => (d ? { ...d, name: old } : d));
+        setError(message(e));
+      },
+    );
+  };
 
   return (
     <div
@@ -870,7 +889,30 @@ function DesignPage({ id }: { id: string }) {
       onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
       onDrop={dropped}
     >
-      <AppBar tool="Designer" to="/design" trail={<span className="truncate font-normal text-zinc-500">{design.name}</span>}>
+      <AppBar tool="Designer" to="/design" trail={
+          // as wide as the name (an invisible copy sizes it), so the rest of the bar stays free to drag the Mac window
+          <span className="inline-grid min-w-0">
+            <span aria-hidden className="invisible col-start-1 row-start-1 truncate whitespace-pre border border-transparent px-2 py-1 text-sm">{naming ?? design.name}</span>
+            <input
+              value={naming ?? design.name}
+              aria-label="Design name"
+              title="Rename"
+              maxLength={DESIGN_LIMITS.name}
+              onChange={(e) => setNaming(e.target.value)}
+              onBlur={(e) => rename(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter saves and leaves the field, Esc puts the saved name back
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") {
+                  setNaming(design.name);
+                  const field = e.currentTarget;
+                  requestAnimationFrame(() => field.blur());
+                }
+              }}
+              className="col-start-1 row-start-1 w-full min-w-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-normal text-zinc-500 outline-none hover:border-border focus:border-violet-500 focus:text-foreground"
+            />
+          </span>
+        }>
         {piece && (
           <Button size="sm" variant="ghost" asChild>
             <Link to={piece}>Its Workshop piece</Link>
