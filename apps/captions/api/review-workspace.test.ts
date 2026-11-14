@@ -9,7 +9,7 @@ const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "r
 process.env.DATA_DIR = dataDir;
 afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 
-const { reviewApp, addVersion, reviewJobsDone } = await import("./review");
+const { reviewApp, addVersion, fileVideo, projectNamed, reviewJobsDone } = await import("./review");
 const { inRequestWorkspace } = await import("./lib/workspace-scope");
 
 // two workspaces; "first" is the oldest, so a video from before workspaces is its
@@ -71,6 +71,16 @@ it("keeps each workspace's videos and folders to it; a video from before workspa
   await upload("Tiny C.mp4", "second", { projectId: folder.id });
   expect(await names("/", "second")).toEqual(["Tiny A2", "Tiny C"]);
   expect(await names("/", "first")).toEqual(["Old", "Tiny B"]);
+
+  // a video from before workspaces filed in that folder (a plug-in's) is with it, and stays when taken out again
+  const old = (await addVersion(undefined, { owner: "ana", name: "Older.mp4", mime: "video/mp4", bytes: 1 }, async () => {}))!;
+  await reviewJobsDone();
+  await fileVideo(old.meta.id, folder.id);
+  await app.request(`/assets/${old.meta.id}`, { ...post({ projectId: null }), method: "PATCH" });
+  expect(await names("/", "second")).toEqual(["Older", "Tiny A2", "Tiny C"]);
+  // a folder found by name in a workspace is that workspace's; none there: a new one, made in it
+  expect(await projectNamed("ana", "tiny  FOLDER", "second")).toBe(folder.id);
+  expect(await projectNamed("ana", "Tiny folder", "first")).not.toBe(folder.id);
 
   // a video is still opened by its id from the other workspace
   expect((await app.request(`/assets/${a.id}`, { headers: ws("first") })).status).toBe(200);

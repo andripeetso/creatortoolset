@@ -335,6 +335,10 @@ function updateProjects<T>(fn: (list: Project[]) => T): Promise<T> {
 const ownsProject = async (owner: string, pid: unknown) =>
   typeof pid === "string" && (await readProjects()).some((p) => p.id === pid && p.owner === owner);
 
+/** A video filed in a folder is in the folder's workspace, and stays in it when taken out again. */
+const folderWorkspace = async (pid: string | undefined) => (pid ? (await readProjects()).find((p) => p.id === pid)?.workspace : undefined);
+const setWorkspace = (m: Meta, ws: string | undefined) => (ws ? (m.workspace = ws) : delete m.workspace);
+
 /**
  * Which of the person's videos and folders are in the workspace this request works in: a video filed in a folder is in
  * the folder's, so a folder never shows without its videos. A view filter: a video opened by its id still opens.
@@ -1046,9 +1050,12 @@ reviewApp.post("/uploads/:uid/parts/:partNumber", (c) => {
  * with `place` (an upload assembles its parts into it).
  */
 /** File a loose video in a project (one filed by hand stays where it is); it is in the project's workspace then. */
-export function fileVideo(id: string, projectId: string): Promise<Meta | null> {
+export async function fileVideo(id: string, projectId: string): Promise<Meta | null> {
+  const ws = await folderWorkspace(projectId);
   return updateMeta(id, (m) => {
-    m.projectId ??= projectId;
+    if (m.projectId) return;
+    m.projectId = projectId;
+    setWorkspace(m, ws);
   });
 }
 
@@ -1060,6 +1067,7 @@ export async function addVersion(
 ): Promise<{ meta: Meta; n: number } | null> {
   const id = assetId ?? randomUUID();
   const now = Date.now();
+  const workspace = v.workspace ?? (await folderWorkspace(v.projectId));
   if (!assetId) {
     await mkdir(assetDir(id), { recursive: true });
     await writeJson(metaPath(id), {
@@ -1067,7 +1075,7 @@ export async function addVersion(
       name: assetName(v.name),
       owner: v.owner,
       ...(v.projectId ? { projectId: v.projectId } : {}),
-      ...(v.workspace ? { workspace: v.workspace } : {}),
+      ...(workspace ? { workspace } : {}),
       versions: [],
       approval: { status: "none" },
       createdAt: now,
@@ -1495,10 +1503,14 @@ reviewApp.patch("/assets/:id", async (c) => {
     return c.json({ error: "That project is gone" }, 404);
   }
   let oldToken: string | undefined;
+  const ws = typeof projectId === "string" ? await folderWorkspace(projectId) : undefined;
   const meta = await updateMeta(v.meta.id, (m) => {
     if (name) m.name = name;
     if (projectId === null) delete m.projectId;
-    else if (typeof projectId === "string") m.projectId = projectId;
+    else if (typeof projectId === "string") {
+      m.projectId = projectId;
+      setWorkspace(m, ws);
+    }
     if (share) ({ share: m.share, oldToken } = patchShare(m.share, share));
     if (typeof body?.finished === "boolean") m.done = { finished: body.finished, at: Date.now() };
   });
@@ -2047,13 +2059,13 @@ export function setApproval(id: string, status: Approval, by: string, only?: App
 }
 
 /**
- * The user's project with this name in a workspace (the request's when not named), made there when missing. Spaces,
- * case and punctuation don't count.
+ * The user's project with this name, made when missing. Spaces, case and punctuation don't count. With a workspace,
+ * one in that workspace; without, any (a heartbeat's call has no window), and one made is the request's workspace's.
  */
 export async function projectNamed(owner: string, name: string, workspace?: string): Promise<string> {
   const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   const ws = workspace ?? (await currentWorkspaceId({ username: owner } as SessionUser));
-  const keep = await inProjectOf({ username: owner } as SessionUser, ws);
+  const keep = workspace ? await inProjectOf({ username: owner } as SessionUser, workspace) : null;
   return updateProjects((list) => {
     const found = list.find((p) => p.owner === owner && key(p.name) === key(name) && (!keep || keep(p.workspace)));
     if (found) return found.id;
