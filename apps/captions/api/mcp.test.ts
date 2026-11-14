@@ -75,6 +75,8 @@ describe("Creator Toolset as a remote MCP server", () => {
   it("drives the Workshop through the site's own routes, as the AI's text", async () => {
     const s = (await tool("workshop_new_session", { title: "From the phone", notes: "the idea" })).value as { id: string; pieces: Array<{ id: string }> };
     expect(s.pieces).toHaveLength(1);
+    // an AI writes new words from the material workshop_chat gives (no AI on this account: no writer's turn)
+    expect((await tool("workshop_chat", { session: s.id, piece: s.pieces[0]!.id, message: "Two lines" })).value).toMatchObject({ write_it_yourself: true });
     const edited = (await tool("workshop_edit_piece", { session: s.id, piece: s.pieces[0]!.id, blocks: [{ text: "Line one" }, { text: "Line two" }], caption: "Post" })).value;
     expect(edited.blocks.map((b: { text: string }) => b.text)).toEqual(["Line one", "Line two"]);
     // a piece's link opens its session on that piece, not on the first one
@@ -516,6 +518,8 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 16151 -> 16887: who writes a piece's words, said where every caller reads it (an AI app's store keeps one copy of
     // the descriptions for everyone): workshop_chat's message is the user's own words and notes the caller's findings;
     // workshop_new_piece and workshop_edit_piece are for the user's own words (theirs), new words come from the writer
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(16887);
+    // 16887 -> 16935: workshop_chat's answer is the writer's piece or the material to write it from (an AI writes from
+    // the user's own posts and rewrites); workshop_edit_piece takes what an AI wrote from that material
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(16935);
   });
 });

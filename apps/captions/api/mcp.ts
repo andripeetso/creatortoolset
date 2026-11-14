@@ -169,17 +169,17 @@ export const TOOLS = [
   },
   {
     name: "workshop_new_piece",
-    description: "Add another piece to a session. Its words come from the Workshop's writer: leave text out and call workshop_chat. text, its first block, is for the user's own words.",
+    description: "Add another piece to a session. Its words are written from the user's own material (workshop_chat): leave text out. text, its first block, is for the user's own words.",
     inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str, theirs: { type: "boolean", description: "the text is the user's own words" } }, required: ["session", "kind"] },
   },
   {
     name: "workshop_edit_piece",
-    description: "Put the user's own words in a piece, or a change they spelled out word for word (new words come from workshop_chat). blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+    description: "Put words in a piece: the user's own, a change they spelled out, or what you wrote from workshop_chat's material. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
     inputSchema: { type: "object", properties: { session: str, piece: str, title: str, blocks: lines, hooks: lines, caption: str, pinned: str, theirs: { type: "boolean", description: "the text is the user's own words" } }, required: ["session", "piece"] },
   },
   {
     name: "workshop_chat",
-    description: "The Workshop's writer writes or changes a piece, in the session's chat: it reads the user's posts and how they rewrote its drafts. message is what the user asked, in their own words; notes is what you found. Where the account has no writer, the answer says so: then write the words with workshop_edit_piece. Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
+    description: "Write or change a piece from the user's own material. message is what the user asked, in their own words; notes is what you found. The answer is the piece written by the Workshop's own writer, or the material for you to write it from (the project, the user's posts closest to it, how they rewrote earlier drafts), then you save it with workshop_edit_piece. Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -634,10 +634,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
     },
     workshop_new_piece: async (a) => {
-      // words that aren't the user's: the piece is made empty and the writer is next
-      const toWriter = typeof a.text === "string" && (await notTheirs(call, auth, user, [a.text], a.theirs));
-      const made = piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, toWriter ? ["kind", "title"] : ["kind", "title", "text"])));
-      return toWriter ? { ...made, saved_text: false, answer: `Made it empty. ${TO_WRITER}` } : made;
+      // words that aren't the user's: the piece is made empty, and workshop_chat is next
+      const next = typeof a.text === "string" ? await pieceWords(call, auth, user, undefined, [a.text], a.theirs) : null;
+      const made = piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, next ? ["kind", "title"] : ["kind", "title", "text"])));
+      return next ? { ...made, saved_text: false, answer: `Made it empty. ${next}` } : made;
     },
     workshop_edit_piece: async (a) => {
       const body = pick(a, ["title", "blocks", "hooks", "caption", "pinned"]);
@@ -651,16 +651,21 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...(["caption", "pinned"] as const).filter((f) => typeof a[f] === "string" && a[f] !== was(f)).map((f) => String(a[f])),
       ];
       const already = [...had.values(), was("caption"), was("pinned")].join("\n\n");
-      if (await notTheirs(call, auth, user, changed, a.theirs, already)) return { saved: false, answer: TO_WRITER };
+      const next = await pieceWords(call, auth, user, String(a.piece), changed, a.theirs, already);
+      if (next) return { saved: false, answer: next };
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
       // From the app's own assistant, the writer gets what the person typed in that chat (and pasted with it), as they
       // wrote it; the assistant's message rides along as its notes. Its own retelling came out as the person's brief
       // and the writer took it for their words (owner, 2026-11-14). A scheduled run has nobody typing: its message goes as it is.
-      // Any other caller (an AI app, a script) sends the user's words in message and its own in notes.
-      // an account with no AI to write with gets an answer, not an error: the caller writes
-      if (!(await workshopWrites(call, auth))) return { writer: "none", answer: "This account's Workshop has no writer to ask now (no AI set up, or its computer is off): write the words yourself with workshop_edit_piece." };
+      // Any other AI (an AI app, a script's model), and the assistant when the writer can't run, writes the words itself
+      // from the writer's material, given at once: the usual way for an app inside an AI (owner, 2026-11-14)
+      if (!isJob(auth) || !(await workshopWrites(call, auth))) {
+        const material = await ws(`/sessions/${a.session}/docs/${a.piece}/material`, "POST", { text: [a.message, a.notes].filter((t) => typeof t === "string").join("\n") });
+        materialGiven(user.username, String(a.piece));
+        return { write_it_yourself: true, material, answer: MATERIAL_ANSWER };
+      }
       const turn = isJob(auth) ? jobTurn(auth.get("authorization") ?? undefined) : null;
       const typed = turn ? saidInChat(user.username, turn)?.[0]?.text : undefined;
       const notes = [typed ? a.message : "", a.notes].filter((t): t is string => typeof t === "string" && !!t.trim()).join("\n\n");
@@ -1383,16 +1388,45 @@ sentence or two, and what the user could do next.`;
 
 /**
  * Every caller, the same text (an AI app reads the copy its store scanned, so nothing here may differ per account). A
- * caller doesn't see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13).
- * What differs per account comes back in a tool's answer: notTheirs, and workshop_chat with no writer.
+ * piece written without the user's posts and rewrites came out in nobody's voice (owner, 2026-11-13). What differs per
+ * account and caller comes back in a tool's answer: pieceWords, and workshop_chat's writer or material.
  */
-const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer (workshop_chat), which reads
-the user's posts and how they rewrote its drafts. Give it what the user asked, in their own words, and what you found in
-notes. workshop_new_piece and workshop_edit_piece are for the user's own words; where the account has no writer,
-workshop_chat says so and you write them. A project's instructions: workshop_project_update with draft_from, as the
-project form's Write it for me does.`;
+const WRITER_GUIDE = `Writing in the Workshop: a piece's words are written from the user's own material: their project, their posts
+and how they rewrote earlier drafts. Call workshop_chat on the piece with what the user asked, in their own words, and
+what you found in notes. Its answer is the piece, written by the Workshop's own writer, or that material for you to
+write from; then save the words with workshop_edit_piece. workshop_new_piece and workshop_edit_piece also take the
+user's own words as they are. A project's instructions: workshop_project_update with draft_from, as the project form's
+Write it for me does.`;
 
 const TO_WRITER = "These words aren't the user's own, and this account's Workshop has a writer: it writes a piece's words. Call workshop_chat on the piece with what the user asked, in their own words, and what you found in notes.";
+const TO_MATERIAL = "Call workshop_chat on the piece first: it gives you the user's project, their posts closest to it and how they rewrote earlier drafts, to write these words from.";
+const MATERIAL_ANSWER = "Write the piece's words yourself from this material, then save them with workshop_edit_piece. their_posts and their_rewrites are how the user sounds (what they changed in the AI's drafts is what they want); project is facts about the brand.";
+
+/** Pieces whose material was given to a caller, by user and piece: when (an AI that writes, writes from it). */
+const given = new Map<string, number>();
+const GIVEN_MS = 2 * 3_600_000;
+// ponytail: in memory, per process: after a restart the caller is asked to read the material again
+const materialGiven = (username: string, piece: string) => given.set(`${username}:${piece}`, Date.now());
+const hadMaterial = (username: string, piece: string | undefined) => !!piece && Date.now() - (given.get(`${username}:${piece}`) ?? 0) < GIVEN_MS;
+
+/**
+ * New words in a piece: null when they may be saved, else the answer that says what comes first. Words already in the
+ * piece (a cut, a split, a join, a block moved) are not new. The app's assistant, where the Workshop's writer can run,
+ * saves only what the person typed or pasted in that chat (as a style's text is held: own-words.ts): the rest is the
+ * writer's (a guide alone did not hold it: a real model still wrote the pieces itself, 2026-11-14). Any other AI writes
+ * the words itself, from the writer's material (workshop_chat gives it), or saves the user's own words (theirs).
+ */
+async function pieceWords(call: Call, auth: Headers, user: SessionUser, piece: string | undefined, texts: string[], theirs: unknown, already = ""): Promise<string | null> {
+  const sent = texts.filter((t) => t.trim() && !foundIn(t, already));
+  if (!sent.length) return null;
+  if (isJob(auth)) {
+    const turn = jobTurn(auth.get("authorization") ?? undefined) ?? "";
+    const own = [...(saidInChat(user.username, turn) ?? []).map((m) => m.text), ...(pastedInChat(user.username, turn) ?? [])];
+    if (sent.every((t) => own.some((o) => foundIn(t, o)))) return null;
+    if (await workshopWrites(call, auth)) return TO_WRITER;
+  } else if (theirs === true) return null;
+  return hadMaterial(user.username, piece) ? null : TO_MATERIAL;
+}
 
 /**
  * Where the account's Workshop has a writer, the words in a piece and a project's instructions are the user's own or
