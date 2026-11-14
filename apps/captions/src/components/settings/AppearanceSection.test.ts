@@ -53,6 +53,13 @@ describe("a colour of the person's own", () => {
     expect(dark).toContain(`--s-violet-900:${s[900]}`);
     expect(light).toContain(`--s-violet-900:${s[100]}`);
   });
+
+  it("can write them for the chat side alone, so the chats keep the person's own colour in chat mode", () => {
+    const css = customTintCss("#ff0000", '[data-own-tint="custom"]', " [data-chat-side]");
+    expect(css).toContain(':root[data-own-tint="custom"] [data-chat-side]{');
+    expect(css).toContain('.dark[data-own-tint="custom"] [data-chat-side]{');
+    expect(css).not.toContain("data-tint=");
+  });
 });
 
 describe("every Home tile has a switch", () => {

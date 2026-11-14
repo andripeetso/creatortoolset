@@ -164,9 +164,10 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
               {nav("skills", "Skills", BookOpenText)}
             </nav>
           </div>
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-scroll">
+          {/* a div, not <main>: chat mode lays out and hides every <main> as the page beside the chats (SettingsPage) */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-scroll">
             <div className="mx-auto w-full max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
-          </main>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
