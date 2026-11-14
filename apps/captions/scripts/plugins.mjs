@@ -43,8 +43,9 @@ function findFolders(root, names) {
     return found;
   }
   for (const name of names) {
-    const hit = ["plugins", "plugin-examples"].map((base) => path.join(root, base, name)).find((d) => existsSync(d));
-    if (!hit) throw new Error(`CT_PLUGINS names "${name}", but there is no plugins/${name} or plugin-examples/${name}`);
+    // editor-steps/: the team's own plug-ins, so a server can name one (CT_PLUGINS=…,blur-faces) as the Mac app downloads it
+    const hit = ["plugins", "plugin-examples", "editor-steps"].map((base) => path.join(root, base, name)).find((d) => existsSync(d));
+    if (!hit) throw new Error(`CT_PLUGINS names "${name}", but there is no plugins/${name}, plugin-examples/${name} or editor-steps/${name}`);
     found.push({ dir: hit, name });
   }
   return found;
