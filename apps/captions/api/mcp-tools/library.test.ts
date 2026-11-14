@@ -184,7 +184,10 @@ describe("the media tools follow the install's library", () => {
     tiny.late = 120_000;
     try {
       const call = tool(key, "media_search", { q: "beach" });
-      await vi.advanceTimersByTimeAsync(51_000);
+      // a second at a time: the search reads files (the workspace, the libraries) before it starts the source's clock
+      let done = false;
+      void call.finally(() => (done = true));
+      for (let s = 0; s < 51 && !done; s++) await vi.advanceTimersByTimeAsync(1_000);
       const out = (await call).value;
       expect(out.files.map((f: { source: string }) => f.source)).toEqual(["Library", "Library"]);
       expect(out.note).toBe("Tiny archive did not answer.");

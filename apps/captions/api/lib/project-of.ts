@@ -1,4 +1,3 @@
-import { mineAccountId } from "../instagram";
 import type { SessionUser } from "../users";
 import { ownedProjects } from "./workshop/workspace";
 
@@ -11,7 +10,8 @@ import { ownedProjects } from "./workshop/workspace";
 async function projectsOf(user: SessionUser): Promise<{ of: (own?: string) => string; ids: Set<string> } | null> {
   const projects = await ownedProjects(user.username);
   if (!projects.length) return null;
-  const mine = await mineAccountId(user).catch(() => undefined);
+  // read when asked: the Analyzer is a big module, and everything that keeps workspaces apart reaches this file
+  const mine = await import("../instagram").then((m) => m.mineAccountId(user)).catch(() => undefined);
   const first = (projects.find((p) => mine && p.accountId === mine) ?? [...projects].sort((a, b) => a.createdAt - b.createdAt)[0])!.id;
   const ids = new Set(projects.map((p) => p.id));
   return { of: (own) => (own && ids.has(own) ? own : first), ids };
