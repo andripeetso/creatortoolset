@@ -332,8 +332,9 @@ export const deleteProject = async (id: string) => {
 };
 
 /** A new project's facts, drafted from its Instagram bio and posts, for the author to rewrite. */
-export const draftProjectNotes = (accountId: string, name: string) =>
-  fetch("/api/workshop/projects/draft-notes", jsonInit({ accountId, name })).then((r) => json<{ notes: string }>(r));
+/** A project's instructions drafted from what the person gave: text (its links are read), .docx/.odt/.epub files, Instagram accounts. */
+export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; data: string }> }) =>
+  fetch("/api/workshop/projects/draft-notes", jsonInit(input)).then((r) => json<{ notes: string }>(r));
 
 export const listFrameworks = () =>
   fetch("/api/workshop/frameworks").then((r) => json<WorkshopFramework[]>(r));

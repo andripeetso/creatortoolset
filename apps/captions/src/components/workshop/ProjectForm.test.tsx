@@ -36,11 +36,26 @@ describe("ProjectForm variant setup", () => {
     expect(setupHtml).not.toContain("Knowledge, frameworks and rules");
   });
 
-  it("leaves the Workshop's own form as it was", () => {
-    expect(fullHtml).toContain("My Instagram");
-    expect(fullHtml).toContain("Sync");
+  it("the Projects form asks for no handle: accounts are connected once it's made, and the instructions can be written for you", () => {
+    expect(fullHtml).not.toContain("My Instagram");
+    expect(fullHtml).not.toContain("Sync");
+    expect(fullHtml).not.toContain("@yourhandle");
+    expect(fullHtml).toContain("Accounts");
+    expect(fullHtml).toContain("Settings → Social accounts");
     expect(fullHtml).toContain("Instructions");
+    expect(fullHtml).toContain("Write it for me");
     expect(fullHtml).not.toContain("Where do you post?");
     expect(fullHtml).toContain('placeholder="Tiny Acrobatics"');
+  });
+
+  it("a new project shows no knowledge switches", () => {
+    expect(fullHtml).not.toContain("Knowledge, frameworks and rules");
+  });
+
+  it("the name and the button belong to the form, so Enter submits it and never another row's button", () => {
+    const id = /<form id="([^"]+)"/.exec(fullHtml)?.[1];
+    expect(id).toBeTruthy();
+    expect(fullHtml).toMatch(new RegExp(`<input form="${id}"[^>]*placeholder="Tiny Acrobatics"`));
+    expect(fullHtml).toMatch(new RegExp(`type="submit" form="${id}"`));
   });
 });

@@ -106,9 +106,16 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
  * platform this server has its own app for. A sign-in that would come from the sign-in service is not offered there:
  * that form cannot know it will finish, and a row that ends nowhere is worse than no row.
  */
-export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
+export function ConnectorsSection({ back = "/settings/connectors", compact, projectId: pinned }: {
+  sub?: string;
+  back?: string;
+  compact?: boolean;
+  /** One project's accounts (the project form): no project picker, and a platform with nothing to add has no row. */
+  projectId?: string;
+}) {
   const projects = useWorkspace((s) => s.projects);
-  const current = useWorkspace((s) => s.currentProjectId);
+  const picked = useWorkspace((s) => s.currentProjectId);
+  const current = pinned ?? picked;
   const { data: view, error, refresh } = useCachedLoad<ConnectorsView>("/api/connectors", getConnectors, { own: true });
   const [params, setParams] = useSearchParams();
   // The sign-in service is asked only when the person acts (Add, Sign in), never to draw the rows. `off`: the sign-ins it
@@ -147,7 +154,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   // a pull runs on the server: look again a few times
   const watch = () => [4, 10, 25, 60].forEach((s) => window.setTimeout(() => void reload(), s * 1000));
   const act = (p: Promise<unknown>) => p.then(reload).catch((e) => saveFailed(msg(e)));
-  const projectId = () => useWorkspace.getState().currentProjectId ?? undefined;
+  const projectId = () => pinned ?? useWorkspace.getState().currentProjectId ?? undefined;
 
   // the sign-in comes back here with the result: say it once, then drop it from the address
   useEffect(() => {
@@ -195,6 +202,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   }
 
   if (!view) {
+    if (pinned && !error) return null;
     return (
       <Section title="Platforms">
         <Card>{error ? <ErrorRow title="Couldn't load your accounts" detail={error} retry={() => void reload()} /> : <LoadingRow />}</Card>
@@ -203,6 +211,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   }
 
   const rows = platformRows(view, current ?? undefined, off);
+  if (pinned && !rows.length) return null;
   // Add is the platform's sign-in itself (the Mac app finishes it in the computer's browser)
   const choose = async (platform: SocialPlatform) => {
     const login = loginOf(platform);
@@ -211,75 +220,77 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     window.location.assign(loginHref(login, { back, projectId: projectId() }));
   };
 
+  const card = (
+    <Card>
+      {rows.map((r) =>
+        r.own ? (
+          <ListRow
+            key={r.platform}
+            id={`platform-${r.platform}` as SearchRowId}
+            icon={<PlatformLogo platform={r.platform} className="size-4" />}
+            title={r.label}
+            subtitle={r.summary}
+            actions={
+              <>
+              <InUse>Connected</InUse>
+              <RowMenu
+                label={`${at(r.own.handle)} actions`}
+                items={[
+                  // not "my account" any more: the Analyzer keeps it as a followed account, no project links it
+                  { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(r.own.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void act(patchInstagram(r.own!.id, { mine: false })) },
+                ]}
+              />
+              </>
+            }
+          />
+        ) : r.account ? (
+          <AccountRow
+            key={r.platform}
+            row={r}
+            a={r.account}
+            back={back}
+            onLink={() => act(linkAccount(r.account!.key, current))}
+            onPull={() => void act(pullAccountNow(r.account!.key).then(watch))}
+            onRemove={() => act(disconnectAccount(r.account!.key))}
+          />
+        ) : (
+          <ListRow
+            key={r.platform}
+            id={`platform-${r.platform}` as SearchRowId}
+            icon={<PlatformLogo platform={r.platform} className="size-4" />}
+            title={r.label}
+            subtitle={r.summary}
+            actions={
+              r.button && (
+                <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} disabled={!!asking && asking === loginOf(r.platform)} onClick={() => void choose(r.platform)}>
+                  {r.button}
+                </Button>
+              )
+            }
+          />
+        ),
+      )}
+    </Card>
+  );
+  // in the project form the rows stand under its own "Accounts"
+  if (pinned) return card;
   return (
-    <>
-      <Section
-        id="social-platforms"
-        title="Platforms"
-        action={
-          projects.length > 1 && (
-            <SettingsSelect
-              label="Project"
-              value={current ?? ""}
-              onValueChange={(id) => void useWorkspace.getState().select(id).catch((e) => saveFailed(msg(e)))}
-              options={projects.map((p) => ({ value: p.id, label: p.name }))}
-            />
-          )
-        }
-      >
-        <Card>
-          {rows.map((r) =>
-            r.own ? (
-              <ListRow
-                key={r.platform}
-                id={`platform-${r.platform}` as SearchRowId}
-                icon={<PlatformLogo platform={r.platform} className="size-4" />}
-                title={r.label}
-                subtitle={r.summary}
-                actions={
-                  <>
-                  <InUse>Connected</InUse>
-                  <RowMenu
-                    label={`${at(r.own.handle)} actions`}
-                    items={[
-                      // not "my account" any more: the Analyzer keeps it as a followed account, no project links it
-                      { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(r.own.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void act(patchInstagram(r.own!.id, { mine: false })) },
-                    ]}
-                  />
-                  </>
-                }
-              />
-            ) : r.account ? (
-              <AccountRow
-                key={r.platform}
-                row={r}
-                a={r.account}
-                back={back}
-                onLink={() => act(linkAccount(r.account!.key, current))}
-                onPull={() => void act(pullAccountNow(r.account!.key).then(watch))}
-                onRemove={() => act(disconnectAccount(r.account!.key))}
-              />
-            ) : (
-              <ListRow
-                key={r.platform}
-                id={`platform-${r.platform}` as SearchRowId}
-                icon={<PlatformLogo platform={r.platform} className="size-4" />}
-                title={r.label}
-                subtitle={r.summary}
-                actions={
-                  r.button && (
-                    <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} disabled={!!asking && asking === loginOf(r.platform)} onClick={() => void choose(r.platform)}>
-                      {r.button}
-                    </Button>
-                  )
-                }
-              />
-            ),
-          )}
-        </Card>
-      </Section>
-
-    </>
+    <Section
+      id="social-platforms"
+      title="Platforms"
+      action={
+        projects.length > 1 && (
+          <SettingsSelect
+            label="Project"
+            value={current ?? ""}
+            onValueChange={(id) => void useWorkspace.getState().select(id).catch((e) => saveFailed(msg(e)))}
+            options={projects.map((p) => ({ value: p.id, label: p.name }))}
+          />
+        )
+      }
+    >
+      {card}
+    </Section>
   );
 }
 

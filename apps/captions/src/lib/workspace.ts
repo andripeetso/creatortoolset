@@ -113,7 +113,8 @@ export function projectBody(explicit?: string | null): { projectId?: string } {
  * the dot on the switcher, the Projects list and the form; `rgb` (Tailwind 600) / `text` (400) tint the home page. Same keys as the server's PROJECT_COLORS.
  */
 export const PROJECT_COLORS = {
-  violet: { dot: "bg-violet-500", ring: "border-violet-500/60", rgb: "124 58 237", text: "167 139 250" },
+  // violet is the themed accent (it wears the current project's colour), so its dot is the fixed violet-500
+  violet: { dot: "bg-[#8b5cf6]", ring: "border-violet-500/60", rgb: "124 58 237", text: "167 139 250" },
   sky: { dot: "bg-sky-500", ring: "border-sky-500/60", rgb: "2 132 199", text: "56 189 248" },
   emerald: { dot: "bg-emerald-500", ring: "border-emerald-500/60", rgb: "5 150 105", text: "52 211 153" },
   amber: { dot: "bg-amber-500", ring: "border-amber-500/60", rgb: "217 119 6", text: "251 191 36" },
@@ -121,6 +122,15 @@ export const PROJECT_COLORS = {
   orange: { dot: "bg-orange-500", ring: "border-orange-500/60", rgb: "234 88 12", text: "251 146 60" },
   teal: { dot: "bg-teal-500", ring: "border-teal-500/60", rgb: "13 148 136", text: "45 212 191" },
   pink: { dot: "bg-pink-500", ring: "border-pink-500/60", rgb: "219 39 119", text: "244 114 182" },
+  // added after: older projects without a colour are given one by key order, so new ones go at the end
+  blue: { dot: "bg-blue-500", ring: "border-blue-500/60", rgb: "37 99 235", text: "96 165 250" },
+  indigo: { dot: "bg-indigo-500", ring: "border-indigo-500/60", rgb: "79 70 229", text: "129 140 248" },
+  fuchsia: { dot: "bg-fuchsia-500", ring: "border-fuchsia-500/60", rgb: "192 38 211", text: "232 121 249" },
+  red: { dot: "bg-red-500", ring: "border-red-500/60", rgb: "220 38 38", text: "248 113 113" },
+  lime: { dot: "bg-lime-500", ring: "border-lime-500/60", rgb: "101 163 13", text: "163 230 53" },
+  cyan: { dot: "bg-cyan-500", ring: "border-cyan-500/60", rgb: "8 145 178", text: "34 211 238" },
+  yellow: { dot: "bg-yellow-500", ring: "border-yellow-500/60", rgb: "202 138 4", text: "250 204 21" },
+  slate: { dot: "bg-slate-500", ring: "border-slate-500/60", rgb: "71 85 105", text: "148 163 184" },
 } as const;
 export type ProjectColor = keyof typeof PROJECT_COLORS;
 

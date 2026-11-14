@@ -26,9 +26,11 @@ export function ProjectList() {
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const select = useWorkspace((s) => s.select);
   const [editing, setEditing] = useState<string | "new" | null>(null);
+  // the project just created in the form: it stays open on it, for its accounts, with Done
+  const [made, setMade] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
   // `/projects?add=1` opens the New project form once, `?edit=<id>` that project's own (a chat's menu asks for the
-  // current one); then the parameter goes
+  // current one; a platform sign-in comes back there); then the parameter goes
   useEffect(() => {
     const edit = params.get("add") === "1" ? "new" : params.get("edit");
     if (!edit) return;
@@ -41,12 +43,12 @@ export function ProjectList() {
   const { items: accounts, refresh } = useCachedList<InstagramAccount>(PROJECT_ACCOUNTS_KEY, () => listAccounts("", { projectId: null }));
   const loadAccounts = () => void refresh().catch(() => {});
 
-  const run = async (fn: () => Promise<unknown>) => {
+  const closed = () => (setEditing(null), setMade(null));
+  const run = async <T,>(fn: () => Promise<T>, after: (v: T) => void = closed) => {
     setBusy(true);
     setError(null);
     try {
-      await fn();
-      setEditing(null);
+      after(await fn());
       loadAccounts();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -56,7 +58,11 @@ export function ProjectList() {
   };
 
   const save = (id: string | "new", fields: ProjectFields) =>
-    run(() => (id === "new" ? createProject(fields) : patchProject(id, fields)));
+    id === "new"
+      ? run(() => createProject(fields), (p) => (setEditing(p.id), setMade(p.id)))
+      : run(() => patchProject(id, fields));
+  // making one: only its form shows
+  const making = editing === "new" || (!!made && editing === made);
 
   return (
     <section>
@@ -64,9 +70,11 @@ export function ProjectList() {
         <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
           Instructions and context the AI should already know
         </p>
-        <button type="button" disabled={busy || editing === "new"} onClick={() => setEditing("new")} className={secondary}>
-          <Plus className="h-3.5 w-3.5" /> New project
-        </button>
+        {!making && (
+          <button type="button" disabled={busy} onClick={() => setEditing("new")} className={secondary}>
+            <Plus className="h-3.5 w-3.5" /> New project
+          </button>
+        )}
       </div>
       {error ? <p className="mb-3 text-xs text-red-400">{error}</p> : null}
       <div className="flex flex-col gap-2">
@@ -80,8 +88,8 @@ export function ProjectList() {
         ) : null}
         {projects.map((p) =>
           editing === p.id ? (
-            <ProjectForm key={p.id} initial={p} busy={busy} onSave={(f) => save(p.id, f)} onCancel={() => setEditing(null)} />
-          ) : (
+            <ProjectForm key={p.id} initial={p} made={made === p.id} busy={busy} onSave={(f) => save(p.id, f)} onCancel={() => setEditing(null)} />
+          ) : making ? null : (
             <ProjectRow
               key={p.id}
               project={p}

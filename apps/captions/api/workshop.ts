@@ -1871,24 +1871,52 @@ workshopApp.post("/projects", async (c) => {
 });
 
 /**
- * A new project's setup: the facts a writer
- * needs about the brand, drafted from its Instagram bio and posts, for the author to rewrite. Facts, not a voice.
+ * A project's instructions, drafted for the person to rewrite: the facts a writer needs about it, from whatever they gave
+ * (text they pasted or dropped, the pages its links lead to, .docx/.odt/.epub files) and the Instagram bio and posts of
+ * the accounts it names. Facts, not a voice.
  */
+const DRAFT_LINKS = 5;
+const DRAFT_TEXT = 60_000;
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
-  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; name?: unknown } | null;
-  if (!okId(body?.accountId)) return c.json({ error: "Link the project's Instagram first" }, 400);
-  const [account, own] = await Promise.all([ownAccountContextFor(user, body.accountId), ownPostsForWorkshop(user, body.accountId)]);
-  if (!account || !own?.posts.length) return c.json({ error: "No posts synced for that account yet: Sync it first" }, 409);
-  const views = (p: (typeof own.posts)[number]) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
-  const posts = [...own.posts]
-    .sort((a, b) => views(b) - views(a))
-    .slice(0, 40)
-    .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
+  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown } | null;
+  const text = typeof body?.text === "string" ? body.text.slice(0, DRAFT_TEXT).trim() : "";
+  const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
+  const files = (Array.isArray(body?.files) ? body.files : [])
+    .filter((f): f is { name: string; data: string } => typeof f?.name === "string" && typeof f?.data === "string")
+    .slice(0, 5);
+  const links = [...new Set(text.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
+  const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
+  // each part on its own: one that can't be read is said, the rest still drafts
+  const parts = await Promise.all([
+    ...ids.map(async (id) => {
+      const [account, own] = await Promise.all([ownAccountContextFor(user, id), ownPostsForWorkshop(user, id)]);
+      if (!account) return "";
+      const posts = [...(own?.posts ?? [])]
+        .sort((a, b) => views(b) - views(a))
+        .slice(0, 40)
+        .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
+      return `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
+    }),
+    ...links.map((url) =>
+      webPageText(url).then(
+        (p) => `The page ${url} (${p.title}):\n${p.text.slice(0, 12_000)}`,
+        (e: unknown) => `(${url} could not be read: ${errorMessage(e)})`,
+      ),
+    ),
+    ...files.map((f) =>
+      documentText(f.name, Buffer.from(f.data, "base64")).then(
+        (t) => `The file ${f.name}:\n${t.slice(0, 20_000)}`,
+        (e: unknown) => `(${f.name} could not be read: ${errorMessage(e)})`,
+      ),
+    ),
+  ]);
+  const given = parts.filter(Boolean);
+  if (!text && !given.some((p) => !p.startsWith("("))) return c.json({ error: "Paste or drop something about the project first" }, 400);
   try {
     const notes = await completeWithFallback(
-      "From a creator's Instagram bio and posts, write the facts a writer needs about this brand: who it is for, what it offers, where people are sent (a link, a product, a DM word), and the topics it keeps coming back to. Only what the bio and posts say; say so where they don't. Plain short lines, under 1,200 characters. Don't describe how they write.",
-      `${typeof body.name === "string" ? `Project: ${body.name.slice(0, 80)}\n\n` : ""}${renderAccountContext(account)}\n\nTheir most-viewed posts (what was said or on the slides):\n${posts.join("\n")}`,
+      "From what a creator gave about one of their projects (their own words, pages and files, and any Instagram bio and posts), write the facts a writer needs about it: who it is for, what it offers, where people are sent (a link, a product, a DM word), and the topics it keeps coming back to. Only what the material says; say so where it doesn't. Plain short lines, under 1,200 characters. Don't describe how they write.",
+      [typeof body?.name === "string" && body.name.trim() ? `Project: ${body.name.slice(0, 80)}` : "", text ? `What they wrote:\n${text}` : "", ...given].filter(Boolean).join("\n\n"),
       undefined,
       (t) => {
         const s = t.trim();
