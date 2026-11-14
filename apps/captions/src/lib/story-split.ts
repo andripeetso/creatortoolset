@@ -3,12 +3,12 @@ import {
   AudioBufferSink,
   BlobSource,
   BufferTarget,
-  CanvasSink,
   Conversion,
   Input,
   Mp4OutputFormat,
   Output,
   Quality,
+  VideoSampleSink,
 } from "mediabunny";
 import { allowHighH264 } from "./h264-level";
 
@@ -239,6 +239,50 @@ function planStretch(a: Analysis, from: number, to: number, target: number): num
 
 // ---------- in the browser: read, render, zip ----------
 
+/** The grid frames are compared on. */
+const GW = 64, GH = 36;
+
+/**
+ * Each cell's mean brightness (0..1) on a GW×GH grid, read from a decoded
+ * frame's own pixels: its Y plane, or RGB. Reading a canvas back once per
+ * frame was about ten times slower (Mac WebKit, 2 min of video: 37 s against 4 s at 1080p, 129 s against 11 s at 4K).
+ * Null for a format it can't read.
+ */
+export function lumaGrid(
+  data: Uint8Array,
+  plane: { offset: number; stride: number },
+  format: string,
+  width: number,
+  height: number,
+  fullRange: boolean,
+): Float32Array | null {
+  const rgb = /^(RGB|BGR)[AX]$/.test(format);
+  if (!rgb && !/^(I4|NV12)/.test(format)) return null;
+  const bytes = /P1[02]/.test(format) ? 2 : 1;
+  const max = bytes === 1 ? 255 : format.includes("P10") ? 1023 : 4095;
+  const out = new Float32Array(GW * GH);
+  for (let gy = 0; gy < GH; gy++)
+    for (let gx = 0; gx < GW; gx++) {
+      let sum = 0;
+      // 4×4 points a cell: enough to see through grain
+      for (let sy = 0; sy < 4; sy++)
+        for (let sx = 0; sx < 4; sx++) {
+          const x = Math.floor(((gx + (sx + 0.5) / 4) * width) / GW);
+          const row = plane.offset + Math.floor(((gy + (sy + 0.5) / 4) * height) / GH) * plane.stride;
+          if (rgb) {
+            const p = row + x * 4, r = data[p + (format[0] === "R" ? 0 : 2)], b = data[p + (format[0] === "R" ? 2 : 0)];
+            sum += (0.299 * r + 0.587 * data[p + 1] + 0.114 * b) / 255;
+          } else {
+            const v = (bytes === 1 ? data[row + x] : data[row + 2 * x] | (data[row + 2 * x + 1] << 8)) / max;
+            sum += fullRange ? v : (v * 255 - 16) / 219;
+          }
+        }
+      out[gy * GW + gx] = sum / 16;
+    }
+  return out;
+}
+
+
 /** Frame differences and loudness, decoded side by side. */
 export async function readSignals(blob: Blob, onProgress: (p: number) => void): Promise<Signals> {
   await allowHighH264(); // the Mac app's web view takes H.264 above level 5.2 only this way (lib/h264-level.ts)
@@ -255,23 +299,34 @@ export async function readSignals(blob: Blob, onProgress: (p: number) => void): 
     };
 
     const frames = async () => {
-      const w = 64, h = 36;
-      const small = Object.assign(document.createElement("canvas"), { width: w, height: h });
+      // the canvas only for a frame whose pixels can't be read (no format)
+      const small = Object.assign(document.createElement("canvas"), { width: GW, height: GH });
       const ctx = small.getContext("2d", { willReadFrequently: true })!;
       const out: Signals["frames"] = [];
       let last: Float32Array | null = null;
-      for await (const f of new CanvasSink(video, { width: w, height: h, fit: "fill", poolSize: 2 }).canvases()) {
-        ctx.drawImage(f.canvas, 0, 0);
-        const px = ctx.getImageData(0, 0, w, h).data;
-        const luma = new Float32Array(w * h);
-        let diff = 0;
-        for (let i = 0; i < luma.length; i++) {
-          luma[i] = (0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]) / 255;
-          if (last) diff += Math.abs(luma[i] - last[i]);
+      let buf = new Uint8Array(0);
+      for await (const s of new VideoSampleSink(video).samples()) {
+        try {
+          let luma: Float32Array | null = null;
+          if (s.format) {
+            const size = s.allocationSize();
+            if (buf.length < size) buf = new Uint8Array(size);
+            const [plane] = await s.copyTo(buf);
+            luma = lumaGrid(buf, plane, s.format, s.codedWidth, s.codedHeight, s.colorSpace.fullRange ?? false);
+          }
+          if (!luma) {
+            s.draw(ctx, 0, 0, GW, GH);
+            const px = ctx.getImageData(0, 0, GW, GH).data;
+            luma = Float32Array.from({ length: GW * GH }, (_, i) => (0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]) / 255);
+          }
+          let diff = 0;
+          if (last) for (let i = 0; i < luma.length; i++) diff += Math.abs(luma[i] - last[i]);
+          out.push({ t: s.timestamp, diff: diff / luma.length });
+          last = luma;
+          report(0, s.timestamp);
+        } finally {
+          s.close();
         }
-        out.push({ t: f.timestamp, diff: diff / luma.length });
-        last = luma;
-        report(0, f.timestamp);
       }
       return out;
     };

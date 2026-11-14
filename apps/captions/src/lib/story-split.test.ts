@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyse, crc32, planCuts, snapCut, zipStored, type Analysis, type Spot } from "./story-split";
+import { analyse, crc32, lumaGrid, planCuts, snapCut, zipStored, type Analysis, type Spot } from "./story-split";
 
 const HZ = 100;
 const loud = (seconds: number, level = 0.9) => new Float32Array(seconds * HZ).fill(level);
@@ -70,5 +70,20 @@ describe("story splitter", () => {
       expect(crc32(data)).toBe(zip.getUint32(at + 16, true));
       at += 46 + zip.getUint16(at + 28, true);
     }
+  });
+
+  it("reads a frame's brightness from its own pixels: Y plane (video or full range, 10-bit) or RGB", () => {
+    // 128×72, left half black, right half white
+    const w = 128, h = 72;
+    const y8 = (lo: number, hi: number) => Uint8Array.from({ length: w * h }, (_, i) => (i % w < w / 2 ? lo : hi));
+    const grid = (g: Float32Array) => [g[0], g[63], g[35 * 64 + 63]].map((v) => +v.toFixed(3));
+    expect(grid(lumaGrid(y8(16, 235), { offset: 0, stride: w }, "NV12", w, h, false)!)).toEqual([0, 1, 1]);
+    expect(grid(lumaGrid(y8(0, 255), { offset: 0, stride: w }, "I420", w, h, true)!)).toEqual([0, 1, 1]);
+    const y10 = new Uint8Array(w * h * 2);
+    new Uint16Array(y10.buffer).forEach((_, i, a) => (a[i] = i % w < w / 2 ? 0 : 1023));
+    expect(grid(lumaGrid(y10, { offset: 0, stride: w * 2 }, "I420P10", w, h, true)!)).toEqual([0, 1, 1]);
+    const rgba = Uint8Array.from({ length: w * h * 4 }, (_, i) => ((i >> 2) % w < w / 2 ? 0 : 255));
+    expect(grid(lumaGrid(rgba, { offset: 0, stride: w * 4 }, "BGRX", w, h, true)!)).toEqual([0, 1, 1]);
+    expect(lumaGrid(rgba, { offset: 0, stride: w * 4 }, "mystery", w, h, true)).toBeNull();
   });
 });
