@@ -1057,7 +1057,7 @@ export function Message({
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
   if (m.role === "user")
     return (
-      <div className={cn("group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1", enter)}>
+      <div className={cn("ml-auto flex max-w-[85%] flex-col items-end gap-1", enter)}>
         {m.task && (
           <Link to={`/settings/automations?task=${encodeURIComponent(m.task.id)}`} className="text-[11px] text-muted-foreground underline-offset-2 hover:underline" title="Open the scheduled task">
             Scheduled task · {m.task.name}
@@ -1105,7 +1105,6 @@ export function Message({
             {m.text}
           </div>
         )}
-        <MessageMeta className="-mr-1" text={m.text.trim() ? m.text : undefined} at={m.at} />
         {big && <PictureOverlay src={big} onClose={() => setBig(null)} />}
       </div>
     );
@@ -1209,8 +1208,9 @@ export function Message({
 }
 
 /**
- * Under a message, while the pointer is on it (always on a touch screen): copy it, a new chat from here (a reply), and
- * when it was said. The row keeps its height while a reply is written, so nothing moves when the reply ends.
+ * Under a reply, while the pointer is on it (always on a touch screen): copy it, a new chat from here, and when it was
+ * said. The row keeps its height while the reply is written, so nothing moves when it ends. The person's own messages
+ * have none: they wrote them.
  */
 function MessageMeta({ text, at, onBranch, className }: { text?: string; at?: number; onBranch?: () => void; className?: string }) {
   return (
