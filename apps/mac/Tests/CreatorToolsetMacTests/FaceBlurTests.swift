@@ -81,6 +81,8 @@ final class FaceBlurAskTests: XCTestCase {
                        .choose(job: "j", path: "/x.jpg", blur: [], error: "No AI is connected."))
         XCTAssertEqual(faceBlurAsk(#"faceblur:choose:{"job":"j","path":"/x.jpg","blur":[],"error":""}"#), .choose(job: "j", path: "/x.jpg", blur: []))
         XCTAssertEqual(faceBlurAsk("faceblur:state:j1"), .state(job: "j1"))
+        XCTAssertEqual(faceBlurAsk(#"faceblur:faces:{"job":"j1","path":"/x.jpg"}"#), .faces(job: "j1", path: "/x.jpg"))
+        XCTAssertNil(faceBlurAsk(#"faceblur:faces:{"job":"j1"}"#))
         XCTAssertEqual(faceBlurAsk("faceblur:cancel:j1"), .cancel(job: "j1"))
         XCTAssertEqual(faceBlurAsk("faceblur:show:/a/b:c.mp4"), .show(path: "/a/b:c.mp4"))
         // malformed or unknown: nil
@@ -158,10 +160,37 @@ final class FaceBlurEngineTests: XCTestCase {
         XCTAssertFalse(metadata.contains { $0.identifier == .quickTimeMetadataLocationISO6709 })
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix(".") }, [])
 
-        // a face not chosen stays as it is, and writing again replaces the same copy
-        try await CoverPipeline.write(scan, from: source, blur: [], to: out) { _ in }
-        let plain = try await centres(out)
-        XCTAssertTrue(plain.allSatisfy { $0.value > 150 })
+        // no face chosen: nothing is written, the copy is as it was
+        do {
+            try await CoverPipeline.write(scan, from: source, blur: [], to: out) { _ in }
+            XCTFail("wrote a copy with no face covered")
+        } catch let nothing as CoverPipeline.NothingToCover {
+            XCTAssertEqual(nothing.why, "No face chosen, nothing written")
+        }
+        let after = try await centres(out)
+        XCTAssertEqual(after.filter { $0.value < 80 }.count, frames.filter { $0.value < 80 }.count)
+        // no face found at all
+        let none = FaceScan(kind: .video, covers: [], faces: [])
+        let other = dir.appendingPathComponent("none blurred.mp4")
+        do {
+            try await CoverPipeline.write(none, from: source, blur: [], to: other) { _ in }
+            XCTFail("wrote a copy of a file with no face")
+        } catch let nothing as CoverPipeline.NothingToCover {
+            XCTAssertEqual(nothing.why, "No face found, nothing written")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: other.path))
+    }
+
+    /// The state the page polls carries no face pictures; the faces ask does.
+    @MainActor
+    func testPicturesOnlyWhenAsked() {
+        var item = FaceBlurJobs.Item(path: "/a.jpg")
+        item.scan = FaceScan(kind: .photo, covers: [middleCover(0, 0)], faces: [ScannedFace(id: "F1", picture: "abc", note: "n")])
+        item.blur = ["F1"]
+        let light = (FaceBlurJobs.reply(item)["faces"] as? [[String: Any]])?.first
+        XCTAssertNil(light?["picture"])
+        XCTAssertEqual(light?["blur"] as? Bool, true)
+        XCTAssertEqual((FaceBlurJobs.reply(item, pictures: true)["faces"] as? [[String: Any]])?.first?["picture"] as? String, "abc")
     }
 
     /// A photo: the face covered, and none of the original's metadata (location, camera, date) in the copy.
@@ -217,8 +246,8 @@ final class FaceBlurEngineTests: XCTestCase {
         XCTAssertEqual(image.width, 3 * CoverPipeline.tile)
     }
 
-    /// The page's road on this Mac: start, read the state until done, a copy beside the original. The video drawn here
-    /// has no face, so its copy is written straight away even in "some" mode.
+    /// The page's road on this Mac: start, read the state until done. The video drawn here has no face: it is done
+    /// straight away even in "some" mode, says so, and nothing is written beside it.
     @MainActor
     func testJobWritesTheCopy() async throws {
         let dir = try scratch()
@@ -236,9 +265,10 @@ final class FaceBlurEngineTests: XCTestCase {
         }
         let item = try XCTUnwrap((state["items"] as? [[String: Any]])?.first)
         XCTAssertEqual(item["stage"] as? String, "done", "\(item)")
-        XCTAssertEqual(item["out"] as? String, dir.appendingPathComponent("plain blurred.mp4").path)
+        XCTAssertNil(item["out"])
+        XCTAssertEqual(item["note"] as? String, "No face found, nothing written")
         XCTAssertEqual((item["faces"] as? [Any])?.count, 0)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("plain blurred.mp4").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("plain blurred.mp4").path))
         XCTAssertNotNil(jobs.answer("faceblur:choose:{\"job\":\"nope\",\"path\":\"/x\",\"blur\":[]}", allowed: [])["problem"])
     }
 }

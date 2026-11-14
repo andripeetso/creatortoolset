@@ -10,7 +10,10 @@ enum FaceBlurAsk: Equatable {
     enum Mode: String { case all, some }
     case hello
     case start(files: [String], mode: Mode, look: CoverLook)
+    /// the items without their face pictures (polled twice a second)
     case state(job: String)
+    /// one item's faces with their pictures, read once
+    case faces(job: String, path: String)
     /// `error`: the faces could not be chosen (the AI failed); the item ends as failed with it and nothing is written
     case choose(job: String, path: String, blur: [String], error: String? = nil)
     case cancel(job: String)
@@ -37,6 +40,9 @@ func faceBlurAsk(_ ask: String) -> FaceBlurAsk? {
         guard let job = json?["job"] as? String, let path = json?["path"] as? String, let blur = json?["blur"] as? [String] else { return nil }
         let error = (json?["error"] as? String).map { String($0.prefix(300)) }.flatMap { $0.isEmpty ? nil : $0 }
         return .choose(job: job, path: path, blur: blur, error: error)
+    case "faces":
+        guard let job = json?["job"] as? String, let path = json?["path"] as? String else { return nil }
+        return .faces(job: job, path: path)
     case "state": return rest.isEmpty ? nil : .state(job: rest)
     case "cancel": return rest.isEmpty ? nil : .cancel(job: rest)
     case "show": return rest.isEmpty ? nil : .show(path: rest)
@@ -62,6 +68,8 @@ final class FaceBlurJobs {
         var blur: Set<String> = []
         var out: String?
         var error: String?
+        /// a done item that wrote nothing ("No face found, nothing written")
+        var note: String?
     }
 
     final class Job {
@@ -99,7 +107,12 @@ final class FaceBlurJobs {
             return ["job": job.id]
         case let .state(id):
             guard let job = job(id) else { return ["problem": "That Face Blur job is gone. Start again."] }
-            return ["done": !busy(job), "items": job.items.map(Self.reply)]
+            return ["done": !busy(job), "items": job.items.map { Self.reply($0) }]
+        case let .faces(id, path):
+            guard let item = job(id)?.items.first(where: { $0.path == path }), item.scan != nil else {
+                return ["problem": "That file has no faces to show. Start again."]
+            }
+            return ["faces": Self.reply(item, pictures: true)["faces"] ?? []]
         // a done item is written again (to the same copy), a failed write tried again
         case let .choose(id, path, blur, error):
             guard let job = job(id), let i = job.items.firstIndex(where: { $0.path == path }), job.items[i].scan != nil,
@@ -147,14 +160,20 @@ final class FaceBlurJobs {
         return nil
     }
 
-    static func reply(_ item: Item) -> [String: Any] {
+    /// An item as the page reads it; the face pictures (up to 200 KB each) only with `pictures`, for the `faces` ask.
+    static func reply(_ item: Item, pictures: Bool = false) -> [String: Any] {
         var out: [String: Any] = ["path": item.path, "name": (item.path as NSString).lastPathComponent,
                                   "stage": item.stage.rawValue, "progress": item.progress]
         if let scan = item.scan {
-            out["faces"] = scan.faces.map { ["id": $0.id, "picture": $0.picture, "note": $0.note, "blur": item.blur.contains($0.id)] }
+            out["faces"] = scan.faces.map { face -> [String: Any] in
+                var f: [String: Any] = ["id": face.id, "note": face.note, "blur": item.blur.contains(face.id)]
+                if pictures { f["picture"] = face.picture }
+                return f
+            }
         }
         if let file = item.out { out["out"] = file }
         if let error = item.error { out["error"] = error }
+        if let note = item.note { out["note"] = note }
         return out
     }
 
@@ -208,6 +227,7 @@ final class FaceBlurJobs {
             case .write:
                 guard let scan = job.items[i].scan else { return }
                 job.items[i].stage = .writing
+                job.items[i].note = nil
                 let out = job.items[i].out.map(URL.init(fileURLWithPath:)) ?? CoverPipeline.outputURL(for: source, kind: scan.kind)
                 try await CoverPipeline.write(scan, from: source, blur: job.items[i].blur, to: out, progress: progress)
                 job.items[i].out = out.path
@@ -215,6 +235,12 @@ final class FaceBlurJobs {
                 job.items[i].stage = .done
                 job.items[i].error = nil
             }
+        } catch let nothing as CoverPipeline.NothingToCover {
+            // done, with no copy (or the earlier one, as it was)
+            job.items[i].stage = .done
+            job.items[i].progress = 1
+            job.items[i].error = nil
+            job.items[i].note = job.items[i].out == nil ? nothing.why : "\(nothing.why), the earlier copy is as it was"
         } catch {
             fail(job, i, job.cancelled || error is CancellationError ? "Stopped." : error.localizedDescription)
         }

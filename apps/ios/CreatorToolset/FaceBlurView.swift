@@ -83,7 +83,8 @@ private struct FaceBlurRow: View {
             HStack {
                 Text(item.name).lineLimit(1).truncationMode(.middle)
                 Spacer()
-                Text(item.stage.label).font(.subheadline).foregroundStyle(item.stage == .failed ? .red : .secondary)
+                Text(item.stage == .done && !item.saved ? "Nothing written" : item.stage.label)
+                    .font(.subheadline).foregroundStyle(item.stage == .failed ? .red : .secondary)
             }
             if item.stage == .scanning || item.stage == .writing {
                 ProgressView(value: item.progress)
@@ -91,10 +92,11 @@ private struct FaceBlurRow: View {
             if let error = item.error {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
+            if let note = item.note {
+                Text(note).font(.footnote).foregroundStyle(.secondary)
+            }
             if item.stage == .done || (item.stage == .failed && item.scan != nil) {
-                if item.faces.isEmpty {
-                    Text("No face found").font(.footnote).foregroundStyle(.secondary)
-                } else {
+                if !item.faces.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             ForEach(item.faces) { face in
@@ -160,6 +162,12 @@ final class FaceBlurModel: ObservableObject {
         var scan: FaceScan?
         var faces: [Face] = []
         var error: String?
+        /// the last run saved a copy to Photos
+        var saved = false
+        /// copies of it in Photos so far
+        var saves = 0
+        /// "No face found, nothing written", or that an earlier copy is still in Photos
+        var note: String?
     }
 
     @Published private(set) var settings: FaceBlurSettings?
@@ -170,10 +178,11 @@ final class FaceBlurModel: ObservableObject {
     private var waiting: [UUID] = []
 
     /// Where the picked files are while the screen is open. A copy leaves as soon as it is in Photos; the picked files
-    /// go when Face Blur opens next (or iOS clears the temporary folder).
+    /// go when the screen closes and its work is done (the work holds this model), and any left by a crash when it opens.
     nonisolated static let folder = FileManager.default.temporaryDirectory.appendingPathComponent("face-blur", isDirectory: true)
 
     init() { try? FileManager.default.removeItem(at: Self.folder) }
+    deinit { try? FileManager.default.removeItem(at: Self.folder) }
 
     private static let path = "/api/x/blur-faces"
 
@@ -232,7 +241,7 @@ final class FaceBlurModel: ObservableObject {
 
     func again(_ id: UUID) {
         guard !waiting.contains(id) else { return }
-        update(id) { $0.stage = .queued; $0.error = nil }
+        update(id) { $0.stage = .queued; $0.error = nil; $0.note = nil }
         waiting.append(id)
         next()
     }
@@ -286,7 +295,20 @@ final class FaceBlurModel: ObservableObject {
             }
             try await SaveToPhotos.add([out])
             try? FileManager.default.removeItem(at: out)
-            update(id) { $0.stage = .done; $0.progress = 1 }
+            update(id) { item in
+                item.stage = .done
+                item.progress = 1
+                item.saved = true
+                item.saves += 1
+                item.note = item.saves > 1 ? "Saved again, the earlier copy is still in Photos" : nil
+            }
+        } catch let nothing as CoverPipeline.NothingToCover {
+            update(id) { item in
+                item.stage = .done
+                item.progress = 1
+                item.saved = false
+                item.note = item.saves > 0 ? "\(nothing.why), the earlier copy is still in Photos" : nothing.why
+            }
         } catch is CancellationError {
             update(id) { $0.stage = .failed; $0.error = "Stopped" }
         } catch {

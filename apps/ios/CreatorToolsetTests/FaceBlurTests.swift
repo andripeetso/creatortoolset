@@ -115,10 +115,17 @@ final class FaceBlurEngineTests: XCTestCase {
         XCTAssertFalse(metadata.contains { $0.identifier == .quickTimeMetadataLocationISO6709 })
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix(".") }, [])
 
-        // a face not chosen stays as it is, and writing again replaces the same copy
-        try await CoverPipeline.write(scan, from: source, blur: [], to: out) { _ in }
-        let plain = try await centres(out)
-        XCTAssertTrue(plain.allSatisfy { $0.value > 150 })
+        // no face chosen, or none found: nothing is written
+        let other = dir.appendingPathComponent("other.mp4")
+        for (s, why) in [(scan, "No face chosen, nothing written"), (FaceScan(kind: .video, covers: [], faces: []), "No face found, nothing written")] {
+            do {
+                try await CoverPipeline.write(s, from: source, blur: [], to: other) { _ in }
+                XCTFail("wrote a copy with no face covered")
+            } catch let nothing as CoverPipeline.NothingToCover {
+                XCTAssertEqual(nothing.why, why)
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: other.path))
     }
 
     /// A photo: the face covered, and none of the original's metadata (location, camera, date) in the copy.

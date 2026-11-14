@@ -8,11 +8,13 @@ import { Switch } from "@/components/ui/switch";
 import {
   droppedOnMac,
   faceBlurChoose,
+  faceBlurFaces,
   faceBlurHere,
   faceBlurShow,
   faceBlurStart,
   faceBlurState,
   pathOnMac,
+  type FaceBlurFace,
   type FaceBlurItem,
 } from "@/lib/thisMac";
 import { defineWebPlugin } from "../../src/lib/plugin";
@@ -47,7 +49,9 @@ function FaceBlurPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   // a pick that failed, by file: the Mac wrote nothing, and the page says why
   const [failed, setFailed] = useState<Record<string, string>>({});
+  // each file's faces are read once, with their pictures (the state polled twice a second leaves them out)
   const asked = useRef(new Set<string>());
+  const [pictures, setPictures] = useState<Record<string, Record<string, string>>>({});
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
@@ -66,18 +70,31 @@ function FaceBlurPage() {
     }
   };
 
-  // "Only some faces": the faces go to the person's AI, and its answer to the Mac
-  const pick = async (job: string, item: FaceBlurItem) => {
+  // a file's face pictures, read once; in "Only some faces" (stage choosing) they go to the person's AI, and its
+  // answer to the Mac
+  const read = async (job: string, item: FaceBlurItem) => {
+    const choosing = item.stage === "choosing";
+    try {
+      const faces = await faceBlurFaces(job, item.path);
+      setPictures((p) => ({ ...p, [`${job}\n${item.path}`]: Object.fromEntries(faces.map((f) => [f.id, f.picture ?? ""])) }));
+      if (choosing) await pick(job, item.path, faces);
+    } catch (e) {
+      if (choosing) await pickFailed(job, item.path, (e as Error).message);
+    }
+  };
+  const pickFailed = async (job: string, path: string, why: string) => {
+    setFailed((f) => ({ ...f, [path]: why }));
+    await faceBlurChoose(job, path, [], why).catch(() => undefined);
+  };
+  const pick = async (job: string, path: string, faces: FaceBlurFace[]) => {
     try {
       const { blur } = await call<{ blur: string[] }>(`${API}/pick`, "POST", {
         who: settings?.who ?? "",
-        faces: (item.faces ?? []).map(({ id, picture, note }) => ({ id, picture, note })),
+        faces: faces.map(({ id, picture, note }) => ({ id, picture, note })),
       });
-      await faceBlurChoose(job, item.path, blur);
+      await faceBlurChoose(job, path, blur);
     } catch (e) {
-      const why = (e as Error).message;
-      setFailed((f) => ({ ...f, [item.path]: why }));
-      await faceBlurChoose(job, item.path, [], why).catch(() => undefined);
+      await pickFailed(job, path, (e as Error).message);
     }
   };
 
@@ -90,9 +107,9 @@ function FaceBlurPage() {
           ({ items }) => {
             for (const i of items) {
               const key = `${id}\n${i.path}`;
-              if (i.stage === "choosing" && !asked.current.has(key)) {
+              if (i.faces?.length && !asked.current.has(key)) {
                 asked.current.add(key);
-                void pick(id, i);
+                void read(id, i);
               }
             }
             setJobs((js) => js.map((j) => (j.id === id ? { ...j, items, settled: items.every((i) => finished(i, failed)) } : j)));
@@ -102,7 +119,7 @@ function FaceBlurPage() {
       }
     }, 500);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick reads the settings of the moment
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read and pick use the settings of the moment
   }, [unsettled, failed]);
 
   const start = async (paths: string[]) => {
@@ -123,7 +140,6 @@ function FaceBlurPage() {
 
   const again = async (job: string, path: string, blur: string[]) => {
     setFailed((f) => Object.fromEntries(Object.entries(f).filter(([p]) => p !== path)));
-    asked.current.add(`${job}\n${path}`);
     try {
       await faceBlurChoose(job, path, blur);
       setJobs((js) => js.map((j) => (j.id === job ? { ...j, settled: false } : j)));
@@ -213,7 +229,7 @@ function FaceBlurPage() {
         {jobs.some((j) => j.items.length) && (
           <Section title="Files">
             <Card>
-              {jobs.flatMap((j) => j.items.map((i) => <ItemRow key={`${j.id}\n${i.path}`} item={i} error={failed[i.path]} onAgain={(blur) => void again(j.id, i.path, blur)} />))}
+              {jobs.flatMap((j) => j.items.map((i) => <ItemRow key={`${j.id}\n${i.path}`} item={i} pictures={pictures[`${j.id}\n${i.path}`]} error={failed[i.path]} onAgain={(blur) => void again(j.id, i.path, blur)} />))}
             </Card>
           </Section>
         )}
@@ -222,7 +238,7 @@ function FaceBlurPage() {
   );
 }
 
-function ItemRow({ item, error, onAgain }: { item: FaceBlurItem; error?: string; onAgain: (blur: string[]) => void }) {
+function ItemRow({ item, pictures, error, onAgain }: { item: FaceBlurItem; pictures?: Record<string, string>; error?: string; onAgain: (blur: string[]) => void }) {
   const faces = item.faces ?? [];
   // the switches start from what the Mac covered, and again each time it writes the file anew
   const from = faces.filter((f) => f.blur).map((f) => f.id).join(",");
@@ -239,7 +255,7 @@ function ItemRow({ item, error, onAgain }: { item: FaceBlurItem; error?: string;
     stage === "failed"
       ? (error ?? item.error ?? STAGE.failed)
       : stage === "done"
-        ? `${faces.length === 1 ? "1 face" : `${faces.length} faces`}, ${on.size} covered`
+        ? (item.note ?? `${faces.length === 1 ? "1 face" : `${faces.length} faces`}, ${on.size} covered`)
         : `${STAGE[stage]}${item.progress > 0 ? ` ${Math.round(item.progress * 100)}%` : ""}`;
   return (
     <Row
@@ -271,7 +287,11 @@ function ItemRow({ item, error, onAgain }: { item: FaceBlurItem; error?: string;
         <div className="flex flex-wrap gap-3">
           {faces.map((f) => (
             <label key={f.id} className="flex flex-col items-center gap-1.5" title={f.note}>
-              <img src={`data:image/jpeg;base64,${f.picture}`} alt="" className="h-16 rounded-md object-cover" />
+              {pictures?.[f.id] ? (
+                <img src={`data:image/jpeg;base64,${pictures[f.id]}`} alt="" className="h-16 rounded-md object-cover" />
+              ) : (
+                <div className="h-16 w-16 rounded-md bg-muted" />
+              )}
               <Switch
                 aria-label={`Cover ${f.note}`}
                 checked={on.has(f.id)}
