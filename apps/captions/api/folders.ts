@@ -5,6 +5,7 @@ import path from "node:path";
 import type { AuthVars } from "./auth";
 import { isFolderTool, SHAREABLE_TOOLS, type FolderTool, type ToolFolder, type ToolFolders } from "../contracts/folders";
 import { env } from "./lib/env";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
  * Folders for the tools with none of their own (contracts/folders.ts): $DATA_DIR/folders/<tool>/<username>.json holds
@@ -76,8 +77,17 @@ type Ctx = Context<{ Variables: AuthVars }>;
 const ctx = (c: Ctx) => [c.req.param("tool") as FolderTool, c.get("user").username] as const;
 const json = async (c: Ctx) => ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
 
-// GET /api/folders/:tool → { folders, items }
-foldersApp.get("/:tool", async (c) => c.json(await read(...ctx(c))));
+/** Tools whose items each workspace keeps apart: their folders are kept apart too (a folder of another workspace isn't listed). */
+const BY_WORKSPACE: readonly FolderTool[] = ["captions"];
+
+// GET /api/folders/:tool → { folders, items }: the folders of the workspace the request works in. Only the answer is
+// filtered, never read(): change() saves what read() gives, which would drop the other workspaces' folders
+foldersApp.get("/:tool", async (c) => {
+  const [tool, username] = ctx(c);
+  const d = await read(tool, username);
+  const here = BY_WORKSPACE.includes(tool) ? await inCurrentWorkspace(c.get("user")) : null;
+  return c.json(here ? { ...d, folders: d.folders.filter((f) => here(f.workspace)) } : d);
+});
 
 // POST /api/folders/:tool { name, parentId? } → 201 the folder
 foldersApp.post("/:tool", async (c) => {
@@ -85,10 +95,11 @@ foldersApp.post("/:tool", async (c) => {
   const name = nameOf(body.name);
   if (!name) return c.json({ error: "A name is needed" }, 400);
   const parentId = typeof body.parentId === "string" ? body.parentId : null;
+  const workspace = await currentWorkspaceId(c.get("user"));
   const out = await change(...ctx(c), (d) => {
     if (parentId && !d.folders.some((f) => f.id === parentId)) return c.json({ error: "Not found" }, 404);
     if (d.folders.length >= MAX_FOLDERS) return c.json({ error: `${MAX_FOLDERS} folders at most` }, 400);
-    const folder: ToolFolder = { id: randomUUID(), name, parentId, createdAt: Date.now() };
+    const folder: ToolFolder = { id: randomUUID(), name, parentId, createdAt: Date.now(), ...(workspace ? { workspace } : {}) };
     d.folders.push(folder);
     return folder;
   });

@@ -108,16 +108,18 @@ interface ProjectData {
 
 export async function listSessions(): Promise<SessionMeta[]> {
   const local = await listLocalRecoveryProjects().catch(() => []);
-  let remote: SessionMeta[] = [];
+  let remote: SessionMeta[] | null = null;
   try {
     const res = await fetch("/api/projects");
     if (res.ok) remote = await res.json();
   } catch {
     // Offline is a normal state: the local project list still works.
   }
-  const merged = new Map(remote.map((project) => [project.id, project]));
+  const merged = new Map((remote ?? []).map((project) => [project.id, project]));
   for (const project of local) {
     const server = merged.get(project.id);
+    // the server has it but doesn't list it here: another workspace's (or deleted). Unsaved changes still show
+    if (remote && !server && project.serverProjectReady && !project.unsynced) continue;
     merged.set(project.id, {
       ...(server ?? {
         id: project.id,

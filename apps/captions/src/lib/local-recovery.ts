@@ -274,6 +274,8 @@ export interface LocalRecoveryMeta {
   thumbClipId: string | null;
   serverProjectReady: boolean;
   serverConflict: boolean;
+  /** Has changes the server hasn't taken (RecoveryProject.unsynced). */
+  unsynced: boolean;
 }
 
 export async function listLocalRecoveryProjects(): Promise<
@@ -304,6 +306,7 @@ export async function listLocalRecoveryProjects(): Promise<
       thumbClipId: project.clips[0]?.info.id ?? null,
       serverProjectReady: project.serverProjectReady,
       serverConflict: project.serverConflict,
+      unsynced: !!project.unsynced,
     }))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }

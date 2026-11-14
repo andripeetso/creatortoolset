@@ -145,14 +145,14 @@ export interface AppWork {
   libraries: LibraryWork[];
   /** the account's edits whose newest step is queued or running */
   edits: { id: string; name: string }[];
-  exports: ReturnType<typeof activeExports>;
+  exports: Awaited<ReturnType<typeof activeExports>>;
   /** each tool's own "what runs for this account" (left out = nothing runs there) */
   analyzer?: ReturnType<typeof analyzerWork>;
   notes?: Awaited<ReturnType<typeof notesWork>>;
   enhance?: ReturnType<typeof enhancing>;
   review?: Awaited<ReturnType<typeof reviewWork>>;
   guides?: ReturnType<typeof guidesWork>;
-  captioning?: ReturnType<typeof captioningWork>;
+  captioning?: Awaited<ReturnType<typeof captioningWork>>;
   knowledge?: Awaited<ReturnType<typeof knowledgeWork>>;
 }
 
@@ -182,10 +182,10 @@ async function appWork(user: SessionUser): Promise<AppWork> {
     soft(may(user, "enhance"), async () => (await import("./enhance")).enhancing(u, await (await import("./lib/workspace-scope")).inCurrentWorkspace(user))),
     soft(may(user, "review"), async () => (await import("./review")).reviewWork(u)),
     soft(may(user, "guides"), async () => (await import("./documents")).guidesWork(u)),
-    soft(may(user, "captions"), async () => (await import("./captions-job")).captioningWork(u)),
+    soft(may(user, "captions"), async () => (await import("./captions-job")).captioningWork(user)),
     soft(may(user, "workshop"), async () => (await import("./workshop")).knowledgeWork(u)),
   ]);
-  return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: activeExports(u), analyzer, notes, enhance, review, guides, captioning, knowledge };
+  return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: await activeExports(user), analyzer, notes, enhance, review, guides, captioning, knowledge };
 }
 
 const count = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
