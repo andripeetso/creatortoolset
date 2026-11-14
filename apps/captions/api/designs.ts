@@ -634,7 +634,7 @@ designsApp.post("/", (c) =>
       const count = Number.isInteger(b.pages) ? Math.min(DESIGN_LIMITS.pages, Math.max(0, b.pages as number)) : 1;
       d.name = named || d.name;
       d.pages = withFrames(Array.from({ length: count }, (_, k) => ({ id: `p${k + 1}`, background: "#ffffff", layers: [] })), d.width, d.height);
-    } else throw new DesignError("Say what the design is of: a carousel piece (session and doc), a video's moment (version and t), or blank: true");
+    } else throw new DesignError("Say what the design is of: a carousel piece (its project as session, and doc), a video's moment (version and t), or blank: true");
     // made on its own, or from a video: in the brand project the window is in when that is the person's own, else the
     // account's current one (the way a Workshop session gets its project)
     if (!pieceOf(d)) {

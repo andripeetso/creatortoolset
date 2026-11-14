@@ -50,7 +50,7 @@ export function needFix(need: Need): { label: string; to: string } {
   }
   if (need.form === "apify") return { label: "Add key", to: "/settings/keys#apify-key" };
   if (need.form === "library") return { label: "Open Media Library", to: "/library" };
-  if (need.form === "project") return { label: "New project", to: "/projects" };
+  if (need.form === "project") return { label: "New workspace", to: "/projects" };
   return { label: "Add AI", to: "/settings/providers" };
 }
 

@@ -301,7 +301,7 @@ export default function FinalsPage() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-500">{error}</p>}
-        {libraries?.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No library yet. The workspace owner creates one.</p>}
+        {libraries?.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No library yet. The team owner creates one.</p>}
         {(libraries === null || (library && finals === undefined)) && !error && <FinalsFrame />}
         {library && finals !== undefined && (
           <>

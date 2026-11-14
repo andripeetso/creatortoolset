@@ -19,7 +19,7 @@ const LEVELS: Record<Level, { name: string; what: string }> = {
   },
   full: {
     name: "Full access",
-    what: "Does what you can do on the site: Workshop projects, sessions, pieces, chat and Review. Never Admin, AI settings, paired Macs or your sign-in.",
+    what: "Does what you can do on the site: Workshop workspaces, projects, pieces, chat and Review. Never Admin, AI settings, paired Macs or your sign-in.",
   },
 };
 

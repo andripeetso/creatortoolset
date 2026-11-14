@@ -173,7 +173,7 @@ export function parseProjectInput(raw: unknown, base?: ProjectFields): ProjectFi
   const languages = "languages" in body ? (Array.isArray(body.languages) ? [...new Set(body.languages.filter(isLanguage))].slice(0, 5) : []) : b.languages;
   if (languages?.length) out.languages = languages;
   else delete out.languages;
-  if (!out.name) throw new Error("Give the project a name");
+  if (!out.name) throw new Error("Give the workspace a name");
   return out;
 }
 
@@ -244,7 +244,7 @@ export function parseSources(raw: unknown, now = Date.now()): SessionSource[] {
     const addedAt = isRec(item) && typeof item.addedAt === "number" ? item.addedAt : now;
     out.push({ postId, addedAt, ...(note ? { note } : {}) });
   }
-  if (out.length > LIMITS.sources) throw new Error(`A session holds at most ${LIMITS.sources} sources`);
+  if (out.length > LIMITS.sources) throw new Error(`A project holds at most ${LIMITS.sources} sources`);
   return out;
 }
 
@@ -271,7 +271,7 @@ export function parseSessionPatch(raw: unknown): SessionPatch {
   if ("projectId" in body) {
     if (body.projectId === null || body.projectId === "") out.projectId = null;
     else if (okId(body.projectId)) out.projectId = body.projectId;
-    else throw new Error("Unknown project");
+    else throw new Error("Unknown workspace");
   }
   if ("status" in body) {
     const status = parseSessionStatus(body.status);

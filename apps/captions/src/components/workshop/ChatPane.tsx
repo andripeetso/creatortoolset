@@ -436,7 +436,7 @@ export function ChatPane({
           <p className="py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
             Think here; the document is the output only.
             <br />
-            Pick a project in the header for instructions and brand files.
+            Pick a workspace in the header for instructions and brand files.
           </p>
         )}
         <div className="flex flex-col gap-2">
@@ -806,7 +806,7 @@ export function ChatPane({
             {contextOpen && (
               <span className="absolute bottom-full left-0 z-30 mb-1 flex w-80 flex-col gap-1.5 rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl">
                 <span className="text-[10px] text-muted-foreground">In the AI's hands</span>
-                {sources.length === 0 ? <span className="text-[11px] text-muted-foreground">No sources in the session yet — add some in Browse.</span> : null}
+                {sources.length === 0 ? <span className="text-[11px] text-muted-foreground">No sources in the project yet. Add some in Browse.</span> : null}
                 {sources.map((src) => {
                   const parts = loaded.find((l) => l.postId === src.id)?.parts ?? [];
                   return (

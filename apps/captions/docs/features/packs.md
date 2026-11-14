@@ -102,8 +102,8 @@ catalog were reviewed before they were listed.
 - Update (installing a newer file of the same pack) replaces the copies you haven't touched, and leaves the ones
   you edited.
 - Remove deletes the copies you haven't touched and keeps the ones you edited.
-- Instructions can be switched off everywhere, or for one project.
-- A pack reaches every project, or only the projects you tick (Community → Installed, or when installing).
+- Instructions can be switched off everywhere, or for one workspace.
+- A pack reaches every workspace, or only the workspaces you tick (Community → Installed, or when installing).
 
 ## Default packs
 

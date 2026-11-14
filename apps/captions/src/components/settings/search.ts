@@ -31,8 +31,8 @@ export type ServerKeyRowId = `server-key-${ServiceKeyEnv}`;
 const STATIC_ROWS = [
   // General: how the app behaves here, setup, this computer's saved data
   { section: "general", id: "confirm-deletes", title: "Ask before moving to trash or deleting a comment", keywords: ["trash", "delete", "confirm", "comment"] },
-  { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
-  { section: "general", id: "ask-fit", title: "Ask when dropped footage doesn't fit the open project", keywords: ["assistant", "drop", "footage", "project", "ask"] },
+  { section: "general", id: "status-colours", title: "Colour bar beside each project in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
+  { section: "general", id: "ask-fit", title: "Ask when dropped footage doesn't fit the open workspace", keywords: ["assistant", "drop", "footage", "workspace", "ask"] },
   { section: "general", id: "auto-resume-limited", title: "Resume after usage limits", keywords: ["assistant", "chat", "limit", "rate", "continue", "auto"] },
   { section: "general", id: "snooze-limited", title: "Snooze until limits reset", keywords: ["assistant", "chat", "limit", "rate", "snooze"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },

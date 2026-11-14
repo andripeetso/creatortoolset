@@ -421,7 +421,7 @@ describe("work cards", () => {
     const made = JSON.parse((await toolOf(job.mcp.token, "workshop_new_session", { title: "Rolling over" })).text) as { id: string };
     await toolOf(fullKey.slice(7), "workshop_new_session", { title: "From a Full key" });
     const workOf = async () => ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ work?: unknown[] }> }).messages.at(-1)?.work;
-    expect(await workOf()).toEqual([{ id: `workshop:${made.id}`, kind: "workshop", title: "Rolling over", href: `/workshop/sessions/${made.id}`, status: "done", detail: "Session started" }]);
+    expect(await workOf()).toEqual([{ id: `workshop:${made.id}`, kind: "workshop", title: "Rolling over", href: `/workshop/sessions/${made.id}`, status: "done", detail: "Project started" }]);
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Started it." }, { authorization: `Bearer ${mac.token}` }) });
     expect(await workOf()).toHaveLength(1);
   });

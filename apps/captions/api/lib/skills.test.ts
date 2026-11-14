@@ -251,7 +251,7 @@ describe("a person's own skills at the plain places", () => {
 
   it("a place whose job has no project takes no projects, and a skill goes only to a place there is", async () => {
     await clear();
-    expect((await call("/api/skills", "POST", { name: "Lines", body: "x", place: "captions.lines", projectIds: ["p1"] })).body).toEqual({ error: "A skill for Caption Studio: where captions break into lines goes to every project." });
+    expect((await call("/api/skills", "POST", { name: "Lines", body: "x", place: "captions.lines", projectIds: ["p1"] })).body).toEqual({ error: "A skill for Caption Studio: where captions break into lines goes to every workspace." });
     expect((await call("/api/skills", "POST", { name: "Script", body: "x", place: "editor.script", projectIds: ["p1"] })).status).toBe(400);
     expect((await call("/api/skills", "POST", { name: "Cards", body: "x", place: "editor.cards" })).status).toBe(400);
     const review = (await call<Skill>("/api/skills", "POST", { name: "Review", body: "REVIEW-OWN", place: "workshop.review", projectIds: ["p1"] })).body;

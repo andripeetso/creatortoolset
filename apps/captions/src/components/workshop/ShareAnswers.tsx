@@ -247,7 +247,7 @@ export function ShareAnswers({
     <div className="flex flex-col gap-3 rounded-2xl border border-violet-500/40 bg-violet-500/[0.06] p-2.5">
       <p
         className="px-1 text-[11px] text-violet-300"
-        title="Only people signed in with access to the session see these"
+        title="Only people signed in with access to the project see these"
       >
         Only you see these · not the freelancer
       </p>
@@ -260,7 +260,7 @@ export function ShareAnswers({
               to={`/workshop/sessions/${data.sessionId}`}
               className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-50"
             >
-              <ArrowLeft className="h-3 w-3" /> Session
+              <ArrowLeft className="h-3 w-3" /> Project
             </Link>
           )}
           {data.post ? (
@@ -299,7 +299,7 @@ export function ShareAnswers({
         <div className="flex flex-col gap-3 p-3">
           {!data.post ? (
             <p className="text-[12px] text-zinc-500">
-              This session isn't linked to its Instagram post yet. Once it is,
+              This project isn't linked to its Instagram post yet. Once it is,
               its comments can be read here.
             </p>
           ) : !read ? (

@@ -168,7 +168,7 @@ export function buildExportMarkdown(
   sources: ExportSource[],
   drafts: Array<{ draft: DraftMeta; markdown: string }>,
 ): string {
-  const lines: string[] = [`# ${session.title || "Workshop session"}`, ""];
+  const lines: string[] = [`# ${session.title || "Workshop project"}`, ""];
   lines.push("## Notes", "", notes.trim() || "_No notes yet._", "");
   lines.push("## Sources", "");
   if (!sources.length) lines.push("_No sources selected._");

@@ -109,7 +109,7 @@ A plug-in has one or both of these files, and any other files beside them:
 | A tile on Home, in Plan, Make, Distribute or Tools (each names a `gate`, see the switch below) | `tiles` | `web.tsx` |
 | A section in Settings | `settings` | `web.tsx` |
 | An item in the account menu | `accountMenu` | `web.tsx` |
-| A button on a Workshop session, a review upload, an export, a library item or the project open in Caption Studio (`captions`). `onRun` gets the item's id; read the rest through the app's own API (a session: `GET /api/workshop/sessions/<id>`) | `itemActions` | `web.tsx` |
+| A button on a Workshop project, a review upload, an export, a library item or the project open in Caption Studio (`captions`). `onRun` gets the item's id; read the rest through the app's own API (a Workshop project: `GET /api/workshop/sessions/<id>`) | `itemActions` | `web.tsx` |
 | Panels and toolbar buttons in Review | `review` | `web.tsx` |
 | Review's timeline editor: a clip that plays in a card, the camera frame under Reframe, full-quality colour, Face (a face refinement strength slider) and the edit's original recordings on this computer (played from there through the Mac app) on an AI edit (`ReviewTimelineSlot`, `src/lib/plugin.ts`) | `review.timeline` | `web.tsx` |
 | Your page in place of a built-in one (AI Editor, Media Library, Finals, Settings → Storage) | `replaces` | `web.tsx` |
@@ -117,7 +117,7 @@ A plug-in has one or both of these files, and any other files beside them:
 | An API of its own, at `/api/x/<id>/…` behind the app's login | `routes` (a Hono app) | `plugin.ts` |
 | A tool the person's own AI can call | `tools: { defs, handlers }` | `plugin.ts` |
 | A switch per account for the whole plug-in | `gates`, `requireGate(id)` on its routes, `gate` on its tile | both |
-| Something done each time a session is published or changes status, an export finishes or a review gets a new version | `onEvent(name, fn)` from `api/lib/events.ts`, called in `start` | `plugin.ts` |
+| Something done each time a Workshop project is published or changes status, an export finishes or a review gets a new version | `onEvent(name, fn)` from `api/lib/events.ts`, called in `start` | `plugin.ts` |
 | Work that starts with the server | `start` | `plugin.ts` |
 | Media Library sources, filters and badges | `library` | both |
 | A post-processing step in the AI Editor (it changes the footage a draft plays: the voice, the colour, faces) | `editor.steps` | `plugin.ts` |

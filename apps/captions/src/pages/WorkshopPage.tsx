@@ -315,8 +315,8 @@ export default function WorkshopPage() {
           {(
             // the counts hold their width while they load, so the tabs don't move
             [
-              ["sessions", <>Sessions <span className="inline-block min-w-[3ch] tabular-nums">· {sessionsKnown ? sessions.length : ""}</span></>],
-              ["projects", <>Projects <span className="inline-block min-w-[3ch] tabular-nums">· {projects.length}</span></>],
+              ["sessions", <>Projects <span className="inline-block min-w-[3ch] tabular-nums">· {sessionsKnown ? sessions.length : ""}</span></>],
+              ["projects", <>Workspaces <span className="inline-block min-w-[3ch] tabular-nums">· {projects.length}</span></>],
               ["knowledge", "Knowledge"],
               ["frameworks", <>Frameworks <span className="inline-block min-w-[3ch] tabular-nums">· {frameworks.length}</span></>],
               ["rules", <>Rules <span className="inline-block min-w-[7ch] tabular-nums">· {rules.filter((r) => r.on).length} on</span></>],
@@ -348,7 +348,7 @@ export default function WorkshopPage() {
             onClose={() => setMenu(null)}
             onRename={async () => {
               const s = menu.s;
-              const next = (await promptDialog({ title: "Session name", value: s.title, ok: "Rename" }))?.trim();
+              const next = (await promptDialog({ title: "Project name", value: s.title, ok: "Rename" }))?.trim();
               if (!next || next === s.title) return;
               patchSummary(s.id, { title: next });
               window.dispatchEvent(new CustomEvent("workshop:renamed", { detail: { id: s.id, title: next } }));
@@ -361,7 +361,7 @@ export default function WorkshopPage() {
         {tab === "sessions" && (
           <section>
             <BrowseBar
-              search={{ value: find, onChange: setFind, placeholder: "Search sessions (⌘K)" }}
+              search={{ value: find, onChange: setFind, placeholder: "Search projects (⌘K)" }}
               chips={{
                 value: kindFilter,
                 onChange: setKindFilter,
@@ -375,7 +375,7 @@ export default function WorkshopPage() {
               sort={{
                 value: sortBy,
                 onChange: setSortBy,
-                label: "Sort sessions",
+                label: "Sort projects",
                 options: [
                   { id: "recent", label: "Recent" },
                   { id: "type", label: "Type" },
@@ -396,11 +396,11 @@ export default function WorkshopPage() {
                   <button type="button" onClick={() => setPicked(new Set())} title="Clear (Esc)" aria-label="Clear the selection" className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100">
                     <X className="h-3.5 w-3.5" />
                   </button>
-                  <button type="button" disabled={busy !== null} onClick={() => void sharePicked()} title="A share link for each, all copied; each session moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
+                  <button type="button" disabled={busy !== null} onClick={() => void sharePicked()} title="A share link for each, all copied; each project moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
                     {busy === "share" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
                     Share {picked.size}
                   </button>
-                  <button type="button" disabled={busy !== null} onClick={() => void exportPicked()} title="Each as its own Obsidian note (a note with pictures as a zip with a folder); each session moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
+                  <button type="button" disabled={busy !== null} onClick={() => void exportPicked()} title="Each as its own Obsidian note (a note with pictures as a zip with a folder); each project moves to In Production" className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 text-[12px] text-zinc-100 hover:bg-zinc-800 disabled:opacity-50">
                     {busy === "export" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                     Export {picked.size}
                   </button>

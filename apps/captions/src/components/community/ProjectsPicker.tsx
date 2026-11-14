@@ -10,17 +10,17 @@ import {
 import { useWorkspace } from "@/lib/workspace";
 
 /**
- * Which projects a pack is in: "All my projects" (empty) or any of the person's projects, ticked one by one. The menu
+ * Which projects a pack is in: "All my workspaces" (empty) or any of the person's projects, ticked one by one. The menu
  * stays open while ticking.
  */
 export function ProjectsPicker({ value, onChange, disabled }: { value: string[]; onChange: (ids: string[]) => void; disabled?: boolean }) {
   const projects = useWorkspace((s) => s.projects);
   const label =
     value.length === 0
-      ? "All my projects"
+      ? "All my workspaces"
       : value.length === 1
-        ? (projects.find((p) => p.id === value[0])?.name ?? "1 project")
-        : `${value.length} projects`;
+        ? (projects.find((p) => p.id === value[0])?.name ?? "1 workspace")
+        : `${value.length} workspaces`;
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
 
   return (

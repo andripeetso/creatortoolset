@@ -153,10 +153,10 @@ export function SourceReader({
           </>
         ) : (
           <>
-            <span className="rounded-md border border-dashed border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500">Preview · not in session</span>
+            <span className="rounded-md border border-dashed border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500">Preview · not in project</span>
             {onAdd ? (
               <button type="button" onClick={onAdd} className="flex items-center gap-1 rounded-md bg-violet-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-violet-500">
-                <Plus className="h-3 w-3" /> Add to session
+                <Plus className="h-3 w-3" /> Add to project
               </button>
             ) : null}
           </>

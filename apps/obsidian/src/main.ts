@@ -378,7 +378,7 @@ class SettingsTab extends PluginSettingTab {
     text("Status property", "Frontmatter property with the status.", "statusProperty");
     text("Media property", "Frontmatter property with the format (Reel, Carousel…).", "mediaProperty");
     text("Statuses that sync on their own", "Comma-separated status values. A note with one of them is sent without being linked first.", "syncStatuses");
-    text("Project ID", "Optional: the Workshop project new sessions go to.", "projectId");
+    text("Workspace ID", "Optional: the workspace new projects go to.", "projectId");
     new Setting(containerEl)
       .setName("Sync every (minutes)")
       .addText((input) =>

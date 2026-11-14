@@ -180,13 +180,13 @@ export function ProjectForm({
           required
           value={f.name}
           onChange={set("name")}
-          placeholder={setup ? "My brand" : undefined}
+          placeholder={setup ? "My workspace" : undefined}
           className={`${input} mt-1`}
         />
       </label>
       <div>
         <p className="text-[11px] text-zinc-400">Colour</p>
-        <div className="mt-1.5 flex flex-wrap gap-2" role="radiogroup" aria-label="Project colour">
+        <div className="mt-1.5 flex flex-wrap gap-2" role="radiogroup" aria-label="Workspace colour">
           {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => {
             const on = projectColor({ id: initial?.id ?? "new", color: f.color }) === c;
             return (
@@ -381,7 +381,7 @@ export function ProjectForm({
           className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
         >
           {(busy || pending) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {made ? "Done" : initial ? "Save" : "Create project"}
+          {made ? "Done" : initial ? "Save" : "Create workspace"}
         </button>
       </div>}
     </div>

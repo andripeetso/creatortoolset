@@ -150,7 +150,7 @@ export function OwnAiSection() {
     <>
       <Section id="connect-ai" title={web.length ? "Use Creator Toolset from your AI" : "Use Creator Toolset from Claude Code or Codex"}>
         <p className="px-0.5 text-sm text-muted-foreground">
-          Install it in your AI app once. From then on it can find your clips, start edits and work in your Workshop projects, as you, without this window open.
+          Install it in your AI app once. From then on it can find your clips, start edits and work in your workspaces and projects, as you, without this window open.
         </p>
         {!local || !keys ? (
           error ? <Card><ErrorRow title="Couldn't load your AI apps" detail={error} retry={load} /></Card> : <Card><LoadingRow /></Card>

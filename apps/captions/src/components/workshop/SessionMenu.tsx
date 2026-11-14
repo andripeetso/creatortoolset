@@ -148,9 +148,9 @@ export function SessionMenu({
       const from = (await listDocuments(id)).find((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim()));
       if (!from) throw new Error("There is no written piece to convert yet");
       const copy = await duplicateSession(id);
-      await patchSession(copy.id, { title: `${title.trim() || "Untitled session"}-${CONVERT_SUFFIX[kind]}`, status: "writing" });
+      await patchSession(copy.id, { title: `${title.trim() || "Untitled project"}-${CONVERT_SUFFIX[kind]}`, status: "writing" });
       const doc = await createDocument(copy.id, { kind });
-      await sendTurn(copy.id, { docId: doc.id, text: `Write this ${docKindLabel(kind)} from the ${docKindLabel(from.kind)} in this session.` });
+      await sendTurn(copy.id, { docId: doc.id, text: `Write this ${docKindLabel(kind)} from the ${docKindLabel(from.kind)} in this project.` });
       void refreshSummaries();
       onChanged?.();
       navigate(`${sessionPath(copy.id)}?doc=${doc.id}`);
@@ -159,7 +159,7 @@ export function SessionMenu({
   const remove = () => {
     onClose();
     void (async () => {
-      if (!(await confirmDialog({ title: `Delete “${title || "Untitled session"}” for good?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+      if (!(await confirmDialog({ title: `Delete “${title || "Untitled project"}” for good?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
       await deleteSession(id);
       if (open) navigate(WORKSHOP_HOME);
       void refreshSummaries();
@@ -177,7 +177,7 @@ export function SessionMenu({
     <div
       ref={ref}
       role="menu"
-      aria-label="Session"
+      aria-label="Project"
       onContextMenu={(e) => e.preventDefault()}
       className="fixed z-[60] w-56 rounded-xl border border-zinc-700 bg-zinc-900 p-1 text-[13px] shadow-2xl"
       style={{ left, top }}
@@ -202,7 +202,7 @@ export function SessionMenu({
         <button type="button" role="menuitem" className={item} onClick={() => copy(`${window.location.origin}${sessionPath(id)}`)}>
           <Link2 className="h-3.5 w-3.5" /> Copy link
         </button>
-        <button type="button" role="menuitem" className={item} onClick={() => copy(title || "Untitled session")}>
+        <button type="button" role="menuitem" className={item} onClick={() => copy(title || "Untitled project")}>
           Copy name
         </button>
         <button type="button" role="menuitem" className={item} onClick={() => copy(mainPieceText())}>

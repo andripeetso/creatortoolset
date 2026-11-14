@@ -98,7 +98,7 @@ describe("sessionText", () => {
       { id: "m2", role: "assistant", text: "Agreed.", at: Date.UTC(2026, 10, 3), docId: "d1" },
       { id: "m3", role: "assistant", text: "broken", at: 3, docId: "d1", status: "error" },
     ], true);
-    expect(text).toContain("# THIS SESSION: Strength Training (project Tiny Acrobatics)");
+    expect(text).toContain("# THIS PROJECT: Strength Training (workspace Tiny Acrobatics)");
     expect(text).toContain("Slide one");
     expect(text).toContain("«This is why» → «Slide one»");
     expect(text).toContain(`the hook sucks ${long}`);

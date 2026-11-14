@@ -330,7 +330,7 @@ describe("what a skill may hold", () => {
     for (let i = 1; i <= SKILL_LIMITS.perTurn; i++) expect((await add({ name: `Skill ${i}`, when: `When ${i}`, body: `Body ${i}`, place: "workshop.write" })).on).toBe(true);
     const ninth = await add({ name: "Skill 9", when: "When 9", body: "Body 9", place: "workshop.write" });
     expect(ninth.on).toBe(false);
-    expect((await call(me, `/api/skills/${ninth.id}`, "PATCH", { on: true })).body).toEqual({ error: "8 skills can be on in one place of one project. Switch one off first." });
+    expect((await call(me, `/api/skills/${ninth.id}`, "PATCH", { on: true })).body).toEqual({ error: "8 skills can be on in one place of one workspace. Switch one off first." });
     expect((await mine()).find((s) => s.id === ninth.id)!.on).toBe(false);
 
     const w = await workshop("Tiny Acrobatics");

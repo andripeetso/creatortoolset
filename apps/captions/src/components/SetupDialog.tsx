@@ -77,7 +77,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
     hint: "Pick the folders where you keep your footage and music. The AI Editor and Media Library find your clips there. Nothing is moved.",
   },
   how: { title: "How do you work best?", hint: "Pick where you talk to your AI." },
-  own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your projects, as you." },
+  own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your workspaces and projects, as you." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
   account: { title: "Create your account", hint: "" },
 };

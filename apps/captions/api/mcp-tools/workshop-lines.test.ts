@@ -60,8 +60,8 @@ describe("the lines for api/mcp.ts", () => {
     expect((left.postings as Row[]).map((p) => p.shortcode)).toEqual(["TinyAcro22"]);
     expect((await route(`/api/workshop/sessions/${id}`)).postedNot).toEqual(["TinyAcro1"]);
     // a post that is not linked: refused, and not marked "never match again"
-    expect((await tool("workshop_update_session", { session: id, unlink_post_url: "https://www.instagram.com/p/TinyNever9/" })).error).toBe("That post is not linked to this session.");
-    expect((await tool("workshop_update_session", { session: id, unlink_post_url: "not a link" })).error).toBe("That post is not linked to this session.");
+    expect((await tool("workshop_update_session", { session: id, unlink_post_url: "https://www.instagram.com/p/TinyNever9/" })).error).toBe("That post is not linked to this project.");
+    expect((await tool("workshop_update_session", { session: id, unlink_post_url: "not a link" })).error).toBe("That post is not linked to this project.");
     expect((await route(`/api/workshop/sessions/${id}`)).postedNot).toEqual(["TinyAcro1"]);
 
     await tool("workshop_update_session", { session: id, notes: "" });

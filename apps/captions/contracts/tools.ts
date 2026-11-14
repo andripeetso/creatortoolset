@@ -84,7 +84,7 @@ export const onHome = (hidden: readonly HomeTile[] | null | undefined, t: HomeTi
 
 /** One plain sentence per need: what it is for and who bills (section 11.2 of the onboarding spec). */
 export const NEED_SENTENCE: Record<Have, string> = {
-  project: "A project keeps this tool's work together. Making one takes a moment.",
+  project: "A workspace keeps this tool's work together. Making one takes a moment.",
   ai: "ChatGPT, Claude or another AI plan you already have.",
   ownAi: "ChatGPT, Claude or another AI plan you already have.",
   library: "The Media Library is where your footage lives. Make one to start.",
@@ -151,13 +151,13 @@ export interface Need {
 // Settings → Tools and the tool's checklist all say a missing row the same way: needsLine, "Needs an Apify key".
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
-    { what: "A project", anyOf: ["project"], form: "project" },
+    { what: "A workspace", anyOf: ["project"], form: "project" },
     { what: "An Apify key", anyOf: ["apify", "instagram"], form: "apify" },
     { what: "An AI provider: reads posts and slides", anyOf: ["ai"], form: "ai", optional: true },
     { what: "A TypeSafe Jev key: sharper picks", anyOf: ["TYPESAFE_API_KEY"], form: "keys", optional: true },
   ],
   workshop: [
-    { what: "A project", anyOf: ["project"], form: "project" },
+    { what: "A workspace", anyOf: ["project"], form: "project" },
     { what: "An AI provider", anyOf: ["ownAi"], form: "ai" },
     { what: "A Perplexity key: accuracy checks and deep research", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
   ],
