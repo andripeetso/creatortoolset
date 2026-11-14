@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, LayoutGrid, RectangleHorizontal, Sparkles, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, LayoutGrid, RectangleHorizontal, X } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { CarouselSlideCard, slideChrome } from "./carousel-cards";
 import { layoutSourceHash, liveCompose, type CarouselLayoutSet } from "@/lib/carousel-layout";
 import { askUsageText } from "@/lib/workshop";
@@ -176,7 +177,7 @@ export function CarouselVisualizeModal({
                   title={aiAvailable ? (live ? "Pick a new pairing from the same kit" : "Compose text layout and image wells from the kit") : "AI is not configured"}
                   className={`${pickOff} inline-flex items-center gap-1 disabled:opacity-40`}
                 >
-                  <Sparkles className="h-3 w-3" />
+                  <CtMark className="h-3 w-3" />
                   {busy === "gen" ? "Picking…" : live ? "Regenerate" : "Generate layouts"}
                 </button>
                 {layoutError ? <span className="text-[11px] text-red-500">{layoutError}</span> : null}

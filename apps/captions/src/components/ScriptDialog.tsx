@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ScrollText, Sparkles, X } from "lucide-react";
+import { ScrollText, SpellCheck, X } from "lucide-react";
 import { isEditorBusy, useStudio } from "@/lib/store";
 import { aiStatus, type AiStatus } from "@/lib/refine";
 import { MAX_SCRIPT_CHARS } from "@/lib/script-check";
@@ -103,7 +103,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
               title={checkBlocked ?? "Save, then fix mis-heard words in this clip's transcript"}
               className="flex items-center gap-2 h-9 rounded-md bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600"
             >
-              <Sparkles className="h-4 w-4" /> Save &amp; check transcript
+              <SpellCheck className="h-4 w-4" /> Save &amp; check transcript
             </button>
           )}
           <button

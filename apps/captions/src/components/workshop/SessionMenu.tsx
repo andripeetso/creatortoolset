@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
-import { Archive, ArchiveRestore, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Sparkles, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Trash2 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { createDocument, deleteSession, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, statusSteps, useDocKinds, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
 import { markUnread, patchSummary, refreshSummaries, useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 import { undoable } from "@/lib/undo";
@@ -189,7 +190,7 @@ export function SessionMenu({
         <Pencil className="h-3.5 w-3.5" /> Rename
       </button>
       <button type="button" role="menuitem" className={item} onClick={regenerate}>
-        <Sparkles className="h-3.5 w-3.5" /> Regenerate title
+        <CtMark className="h-3.5 w-3.5" /> Regenerate title
       </button>
       {hasReply ? (
         <button type="button" role="menuitem" className={item} onClick={() => (onClose(), markUnread(id))}>

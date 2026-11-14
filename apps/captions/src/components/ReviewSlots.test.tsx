@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Sparkles } from "lucide-react";
+import { Star } from "lucide-react";
 import type { Me } from "@/lib/auth";
 import { defineWebPlugin, reviewSlotsFor, type ReviewSlotContext } from "@/lib/plugin";
 import { ReviewSlotBridge } from "@/lib/review-slots";
@@ -14,7 +14,7 @@ const tiny = defineWebPlugin({
   id: "tiny",
   review: {
     panels: [{ id: "panel", gate: "tiny-gate", panel: TinyPanel }],
-    actions: [{ label: "Tiny action", icon: Sparkles, gate: "tiny-gate", onRun: () => {} }],
+    actions: [{ label: "Tiny action", icon: Star, gate: "tiny-gate", onRun: () => {} }],
   },
 });
 const other = defineWebPlugin({

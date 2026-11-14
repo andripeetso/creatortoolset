@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Captions,
   Check,
   Loader2,
   Lock,
   Play,
-  Sparkles,
+  RefreshCw,
   Square,
   TriangleAlert,
 } from "lucide-react";
@@ -289,7 +290,7 @@ function CaptionBox({
             {fittingSplits ? (
               <Loader2 className="h-2.5 w-2.5 animate-spin" />
             ) : (
-              <Sparkles className="h-2.5 w-2.5" />
+              <RefreshCw className="h-2.5 w-2.5" />
             )}
             {fittingSplits ? "Fitting lines…" : "Re-match for this size"}
           </button>
@@ -881,7 +882,7 @@ export function Player() {
                   onClick={runTranscription}
                   className="flex shrink-0 items-center gap-2 rounded-md bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500"
                 >
-                  <Sparkles className="h-4 w-4" /> Transcribe
+                  <Captions className="h-4 w-4" /> Transcribe
                 </button>
               </>
             )}

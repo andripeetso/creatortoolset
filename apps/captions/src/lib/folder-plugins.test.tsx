@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { Sparkles } from "lucide-react";
+import { Star } from "lucide-react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { folderRowNote, guardWebPlugin, loadFolderPlugins, offersNewVersion, reloadForFolderPlugins, webAdmissionProblem, type FolderPluginRow } from "./folder-plugins";
 import { defineWebPlugin, type WebPlugin } from "./plugin";
@@ -26,12 +26,12 @@ describe("a folder plug-in's page half joins the app only when it can't break a 
     ["a page path without its slash", { ...ok, routes: [{ path: "sponsors", element: null }] }, [], /must start with \//],
     ["a page another plug-in has", ok, [{ id: "first", routes: [{ path: "/sponsors", element: null }] }], /already has the page \/sponsors/],
     ["a replaced page another plug-in replaces", { ...ok, replaces: { finals: Page } }, [{ id: "first", replaces: { finals: Page } }], /more than one plug-in replaces the finals page/],
-    ["a tile that names no Home stage", { ...ok, tiles: [{ stage: "Nowhere" as never, to: "/sponsors", icon: Sparkles, name: "S", desc: "", gate: "sponsors" as never }] }, [], /names no stage/],
-    ["a Settings section with a built-in section's id", { ...ok, settings: [{ id: "general", title: "Mine", icon: Sparkles, body: null }] }, [], /already a built-in section/],
+    ["a tile that names no Home stage", { ...ok, tiles: [{ stage: "Nowhere" as never, to: "/sponsors", icon: Star, name: "S", desc: "", gate: "sponsors" as never }] }, [], /names no stage/],
+    ["a Settings section with a built-in section's id", { ...ok, settings: [{ id: "general", title: "Mine", icon: Star, body: null }] }, [], /already a built-in section/],
     // an icon name the app's icon set doesn't have arrives as undefined, and Home itself would draw it
     ["a tile whose icon is missing", { ...ok, tiles: [{ stage: "Tools", to: "/sponsors", icon: undefined as never, name: "Sponsors", desc: "", gate: "sponsors" as never }] }, [], /the Home tile "Sponsors" has no icon/],
     ["a Settings section whose icon is missing", { ...ok, settings: [{ id: "sponsors", title: "Sponsors", icon: undefined as never, body: null }] }, [], /the Settings section "Sponsors" has no icon/],
-    ["an account menu item with no label", { ...ok, accountMenu: [{ label: "", to: "/sponsors", icon: Sparkles }] }, [], /account menu item needs label and to/],
+    ["an account menu item with no label", { ...ok, accountMenu: [{ label: "", to: "/sponsors", icon: Star }] }, [], /account menu item needs label and to/],
     ["a button with no onRun", { ...ok, itemActions: { session: [{ label: "Send", onRun: undefined as never }] } }, [], /button on session items needs label and onRun/],
     ["a replaced page that is not a component", { ...ok, replaces: { finals: "FinalsPage" as never } }, [], /replaces\.finals is not a component/],
     ["a Review panel with no component", { ...ok, review: { panels: [{ id: "p", panel: undefined as never }] } }, [], /Review panel needs id and panel/],
@@ -63,11 +63,11 @@ describe("every piece a folder plug-in draws has its own boundary", () => {
   });
 
   it("wraps pages, Settings and Devices sections, replaced pages and Review panels, and nothing else", () => {
-    const tile = { stage: "Tools" as const, to: "/sponsors", icon: Sparkles, name: "S", desc: "", gate: "sponsors" as never };
+    const tile = { stage: "Tools" as const, to: "/sponsors", icon: Star, name: "S", desc: "", gate: "sponsors" as never };
     const full = defineWebPlugin({
       ...ok,
       tiles: [tile],
-      settings: [{ id: "sponsors", title: "Sponsors", icon: Sparkles, body: <Page /> }],
+      settings: [{ id: "sponsors", title: "Sponsors", icon: Star, body: <Page /> }],
       devices: [{ id: "sponsors", title: "Sponsors", body: <Page /> }],
       replaces: { finals: Page },
       review: { panels: [{ id: "p", panel: Page as never }] },

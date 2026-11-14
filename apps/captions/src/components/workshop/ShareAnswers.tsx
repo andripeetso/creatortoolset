@@ -10,8 +10,8 @@ import {
   MessageCircleQuestion,
   RefreshCw,
   Send,
-  Sparkles,
 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { askUsageText, type AskUsage } from "@/lib/workshop";
 
 /**
@@ -338,7 +338,7 @@ export function ShareAnswers({
 
       <section className={PANEL}>
         <div className={PANEL_HEAD}>
-          <Sparkles className="h-4 w-4 text-violet-300" />
+          <CtMark className="h-4 w-4 text-violet-300" />
           <p className={`${PANEL_TITLE} text-violet-200`}>Ask AI</p>
           <span className="text-zinc-500">
             knows the post and how it was made

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Download, Loader2, Palette, PencilLine, Sparkles, TriangleAlert } from "lucide-react";
+import { Check, Download, Loader2, Palette, PencilLine, RefreshCw, TriangleAlert } from "lucide-react";
 import { isEditorBusy, narrowerThanMatched, useStudio } from "@/lib/store";
 import { aiStatus, type AiStatus } from "@/lib/refine";
 import { FONT_OPTIONS, fontWeightFor } from "@/lib/types";
@@ -96,7 +96,7 @@ export function MobileEditor({ onExport }: { onExport: () => void }) {
             {refining ? (
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : rematch ? (
-              <Sparkles className="h-5 w-5" />
+              <RefreshCw className="h-5 w-5" />
             ) : (
               <Check className="h-5 w-5" />
             )}

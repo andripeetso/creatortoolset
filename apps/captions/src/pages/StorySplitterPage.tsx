@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useCachedList } from "@/lib/local-cache";
-import { Download, Eraser, Loader2, Play, Scissors, Upload, UploadCloud, WandSparkles, X } from "lucide-react";
+import { Download, Eraser, Loader2, Play, Scissors, Upload, UploadCloud, X } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { dropZoneClass } from "@/components/DropZone";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
@@ -543,7 +543,7 @@ export default function StorySplitterPage() {
                   title="Place the cuts again, keeping the ones you added"
                   onClick={() => replan()}
                 >
-                  <WandSparkles /> Auto split
+                  <Scissors /> Auto split
                 </Button>
                 <Button
                   size="sm"

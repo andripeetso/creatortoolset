@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Captions, Clapperboard, Download, FileText, Loader2, MessageSquare, Pencil, RotateCcw, Share2, Sparkles, Trash2 } from "lucide-react";
+import { Captions, Clapperboard, Download, FileText, Loader2, MessageSquare, Pencil, RotateCcw, Share2, Trash2 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
@@ -472,7 +473,7 @@ function DescriptionBox({
           </Button>
           {(asset.kind === "video" || asset.kind === "image") && (
             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" disabled={queued} onClick={() => void describe()}>
-              <Sparkles className="h-3.5 w-3.5" />
+              <CtMark className="h-3.5 w-3.5" />
               {queued ? "Queued: the AI's description shows when it is done" : "Describe with AI"}
             </Button>
           )}

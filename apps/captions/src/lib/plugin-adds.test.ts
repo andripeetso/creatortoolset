@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Sparkles } from "lucide-react";
+import { Star } from "lucide-react";
 import type { Me } from "./auth";
 import { defineWebPlugin, mergePluginInfo, webPluginAdds } from "./plugin";
 import { resolveSection, type NavContext } from "../components/settings/nav";
@@ -12,10 +12,10 @@ const tiny = defineWebPlugin({
   id: "tiny",
   name: "Tiny Tools",
   about: "A small example",
-  tiles: [{ stage: "Tools", to: "/tiny", icon: Sparkles, name: "Tiny", desc: "tile", gate: "tiny-gate" }],
+  tiles: [{ stage: "Tools", to: "/tiny", icon: Star, name: "Tiny", desc: "tile", gate: "tiny-gate" }],
   settings: [
-    { id: "tiny-admin", title: "Tiny admin", icon: Sparkles, adminTab: true, body: null },
-    { id: "tiny-section", title: "Tiny section", icon: Sparkles, group: "AI", body: null },
+    { id: "tiny-admin", title: "Tiny admin", icon: Star, adminTab: true, body: null },
+    { id: "tiny-section", title: "Tiny section", icon: Star, group: "AI", body: null },
   ],
   devices: [{ id: "tiny-drive", title: "Tiny drive", adminOnly: true, body: null }],
   replaces: { media: () => null },

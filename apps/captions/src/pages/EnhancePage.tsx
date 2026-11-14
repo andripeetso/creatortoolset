@@ -11,7 +11,6 @@ import {
   Lock,
   RotateCcw,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
 } from "lucide-react";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
@@ -252,7 +251,7 @@ function StatusChip({ s }: { s: EnhanceSession }) {
   if (s.hasEnhanced) {
     return (
       <span className="flex items-center gap-1 text-[11px] text-emerald-400">
-        <Sparkles className="h-3 w-3" /> Enhanced
+        <AudioLines className="h-3 w-3" /> Enhanced
       </span>
     );
   }
@@ -382,7 +381,7 @@ function SessionView({
             onClick={retry}
             className="mt-3 flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500"
           >
-            <Sparkles className="h-3 w-3" /> {session.hasEnhanced ? "Enhance again" : "Enhance"} with{" "}
+            <AudioLines className="h-3 w-3" /> {session.hasEnhanced ? "Enhance again" : "Enhance"} with{" "}
             {chainLabel({ engine, chain: second ? [engine, second] : [engine] })}
           </button>
         </div>
@@ -443,7 +442,7 @@ function SessionView({
               onClick={retry}
               className="flex shrink-0 items-center gap-1.5 rounded-md bg-violet-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-violet-500"
             >
-              <Sparkles className="h-3 w-3" /> Enhance
+              <AudioLines className="h-3 w-3" /> Enhance
             </button>
           </div>
         )}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Hand, Sparkles } from "lucide-react";
+import { Hand, Star } from "lucide-react";
 import type { Me } from "./auth";
 import { accountItemsFor, adminTabsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, webPluginAdds, type WebPlugin } from "./plugin";
 import { shownTools, withPluginTiles } from "./tools";
@@ -11,13 +11,13 @@ const admin = (off: string[] = []): Me => ({ username: "owner", role: "admin", c
 const tiny = defineWebPlugin({
   id: "tiny",
   tiles: [
-    { stage: "Make", to: "/tiny-make", icon: Sparkles, name: "Tiny Make", desc: "a make tile", gate: "tiny-gate" },
-    { stage: "Tools", to: "/tiny-tools", icon: Sparkles, name: "Tiny Tools", desc: "a quiet tile", gate: "tiny-gate" },
+    { stage: "Make", to: "/tiny-make", icon: Star, name: "Tiny Make", desc: "a make tile", gate: "tiny-gate" },
+    { stage: "Tools", to: "/tiny-tools", icon: Star, name: "Tiny Tools", desc: "a quiet tile", gate: "tiny-gate" },
   ],
-  settings: [{ id: "tiny", title: "Tiny", icon: Sparkles, adminOnly: true, body: null }],
+  settings: [{ id: "tiny", title: "Tiny", icon: Star, adminOnly: true, body: null }],
   accountMenu: [
-    { label: "Tiny account", to: "/tiny", icon: Sparkles, gate: "tiny-gate" },
-    { label: "Everyone", to: "/everyone", icon: Sparkles },
+    { label: "Tiny account", to: "/tiny", icon: Star, gate: "tiny-gate" },
+    { label: "Everyone", to: "/everyone", icon: Star },
   ],
 });
 
@@ -135,7 +135,7 @@ describe("Review slots", () => {
         { id: "open", panel: Panel },
       ],
       actions: [
-        { label: "Gated action", icon: Sparkles, gate: "tiny-gate", onRun: () => {} },
+        { label: "Gated action", icon: Star, gate: "tiny-gate", onRun: () => {} },
         { label: "Open action", onRun: () => {} },
       ],
     },
@@ -189,7 +189,7 @@ describe("item actions", () => {
     id: "open",
     itemActions: {
       session: [
-        { label: "Open in tool", icon: Sparkles, gate: "tiny-gate", onRun: () => {} },
+        { label: "Open in tool", icon: Star, gate: "tiny-gate", onRun: () => {} },
         { label: "Always", onRun: () => {} },
       ],
     },

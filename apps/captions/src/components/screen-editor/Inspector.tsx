@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { AudioLines, Crosshair, Image as ImageIcon, MousePointer2, Plus, Sparkles, Trash2, Video, X, ZoomIn } from "lucide-react";
+import { AudioLines, Crosshair, Image as ImageIcon, MousePointer2, Plus, Trash2, Video, X, ZoomIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   BACKGROUNDS,
@@ -313,7 +313,7 @@ function ZoomTab({
             }}
             title="One zoom around each run of clicks (with no clicks, where the pointer was at work); replaces the zooms there are"
           >
-            <Sparkles /> {look.zooms.length ? "Lay them out again" : "Lay out zooms"}
+            <ZoomIn /> {look.zooms.length ? "Lay them out again" : "Lay out zooms"}
           </PanelButton>
         )}
       </Group>

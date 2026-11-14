@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pause, Play, Sparkles } from "lucide-react";
+import { AudioLines, Pause, Play } from "lucide-react";
 import { isEnhancing, playUrl, type EnhanceSession } from "@/lib/enhance";
 
 /**
@@ -296,7 +296,7 @@ export function EnhancePlayer({ session, mix, onMix }: {
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            <Sparkles className="h-3 w-3" /> After
+            <AudioLines className="h-3 w-3" /> After
           </button>
         </div>
       </div>

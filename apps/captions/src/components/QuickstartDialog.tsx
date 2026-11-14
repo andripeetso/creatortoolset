@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  Captions,
   CircleHelp,
   Download,
   FolderPlus,
   Import,
   Rocket,
-  Sparkles,
   Type,
 } from "lucide-react";
 import { useMe } from "@/lib/auth";
@@ -72,7 +72,7 @@ export function QuickstartDialog() {
       ),
     },
     {
-      icon: Sparkles,
+      icon: Captions,
       text: (
         <>
           Hit <b className="text-zinc-200">Transcribe</b>. If cloud models are

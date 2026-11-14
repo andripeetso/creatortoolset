@@ -4,8 +4,8 @@ import {
   FileText,
   MoreHorizontal,
   Pencil,
+  RefreshCw,
   ScrollText,
-  Sparkles,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -935,7 +935,7 @@ export function TranscriptPanel() {
             {cadenceApplied && !dirty && !narrower && !editorBusy ? (
               <Check className="h-3 w-3" />
             ) : (
-              <Sparkles className="h-3 w-3" />
+              <RefreshCw className="h-3 w-3" />
             )}
             {dirty
               ? "Re-match cadence"
