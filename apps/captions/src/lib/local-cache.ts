@@ -30,12 +30,22 @@ const versions = new Map<string, number>();
 let epoch = 0;
 
 const baseOf = (user: string, url: string) => `${PREFIX}${encodeURIComponent(user)}|${url}`;
-/** The lists that name every workspace (the switcher's own): kept once, not per workspace. */
+/**
+ * The tools whose lists the server keeps per workspace (api/lib/workspace-scope.ts), by their topic (sync.ts topicOf),
+ * and the plug-ins' ("x/<id>"). Only their saved copies are kept per workspace: Settings, providers, keys and the
+ * account's other lists stay one copy, so a switch (each chat in chat mode switches) never makes them load again.
+ */
+const PER_WORKSPACE = new Set(["library", "workshop", "review", "instagram", "editor", "documents", "enhance", "designs", "caption-projects", "projects", "clips", "stories", "folders", "exports", "activity", "automations", "memory"]);
+/** The lists that name every workspace (the switcher's own): kept once. */
 const ACROSS_WORKSPACES = new Set(["workshop/workspace", "instagram/accounts?all"]);
-/** Each workspace keeps its own copy of a list (current-workspace.ts), so a switch never paints the last workspace's. */
+const perWorkspace = (url: string) => {
+  const topic = topicOf(url);
+  return !!topic && (PER_WORKSPACE.has(topic) || topic.startsWith("x/")) && !ACROSS_WORKSPACES.has(url);
+};
+/** A per-workspace tool's list: each workspace keeps its own copy (current-workspace.ts), so a switch never paints the last workspace's. */
 const keyOf = (user: string, url: string) => {
   const ws = currentWorkspace();
-  return baseOf(user, url) + (ws && !ACROSS_WORKSPACES.has(url) ? `#ws=${ws}` : "");
+  return baseOf(user, url) + (ws && perWorkspace(url) ? `#ws=${ws}` : "");
 };
 const urlOf = (k: string) => k.slice(k.indexOf("|") + 1).replace(/#ws=[^#]*$/, "");
 const stamp = (k: string) => `${epoch}.${versions.get(k) ?? 0}`;

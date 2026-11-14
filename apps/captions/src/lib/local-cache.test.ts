@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useAuth, type Me } from "./auth";
 import { cachedUsage, clearAccountCache, clearLocalCache, putCached, readCached, warmCached } from "./local-cache";
+import { setCurrentWorkspace } from "./current-workspace";
 
 // a stand-in for the browser's localStorage (the test runs in node)
 const store = new Map<string, string>();
@@ -32,6 +33,18 @@ describe("local-cache", () => {
     expect(readCached("tinyacrobatics", "/api/review")).toEqual([1]);
     expect(readCached("ben", "/api/review")).toBeNull();
     expect(readCached("tinyacrobatics", "/api/review/projects")).toBeNull();
+  });
+
+  it("a tool kept per workspace has a copy per workspace; Settings' lists are one copy for the account", () => {
+    setCurrentWorkspace("ws-a");
+    putCached("tinyacrobatics", "/api/review", ["a's video"]);
+    putCached("tinyacrobatics", "/api/providers", ["my provider"]);
+    setCurrentWorkspace("ws-b");
+    expect(readCached("tinyacrobatics", "/api/review")).toBeNull();
+    expect(readCached("tinyacrobatics", "/api/providers")).toEqual(["my provider"]);
+    setCurrentWorkspace("ws-a");
+    expect(readCached("tinyacrobatics", "/api/review")).toEqual(["a's video"]);
+    setCurrentWorkspace(null);
   });
 
   it("stale then fresh: a warm-up replaces the saved copy", async () => {
