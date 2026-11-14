@@ -2,7 +2,7 @@ import XCTest
 @testable import CreatorToolsetMac
 
 /// The chat-mode wave's sound (WaveSound.swift), made as the wave makes it: a click is silent, a hold builds, the pop is
-/// louder than the hold and never clips, and it dies away.
+/// louder than the hold and never clips, and it is gone within half a second: a bubble's bop, never a boom.
 final class WaveSynthTests: XCTestCase {
     private func play(held: Double, seconds: Double) -> [Float] {
         var synth = WaveSynth(rate: 48000)
@@ -41,6 +41,8 @@ final class WaveSynthTests: XCTestCase {
         XCTAssertGreaterThan(late, early * 3)
         XCTAssertGreaterThan(pop, late * 1.5)
         XCTAssertLessThan(s.map(abs).max()!, 0.9)
-        XCTAssertLessThan(loudness(s, from: 4.5, to: 5), 0.01)
+        XCTAssertLessThan(loudness(s, from: 2.5, to: 3), 0.003)
+        // smooth: no sample jumps far from the one before (noise, a click)
+        XCTAssertLessThan(zip(s, s.dropFirst()).map { abs($0 - $1) }.max()!, 0.08)
     }
 }
