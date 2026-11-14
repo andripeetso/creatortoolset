@@ -3,11 +3,17 @@ import { Lock, UserRound } from "lucide-react";
 import { ToolsetLogo } from "@/components/HomeLink";
 import type { InviteInfo } from "@contracts/workspaces";
 import { inviteInfo, joinWithInvite } from "@/lib/workspaces";
+import { DOWNLOAD_URL } from "@/lib/setup";
 
 /**
  * /join/<token>: an invite to a team (Settings → Team; hosted servers only). Signed in: join with that account. Else
  * make an account with your own username and password (signed in at once), or sign in first and come back to the link.
+ * In a browser it also offers the Mac app: creatortoolset://join?link=<this page> adds this server there, makes it the
+ * one the window opens and opens this page in it (apps/mac inviteLink).
  */
+// the Mac app marks every page it opens (apps/mac TitleBar.swift)
+const inMacApp = typeof document !== "undefined" && document.documentElement.dataset.macLocalFiles !== undefined;
+
 export function JoinPage({ token }: { token: string }) {
   const [info, setInfo] = useState<InviteInfo | null>(null);
   const [error, setError] = useState("");
@@ -83,6 +89,18 @@ export function JoinPage({ token }: { token: string }) {
           </form>
         )}
         {error && <p className="text-xs text-red-400">{error}</p>}
+        {info && !info.expired && !info.member && !inMacApp && (
+          <p className="mt-2 text-center text-xs text-zinc-500">
+            Use the Mac app?{" "}
+            <a href={`creatortoolset://join?link=${encodeURIComponent(window.location.href)}`} className="text-zinc-300 hover:text-white">
+              Open in the app
+            </a>
+            {" · "}
+            <a href={DOWNLOAD_URL} className="text-zinc-300 hover:text-white">
+              Get it
+            </a>
+          </p>
+        )}
       </div>
     </div>
   );

@@ -223,6 +223,7 @@ export function createInvite(w: Workspace, by: { username: string; role: Workspa
     createdAt: now,
     expiresAt: now + INVITE_DAYS * DAY,
     tokenHash: sha256(token),
+    ...(input.email ? { email: input.email } : {}),
   };
   store().invites.push(invite);
   persist();

@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import type { AuthVars } from "./auth";
 import { isPluginGateId, isRetiredAppId, isTool, type PluginGateId, type Tool } from "../contracts/tools";
-import type { Member, MemberView, WorkspaceView } from "../contracts/workspaces";
+import { INVITE_DAYS, type Member, type MemberView, type WorkspaceView } from "../contracts/workspaces";
 import { pluginDefaultOff } from "./lib/plugin";
 import {
   canManage,
@@ -17,6 +17,8 @@ import {
   workspaceOf,
 } from "./lib/workspaces";
 import { findUser, setOff, type SessionUser, type UserRecord } from "./users";
+import { EMAIL_RE, mailOn, sendMail } from "./lib/mail";
+import { originOf } from "./sign-in";
 
 /**
  * Settings → Team (contracts/workspaces.ts): the team, its members, invite links and each member's AI. The owner
@@ -50,6 +52,7 @@ function viewFor(u: SessionUser): WorkspaceView | null {
     members,
     invites: manager ? invitesOf(w) : [],
     seats: w.members.filter((m) => m.role !== "owner").length,
+    ...(manager ? { mail: mailOn() } : {}),
   };
 }
 
@@ -88,11 +91,36 @@ workspaceApp.post("/invites", async (c) => {
   const m = managed(c);
   if (m.error) return m.error;
   const b = await body(c);
+  const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
+  if (email && !EMAIL_RE.test(email)) return c.json({ error: "That email address doesn't look right" }, 400);
+  if (email && !mailOn()) return c.json({ error: "Email isn't set up on this server: copy the link instead" }, 400);
+  let made: ReturnType<typeof createInvite>;
   try {
-    return c.json(createInvite(m.w, { username: m.u.username, role: m.me.role }, b));
+    made = createInvite(m.w, { username: m.u.username, role: m.me.role }, { ...b, email: email || undefined });
   } catch (e) {
     return bad(c, e);
   }
+  if (email) {
+    const from = findUser(m.u.username)?.displayName || m.u.username;
+    const link = `${originOf(c)}/join/${made.token}`;
+    try {
+      await sendMail(
+        email,
+        `${from} invited you to ${m.w.name} on Creator Toolset`,
+        `${from} invited you to join ${m.w.name} on Creator Toolset.\n\n` +
+          `Your invite (it works for ${INVITE_DAYS} days):\n${link}\n\n` +
+          `New to Creator Toolset?\n` +
+          `1. Download the app: https://creatortoolset.com/download\n` +
+          `2. Open the invite link above and choose Open in the app, or paste the link into the app's Add server.\n` +
+          `The app then opens ${m.w.name} for you: there is nothing else to set up.\n\n` +
+          `Rather use a browser? Open the invite link and join there.\n`,
+      );
+    } catch (e) {
+      revokeInvite(m.w, made.invite.id); // not sent: no link left behind that nobody has
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  }
+  return c.json(made);
 });
 
 workspaceApp.delete("/invites/:id", (c) => {

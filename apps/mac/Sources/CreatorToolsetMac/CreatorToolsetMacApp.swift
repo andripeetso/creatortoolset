@@ -203,6 +203,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 shell.showWindow()
                 continue
             }
+            // a team invite: that server added and made the one the window opens, once the person says yes (any web
+            // page can open this link, so the server's name is shown first)
+            if let link = inviteLink(from: url), let host = serverInput(link)?.url.host {
+                NSApp.activate(ignoringOtherApps: true)
+                let a = NSAlert()
+                a.messageText = "Join a team on \(host)?"
+                a.informativeText = "Creator Toolset adds this server, opens it from now on and shows the invite. Join only if you know who sent it."
+                a.addButton(withTitle: "Join")
+                a.addButton(withTitle: "Cancel")
+                if a.runModal() == .alertFirstButtonReturn { shell.addServer(link) }
+                continue
+            }
             if let href = appHref(from: url, site: shell.base) { shell.showWindow(href: href) }
         }
     }

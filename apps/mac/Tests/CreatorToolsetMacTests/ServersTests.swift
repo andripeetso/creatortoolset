@@ -53,6 +53,12 @@ final class ServersTests: XCTestCase {
         XCTAssertEqual(serverInput(" https://tools.example.com:8443/settings "), ServerInput(url: URL(string: "https://tools.example.com:8443")!, signInPath: nil))
         XCTAssertEqual(serverInput("https://tools.example.com/api/auth/link/abc_123")?.signInPath, "/api/auth/link/abc_123")
         XCTAssertNil(serverInput("https://tools.example.com/api/auth/link/")?.signInPath)
+        XCTAssertEqual(serverInput("https://tools.example.com/join/ab12")?.signInPath, "/join/ab12")
+        XCTAssertNil(serverInput("https://tools.example.com/join/ab12/x")?.signInPath)
+        let invite = "https://tools.example.com/join/ab12"
+        XCTAssertEqual(inviteLink(from: URL(string: "creatortoolset://join?link=" + invite.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)!), invite)
+        XCTAssertNil(inviteLink(from: URL(string: "creatortoolset://join?link=https%3A%2F%2Ftools.example.com%2Fsettings")!))
+        XCTAssertNil(inviteLink(from: URL(string: "creatortoolset://review/abc")!))
         XCTAssertEqual(serverInput("http://localhost:3000")?.url.absoluteString, "http://localhost:3000")
         XCTAssertNil(serverInput("http://tools.example.com"))   // never in clear to another host
         XCTAssertNil(serverInput(""))

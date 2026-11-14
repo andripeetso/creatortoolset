@@ -37,8 +37,9 @@ func seedingDefaultServer(_ defaultServer: String?, into list: [ServerEntry], se
     return (addingServer(input.url, name: "", to: list, newID: newID).servers, true)
 }
 
-/// What "Add server" was given: the server's address, and a one-time sign-in link's path when one was pasted
-/// (…/api/auth/link/<code>, from a server signed in elsewhere). A bare name gets https://.
+/// What "Add server" was given: the server's address, and the path to open there when a link was pasted: a one-time
+/// sign-in link (…/api/auth/link/<code>, from a server signed in elsewhere) or a team invite (…/join/<token>).
+/// A bare name gets https://.
 struct ServerInput: Equatable {
     let url: URL
     let signInPath: String?
@@ -49,10 +50,11 @@ func serverInput(_ text: String) -> ServerInput? {
     guard !trimmed.isEmpty else { return nil }
     let full = trimmed.contains("://") ? trimmed : "https://" + trimmed
     guard let url = siteURL(from: full), let parts = URLComponents(string: full) else { return nil }
-    let prefix = "/api/auth/link/"
     let path = parts.percentEncodedPath
-    let signIn = path.hasPrefix(prefix) && path.count > prefix.count && !path.dropFirst(prefix.count).contains("/") ? path : nil
-    return ServerInput(url: url, signInPath: signIn)
+    let opens = ["/api/auth/link/", "/join/"].contains { prefix in
+        path.hasPrefix(prefix) && path.count > prefix.count && !path.dropFirst(prefix.count).contains("/")
+    }
+    return ServerInput(url: url, signInPath: opens ? path : nil)
 }
 
 /// The list with the server added, and its id. A server already in the list (same scheme, host and port) is not

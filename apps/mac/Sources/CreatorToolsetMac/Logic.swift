@@ -24,6 +24,15 @@ func isSite(_ url: URL, _ site: URL) -> Bool {
     return url.host?.lowercased() == site.host?.lowercased() && port(url) == port(site)
 }
 
+/// A team invite from a server's join page: creatortoolset://join?link=https://tools.example.com/join/<token>. The
+/// invite's own link, for "Add server" to add that server and open the invite there; nil for anything else.
+func inviteLink(from url: URL) -> String? {
+    guard url.scheme?.lowercased() == "creatortoolset", url.host?.lowercased() == "join",
+          let link = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "link" })?.value,
+          serverInput(link)?.signInPath?.hasPrefix("/join/") == true else { return nil }
+    return link
+}
+
 /// A link the window should open: creatortoolset://review/<id>?v=2 (the scheme the app registers), or the site's own
 /// https link, as `open -a "Creator Toolset" <url>` delivers it. The path, query and fragment to load in the window;
 /// nil for anything else.

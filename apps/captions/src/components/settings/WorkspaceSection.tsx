@@ -197,7 +197,7 @@ export function WorkspaceSection() {
             {view.invites.map((i) => (
               <ListRow
                 key={i.id}
-                title="Link for one person"
+                title={i.email ? `Emailed to ${i.email}` : "Link for one person"}
                 subtitle={`Expires ${new Date(i.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`}
                 actions={
                   <RowMenu
@@ -211,7 +211,7 @@ export function WorkspaceSection() {
         </Section>
       )}
 
-      <InviteDialog open={inviting} onOpenChange={setInviting} onCreated={() => void load()} />
+      <InviteDialog open={inviting} mail={Boolean(view.mail)} onOpenChange={setInviting} onCreated={() => void load()} />
       {aiFor && <AiDialog member={aiFor} onClose={() => setAiFor(null)} onSave={(m, patch) => act(updateMember(m.username, patch))} />}
       <ToolsDialog member={editing} onClose={() => setEditing(null)} onChange={(m, off) => attempt(updateMember(m.username, { off }))} />
     </>
@@ -324,14 +324,21 @@ function ToolsDialog({ member, onClose, onChange }: { member: MemberView | null;
   );
 }
 
-/** Makes an invite link (one person, 7 days). The link is shown here once; the pending list only has Revoke. */
-function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
+/**
+ * Makes an invite link (one person, 7 days), emailed when an address is given and the server can send email. The link
+ * is shown here once; the pending list only has Revoke.
+ */
+function InviteDialog({ open, mail, onOpenChange, onCreated }: { open: boolean; mail: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
   const [link, setLink] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [sentTo, setSentTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const close = (o: boolean) => {
     if (!o) {
       setLink(null);
+      setEmail("");
+      setSentTo("");
       setCopied(false);
     }
     onOpenChange(o);
@@ -339,7 +346,9 @@ function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpen
   const make = async () => {
     setBusy(true);
     try {
-      const { token } = await createInvite({ ai: "own", budgetUsd: 0 });
+      const to = email.trim();
+      const { token } = await createInvite({ ai: "own", budgetUsd: 0, ...(to ? { email: to } : {}) });
+      setSentTo(to);
       setLink(inviteUrl(token));
       onCreated();
     } catch (e) {
@@ -362,8 +371,22 @@ function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpen
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Invite someone</DialogTitle>
-          <DialogDescription>Good for 7 days. Shown once: copy it now.</DialogDescription>
+          <DialogDescription>
+            {sentTo ? `Emailed to ${sentTo}. The link is good for 7 days.` : mail ? "Good for 7 days. Leave the email empty to copy the link yourself." : "Good for 7 days. Shown once: copy it now."}
+          </DialogDescription>
         </DialogHeader>
+        {mail && !link && (
+          <Input
+            type="email"
+            autoFocus
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !busy && void make()}
+            placeholder="Their email"
+            aria-label="Their email"
+            className="h-8 text-sm"
+          />
+        )}
         {link && <code className="block truncate rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">{link}</code>}
         <DialogFooter>
           {link ? (
@@ -381,7 +404,7 @@ function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpen
                 Cancel
               </Button>
               <Button size="sm" onClick={() => void make()} disabled={busy}>
-                {busy ? "Creating…" : "Create link"}
+                {busy ? (email.trim() ? "Sending…" : "Creating…") : email.trim() ? "Send invite" : "Create link"}
               </Button>
             </>
           )}

@@ -13,7 +13,8 @@ import type { PluginGateId, Tool } from "./tools";
  * Contract (Settings → Team; api/workspace.ts mounted at /api/workspace):
  *   GET    /api/workspace                      → WorkspaceView | null (no workspace)
  *   PATCH  /api/workspace                      { name } (owner) → WorkspaceView
- *   POST   /api/workspace/invites              InviteInput (owner) → { invite, token } (token shown once)
+ *   POST   /api/workspace/invites              InviteInput (owner) → { invite, token } (token shown once; with `email`
+ *                                               the link is also emailed, api/lib/mail.ts)
  *   DELETE /api/workspace/invites/:id          (owner)
  *   PATCH  /api/workspace/members/:username    MemberPatch (owner) → WorkspaceView
  *   DELETE /api/workspace/members/:username    (owner; the owner can't be removed)
@@ -58,9 +59,11 @@ export interface Invite {
   createdBy: string;
   createdAt: number;
   expiresAt: number;
+  /** where the link was emailed, when it was */
+  email?: string;
 }
 
-export type InviteInput = Pick<Invite, "ai" | "budgetUsd">;
+export type InviteInput = Pick<Invite, "ai" | "budgetUsd" | "email">;
 /** `off`: apps and plug-in gates switched off for the member's account; a platform admin switches a plug-in's gates. */
 export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd" | "scripts">> & { off?: (Tool | PluginGateId)[] };
 
@@ -83,6 +86,8 @@ export interface WorkspaceView {
   invites: Invite[];
   /** seats in use: everyone but the owner */
   seats: number;
+  /** the server can email invites (RESEND_API_KEY and MAIL_FROM set): the owner only */
+  mail?: boolean;
 }
 
 export interface InviteInfo {
