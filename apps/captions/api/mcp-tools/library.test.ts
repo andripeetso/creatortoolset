@@ -184,10 +184,14 @@ describe("the media tools follow the install's library", () => {
     tiny.late = 120_000;
     try {
       const call = tool(key, "media_search", { q: "beach" });
-      // a second at a time: the search reads files (the workspace, the libraries) before it starts the source's clock
+      // a second at a time until it answers, letting real file reads finish in between: the search reads the workspace and
+      // the libraries from disk before it starts the source's clock, and under a busy full run that takes a while
       let done = false;
       void call.finally(() => (done = true));
-      for (let s = 0; s < 51 && !done; s++) await vi.advanceTimersByTimeAsync(1_000);
+      for (let s = 0; s < 2_000 && !done; s++) {
+        await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
       const out = (await call).value;
       expect(out.files.map((f: { source: string }) => f.source)).toEqual(["Library", "Library"]);
       expect(out.note).toBe("Tiny archive did not answer.");
