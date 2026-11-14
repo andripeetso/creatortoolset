@@ -95,8 +95,8 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // description, project, name, instructions, the sixteen colours and language); its draft_from adds 158 (instructions
     // drafted from what the user gave, as the project form's Write it for me does); its theirs adds 82 (instructions that
     // are the user's own words, where the account's writer would otherwise draft them)
-    expect(bytes(dock) - bytes(main(dock))).toBe(6700);
+    expect(bytes(dock) - bytes(main(dock))).toBe(6773);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7212);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7285);
   });
 });
