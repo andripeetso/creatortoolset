@@ -93,9 +93,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // words too, and reads one; their 207- and 205-byte descriptions, query, id, limit and before)
     // workshop_project_update adds 699 (a project's name, instructions, colour and language changed in a chat: its 322-byte
     // description, project, name, instructions, the sixteen colours and language); its draft_from adds 158 (instructions
-    // drafted from what the user gave, as the project form's Write it for me does)
-    expect(bytes(dock) - bytes(main(dock))).toBe(6515);
+    // drafted from what the user gave, as the project form's Write it for me does); its theirs adds 82 (instructions that
+    // are the user's own words, where the account's writer would otherwise draft them)
+    expect(bytes(dock) - bytes(main(dock))).toBe(6597);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7027);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7109);
   });
 });

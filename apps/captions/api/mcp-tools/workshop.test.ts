@@ -219,7 +219,7 @@ describe("workshop_project_update", () => {
     const id = String(made.id);
     await tool(key, "workshop_set_project", { project: id });
 
-    const out = await tool(key, "workshop_project_update", { instructions: "For new dog owners. Never promise results.", color: "lime", language: "et" });
+    const out = await tool(key, "workshop_project_update", { instructions: "For new dog owners. Never promise results.", theirs: true, color: "lime", language: "et" });
     expect(out.value).toEqual({ project: { id, name: "Puppy school", instructions: "For new dog owners. Never promise results.", color: "lime", languages: ["et"] } });
     // the old audience field is folded in, as the form does: the prompt reads the instructions once
     const saved = (await page<Row[]>(cookie, "/api/workshop/projects")).find((p) => p.id === id)!;
@@ -247,7 +247,7 @@ describe("workshop_project_update", () => {
 });
 
 describe("who writes a piece", () => {
-  it("every caller, the app's assistant or an AI app outside, is sent to the Workshop's writer where the account has one; without one it writes itself", async () => {
+  it("every caller reads the same guide: the Workshop's writer writes a piece's words (an AI app's store keeps one copy for everyone)", async () => {
     const t = await turn(await cookieOf("ana"), "Write me an X thread");
     const guide = async (authorization: string) =>
       String(((await (await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { authorization }) })).json()) as { result: { instructions: string } }).result.instructions);
@@ -255,16 +255,61 @@ describe("who writes a piece", () => {
     const outside = await guide(key);
     const noWriter = await guide(`Bearer ${newApiKey(nico, "full")}`);
     await t.end();
-    for (const g of [dock, outside]) {
-      expect(g).toContain("the words in a piece come from the Workshop's own writer");
+    for (const g of [dock, outside, noWriter]) {
+      expect(g).toContain("the words in a piece come from the Workshop's own writer (workshop_chat)");
       expect(g).toContain("workshop_project_update with draft_from");
       expect(g).not.toContain("Here you are the writer");
     }
     // the cards are an AI app's alone
     expect(dock).not.toContain("Cards:");
     expect(outside).toContain("Cards:");
-    expect(noWriter).toContain("Here you are the writer");
-    expect(noWriter).not.toContain("the words in a piece come from");
+    expect(noWriter).toBe(outside);
+  });
+
+  it("where the account has a writer, a caller's own words go to it: the dock's are checked against what was typed, an AI app says they are the user's", async () => {
+    const cookie = await cookieOf("ana");
+    const typed = "Put this in as the first line: the dogs just learn to sit on the first day";
+    const t = await turn(cookie, typed);
+    const s = (await tool(t.token, "workshop_new_session", { title: "Puppy school" })).value!;
+    const piece = String((s.pieces as Row[])[0]!.id);
+    const blocks = async () => ((await page<Doc[]>(cookie, `/api/workshop/sessions/${s.id}/docs`)).find((d) => d.id === piece)?.blocks ?? []).map((b) => b.text);
+
+    // the assistant's own line is not saved, and the answer sends it to the writer
+    const own = (await tool(t.token, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Sit happens. Day one." }] })).value!;
+    expect(own).toMatchObject({ saved: false });
+    expect(String(own.answer)).toContain("Call workshop_chat");
+    expect(await blocks()).toEqual([]);
+    // saying they are the user's doesn't get the dock past it: it is checked
+    expect((await tool(t.token, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Sit happens. Day one." }], theirs: true })).value).toMatchObject({ saved: false });
+    // the user's own words, as typed, are kept
+    await tool(t.token, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "the dogs just learn to sit on the first day" }] });
+    expect(await blocks()).toEqual(["the dogs just learn to sit on the first day"]);
+    // a new piece with the assistant's words is made empty
+    const made = (await tool(t.token, "workshop_new_piece", { session: s.id, kind: "thread", text: "Big news, dog people." })).value!;
+    expect(made).toMatchObject({ saved_text: false });
+    // a project's instructions it wrote itself go through Write it for me
+    const project = String((await page(cookie, "/api/workshop/projects", "POST", { name: "Puppy school" })).id);
+    expect((await tool(t.token, "workshop_project_update", { project, instructions: "Voice: short sentences." })).value).toMatchObject({ saved: false });
+    await t.end();
+
+    // an AI app can't be checked: it says the words are the user's, or they go to the writer
+    expect((await tool(key, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Sit happens." }] })).value).toMatchObject({ saved: false });
+    await tool(key, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Sit happens." }], theirs: true });
+    expect(await blocks()).toEqual(["Sit happens."]);
+    // a block kept as it is, by its id, is not new words
+    const kept = (await page<Doc[]>(cookie, `/api/workshop/sessions/${s.id}/docs`)).find((d) => d.id === piece)!.blocks[0]!;
+    expect((await tool(key, "workshop_edit_piece", { session: s.id, piece, title: "Day one", blocks: [{ id: kept.id, text: kept.text }] })).value).not.toMatchObject({ saved: false });
+  });
+
+  it("an account with no writer: workshop_chat answers so, without an error, and the caller writes the piece", async () => {
+    const nicoKey = `Bearer ${newApiKey(nico, "full")}`;
+    const s = (await tool(nicoKey, "workshop_new_session", { title: "Balloon keep-up" })).value!;
+    const piece = String((s.pieces as Row[])[0]!.id);
+    const asked = await tool(nicoKey, "workshop_chat", { session: s.id, piece, message: "Write a reel about balloon keep-up, five short lines." });
+    expect(asked.value).toMatchObject({ writer: "none" });
+    await tool(nicoKey, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Keep the balloon up." }] });
+    const docs = await page<Doc[]>(await cookieOf("nico"), `/api/workshop/sessions/${s.id}/docs`);
+    expect(docs.find((d) => d.id === piece)!.blocks.map((b) => b.text)).toEqual(["Keep the balloon up."]);
   });
 
   it("the writer gets what the person typed to the assistant, and the assistant's own message only as its notes", async () => {

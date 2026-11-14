@@ -109,7 +109,7 @@
   },
   {
    "name": "workshop_new_piece",
-   "description": "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
+   "description": "Add another piece to a session. Its words come from the Workshop's writer: leave text out and call workshop_chat. text, its first block, is for the user's own words.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -134,6 +134,10 @@
      },
      "text": {
       "type": "string"
+     },
+     "theirs": {
+      "type": "boolean",
+      "description": "the text is the user's own words"
      }
     },
     "required": [
@@ -144,7 +148,7 @@
   },
   {
    "name": "workshop_edit_piece",
-   "description": "Write in a piece yourself. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+   "description": "Put the user's own words in a piece, or a change they spelled out word for word (new words come from workshop_chat). blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -196,6 +200,10 @@
      },
      "pinned": {
       "type": "string"
+     },
+     "theirs": {
+      "type": "boolean",
+      "description": "the text is the user's own words"
      }
     },
     "required": [
@@ -206,7 +214,7 @@
   },
   {
    "name": "workshop_chat",
-   "description": "Ask the Workshop's writer, in a session's chat, about one piece (it may edit the piece). Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
+   "description": "The Workshop's writer writes or changes a piece, in the session's chat: it reads the user's posts and how they rewrote its drafts. message is what the user asked, in their own words; notes is what you found. Where the account has no writer, the answer says so: then write the words with workshop_edit_piece. Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
    "inputSchema": {
     "type": "object",
     "properties": {

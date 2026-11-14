@@ -11,7 +11,7 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSend, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { askConfirm, askFolder, askSend, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
 import { SESSION_STATUSES } from "./lib/workshop/types";
@@ -169,17 +169,17 @@ export const TOOLS = [
   },
   {
     name: "workshop_new_piece",
-    description: "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
-    inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str }, required: ["session", "kind"] },
+    description: "Add another piece to a session. Its words come from the Workshop's writer: leave text out and call workshop_chat. text, its first block, is for the user's own words.",
+    inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str, theirs: { type: "boolean", description: "the text is the user's own words" } }, required: ["session", "kind"] },
   },
   {
     name: "workshop_edit_piece",
-    description: "Write in a piece yourself. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
-    inputSchema: { type: "object", properties: { session: str, piece: str, title: str, blocks: lines, hooks: lines, caption: str, pinned: str }, required: ["session", "piece"] },
+    description: "Put the user's own words in a piece, or a change they spelled out word for word (new words come from workshop_chat). blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+    inputSchema: { type: "object", properties: { session: str, piece: str, title: str, blocks: lines, hooks: lines, caption: str, pinned: str, theirs: { type: "boolean", description: "the text is the user's own words" } }, required: ["session", "piece"] },
   },
   {
     name: "workshop_chat",
-    description: "Ask the Workshop's writer, in a session's chat, about one piece (it may edit the piece). Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
+    description: "The Workshop's writer writes or changes a piece, in the session's chat: it reads the user's posts and how they rewrote its drafts. message is what the user asked, in their own words; notes is what you found. Where the account has no writer, the answer says so: then write the words with workshop_edit_piece. Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -633,10 +633,24 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
       return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
     },
-    workshop_new_piece: async (a) => piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, ["kind", "title", "text"]))),
+    workshop_new_piece: async (a) => {
+      // words that aren't the user's: the piece is made empty and the writer is next
+      const toWriter = typeof a.text === "string" && (await notTheirs(call, auth, user, [a.text], a.theirs));
+      const made = piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, toWriter ? ["kind", "title"] : ["kind", "title", "text"])));
+      return toWriter ? { ...made, saved_text: false, answer: `Made it empty. ${TO_WRITER}` } : made;
+    },
     workshop_edit_piece: async (a) => {
       const body = pick(a, ["title", "blocks", "hooks", "caption", "pinned"]);
       if (!Object.keys(body).length) throw new ToolError("Nothing to change.");
+      // only the words that change are checked: a block or hook kept as it is, by its id, is the piece's already
+      const now = (await ws<Args[]>(`/sessions/${a.session}/docs`)).find((d) => d.id === a.piece);
+      const had = new Map([...((now?.blocks as Args[] | undefined) ?? []), ...((now?.hooks as Args[] | undefined) ?? [])].map((b) => [b.id, b.text]));
+      const was = (f: string) => String(((now?.[f] as Args | undefined)?.text as string | undefined) ?? "");
+      const changed = [
+        ...[...((a.blocks as Args[] | undefined) ?? []), ...((a.hooks as Args[] | undefined) ?? [])].filter((b) => had.get(b.id) !== b.text).map((b) => String(b.text ?? "")),
+        ...(["caption", "pinned"] as const).filter((f) => typeof a[f] === "string" && a[f] !== was(f)).map((f) => String(a[f])),
+      ];
+      if (await notTheirs(call, auth, user, changed, a.theirs)) return { saved: false, answer: TO_WRITER };
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
@@ -644,6 +658,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       // wrote it; the assistant's message rides along as its notes. Its own retelling came out as the person's brief
       // and the writer took it for their words (owner, 2026-11-14). A scheduled run has nobody typing: its message goes as it is.
       // Any other caller (an AI app, a script) sends the user's words in message and its own in notes.
+      // an account with no AI to write with gets an answer, not an error: the caller writes
+      if (!(await workshopWrites(call, auth))) return { writer: "none", answer: "This account's Workshop has no AI to write with: write the words yourself with workshop_edit_piece." };
       const turn = isJob(auth) ? jobTurn(auth.get("authorization") ?? undefined) : null;
       const typed = turn ? saidInChat(user.username, turn)?.[0]?.text : undefined;
       const notes = [typed ? a.message : "", a.notes].filter((t): t is string => typeof t === "string" && !!t.trim()).join("\n\n");
@@ -1312,6 +1328,7 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
       throw new Asked(question);
     },
     ...(turn ? { open: async (p: string) => void (await navigateTo(user.username, p, turn)) } : {}),
+    notTheirs: (texts, theirs) => notTheirs(call, auth, user, texts, theirs),
   };
   const plug = plugged.handlers.get(name);
   const own = notHere(name) ? undefined : MODULE_HANDLERS.get(name);
@@ -1363,28 +1380,41 @@ a card, where the app can draw one. The card already shows the content, plays th
 buttons (open it in Creator Toolset, resolve a comment): do not repeat it line by line. Say what you did or found in a
 sentence or two, and what the user could do next.`;
 
-/** An account whose Workshop has no AI to write with: whoever calls writes the words. */
-const SELF_WRITER_GUIDE = `Here you are the writer: write and change scripts yourself with workshop_new_piece and workshop_edit_piece, so the user
-sees them saved at once. workshop_chat asks the Workshop's own writer, which needs a computer paired to the account:
-use it only when the user asks for that writer.`;
+/**
+ * Every caller, the same text (an AI app reads the copy its store scanned, so nothing here may differ per account). A
+ * caller doesn't see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13).
+ * What differs per account comes back in a tool's answer: notTheirs, and workshop_chat with no writer.
+ */
+const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer (workshop_chat), which reads
+the user's posts and how they rewrote its drafts. Give it what the user asked, in their own words, and what you found in
+notes. workshop_new_piece and workshop_edit_piece are for the user's own words; where the account has no writer,
+workshop_chat says so and you write them. A project's instructions: workshop_project_update with draft_from, as the
+project form's Write it for me does.`;
+
+const TO_WRITER = "These words aren't the user's own, and this account's Workshop has a writer: it writes a piece's words. Call workshop_chat on the piece with what the user asked, in their own words, and what you found in notes.";
 
 /**
- * Every caller where the account's Workshop can write (the app's own assistant, an AI app, a script). A caller doesn't
- * see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13); every caller is
- * to use the worker that has the context (2026-11-14).
+ * Where the account's Workshop has a writer, the words in a piece and a project's instructions are the user's own or
+ * the writer's: true when `texts` are neither, and the call goes to the writer instead. A guide alone did not hold it:
+ * a real model, told so, still wrote the pieces itself (owner, 2026-11-14: the chat calls the worker that has the
+ * context). The app's own assistant's words are checked against what the person typed or pasted in that chat (what a
+ * style's text is held to: own-words.ts); a scheduled run has typed nothing. Any other caller can't be checked: it
+ * says they are the user's with `theirs`.
  */
-const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer. It reads the project, the
-user's own posts and how they rewrote its earlier drafts, which you don't see. Make the piece empty and call workshop_chat
-with what the user asked, in their own words, and what you found in notes. A change they ask for to a piece's words goes
-the same way. Write with workshop_new_piece or workshop_edit_piece only the user's own words, or a change they spelled
-out word for word. A project's instructions: workshop_project_update with draft_from, as the project form's Write it for
-me does.`;
+export async function notTheirs(call: Call, auth: Headers, user: SessionUser, texts: string[], theirs: unknown): Promise<boolean> {
+  const sent = texts.filter((t) => t.trim());
+  if (!sent.length || !(await workshopWrites(call, auth))) return false;
+  if (!isJob(auth)) return theirs !== true;
+  const turn = jobTurn(auth.get("authorization") ?? undefined) ?? "";
+  const own = [...(saidInChat(user.username, turn) ?? []).map((m) => m.text), ...(pastedInChat(user.username, turn) ?? [])];
+  return sent.some((t) => !own.some((o) => foundIn(t, o)));
+}
 
-/** The account's Workshop has an AI to write with, on a computer that is on where it runs on one (GET /api/workshop/availability). */
+/** The account's Workshop has an AI to write with: what its chat itself asks before a turn (GET /api/workshop/availability). */
 async function workshopWrites(call: Call, auth: Headers): Promise<boolean> {
   try {
-    const a = (await (await apiOf(call, auth)("/api/workshop/availability")).json()) as { ai?: boolean; mac?: boolean };
-    return !!a.ai && a.mac !== false;
+    const a = (await (await apiOf(call, auth)("/api/workshop/availability")).json()) as { ai?: boolean };
+    return !!a.ai;
   } catch {
     return false; // a key that can't read the Workshop: it writes with the tools it has
   }
@@ -1403,7 +1433,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, (await workshopWrites(call, auth)) ? WRITER_GUIDE : SELF_WRITER_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});

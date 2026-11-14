@@ -81,6 +81,10 @@ async function projectUpdate(a: Args, ctx: ToolContext) {
   const name = from && (a.name ?? was?.name);
   // a draft replaces the instructions whole: ones already written are asked about first (before the draft runs)
   if (from && String(was?.notes ?? "").trim()) await ctx.sure(`Replace "${String(was?.name ?? "the project")}"'s instructions with a new draft?`);
+  // written by the caller itself: the form's own draft writes them instead (an account with no AI to draft keeps them)
+  if (!from && typeof a.instructions === "string" && (await ctx.notTheirs([a.instructions], a.theirs))) {
+    return { saved: false, answer: "These instructions aren't the user's own words: give what they said about the project as draft_from, and the project form's Write it for me writes the facts from it." };
+  }
   const instructions = from ? (await ctx.json<{ notes: string }>("/api/workshop/projects/draft-notes", "POST", { name, text: from })).notes : a.instructions;
   // the instructions are one text: the old audience, voice and CTA fields are folded into it, as the form does
   if (instructions !== undefined) Object.assign(body, { notes: instructions, audience: "", voice: "", cta: "" });
@@ -109,7 +113,7 @@ export const workshopTools: ToolModule = {
         'Change a Workshop project: its name, its instructions (the text always in its prompt; this replaces it whole, so read it with workshop_projects first and keep what holds: the user\'s own words, or draft_from = what they gave about the project, written into facts as the form\'s Write it for me does), its colour, or the language spoken in its videos (a two-letter code, "" = the person\'s own). Only what you give changes. No project = the current one.',
       inputSchema: {
         type: "object",
-        properties: { project: str, name: str, instructions: str, draft_from: str, color: { type: "string", enum: [...PROJECT_COLORS] }, language: str },
+        properties: { project: str, name: str, instructions: str, theirs: { type: "boolean", description: "instructions are the user's own words" }, draft_from: str, color: { type: "string", enum: [...PROJECT_COLORS] }, language: str },
       },
     },
   ],

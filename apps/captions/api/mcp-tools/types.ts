@@ -38,6 +38,8 @@ export type ToolContext = {
    * Only there in the app's own assistant: a caller from outside has no window of this app to open it in.
    */
   open?: (path: string) => Promise<void>;
+  /** True when these words are neither the user's own nor the Workshop writer's, on an account that has a writer (mcp.ts notTheirs). */
+  notTheirs: (texts: string[], theirs: unknown) => Promise<boolean>;
 };
 
 export type ToolHandler = (args: Args, ctx: ToolContext) => Promise<unknown>;

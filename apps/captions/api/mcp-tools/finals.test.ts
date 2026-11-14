@@ -142,7 +142,7 @@ describe("finals_pieces", () => {
     expect(listed.filter((p) => p.session).map((p) => [p.id, p.session])).toEqual([[RAINY, session.id]]);
     // the post description written in that session (on its piece with words in it) comes with the piece in full
     const doc = (await site(anaCookie, `/api/workshop/sessions/${session.id}/docs`)).find((d: { kind: string }) => d.kind !== "notes");
-    expect((await tool(anaKey, "workshop_edit_piece", { session: session.id, piece: doc.id, blocks: [{ text: "Roll through the puddle." }], caption: "Roll through the rain." })).error).toBe(false);
+    expect((await tool(anaKey, "workshop_edit_piece", { session: session.id, piece: doc.id, blocks: [{ text: "Roll through the puddle." }], caption: "Roll through the rain.", theirs: true })).error).toBe(false);
     expect((await tool(anaKey, "finals_pieces", { piece: RAINY })).value).toMatchObject({ id: RAINY, session: session.id, session_post_description: "Roll through the rain." });
     // a version with no post description of its own shows the one the session's writer wrote for it (kept in the session, by the version's id)
     const version = (await onPage(RAINY)).items[0]!.id;
