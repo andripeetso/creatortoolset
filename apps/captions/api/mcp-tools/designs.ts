@@ -16,6 +16,8 @@ type Image = { text: string; jpeg: string };
 
 const enc = (v: unknown) => encodeURIComponent(String(v));
 const about = (origin: string, d: { id: string; name: string }, frames: number) => ({ id: d.id, name: d.name, link: `${origin}/design/${d.id}`, frames });
+/** A design that still has the name it was started with ("Untitled canvas", "Untitled design"): the AI that designs in it names it. */
+const unnamed = (d: { name: string }) => (/^untitled\b/i.test(d.name.trim()) ? { unnamed: `The design is still called "${d.name}": give it a short name for what is on it (design_update with id and name).` } : {});
 
 /** The frames as they are drawn: each as a picture the AI is shown (six at a time), and the words that do not fit their box. Where no picture can be made, the answer says why. */
 async function seen(ctx: ToolContext, at: string, frames: readonly Frame[], only?: readonly string[]): Promise<{ said: Args; images: Image[] }> {
@@ -53,8 +55,8 @@ export const designTools: ToolModule = {
     },
     {
       name: "design_update",
-      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers, picture copies a library video's moment in. The answer shows the changed frames as pictures and says what was left out or does not fit.",
-      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, picture: { type: "object" } }, required: ["id"] },
+      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). The answer shows the changed frames as pictures and says what was left out or does not fit.",
+      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, picture: { type: "object" }, name: str }, required: ["id"] },
     },
     {
       name: "carousel_style_save",
@@ -105,10 +107,13 @@ export const designTools: ToolModule = {
     design_update: async (a, ctx) => {
       if (!a.id) throw new ToolError("Give the design's id: design_get lists the designs.");
       const at = `/api/designs/${enc(a.id)}`;
+      // a name first: the answer and the card under the reply carry it
+      const named = typeof a.name === "string" && a.name.trim() ? await ctx.json<Design>(at, "PUT", { name: a.name }) : null;
       // a picture first: it is in the design before the frames that may show it are checked
       const picture = a.picture ? (await ctx.json<{ id: string }>(`${at}/pictures`, "POST", a.picture)).id : "";
       const added = picture ? { picture_added: picture } : {};
       if (picture && !a.frames && !a.changes) return { id: a.id, ...added };
+      if (named && !a.frames && !a.changes) return about(ctx.origin, named, named.pages.length);
       // a change that asks for a cut-out: the picture is cut first (a new picture of the design), and the change becomes
       // a plain one that shows it and remembers the picture it was cut from
       const changes = Array.isArray(a.changes) ? (a.changes as Args[]) : undefined;
@@ -133,7 +138,7 @@ export const designTools: ToolModule = {
       const drawn = await seen(ctx, at, frames, touched);
       // each frame written, with the layers this call wrote in it (a frame given whole: all of them)
       const changed = wrote.map((w) => ({ frame: w.frame, n: frames.find((f) => f.id === w.frame)?.n, ...(w.isNew ? { new: true } : {}), layers: w.layers }));
-      return { ...about(ctx.origin, design, design.pages.length), ...added, changed, ...(notes.length ? { left_out: notes } : {}), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
+      return { ...about(ctx.origin, design, design.pages.length), ...added, changed, ...(notes.length ? { left_out: notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
     },
   },
   steps: { design_get: "Looking at the design", design_make: "Starting the design", design_update: "Designing" },

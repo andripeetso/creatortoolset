@@ -128,6 +128,24 @@ describe("the Designer's tools", () => {
     expect((await tool(nicoKey, "design_make", { version: "ver_t", t: 1 })).error).toBe(true);
   });
 
+  it("a canvas the user started untitled is named by the AI that designs in it", async () => {
+    // the user's own blank canvas, as the Designer's New canvas makes it
+    const r = await app.request("/api/designs", { method: "POST", headers: { "content-type": "application/json", authorization: anaKey }, body: JSON.stringify({ format: "portrait", blank: true, pages: 0, name: "Untitled canvas" }) });
+    const { id } = (await r.json()) as { id: string };
+    const frame = { w: 1080, h: 1350, background: "#1a0b2e", layers: [{ type: "shape", shape: "ellipse", fill: "#ff7a00", x: 340, y: 500, w: 400, h: 400 }] };
+    // designed without a name: the answer says to give it one
+    const wrote = await tool<Made & { unnamed?: string }>(anaKey, "design_update", { id, frames: [frame] });
+    expect(wrote.out.unnamed).toContain('"Untitled canvas"');
+    // a name alone renames it
+    const named = await tool<Made & { unnamed?: string }>(anaKey, "design_update", { id, name: "  Sunset  " });
+    expect(named.out).toMatchObject({ id, name: "Sunset", frames: 1 });
+    // designed with a name in the same call: named, and nothing more to say about it
+    const both = await tool<Made & { unnamed?: string }>(anaKey, "design_update", { id, name: "Sunset over the sea", frames: [{ ...frame, id: wrote.out.changed![0]!.frame }] });
+    expect(both.out).toMatchObject({ name: "Sunset over the sea" });
+    expect(both.out).not.toHaveProperty("unnamed");
+    expect((await tool<{ designs: Array<{ id: string; name: string }> }>(anaKey, "design_get")).out.designs).toContainEqual(expect.objectContaining({ id, name: "Sunset over the sea" }));
+  });
+
   it("the assistant in the app has the same three tools, and they are refused for an account whose Designer is switched off", async () => {
     const dock = `Bearer ${mintJobToken("ana", "turn-design")}`;
     const listed = (await (await app.request("/api/mcp", { method: "POST", headers: { "content-type": "application/json", authorization: dock }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) })).json()) as { result: { tools: Array<{ name: string }> } };
