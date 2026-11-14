@@ -21,6 +21,8 @@ import { cardsApp } from "./cards/routes";
 import { markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
+import { inProjectOf } from "../lib/project-of";
+import { resolveProjectId } from "../lib/workshop/workspace";
 
 /**
  * AI Editor routes (contracts/editor.ts), mounted at /api/editor behind the `editor` tool gate (boot.ts). An edit that
@@ -52,7 +54,10 @@ onUploadDone.push((id, version) => void uploadFinished(id, version));
 editorApp.post("/", async (c) => {
   const user = c.get("user").username;
   try {
-    const e = await createEdit(user, await body(c), viaTool(c));
+    const b = await body(c);
+    // made in the project asked for, if it is the person's, else the one they are in
+    const projectId = await resolveProjectId(c.get("user"), typeof b.projectId === "string" ? b.projectId : null);
+    const e = await createEdit(user, b, viaTool(c), projectId);
     return e ? c.json({ id: e.id }) : notFound(c);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
@@ -61,10 +66,12 @@ editorApp.post("/", async (c) => {
   }
 });
 
-editorApp.get("/", (c) => {
+/** The person's edits, newest first; ?projectId= only those of that project of theirs (lib/project-of.ts). */
+editorApp.get("/", async (c) => {
   const user = c.get("user").username;
+  const inProject = await inProjectOf(c.get("user"), c.req.query("projectId"));
   const list = allEdits()
-    .filter((e) => !e.trashedAt && e.createdBy === user)
+    .filter((e) => !e.trashedAt && e.createdBy === user && (!inProject || inProject(e.projectId)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return c.json(list.map(summaryOf));
 });

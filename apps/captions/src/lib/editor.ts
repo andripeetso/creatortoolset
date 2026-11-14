@@ -18,7 +18,8 @@ async function send<T>(url: string, method = "GET", body?: unknown): Promise<T> 
 
 const base = (id: string) => `/api/editor/${id}`;
 
-export const listEdits = () => send<EditSummary[]>("/api/editor");
+/** The person's edits, newest first; with a project, only that project's. */
+export const listEdits = (projectId?: string | null) => send<EditSummary[]>(`/api/editor${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`);
 export const footageTarget = () => send<FootageTarget>("/api/editor/footage-target", "GET");
 export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "POST", e);
 /** The voices of the person's ElevenLabs account, and a voice made from text: saved in the Media Library as a take. */
