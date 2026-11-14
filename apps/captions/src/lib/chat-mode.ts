@@ -248,14 +248,20 @@ export function holdChatMode(from: HTMLElement | null): void {
 }
 
 /**
- * The pointer came onto chat mode's button, in the Mac app: the app takes its picture of the screen now, so a press shows
- * the wave at once (a picture of a big window can take half a second; owner, 11-14: "the first time I clicked it it
- * lagged a bit ... sometimes the hold doesn't trigger").
+ * The pointer came onto chat mode's button (`false`: it left), in the Mac app: once it has rested there a moment the app
+ * takes its picture of the screen, so a press shows the wave at once (a picture of a big window can take half a second;
+ * owner, 11-14: "the first time I clicked it it lagged a bit ... sometimes the hold doesn't trigger"). Not for a pointer
+ * only passing: taking it holds the page still for as long.
  */
-export function readyChatMode(): void {
-  const mac = macWave();
-  if (mac && waves()) void mac.postMessage("ready").catch(() => {});
+export function readyChatMode(over = true): void {
+  clearTimeout(readyLater);
+  if (!over) return;
+  readyLater = window.setTimeout(() => {
+    const mac = macWave();
+    if (mac && waves()) void mac.postMessage("ready").catch(() => {});
+  }, 120);
 }
+let readyLater = 0;
 
 /** The pointer's press switched chat mode (holdChatMode), and the click it ends with is still to come. */
 let pressed = false;

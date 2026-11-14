@@ -83,6 +83,8 @@ final class ChatWaveHost {
     /// update, so with the button's look under the pointer.
     private func prepare() {
         guard wave == nil, earlyWaiting == nil, let view, let renderer = WaveRenderer.shared else { return }
+        // (taking one holds the page still for as long: not again while the last is fresh)
+        if let e = early, CACurrentMediaTime() - e.at < 2 { return }
         waveLog.notice("ready: taking the picture early")
         earlyWaiting = []
         view.takeSnapshot(with: nil) { image, _ in
@@ -141,14 +143,24 @@ final class ChatWaveHost {
                 self?.sound.end()
                 return reply(false, nil)
             }
-            waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early), made in \(Int((CACurrentMediaTime() - making) * 1000)) ms")
             self.wave = wave
             wave.onDone = { [weak self] in
                 self?.wave = nil
                 self?.drawn?(true, nil)
                 self?.drawn = nil
             }
-            reply(true, nil)
+            // The page changes once the picture of the screen as it was is on show, not before: the new screen would
+            // flash for a frame (a switch to a light page is drawn that quickly). Should no frame come (its window hidden),
+            // it changes anyway.
+            var answered = false
+            let answer = {
+                guard !answered else { return }
+                answered = true
+                waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early), made in \(Int((CACurrentMediaTime() - making) * 1000)) ms")
+                reply(true, nil)
+            }
+            wave.onShown = answer
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: answer)
         }
     }
 }
@@ -213,9 +225,9 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     if (x < -4.6) return float4(0.0);
     float ahead = smoothstep(-0.4, 0.4, x);
     // The top bar goes with the rest (owner, 11-14: "I want this top half also to be affected"), all but the button
-    // under the pointer: nothing within 14 points of the middle of it moves, blurs or splits, so it stays put (11-13:
-    // "the button underneath my mouse should not move"); the wave comes in over the next 26.
-    float still = smoothstep(14.0 * pt, 40.0 * pt, r);
+    // under the pointer: nothing within 20 points of the middle of it (its corners) moves, blurs or splits, so it stays
+    // put (11-13: "the button underneath my mouse should not move"); the wave comes in over the next 26.
+    float still = smoothstep(20.0 * pt, 46.0 * pt, r);
 
     // The screen that was falls toward the button: what is near it shrinks into it, what is further is stretched
     // toward it, and all of it turns a little round it. Each point is drawn in until the front comes, and let go as it
@@ -525,6 +537,8 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
     /// Whether the mouse button is down now (a test sets its own).
     static var mouseDown: () -> Bool = { NSEvent.pressedMouseButtons & 1 != 0 }
     var onDone: (() -> Void)?
+    /// The first frame is on the screen (called on the main thread).
+    var onShown: (() -> Void)?
     private let sound: WaveSound?
 
     init(over view: NSView, was: Picture, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool,
@@ -565,6 +579,12 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Gone without being finished (its window closed mid-wave): its thread and display link stop with it.
+    deinit {
+        shared.withLock { $0.over = true }
+        link?.invalidate()
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -666,6 +686,14 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         pass.colorAttachments[0].storeAction = .store
         renderer.encode(m, size: state.size, origin: o, tint: tint, dark: dark, into: pass, on: buffer, was: was, now: state.now)
+        if frames == 1 {
+            update.drawable.addPresentedHandler { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.onShown?()
+                    self?.onShown = nil
+                }
+            }
+        }
         buffer.present(update.drawable)
         buffer.commit()
     }
