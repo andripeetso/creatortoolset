@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { BROWSE_TOOLS, BROWSE_VIEWS, persistDefaultView, resetDefaultViews, useDefaultViews, type BrowseTool } from "@/components/browse/views";
 import { canUse, canUseTile, useMe } from "@/lib/auth";
 import { canRecordScreen } from "@/lib/mac-record";
-import { persistHomeGlow, persistOwnColour, persistProjectTint, useAppearance } from "@/lib/settings";
+import { persistChatWave, persistHomeGlow, persistOwnColour, persistProjectTint, useAppearance } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { isHexColour, PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
 import { persistClipView, useClipView, type ClipView } from "@/pages/library/clip";
@@ -58,9 +58,10 @@ function Preview({ look }: { look: Look }) {
   );
 }
 
-/** Settings → Appearance: the theme, the colour, and what a Media Library clip opens in. */
+/** Settings → Appearance: the theme, the colour, the chat-mode wave, and what a Media Library clip opens in. */
 export function AppearanceSection() {
   const { choice, setChoice, dark } = useShareTheme();
+  const { chatWave } = useAppearance();
   const clipView = useClipView();
   return (
     <>
@@ -104,6 +105,17 @@ export function AppearanceSection() {
       </Section>
 
       <Colour dark={dark} />
+
+      <Section title="Chat mode">
+        <Card>
+          <Row
+            id="chat-wave"
+            title="Transition effect"
+            description="A wave from the button when chat mode turns on or off"
+            control={<Switch checked={chatWave} aria-label="Chat mode transition effect" onCheckedChange={persistChatWave} />}
+          />
+        </Card>
+      </Section>
 
       <Section title="Media Library">
         <Card>

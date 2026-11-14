@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { create } from "zustand";
+import { storedChatWave } from "@/lib/settings";
 
 /**
  * Chat mode: the assistant fills the left of the window (every chat in a list, the open one beside it) and the page the
@@ -217,8 +218,17 @@ export function useChatModeKey(enabled: boolean): void {
   }, [enabled]);
 }
 
-/** Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that is shown with the wave. */
+/**
+ * Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that is shown with the wave. Pressed
+ * again while the wave runs, it switches back once that wave is over, with a wave of its own: a wave is never cut off
+ * halfway (owner, 11-14: "clicking it fast interrupts the animation ... that shouldn't happen"). Pressed twice
+ * meanwhile, it stays as the running wave leaves it.
+ */
 export function toggleChatMode(from?: HTMLElement | null): void {
+  if (washing) {
+    again = again ? null : () => toggleChatMode(from);
+    return;
+  }
   washTo({ on: !useChatMode.getState().on }, from, { wash: true });
 }
 
@@ -273,6 +283,17 @@ export function frontReaches(d: number): number {
 /** The switch on its way and what it changes. */
 let washing: { skipTransition(): void } | null = null;
 let washingTo: Partial<Stored> = {};
+/** Chat mode pressed again while the wave ran (toggleChatMode): what to do once it is over. */
+let again: (() => void) | null = null;
+
+/** The wave is over: chat mode pressed again meanwhile switches now. */
+function over(): void {
+  washing = null;
+  washingTo = {};
+  const next = again;
+  again = null;
+  next?.();
+}
 /** The new screen's things that are still landing, and the looks still to come for things it fills in late. */
 let landing: Animation[] = [];
 let looks: number[] = [];
@@ -368,8 +389,9 @@ function things(x: number, y: number, most: number, pictures: boolean, within: P
  * it was; the front carries off each thing it reaches, out of focus and fading; behind it the new screen's things are
  * let go one by one, small and out of focus, and land in their places in one movement each. Everything moves the way
  * the front goes. One band of light rides the front and leaves the window with it. With no button (⌘J on a screen
- * whose bar has none) it starts where the button stands. Chat mode switched again while it runs, or where motion is
- * turned down, and the new screen is there at once. Anything else that changes meanwhile (the open chat's page comes
+ * whose bar has none) it starts where the button stands. Chat mode switched again while it runs switches once it is over
+ * (toggleChatMode). With the wave switched off in Settings → Appearance, or where motion is turned down, the new screen
+ * is there at once. Anything else that changes meanwhile (the open chat's page comes
  * beside it, a new chat's page goes) changes under the wave, in the screen the front is showing: such a change
  * follows a switch within a moment, and ending the wave for it left the switch with no effect at all.
  *
@@ -389,7 +411,8 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
   if (washing && !how.also && (Object.keys(patch) as Array<keyof Stored>).every((k) => washingTo[k] === patch[k])) return;
   if (washing && !how.wash) return change();
   const mac = macWave();
-  if (!how.wash || washing || (!mac && !document.startViewTransition) || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+  // the wave switched off in Settings → Appearance, or motion turned down: the new screen is there at once
+  if (!how.wash || washing || !storedChatWave() || (!mac && !document.startViewTransition) || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
     cutShort();
     return change();
   }
@@ -427,12 +450,11 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
     () => {},
   );
   void t.finished.finally(() => {
-    washing = null;
-    washingTo = {};
     root.classList.remove("chat-wash");
     light?.remove();
     // an animation of a picture holds its last frame: it goes with the pictures
     for (const a of document.getAnimations()) if ((a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition")) a.cancel();
+    over();
   });
 }
 
@@ -463,10 +485,7 @@ async function macWash(mac: MacWave, x: number, y: number, patch: Partial<Stored
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     await mac.postMessage("drawn").catch(() => {});
   } finally {
-    if (washing === run) {
-      washing = null;
-      washingTo = {};
-    }
+    if (washing === run) over();
   }
 }
 

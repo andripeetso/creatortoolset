@@ -72,6 +72,10 @@ export const storedProjectTint = () => storedFlag(PROJECT_TINT_KEY);
 export const persistProjectTint = (on: boolean) => persistFlag(PROJECT_TINT_KEY, on);
 export const storedHomeGlow = () => storedFlag(HOME_GLOW_KEY);
 export const persistHomeGlow = (on: boolean) => persistFlag(HOME_GLOW_KEY, on);
+/** The wave when chat mode turns on or off (lib/chat-mode.ts washTo); on unless switched off. */
+const CHAT_WAVE_KEY = "appearance:chat-wave";
+export const storedChatWave = () => storedFlag(CHAT_WAVE_KEY);
+export const persistChatWave = (on: boolean) => persistFlag(CHAT_WAVE_KEY, on);
 
 export function storedOwnColour(): string {
   try {
@@ -90,13 +94,13 @@ export function persistOwnColour(colour: string): void {
   persistProjectTint(false);
 }
 
-export function useAppearance(): { projectTint: boolean; homeGlow: boolean; ownColour: string } {
+export function useAppearance(): { projectTint: boolean; homeGlow: boolean; chatWave: boolean; ownColour: string } {
   const key = useSyncExternalStore(
     (cb) => {
       window.addEventListener(APPEARANCE_EVENT, cb);
       return () => window.removeEventListener(APPEARANCE_EVENT, cb);
     },
-    () => `${+storedProjectTint()}${+storedHomeGlow()}${storedOwnColour()}`,
+    () => `${+storedProjectTint()}${+storedHomeGlow()}${+storedChatWave()}${storedOwnColour()}`,
   );
-  return { projectTint: key[0] === "1", homeGlow: key[1] === "1", ownColour: key.slice(2) };
+  return { projectTint: key[0] === "1", homeGlow: key[1] === "1", chatWave: key[2] === "1", ownColour: key.slice(3) };
 }
