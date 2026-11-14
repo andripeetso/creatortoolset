@@ -185,7 +185,7 @@ describe("designs: frames on a canvas", () => {
 
 describe("designs: an AI that designs", () => {
   type Frame = { id: string; n: number; name?: string; w: number; h: number; words?: string; background: string; layers: Array<{ id: string; type: string; text?: string; x: number; size?: number }> };
-  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; brief?: string; pictures: number }>; look?: { name: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[] };
+  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[] };
   type Wrote = DesignAnswer & { touched: string[] };
   const text = { type: "text", font: "Anton", size: 90, color: "#ffffff", align: "center", x: 90, y: 400, w: 900, h: 300 };
   const read = async (id: string, more = "") => (await call<Read>("GET", `/api/designs/${id}/pages${more}`)).body;
@@ -372,6 +372,8 @@ describe("designs: an AI that designs", () => {
     // the person's one look comes with its pictures unasked: an AI that never asks for a look still designs from it
     expect(typeof got.look === "object" && [got.look.name, got.look.pictures.map((p) => p.what)]).toEqual(["Paper cut", ["a picture the user made and liked in this look", "an inspiration for this look"]]);
     expect(got.how).toContain("Design in one of them");
+    expect(typeof got.look === "object" && got.look.brief).toBe("Torn paper edges, one loud colour.");
+    expect(got.how).toContain("Design in rounds, never in one pass");
     const withLook = await read(d.id, "?look=paper%20cut");
     expect(typeof withLook.look === "object" && withLook.look.pictures.map((p) => p.what)).toEqual(["a picture the user made and liked in this look", "an inspiration for this look"]);
     expect((await read(d.id, "?look=Nope")).look).toBe("There is no look called Nope");
@@ -383,6 +385,8 @@ describe("designs: an AI that designs", () => {
   it("with several looks the AI is told to pick one and read it first; a plug-in's own looks are listed after the account's, their pictures made small", async () => {
     const { Hono } = await import("hono");
     const { definePlugin, mountPlugins } = await import("./lib/plugin");
+    // a studio's guide runs long, and what the person likes and hates comes after its first lines
+    const TINY = `Everything hangs on threads. ${"Pieces come down slowly and settle. ".repeat(20)}What they hate: a grey wall.`;
     // a big picture a plug-in keeps as a file of its own
     const big = path.join(dataDir, "studio-look.png");
     execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xE9E2D0:s=1600x2400", "-frames:v", "1", big]);
@@ -394,7 +398,7 @@ describe("designs: an AI that designs", () => {
           looks: (user) => {
             asked = user.username;
             return [
-              { name: "Tiny Mobile", brief: "Everything hangs on threads.", pictures: [{ file: path.join(dataDir, "gone.png"), made: false }, { file: big, made: true }] },
+              { name: "Tiny Mobile", brief: TINY, pictures: [{ file: path.join(dataDir, "gone.png"), made: false }, { file: big, made: true }] },
               // named like one of the account's own: the account's stands
               { name: "paper cut", brief: "Not this one.", pictures: [] },
             ];
@@ -407,12 +411,15 @@ describe("designs: an AI that designs", () => {
       const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
       const got = await read(d.id);
       expect(asked).toBe("jordan");
-      expect(got.looks).toEqual([{ name: "Paper cut", brief: "Torn paper edges, one loud colour.", pictures: 2 }, { name: "Tiny Mobile", brief: "Everything hangs on threads.", pictures: 2 }]);
+      expect(got.looks).toEqual([{ name: "Paper cut", brief: "Torn paper edges, one loud colour.", pictures: 2 }, { name: "Tiny Mobile", brief: TINY.slice(0, 600), pictures: 2 }]);
       // two looks with pictures: none is shown unasked, and the answer says to pick one
       expect(got.look).toBe('Pick the look this design is in ("Paper cut", "Tiny Mobile"; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.');
       // the plug-in's look by name: the picture it made first, as a small JPEG; the file that is gone is left out
       const tiny = (await read(d.id, "?look=tiny%20mobile")).look;
       if (typeof tiny !== "object") throw new Error(String(tiny));
+      // the look it designs in comes with all its words: the list of looks has only their start
+      expect(tiny.brief).toBe(TINY);
+      expect(TINY.slice(0, 600)).not.toContain("a grey wall");
       expect(tiny.pictures.map((p) => p.what)).toEqual(["a picture the user made and liked in this look"]);
       const jpeg = Buffer.from(tiny.pictures[0]!.jpeg, "base64");
       expect([jpeg[0], jpeg[1]]).toEqual([0xff, 0xd8]);

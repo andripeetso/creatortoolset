@@ -9,7 +9,7 @@ import { type Args, pick, str, ToolError, type ToolContext, type ToolModule, whe
 // carousel slide's words held. The person sees the frames change in the open designer and takes it back with ⌘Z.
 
 type Frame = Args & { id: string; n: number };
-type ForAi = Args & { id: string; name: string; frames: Frame[]; look?: { name: string; pictures: Array<{ what: string; jpeg: string }> } | string };
+type ForAi = Args & { id: string; name: string; frames: Frame[]; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string };
 type Look = { pictures: Array<{ page: number; jpeg: string; spills: string[] }>; why?: string };
 type Image = { text: string; jpeg: string };
 
@@ -42,7 +42,7 @@ export const designTools: ToolModule = {
     {
       name: "design_get",
       description:
-        "The Designer: the user's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers they edit by hand. With no id it lists them. With an id (as in /design/<id>) it gives every frame with its layers and a picture of it, and how to design and change them; look: a look's name adds that look's pictures; frames: the ids to picture.",
+        "The Designer: the user's designs, each a canvas of frames (still pictures: carousel slides, covers, thumbnails; nothing here moves) made of layers they edit by hand. With no id it lists them. With an id (as in /design/<id>) it gives every frame with its layers and a picture of it, and how to design and change them; look: a look's name adds that look's pictures; frames: the ids to picture.",
       inputSchema: { type: "object", properties: { id: str, look: str, frames: { type: "array", items: str } } },
     },
     {
@@ -75,7 +75,7 @@ export const designTools: ToolModule = {
         ...read,
         link: `${ctx.origin}/design/${read.id}`,
         // the look's pictures go as pictures, after the answer
-        ...(look ? { look: { name: look.name, pictures: look.pictures.length } } : {}),
+        ...(look ? { look: { name: look.name, ...(look.brief ? { brief: look.brief } : {}), pictures: look.pictures.length } } : {}),
         ...drawn.said,
         _images: [...(look?.pictures ?? []).map((p, n) => ({ text: `The look "${look!.name}", picture ${n + 1}: ${p.what}.`, jpeg: p.jpeg })), ...drawn.images],
       };

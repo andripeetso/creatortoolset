@@ -40,6 +40,9 @@ const LOOK_PICTURES = 8;
 const LOOK_UNASKED = 4;
 /** The longest side of a look's picture as an AI is shown it, when it is not already a small still. */
 const LOOK_SIDE = 768;
+/** How much of a look's own words an AI is given: in the list of looks a start; of the look it designs in, all of them (a studio's guide runs to a few pages: what they like and hate is rarely in its first lines). */
+const LOOK_LISTED = 600;
+const LOOK_BRIEF = 6000;
 
 const dirOf = (owner: string) => path.join(env.dataDir, "designs", owner);
 const fileOf = (owner: string, id: string) => path.join(dirOf(owner), `${id}.json`);
@@ -179,21 +182,23 @@ export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from 
 - {"type":"image","picture":"<id>","fit":"cover|contain","zoom":1,"focus":{"x":0.5,"y":0.5},"radius":0}: only a picture listed under "pictures" (how one gets there is below). "cover" fills the box and cuts the rest off: "focus" says which part stays (0 = the picture's left or top edge, 1 = its right or bottom), "zoom" (1 to 8) goes closer. Its colours: "adjust":{${DESIGN_ADJUST.map((k) => `"${k}":0`).join(",")}} (each -100 to 100), "duotone":{"dark":"#rrggbb","light":"#rrggbb"} (two colours in place of its own; black and white for a black and white picture), "vignette" (1 to 100 darkens the corners, -1 to -100 lightens them), "grain" (0 to 100), "blur" (pixels; a blurred photo behind words keeps them readable). They are settings of the layer, not a changed picture: 0 or null puts one back.
 - {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.`;
 
-const HOW = `A design is a canvas of frames. A frame is one picture (a carousel slide, a cover, a thumbnail, anything): it has an id, a size (w, h) and layers. The user sees every frame side by side, moves and edits any layer by hand, and exports each frame as a PNG of exactly its size.
+const HOW = `A design is a canvas of frames. A frame is one still picture (a carousel slide, a cover, a thumbnail, a post; nothing in it moves, and animation and video are not made here): it has an id, a size (w, h) and layers. The user sees every frame side by side, moves and edits any layer by hand, and exports each frame as a PNG of exactly its size.
 
 ${DESIGN_LAYERS}
 
-"looks" are the user's looks: each a collection of pictures they made and liked, and inspirations, with a few words of their own. Design in one of them. Its pictures come with this answer when the user has one look, and with "look": its name otherwise: study them before your first change, and carry their finish into the frames (the ground and how it is lit, the type, the materials, the shadows, how much is left empty), never their words or one of them copied. A design made without a look's pictures comes out generic.
+"looks" are the user's looks: each a collection of pictures they made and liked, and inspirations, with a few words of their own. Design in one of them. Its pictures and all its words ("brief": what the user likes and hates in it) come with this answer when the user has one look, and with "look": its name otherwise: study them before your first change, and carry their finish into the frames (the ground and how it is lit, the type, the materials, the shadows, how much is left empty), never their words or one of them copied. A design made without a look's pictures comes out generic.
 
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
 To change a design, give either or both of:
-- "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
+- "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
 - "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off.
 - A change {"frame":"<id>","layer":"<a picture layer's id>","cutout":true} takes the picture's background away (the user's own Mac cuts it out, which takes some seconds; the answer says so when no Mac of theirs is on). {"set":{"picture":"<its 'uncut' id>","uncut":null}} puts the background back.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
-After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit). Look, and fix what does not sit right.`;
+After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit).
+
+Design in rounds, never in one pass. After each change, set every frame you changed beside the look's pictures (without a look: beside what the user asked for) and name at least three things that make yours look more generic than theirs: type too small or too timid, a flat ground with no light on it, pieces with no weight or shadow, a crowded frame, a highlight on a word that does not carry the point, something there for no reason (a line or a shape that holds or means nothing). Fix them and look again. One slide takes several rounds: stop when you can no longer name a difference that matters. Before you say it is done, look at every frame once more as someone who did not make it would, and fix what gives it away.`;
 
 /**
  * The frames as an AI works on them, and each frame's own words (undefined: it is no slide, and may say anything).
@@ -293,10 +298,10 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
     fonts: DESIGN_FONTS.map((f) => f.family),
     pictures: d.pictures.map((id) => ({ id, what: d.from && "version" in d.from && id === d.pictures[0] ? "the video's own frame" : "a picture added to this design" })),
     // a look is its pictures first: its name and brief are what words carry, and its pictures come when it is asked for
-    looks: looks.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, 600) } : {}), pictures: s.pictures })),
+    looks: looks.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, LOOK_LISTED) } : {}), pictures: s.pictures })),
     ...(lookNamed && !style ? { look: `There is no look called ${lookNamed}` } : {}),
     ...(!lookNamed && pictured.length > 1 ? { look: `Pick the look this design is in (${pictured.slice(0, 12).map((l) => `"${l.name}"`).join(", ")}; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.` } : {}),
-    ...(style && shown ? { look: { name: style.name, pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })) } } : {}),
+    ...(style && shown ? { look: { name: style.name, ...(style.brief.trim() ? { brief: style.brief.trim().slice(0, LOOK_BRIEF) } : {}), pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })) } } : {}),
     frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), layers: p.layers })),
     how: HOW,
   };
