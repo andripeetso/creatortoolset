@@ -3,6 +3,7 @@
 // once in the window is enough.
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 import UserNotifications
 import WebKit
 
@@ -142,6 +143,7 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMacAsk = { [weak self, weak view] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
             // Face Blur's page (FaceBlurBridge.swift): the files it may take are the ones picked or dropped in this window
+            if faceBlurAsk(ask) == .pick { return self.faceBlurPick(in: view?.window, done) }
             if isFaceBlurAsk(ask) {
                 let allowed = Set((self.pickedFiles + (view?.droppedFiles ?? [])).map(\.path))
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
@@ -1021,6 +1023,23 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url { NSWorkspace.shared.open(url) }
         return nil
+    }
+
+    /// Face Blur's Choose files (`faceblur:pick`): this app's own open panel, on whichever server the window shows. A file
+    /// input's pick is told to the page only on this Mac's own server ("files"); these paths go to the Face Blur page, for
+    /// its job on this Mac, and join the files Face Blur may take. { paths }, none when the panel is cancelled.
+    private func faceBlurPick(in window: NSWindow?, _ done: @escaping ([String: Any]) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image, .movie]
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .OK, let self else { return done(["paths": [String]()]) }
+            self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles)
+            done(["paths": panel.urls.map(\.path)])
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
 
     /// The page's file inputs and drop zones: the Mac's own open panel.

@@ -89,6 +89,8 @@ final class FaceBlurAskTests: XCTestCase {
         XCTAssertNil(faceBlurAsk(#"faceblur:start:{"files":["/a.mov"],"mode":"every","look":"blur"}"#))
         XCTAssertNil(faceBlurAsk(#"faceblur:start:{"files":[],"mode":"all","look":"blur"}"#))
         XCTAssertNil(faceBlurAsk(#"faceblur:start:{"files":["/a.mov"],"mode":"all","look":"emoji"}"#))
+        XCTAssertEqual(faceBlurAsk("faceblur:pick"), .pick)
+        XCTAssertNil(faceBlurAsk("faceblur:pick:x"))
         XCTAssertNil(faceBlurAsk("faceblur:state"))
         XCTAssertNil(faceBlurAsk("faceblur:hello:x"))
         XCTAssertNil(faceBlurAsk("faceblur:delete:/a"))

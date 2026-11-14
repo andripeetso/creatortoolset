@@ -51,6 +51,20 @@ describe("Settings → Tools → AI Editor's steps", () => {
     expect((await app.request("/add/voice", { method: "POST" })).status).toBe(404);
   });
 
+  it("on any server: every loaded plug-in that adds no step is a row, Installed, under the tool it names", async () => {
+    mountPlugins(new Hono(), [blur, definePlugin({ id: "tiny-studio", name: "Tiny Studio", about: "The studio's own." }), definePlugin({ id: "tiny-faces", name: "Tiny Faces", kind: "tool" })]);
+    try {
+      const view = (await (await app.request("/")).json()) as StepsView;
+      expect(view.canAdd).toBe(false);
+      expect(view.steps.map((r) => [r.id, r.state])).toEqual([["blur", "on"], ["tiny-studio", "loaded"], ["tiny-faces", "loaded"]]);
+      expect(view.steps[1]).toMatchObject({ title: "Tiny Studio", about: "The studio's own.", kind: "" });
+      expect(view.steps[2]).toMatchObject({ title: "Tiny Faces", about: "", kind: "tool" });
+      expect(view.steps[1]!.folder).toBeUndefined();
+    } finally {
+      mountPlugins(new Hono(), [blur]);
+    }
+  });
+
   it("reads the plug-ins that come with the app from their folders, without running them, each with its own kind", () => {
     expect(bundledPlugins()).toContainEqual({ folder: "voice", pluginId: "editor-voice", title: "Voice", about: "Cleans and levels the voice in every edit, on this computer", kind: "editor" });
     // its Community line: what it does, and that it uses the person's own Adobe account
