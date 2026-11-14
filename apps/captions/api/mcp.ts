@@ -650,7 +650,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...[...((a.blocks as Args[] | undefined) ?? []), ...((a.hooks as Args[] | undefined) ?? [])].filter((b) => had.get(b.id) !== b.text).map((b) => String(b.text ?? "")),
         ...(["caption", "pinned"] as const).filter((f) => typeof a[f] === "string" && a[f] !== was(f)).map((f) => String(a[f])),
       ];
-      if (await notTheirs(call, auth, user, changed, a.theirs)) return { saved: false, answer: TO_WRITER };
+      const already = [...had.values(), was("caption"), was("pinned")].join("\n\n");
+      if (await notTheirs(call, auth, user, changed, a.theirs, already)) return { saved: false, answer: TO_WRITER };
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
@@ -659,7 +660,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       // and the writer took it for their words (owner, 2026-11-14). A scheduled run has nobody typing: its message goes as it is.
       // Any other caller (an AI app, a script) sends the user's words in message and its own in notes.
       // an account with no AI to write with gets an answer, not an error: the caller writes
-      if (!(await workshopWrites(call, auth))) return { writer: "none", answer: "This account's Workshop has no AI to write with: write the words yourself with workshop_edit_piece." };
+      if (!(await workshopWrites(call, auth))) return { writer: "none", answer: "This account's Workshop has no writer to ask now (no AI set up, or its computer is off): write the words yourself with workshop_edit_piece." };
       const turn = isJob(auth) ? jobTurn(auth.get("authorization") ?? undefined) : null;
       const typed = turn ? saidInChat(user.username, turn)?.[0]?.text : undefined;
       const notes = [typed ? a.message : "", a.notes].filter((t): t is string => typeof t === "string" && !!t.trim()).join("\n\n");
@@ -1401,8 +1402,9 @@ const TO_WRITER = "These words aren't the user's own, and this account's Worksho
  * style's text is held to: own-words.ts); a scheduled run has typed nothing. Any other caller can't be checked: it
  * says they are the user's with `theirs`.
  */
-export async function notTheirs(call: Call, auth: Headers, user: SessionUser, texts: string[], theirs: unknown): Promise<boolean> {
-  const sent = texts.filter((t) => t.trim());
+export async function notTheirs(call: Call, auth: Headers, user: SessionUser, texts: string[], theirs: unknown, already = ""): Promise<boolean> {
+  // words already in the piece (a cut, a split, a join, a block moved) are not new words
+  const sent = texts.filter((t) => t.trim() && !foundIn(t, already));
   if (!sent.length || !(await workshopWrites(call, auth))) return false;
   if (!isJob(auth)) return theirs !== true;
   const turn = jobTurn(auth.get("authorization") ?? undefined) ?? "";
@@ -1410,11 +1412,15 @@ export async function notTheirs(call: Call, auth: Headers, user: SessionUser, te
   return sent.some((t) => !own.some((o) => foundIn(t, o)));
 }
 
-/** The account's Workshop has an AI to write with: what its chat itself asks before a turn (GET /api/workshop/availability). */
+/**
+ * The account's Workshop has an AI to write with now (GET /api/workshop/availability): set up, and the computer it runs
+ * on (where it runs on one) is on. A computer that is off would fail the writer's turn after minutes, so then the
+ * caller writes.
+ */
 async function workshopWrites(call: Call, auth: Headers): Promise<boolean> {
   try {
-    const a = (await (await apiOf(call, auth)("/api/workshop/availability")).json()) as { ai?: boolean };
-    return !!a.ai;
+    const a = (await (await apiOf(call, auth)("/api/workshop/availability")).json()) as { ai?: boolean; mac?: boolean };
+    return !!a.ai && a.mac !== false;
   } catch {
     return false; // a key that can't read the Workshop: it writes with the tools it has
   }

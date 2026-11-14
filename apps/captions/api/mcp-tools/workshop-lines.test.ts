@@ -16,7 +16,7 @@ vi.mock("../ai-complete", async (importOriginal) => ({
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
 const { streamWithFallback } = await import("../ai-complete");
-const { pairDevice } = await import("../lib/devices");
+const { pairDevice, touchDevice } = await import("../lib/devices");
 const { saveSettings } = await import("../lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
 const { TOOLS } = await import("../mcp");
@@ -70,6 +70,7 @@ describe("the lines for api/mcp.ts", () => {
 
   it("workshop_chat passes my words only and deep research to the writer", async () => {
     vi.mocked(streamWithFallback).mockImplementation((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown) => ({ result: parse(JSON.stringify({ reply: "Done.", edits: [] })), provider: "Claude (Mac)" })) as never);
+    touchDevice(mac.device.id); // the writer's computer is on: the writer is asked
     const s = (await tool("workshop_new_session", { title: "Options" })).value!;
     const piece = (s.pieces as Row[])[0]!.id;
     const chat = async () => (await route(`/api/workshop/sessions/${String(s.id)}/chat`)) as unknown as Row[];

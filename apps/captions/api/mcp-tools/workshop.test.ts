@@ -300,6 +300,21 @@ describe("who writes a piece", () => {
     // a block kept as it is, by its id, is not new words
     const kept = (await page<Doc[]>(cookie, `/api/workshop/sessions/${s.id}/docs`)).find((d) => d.id === piece)!.blocks[0]!;
     expect((await tool(key, "workshop_edit_piece", { session: s.id, piece, title: "Day one", blocks: [{ id: kept.id, text: kept.text }] })).value).not.toMatchObject({ saved: false });
+    // cutting, splitting or moving words already in the piece is no new words
+    await tool(key, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Sit happens. Day one is the hardest." }], theirs: true });
+    await tool(key, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Day one is the hardest." }, { text: "Sit happens." }] });
+    expect(await blocks()).toEqual(["Day one is the hardest.", "Sit happens."]);
+  });
+
+  it("a writer whose computer is off is no writer to ask: workshop_chat says so and the caller's words are saved", async () => {
+    const cleo = createUser("cleo", "password1");
+    const off = pairDevice("cleo", "Cleo's Mac"); // paired, never seen since
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: off.device.id }] }, "cleo");
+    const cleoKey = `Bearer ${newApiKey(cleo, "full")}`;
+    const s = (await tool(cleoKey, "workshop_new_session", { title: "Balloon keep-up" })).value!;
+    const piece = String((s.pieces as Row[])[0]!.id);
+    expect((await tool(cleoKey, "workshop_chat", { session: s.id, piece, message: "Five short lines." })).value).toMatchObject({ writer: "none" });
+    expect((await tool(cleoKey, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Keep the balloon up." }] })).value).not.toMatchObject({ saved: false });
   });
 
   it("an account with no writer: workshop_chat answers so, without an error, and the caller writes the piece", async () => {
