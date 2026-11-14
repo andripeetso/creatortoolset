@@ -39,8 +39,8 @@ final class ChatWaveHost {
     private let sound = WaveSound()
     /// The picture taken when the pointer came onto the button ("ready"), and who waits for one being taken (nil when
     /// none is).
-    private var early: (image: CGImage, at: CFTimeInterval)?
-    private var earlyWaiting: [(CGImage?) -> Void]?
+    private var early: (picture: Picture, at: CFTimeInterval)?
+    private var earlyWaiting: [(Picture?) -> Void]?
 
     init(_ view: WKWebView) {
         self.view = view
@@ -60,10 +60,12 @@ final class ChatWaveHost {
             let wait = oldPage ? max(0, 420 - wave.elapsed) / 1000 : 0
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak view, weak wave] in
                 guard let view, let wave, wave.superview != nil else { return }
-                view.takeSnapshot(with: nil) { [weak wave] image, _ in
-                    guard let wave, wave.superview != nil else { return }
-                    if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
-                    waveLog.notice("new screen's picture at \(Int(wave.elapsed)) ms")
+                view.takeSnapshot(with: nil) { image, _ in
+                    WaveRenderer.shared?.picture(image?.cgImage(forProposedRect: nil, context: nil, hints: nil)) { [weak wave] picture in
+                        guard let wave, wave.superview != nil else { return }
+                        if let picture { wave.setNew(picture.texture) } else { wave.finish() }
+                        waveLog.notice("new screen's picture at \(Int(wave.elapsed)) ms")
+                    }
                 }
             }
         case "stop":
@@ -80,36 +82,41 @@ final class ChatWaveHost {
     /// A picture of the screen as it is now, kept for a press in the next few seconds. Taken after the screen's next
     /// update, so with the button's look under the pointer.
     private func prepare() {
-        guard wave == nil, earlyWaiting == nil, let view else { return }
+        guard wave == nil, earlyWaiting == nil, let view, let renderer = WaveRenderer.shared else { return }
+        waveLog.notice("ready: taking the picture early")
         earlyWaiting = []
-        view.takeSnapshot(with: nil) { [weak self] image, _ in
-            guard let self else { return }
-            let picture = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
-            let at = CACurrentMediaTime()
-            if let picture { self.early = (picture, at) }
-            let waiting = self.earlyWaiting ?? []
-            self.earlyWaiting = nil
-            waiting.forEach { $0(picture) }
-            // (a picture of a big window is large: not kept past its use)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.1) { [weak self] in
-                if self?.early?.at == at { self?.early = nil }
+        view.takeSnapshot(with: nil) { image, _ in
+            renderer.picture(image?.cgImage(forProposedRect: nil, context: nil, hints: nil)) { [weak self] picture in
+                guard let self else { return }
+                let at = CACurrentMediaTime()
+                if let picture { self.early = (picture, at) }
+                let waiting = self.earlyWaiting ?? []
+                self.earlyWaiting = nil
+                waiting.forEach { $0(picture) }
+                // (a picture of a big window is large: not kept past its use)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.1) { [weak self] in
+                    if self?.early?.at == at { self?.early = nil }
+                }
             }
         }
     }
 
     /// The screen as it is on show now: the picture taken as the pointer came onto the button when it is recent (or
     /// still being taken: that comes sooner than a new one), else a new one.
-    private func screenNow(_ done: @escaping (CGImage?, Bool) -> Void) {
+    private func screenNow(_ done: @escaping (Picture?, Bool) -> Void) {
         if let e = early, CACurrentMediaTime() - e.at < 3 {
             early = nil
-            return done(e.image, true)
+            return done(e.picture, true)
         }
         early = nil
         if earlyWaiting != nil { return earlyWaiting!.append { done($0, true) } }
         // not after the next update: the page changes only once this is answered
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = false
-        view?.takeSnapshot(with: config) { image, _ in done(image?.cgImage(forProposedRect: nil, context: nil, hints: nil), false) }
+        view?.takeSnapshot(with: config) { image, _ in
+            guard let renderer = WaveRenderer.shared else { return done(nil, false) }
+            renderer.picture(image?.cgImage(forProposedRect: nil, context: nil, hints: nil)) { done($0, false) }
+        }
     }
 
     private func begin(_ start: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
@@ -125,15 +132,16 @@ final class ChatWaveHost {
         oldPage = start["hold"] == nil
         waveLog.notice("start: hold \(hold), mouse down \(ChatWaveView.mouseDown()), page from before holding \(self.oldPage)")
         if hold { sound.begin() }
-        screenNow { [weak self] image, early in
-            guard let self, let view = self.view, let image,
-                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed, sound: hold ? self.sound : nil)
+        screenNow { [weak self] picture, early in
+            let making = CACurrentMediaTime()
+            guard let self, let view = self.view, let picture,
+                  let wave = try? ChatWaveView(over: view, was: picture, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed, sound: hold ? self.sound : nil)
             else {
                 waveLog.notice("no wave: no picture of the screen")
                 self?.sound.end()
                 return reply(false, nil)
             }
-            waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early)")
+            waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early), made in \(Int((CACurrentMediaTime() - making) * 1000)) ms")
             self.wave = wave
             wave.onDone = { [weak self] in
                 self?.wave = nil
@@ -204,9 +212,10 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     // well behind the front, once its wave has settled: the page itself shows
     if (x < -4.6) return float4(0.0);
     float ahead = smoothstep(-0.4, 0.4, x);
-    // The bars at the top (56 points: titleBarHeight in TitleBar.swift, the page's h-14) are the window's own: nothing
-    // in them moves, blurs or splits, so the button under the pointer stays put. Below their edge the wave comes in.
-    float still = smoothstep(56.0 * pt, 84.0 * pt, p.y);
+    // The top bar goes with the rest (owner, 11-14: "I want this top half also to be affected"), all but the button
+    // under the pointer: nothing within 14 points of the middle of it moves, blurs or splits, so it stays put (11-13:
+    // "the button underneath my mouse should not move"); the wave comes in over the next 26.
+    float still = smoothstep(14.0 * pt, 40.0 * pt, r);
 
     // The screen that was falls toward the button: what is near it shrinks into it, what is further is stretched
     // toward it, and all of it turns a little round it. Each point is drawn in until the front comes, and let go as it
@@ -432,12 +441,28 @@ final class WaveRenderer {
     /// A picture as a texture, its values as they are (no colour conversion): the view shows it in the picture's own
     /// colour space, so where nothing bends it, it is the screen, pixel for pixel.
     func texture(_ image: CGImage) throws -> MTLTexture {
-        try loader.newTexture(cgImage: image, options: [.SRGB: false, .textureUsage: MTLTextureUsage.shaderRead.rawValue, .textureStorageMode: MTLStorageMode.private.rawValue])
+        try loader.newTexture(cgImage: image, options: textureOptions)
     }
 
+    /// The same, made off the main thread, which draws the wave (copying a picture of a 6K window takes tens of
+    /// milliseconds: frames the wave would miss); `done` runs on the main thread, with nil when there is no picture.
+    func picture(_ image: CGImage?, _ done: @escaping (Picture?) -> Void) {
+        guard let image else { return done(nil) }
+        let space = image.colorSpace
+        loader.newTexture(cgImage: image, options: textureOptions) { texture, _ in
+            DispatchQueue.main.async { done(texture.map { Picture(texture: $0, space: space) }) }
+        }
+    }
+
+    private let textureOptions: [MTKTextureLoader.Option: Any] = [
+        .SRGB: false, .textureUsage: MTLTextureUsage.shaderRead.rawValue, .textureStorageMode: MTLStorageMode.private.rawValue,
+    ]
+
+    /// `was` and `now` default to the renderer's own (a picture renderer such as the tests'); a wave passes its own.
     func encode(_ m: WaveMoment, size: CGSize, origin: CGPoint, tint: SIMD3<Float>, dark: Bool,
-                into pass: MTLRenderPassDescriptor, on buffer: MTLCommandBuffer) {
-        guard let was, let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+                into pass: MTLRenderPassDescriptor, on buffer: MTLCommandBuffer, was: MTLTexture? = nil, now: MTLTexture? = nil) {
+        guard let was = was ?? self.was, let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        let now = now ?? self.now
         var u: [SIMD4<Float>] = [
             SIMD4(Float(size.width), Float(size.height), Float(origin.x), Float(origin.y)),
             SIMD4(m.pull, m.reach, m.swirl, m.veil),
@@ -457,102 +482,174 @@ final class WaveRenderer {
 
 enum WaveError: Error { case noMetal }
 
-/// The wave over the web view while it runs; takes no clicks, and goes when the front has left the window.
-final class ChatWaveView: MTKView, MTKViewDelegate {
+/// A picture of the screen on the GPU, and the colour space it is in.
+struct Picture {
+    let texture: MTLTexture
+    let space: CGColorSpace?
+}
+
+/// The wave over the web view while it runs; takes no clicks, and goes when the front has left the window. Drawn on a
+/// thread of its own, in step with the display: the main thread is busy while the page under it switches (WebKit puts
+/// the new screen together there), and drawn there the wave missed frames, worst the first time after a pause (owner,
+/// 11-14: "sometimes it just lags ... it gets stuck ... when I trigger it cold it sometimes lags, stutters").
+final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
     private let renderer: WaveRenderer
+    private let metal = CAMetalLayer()
+    private var link: CAMetalDisplayLink?
     private let origin: CGPoint
     private let tint: SIMD3<Float>
     private let dark: Bool
-    /// When the button was pressed (moved later by however long the first picture took past `holdFrom`, so the pull
-    /// starts from nothing on the first frame drawn), and that first frame (ms).
-    private var started: CFTimeInterval
-    private var shownAt: Double?
-    private var popped = false
-    /// When the picture of the new screen came (the front waits for it, at most `wait` ms after it would have gone).
-    private var newAt: Double?
+    private let was: MTLTexture
+    /// What the main thread and the drawing thread share: when the button was pressed (moved later by however long the
+    /// first picture took past `holdFrom`, so the pull starts from nothing on the first frame drawn), the picture of
+    /// the new screen and when it came (the front waits for it, at most `wait` ms after it would have gone), the
+    /// drawable's size and scale, and whether the wave is over.
+    private struct Shared {
+        var started: CFTimeInterval
+        var now: MTLTexture?
+        var newAt: Double?
+        var size = CGSize.zero, scale: CGFloat = 2
+        var over = false
+    }
+    private let shared: OSAllocatedUnfairLock<Shared>
     private let wait: Double = 1000
-    /// The mouse went down on the button: the screen falls in until its button comes up (`goAt`, ms), at most
-    /// `WaveClock.longest`.
+    /// The drawing thread's own: the first frame (ms), whether it has popped, when the button was let go (ms; at most
+    /// `WaveClock.longest`), frames drawn, how many came late (half a frame or more after they were due) and the
+    /// longest gap between two (ms).
+    private var shownAt: Double?, popped = false, goAt: Double?
+    private var frames = 0, late = 0, worstGap: Double = 0, lastDraw: Double?
+    /// One frame at the display's rate (ms).
+    private let due: Double
+    /// The mouse went down on the button: the screen falls in until its button comes up.
     private let hold: Bool
-    private var goAt: Double?
     /// Whether the mouse button is down now (a test sets its own).
     static var mouseDown: () -> Bool = { NSEvent.pressedMouseButtons & 1 != 0 }
     var onDone: (() -> Void)?
-
     private let sound: WaveSound?
 
-    init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool,
+    init(over view: NSView, was: Picture, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool,
          pressed: CFTimeInterval = CACurrentMediaTime(), sound: WaveSound? = nil) throws {
-        started = pressed
+        shared = OSAllocatedUnfairLock(initialState: Shared(started: pressed))
         self.sound = sound
         self.renderer = renderer
         self.origin = origin
         self.tint = tint
         self.dark = dark
         self.hold = hold
-        renderer.was = try renderer.texture(was)
-        renderer.now = nil
-        super.init(frame: view.bounds, device: renderer.device)
+        self.was = was.texture
+        due = 1000 / Double(max(view.window?.screen?.maximumFramesPerSecond ?? 60, 30))
+        super.init(frame: view.bounds)
         autoresizingMask = [.width, .height]
-        colorPixelFormat = .bgra8Unorm
-        framebufferOnly = true
-        clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-        layer?.isOpaque = false
-        (layer as? CAMetalLayer)?.colorspace = was.colorSpace
-        preferredFramesPerSecond = NSScreen.main?.maximumFramesPerSecond ?? 60
-        delegate = self
+        metal.device = renderer.device
+        metal.pixelFormat = .bgra8Unorm
+        metal.framebufferOnly = true
+        metal.isOpaque = false
+        metal.colorspace = was.space
+        layer = metal
+        wantsLayer = true
         view.addSubview(self)
+        resized()
+        let link = CAMetalDisplayLink(metalLayer: metal)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, __preferred: 120)
+        link.delegate = self
+        self.link = link
+        let shared = shared
+        let thread = Thread {
+            link.add(to: .current, forMode: .default)
+            while !shared.withLock({ $0.over }) { _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1)) }
+        }
+        thread.name = "chat-wave"
+        thread.qualityOfService = .userInteractive
+        thread.start()
     }
 
     @available(*, unavailable)
-    required init(coder: NSCoder) { fatalError("not used") }
+    required init?(coder: NSCoder) { fatalError("not used") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// Milliseconds since the wave went up.
-    var elapsed: Double { (CACurrentMediaTime() - started) * 1000 }
+    override func layout() {
+        super.layout()
+        resized()
+    }
 
-    func setNew(_ image: CGImage) {
-        renderer.now = try? renderer.texture(image)
-        newAt = (CACurrentMediaTime() - started) * 1000
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        resized()
+    }
+
+    private func resized() {
+        let scale = window?.backingScaleFactor ?? 2
+        let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        metal.contentsScale = scale
+        metal.drawableSize = size
+        shared.withLock {
+            $0.size = size
+            $0.scale = scale
+        }
+    }
+
+    /// Milliseconds since the wave went up.
+    var elapsed: Double { (CACurrentMediaTime() - shared.withLock { $0.started }) * 1000 }
+
+    func setNew(_ texture: MTLTexture) {
+        shared.withLock {
+            $0.now = texture
+            $0.newAt = (CACurrentMediaTime() - $0.started) * 1000
+        }
     }
 
     func finish() {
         guard superview != nil else { return }
-        waveLog.notice("done at \(Int(self.elapsed)) ms")
+        shared.withLock { $0.over = true }
+        link?.invalidate()
+        link = nil
+        waveLog.notice("done at \(Int(self.elapsed)) ms: \(self.frames) frames, \(self.late) late, worst gap \(Int(self.worstGap)) ms")
         sound?.end()
-        isPaused = true
         removeFromSuperview()
-        renderer.was = nil
-        renderer.now = nil
         onDone?()
         onDone = nil
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    /// Over, from the drawing thread: no more frames, and the view goes on the main thread.
+    private func end() {
+        shared.withLock { $0.over = true }
+        DispatchQueue.main.async { [weak self] in self?.finish() }
+    }
 
-    func draw(in view: MTKView) {
-        var ms = (CACurrentMediaTime() - started) * 1000
+    func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        let now = CACurrentMediaTime()
+        // the first frame: the clock moves later by however long the first picture took past `holdFrom`
+        let state = shared.withLock { s -> Shared in
+            if shownAt == nil { s.started += max(0, (now - s.started) * 1000 - WaveClock.holdFrom) / 1000 }
+            return s
+        }
+        if state.over { return }
+        let ms = (now - state.started) * 1000
+        if let lastDraw {
+            let gap = ms - lastDraw
+            worstGap = max(worstGap, gap)
+            if gap > due * 1.5 { late += 1 }
+            if gap > due * 4 { waveLog.notice("a frame \(Int(gap)) ms after the last, at \(Int(ms)) ms") }
+        }
+        frames += 1
         if shownAt == nil {
-            started += max(0, ms - WaveClock.holdFrom) / 1000
-            ms = (CACurrentMediaTime() - started) * 1000
             shownAt = ms
             waveLog.notice("first frame at \(Int(ms)) ms")
         }
+        lastDraw = ms
         if hold && goAt == nil && !Self.mouseDown() {
             goAt = ms
             waveLog.notice("let go at \(Int(ms)) ms")
         }
         // the button let go (a click: at once), or held so long it pops by itself
         let held = hold ? min(goAt ?? WaveClock.longest, WaveClock.longest) : 0
-        if newAt == nil && ms > held + wait { return finish() }
+        if state.newAt == nil && ms > held + wait { return end() }
         // the front leaves then, once there is a new screen to show behind it; until then the screen goes on falling in,
         // never held
-        let scale = window?.backingScaleFactor ?? 2
-        let size = drawableSize
-        let o = CGPoint(x: origin.x * scale, y: origin.y * scale)
-        var m = WaveClock.at(ms, held: held, release: newAt.map { max(held, $0) }, size: size, origin: o, scale: scale)
-        if m.done { return finish() }
+        let o = CGPoint(x: origin.x * state.scale, y: origin.y * state.scale)
+        var m = WaveClock.at(ms, held: held, release: state.newAt.map { max(held, $0) }, size: state.size, origin: o, scale: state.scale)
+        if m.done { return end() }
         // the light at the button comes up over the first frames drawn, however late the first picture was
         m.bloom *= Float(1 - pow(1 - min((ms - (shownAt ?? 0)) / 80, 1), 3))
         if m.front < -1e5 {
@@ -562,9 +659,14 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
             sound?.pop(drawnIn: WaveClock.pull(held, held: held), wild: WaveClock.wild(held))
             waveLog.notice("pops at \(Int(ms)) ms, held \(Int(held)) ms, drawn in \(m.pull)")
         }
-        guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable, let buffer = renderer.queue.makeCommandBuffer() else { return }
-        renderer.encode(m, size: size, origin: o, tint: tint, dark: dark, into: pass, on: buffer)
-        buffer.present(drawable)
+        guard let buffer = renderer.queue.makeCommandBuffer() else { return }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = update.drawable.texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        pass.colorAttachments[0].storeAction = .store
+        renderer.encode(m, size: state.size, origin: o, tint: tint, dark: dark, into: pass, on: buffer, was: was, now: state.now)
+        buffer.present(update.drawable)
         buffer.commit()
     }
 }
