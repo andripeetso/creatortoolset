@@ -26,6 +26,8 @@ private let waveLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Creator
 /// - `"drawn"`: the page has changed under the picture; a picture of the new screen is taken. Answered when the wave is
 ///   over
 /// - `"stop"`: chat mode was switched again; the wave goes at once
+/// - `"ready"`: the pointer came onto the button; a picture of the screen is taken now, so a press shows the wave at
+///   once (on a big window, a picture can take half a second: what a press would wait for)
 final class ChatWaveHost {
     private weak var view: WKWebView?
     private var wave: ChatWaveView?
@@ -35,6 +37,10 @@ final class ChatWaveHost {
     private var oldPage = false
     /// The sound of a held wave (WaveSound.swift); a click makes none.
     private let sound = WaveSound()
+    /// The picture taken when the pointer came onto the button ("ready"), and who waits for one being taken (nil when
+    /// none is).
+    private var early: (image: CGImage, at: CFTimeInterval)?
+    private var earlyWaiting: [(CGImage?) -> Void]?
 
     init(_ view: WKWebView) {
         self.view = view
@@ -48,6 +54,7 @@ final class ChatWaveHost {
         case "drawn":
             guard let view, let wave else { return reply(true, nil) }
             drawn = reply
+            waveLog.notice("new screen drawn at \(Int(wave.elapsed)) ms")
             // the page has finished its own entrances by now (chat-mode.ts macWash): what it shows is the new screen. A
             // page from before that is given until 420 ms after the press, as it was then (what fades in is there by then)
             let wait = oldPage ? max(0, 420 - wave.elapsed) / 1000 : 0
@@ -62,9 +69,47 @@ final class ChatWaveHost {
         case "stop":
             wave?.finish()
             reply(true, nil)
+        case "ready":
+            prepare()
+            reply(true, nil)
         default:
             reply(nil, "unknown")
         }
+    }
+
+    /// A picture of the screen as it is now, kept for a press in the next few seconds. Taken after the screen's next
+    /// update, so with the button's look under the pointer.
+    private func prepare() {
+        guard wave == nil, earlyWaiting == nil, let view else { return }
+        earlyWaiting = []
+        view.takeSnapshot(with: nil) { [weak self] image, _ in
+            guard let self else { return }
+            let picture = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            let at = CACurrentMediaTime()
+            if let picture { self.early = (picture, at) }
+            let waiting = self.earlyWaiting ?? []
+            self.earlyWaiting = nil
+            waiting.forEach { $0(picture) }
+            // (a picture of a big window is large: not kept past its use)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.1) { [weak self] in
+                if self?.early?.at == at { self?.early = nil }
+            }
+        }
+    }
+
+    /// The screen as it is on show now: the picture taken as the pointer came onto the button when it is recent (or
+    /// still being taken: that comes sooner than a new one), else a new one.
+    private func screenNow(_ done: @escaping (CGImage?, Bool) -> Void) {
+        if let e = early, CACurrentMediaTime() - e.at < 3 {
+            early = nil
+            return done(e.image, true)
+        }
+        early = nil
+        if earlyWaiting != nil { return earlyWaiting!.append { done($0, true) } }
+        // not after the next update: the page changes only once this is answered
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = false
+        view?.takeSnapshot(with: config) { image, _ in done(image?.cgImage(forProposedRect: nil, context: nil, hints: nil), false) }
     }
 
     private func begin(_ start: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
@@ -80,17 +125,15 @@ final class ChatWaveHost {
         oldPage = start["hold"] == nil
         waveLog.notice("start: hold \(hold), mouse down \(ChatWaveView.mouseDown()), page from before holding \(self.oldPage)")
         if hold { sound.begin() }
-        // the screen as it is on show now, not after the next update: the page changes only once this is answered
-        let config = WKSnapshotConfiguration()
-        config.afterScreenUpdates = false
-        view.takeSnapshot(with: config) { [weak self] image, _ in
-            guard let self, let view = self.view, let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+        screenNow { [weak self] image, early in
+            guard let self, let view = self.view, let image,
                   let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed, sound: hold ? self.sound : nil)
             else {
                 waveLog.notice("no wave: no picture of the screen")
+                self?.sound.end()
                 return reply(false, nil)
             }
-            waveLog.notice("up at \(Int(wave.elapsed)) ms")
+            waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early)")
             self.wave = wave
             wave.onDone = { [weak self] in
                 self?.wave = nil
@@ -311,10 +354,11 @@ enum WaveClock {
             return (0.7 * (1 - exp(-h / 200)) + 0.0016 * h) * (1 - exp(-h / 40))
         }
         if ms <= held { return Float(deep(ms)) }
-        // at the speed it had, slowing over 300 ms; a press little longer than a click (quick to fall in, with little
-        // drawn in yet) slows sooner, so it goes on by no more than it drew in and stays all but a click
+        // at the speed it had, slowing over 300 ms (the new screen's picture can come half a second late on a big
+        // window: no stop meanwhile); a press little longer than a click (quick to fall in, with little drawn in yet)
+        // slows sooner, so it stays all but a click
         let speed = deep(held) - deep(held - 1)
-        let slows = speed > 0 ? min(300, deep(held) / speed) : 300
+        let slows = speed > 0 ? min(300, deep(held) / speed * (1 + max(held - holdFrom - 60, 0) / 40)) : 300
         return Float(deep(held) + speed * slows * (1 - exp(-(ms - held) / slows)))
     }
 

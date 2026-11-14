@@ -34,6 +34,9 @@ final class ChatWaveTests: XCTestCase {
         let short = 230.0
         let speed = { (ms: Double) in WaveClock.pull(ms + self.frame, held: short) - WaveClock.pull(ms, held: short) }
         XCTAssertGreaterThan(speed(short), speed(short - frame) * 0.7)
+        // a 0.3 s hold whose new screen's picture is half a second late is still falling in when it comes
+        let third = { (ms: Double) in WaveClock.pull(ms + self.frame, held: 300) - WaveClock.pull(ms, held: 300) }
+        XCTAssertGreaterThan(third(300 + 400), third(300) / 4)
     }
 
     /// Held, the screen is on its way within a few frames and well in after a tenth of a second (owner, 11-14: "stronger
@@ -143,8 +146,9 @@ final class ChatWaveTests: XCTestCase {
         var answers: [Any?] = []
         host.handle("drawn") { v, _ in answers.append(v) }
         host.handle("stop") { v, _ in answers.append(v) }
+        host.handle("ready") { v, _ in answers.append(v) }
         host.handle(["start": ["x": "nowhere"]]) { v, _ in answers.append(v) }
-        XCTAssertEqual(answers.count, 3)
-        XCTAssertEqual(answers[2] as? Bool, false)
+        XCTAssertEqual(answers.count, 4)
+        XCTAssertEqual(answers[3] as? Bool, false)
     }
 }

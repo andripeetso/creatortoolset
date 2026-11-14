@@ -77,7 +77,8 @@ struct WaveSynth {
                 + 0.45 * air * exp(-a / (0.12 + 0.3 * popSize + 0.3 * popWild)))
             out += 0.4 * popLoud * popWild * sin(sub) * exp(-a / 0.4) * min(a / 0.02, 1)
         }
-        return tanh(out * 1.3) * 0.7
+        // (a half-second hold's pop peaks about as loud as the Mac's own "Pop", the longest hold's about as its "Tink")
+        return tanh(out * 1.3) * 0.4
     }
 }
 
@@ -100,8 +101,12 @@ final class WaveSound {
             if engine?.isRunning == true { return }
             let e = engine ?? AVAudioEngine()
             if engine == nil {
-                let rate = e.outputNode.outputFormat(forBus: 0).sampleRate
-                guard rate > 0, let mono = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1) else { return }
+                // (no way to play sound reports 0 Hz or no channels, and the engine would raise an exception Swift cannot
+                // catch: then the wave makes none)
+                let output = e.outputNode.outputFormat(forBus: 0)
+                guard output.sampleRate > 0, output.channelCount > 0,
+                      let mono = AVAudioFormat(standardFormatWithSampleRate: output.sampleRate, channels: 1) else { return }
+                let rate = output.sampleRate
                 var synth = WaveSynth(rate: Float(rate))
                 let node = AVAudioSourceNode(format: mono) { [told] _, _, frames, buffers in
                     if let now = told.withLockIfAvailable({ s -> Told in

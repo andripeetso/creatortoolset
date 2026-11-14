@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { clickChatMode, holdChatMode, useChatMode } from "@/lib/chat-mode";
+import { clickChatMode, holdChatMode, readyChatMode, useChatMode } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 
 /** A speech bubble: an outline while chat mode is off, filled in the project's colour while it's on. */
@@ -29,6 +29,7 @@ export function ChatModeButton({ className, ...rest }: { className?: string } & 
       data-chat-toggle
       type="button"
       // (a Control-click is the Mac's right click: it opens no chat mode)
+      onPointerEnter={readyChatMode}
       onPointerDown={(e) => e.button === 0 && !e.ctrlKey && holdChatMode(ref.current)}
       onClick={(e) => clickChatMode(ref.current, e)}
       aria-pressed={on}
