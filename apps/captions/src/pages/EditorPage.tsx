@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InOtherProjects } from "@/components/workspace/InOtherProjects";
+import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
@@ -231,6 +232,8 @@ export default function EditorPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor">
+        {/* the list is the current project's edits, so the project is picked here too, as in the Workshop */}
+        <ProjectSwitcher />
         {anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
         <EditorDefaultsButton slots={["grade"]} />
         <Button size="sm" onClick={() => setCreating(true)}>
