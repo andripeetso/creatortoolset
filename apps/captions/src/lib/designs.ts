@@ -11,11 +11,14 @@ export class DesignChanged extends Error {
   }
 }
 
-async function send<T>(url: string, method = "GET", body?: unknown): Promise<T> {
-  const r = await fetch(url, { method, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
-  const out = (await r.json().catch(() => ({}))) as T & { error?: string; design?: Design };
+/** An answer that is not ok: its words, and its `code` and the `device` it names when it has them (a Mac that is not reachable). */
+export type SendError = Error & { code?: string; device?: { id: string; name: string } };
+
+async function send<T>(url: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+  const r = await fetch(url, { method, signal, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const out = (await r.json().catch(() => ({}))) as T & { error?: string; design?: Design; code?: string; device?: { id: string; name: string } };
   if (r.status === 409 && out.design) throw new DesignChanged(out.design);
-  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  if (!r.ok) throw Object.assign(new Error(out.error ?? `Request failed (${r.status})`), { code: out.code, device: out.device }) as SendError;
   return out;
 }
 
@@ -31,9 +34,9 @@ export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;
 
 /** One of the design's pictures with its background taken away, as a new picture of the design: its id. Cut by a Mac of the person's own; the error says what is missing when none is on. */
-export const cutOutPicture = async (id: string, picture: string) => (await send<{ id: string }>(`${base(id)}/pictures/${picture}/cutout`, "POST", {})).id;
+export const cutOutPicture = async (id: string, picture: string, signal?: AbortSignal) => (await send<{ id: string }>(`${base(id)}/pictures/${picture}/cutout`, "POST", {}, signal)).id;
 /** The picture split by a Mac of the person's own: what is behind its words and pieces, each piece, and its lines (lib/design/split.ts makes them layers). */
-export const splitPicture = (id: string, picture: string) => send<SplitAnswer>(`${base(id)}/pictures/${picture}/split`, "POST", {});
+export const splitPicture = (id: string, picture: string, signal?: AbortSignal) => send<SplitAnswer>(`${base(id)}/pictures/${picture}/split`, "POST", {}, signal);
 
 /**
  * A picture from this computer into the design's own folder, as it is (no shrinking, transparency kept); answers its

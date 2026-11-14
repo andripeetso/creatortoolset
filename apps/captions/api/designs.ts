@@ -10,7 +10,7 @@ import { animationStyles, carouselApp, carouselStyles } from "./editor/animation
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
-import { cutOut, splitPicture } from "./lib/cutouts";
+import { cutOut, NoMac, splitPicture } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
 import { smallJpeg } from "./lib/small-jpeg";
@@ -191,6 +191,8 @@ export class DesignError extends Error {
   constructor(
     message: string,
     readonly status: 400 | 404 | 502 = 400,
+    /** more the answer carries beside `error` */
+    readonly more?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -504,7 +506,7 @@ const answer = async (c: C, run: () => Promise<object>) => {
   try {
     return c.json(await run());
   } catch (e) {
-    if (e instanceof DesignError) return c.json({ error: e.message }, e.status);
+    if (e instanceof DesignError) return c.json({ error: e.message, ...e.more }, e.status);
     if (e instanceof Changed) return c.json({ error: e.message, design: e.design }, 409);
     throw e;
   }
@@ -740,10 +742,12 @@ async function keepable(png: Buffer, tmp: string, what: string): Promise<Buffer>
   return out;
 }
 
+/** What a Mac was asked for, or why not: no Mac of theirs on comes with `code: "no_mac"` and the Mac that is not reachable, so a page can say so and do it on the Mac it is open on. */
 const fromMac = async <T>(ask: Promise<T>): Promise<T> => {
   try {
     return await ask;
   } catch (e) {
+    if (e instanceof NoMac) throw new DesignError(e.message, 400, { code: "no_mac", ...(e.device ? { device: e.device } : {}) });
     throw new DesignError(e instanceof Error ? e.message : String(e));
   }
 };

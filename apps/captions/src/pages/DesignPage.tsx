@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
-import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2 } from "lucide-react";
+import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2, X } from "lucide-react";
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
@@ -19,7 +19,7 @@ import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, fres
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
-import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture } from "@/lib/designs";
+import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture, type SendError } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
 import { onThisMac } from "@/lib/thisMac";
 import { downloadBlob } from "@/lib/download";
@@ -106,6 +106,8 @@ function DesignPage({ id }: { id: string }) {
   const view = useRef(viewStore()).current;
   const [pointed, setPointed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A Mac it needs is not reachable: said in a line of its own, with Stop while it is being done on this Mac instead. */
+  const [macNote, setMacNote] = useState<{ text: string; stop?: () => void } | null>(null);
   const navigate = useNavigate();
   // the same saved copy as the Designer's Carousel styles tab, so a style made here is in that list too. Read when the
   // page opens and after a frame is added: not again at each save of this design
@@ -587,6 +589,26 @@ function DesignPage({ id }: { id: string }) {
    * The picked picture with its background taken away. The cut-out is a new picture of the design, and the layer
    * keeps the one it was cut from, so ⌘Z (or the panel) puts the background back.
    */
+  /**
+   * A call to a Mac of the person's own (a cut-out, a split), said as it goes: a Mac of theirs that is not reachable is
+   * named, and in the Mac app the call is made on this Mac instead, with Stop. In a browser the line stays, with Settings.
+   */
+  const withMac = async <T,>(run: (signal: AbortSignal) => Promise<T>): Promise<T | null> => {
+    const stop = new AbortController();
+    setMacNote(null);
+    try {
+      return await onThisMac(() => run(stop.signal), { signal: stop.signal, onHere: (text) => setMacNote({ text, stop: () => stop.abort() }) });
+    } catch (e) {
+      if (stop.signal.aborted) return null;
+      const no = e as SendError;
+      if (no.code !== "no_mac") throw e;
+      setMacNote({ text: no.device ? `${no.message}: open Creator Toolset on it and try again.` : no.message });
+      return null;
+    } finally {
+      setMacNote((n) => (n?.stop ? null : n));
+    }
+  };
+
   const cutOut = async () => {
     const l = mine.length === 1 ? mine[0]! : null;
     if (!design || !base || l?.type !== "image" || cutting) return;
@@ -594,7 +616,8 @@ function DesignPage({ id }: { id: string }) {
     setCutting(true);
     setError(null);
     try {
-      const cut = await onThisMac(() => cutOutPicture(design.id, l.picture));
+      const cut = await withMac((signal) => cutOutPicture(design.id, l.picture, signal));
+      if (!cut) return;
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, cut] } : d));
       // onto the layer as it is by now: the cutting took a while
       const page = latest.current.find((p) => p.id === onto);
@@ -617,7 +640,8 @@ function DesignPage({ id }: { id: string }) {
     setCutting(true);
     setError(null);
     try {
-      const a = await onThisMac(() => splitPicture(design.id, l.picture));
+      const a = await withMac((signal) => splitPicture(design.id, l.picture, signal));
+      if (!a) return;
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, a.background, ...a.pieces.map((p) => p.picture)] } : d));
       // onto the frame as it is by now: the Mac took a while
       const page = latest.current.find((p) => p.id === onto);
@@ -867,6 +891,24 @@ function DesignPage({ id }: { id: string }) {
         </Button>
       </AppBar>
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
+      {macNote && (
+        <div role="status" className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-sm text-amber-700 dark:text-amber-300">
+          <span className="min-w-0 flex-1">{macNote.text}</span>
+          {macNote.stop && (
+            <Button size="sm" variant="ghost" className="h-7" onClick={macNote.stop}>
+              Stop
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" className="h-7" onClick={() => navigate("/settings/devices")}>
+            Settings
+          </Button>
+          {!macNote.stop && (
+            <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Close" onClick={() => setMacNote(null)}>
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />

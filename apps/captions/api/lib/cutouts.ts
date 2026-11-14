@@ -50,12 +50,28 @@ interface Cut {
 const cuts = new Map<number, Cut>();
 let lastId = 0;
 
-/** Why this account can't have a picture cut out (or split) now, in the app's words for what is missing; null when a Mac of its own can. */
-export function cutoutMissing(owner: string, kind: Kind = CUTOUT_KIND): string | null {
-  const on = listDevices((d) => d.owner === owner && isOnline(d.id));
+/** No Mac of the account's own can take a cut-out (or split) now. `device`: the Mac of theirs that would, and is not reachable. */
+export class NoMac extends Error {
+  constructor(
+    message: string,
+    readonly device?: { id: string; name: string },
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Why this account can't have a picture cut out (or split) now; null when a Mac of its own can. A Mac of theirs that
+ * is paired and not on is named ("Ana's Mac is unreachable"), the one seen last; with none, what is missing.
+ */
+export function cutoutMissing(owner: string, kind: Kind = CUTOUT_KIND): NoMac | null {
+  const mine = listDevices((d) => d.owner === owner);
+  const on = mine.filter((d) => isOnline(d.id));
   if (on.some((d) => d.kinds?.includes(kind))) return null;
   // a Mac that is on but lists no cut-out (or split) has an app older than it
-  return needsLine([{ what: on.length ? "The newest Creator Toolset Mac app" : "A Mac with Creator Toolset on", anyOf: [], form: "ai" }]);
+  if (on.length) return new NoMac(needsLine([{ what: "The newest Creator Toolset Mac app", anyOf: [], form: "ai" }]));
+  const last = mine.sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+  return last ? new NoMac(`${last.name} is unreachable`, { id: last.id, name: last.name }) : new NoMac(needsLine([{ what: "A Mac with Creator Toolset on", anyOf: [], form: "ai" }]));
 }
 
 /**
@@ -70,11 +86,11 @@ export const splitPicture = (owner: string, picture: Buffer): Promise<Split> => 
 function ask<T extends Buffer | Split>(owner: string, picture: Buffer, kind: Kind): Promise<T> {
   const mime = pictureType(picture);
   const refused =
-    picture.length > CUTOUT_LIMITS.bytes ? `The picture is over ${CUTOUT_LIMITS.bytes / 1e6} MB.`
-    : !mime ? "That is not a PNG, JPEG or HEIC picture."
+    picture.length > CUTOUT_LIMITS.bytes ? new Error(`The picture is over ${CUTOUT_LIMITS.bytes / 1e6} MB.`)
+    : !mime ? new Error("That is not a PNG, JPEG or HEIC picture.")
     : cutoutMissing(owner, kind) ??
-      ([...cuts.values()].filter((c) => c.owner === owner).length >= CUTOUT_LIMITS.waiting ? `${CUTOUT_LIMITS.waiting} pictures are being ${kind === SPLIT_KIND ? "split" : "cut out"} already: wait for one of them.` : null);
-  if (refused) return Promise.reject(new Error(refused));
+      ([...cuts.values()].filter((c) => c.owner === owner).length >= CUTOUT_LIMITS.waiting ? new Error(`${CUTOUT_LIMITS.waiting} pictures are being ${kind === SPLIT_KIND ? "split" : "cut out"} already: wait for one of them.`) : null);
+  if (refused) return Promise.reject(refused);
   return new Promise((resolve, reject) => {
     const id = ++lastId;
     const timer = setTimeout(() => end(new Error(`Your Mac did not ${kind === SPLIT_KIND ? "split the picture" : "cut the picture out"} in ${CUTOUT_LIMITS.ms / 1000} seconds.`)), CUTOUT_LIMITS.ms);

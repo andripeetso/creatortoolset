@@ -79,30 +79,49 @@ describe("where a picked file is on this Mac", () => {
 });
 
 describe("a call that needs a Mac of the person's own", () => {
-  const noMac = new Error("Needs a Mac with Creator Toolset on");
-  it("inside the Mac app, switches this Mac on and makes the call again until the server sees it", async () => {
+  const away = (device?: { id: string; name: string }) => Object.assign(new Error(device ? `${device.name} is unreachable` : "Needs a Mac with Creator Toolset on"), { code: "no_mac", device });
+  const studio = { id: "dev-studio", name: "Ana's Mac Studio" };
+
+  it("inside the Mac app, says which Mac is unreachable, switches this Mac on and makes the call again until the server sees it", async () => {
     const asked: string[] = [];
-    bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true }));
+    bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true, device: "dev-air" }));
     let calls = 0;
+    const said: string[] = [];
     const run = async () => {
-      if (++calls < 3) throw noMac;
+      if (++calls < 3) throw away(studio);
       return "split";
     };
-    expect(await onThisMac(run, 1)).toBe("split");
-    expect([asked, calls]).toEqual([["start"], 3]);
+    expect(await onThisMac(run, { wait: 1, onHere: (t) => said.push(t) })).toBe("split");
+    expect([asked, calls, said]).toEqual([["state", "start"], 3, ["Ana's Mac Studio is unreachable. Doing it on this Mac."]]);
+  });
+
+  it("when the Mac it can't reach is this one, says this Mac isn't connected", async () => {
+    bridgeWith(async () => ({ aiOn: true, paired: true, device: "dev-studio" }));
+    const said: string[] = [];
+    let calls = 0;
+    await onThisMac(async () => (++calls < 2 ? Promise.reject(away(studio)) : "ok"), { wait: 1, onHere: (t) => said.push(t) });
+    expect(said).toEqual(["This Mac isn't connected to this server. Connecting it and doing it here."]);
+  });
+
+  it("Stop ends the waiting", async () => {
+    bridgeWith(async () => ({ aiOn: true, paired: true }));
+    const stop = new AbortController();
+    const going = onThisMac(async () => Promise.reject(away()), { wait: 5, signal: stop.signal, onHere: () => stop.abort() });
+    await expect(going).rejects.toThrow();
+    expect(stop.signal.aborted).toBe(true);
   });
 
   it("says why when this Mac can't be switched on, and gives any other answer as it is", async () => {
     bridgeWith(async () => ({ aiOn: false, paired: false, problem: "Could not pair this Mac: offline" }));
-    await expect(onThisMac(async () => Promise.reject(noMac), 1)).rejects.toThrow("This Mac could not be switched on for it: Could not pair this Mac: offline");
+    await expect(onThisMac(async () => Promise.reject(away()), { wait: 1 })).rejects.toThrow("This Mac could not be switched on for it: Could not pair this Mac: offline");
     const asked: string[] = [];
     bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true }));
-    await expect(onThisMac(async () => Promise.reject(new Error("Needs the newest Creator Toolset Mac app")), 1)).rejects.toThrow("Needs the newest");
+    await expect(onThisMac(async () => Promise.reject(new Error("Needs the newest Creator Toolset Mac app")), { wait: 1 })).rejects.toThrow("Needs the newest");
     expect(asked).toEqual([]);
   });
 
   it("in a browser, the call's own answer", async () => {
     vi.stubGlobal("window", {});
-    await expect(onThisMac(async () => Promise.reject(noMac), 1)).rejects.toThrow("Needs a Mac with Creator Toolset on");
+    await expect(onThisMac(async () => Promise.reject(away(studio)), { wait: 1 })).rejects.toThrow("Ana's Mac Studio is unreachable");
   });
 });

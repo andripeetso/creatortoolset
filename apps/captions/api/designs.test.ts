@@ -567,6 +567,12 @@ describe("designs: a picture split into layers", () => {
   it("keeps what the Mac made as pictures of the design and answers the lines; a layout it cannot read fails in words", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
     const first = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "slide", type: "image/png", data: png(108, 135, "navy").toString("base64") })).body.id;
+    // a Mac of robin's that is paired and not on: named, with its id, so the page can say so
+    const robins = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true }, "robin")).body;
+    const robinPic = (await call<{ id: string }>("POST", `/api/designs/${robins.id}/pictures`, { name: "slide", type: "image/png", data: png(108, 135).toString("base64") }, "robin")).body.id;
+    const away = pairDevice("robin", "Robin's Mac Studio").device;
+    const off = await call<{ error: string; code: string; device: unknown }>("POST", `/api/designs/${robins.id}/pictures/${robinPic}/split`, {}, "robin");
+    expect([off.status, off.body]).toEqual([400, { error: "Robin's Mac Studio is unreachable", code: "no_mac", device: { id: away.id, name: "Robin's Mac Studio" } }]);
     const mac = pairDevice("jordan", "Jordan's split Mac").device;
     // a Mac that cuts out but does not split has an app older than the split
     setDeviceKinds(mac.id, [CUTOUT_KIND]);

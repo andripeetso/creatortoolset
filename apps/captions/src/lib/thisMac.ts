@@ -26,28 +26,36 @@ export async function startThisMac(): Promise<ThisMacState | null> {
   }
 }
 
-/** What the server says when no Mac of the person's own is on for it (api/lib/cutouts.ts cutoutMissing, contracts/tools.ts needsLine). */
-const NO_MAC = /^Needs a Mac with Creator Toolset on/;
+/** The server's answer when no Mac of the person's own is on for a call (api/designs.ts fromMac): `device` is the Mac of theirs it can't reach. */
+type NoMac = Error & { code?: string; device?: { id: string; name: string } };
+const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).code === "no_mac";
 
 /**
  * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
- * theirs, this Mac is switched on for it (Settings → Computers, Use this Mac for my AI, which pairs it with this server)
- * and the call is made again once the server sees it. In a browser, or for any other answer, the call's own error.
+ * theirs, it is done on this Mac: `onHere` is told so first ("Ana's Mac Studio is unreachable. Doing it on this Mac.",
+ * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, Use this Mac for my AI, which pairs
+ * it with this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
+ * for any other answer, the call's own error.
  */
-export async function onThisMac<T>(run: () => Promise<T>, wait = 1500, tries = 8): Promise<T> {
+export async function onThisMac<T>(run: () => Promise<T>, opts: { onHere?: (why: string) => void; signal?: AbortSignal; wait?: number; tries?: number } = {}): Promise<T> {
+  const { wait = 1500, tries = 8, signal } = opts;
   try {
     return await run();
   } catch (e) {
-    if (!thisMacBridge() || !(e instanceof Error) || !NO_MAC.test(e.message)) throw e;
+    const bridge = thisMacBridge();
+    if (!bridge || !noMac(e)) throw e;
+    const here = await bridge.postMessage("state").catch(() => null);
+    opts.onHere?.(e.device && e.device.id !== here?.device ? `${e.device.name} is unreachable. Doing it on this Mac.` : "This Mac isn't connected to this server. Connecting it and doing it here.");
     const s = await startThisMac();
     if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not be switched on for it: ${s.problem}` : e.message);
     // the server sees the Mac at its first call, a moment after it is switched on
     for (let n = 1; ; n++) {
       await new Promise((r) => setTimeout(r, wait));
+      signal?.throwIfAborted();
       try {
         return await run();
       } catch (again) {
-        if (n >= tries || !(again instanceof Error) || !NO_MAC.test(again.message)) throw again;
+        if (n >= tries || !noMac(again)) throw again;
       }
     }
   }
