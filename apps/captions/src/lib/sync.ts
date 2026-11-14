@@ -209,7 +209,7 @@ function tagUploads() {
     if (name.toLowerCase() === "x-ct-workspace") this.ctWs = true;
     return setRequestHeader.call(this, name, value);
   };
-  proto.send = function (this: Tagged, body?: Document | XMLHttpRequestBodyInit | null) {
+  proto.send = function (this: Tagged, body?: Parameters<typeof send>[0]) {
     const ws = currentWorkspace();
     if (this.ctSame && ws && !this.ctWs) setRequestHeader.call(this, "X-CT-Workspace", ws);
     return send.call(this, body);
