@@ -127,18 +127,22 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
 
     // the front is no circle: it wavers along its length, and the wavering moves
     float waver = 0.6 * sin(ang * 7.0 + time * 3.5) + 0.32 * sin(ang * 13.0 - time * 5.5 + 1.3) + 0.08 * sin(ang * 23.0 + time * 8.0 + 2.1);
-    float x = (r - front - waver * w * 0.28) / w;
+    // (none at the button itself, where a little of it round a small circle would make a star)
+    float x = (r - front - waver * w * 0.28 * smoothstep(0.0, 120.0 * pt, r)) / w;
     // well behind the front, once its wave has settled: the page itself shows
     if (x < -3.2) return float4(0.0);
     float ahead = smoothstep(-0.4, 0.4, x);
+    // The bars at the top (56 points: titleBarHeight in TitleBar.swift, the page's h-14) are the window's own: nothing
+    // in them moves, blurs or splits, so the button under the pointer stays put. Below their edge the wave comes in.
+    float still = smoothstep(56.0 * pt, 84.0 * pt, p.y);
 
     // The screen that was falls toward the button: what is near it shrinks into it, what is further is stretched
     // toward it, and all of it turns a little round it. Each point stays so until the front reaches it.
-    float sucked = pull * r * exp(-r / reach) * ahead;
-    float turn = swirl * pull * exp(-r / (0.6 * reach)) * ahead;
+    float sucked = pull * r * exp(-r / reach) * ahead * still;
+    float turn = swirl * pull * exp(-r / (0.6 * reach)) * ahead * still;
     // Behind the front the new screen is pushed out by the crest and settles back after one small trough.
-    float h = height(x);
-    float slope = (height(x + 0.05) - height(x - 0.05)) / 0.1;
+    float h = height(x) * still;
+    float slope = (height(x + 0.05) - height(x - 0.05)) / 0.1 * still;
     float rs = max(r + sucked - amp * h, 0.0);
     float as = ang + turn;
     float2 ns = float2(cos(as), sin(as));
@@ -146,9 +150,9 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float2 base = o + ns * rs;
 
     // Out of focus: a veil round the button while the screen falls into it, and the crest of the wave.
-    float soft = veil * pull * exp(-r / (0.8 * reach)) * ahead + 9.0 * pt * abs(h) * (0.4 + 0.6 * flash);
+    float soft = (veil * pull * exp(-r / (0.8 * reach)) * ahead + 9.0 * pt * abs(h) * (0.4 + 0.6 * flash)) * still;
     // the colours split where the picture bends most
-    float sp = split * (abs(slope) * amp * 0.5 + 0.12 * sucked);
+    float sp = split * (abs(slope) * amp * 0.5 + 0.12 * sucked) * still;
     float3 col = float3(0.0);
     int taps = soft < 0.75 ? 1 : 16;
     float spin = grain(p) * 6.2831853;
