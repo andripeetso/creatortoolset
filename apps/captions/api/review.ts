@@ -38,7 +38,6 @@ import { indexAsset } from "./library/query";
 import { deleteAssets } from "./library/trash";
 import { emitEvent } from "./lib/events";
 import { announceSoon } from "./lib/announce-soon";
-import { currentWorkspaceId } from "./lib/workspace-scope";
 import { announce } from "./lib/sync";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
@@ -1475,7 +1474,8 @@ reviewApp.post("/assets/:id/v/:n/captions", async (c) => {
         clipName: version.name,
         file: sourcePath(id, n),
         duration: version.duration,
-        workspace: await currentWorkspaceId(user),
+        // the video's workspace (a filed one is in its folder's), not the window's
+        workspace: (await folderWorkspace(v.meta.projectId)) ?? v.meta.workspace,
       });
       await setVersion(id, n, { captions: created });
       return created.projectId;

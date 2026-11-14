@@ -10,7 +10,6 @@ import { notesFromFile, probeDuration } from "./clips";
 import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
-import { currentWorkspaceId } from "./lib/workspace-scope";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary } from "./library/access";
 import { libraryDb } from "./library/db";
