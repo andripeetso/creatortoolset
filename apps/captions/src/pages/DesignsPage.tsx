@@ -83,12 +83,15 @@ export default function DesignsPage() {
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
 
+  // each workspace keeps its own designs: a switch reads its list, with nothing of the last one shown meanwhile
+  const workspace = useWorkspace((s) => s.currentProjectId);
   const load = useCallback(() => listDesigns().then((all) => (setDesigns(all), setError(null)), (e) => setError(message(e))), []);
   useEffect(() => {
+    setDesigns(null);
     void load();
     // this window's own changes too: a rename or a delete here is shown from what the server kept
     return onTopic("designs", () => void load(), { own: true });
-  }, [load]);
+  }, [load, workspace]);
 
   // the open folder's designs (every folder's when searching); the server sends them newest change first
   const folders = useToolFolders("design", designs ?? [], find);

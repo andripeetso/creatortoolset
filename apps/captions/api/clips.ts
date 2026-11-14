@@ -25,6 +25,7 @@ import {
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
 import { env } from "./lib/env";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { isWithin, sharedFolder } from "./folders";
 import type { SharedFolder, ToolFolder } from "../contracts/folders";
 import {
@@ -80,10 +81,13 @@ async function finishUpload(
 ): Promise<Meta> {
   const st = await stat(recordingPath(id));
   if (!st.size) throw new Error("Empty recording");
+  // in the workspace it was made in (the window's, or the chat's for one dropped in the assistant)
+  const projectId = await currentWorkspaceId(user);
   const meta: Meta = {
     id,
     name,
     owner,
+    ...(projectId ? { projectId } : {}),
     duration: 0,
     bytes: st.size,
     mime,
@@ -146,6 +150,8 @@ interface Meta {
   id: string;
   name: string;
   owner?: string;
+  /** the workspace it was made in; absent on one from before workspaces (the first brand's) */
+  projectId?: string;
   duration: number;
   bytes: number;
   mime: string;
@@ -168,11 +174,12 @@ const children = new Map<string, ReturnType<typeof spawn>>();
 const writeQ = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Set<BlockKind>>();
 
-/** This account's notes being made and sections being written, for Home (api/activity.ts). */
-export async function notesWork(username: string) {
-  const writing = (await Promise.all([...generating.keys()].filter((id) => !active.has(id)).map(readMeta))).filter((m) => m?.owner === username);
+/** This account's notes being made and sections being written, for Home (api/activity.ts); with `keep`, one workspace's. */
+export async function notesWork(username: string, keep?: ((own?: string) => boolean) | null) {
+  const mine = (m: Meta | null) => m?.owner === username && (!keep || keep(m.projectId));
+  const writing = (await Promise.all([...generating.keys()].filter((id) => !active.has(id)).map(readMeta))).filter(mine);
   return [
-    ...[...active.values()].filter((m) => m.owner === username && m.status === "processing").map((m) => ({ id: m.id, name: m.name, progress: m.progress, section: false })),
+    ...[...active.values()].filter((m) => mine(m) && m.status === "processing").map((m) => ({ id: m.id, name: m.name, progress: m.progress, section: false })),
     ...writing.map((m) => ({ id: m!.id, name: m!.name, progress: undefined, section: true })),
   ];
 }
@@ -936,7 +943,9 @@ async function clipMetas(keep: (m: Meta) => boolean): Promise<Meta[]> {
 
 clipsApp.get("/", async (c) => {
   const user = c.get("user");
-  const metas = await clipMetas((m) => m.owner === user.username || (user.role === "admin" && !m.owner));
+  // the workspace the window is in keeps its own notes; a shared folder's link and a note's own link show them anywhere
+  const keep = await inCurrentWorkspace(user);
+  const metas = await clipMetas((m) => (m.owner === user.username || (user.role === "admin" && !m.owner)) && (!keep || keep(m.projectId)));
   return c.json(metas.map((m) => publicMeta(m)));
 });
 

@@ -12,6 +12,7 @@ import {
   aiFor,
 } from "./ai-complete";
 import { env } from "./lib/env";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import {
   parseDocumentMarkdown,
   splitDocumentTitle,
@@ -63,6 +64,8 @@ interface Meta {
   id: string;
   name: string;
   owner?: string;
+  /** the workspace it was written in; absent on one from before workspaces (the first brand's) */
+  projectId?: string;
   kind?: Kind;
   prompt: string;
   sources: DocSource[];
@@ -161,12 +164,13 @@ function assertGuideSources(sources: DocSource[]): void {
   }
 }
 
-/** Guides and documents being written (inside their request), for Home (api/activity.ts). */
-const writing = new Map<string, { owner: string; name: string }>();
-export const guidesWork = (username: string) => [...writing].filter(([, w]) => w.owner === username).map(([id, w]) => ({ id, name: w.name }));
+/** Guides and documents being written (inside their request), for Home (api/activity.ts); with `keep`, one workspace's. */
+const writing = new Map<string, { owner: string; name: string; projectId?: string }>();
+export const guidesWork = (username: string, keep?: ((own?: string) => boolean) | null) =>
+  [...writing].filter(([, w]) => w.owner === username && (!keep || keep(w.projectId))).map(([id, w]) => ({ id, name: w.name }));
 /** Runs one writing, told to Home when it starts and when it ends, whatever the end. */
-async function written<T>(id: string, owner: string, name: string, fn: () => Promise<T>): Promise<T> {
-  writing.set(id, { owner, name });
+async function written<T>(id: string, owner: string, name: string, projectId: string | undefined, fn: () => Promise<T>): Promise<T> {
+  writing.set(id, { owner, name, projectId });
   announce(owner, "documents");
   try {
     return await fn();
@@ -465,6 +469,8 @@ documentsApp.get("/availability", (c) =>
 
 documentsApp.get("/media", async (c) => {
   const user = c.get("user");
+  // the Video Notes to write from are the workspace's the window is in, as /api/clips lists them
+  const keep = await inCurrentWorkspace(user);
   const clips: {
     id: string;
     name: string;
@@ -485,10 +491,11 @@ documentsApp.get("/media", async (c) => {
         ) as {
           name?: string;
           owner?: string;
+          projectId?: string;
           duration?: number;
           createdAt?: number;
         };
-        if (!ownsSource(meta.owner, user)) continue;
+        if (!ownsSource(meta.owner, user) || (keep && !keep(meta.projectId))) continue;
         clips.push({
           id,
           name: meta.name || "Untitled clip",
@@ -568,9 +575,11 @@ documentsApp.get("/", async (c) => {
   } catch {
     return c.json([]);
   }
+  // the workspace the window is in keeps its own documents and guides; a published one's link opens anywhere
+  const keep = await inCurrentWorkspace(user);
   const metas = (await Promise.all(ids.map(readMeta))).filter(
     (m): m is Meta =>
-      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner)),
+      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner)) && (!keep || keep(m.projectId)),
   );
   metas.sort((a, b) => b.updatedAt - a.updatedAt);
   return c.json(metas.map((m) => ({ ...m, kind: parseDocKind(m.kind) })));
@@ -608,10 +617,12 @@ documentsApp.post("/", async (c) => {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
   const id = randomUUID();
+  const projectId = await currentWorkspaceId(user);
   const meta: Meta = {
     id,
     name: kind === "guide" ? "Untitled guide" : "Untitled document",
     owner: user.username,
+    ...(projectId ? { projectId } : {}),
     kind,
     prompt,
     sources: resolved.map(({ pack: _p, ...s }) => s),
@@ -621,7 +632,7 @@ documentsApp.post("/", async (c) => {
     updatedAt: Date.now(),
   };
   try {
-    const md = await written(id, user.username, resolved[0]?.name ?? meta.name, async () =>
+    const md = await written(id, user.username, resolved[0]?.name ?? meta.name, meta.projectId, async () =>
       kind === "guide"
         ? (await runGuideGenerate(meta, resolved, user.username)).markdown
         : await generateBody(prompt, resolved, user.username));
@@ -762,7 +773,7 @@ documentsApp.post("/:id/generate", async (c) => {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
   try {
-    const md = await written(meta.id, user.username, meta.name, async () =>
+    const md = await written(meta.id, user.username, meta.name, meta.projectId, async () =>
       kind === "guide"
         ? (await runGuideGenerate(meta, resolved, user.username)).markdown
         : await generateBody(meta.prompt, resolved, user.username));

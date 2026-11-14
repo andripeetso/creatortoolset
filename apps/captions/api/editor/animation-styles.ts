@@ -19,6 +19,7 @@ import {
 import { picturesInChat } from "../assistant";
 import { jobTurn, type AuthVars } from "../auth";
 import { env } from "../lib/env";
+import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { ffmpeg } from "../library/media/run";
 import { notTyped } from "./own-words";
 import { change, read, type Saved } from "./styles";
@@ -83,12 +84,12 @@ function clean(body: Record<string, unknown>, kind: StyleKind): { name?: string;
   return out;
 }
 
-export function createAnimation(username: string, body: Record<string, unknown>, kind: StyleKind = "animation"): AnimationStyle | string {
+export function createAnimation(username: string, body: Record<string, unknown>, kind: StyleKind = "animation", projectId?: string): AnimationStyle | string {
   const given = clean(body, kind);
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const now = Date.now();
-  const style: AnimationStyle = { id: randomUUID(), name: given.name, brief: given.brief ?? "", pictures: [], createdAt: now, updatedAt: now };
+  const style: AnimationStyle = { id: randomUUID(), name: given.name, brief: given.brief ?? "", pictures: [], ...(projectId ? { projectId } : {}), createdAt: now, updatedAt: now };
   return change(username, (f) => {
     const list = (f[kind] ??= []);
     if (list.length >= KIND[kind].most) return `You have ${KIND[kind].most} ${KIND[kind].many}, the most an account keeps. Delete one first.`;
@@ -202,13 +203,18 @@ function stylesApp(kind: StyleKind) {
   const ofKind = (username: string, id: string) => stylesOf(username, kind).find((s) => s.id === id) ?? null;
   const unsaid = briefNotTyped(kind);
 
-  app.get("/", (c) => c.json({ styles: stylesOf(c.get("user").username, kind) } satisfies AnimationStylesView));
+  // a carousel style is a brand's: each workspace lists its own (one from before workspaces is the first brand's).
+  // An animation style is the account's. By its id either one still opens.
+  app.get("/", async (c) => {
+    const keep = kind === "carousel" ? await inCurrentWorkspace(c.get("user")) : null;
+    return c.json({ styles: stylesOf(c.get("user").username, kind).filter((s) => !keep || keep(s.projectId)) } satisfies AnimationStylesView);
+  });
 
   // the brief is the person's own words, also when the assistant saves it (own-words.ts)
   app.post("/", async (c) => {
     const b = await json(c.req);
     if (notTyped(c, b, ["brief"])) return c.json({ error: unsaid, code: "not_typed" }, 409);
-    const made = createAnimation(c.get("user").username, b, kind);
+    const made = createAnimation(c.get("user").username, b, kind, kind === "carousel" ? await currentWorkspaceId(c.get("user")) : undefined);
     return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
   });
 

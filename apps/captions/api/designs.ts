@@ -21,6 +21,7 @@ import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
 import { blobs, libraryDb } from "./library/db";
 import { ffmpeg } from "./library/media/run";
 import { ownedProjects, resolveProjectId } from "./lib/workshop/workspace";
+import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { ownedSession, readDoc } from "./workshop";
 
 /**
@@ -308,7 +309,9 @@ async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
       return p.images.map((i, n) => ({ jpeg: i.jpegBase64, made: n < p.made }));
     },
   }));
-  const own = [...ownOf(carouselStyles(owner), "carousel style"), ...ownOf(animationStyles(owner), "animation style")];
+  // the carousel styles of the workspace the request works in; animation styles are the account's
+  const keep = await inCurrentWorkspace(user);
+  const own = [...ownOf(carouselStyles(owner).filter((s) => !keep || keep(s.projectId)), "carousel style"), ...ownOf(animationStyles(owner), "animation style")];
   const theirs = (await pluginLooks(user)).filter((l) => l.name.trim() && !own.some((o) => o.name.toLowerCase() === l.name.toLowerCase()));
   return [
     ...own,
@@ -596,10 +599,14 @@ designsApp.get("/", (c) =>
     const names = await readdir(dirOf(owner)).catch(() => [] as string[]);
     const all = (await Promise.all(names.filter((n) => n.endsWith(".json")).map((n) => read(owner, n.slice(0, -5))))).filter((d): d is Design => !!d);
     const { session, doc } = c.req.query();
-    return listed(
+    const out = await listed(
       c.get("user"),
       all.filter((d) => !session || !doc || (pieceOf(d)?.session === session && pieceOf(d)?.doc === doc)).sort((a, b) => b.updatedAt - a.updatedAt),
     );
+    // the workspace the window is in keeps its own designs (a piece's by its script's workspace now); one piece's
+    // design, asked for by the piece, is found wherever it is
+    const keep = session && doc ? null : await inCurrentWorkspace(c.get("user"));
+    return keep ? out.filter((d) => keep(d.project)) : out;
   }),
 );
 

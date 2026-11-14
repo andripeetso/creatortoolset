@@ -19,6 +19,7 @@ const { CUTOUT_KIND, SPLIT_KIND } = await import("../contracts/devices");
 const { claimCutout, cutoutFailed, cutoutSent, heldCutout } = await import("./lib/cutouts");
 const { pairDevice, setDeviceKinds, touchDevice } = await import("./lib/devices");
 const { createUser } = await import("./users");
+const { workspaceScope } = await import("./lib/workshop/workspace");
 
 createUser("jordan", "password1", { role: "user" });
 createUser("robin", "password1", { role: "user" });
@@ -663,7 +664,8 @@ describe("designs: what each is connected to", () => {
     mkdirSync(ws("projects"), { recursive: true });
     writeFileSync(ws("projects", `${id}.json`), JSON.stringify({ id, owner, name, audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt }));
   };
-  const list = async () => (await call<DesignListed[]>("GET", "/api/designs")).body;
+  // each workspace lists its own designs (the window's, as the app's header says)
+  const list = (inWs: string) => workspaceScope.run(inWs, async () => (await call<DesignListed[]>("GET", "/api/designs")).body);
 
   it("the list says the script or the video a design was made from, by its name, and the brand project it is in", async () => {
     project(BRAND, "jordan", "Tiny Acrobatics", 2);
@@ -680,7 +682,12 @@ describe("designs: what each is connected to", () => {
     const unsaid = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, name: "Said nothing" })).body;
     expect([ofVideo.project, own.project, notMine.project, unsaid.project]).toEqual([BRAND, OTHER, BRAND, BRAND]);
 
-    const all = await list();
+    const [brand, other] = [await list(BRAND), await list(OTHER)];
+    const ids = (l: DesignListed[]) => l.map((d) => d.id);
+    expect(ids(other)).toEqual(expect.arrayContaining([ofPiece.id, own.id]));
+    expect(ids(brand)).toEqual(expect.arrayContaining([ofVideo.id, notMine.id, unsaid.id]));
+    expect(ids(brand)).not.toContain(ofPiece.id);
+    const all = [...brand, ...other];
     const of = (id: string) => all.find((d) => d.id === id)!;
     expect(of(ofPiece.id)).toMatchObject({ madeFrom: "Tiny Acrobatics floor time", project: OTHER, projectName: "Healthy Homes", from: { session: SESSION, doc: DOC } });
     expect(of(ofVideo.id)).toMatchObject({ madeFrom: "Tiny Acrobatics take", projectName: "Tiny Acrobatics" });
@@ -689,19 +696,21 @@ describe("designs: what each is connected to", () => {
     expect(of(notMine.id).projectName).toBe("Tiny Acrobatics");
     // the script moved to the other project: its design follows it at the next list
     writeFileSync(ws("sessions", SESSION, "meta.json"), JSON.stringify({ id: SESSION, owner: "jordan", title: "Floor time", projectId: BRAND, query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
-    expect((await list()).find((d) => d.id === ofPiece.id)).toMatchObject({ project: BRAND, projectName: "Tiny Acrobatics" });
+    expect((await list(BRAND)).find((d) => d.id === ofPiece.id)).toMatchObject({ project: BRAND, projectName: "Tiny Acrobatics" });
+    expect(ids(await list(OTHER))).not.toContain(ofPiece.id);
     // another account's list has none of it
     expect((await call<DesignListed[]>("GET", "/api/designs", undefined, "robin")).body).toEqual([]);
   });
 
   it("a design whose script, video or project is gone is still listed, without what is gone", async () => {
-    const before = await list();
+    const before = [...(await list(BRAND)), ...(await list(OTHER))];
     const ofPiece = before.find((d) => d.madeFrom === "Tiny Acrobatics floor time")!;
     const ofVideo = before.find((d) => d.madeFrom === "Tiny Acrobatics take")!;
     rmSync(ws("sessions", SESSION), { recursive: true, force: true });
     libraryDb().exec("DELETE FROM asset_versions WHERE id = 'ver_v'");
     rmSync(ws("projects", `${OTHER}.json`));
-    const res = await call<DesignListed[]>("GET", "/api/designs");
+    // what was in the workspace that is gone is the first brand's now
+    const res = await workspaceScope.run(BRAND, () => call<DesignListed[]>("GET", "/api/designs"));
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(before.length);
     const piece = res.body.find((d) => d.id === ofPiece.id)!;
