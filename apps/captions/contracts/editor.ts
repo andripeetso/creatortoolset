@@ -127,6 +127,8 @@ export interface EditSummary {
   uploads?: { id: string; version?: string }[];
   /** the latest job's state and kind, if any ran; `stopped`: it failed because the person stopped it */
   last: (Pick<EditJob, "kind" | "state"> & { stopped?: true }) | null;
+  /** the project it is in (GET /api/editor; one from before edits had a project is the first brand's); absent for a person with no project */
+  projectId?: string;
 }
 
 /** One spoken sentence of the footage (analyze): numbered from 1 across every source, in recording order. */

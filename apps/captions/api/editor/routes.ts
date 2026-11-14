@@ -21,7 +21,7 @@ import { cardsApp } from "./cards/routes";
 import { markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
-import { inProjectOf } from "../lib/project-of";
+import { inProjectOf, projectOf } from "../lib/project-of";
 import { resolveProjectId } from "../lib/workshop/workspace";
 
 /**
@@ -66,14 +66,17 @@ editorApp.post("/", async (c) => {
   }
 });
 
-/** The person's edits, newest first; ?projectId= only those of that project of theirs (lib/project-of.ts). */
+/**
+ * The person's edits, newest first, each with the project it is in (lib/project-of.ts: an old one is the first
+ * brand's); ?projectId= only those of that project of theirs.
+ */
 editorApp.get("/", async (c) => {
   const user = c.get("user").username;
-  const inProject = await inProjectOf(c.get("user"), c.req.query("projectId"));
+  const [inProject, of] = await Promise.all([inProjectOf(c.get("user"), c.req.query("projectId")), projectOf(c.get("user"))]);
   const list = allEdits()
     .filter((e) => !e.trashedAt && e.createdBy === user && (!inProject || inProject(e.projectId)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
-  return c.json(list.map(summaryOf));
+  return c.json(list.map((e) => ({ ...summaryOf(e), ...(of ? { projectId: of(e.projectId) } : {}) })));
 });
 
 // where footage picked from this computer is filed (api/editor/ingest.ts); registered before /:id
