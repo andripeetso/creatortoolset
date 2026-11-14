@@ -49,8 +49,10 @@ describe("ProjectForm variant setup", () => {
     expect(fullHtml).not.toContain("Tiny Acrobatics");
   });
 
-  it("a new project shows no knowledge switches", () => {
+  it("no knowledge, framework or rule switches, for a new project or one already made", () => {
     expect(fullHtml).not.toContain("Knowledge, frameworks and rules");
+    const made = { id: "p1", owner: "o", name: "Mine", audience: "", voice: "", cta: "", notes: "", off: ["k1"], createdAt: 0, updatedAt: 0 };
+    expect(renderToStaticMarkup(<ProjectForm initial={made} busy={false} onSave={() => {}} />)).not.toContain("Knowledge, frameworks and rules");
   });
 
   it("the name and the button belong to the form, so Enter submits it and never another row's button", () => {

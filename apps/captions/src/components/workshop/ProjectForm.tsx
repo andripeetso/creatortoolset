@@ -8,14 +8,8 @@ import {
   draftProjectNotes,
   fileBase64,
   foldProjectInstructions,
-  listFrameworks,
-  listRules,
-  listSources,
-  type KnowledgeSource,
   type ProjectFields,
-  type WorkshopFramework,
   type WorkshopProject,
-  type WorkshopRule,
 } from "@/lib/workshop";
 import { pdfText } from "@/lib/pdf-text";
 import { PROJECT_COLORS, projectColor, type ProjectColor } from "@/lib/workspace";
@@ -53,8 +47,9 @@ const readable = (file: File) => DOC.test(file.name) || ["text", "pdf"].includes
 
 /**
  * A project: name, colour, its accounts, the instructions always in the prompt (written for you from whatever you drop
- * in, if you like), the language of its videos and, once made, which of the account's knowledge, frameworks and rules it
- * uses. variant "setup" is the first-run project step: name, colour, where it posts (handles only).
+ * in, if you like) and the language of its videos. Which knowledge, frameworks and rules a project uses is switched where
+ * they live (the Knowledge tab), not here: what it has switched off (`off`) goes back as it was. variant "setup" is
+ * the first-run project step: name, colour, where it posts (handles only).
  */
 export function ProjectForm({
   initial,
@@ -71,8 +66,7 @@ export function ProjectForm({
   onSave: (fields: ProjectFields) => void | Promise<unknown>;
   /** Absent = no Cancel (the first-run setup, where a project is required). */
   onCancel?: () => void;
-  /** First-run setup: the form gets this id and the setup window's own button submits it (no box, no buttons here, no
-   *  knowledge off-switches yet: everything starts on). */
+  /** First-run setup: the form gets this id and the setup window's own button submits it (no box, no buttons here). */
   formId?: string;
   /** "setup": the first-run project step. No accounts, instructions or knowledge; handles only. */
   variant?: "setup";
@@ -87,9 +81,6 @@ export function ProjectForm({
   const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>(() => (setup && initial?.handles ? { ...initial.handles } : {}));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [frameworks, setFrameworks] = useState<WorkshopFramework[]>([]);
-  const [rules, setRules] = useState<WorkshopRule[]>([]);
-  const [sources, setSources] = useState<KnowledgeSource[]>([]);
   // files dropped on the instructions, to write them from ("Write it for me"); and what the box held before it did
   const [dropped, setDropped] = useState<File[]>([]);
   const [before, setBefore] = useState<{ notes: string; files: File[] } | null>(null);
@@ -104,12 +95,6 @@ export function ProjectForm({
   const set = (k: "name" | "notes") => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setF((cur) => ({ ...cur, [k]: e.target.value }));
   const locked = busy || pending || drafting;
-  const off = f.off ?? [];
-  const toggleOff = (id: string) =>
-    setF((cur) => {
-      const now = cur.off ?? [];
-      return { ...cur, off: now.includes(id) ? now.filter((x) => x !== id) : [...now, id] };
-    });
   const togglePlatform = (id: SocialPlatform) =>
     setWhere((cur) => {
       if (id in cur) {
@@ -165,17 +150,6 @@ export function ProjectForm({
   useEffect(() => {
     onReady?.(f.name.trim().length > 0);
   }, [f.name, onReady]);
-
-  useEffect(() => {
-    if (setup || !initial) return;
-    listFrameworks().then(setFrameworks).catch(() => {});
-    listRules().then(setRules).catch(() => {});
-    listSources().then(setSources).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the project, not each new copy of it from the store
-  }, [setup, initial?.id]);
-  // another project's own sources never show here
-  const knowledge = sources.filter((s) => !s.projectId || s.projectId === initial?.id);
-  const switches = [...knowledge, ...frameworks, ...rules];
 
   return (
     <div className={formId ? "flex flex-col gap-4" : "flex flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"}>
@@ -391,35 +365,6 @@ export function ProjectForm({
           />
         </div>
       )}
-      {/* only once the project exists, and folded: everything starts on, and most never change it */}
-      {!formId && !setup && initial && switches.length ? (
-        <details className="group">
-          <summary className="cursor-pointer select-none text-[11px] text-zinc-500 hover:text-zinc-300">
-            Knowledge, frameworks and rules · {switches.filter((x) => !off.includes(x.id)).length} of {switches.length} on
-          </summary>
-          <p className="mb-1.5 mt-1 text-[10px] text-zinc-600">
-            All of yours are on in every project. Switch off what this one shouldn't use. Add knowledge in the Workshop's Knowledge tab.
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {switches.map((x) => {
-              const on = !off.includes(x.id);
-              return (
-                <button
-                  key={x.id}
-                  type="button"
-                  aria-pressed={on}
-                  disabled={locked}
-                  onClick={() => toggleOff(x.id)}
-                  title={on ? "On for this project: click to switch off" : "Off for this project: click to switch on"}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] ${on ? "border-violet-500/50 bg-violet-500/10 text-zinc-100" : "border-zinc-800 text-zinc-600 line-through"}`}
-                >
-                  {x.name}
-                </button>
-              );
-            })}
-          </div>
-        </details>
-      ) : null}
       {/* Cancel / Save stay in view at the bottom while the form scrolls */}
       {!formId && <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
         {onCancel && !made && (
