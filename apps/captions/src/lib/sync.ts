@@ -190,4 +190,28 @@ export function tagWrites() {
   };
   (tagged as { ctTagged?: boolean }).ctTagged = true;
   globalThis.fetch = tagged as typeof fetch;
+  tagUploads();
+}
+
+/** The uploads that go by XMLHttpRequest (their progress bars: lib/uploads.ts, persist.ts) say the workspace too. */
+function tagUploads() {
+  if (typeof XMLHttpRequest === "undefined") return;
+  type Tagged = XMLHttpRequest & { ctSame?: boolean; ctWs?: boolean };
+  const proto = XMLHttpRequest.prototype;
+  const { open, setRequestHeader, send } = proto;
+  proto.open = function (this: Tagged, ...args: Parameters<typeof open>) {
+    const url = String(args[1]);
+    this.ctSame = url.startsWith("/") || url.startsWith(location.origin);
+    this.ctWs = false;
+    return open.apply(this, args);
+  } as typeof open;
+  proto.setRequestHeader = function (this: Tagged, name: string, value: string) {
+    if (name.toLowerCase() === "x-ct-workspace") this.ctWs = true;
+    return setRequestHeader.call(this, name, value);
+  };
+  proto.send = function (this: Tagged, body?: Document | XMLHttpRequestBodyInit | null) {
+    const ws = currentWorkspace();
+    if (this.ctSame && ws && !this.ctWs) setRequestHeader.call(this, "X-CT-Workspace", ws);
+    return send.call(this, body);
+  };
 }
