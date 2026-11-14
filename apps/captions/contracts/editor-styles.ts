@@ -159,6 +159,8 @@ export interface AnimationStyle {
   pictures: StylePicture[];
   /** where it was installed from; absent for a style the person made. Only a style without it makes cards. */
   from?: string;
+  /** a carousel style's workspace (the brand it was made in); absent on an animation style and one from before workspaces */
+  projectId?: string;
   createdAt: number;
   updatedAt: number;
 }
