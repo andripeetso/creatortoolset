@@ -6,6 +6,7 @@ import path from "node:path";
 import type { AuthVars } from "./auth";
 import { captionLayoutApp } from "./caption-layout";
 import { announceSoon } from "./lib/announce-soon";
+import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { DEVICE_AUDIO, deviceTranscribes, transcribeOnDevice } from "./lib/device-transcribe";
 import { ffmpeg } from "./library/media/run";
 import { captioning, clipReadyToEdit, clipSourceFile, projectsApp } from "./projects";
@@ -175,15 +176,19 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
 }
 
 /** Who each running job is for and its project's name, for Home (api/activity.ts). */
-const started = new Map<string, { owner: string; name: string }>();
+const started = new Map<string, { owner: string; name: string; workspace?: string }>();
 /** Caption jobs a restart of the server would drop: a deploy waits for 0 (/api/health). */
 export const captionJobsAtRisk = (): number => started.size;
-export const captioningWork = (username: string) => [...started].filter(([, j]) => j.owner === username).map(([id, j]) => ({ id, name: j.name }));
+/** The person's jobs in the workspace the request works in. */
+export async function captioningWork(user: SessionUser) {
+  const here = await inCurrentWorkspace(user);
+  return [...started].filter(([, j]) => j.owner === user.username && (!here || here(j.workspace))).map(([id, j]) => ({ id, name: j.name }));
+}
 
-/** Starts the captions for a project just made from a file; the chat hears how it ended. `name` is the project's. */
-export function captionInBackground(user: SessionUser, projectId: string, clipId: string, name: string, engine: Engine): void {
+/** Starts the captions for a project just made from a file; the chat hears how it ended. `name` and `workspace` are the project's. */
+export function captionInBackground(user: SessionUser, projectId: string, clipId: string, name: string, engine: Engine, workspace?: string): void {
   captioning.set(projectId, "preparing");
-  started.set(projectId, { owner: user.username, name });
+  started.set(projectId, { owner: user.username, name, workspace });
   announceSoon(user.username, "projects"); // Home's chip (api/activity.ts captioningWork)
   void caption(user, projectId, clipId, engine)
     .then(

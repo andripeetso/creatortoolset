@@ -45,6 +45,7 @@ import type { AuthVars } from "./auth";
 import type { Expired } from "./retention";
 import { type SessionUser, bumpUsage } from "./users";
 import { announceSoon } from "./lib/announce-soon";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
  * File-based project persistence. A project is a POOL of clips: one
@@ -208,6 +209,8 @@ interface Meta {
   /** Sum of clip durations — for the session list / admin panel. */
   duration: number;
   owner?: string; // account username; absent on pre-account projects
+  /** The workspace it was made in; none on one made before workspaces (the first brand's, lib/project-of.ts). */
+  projectId?: string;
   clips: ClipMeta[];
   /** Disk-only orphan reconstructed without ownership or a saved transcript. */
   incompleteRecovery?: boolean;
@@ -941,6 +944,7 @@ projectsApp.get("/", async (c) => {
   } catch {
     return c.json([]);
   }
+  const here = await inCurrentWorkspace(user);
   const metas = (
     await Promise.all(
       ids.filter(okId).map(async (id) => {
@@ -953,7 +957,8 @@ projectsApp.get("/", async (c) => {
       !!m &&
       !m.deletedAt &&
       !m.incompleteRecovery &&
-      (m.owner === user.username || (user.role === "admin" && !m.owner)),
+      (m.owner === user.username || (user.role === "admin" && !m.owner)) &&
+      (!here || here(m.projectId)),
   );
   metas.sort((a, b) => b.updatedAt - a.updatedAt);
   return c.json(
@@ -980,10 +985,12 @@ projectsApp.get("/trash", async (c) => {
   } catch {
     return c.json([]);
   }
+  const here = await inCurrentWorkspace(user);
   const metas = (await Promise.all(ids.map(readMeta))).filter(
     (meta): meta is Meta =>
       !!meta?.deletedAt &&
-      (meta.owner === user.username || (user.role === "admin" && !meta.owner)),
+      (meta.owner === user.username || (user.role === "admin" && !meta.owner)) &&
+      (!here || here(meta.projectId)),
   );
   metas.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
   return c.json(
@@ -1026,6 +1033,7 @@ projectsApp.post("/draft", async (c) => {
     updatedAt: Date.now(),
     duration: 0,
     owner: c.get("user").username,
+    projectId: await currentWorkspaceId(c.get("user")),
     clips,
     revision: 0,
   };
@@ -1087,6 +1095,7 @@ projectsApp.put("/:id/draft", async (c) => {
           updatedAt: now,
           duration: 0,
           owner: user.username,
+          projectId: await currentWorkspaceId(user),
           clips: [],
           revision: 0,
         };
@@ -1146,6 +1155,7 @@ projectsApp.post("/", async (c) => {
     updatedAt: Date.now(),
     duration: 0,
     owner: c.get("user").username,
+    projectId: await currentWorkspaceId(c.get("user")),
     clips: [{ id: clipId, name: clipName, duration: 0, createdAt: Date.now() }],
   };
   try {
@@ -2472,6 +2482,8 @@ export async function createProjectFromFile(o: {
   file: string;
   duration: number;
   libraryVersionId?: string;
+  /** The workspace it is made in (its Meta.projectId); none: the first brand's. */
+  workspace?: string;
   /** Answer once the project is on disk: its editing copy is built behind it (clipReadyToEdit waits for that). */
   later?: boolean;
 }): Promise<{ projectId: string; clipId: string }> {
@@ -2487,6 +2499,7 @@ export async function createProjectFromFile(o: {
     updatedAt: now,
     duration: 0,
     owner: o.owner,
+    projectId: o.workspace,
     clips: [
       {
         id: clipId,
@@ -2605,6 +2618,7 @@ export async function addEditedClip(o: {
         id: projectId,
         name: o.name.slice(0, 120),
         owner: o.user.username,
+        projectId: await currentWorkspaceId(o.user),
         createdAt: now,
         updatedAt: now,
         duration: 0,

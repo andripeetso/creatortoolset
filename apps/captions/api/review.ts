@@ -1474,6 +1474,8 @@ reviewApp.post("/assets/:id/v/:n/captions", async (c) => {
         clipName: version.name,
         file: sourcePath(id, n),
         duration: version.duration,
+        // the video's workspace (a filed one is in its folder's), not the window's
+        workspace: (await folderWorkspace(v.meta.projectId)) ?? v.meta.workspace,
       });
       await setVersion(id, n, { captions: created });
       return created.projectId;

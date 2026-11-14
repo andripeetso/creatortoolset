@@ -12,6 +12,8 @@ export interface ToolFolder {
   /** The folder it is in; null at the top. */
   parentId: string | null;
   createdAt: number;
+  /** The workspace it was made in; none on one made before workspaces (the first brand's). */
+  workspace?: string;
   /** Its share link's token (anyone with the link sees it and what is inside); only tools in SHAREABLE_TOOLS. */
   share?: string;
 }

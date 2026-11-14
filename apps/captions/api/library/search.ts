@@ -229,7 +229,7 @@ searchApp.post("/:id/assets/:assetId/captions", async (c) => {
   let job = opening.get(key);
   if (!job) {
     job = (async () => {
-      const { createProjectFromFile } = await import("../projects");
+      const [{ createProjectFromFile }, { currentWorkspaceId }] = await Promise.all([import("../projects"), import("../lib/workspace-scope")]);
       const created = await createProjectFromFile({
         owner: user.username,
         name: row.title,
@@ -237,6 +237,8 @@ searchApp.post("/:id/assets/:assetId/captions", async (c) => {
         file,
         duration: Number((JSON.parse(row.probe ?? "{}") as { duration?: number }).duration) || 0,
         libraryVersionId: row.version_id,
+        // ponytail: the window's workspace; inherit the clip's own once Media Library items carry one
+        workspace: await currentWorkspaceId(user),
       });
       return created.projectId;
     })().finally(() => opening.delete(key));

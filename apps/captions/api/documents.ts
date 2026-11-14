@@ -20,6 +20,7 @@ import {
 import { type SessionUser } from "./users";
 import { generateGuideFromClip } from "./lib/guide-pipeline";
 import { announce } from "./lib/sync";
+import { inCurrentWorkspace } from "./lib/workspace-scope";
 import {
   guideToMarkdown,
   isGuideAssetName,
@@ -515,6 +516,8 @@ documentsApp.get("/media", async (c) => {
     thumbClipId: string | null;
     updatedAt: number;
   }[] = [];
+  // Caption Studio's projects of the workspace this request works in
+  const here = await inCurrentWorkspace(user);
   try {
     const ids = (await readdir(PROJECTS_DIR, { withFileTypes: true }))
       .filter((d) => d.isDirectory())
@@ -531,10 +534,12 @@ documentsApp.get("/media", async (c) => {
           updatedAt?: number;
           deletedAt?: number;
           incompleteRecovery?: boolean;
+          projectId?: string;
           clips?: { id: string }[];
         };
         if (meta.deletedAt || meta.incompleteRecovery) continue;
         if (!ownsSource(meta.owner, user)) continue;
+        if (here && !here(meta.projectId)) continue;
         const list = meta.clips ?? [];
         captions.push({
           id,

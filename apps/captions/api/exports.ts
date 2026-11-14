@@ -31,6 +31,7 @@ import { type SessionUser, bumpUsage } from "./users";
 import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
  * Background export jobs (Canva-style). POST creates a job and returns
@@ -75,6 +76,8 @@ interface JobParams {
   finalsLabel?: string;
   /** started from the assistant's chat (the captions_export tool): the chat hears how it ended (tellChat) */
   chat?: boolean;
+  /** The workspace of the Caption Studio project it was made from (lib/workspace-scope.ts); none: the first brand's. */
+  workspace?: string;
 }
 
 interface Job {
@@ -147,8 +150,20 @@ const chatHears = (job: Job, stopped = false) => void tellChat(job, stopped).cat
 const jobs = new Map<string, Job>();
 const children = new Map<string, ChildProcess>();
 /** An account's renders still to finish, for Home's list and the menu bar (api/activity.ts). */
-export const activeExports = (owner: string) =>
-  [...jobs.values()].filter((j) => j.owner === owner && (j.status === "queued" || j.status === "running")).map((j) => ({ id: j.id, filename: j.filename, status: j.status, progress: j.progress, projectId: j.params.projectId }));
+export const activeExports = async (user: SessionUser) => {
+  const here = await inCurrentWorkspace(user);
+  return [...jobs.values()].filter((j) => j.owner === user.username && (j.status === "queued" || j.status === "running") && (!here || here(j.params.workspace))).map((j) => ({ id: j.id, filename: j.filename, status: j.status, progress: j.progress, projectId: j.params.projectId }));
+};
+
+/** The Caption Studio project's owner and workspace (its meta.json); null when it can't be read. */
+async function projectMeta(projectId: string): Promise<{ owner?: unknown; projectId?: unknown } | null> {
+  try {
+    return JSON.parse(await readFile(path.join(env.dataDir, "projects", projectId, "meta.json"), "utf-8"));
+  } catch {
+    return null;
+  }
+}
+const workspaceOf = (meta: { projectId?: unknown } | null) => (typeof meta?.projectId === "string" ? meta.projectId : undefined);
 
 async function persist(job: Job): Promise<void> {
   try {
@@ -887,22 +902,10 @@ exportsApp.post("/", async (c) => {
     const clipId = body.clipId ?? "";
     if (!okId(clipId)) return c.json({ error: "Invalid clip" }, 400);
     const user = c.get("user");
-    if (user.role !== "admin") {
-      let owner = "";
-      try {
-        const meta = JSON.parse(
-          await readFile(
-            path.join(env.dataDir, "projects", projectId, "meta.json"),
-            "utf-8",
-          ),
-        );
-        if (typeof meta.owner === "string") owner = meta.owner;
-      } catch {
-        /* unreadable meta → treat as not yours */
-      }
-      if (owner !== user.username)
-        return c.json({ error: "Invalid project" }, 400);
-    }
+    const meta = await projectMeta(projectId);
+    // unreadable meta → not yours
+    if (user.role !== "admin" && meta?.owner !== user.username)
+      return c.json({ error: "Invalid project" }, 400);
     if (
       !(await projectOriginalExists(
         projectId,
@@ -935,6 +938,8 @@ exportsApp.post("/", async (c) => {
         crf: body.crf,
         ...(body.finals ? { finals: true, finalsLabel: base } : {}),
         ...(body.chat ? { chat: true } : {}),
+        // the project's workspace, not the window's: a render belongs where its project is
+        workspace: workspaceOf(meta),
       },
     };
   } else if (kind === "overlay") {
@@ -958,6 +963,9 @@ exportsApp.post("/", async (c) => {
         // overlay renders don't read project files, but tagging the source
         // project lets project deletion clean these up too
         projectId: okId(body.projectId ?? "") ? body.projectId : undefined,
+        workspace: okId(body.projectId ?? "")
+          ? workspaceOf(await projectMeta(body.projectId!))
+          : await currentWorkspaceId(c.get("user")),
       },
     };
   } else {
@@ -1000,9 +1008,12 @@ exportsApp.post("/", async (c) => {
 exportsApp.get("/", async (c) => {
   await loaded;
   const user = c.get("user");
+  const here = await inCurrentWorkspace(user);
   const all = [...jobs.values()]
     .filter(
-      (j) => j.owner === user.username || (user.role === "admin" && !j.owner),
+      (j) =>
+        (j.owner === user.username || (user.role === "admin" && !j.owner)) &&
+        (!here || here(j.params.workspace)),
     )
     .sort((a, b) => b.createdAt - a.createdAt);
   return c.json(all.map(publicJob));
