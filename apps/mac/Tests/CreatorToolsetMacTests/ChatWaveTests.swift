@@ -15,18 +15,21 @@ final class ChatWaveTests: XCTestCase {
         XCTAssertGreaterThan(WaveClock.at(50, size: size, origin: button, scale: 2).bloom, 0.45)
     }
 
-    /// The screen falls toward the button faster and faster before the wave is let go.
-    func testTheScreenFallsInBeforeTheWaveLeaves() {
-        let early = WaveClock.at(WaveClock.gather / 2, size: size, origin: button, scale: 2)
+    /// The screen starts falling toward the button at once and eases into its fullest before the wave is let go: no
+    /// stretch where nothing happens and then everything at once (owner, 11-13).
+    func testTheScreenFallsInSmoothlyBeforeTheWaveLeaves() {
+        let first = WaveClock.at(WaveClock.gather / 10, size: size, origin: button, scale: 2)
+        let half = WaveClock.at(WaveClock.gather / 2, size: size, origin: button, scale: 2)
         let late = WaveClock.at(WaveClock.gather - 1, size: size, origin: button, scale: 2)
+        XCTAssertGreaterThan(first.pull, 0.02)
+        XCTAssertEqual(half.pull, 0.5, accuracy: 0.05)
+        XCTAssertGreaterThan(late.pull, 0.99)
         XCTAssertLessThan(late.front, 0)
-        XCTAssertLessThan(early.pull, 0.5 * late.pull)
-        XCTAssertGreaterThan(late.pull, 0.95)
         XCTAssertFalse(late.done)
     }
 
-    /// One front, out from the button only, fastest as it is let go, past the far corner (with all of its wave and the
-    /// most it wavers) when it is done.
+    /// One front, out from the button only, easing in, then slowing for the rest of the way; past the far corner by its
+    /// crest and first ridge when it is done, and the wave died away and faded out by then.
     func testTheFrontGoesOutOnceAndLeavesTheWindow() {
         var last: Float = 0
         var steps: [Float] = []
@@ -36,12 +39,15 @@ final class ChatWaveTests: XCTestCase {
             steps.append(m.front - last)
             last = m.front
         }
-        XCTAssertGreaterThan(steps[1], steps.last! * 1.5)
+        XCTAssertLessThan(steps[1], steps.max()!)
+        XCTAssertGreaterThan(steps.max()!, steps.last! * 3)
         let end = WaveClock.at(WaveClock.gather + WaveClock.sweep, size: size, origin: button, scale: 2)
         XCTAssertTrue(end.done)
         let corner = Float(hypot(size.width - button.x, size.height - button.y))
-        // nothing of the wave is left on the window
-        XCTAssertGreaterThan(end.front - (3.2 + 0.28) * end.width, corner - 1)
+        XCTAssertGreaterThan(end.front - 1.5 * end.width, corner - 1)
+        let closing = WaveClock.at(WaveClock.gather + WaveClock.sweep - 17, size: size, origin: button, scale: 2)
+        XCTAssertLessThan(closing.wave, 0.01 * 2 * 26)
+        XCTAssertLessThan(closing.left, 0.03)
     }
 
     @MainActor
