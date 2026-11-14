@@ -8,7 +8,7 @@ process.env.APP_SECRET = "mcp-test-secret";
 
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
-const { TOOLS, handle } = await import("./mcp");
+const { TOOLS, handle, workFor } = await import("./mcp");
 
 const user = createUser("mcpowner", "password1");
 const full = `Bearer ${newApiKey(user, "full")}`;
@@ -77,6 +77,9 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect(s.pieces).toHaveLength(1);
     const edited = (await tool("workshop_edit_piece", { session: s.id, piece: s.pieces[0]!.id, blocks: [{ text: "Line one" }, { text: "Line two" }], caption: "Post" })).value;
     expect(edited.blocks.map((b: { text: string }) => b.text)).toEqual(["Line one", "Line two"]);
+    // a piece's link opens its session on that piece, not on the first one
+    expect(edited.href).toBe(`/workshop/sessions/${s.id}?doc=${s.pieces[0]!.id}`);
+    expect(workFor("workshop_chat", { session: s.id, piece: "p2" }, { reply: { status: "thinking" } })!.card.href).toBe(`/workshop/sessions/${s.id}?doc=p2`);
     await tool("workshop_update_session", { session: s.id, status: "writing" });
     const read = (await tool("workshop_session", { session: s.id })).value;
     expect(read.status).toBe("writing");
