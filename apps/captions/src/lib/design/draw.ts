@@ -9,7 +9,9 @@ import { blurPixels, retouch, retouches } from "./retouch";
  */
 
 /** The CSS font of a text layer at its size (each bundled family is one weight: src/lib/types.ts). */
-export const fontOf = (l: Pick<TextLayer, "font" | "size">, scale = 1): string => `${designWeight(l.font)} ${l.size * scale}px "${l.font}"`;
+// a sign the face does not have (an arrow, in most of the serifs) is drawn in Inter, which every machine has from the
+// app, and not in whatever face that machine falls back to: the same on the person's canvas and in an AI's picture
+export const fontOf = (l: Pick<TextLayer, "font" | "size">, scale = 1): string => `${designWeight(l.font)} ${l.size * scale}px "${l.font}", "Inter"`;
 export const lineHeightOf = (l: Pick<TextLayer, "size" | "lineHeight">): number => l.size * (l.lineHeight ?? 1.15);
 export const shownText = (l: Pick<TextLayer, "text" | "upper">): string => (l.upper ? l.text.toUpperCase() : l.text);
 

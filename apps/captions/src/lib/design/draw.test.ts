@@ -122,8 +122,8 @@ describe("drawing a design", () => {
   });
 
   it("names a text's font at its real weight and size, its line height and its shown letters", () => {
-    expect(fontOf({ font: "Montserrat ExtraBold", size: 96 })).toBe('800 96px "Montserrat ExtraBold"');
-    expect(fontOf({ font: "Anton", size: 50 }, 0.5)).toBe('400 25px "Anton"');
+    expect(fontOf({ font: "Montserrat ExtraBold", size: 96 })).toBe('800 96px "Montserrat ExtraBold", "Inter"');
+    expect(fontOf({ font: "Anton", size: 50 }, 0.5)).toBe('400 25px "Anton", "Inter"');
     expect(lineHeightOf({ size: 100 })).toBeCloseTo(115);
     expect(lineHeightOf({ size: 100, lineHeight: 1.3 })).toBe(130);
     expect(shownText({ text: "Roll it", upper: true })).toBe("ROLL IT");
