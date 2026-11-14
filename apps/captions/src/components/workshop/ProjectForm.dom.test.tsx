@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { ProjectForm } from "./ProjectForm";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,6 +12,8 @@ const drop = (el: Element, files: File[]) => {
   act(() => void el.dispatchEvent(e));
   return e;
 };
+
+vi.stubGlobal("fetch", () => new Promise(() => {}));
 
 it("a file dropped on the instructions opens the box that writes them, with the file in it; a file it can't read is named", () => {
   const host = document.body.appendChild(document.createElement("div"));
