@@ -109,7 +109,7 @@
   },
   {
    "name": "workshop_new_piece",
-   "description": "Add another piece to a session, empty for the writer (workshop_chat), or with the user's own words as text (its first block; split it with workshop_edit_piece).",
+   "description": "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -144,7 +144,7 @@
   },
   {
    "name": "workshop_edit_piece",
-   "description": "Put the user's own words in a piece, or make a change they spelled out word for word (new writing is the writer's: workshop_chat). blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+   "description": "Write in a piece yourself. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
    "inputSchema": {
     "type": "object",
     "properties": {

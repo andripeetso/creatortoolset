@@ -89,16 +89,9 @@ Content Workshop: the same projects, sessions, pieces and chat the user sees on 
 you do here shows there at once. A project is one brand (audience, voice, CTA). A session is one idea: its sources,
 notes, pieces and chat, with a status (draft, writing, production, editing, toPost = ready to post, published,
 shelved). A piece is one reel, carousel, ad, free, youtube script, newsletter, X thread or article: blocks (lines or slides, each with an id), hook
-variations, a caption (post description) and a pinned comment. The words in a piece come from the Workshop's own
-writer (workshop_chat): it reads the project, the user's own posts and how they rewrote its earlier drafts, which you
-don't see, so a piece you write yourself comes out in nobody's voice. Make the piece empty and give the writer what the user
-asked in their own words (not a summary of them), with what you found (facts, examples, links) as findings, not as rules
-for how to write it; it can take minutes on a paired Mac. A change they ask for to a piece's words goes to the writer the
-same way. Write with workshop_new_piece or workshop_edit_piece only the user's own words, or a change they spelled out
-word for word. Locked blocks are ones the user approved: leave them as they are. A project's instructions are facts
-about it (who it is for, what it offers, where people are sent): workshop_project_update with draft_from writes them from
-what the user gave, as the project form does. How the user sounds isn't in them: the writer has it from their posts and
-rewrites.
+variations, a caption (post description) and a pinned comment. Two ways to write: workshop_chat asks the Workshop's
+own writer, which reads the project, the user's posts and past rewrites (it runs on a paired Mac and can take minutes), or
+change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
 
 Designer: the user's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers they then
 edit by hand. You do the designing: design_get lists the designs and reads one (every frame with its layers, a picture
@@ -176,12 +169,12 @@ export const TOOLS = [
   },
   {
     name: "workshop_new_piece",
-    description: "Add another piece to a session, empty for the writer (workshop_chat), or with the user's own words as text (its first block; split it with workshop_edit_piece).",
+    description: "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
     inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str }, required: ["session", "kind"] },
   },
   {
     name: "workshop_edit_piece",
-    description: "Put the user's own words in a piece, or make a change they spelled out word for word (new writing is the writer's: workshop_chat). blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+    description: "Write in a piece yourself. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
     inputSchema: { type: "object", properties: { session: str, piece: str, title: str, blocks: lines, hooks: lines, caption: str, pinned: str }, required: ["session", "piece"] },
   },
   {
@@ -1365,6 +1358,19 @@ Here you are the writer: write and change scripts yourself with workshop_new_pie
 sees them saved at once. workshop_chat asks the Workshop's own writer, which needs a computer paired to the account:
 use it only when the user asks for that writer.`;
 
+/**
+ * The app's own assistant only (an AI app outside keeps CARDS_GUIDE: there it is the writer, on the user's own AI). The
+ * assistant doesn't see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13).
+ */
+const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer (workshop_chat). It reads the
+project, the user's own posts and how they rewrote its earlier drafts, which you don't see. Make the piece empty and give
+the writer what the user asked in their own words (not a summary of them), with what you found (facts, examples, links)
+as findings, not as rules for how to write it. A change they ask for to a piece's words goes to the writer the same way.
+Write with workshop_new_piece or workshop_edit_piece only the user's own words, or a change they spelled out word for
+word. A project's instructions are facts about it (who it is for, what it offers, where people are sent):
+workshop_project_update with draft_from writes them from what the user gave, as the project form does. How the user
+sounds isn't in them: the writer has it from their posts and rewrites.`;
+
 /** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
 export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser, plugged: PluginTools = pluginToolsOf([])): Promise<Args | null> {
   if (msg.id === undefined) return null;
@@ -1378,7 +1384,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? WRITER_GUIDE : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});

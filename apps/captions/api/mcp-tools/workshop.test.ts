@@ -246,6 +246,22 @@ describe("workshop_project_update", () => {
   });
 });
 
+describe("who writes a piece", () => {
+  it("the app's assistant is told the Workshop's writer writes; an AI app outside writes itself, and neither reads the other's", async () => {
+    const t = await turn(await cookieOf("ana"), "Write me an X thread");
+    const guide = async (authorization: string) =>
+      String(((await (await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { authorization }) })).json()) as { result: { instructions: string } }).result.instructions);
+    const dock = await guide(t.token);
+    const outside = await guide(key);
+    await t.end();
+    expect(dock).toContain("the words in a piece come from the Workshop's own writer (workshop_chat)");
+    expect(dock).toContain("workshop_project_update with draft_from");
+    expect(dock).not.toContain("Here you are the writer");
+    expect(outside).toContain("Here you are the writer");
+    expect(outside).not.toContain("the words in a piece come from");
+  });
+});
+
 describe("the writer the assistant asked", { timeout: 30_000 }, () => {
   type Stream = (system: string, user: string, signal: AbortSignal, parse: (t: string) => unknown) => Promise<unknown>;
   /** The writer's answer waits until `release`; `reached` says the turn got to the model. A Stop ends it as the real stream ends. */
