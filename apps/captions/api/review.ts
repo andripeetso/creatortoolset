@@ -31,6 +31,7 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
+import { ensureLibrary } from "./library/access";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
 import { enqueueJob } from "./library/jobs";
 import { probe as probeSummary } from "./library/media/probe";
@@ -648,7 +649,8 @@ export async function toLibrary(id: string): Promise<void> {
     return;
   }
   if (m.versions.some((x) => !x.versionId)) return;
-  const libraryId = row?.library_id ?? libraryFor(m.owner);
+  // the library of the video's own workspace ("": from before workspaces, the account's first library)
+  const libraryId = row?.library_id ?? (await ensureLibrary(m.owner, m.workspace ?? "")) ?? libraryFor(m.owner);
   if (!libraryId) return;
   const dir = live ? assetDir(id) : trashDir(id);
   const file = (n: number, name: string) => path.join(dir, `v${n}`, name);

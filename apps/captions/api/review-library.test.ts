@@ -141,4 +141,24 @@ describe("Review in the Media Library", () => {
     const view = await read(app.request(`/assets/${id}`));
     expect(view.comments.map((x: { text: string }) => x.text)).toEqual(["kept"]);
   });
+
+  it("puts a video into the library of its own workspace, not the first brand's", async () => {
+    const projects = path.join(dataDir, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    for (const [ws, at] of [["first", 1], ["second", 2]] as const) {
+      writeFileSync(path.join(projects, `${ws}.json`), JSON.stringify({ id: ws, owner: "owner", name: ws, createdAt: at, updatedAt: at }));
+    }
+    const id = "0b5d6c1e-2222-4222-8333-944455556666";
+    const dir = path.join(dataDir, "review", id);
+    mkdirSync(path.join(dir, "v1"), { recursive: true });
+    writeFileSync(path.join(dir, "v1", "source"), "second's upload");
+    const meta = {
+      id, name: "Second's video", owner: "owner", workspace: "second", approval: { status: "none" }, createdAt: 1, updatedAt: 2,
+      versions: [{ n: 1, name: "s.mp4", mime: "video/mp4", bytes: 15, duration: 0, fps: 0, width: 0, height: 0, status: "error", progress: 0, createdAt: 1 }],
+    };
+    writeFileSync(path.join(dir, "meta.json"), JSON.stringify(meta));
+    await reviewToLibrary();
+    const lib = libraryDb().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(row(id)!.library_id) as { ws: string | null };
+    expect(lib.ws).toBe("second");
+  });
 });
