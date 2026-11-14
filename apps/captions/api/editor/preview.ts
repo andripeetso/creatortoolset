@@ -186,7 +186,8 @@ export async function previewStep({ edit, variant, signal }: StepContext): Promi
   if (signal.aborted) return;
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
-  const v = { owner: edit.createdBy, name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant } };
+  // a new Review video is in the edit's workspace (a step runs outside the window's request)
+  const v = { owner: edit.createdBy, name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant }, workspace: edit.projectId };
   const place = (dest: string) => rename(out, dest);
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
