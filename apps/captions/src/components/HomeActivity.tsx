@@ -8,6 +8,8 @@ import { canUse, useMe, type Me } from "@/lib/auth";
 import type { EditSummary } from "@contracts/editor";
 import type { ActivityRow } from "@contracts/activity";
 import { listEdits } from "@/lib/editor";
+import { byProject } from "@/lib/by-project";
+import { useWorkspace } from "@/lib/workspace";
 import { listReviewAssets, reviewApi, type ReviewAsset } from "@/lib/review";
 import { undoable } from "@/lib/undo";
 import { useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
@@ -54,8 +56,10 @@ export function withStatus(assets: ReviewAsset[], ids: string[], status: "none" 
 export function useTodoLists(me: Me | null) {
   const edits = useCachedLoad<EditSummary[]>(canUse(me, "editor") ? "/api/editor" : null, listEdits);
   const assets = useCachedLoad<ReviewAsset[]>(canUse(me, "review") ? "/api/review" : null, listReviewAssets);
+  // the edits list is every workspace's, each saying its own (EditorPage keeps them apart the same way)
+  const ws = useWorkspace((s) => s.currentProjectId);
   return {
-    edits: edits.data ?? [],
+    edits: byProject(edits.data ?? [], ws).here,
     assets: assets.data ?? [],
     refresh: () => void Promise.all([edits.refresh(), assets.refresh()]).catch(() => {}),
     /**

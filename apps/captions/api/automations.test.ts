@@ -141,6 +141,23 @@ describe("scheduled tasks: REST, per account", () => {
   });
 });
 
+describe("scheduled tasks: per workspace", () => {
+  it("a task for one workspace is listed only in it, one for no workspace in every one", async () => {
+    const dir = path.join(process.env.DATA_DIR!, "workshop", "projects");
+    mkdirSync(dir, { recursive: true });
+    const [A, B] = ["eeeeeeee-0000-4000-8000-000000000001", "eeeeeeee-0000-4000-8000-000000000002"];
+    for (const [id, at] of [[A, 1], [B, 2]] as const) writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({ id, owner: "dave1", name: id, createdAt: at, updatedAt: at }));
+    const as = (ws: string, method: string, body?: unknown) =>
+      app.request("/api/automations", { method, headers: { authorization: keys.dave!, "content-type": "application/json", "x-ct-workspace": ws }, body: body === undefined ? undefined : JSON.stringify(body) });
+    // off, so the scheduler below never runs them
+    for (const [name, project] of [["for A", A], ["for B", B], ["everywhere", null]] as const)
+      expect((await as(A, "POST", { name, schedule: everyHour, prompt: "p", enabled: false, project })).status).toBe(201);
+    const names = async (ws: string) => ((await json(await as(ws, "GET"))).items as Json[]).map((x) => x.name);
+    expect(await names(A)).toEqual(["for A", "everywhere"]);
+    expect(await names(B)).toEqual(["for B", "everywhere"]);
+  });
+});
+
 describe("the scheduler", () => {
   const hold = new Promise<void>(() => {}); // never settles: a run stays in progress
   const always = () => ready;

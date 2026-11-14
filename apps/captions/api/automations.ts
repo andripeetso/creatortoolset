@@ -24,6 +24,7 @@ import {
   type Destination,
 } from "../contracts/automations";
 import type { Selection } from "../contracts/providers";
+import { inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
  * Scheduled tasks (contracts/automations.ts): $DATA_DIR/automations/<user>.json, one list per account. A run is a turn
@@ -293,10 +294,13 @@ const pastOnce = (a: Pick<Automation, "enabled" | "schedule">, now: number) => a
 const PAST_ONCE = "The run time has passed. Pick a time in the future.";
 
 /** The account's tasks, and why none can run for it now (`blocked`, null when one can): the page then builds none. */
-automationsApp.get("/", (c) => {
+automationsApp.get("/", async (c) => {
   const username = c.get("user").username;
   const admin = isAdminHere(username);
-  return c.json({ items: readAll(username).map((a) => view(a)), blocked: blockOf(routeOf(username, admin), admin) });
+  // a task for one workspace is listed in it alone; one for no workspace in every one
+  const here = await inCurrentWorkspace(c.get("user"));
+  const items = readAll(username).filter((a) => !a.project || !here || here(a.project));
+  return c.json({ items: items.map((a) => view(a)), blocked: blockOf(routeOf(username, admin), admin) });
 });
 
 /**
