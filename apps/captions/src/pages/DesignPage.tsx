@@ -5,6 +5,7 @@ import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Pe
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
+import { CtMark } from "@/components/CtMark";
 import { FramePresets } from "@/components/design/FramePresets";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
 import { usePageNeeds } from "@/lib/chat-mode";
@@ -894,7 +895,11 @@ function DesignPage({ id }: { id: string }) {
                   {mine.length === 1 && mine[0]!.type === "image" && (
                     <>
                       <ContextMenuSeparator />
-                      {item(cutting ? "Your Mac is on it" : "Split into layers", "", () => void split(), cutting)}
+                      {/* the AI makes the layers: its mark where a shortcut would be */}
+                      <ContextMenuItem disabled={cutting} onSelect={() => void split()}>
+                        {cutting ? "Your Mac is on it" : "Split into layers"}
+                        <CtMark className="ml-auto size-4 text-violet-500" />
+                      </ContextMenuItem>
                     </>
                   )}
                   <ContextMenuSeparator />
