@@ -255,8 +255,8 @@ export interface EditorStepInput {
   say(text: string): void;
 }
 
-/** The ids of the loaded plug-ins (compiled in and from the plug-ins folder). */
-export const loadedPluginIds = (): string[] => loaded.map((p) => p.id);
+/** The loaded plug-ins (compiled in and from the plug-ins folder) by name, line and Home tool (ServerPlugin.kind), for Community's lists. */
+export const loadedPluginInfo = () => loaded.map((p) => ({ id: p.id, name: p.name ?? p.id, about: p.about ?? "", kind: p.kind ?? "" }));
 
 /** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */
 export function pluginEditorSteps(): (EditorStep & { pluginId: string })[] {
