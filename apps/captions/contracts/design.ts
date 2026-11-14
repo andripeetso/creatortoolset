@@ -40,7 +40,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -268,10 +268,18 @@ export interface Design extends Omit<DesignSummary, "pages"> {
 export type NewDesign = { format: DesignFormat; name?: string; /** the brand project it is made in (the window's current one); absent or not the person's: the account's current one. A piece's design is its script's. */ project?: string } & ({ session: string; doc: string } | { version: string; t: number; title?: string } | { blank: true; pages?: number });
 
 /** What the server's drawing browser is given to draw one page as a small picture (api/lib/design-picture.ts, src/lib/design/picture.ts). */
+/** A font of the person's own, added to their designs. `family` is what its face calls itself ("Superclarendon Black"), and what a text layer's `font` names. */
+export interface DesignFont {
+  id: string;
+  family: string;
+}
+
 export interface PictureSpec {
   width: number;
   height: number;
   page: DesignPage;
+  /** the person's own fonts the page's words are set in, by family, each as the address of its file */
+  fonts?: Record<string, string>;
   /** each picture the page shows, by its id, as a data address (the server made each small first) */
   pictures: Record<string, string>;
   /** picture pixels a design pixel */

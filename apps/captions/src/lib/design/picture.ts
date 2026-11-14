@@ -8,6 +8,14 @@ import { drawingUrl, drawPage, fontOf, lineHeightOf, setText, sourceOf, textWidt
  */
 export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; spills: string[] }> {
   const layers = spec.page.layers.filter((l) => !l.hidden);
+  // the person's own fonts first: each from its file, once (one that cannot be read is drawn in the fallback face)
+  await Promise.all(
+    Object.entries(spec.fonts ?? {}).map(async ([family, address]) => {
+      if ([...document.fonts].some((f) => f.family.replace(/^"|"$/g, "") === family)) return;
+      const face = new FontFace(family, `url("${address}")`, { weight: "400" });
+      await face.load().then(() => void document.fonts.add(face), () => {});
+    }),
+  );
   await Promise.all([...new Set(layers.flatMap((l) => (l.type === "text" ? [fontOf(l)] : [])))].map((f) => document.fonts.load(f).catch(() => [])));
   const loaded: Loaded = new Map();
   await Promise.all(

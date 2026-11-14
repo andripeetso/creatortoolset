@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Browser } from "playwright-chromium";
 import type { Design, DesignPage, PictureSpec } from "../../contracts/design";
 import { installExportBrowser, rendererUrl } from "../caption-frames";
@@ -65,7 +66,7 @@ async function smallPictures(page: DesignPage, dir: string): Promise<Record<stri
   return out;
 }
 
-async function draw(d: Design, pages: DesignPage[], which: number[], dir: string): Promise<Look> {
+async function draw(d: Design, pages: DesignPage[], which: number[], dir: string, fonts: Record<string, string>): Promise<Look> {
   // a test draws nothing unless it asks to: a browser is not part of a unit test
   if (process.env.NODE_ENV === "test" && !process.env.DESIGN_PICTURES) return { pictures: [], why: NO_BROWSER };
   let browser: Browser | null = null;
@@ -86,7 +87,9 @@ async function draw(d: Design, pages: DesignPage[], which: number[], dir: string
       if (!page) continue;
       // each frame at its own size, no wider than the picture's width
       const width = page.w ?? d.width;
-      const spec: PictureSpec = { width, height: page.h ?? d.height, page, pictures: await smallPictures(page, dir), scale: Math.min(1, WIDTH / width) };
+      // the person's own fonts this frame's words are set in, each as its file's address (the drawing page is a file itself)
+      const own = Object.fromEntries(page.layers.flatMap((l) => (l.type === "text" && fonts[l.font] ? [[l.font, pathToFileURL(fonts[l.font]!).href]] : [])));
+      const spec: PictureSpec = { width, height: page.h ?? d.height, page, pictures: await smallPictures(page, dir), ...(Object.keys(own).length ? { fonts: own } : {}), scale: Math.min(1, WIDTH / width) };
       pictures.push({ page: n, ...(await tab.evaluate((s) => (globalThis as unknown as RendererWindow).designRenderer!.draw(s), spec)) });
     }
     return { pictures };
@@ -112,11 +115,11 @@ let line: Promise<unknown> = Promise.resolve();
 let waiting = 0;
 const MAX_WAITING = 4;
 
-/** Pictures of the pages numbered in `which` (1 = the first). `dir`: the design's pictures folder. */
-export function pagePictures(d: Design, pages: DesignPage[], which: number[], dir: string): Promise<Look> {
+/** Pictures of the pages numbered in `which` (1 = the first). `dir`: the design's pictures folder. `fonts`: the person's own fonts, each family's file. */
+export function pagePictures(d: Design, pages: DesignPage[], which: number[], dir: string, fonts: Record<string, string> = {}): Promise<Look> {
   if (waiting >= MAX_WAITING) return Promise.resolve({ pictures: [], why: "No pictures of the pages: the server is drawing others just now" });
   waiting++;
-  const mine = line.then(() => draw(d, pages, which, dir)).finally(() => waiting--);
+  const mine = line.then(() => draw(d, pages, which, dir, fonts)).finally(() => waiting--);
   line = mine.catch(() => {});
   return mine;
 }

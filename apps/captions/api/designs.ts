@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignListed, type DesignPage, type DesignSummary } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
 import { animationStyles } from "./editor/animation-styles";
@@ -12,6 +12,7 @@ import { extractClipJpegFrame } from "./lib/clip-frame";
 import { cutOut } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
+import { FontError, fontFaces } from "./lib/font-file";
 import { env } from "./lib/env";
 import { pluginLooks } from "./lib/plugin";
 import { PICTURE_EXT, parsePictureUpload } from "./lib/workshop/pictures";
@@ -47,6 +48,58 @@ const LOOK_BRIEF = 6000;
 const dirOf = (owner: string) => path.join(env.dataDir, "designs", owner);
 const fileOf = (owner: string, id: string) => path.join(dirOf(owner), `${id}.json`);
 const picturesOf = (owner: string, id: string) => path.join(dirOf(owner), id);
+
+/* ---- the person's own fonts: $DATA_DIR/designs/<owner>/.fonts/<id>.ttf|otf, and index.json beside them ---- */
+
+interface KeptFont extends DesignFont {
+  ext: "ttf" | "otf";
+  at: number;
+}
+const FONT_ID = /^[0-9a-f]{16}$/;
+const fontsDir = (owner: string) => path.join(dirOf(owner), ".fonts");
+const fontFile = (owner: string, f: Pick<KeptFont, "id" | "ext">) => path.join(fontsDir(owner), `${f.id}.${f.ext}`);
+
+/**
+ * The person's own fonts, oldest first. None added yet: none. A list that is there and cannot be read is an error,
+ * never "none": a caller that took it for none would offer an AI no font of theirs and tell the page they are gone.
+ */
+async function fontsOf(owner: string): Promise<KeptFont[]> {
+  let text: string;
+  try {
+    text = await readFile(path.join(fontsDir(owner), "index.json"), "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  const list: unknown = JSON.parse(text);
+  if (!Array.isArray(list)) throw new Error(`The fonts list of ${owner} is not a list`);
+  return (list as KeptFont[]).filter((f) => f && FONT_ID.test(f.id) && typeof f.family === "string" && (f.ext === "ttf" || f.ext === "otf"));
+}
+
+async function keepFonts(owner: string, list: KeptFont[]): Promise<void> {
+  await mkdir(fontsDir(owner), { recursive: true });
+  const file = path.join(fontsDir(owner), "index.json");
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tmp, JSON.stringify(list));
+  await rename(tmp, file);
+}
+
+// one change to a person's fonts at a time: two files added at once would each write the list without the other's
+const fontTurn = new Map<string, Promise<unknown>>();
+function inTurn<T>(owner: string, run: () => Promise<T>): Promise<T> {
+  const mine = (fontTurn.get(owner) ?? Promise.resolve()).then(run, run);
+  fontTurn.set(owner, mine.catch(() => {}));
+  return mine;
+}
+
+/**
+ * The fonts a design's words may be set in beside the app's own: the person's own, and the ones its words are set in
+ * already. So a font that was taken away stays named in the layers that use it (and is drawn again once it is back),
+ * while a name an AI makes up is still turned into a face that is there.
+ */
+async function fontsFor(d: Design): Promise<string[]> {
+  return [...new Set([...(await fontsOf(d.owner)).map((f) => f.family), ...d.pages.flatMap((p) => p.layers.flatMap((l) => (l.type === "text" ? [l.font] : [])))])];
+}
 
 /** A design as it is kept, every frame with its place and size (one saved before frames had them gets them in a row). */
 async function read(owner: string, id: string): Promise<Design | null> {
@@ -295,7 +348,8 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
   return {
     id: d.id,
     name: d.name,
-    fonts: DESIGN_FONTS.map((f) => f.family),
+    // the app's own, then the person's own
+    fonts: [...DESIGN_FONTS.map((f) => f.family), ...(await fontsOf(d.owner)).map((f) => f.family)],
     pictures: d.pictures.map((id) => ({ id, what: d.from && "version" in d.from && id === d.pictures[0] ? "the video's own frame" : "a picture added to this design" })),
     // a look is its pictures first: its name and brief are what words carry, and its pictures come when it is asked for
     looks: looks.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, LOOK_LISTED) } : {}), pictures: s.pictures })),
@@ -388,6 +442,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
 
   const touched: string[] = [];
   const wrote: { frame: string; isNew: boolean; layers: string[] }[] = [];
+  const fonts = await fontsFor(d);
   for (const [id, t] of todo) {
     const k = next.findIndex((p) => p.id === id);
     const was = next[k]!;
@@ -396,6 +451,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       w: d.width,
       h: d.height,
       pictures: d.pictures,
+      fonts,
       words: [words[k]],
     });
     notes.push(...made.notes.map((note) => note.replace(/^Page 1:/, `${label}:`)));
@@ -450,6 +506,75 @@ const mine = async (c: C): Promise<Design> => {
   if (!d) throw new DesignError("Not found", 404);
   return d;
 };
+
+// The person's own fonts (before the routes of one design: "fonts" is no design's id).
+const shown = (list: KeptFont[]): DesignFont[] => list.map((f) => ({ id: f.id, family: f.family }));
+
+designsApp.get("/fonts", (c) => answer(c, async () => ({ fonts: shown(await fontsOf(c.get("user").username)) })));
+
+// A font file added: every face in it becomes a font of the person's (a collection holds a whole family). `notes`
+// says in words which faces were not added and why; a file that is no font is refused whole.
+designsApp.post("/fonts", (c) =>
+  answer(c, async () => {
+    const owner = c.get("user").username;
+    const b = await body(c);
+    if (typeof b.data !== "string" || !b.data) throw new DesignError("Send the font file");
+    // its size is known before it is unpacked
+    if (b.data.length > Math.ceil(DESIGN_LIMITS.fontBytes / 3) * 4 + 4) throw new DesignError(`A font file can be up to ${DESIGN_LIMITS.fontBytes / 1_000_000} MB`);
+    let faces: ReturnType<typeof fontFaces>;
+    try {
+      faces = fontFaces(Buffer.from(b.data, "base64"));
+    } catch (e) {
+      if (e instanceof FontError) throw new DesignError(e.message);
+      throw e;
+    }
+    return inTurn(owner, async () => {
+      const list = await fontsOf(owner);
+      const taken = new Set(DESIGN_FONTS.map((f) => f.family.toLowerCase()));
+      const added: KeptFont[] = [];
+      const notes: string[] = [];
+      for (const face of faces) {
+        const key = face.family.toLowerCase();
+        if (taken.has(key)) notes.push(`${face.family} is one of the app's own fonts`);
+        else if (list.some((f) => f.family.toLowerCase() === key)) notes.push(`${face.family} is among your fonts already`);
+        else if (list.length >= DESIGN_LIMITS.fonts) notes.push(`${face.family} was not added: ${DESIGN_LIMITS.fonts} fonts is the most (take one out first)`);
+        else {
+          const kept: KeptFont = { id: randomBytes(8).toString("hex"), family: face.family, ext: face.ext, at: Date.now() };
+          await mkdir(fontsDir(owner), { recursive: true });
+          await writeFile(fontFile(owner, kept), face.bytes);
+          list.push(kept);
+          added.push(kept);
+        }
+      }
+      if (added.length) await keepFonts(owner, list);
+      return { added: shown(added), notes, fonts: shown(list) };
+    });
+  }),
+);
+
+designsApp.get("/fonts/:fid", async (c) => {
+  const owner = c.get("user").username;
+  const f = FONT_ID.test(c.req.param("fid")) ? (await fontsOf(owner)).find((x) => x.id === c.req.param("fid")) : undefined;
+  const bytes = f ? await readFile(fontFile(owner, f)).catch(() => null) : null;
+  if (!f || !bytes) return c.json({ error: "Not found" }, 404);
+  return c.body(new Uint8Array(bytes), 200, { "Content-Type": f.ext === "otf" ? "font/otf" : "font/ttf", "Cache-Control": "private, max-age=31536000, immutable" });
+});
+
+// A font taken away. The texts set in it keep its name: they are drawn in the app's fallback face until it is added again.
+designsApp.delete("/fonts/:fid", (c) =>
+  answer(c, async () => {
+    const owner = c.get("user").username;
+    return inTurn(owner, async () => {
+      const list = await fontsOf(owner);
+      const f = list.find((x) => x.id === c.req.param("fid"));
+      if (!f) throw new DesignError("Not found", 404);
+      const left = list.filter((x) => x !== f);
+      await keepFonts(owner, left);
+      await rm(fontFile(owner, f), { force: true });
+      return { fonts: shown(left) };
+    });
+  }),
+);
 
 designsApp.get("/", (c) =>
   answer(c, async () => {
@@ -523,7 +648,7 @@ designsApp.put("/:id", (c) =>
     const piece = pieceOf(d);
     // a design made before frames knew their slides: each frame is its slide's by the order the design was in
     const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
-    const pages = withFrames(cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures }).pages, d.width, d.height, was);
+    const pages = withFrames(cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d) }).pages, d.width, d.height, was);
     // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
     // could be kept is not, and nothing is saved over what is there
     if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
@@ -549,7 +674,8 @@ designsApp.get("/:id/look", (c) =>
     const d = await mine(c);
     const { pages } = await framesForAi(c.get("user"), d);
     const asked = (c.req.query("frames") ?? "").split(",").map((id) => pages.findIndex((p) => p.id === id) + 1).filter((n) => n > 0);
-    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.map((_, k) => k + 1))].slice(0, LOOK_FRAMES), picturesOf(d.owner, d.id));
+    const fonts = Object.fromEntries((await fontsOf(d.owner)).map((f) => [f.family, fontFile(d.owner, f)]));
+    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.map((_, k) => k + 1))].slice(0, LOOK_FRAMES), picturesOf(d.owner, d.id), fonts);
   }),
 );
 

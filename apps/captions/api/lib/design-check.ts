@@ -172,6 +172,11 @@ export interface PageRules {
   /** the pictures a layer may show: the ids in the design's folder */
   pictures: readonly string[];
   /**
+   * The fonts a text may be set in beside the app's own: the person's own, and the ones the design's words are set in
+   * already (a font of theirs that was taken away stays named in its layers, and is drawn again once it is back).
+   */
+  fonts?: readonly string[];
+  /**
    * For an AI's answer: each frame's own words (its slide's text), in the frames' order. A text layer that says
    * anything else is left out: where the words go and how they look is the design, what they are is the author's.
    * A frame with none here (undefined: it is no slide) may say anything.
@@ -228,7 +233,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       type: "text",
       ...place,
       text,
-      font: oneOf(raw.font, FONTS, DEFAULT_FONT),
+      font: oneOf(raw.font, r.fonts?.length ? [...FONTS, ...r.fonts] : FONTS, DEFAULT_FONT),
       size: round(num(raw.size, 8, 600, 48)),
       color: color(raw.color, "#111111"),
       ...gradient(raw.gradient),

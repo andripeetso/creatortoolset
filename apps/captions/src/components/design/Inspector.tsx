@@ -31,6 +31,7 @@ import {
   Ungroup,
   Unlink2,
   WrapText,
+  X,
 } from "lucide-react";
 import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
@@ -39,6 +40,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { typedHex } from "@/lib/design/colour";
 import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
+import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
 import { ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
@@ -435,6 +438,11 @@ export function Inspector({
   const sized = (w: number, h: number) => (l: Layer) => (box ? resizeAll([l], box, { x: box.x, y: box.y, w, h })[0]! : l);
 
   const text = every((l) => l.type === "text");
+  /** The font every picked text is set in (null: they differ), and the person's own fonts beside the app's. */
+  const fontNow = same((l) => (l.type === "text" ? l.font : undefined));
+  const ownFonts = useOwnFonts();
+  const fontFile = useRef<HTMLInputElement>(null);
+  const [fontSaid, setFontSaid] = useState("");
   const shape = every((l) => l.type === "shape");
   /** A shape or a path: what has a fill and a line of its own. */
   const lined = every((l) => l.type === "shape" || l.type === "path");
@@ -733,7 +741,8 @@ export function Inspector({
             <Section title="Typography">
               <DropdownMenu>
                 <DropdownMenuTrigger aria-label="Font" className={cn(FIELD, "w-full justify-between outline-none")}>
-                  <span className="truncate">{DESIGN_FONTS.find((f) => f.family === same((l) => (l.type === "text" ? l.font : undefined)))?.label ?? "Mixed"}</span>
+                  {/* one of the person's own (or one they took away since) is shown by its own name */}
+                  <span className="truncate">{DESIGN_FONTS.find((f) => f.family === fontNow)?.label ?? fontNow ?? "Mixed"}</span>
                   <ChevronDown className="h-3 w-3 shrink-0" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="max-h-96 w-56 overflow-y-auto">
@@ -742,11 +751,68 @@ export function Inspector({
                       <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}"`, fontWeight: designWeight(f.family) }}>
                         {f.label}
                       </span>
-                      {same((l) => (l.type === "text" ? l.font : undefined)) === f.family && <Check className="h-3.5 w-3.5 shrink-0" />}
+                      {fontNow === f.family && <Check className="h-3.5 w-3.5 shrink-0" />}
                     </DropdownMenuItem>
                   ))}
+                  <DropdownMenuSeparator />
+                  {ownFonts.map((f) => (
+                    <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family } : l))} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}", "Inter"`, fontWeight: 400 }}>
+                        {f.family}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1">
+                        {fontNow === f.family && <Check className="h-3.5 w-3.5" />}
+                        <span
+                          role="button"
+                          aria-label={`Remove ${f.family}`}
+                          className={cn("flex h-5 w-5 items-center justify-center rounded-[4px] hover:bg-zinc-500/20", DIM)}
+                          onClick={(e) => {
+                            // the row itself picks the font: this takes it away
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void confirmDialog({ title: `Remove ${f.family} from your fonts?`, body: "Texts set in it keep its name and are drawn in the app's own face until you add it again.", ok: "Remove", danger: true }).then(
+                              (yes) => void (yes && removeOwnFont(f.id).then(() => setFontSaid(""), (err: unknown) => setFontSaid(err instanceof Error ? err.message : String(err)))),
+                            );
+                          }}
+                        >
+                          <X className="h-3 w-3" />
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuItem onSelect={() => fontFile.current?.click()}>Add a font…</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              {/* a font file from this computer (.ttf, .otf, or a collection): every face in it becomes one of the person's fonts */}
+              <input
+                ref={fontFile}
+                type="file"
+                accept=".ttf,.otf,.ttc,font/ttf,font/otf,font/collection"
+                multiple
+                aria-label="Add a font file"
+                className="hidden"
+                onChange={(e) => {
+                  const files = [...(e.currentTarget.files ?? [])];
+                  e.currentTarget.value = "";
+                  void (async () => {
+                    const said: string[] = [];
+                    let first = "";
+                    for (const file of files) {
+                      try {
+                        const out = await addOwnFont(file);
+                        first ||= out.added[0]?.family ?? "";
+                        said.push(...out.notes);
+                      } catch (err) {
+                        said.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+                      }
+                    }
+                    setFontSaid(said.join(". "));
+                    // one face added: the picked words are set in it at once
+                    if (first && files.length === 1) onPatch((l) => (l.type === "text" ? { ...l, font: first } : l));
+                  })();
+                }}
+              />
+              {fontSaid && <p className={cn("text-[11px] leading-4", DIM)}>{fontSaid}</p>}
               <div className="grid grid-cols-3 gap-2">
                 {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
                 {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}

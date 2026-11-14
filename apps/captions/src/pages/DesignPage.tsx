@@ -22,6 +22,7 @@ import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { useOwnFonts } from "@/lib/design/own-fonts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -126,6 +127,11 @@ function DesignPage({ id }: { id: string }) {
   useEffect(() => {
     void Promise.all(DESIGN_FONTS.map((f) => document.fonts.load(`${designWeight(f.family)} 48px "${f.family}"`))).then(() => setVersion((v) => v + 1), () => {});
   }, []);
+  // and the person's own: each fetched and the pages drawn again, at the start and whenever one is added
+  const ownFonts = useOwnFonts();
+  useEffect(() => {
+    void Promise.all(ownFonts.map((f) => document.fonts.load(`400 48px "${f.family}"`))).then(() => setVersion((v) => v + 1), () => {});
+  }, [ownFonts]);
 
   const opened = design !== null;
   useEffect(() => {

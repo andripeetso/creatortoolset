@@ -49,10 +49,15 @@ async function purgeMetaDirs(root: string, expired: Expired): Promise<void> {
   }
 }
 
-/** `designs/<owner>/<id>.json` with its pictures in `<id>/` (api/designs.ts): the folder's name is the owner. */
+/**
+ * `designs/<owner>/<id>.json` with its pictures in `<id>/` (api/designs.ts): the folder's name is the owner. The
+ * account's own fonts (`.fonts/`) never go for their age: they go with the account.
+ */
 async function purgeDesigns(expired: Expired): Promise<void> {
   const root = path.join(env.dataDir, "designs");
   for (const owner of await readdir(root).catch(() => [] as string[])) {
+    // judged as changed just now: only an account that is gone gives them up
+    if (expired(owner, Date.now())) await rm(path.join(root, owner, ".fonts"), { recursive: true, force: true });
     for (const name of await readdir(path.join(root, owner)).catch(() => [] as string[])) {
       if (!name.endsWith(".json")) continue;
       const file = path.join(root, owner, name);

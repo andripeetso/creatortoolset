@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Design } from "@contracts/design";
 import { drawingUrl, drawPage, fontOf, sourceOf, type Loaded } from "@/lib/design/draw";
 import { frameOf } from "@/lib/design/hands";
+import { useOwnFonts } from "@/lib/design/own-fonts";
 import { getDesign, pictureUrl } from "@/lib/designs";
 
 /**
@@ -17,6 +18,8 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
   const [design, setDesign] = useState<Design | null>(null);
   const [drawn, setDrawn] = useState(0);
   const [loaded] = useState<Loaded>(() => new Map());
+  // the person's own fonts: a text set in one is drawn in it once the window knows them
+  const fonts = useOwnFonts();
 
   useEffect(() => {
     let gone = false;
@@ -38,7 +41,7 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
       }
       if (l.type === "text") void document.fonts.load(fontOf(l)).then(again, () => {});
     }
-  }, [design, loaded]);
+  }, [design, loaded, fonts]);
 
   useEffect(() => {
     const c = canvas.current;
