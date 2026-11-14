@@ -291,3 +291,9 @@ export const faceBlurChoose = (job: string, path: string, blur: string[], error?
   faceBlurAsk(`faceblur:choose:${JSON.stringify({ job, path, blur, ...(error ? { error } : {}) })}`);
 export const faceBlurCancel = (job: string) => faceBlurAsk(`faceblur:cancel:${job}`);
 export const faceBlurShow = (path: string) => faceBlurAsk(`faceblur:show:${path}`);
+/** Choose files in the Mac app's own open panel, whatever server the window shows: their paths ([] when cancelled), or
+ * null from a Mac app from before it could (the page's own file input then, which gives paths on this Mac's own server). */
+export async function faceBlurPick(): Promise<string[] | null> {
+  const r = await faceBlurAsk("faceblur:pick").catch(() => null);
+  return r && Array.isArray(r.paths) ? (r.paths as string[]) : null;
+}
