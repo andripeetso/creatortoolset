@@ -34,6 +34,8 @@ const fontFiles: [family: string, file: string, weight: number][] = [
   ["Poppins Regular", "Poppins-Regular.ttf", 400],
   ["DM Serif Display", "DMSerifDisplay-Regular.ttf", 400],
   ["Caveat", "Caveat-Variable.ttf", 700],
+  ["Coustard Black", "Coustard-Black.ttf", 400],
+  ["Bevan", "Bevan-Regular.ttf", 400],
 ];
 
 // render.html is opened from dist/public via file://. These relative URLs
