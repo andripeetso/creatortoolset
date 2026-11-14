@@ -55,6 +55,7 @@ const STATIC_ROWS = [
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
   { section: "appearance", id: "colour", title: "Colour", keywords: ["tint", "accent", "project", "own", "color", "violet", "sky", "emerald", "amber", "rose", "orange", "teal", "pink", "blue", "indigo", "fuchsia", "red", "lime", "cyan", "yellow", "slate"] },
   { section: "appearance", id: "background-glow", title: "Glow behind Home", keywords: ["glow", "background", "dark", "home"] },
+  { section: "appearance", id: "chat-wave", title: "Chat mode transition effect", keywords: ["chat mode", "wave", "animation", "effect", "motion", "transition", "switch"] },
   { section: "appearance", id: "clip-view", title: "Clips open in", keywords: ["media library", "clip", "window", "side panel", "open", "player"] },
   { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
   // Storage: where footage, music and finished videos live

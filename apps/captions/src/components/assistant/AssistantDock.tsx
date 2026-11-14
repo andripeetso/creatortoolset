@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
@@ -225,10 +225,6 @@ export function AssistantDock() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view?.navigate]);
 
-  useEffect(() => {
-    if (!collapsed || chatMode) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed, chatMode, view?.id]);
-
   // docked and open: the page moves over to make room
   const docked = !collapsed && place.mode === "dock" && !chatMode;
   useEffect(() => {
@@ -245,6 +241,20 @@ export function AssistantDock() {
   const showChatMode = real && chatMode;
   const layout = useChatModeLayout(showChatMode);
   useChatModeKey(real);
+  // The newest message in view. When the chat is put on screen (chat mode switched, the box opened, another chat) it is
+  // there at once, before the screen is drawn: never seen scrolling down to it (owner, 11-14). What comes in while the
+  // chat shows scrolls into view. Both go to the very end of the list, so neither moves what the other left. After the
+  // chat-mode layout above, which gives the list its width, and so its height
+  const shownAs = useRef("");
+  useLayoutEffect(() => {
+    if (collapsed && !chatMode) return void (shownAs.current = "");
+    const list = bottom.current?.parentElement;
+    if (!list) return;
+    const as = `${chatMode} ${view?.id}`;
+    if (shownAs.current === as) return list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+    shownAs.current = as;
+    list.scrollTop = list.scrollHeight;
+  }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed, chatMode, view?.id]);
   // the list folded away opens over the chat from its button, until a chat is picked
   const [listOpen, setListOpen] = useState(false);
   // the page beside the chats is the open chat's own (useChatPage): its newest card or video is what it works on

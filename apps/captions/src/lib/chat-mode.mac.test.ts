@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toggleChatMode, useChatMode } from "./chat-mode";
+import { persistChatWave } from "./settings";
 
 /** The Mac app's side of the wave (ChatWave.swift), answering as told; what the page asked, and whether chat mode was
  *  on at the time. */
@@ -44,21 +45,59 @@ describe("chat mode switched in the Mac app", () => {
     expect(asked.map((a) => (typeof a.m === "object" ? "start" : a.m))).toEqual(["start"]);
   });
 
-  it("switched again while the wave runs: the wave ends and the screen changes at once", async () => {
-    let finish: (v: unknown) => void = () => {};
-    const asked: unknown[] = [];
+  /** The Mac app, each wave held until `end()`: what the page asked, as "start", "drawn" or "stop". */
+  function slowMacApp() {
+    const asked: string[] = [];
+    const waves: Array<(v: unknown) => void> = [];
     const postMessage = vi.fn((m: unknown) => {
-      asked.push(m);
-      if (m === "drawn") return new Promise((r) => (finish = r));
-      if (m === "stop") finish(true);
+      asked.push(typeof m === "object" ? "start" : String(m));
+      if (m === "drawn") return new Promise((r) => waves.push(r));
+      if (m === "stop") waves.forEach((r) => r(true));
       return Promise.resolve(true);
     });
     (window as unknown as { webkit: object }).webkit = { messageHandlers: { chatWave: { postMessage } } };
+    return { asked, end: () => waves.shift()?.(true) };
+  }
+
+  it("pressed again while the wave runs: the wave goes on to its end, then it switches back with a wave of its own", async () => {
+    const mac = slowMacApp();
+    toggleChatMode();
+    await settled();
     toggleChatMode();
     await settled();
     expect(useChatMode.getState().on).toBe(true);
-    toggleChatMode();
+    expect(mac.asked).toEqual(["start", "drawn"]);
+    mac.end();
+    await settled();
     expect(useChatMode.getState().on).toBe(false);
-    expect(asked).toContain("stop");
+    expect(mac.asked).toEqual(["start", "drawn", "start", "drawn"]);
+    mac.end();
+    await settled();
+    expect(mac.asked).not.toContain("stop");
+  });
+
+  it("pressed twice while the wave runs: it stays as that wave leaves it", async () => {
+    const mac = slowMacApp();
+    toggleChatMode();
+    await settled();
+    toggleChatMode();
+    toggleChatMode();
+    mac.end();
+    await settled();
+    expect(useChatMode.getState().on).toBe(true);
+    expect(mac.asked).toEqual(["start", "drawn"]);
+  });
+
+  it("with the wave switched off in Settings → Appearance, it switches at once and asks the app for nothing", async () => {
+    const asked = macApp(true);
+    persistChatWave(false);
+    try {
+      toggleChatMode();
+      expect(useChatMode.getState().on).toBe(true);
+      await settled();
+      expect(asked).toEqual([]);
+    } finally {
+      persistChatWave(true);
+    }
   });
 });
