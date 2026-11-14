@@ -12,7 +12,7 @@ const app = (await import("./boot")).default;
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
-const { MAX_RUNNING, PAST_KEPT, noteWork, resumeFromDisk, routeOf, runInChat } = await import("./assistant");
+const { MAX_RUNNING, PAST_KEPT, askConfirm, noteWork, resumeFromDisk, routeOf, runInChat, workEnded } = await import("./assistant");
 const { onAttention } = await import("./lib/attention");
 type View = import("../contracts/assistant").AssistantView;
 type Chat = import("../contracts/assistant").AssistantChat;
@@ -484,6 +484,55 @@ describe("a chat's menu in the list: pin, snooze, rename, mark unread, and looki
     expect((await of(p, await answered(p, "Nothing made here"))).on).toBeUndefined();
   });
 
+  it("a new chat from a reply: the chat up to it with pictures of its own, the one it came from as it was, a work card's end in both", async () => {
+    const p = await person("bra");
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const a = await p.make();
+    await p.sendTo(a, { text: "Hooks for the barefoot reel", images: [{ name: "Board.png", type: "image/png", data: png }] });
+    const first = await p.claim();
+    const reply = (await p.chat(a)).messages.at(-1)!.id;
+    noteWork("bra", reply, { id: "edit:9", kind: "edit", title: "Barefoot hook", href: "/editor/9", status: "running" });
+    askConfirm("bra", reply, "Delete the old cut?", { tool: "editor_delete", args: { id: "8" } });
+    await p.answer(first.id, "Three hooks.");
+    await settled(p, a);
+    await p.sendTo(a, { text: "Now a fourth" });
+    await p.answer((await p.claim()).id, "A fourth hook.");
+    const source = await settled(p, a);
+
+    const r = await post(p, a, "branch", { from: reply });
+    expect(r.status).toBe(200);
+    const { id } = (await r.json()) as { id: string };
+    const b = await p.chat(id);
+    expect(b.messages.map((m) => [m.role, m.text])).toEqual([["user", "Hooks for the barefoot reel"], ["assistant", "Three hooks."]]);
+    expect(b.messages.some((m) => source.messages.some((s) => s.id === m.id))).toBe(false);
+    // the question that waits for a Yes stays in the chat it was asked in
+    expect(b.messages[1]!.confirms).toBeUndefined();
+    expect(source.messages[1]!.confirms?.[0]?.status).toBe("waiting");
+    expect(await of(p, id)).toMatchObject({ title: "Hooks for the barefoot reel", count: 2 });
+    expect((await of(p, id)).unread).toBeUndefined();
+    expect((await p.chat(a)).messages).toEqual(source.messages);
+
+    // the edit ends: its card says so in both chats, and the line about it is said once, in the newer chat
+    workEnded("bra", "edit:9", { status: "done", say: "The edit is ready." });
+    for (const c of [a, id]) expect((await p.chat(c)).messages[1]!.work?.[0]?.status).toBe("done");
+    expect((await p.chat(id)).messages.at(-1)?.text).toBe("The edit is ready.");
+    expect((await p.chat(a)).messages.some((m) => m.text === "The edit is ready.")).toBe(false);
+
+    // its picture is its own: the chat it came from can go and take its own
+    const picture = b.messages[0]!.images![0]!.id;
+    expect(picture).not.toBe(source.messages[0]!.images![0]!.id);
+    expect((await app.request(`/api/assistant/past/${a}`, { method: "DELETE", headers: { cookie: p.cookie } })).status).toBe(200);
+    expect((await app.request(`/api/assistant/images/${picture}`, { headers: { cookie: p.cookie } })).status).toBe(200);
+    expect((await app.request(`/api/assistant/images/${source.messages[0]!.images![0]!.id}`, { headers: { cookie: p.cookie } })).status).toBe(404);
+
+    // not from a reply still being written, nor a message not in the chat
+    await p.sendTo(id, { text: "And a fifth" });
+    const job = await p.claim();
+    expect((await post(p, id, "branch", { from: (await p.chat(id)).messages.at(-1)!.id })).status).toBe(400);
+    await p.answer(job.id, "Fifth.");
+    expect((await post(p, id, "branch", { from: "no-such-message" })).status).toBe(404);
+  });
+
   it("search finds chats by their title first, then by what was said; one chat reads, lists and searches the others with its own tools", async () => {
     const p = await person("loo");
     const a = await answered(p, "Hooks for the barefoot reel", "Three hooks: shoes off, brain on.");
@@ -530,7 +579,8 @@ describe("a chat's menu in the list: pin, snooze, rename, mark unread, and looki
     expect((await other.chats()).some((c) => c.id === secret)).toBe(false);
     expect((await app.request(`/api/assistant/chats/${secret}`, { headers: { cookie: other.cookie } })).status).toBe(404);
     expect(((await (await app.request("/api/assistant/chats/search?q=launch", { headers: { cookie: other.cookie } })).json()) as { matches: unknown[] }).matches).toEqual([]);
-    for (const what of ["pin", "snooze", "title", "unread"]) expect((await post(other, secret, what, { pinned: true, until: Date.now() + 60_000, title: "Mine now" })).status).toBe(404);
+    const reply = (await owner.chat(secret)).messages.at(-1)!.id;
+    for (const what of ["pin", "snooze", "title", "unread", "branch"]) expect((await post(other, secret, what, { pinned: true, until: Date.now() + 60_000, title: "Mine now", from: reply })).status).toBe(404);
     // and its assistant, with the tools one chat looks another up with
     const mine = await other.make();
     // (its own message does not hold the id: its own chat's title would then, by itself)

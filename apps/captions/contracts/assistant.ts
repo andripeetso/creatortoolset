@@ -15,6 +15,7 @@
  *   POST /api/assistant/chats/:id/snooze { until: ms | null } → { chats }: out of the list until then (null: back now)
  *   POST /api/assistant/chats/:id/title  { title } → { chats }: its name
  *   POST /api/assistant/chats/:id/unread → { chats }: its newest finished reply counts as not looked at
+ *   POST /api/assistant/chats/:id/branch { from: message id } → { id, chats }: a new chat holding this one up to that message
  *   POST /api/assistant/chats/:id/limit  { resume: boolean } → { chats }: its reply a usage limit stopped carries on
  *                                        when the limit resets, or doesn't (404: no such reply is its newest)
  * Replies in different chats are written at the same time, up to 3 per account (MAX_RUNNING, api/assistant.ts); in one

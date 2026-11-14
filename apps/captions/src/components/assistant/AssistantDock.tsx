@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
 import {
+  branchChat,
   cancelSecret,
   getAssistant,
   keySaved,
@@ -30,6 +31,7 @@ import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
+import { whenSaid } from "@/lib/when-said";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
@@ -681,6 +683,13 @@ export function AssistantDock() {
     const cm = useChatMode.getState();
     land(r.data, r.data.messages.at(-1)?.id ?? null, cm.on && cm.bare && r.data.messages.length ? { bare: false } : null);
   };
+  /** A new chat holding the one on screen up to a reply, opened in its place (the one it came from stays in the list). */
+  const branchFrom = async (from: string) => {
+    if (!view) return;
+    const r = await branchChat(view.id, from);
+    if (!r.ok) return setError(r.error);
+    await openChat(r.data.id);
+  };
   /** The queued messages written in the chat on screen (one from before chats were told apart shows everywhere). */
   const shownQueue = queue.filter((q) => !q.chat || q.chat === view?.id);
   const chatting = connected;
@@ -895,7 +904,8 @@ export function AssistantDock() {
                 i === all.length - 1 && m.status === "done" && m.folderAsk && !thinking && !busy && thisMacBridge()
                   ? () => void chooseFolderOnMac().then((p) => p && submit({ ...EMPTY_DRAFT, folders: [p] }))
                   : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} />;
+              const branch = m.role === "assistant" && m.status !== "thinking" ? () => void branchFrom(m.id) : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -1029,6 +1039,7 @@ export function Message({
   onView,
   sending,
   onCancelSend,
+  onBranch,
 }: {
   m: AssistantMessage;
   onRetry?: () => void;
@@ -1038,6 +1049,8 @@ export function Message({
   /** How far this window's upload for the reply's send is (m.send). */
   sending?: { pct: number; error?: string };
   onCancelSend?: () => void;
+  /** A new chat holding this one up to this reply, opened in its place. */
+  onBranch?: () => void;
 }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
@@ -1088,11 +1101,8 @@ export function Message({
           </div>
         )}
         {m.text.trim() && (
-          <div className="group/msg flex items-end gap-1">
-            <CopyButton className={msgCopy} text={() => m.text} label="Copy" />
-            <div className={cn("rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white", enter, "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right")}>
-              {m.text}
-            </div>
+          <div className={cn("rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white", enter, "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right")}>
+            {m.text}
           </div>
         )}
         {big && <PictureOverlay src={big} onClose={() => setBig(null)} />}
@@ -1192,13 +1202,35 @@ export function Message({
         </div>
       )}
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
-      {!working && <CopyButton className={cn(msgCopy, "-ml-1 mt-0.5")} text={() => m.text} label="Copy" />}
+      <MessageMeta className="-ml-1 mt-1" text={working ? undefined : m.text} at={working ? undefined : (m.started ?? m.at) + (m.took ?? 0)} onBranch={working ? undefined : onBranch} />
     </div>
   );
 }
 
-const msgCopy =
-  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/msg:opacity-100 [@media(hover:none)]:opacity-60";
+/**
+ * Under a reply, while the pointer is on it (always on a touch screen): copy it, a new chat from here, and when it was
+ * said. The row keeps its height while the reply is written, so nothing moves when it ends. The person's own messages
+ * have none: they wrote them.
+ */
+function MessageMeta({ text, at, onBranch, className }: { text?: string; at?: number; onBranch?: () => void; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "flex h-6 items-center gap-2 text-xs text-muted-foreground tabular-nums opacity-0 transition-opacity duration-200 group-hover/msg:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 [&_svg]:size-3",
+        className,
+      )}
+    >
+      {text && <CopyButton className={metaBtn} text={() => text} label="Copy" />}
+      {onBranch && (
+        <button type="button" className={metaBtn} onClick={onBranch} aria-label="New chat from here" title="New chat from here (this one stays as it is)">
+          <GitFork />
+        </button>
+      )}
+      {at !== undefined && <span title={new Date(at).toLocaleString([], { dateStyle: "full", timeStyle: "short" })}>{whenSaid(at)}</span>}
+    </div>
+  );
+}
+const metaBtn = "flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-muted hover:text-foreground";
 
 /** Copies text; a tick for a moment says it did. */
 function CopyButton({ text, label, className }: { text: () => string; label: string; className: string }) {

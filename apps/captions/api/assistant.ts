@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
@@ -236,6 +236,15 @@ function saveImage(username: string, im: AssistantImage, bytes: Buffer): { id: s
   const file = path.join(imagesDir(username), `${id}.${IMAGE_EXT[im.type]}`);
   writeFileSync(`${file}.tmp`, bytes, { mode: 0o600 });
   renameSync(`${file}.tmp`, file);
+  return { id, name: im.name };
+}
+
+/** A picture of a chat as a file of its own (a branch's): either chat can go without taking the other's. */
+function copyImage(username: string, im: { id: string; name: string }): { id: string; name: string } {
+  const found = imageFile(username, im.id);
+  if (!found) return im;
+  const id = randomUUID();
+  copyFileSync(found.file, path.join(imagesDir(username), `${id}.${IMAGE_EXT[found.type]}`));
   return { id, name: im.name };
 }
 
@@ -1765,6 +1774,40 @@ assistantApp.post("/chats/:id/seen", (c) => {
   save(u.username);
   if (woke) tell(u.username);
   return c.json({ ok: true });
+});
+
+/**
+ * A new chat that carries on from one message: { from: message id } → { id, chats }. It holds the chat up to and with
+ * that message (its pictures copied, so deleting one chat leaves the other's), first among the earlier chats; the one it
+ * came from stays as it is. What waited for an answer there (a Yes / No, an Allow / Deny, an upload, a resume at a
+ * limit's reset) stays there alone.
+ */
+assistantApp.post("/chats/:id/branch", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { from?: unknown } | null;
+  const conv = load(u.username);
+  const chat = chatOf(conv, c.req.param("id"));
+  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  const end = chat.messages.findIndex((m) => m.id === b?.from);
+  if (end < 0) return c.json({ error: "That message is gone" }, 404);
+  const upTo = chat.messages.slice(0, end + 1);
+  if (upTo.some((m) => m.status === "thinking")) return c.json({ error: "That reply is still being written" }, 400);
+  const id = randomUUID();
+  const answered = <T extends { status: string }>(xs?: T[]) => (xs?.some((x) => x.status !== "waiting") ? xs.filter((x) => x.status !== "waiting") : undefined);
+  const messages = upTo.map((from) => {
+    const m: AssistantMessage = { ...structuredClone(from), id: randomUUID() };
+    m.approvals = answered(m.approvals);
+    m.confirms = answered(m.confirms);
+    m.send = undefined;
+    m.wait = undefined;
+    if (m.limit) m.limit = m.limit.until ? { until: m.limit.until } : {};
+    if (m.images) m.images = m.images.map((im) => copyImage(u.username, im));
+    return m;
+  });
+  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now() }, ...(conv.past ?? [])]);
+  save(u.username);
+  tell(u.username);
+  return c.json({ id, chats: chatList(u.username) });
 });
 
 /**

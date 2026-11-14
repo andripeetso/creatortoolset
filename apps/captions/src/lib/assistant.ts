@@ -118,6 +118,8 @@ export const renameChat = (id: string, title: string) => call<unknown>(`/chats/$
 /** The chat's reply a usage limit stopped carries on when the limit resets (true), or doesn't. */
 export const limitChat = (id: string, resume: boolean) => call<unknown>(`/chats/${encodeURIComponent(id)}/limit`, "POST", { resume });
 export const unreadChat = (id: string) => call<unknown>(`/chats/${encodeURIComponent(id)}/unread`, "POST");
+/** A new chat holding this one up to the message `from` (the one it came from stays as it is). */
+export const branchChat = (id: string, from: string) => call<{ id: string }>(`/chats/${encodeURIComponent(id)}/branch`, "POST", { from });
 /** Allow or deny something the reply asked to do on the Mac. */
 /** Yes or No to a question the assistant put before deleting, publishing or sending something. */
 export const answerConfirm = (id: string, yes: boolean) => call<AssistantView>(`/confirms/${encodeURIComponent(id)}`, "POST", { yes });
