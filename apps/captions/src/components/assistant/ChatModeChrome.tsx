@@ -5,8 +5,6 @@ import { HomeActivity } from "@/components/HomeActivity";
 import { HomeLink } from "@/components/HomeLink";
 import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
-import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
-import { canUse, useMe } from "@/lib/auth";
 import { LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, previewChatWidth, useChatMode, washTo, type ChatLayout } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./ChatList";
@@ -57,7 +55,7 @@ function ListEdge({ most, onDrag }: { most: number; onDrag: (w: number | null) =
 }
 
 /**
- * The left column of chat mode: the app's name (the way Home), every chat, then the project, the account and Activity. It stands beside the open chat
+ * The left column of chat mode: the app's name (the way Home), every chat of every workspace, then the account and Activity. It stands beside the open chat
  * while there is room; narrower, it opens over the chat from the list button (`onClose` then closes it again).
  */
 export function ChatsAside({
@@ -79,11 +77,8 @@ export function ChatsAside({
   /** Beside the open chat: how the window is shared (the list's width, and how wide its edge can drag it). */
   layout?: ChatLayout;
 }) {
-  const me = useMe();
   // the width while the list's edge is dragged
   const [dragged, setDragged] = useState<number | null>(null);
-  // the same people Home's bar shows the project to
-  const projects = canUse(me, "instagram") || canUse(me, "workshop");
   const pick = <A extends unknown[]>(fn: (...a: A) => Promise<unknown> | void) => (...a: A) => {
     onClose?.();
     return fn(...a);
@@ -107,22 +102,21 @@ export function ChatsAside({
           {/* gives way before the buttons do: in the Mac app the window's buttons take 84px of a narrow list's bar */}
           <HomeLink className="min-w-0 shrink truncate" />
           <span className="flex-1" />
-          <NewChatButton onNew={() => void pick(onNew)()} disabled={!canNew} />
           {onClose && (
             <button type="button" className={iconBtn} onClick={onClose} aria-label="Close the list" title="Close">
               <X className="size-4" />
             </button>
           )}
         </header>
-        <ChatList chats={chats} onOpen={pick(onOpen)} onNew={onNew} reload={reload} />
+        <ChatList chats={chats} onOpen={pick(onOpen)} onNew={onNew} reload={reload} newButton={<NewChatButton onNew={() => void pick(onNew)()} disabled={!canNew} />} />
         {/* what belongs to the whole app, not to the page beside the chats, on one line: the account (its picture; the
-            name is in its menu), the project (its name gives way first) and Activity (owner, 11-13: the account comes
-            first). The plan warning, while there is one, has the line above */}
+            name is in its menu) and Activity. No workspace picker: chats of every workspace are in the list, each with
+            its mark, and the open chat says which one the page shows (owner, 11-14). The plan warning has the line above */}
         <footer className="flex shrink-0 flex-col gap-1.5 border-t px-3 py-2">
           <PlanLimitPill />
           <div className="flex h-8 items-center gap-1.5">
             <UserMenu compact />
-            <span className="flex min-w-0 flex-1">{projects && <ProjectSwitcher frame />}</span>
+            <span className="flex-1" />
             <HomeActivity />
           </div>
         </footer>

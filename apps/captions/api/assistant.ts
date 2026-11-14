@@ -20,6 +20,8 @@ import { TOOL_NAMES } from "../contracts/tools";
 import { allPartsIn, assistantFilesApp, finishUpload, onFileIn, removeFile, setWaitedFor, uploadOf, USE_NAMES } from "./assistant-files";
 import { needsAttention, type Attention } from "./lib/attention";
 import { currentProject, memoryBlock } from "./lib/memory";
+import { projectOf } from "./lib/project-of";
+import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
@@ -106,10 +108,13 @@ interface Chat {
   /** Put away until a time (POST /chats/:id/snooze), `at` when that was done. It is back when the time comes, or
    *  sooner when it asks something or a reply in it fails (isSnoozed); it is kept until the person has looked. */
   snooze?: { until: number; at: number };
+  /** The workspace (a Workshop project's id) it works in: set by its first message, kept for good. Its tools work there,
+   *  whatever the app has open meanwhile (workspaceOfTurn, mcp.ts). */
+  workspace?: string;
 }
 
 /** What a chat keeps besides its messages, on its way among the earlier chats and back to being the open one. */
-const kept = (c: Omit<Chat, "id" | "messages" | "made">) => ({ title: c.title, task: c.task, settled: c.settled, seen: c.seen, pinned: c.pinned, snooze: c.snooze });
+const kept = (c: Omit<Chat, "id" | "messages" | "made">) => ({ title: c.title, task: c.task, settled: c.settled, seen: c.seen, pinned: c.pinned, snooze: c.snooze, workspace: c.workspace });
 
 interface Conv {
   /** The open chat's id, title and task (it keeps them going into `past` and coming back). */
@@ -120,6 +125,7 @@ interface Conv {
   seen?: number;
   pinned?: number;
   snooze?: { until: number; at: number };
+  workspace?: string;
   messages: AssistantMessage[];
   /** One key asked for (ask_secret), account-wide; `turn` is the reply that asked (its chat shows the box). */
   pending?: { env: string; why: string; at: number; turn?: string };
@@ -181,7 +187,7 @@ function archive(username: string, conv: Conv): void {
   // a page this chat asked for goes with it; one another chat asked for waits for that chat
   if (!conv.navigateChat || conv.navigateChat === conv.id) conv.navigate = conv.navigateChat = undefined;
   conv.id = randomUUID();
-  conv.title = conv.task = conv.settled = conv.seen = conv.pinned = conv.snooze = undefined;
+  conv.title = conv.task = conv.settled = conv.seen = conv.pinned = conv.snooze = conv.workspace = undefined;
   conv.messages = [];
 }
 
@@ -276,6 +282,8 @@ interface TurnInput {
   later?: true;
   /** Its videos still on their way when the reply starts. */
   uploading?: Array<{ id: string; name: string }>;
+  /** The workspace picked for a new chat (its first message only: a chat keeps the one it has). */
+  workspace?: string;
 }
 
 const nameOf = (v: unknown, fallback: string) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, 80) : fallback);
@@ -331,7 +339,7 @@ function parseTurn(raw: unknown): TurnInput {
         ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
-  return { text, images, pasted, fileIds, files: [], paths, local, context, ...(b.later === true ? { later: true as const } : {}) };
+  return { text, images, pasted, fileIds, files: [], paths, local, context, ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
@@ -735,6 +743,7 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     past: chat ? [] : (conv.past ?? []).filter((p) => p.messages.length).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length, ...(working(p) ? { working: true as const } : {}), ...(isSettled(conv, p) ? { settled: true as const } : {}) })),
     pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
     ...(isSnoozed(conv, chat ?? (conv as Chat)) ? { snoozed: (chat ?? conv).snooze!.until } : {}),
+    ...((chat ?? conv).workspace ? { workspace: (chat ?? conv).workspace } : {}),
     navigate: (!conv.navigateChat || conv.navigateChat === (chat?.id ?? conv.id) ? conv.navigate : undefined) ?? null,
     sendNow: true,
     videosLater: true,
@@ -800,10 +809,45 @@ function chatList(username: string): AssistantChat[] {
         ...(isSnoozed(conv, c) ? { snoozed: c.snooze!.until } : c.snooze ? { woke: true as const } : {}),
         ...(c.messages.at(-1)?.limit ? { limited: true as const } : {}),
         ...(onOf(c) ? { on: onOf(c) } : {}),
+        ...(c.workspace ? { workspace: c.workspace } : {}),
       };
     })
     .sort((a, b) => b.at - a.at);
 }
+
+/**
+ * Every chat with the workspace it is in. A chat from before chats had one is the first brand's (projectOf, the rule
+ * old edits are filed by), written down the first time the list is read, so its tools and its mark agree from then on.
+ */
+async function chatsOf(u: SessionUser): Promise<AssistantChat[]> {
+  const of = await projectOf(u).catch(() => null);
+  if (of) {
+    const conv = load(u.username);
+    const old = [conv as Chat, ...(conv.past ?? [])].filter((c) => c.messages.length && !c.workspace);
+    for (const c of old) c.workspace = of();
+    if (old.length) save(u.username);
+  }
+  return chatList(u.username).map((c) => (of ? { ...c, workspace: of(c.workspace) } : c));
+}
+
+const chatWithTurn = (username: string, turn: string): Chat | undefined => {
+  const conv = load(username);
+  return [conv as Chat, ...(conv.past ?? [])].find((c) => c.messages.some((m) => m.id === turn));
+};
+
+/** The workspace of the chat a reply is written in, for its tools (mcp.ts); none for a reply that is not in a chat. */
+export function workspaceOfTurn(username: string, turn: string | null): string | undefined {
+  return turn ? chatWithTurn(username, turn)?.workspace : undefined;
+}
+
+// a reply that switches workspace (workshop_set_project) takes its chat along: its next tools work there
+onChatMoves((username, turn, id) => {
+  const chat = chatWithTurn(username, turn);
+  if (!chat || chat.workspace === id) return;
+  chat.workspace = id;
+  save(username);
+  tell(username);
+});
 
 /** What a reply asked before a tool deleted or sent something, and how it was answered. */
 const asked = (m: AssistantMessage) =>
@@ -1559,12 +1603,17 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
-  const memory = await memoryBlock(u);
+  // the chat's workspace: its own once it has one; a new chat's is the one picked for it (else the app's current); a chat
+  // from before chats had one is the first brand's, as its mark in the list says (chatsOf)
+  const was = target();
+  const ws = was?.workspace ?? (was?.messages.length ? (await projectOf(u).catch(() => null))?.() : await resolveProjectId(u, input.workspace));
+  const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
+  const memory = await inWs(() => memoryBlock(u));
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
   if (fitOff) writeWorkPrefs(u.username, { askFit: false });
-  const project = await currentProject(u).catch(() => undefined);
+  const project = await inWs(() => currentProject(u)).catch(() => undefined);
   const footage = files.length || input.paths.length || input.local.length;
   // the project is named once: by the question whether dropped footage belongs there, else by its own line
   const fit = fitOff ? FIT_OFF_SAID : !project ? undefined : footage && readWorkPrefs(u.username).askFit !== false ? fitLine(project.name) : projectLine(project);
@@ -1580,6 +1629,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const now = Date.now();
   // whoever sends has seen the chat up to here: the reply to this is unread until they look again
   chat.seen = now;
+  chat.workspace ??= ws;
   // and is back at work in it: a chat put away till later is no longer away
   chat.snooze = undefined;
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
@@ -1620,7 +1670,7 @@ assistantApp.post("/turn", (c) => sendTurn(c));
 
 /* ---- every chat by its id, none of them made the open one (the phone; the dock keeps the open chat) ---- */
 
-assistantApp.get("/chats", (c) => c.json({ chats: chatList(c.get("user").username) }));
+assistantApp.get("/chats", async (c) => c.json({ chats: await chatsOf(c.get("user")) }));
 
 /** A new empty chat among the earlier ones (the open chat stays open): its id. */
 assistantApp.post("/chats", (c) => {
@@ -1682,7 +1732,7 @@ assistantApp.post("/chats/:id/settle", async (c) => {
   if (b.settled) chat.pinned = chat.snooze = undefined;
   save(u.username);
   tell(u.username);
-  return c.json({ chats: chatList(u.username) });
+  return c.json({ chats: await chatsOf(u) });
 });
 
 /** A chat's own change from its menu in the list: what `change` does to it, then every device's list is told. */
@@ -1695,7 +1745,7 @@ async function changeChat(c: Context<{ Variables: AuthVars }>, change: (chat: Ch
   if (refused) return c.json({ error: refused }, 400);
   save(u.username);
   tell(u.username);
-  return c.json({ chats: chatList(u.username) });
+  return c.json({ chats: await chatsOf(u) });
 }
 
 /** Pin a chat to the top of the list, or let it go: { pinned: boolean, at?: ms }. */
@@ -1740,7 +1790,7 @@ assistantApp.post("/chats/:id/limit", async (c) => {
   save(u.username);
   tell(u.username);
   void pump(u.username);
-  return c.json({ chats: chatList(u.username) });
+  return c.json({ chats: await chatsOf(u) });
 });
 
 /** Name a chat: { title }. */
@@ -1804,10 +1854,10 @@ assistantApp.post("/chats/:id/branch", async (c) => {
     if (m.images) m.images = m.images.map((im) => copyImage(u.username, im));
     return m;
   });
-  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now() }, ...(conv.past ?? [])]);
+  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now(), workspace: chat.workspace }, ...(conv.past ?? [])]);
   save(u.username);
   tell(u.username);
-  return c.json({ id, chats: chatList(u.username) });
+  return c.json({ id, chats: await chatsOf(u) });
 });
 
 /**
@@ -1953,7 +2003,10 @@ assistantApp.post("/confirms/:id", async (c) => {
   else {
     answering.add(id);
     try {
-      const r = await confirmRunner(u, c.req.raw.headers, publicOrigin(c), call.tool, call.args);
+      // in the workspace of the chat it was asked in, as the reply's own calls were
+      const ws = [conv as Chat, ...(conv.past ?? [])].find((x) => x.messages.some((m) => m.confirms?.some((y) => y.id === id)))?.workspace;
+      const run = () => confirmRunner!(u, c.req.raw.headers, publicOrigin(c), call.tool, call.args);
+      const r = await (ws ? workspaceScope.run({ id: ws }, run) : run());
       Object.assign(q, { status: r.ok ? "done" : "failed", result: r.text.replace(/\s+/g, " ").trim().slice(0, 300) });
     } finally {
       answering.delete(id);

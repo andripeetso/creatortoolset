@@ -39,7 +39,9 @@ import { useThrow } from "./useThrow";
 import { duration, WorkCards, WorkingFor } from "./WorkCards";
 import { chatTitle, useChats } from "./ChatList";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
-import { WorkPicker } from "./WorkPicker";
+import { StartSuggestions, WorkPicker } from "./WorkPicker";
+import { useWorkspace } from "@/lib/workspace";
+import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
@@ -96,6 +98,12 @@ function suggestionsFor(path: string): string[] {
   if (path.startsWith("/editor")) return ["How are my edits doing?", "What changed in the last draft?"];
   if (path.startsWith("/instagram") || path.startsWith("/analyzer")) return ["How did my last five posts do?", "Refresh my Instagram numbers"];
   return ["Where did I leave off?", "What can I finish right away?", "Find my next content idea"];
+}
+
+/** Make `id` the app's current workspace, when it is one of the person's and not already it. */
+function followWorkspace(id: string | null | undefined) {
+  const w = useWorkspace.getState();
+  if (id && id !== w.currentProjectId && w.projects.some((p) => p.id === id)) void w.select(id);
 }
 
 /**
@@ -339,6 +347,8 @@ export function AssistantDock() {
       ...(it.local?.length ? { localFiles: it.local } : {}),
       ...(it.folders?.length ? { paths: it.folders } : {}),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
+      // a new chat is filed in the workspace picked for it (a chat that has one keeps it)
+      ...(useWorkspace.getState().currentProjectId ? { workspace: useWorkspace.getState().currentProjectId! } : {}),
     };
     // a message goes to the chat it was written in, even when another one is open by now
     const r = it.chat && view?.chats ? await sendTurnTo(it.chat, input) : await sendTurn(input);
@@ -679,7 +689,8 @@ export function AssistantDock() {
     landing.current.on = true;
     const r = await startOver();
     if (!r.ok) return void (landing.current.on = false);
-    // in chat mode a new chat is its own screen: no page beside it yet
+    // in chat mode a new chat is its own screen: no page beside it yet; with the list narrowed to one workspace, it is for that one
+    if (useChatMode.getState().on) followWorkspace(chatFilterNow());
     land(r.data, null, useChatMode.getState().on ? { bare: true } : null);
   };
   const openChat = async (id: string) => {
@@ -692,6 +703,8 @@ export function AssistantDock() {
     }
     // from the new-chat screen to a chat that was started: its page comes back beside it
     const cm = useChatMode.getState();
+    // the page shows the opened chat's workspace (only that: what a page does when its own picker changes is not done)
+    if (cm.on) followWorkspace(r.data.workspace);
     land(r.data, r.data.messages.at(-1)?.id ?? null, cm.on && cm.bare && r.data.messages.length ? { bare: false } : null);
   };
   /** A new chat holding the one on screen up to a reply, opened in its place (the one it came from stays in the list). */
@@ -889,7 +902,8 @@ export function AssistantDock() {
                 // works), then the message box. The row keeps its height while the list of work is read
                 <div className="flex flex-col items-center pb-5">
                   <h3 className="text-center text-3xl font-normal tracking-tight text-balance">What should we make?</h3>
-                  <div className="mt-2 flex h-7 max-w-full items-center">
+                  <div className="mt-2 flex h-7 max-w-full items-center gap-2">
+                    <NewChatWorkspace />
                     <WorkPicker />
                   </div>
                 </div>
@@ -1020,7 +1034,12 @@ export function AssistantDock() {
         </div>
       )}
       {/* a new chat's suggestions under the box; as tall as the room above it, so the box sits in the middle */}
-      {centred && <div className="min-h-0 flex-1 overflow-y-auto px-[max(1.5rem,calc((100%-46rem)/2))] pb-4">{chips}</div>}
+      {centred && (
+        <div className="min-h-0 flex-1 overflow-y-auto px-[max(1.5rem,calc((100%-46rem)/2))] pb-4">
+          {/* not while the welcome writes; then a different three for each new chat, side by side (owner, 11-14) */}
+          {welcome.stage !== "typing" && <StartSuggestions seed={view.id} disabled={busy} onPick={(text) => submit({ ...EMPTY_DRAFT, text })} />}
+        </div>
+      )}
       </div>
       {chatMode && !layout.full && <ChatEdge />}
     </section>
