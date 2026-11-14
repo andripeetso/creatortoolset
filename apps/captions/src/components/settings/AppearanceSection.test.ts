@@ -96,7 +96,7 @@ describe("a tool's row says what stops it and where that is fixed", () => {
   it("lists only what is missing and required: one line each, nothing once it is set up", () => {
     expect(labels("enhance", [])).toEqual(["Needs an API key"]);
     expect(labels("enhance", ["NVIDIA_API_KEY"])).toEqual([]);
-    expect(labels("instagram", [])).toEqual(["Needs a project", "Needs an Apify key"]);
+    expect(labels("instagram", [])).toEqual(["Needs a workspace", "Needs an Apify key"]);
     expect(labels("instagram", ["project", "instagram"])).toEqual([]); // its own Instagram login reads the posts too
   });
 

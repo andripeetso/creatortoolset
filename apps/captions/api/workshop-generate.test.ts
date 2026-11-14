@@ -78,5 +78,5 @@ describe("Generate draft", () => {
   });
 });
 
-// read from this test on main 83cae003, before Generate draft's request moved into draftRequest
-const PINNED = { system: "f934698a7a418a3ede9bf33be64ac54bcf2f6cedb619ec4d66a7ff43093a7ddd", user: "9d1b2df342a7c208aa126f94e538a0a4128aa1fa1c4623895a0176fe9bb4cbdc" };
+// read from this test on main 83cae003, before Generate draft's request moved into draftRequest; re-pinned 2026-11-14 when the prompt said workspace and project for the brand and the session
+const PINNED = { system: "5517017cea4a0343c9f411624c7e182fac507fcf2c3209298aa40d3487685d8b", user: "3fe4bd17a980eae0f44db290206586e1fc7f21eb9710d3cac727d483b6ce442a" };

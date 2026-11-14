@@ -687,7 +687,7 @@ describe("does the dropped footage belong here?", () => {
     await app.request("/api/workshop/projects", { method: "POST", ...json({ name: "Paper grabbers" }, { cookie: p.cookie }) });
     await p.send({ text: "Hi" });
     const plain = await p.claim();
-    expect(plain.user).not.toContain("The project open in the app");
+    expect(plain.user).not.toContain("The workspace open in the app");
     // every message says which project is open, with its id for the tools
     expect(plain.user).toMatch(/The user's current workspace is "Paper grabbers" \(id [0-9a-f-]{36}\)\./);
     await p.answer(plain.id, "Hello.");
@@ -696,7 +696,7 @@ describe("does the dropped footage belong here?", () => {
     await clip.part();
     await p.send({ text: "Edit this", files: [clip.id] });
     const asks = await p.claim();
-    expect(asks.user).toContain(`The project open in the app is "Paper grabbers"`);
+    expect(asks.user).toContain(`The workspace open in the app is "Paper grabbers"`);
     // named once: the question says which project it is
     expect(asks.user).not.toContain("The user's current workspace is");
     expect(asks.user).toContain(`"Keep it in Paper grabbers"`);
@@ -711,7 +711,7 @@ describe("does the dropped footage belong here?", () => {
     await settled(p);
     await p.send({ text: "And this one", files: [clip.id] });
     const quiet = await p.claim();
-    expect(quiet.user).not.toContain("The project open in the app");
+    expect(quiet.user).not.toContain("The workspace open in the app");
     expect(quiet.user).toContain(`The user's current workspace is "Paper grabbers"`);
     await p.answer(quiet.id, "Ok.");
     await settled(p);
