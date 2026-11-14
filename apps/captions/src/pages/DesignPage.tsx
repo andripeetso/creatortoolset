@@ -21,6 +21,7 @@ import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureSize, pictureUrl, saveDesign, splitPicture } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
+import { onThisMac } from "@/lib/thisMac";
 import { downloadBlob } from "@/lib/download";
 import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -562,7 +563,7 @@ function DesignPage({ id }: { id: string }) {
     setCutting(true);
     setError(null);
     try {
-      const cut = await cutOutPicture(design.id, l.picture);
+      const cut = await onThisMac(() => cutOutPicture(design.id, l.picture));
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, cut] } : d));
       // onto the layer as it is by now: the cutting took a while
       const page = latest.current.find((p) => p.id === onto);
@@ -585,7 +586,7 @@ function DesignPage({ id }: { id: string }) {
     setCutting(true);
     setError(null);
     try {
-      const a = await splitPicture(design.id, l.picture);
+      const a = await onThisMac(() => splitPicture(design.id, l.picture));
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, a.background, ...a.pieces.map((p) => p.picture)] } : d));
       // onto the frame as it is by now: the Mac took a while
       const page = latest.current.find((p) => p.id === onto);

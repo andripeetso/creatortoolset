@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { allowOtherDevices, installInMacAi, pathOnMac } from "./thisMac";
+import { allowOtherDevices, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
 
 const bridgeWith = (postMessage: (m: string) => Promise<unknown>) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage } } } });
 
@@ -75,5 +75,34 @@ describe("where a picked file is on this Mac", () => {
     expect(await pathOnMac(file("C0001.MP4", 10))).toBeUndefined();
     vi.stubGlobal("window", {});
     expect(await pathOnMac(file("C0001.MP4", 10))).toBeUndefined();
+  });
+});
+
+describe("a call that needs a Mac of the person's own", () => {
+  const noMac = new Error("Needs a Mac with Creator Toolset on");
+  it("inside the Mac app, switches this Mac on and makes the call again until the server sees it", async () => {
+    const asked: string[] = [];
+    bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true }));
+    let calls = 0;
+    const run = async () => {
+      if (++calls < 3) throw noMac;
+      return "split";
+    };
+    expect(await onThisMac(run, 1)).toBe("split");
+    expect([asked, calls]).toEqual([["start"], 3]);
+  });
+
+  it("says why when this Mac can't be switched on, and gives any other answer as it is", async () => {
+    bridgeWith(async () => ({ aiOn: false, paired: false, problem: "Could not pair this Mac: offline" }));
+    await expect(onThisMac(async () => Promise.reject(noMac), 1)).rejects.toThrow("This Mac could not be switched on for it: Could not pair this Mac: offline");
+    const asked: string[] = [];
+    bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true }));
+    await expect(onThisMac(async () => Promise.reject(new Error("Needs the newest Creator Toolset Mac app")), 1)).rejects.toThrow("Needs the newest");
+    expect(asked).toEqual([]);
+  });
+
+  it("in a browser, the call's own answer", async () => {
+    vi.stubGlobal("window", {});
+    await expect(onThisMac(async () => Promise.reject(noMac), 1)).rejects.toThrow("Needs a Mac with Creator Toolset on");
   });
 });

@@ -26,6 +26,33 @@ export async function startThisMac(): Promise<ThisMacState | null> {
   }
 }
 
+/** What the server says when no Mac of the person's own is on for it (api/lib/cutouts.ts cutoutMissing, contracts/tools.ts needsLine). */
+const NO_MAC = /^Needs a Mac with Creator Toolset on/;
+
+/**
+ * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
+ * theirs, this Mac is switched on for it (Settings → Computers, Use this Mac for my AI, which pairs it with this server)
+ * and the call is made again once the server sees it. In a browser, or for any other answer, the call's own error.
+ */
+export async function onThisMac<T>(run: () => Promise<T>, wait = 1500, tries = 8): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (!thisMacBridge() || !(e instanceof Error) || !NO_MAC.test(e.message)) throw e;
+    const s = await startThisMac();
+    if (!s?.aiOn || !s.paired) throw new Error(s?.problem ? `This Mac could not be switched on for it: ${s.problem}` : e.message);
+    // the server sees the Mac at its first call, a moment after it is switched on
+    for (let n = 1; ; n++) {
+      await new Promise((r) => setTimeout(r, wait));
+      try {
+        return await run();
+      } catch (again) {
+        if (n >= tries || !(again instanceof Error) || !NO_MAC.test(again.message)) throw again;
+      }
+    }
+  }
+}
+
 /**
  * "Choose a folder" in the Mac app: its own open panel (ThisMacBridge.swift chooseFolder). Resolves to the folder's path,
  * or null when it was cancelled. undefined in a browser, where the page asks for a typed path instead.
