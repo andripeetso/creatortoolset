@@ -172,18 +172,20 @@ async function soft<T>(on: boolean, read: () => Promise<T[]>): Promise<T[]> {
 /** Read when asked, so a test of the rows loads none of the tools. Each list is the account's own, whichever screen (or the assistant) started the work. */
 async function appWork(user: SessionUser): Promise<AppWork> {
   const [{ libraryWork }, { allEdits, summaryOf }, { activeExports }] = await Promise.all([import("./library/activity"), import("./editor/store"), import("./exports")]);
+  // this workspace's work (an old edit is the first brand's; a source for every workspace is in each)
+  const here = await (await import("./lib/workspace-scope")).inCurrentWorkspace(user);
   const edits = may(user, "editor")
-    ? allEdits().filter((e) => !e.trashedAt && e.createdBy === user.username).map(summaryOf).filter((e) => e.last?.state === "queued" || e.last?.state === "running")
+    ? allEdits().filter((e) => !e.trashedAt && e.createdBy === user.username && (!here || here(e.projectId))).map(summaryOf).filter((e) => e.last?.state === "queued" || e.last?.state === "running")
     : [];
   const u = user.username;
   const [analyzer, notes, enhance, review, guides, captioning, knowledge] = await Promise.all([
     soft(may(user, "instagram"), async () => (await import("./instagram")).analyzerWork(u)),
-    soft(may(user, "notes"), async () => (await import("./clips")).notesWork(u, await (await import("./lib/workspace-scope")).inCurrentWorkspace(user))),
-    soft(may(user, "enhance"), async () => (await import("./enhance")).enhancing(u, await (await import("./lib/workspace-scope")).inCurrentWorkspace(user))),
+    soft(may(user, "notes"), async () => (await import("./clips")).notesWork(u, here)),
+    soft(may(user, "enhance"), async () => (await import("./enhance")).enhancing(u, here)),
     soft(may(user, "review"), async () => (await import("./review")).reviewWork(u)),
-    soft(may(user, "guides"), async () => (await import("./documents")).guidesWork(u, await (await import("./lib/workspace-scope")).inCurrentWorkspace(user))),
+    soft(may(user, "guides"), async () => (await import("./documents")).guidesWork(u, here)),
     soft(may(user, "captions"), async () => (await import("./captions-job")).captioningWork(user)),
-    soft(may(user, "workshop"), async () => (await import("./workshop")).knowledgeWork(u)),
+    soft(may(user, "workshop"), async () => (await (await import("./workshop")).knowledgeWork(u)).filter((k) => !k.projectId || !here || here(k.projectId))),
   ]);
   return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: await activeExports(user), analyzer, notes, enhance, review, guides, captioning, knowledge };
 }

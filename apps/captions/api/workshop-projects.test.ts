@@ -23,6 +23,7 @@ vi.mock("./lib/mac-claude", async (importOriginal) => ({
 
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
+const { workspaceScope } = await import("./lib/workshop/workspace");
 const { streamWithFallback } = await import("./ai-complete");
 const mocked = vi.mocked(streamWithFallback);
 const { createUser } = await import("./users");
@@ -121,11 +122,16 @@ describe("projects kept apart", () => {
   it("knowledge: a project's old context files stay its own, a new source reaches every project until one switches it off", async () => {
     const tinyFile = ws("projects", `${tiny}.json`);
     writeFileSync(tinyFile, JSON.stringify({ ...JSON.parse(readFileSync(tinyFile, "utf-8")), knowledge: [{ id: uuid(), name: "offers-facts.md", text: "Offer facts", addedAt: 1 }] }));
-    const before = (await (await call("GET", "/api/workshop/sources")).json()) as Array<{ name: string; projectId?: string; status: string }>;
+    type Row = { name: string; projectId?: string; status: string };
+    const before = (await (await workspaceScope.run({ id: tiny }, () => call("GET", "/api/workshop/sources"))).json()) as Row[];
     expect(before.find((x) => x.name === "offers-facts.md")).toMatchObject({ projectId: tiny, status: "new" });
+    // the Knowledge tab in another workspace does not list it
+    const quiet = (await (await call("GET", "/api/workshop/projects")).json() as Array<{ id: string; name: string }>).find((p) => p.name === "Quiet Garden")!;
+    const there = (await (await workspaceScope.run({ id: quiet.id }, () => call("GET", "/api/workshop/sources"))).json()) as Row[];
+    expect(there.some((x) => x.name === "offers-facts.md")).toBe(false);
     expect(JSON.parse(readFileSync(tinyFile, "utf-8")).knowledge).toEqual([]);
 
-    const added = (await (await call("POST", "/api/workshop/sources", { name: "offers.txt", text: "line one\nline two\nline three" })).json()) as { id: string };
+    const added = (await (await call("POST", "/api/workshop/sources", { name: "offers.txt", text: "line one\nline two\nline three", projectId: null })).json()) as { id: string };
     let book: { status: string; kind?: string; sections?: unknown[] } | undefined;
     for (let i = 0; i < 100 && book?.status !== "read"; i++) {
       await new Promise((res) => setTimeout(res, 10));

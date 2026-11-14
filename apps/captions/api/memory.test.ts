@@ -349,8 +349,10 @@ describe("projects are kept apart", () => {
     expect(await tool(there.token, "forget", { quote: "we never show faces" })).toEqual({ error: true, text: "Nothing kept says that." });
     expect(await tool(there.token, "forget", { quote: "never show" })).toEqual({ error: true, text: "Nothing kept says that." });
     await there.end();
-    expect((await kept()).length).toBe(2);
+    // Settings → Memory in this workspace: the other workspace's fact is not listed, nor removed
+    expect((await kept()).map((f) => f.text)).toEqual(["I only film on my phone"]);
     await enter(tumbles);
+    expect((await kept()).length).toBe(2);
     const back = await turn("Forget the faces thing");
     expect(JSON.parse((await tool(back.token, "forget", { quote: "we never show faces" })).text)).toEqual({ forgot: "we never show faces" });
     await back.end();

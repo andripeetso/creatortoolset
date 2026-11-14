@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { InOtherProjects } from "@/components/workspace/InOtherProjects";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
@@ -85,7 +84,7 @@ export function StateBadge({ state }: { state: string }) {
 export default function EditorPage() {
   // the saved list paints at once; a step that moves (the server's worker, a device) reads it again: lib/local-cache
   const list = useCachedLoad<EditSummary[]>("/api/editor", listEdits);
-  // a project keeps its own edits apart: the page has the current project's, and says what the others have
+  // each workspace keeps its own edits apart: the page has only the current workspace's
   const project = useWorkspace((s) => s.currentProjectId);
   const split = useMemo(() => byProject(list.data ?? [], project), [list.data, project]);
   const edits = list.data ? split.here : null;
@@ -243,7 +242,6 @@ export default function EditorPage() {
       </AppBar>
       <main className={cn("mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
         {tabs}
-        <InOtherProjects elsewhere={split.elsewhere} one="edit" many="edits" />
         {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
         {edits?.length === 0 && !anything && (
           <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>

@@ -24,6 +24,7 @@ import {
   type Destination,
 } from "../contracts/automations";
 import type { Selection } from "../contracts/providers";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
  * Scheduled tasks (contracts/automations.ts): $DATA_DIR/automations/<user>.json, one list per account. A run is a turn
@@ -293,10 +294,13 @@ const pastOnce = (a: Pick<Automation, "enabled" | "schedule">, now: number) => a
 const PAST_ONCE = "The run time has passed. Pick a time in the future.";
 
 /** The account's tasks, and why none can run for it now (`blocked`, null when one can): the page then builds none. */
-automationsApp.get("/", (c) => {
+automationsApp.get("/", async (c) => {
   const username = c.get("user").username;
   const admin = isAdminHere(username);
-  return c.json({ items: readAll(username).map((a) => view(a)), blocked: blockOf(routeOf(username, admin), admin) });
+  // a task for one workspace is listed in it alone; one for no workspace in every one
+  const here = await inCurrentWorkspace(c.get("user"));
+  const items = readAll(username).filter((a) => !a.project || !here || here(a.project));
+  return c.json({ items: items.map((a) => view(a)), blocked: blockOf(routeOf(username, admin), admin) });
 });
 
 /**
@@ -315,6 +319,8 @@ automationsApp.post("/", async (c) => {
     if (fields.schedule.kind === "fixed") return c.json({ error: "timezone (an IANA name such as Europe/Berlin) is needed for a schedule at a time of day" }, 400);
     fields.timezone = "UTC";
   }
+  // a new task is the workspace's it was made in (a chat's tasks its chat's); `project: null` asks for every workspace
+  if (!("project" in b)) fields.project = await currentWorkspaceId(c.get("user"));
   const turn = jobTurn(c.req.header("authorization"));
   const chat = turn ? chatOfTurn(username, turn) : null;
   const destination = fields.destination ?? (chat ? "continue" : "new_chat");

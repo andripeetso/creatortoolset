@@ -971,8 +971,11 @@ export async function sourceFileOf(postId: string, index: number, user: SessionU
   return { path: abs(m.id, s.file), mime: slideMime(s) };
 }
 
+/** How many posts the Workshop reads in the current workspace (libraryForWorkshop's rule, without reading them). */
 export async function libraryCountFor(user: SessionUser): Promise<number> {
-  return (await allMetas()).filter((m) => listedFor(m, user)).length;
+  const projectId = await resolveProjectId(user);
+  const scope = await projectScope(user, projectId);
+  return (await allMetas()).filter((m) => listedFor(m, user) && scope.postIn(m) && postInProject(m, projectId, { mine: scope.mine })).length;
 }
 
 export interface SourcePack {

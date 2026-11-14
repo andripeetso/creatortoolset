@@ -80,7 +80,6 @@ export default function WorkshopPage() {
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "workshop");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
-  const projects = useWorkspace((s) => s.projects);
 
   const [tab, setTab] = useState<Tab>("sessions");
   // null until the list is known (saved or fetched): until then the rows' places show as quiet blocks, not an empty line
@@ -316,7 +315,7 @@ export default function WorkshopPage() {
             // the counts hold their width while they load, so the tabs don't move
             [
               ["sessions", <>Projects <span className="inline-block min-w-[3ch] tabular-nums">· {sessionsKnown ? sessions.length : ""}</span></>],
-              ["projects", <>Workspaces <span className="inline-block min-w-[3ch] tabular-nums">· {projects.length}</span></>],
+              ["projects", "Workspace"],
               ["knowledge", "Knowledge"],
               ["frameworks", <>Frameworks <span className="inline-block min-w-[3ch] tabular-nums">· {frameworks.length}</span></>],
               ["rules", <>Rules <span className="inline-block min-w-[7ch] tabular-nums">· {rules.filter((r) => r.on).length} on</span></>],
@@ -488,7 +487,7 @@ export default function WorkshopPage() {
           </section>
         )}
 
-        {tab === "projects" && <ProjectList />}
+        {tab === "projects" && <ProjectList current />}
 
         {tab === "rules" && (
           <section>

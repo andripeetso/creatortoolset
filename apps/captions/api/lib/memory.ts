@@ -140,8 +140,11 @@ export async function listMemory(user: SessionUser, here = false): Promise<Memor
   const { facts } = read(user.username);
   const ws = facts.some((f) => f.project) ? await getWorkspace(user) : null;
   const projects = ws?.projects ?? [];
+  // Settings → Memory: the facts about the person and this workspace's (one kept for a deleted workspace is the first brand's)
+  // imported when used: project-of.ts reads the Analyzer, which this small store must not load with it
+  const inWs = ws && !here ? await (await import("./workspace-scope")).inCurrentWorkspace(user) : null;
   return facts
-    .filter((f) => !here || !f.project || f.project === ws?.currentProjectId)
+    .filter((f) => !f.project || (here ? f.project === ws?.currentProjectId : !inWs || inWs(f.project)))
     .map(({ id, text, at, project }) => ({ id, text, at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A workspace that is gone" } } : {}) }))
     .reverse();
 }

@@ -91,6 +91,7 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
  */
 export function KnowledgePanel() {
   const projects = useWorkspace((s) => s.projects);
+  const here = useWorkspace((s) => s.currentProjectId);
   // a saved list, live: a read running on the Mac saves as it goes, and each save refetches it (lib/local-cache)
   const { items: sources, setItems: setSources, error: loadError } = useCachedList<KnowledgeSource>("workshop/sources", listSources);
   const [open, setOpen] = useState<string | null>(null);
@@ -103,6 +104,8 @@ export function KnowledgePanel() {
 
 
   const put = (s: KnowledgeSource) => setSources((list) => (list.some((x) => x.id === s.id) ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]));
+  // kept to another workspace: it leaves this one's list, as the server's would
+  const moved = (s: KnowledgeSource) => (s.projectId && here && s.projectId !== here && projects.some((p) => p.id === s.projectId) ? setSources((l) => l.filter((x) => x.id !== s.id)) : put(s));
   const act = (p: Promise<unknown>) => p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const add = async (files: FileList | File[] | null) => {
@@ -146,7 +149,7 @@ export function KnowledgePanel() {
         <p className="text-[13px] text-zinc-200">Drop books, studies, old scripts, videos, references, brand docs</p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           PDF (scans too), Word, EPUB, videos, Markdown or text, or a link. Claude reads each one once and files it: what it is,
-          what it answers, where its parts are. Every workspace uses it unless you switch it off.
+          what it answers, where its parts are. This workspace uses it; set it to every workspace if it is general.
         </p>
         <div className="mt-3 flex justify-center gap-2">
           <button type="button" onClick={() => inputRef.current?.click()} disabled={!!adding} className={small}>
@@ -204,9 +207,9 @@ export function KnowledgePanel() {
               key={s.id}
               s={s}
               open={open === s.id}
-              projects={projects}
+              here={projects.find((p) => p.id === here)}
               onToggle={() => setOpen(open === s.id ? null : s.id)}
-              onSave={(fields) => act(patchSource(s.id, fields).then(put))}
+              onSave={(fields) => act(patchSource(s.id, fields).then(moved))}
               onRead={() => void act(readSourceAgain(s.id).then(put))}
               onDelete={() => act(deleteSource(s.id).then(() => setSources((l) => l.filter((x) => x.id !== s.id))))}
               onProject={(pid) => toggleProject(pid, s.id)}
@@ -221,7 +224,7 @@ export function KnowledgePanel() {
 function SourceRow({
   s,
   open,
-  projects,
+  here,
   onToggle,
   onSave,
   onRead,
@@ -230,7 +233,7 @@ function SourceRow({
 }: {
   s: KnowledgeSource;
   open: boolean;
-  projects: ReturnType<typeof useWorkspace.getState>["projects"];
+  here: ReturnType<typeof useWorkspace.getState>["projects"][number] | undefined;
   onToggle: () => void;
   onSave: (fields: Parameters<typeof patchSource>[1]) => Promise<unknown>;
   onRead: () => void;
@@ -241,7 +244,6 @@ function SourceRow({
   useEffect(() => {
     setDraft({ title: s.title ?? "", about: s.about ?? "", uses: (s.uses ?? []).join("\n"), sections: (s.sections ?? []).map(sectionLine).join("\n") });
   }, [s.title, s.about, s.uses, s.sections]);
-  const only = s.projectId ? projects.find((p) => p.id === s.projectId) : undefined;
   const Chevron = open ? ChevronDown : ChevronRight;
 
   return (
@@ -286,31 +288,24 @@ function SourceRow({
               className="rounded bg-transparent py-px text-[10px] text-zinc-500 outline-none hover:text-zinc-300"
               aria-label="Which workspaces use it"
             >
+              {/* only this workspace's own sources and the ones for every workspace are listed (the server's GET /sources) */}
+              {s.projectId ? <option value={s.projectId}>This workspace</option> : here && <option value={here.id}>This workspace</option>}
               <option value="">Every workspace</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  Only {p.name}
-                </option>
-              ))}
-              {s.projectId && !only && <option value={s.projectId}>Only a deleted workspace</option>}
             </select>
-            {s.projectId ? null : (
-              projects.map((p) => {
-                const on = !(p.off ?? []).includes(s.id);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => onProject(p.id)}
-                    title={on ? `${p.name} uses it: click to switch off` : `${p.name} doesn't use it: click to switch on`}
-                    className={`rounded-full border px-1.5 py-px text-[10px] ${on ? "border-violet-500/50 bg-violet-500/10 text-zinc-200" : "border-zinc-800 text-zinc-600 line-through"}`}
-                  >
-                    {p.name}
-                  </button>
-                );
-              })
-            )}
+            {!s.projectId && here && (() => {
+              const on = !(here.off ?? []).includes(s.id);
+              return (
+                <button
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => onProject(here.id)}
+                  title={on ? "This workspace uses it: click to switch off" : "This workspace doesn't use it: click to switch on"}
+                  className={`rounded-full border px-1.5 py-px text-[10px] ${on ? "border-violet-500/50 bg-violet-500/10 text-zinc-200" : "border-zinc-800 text-zinc-600 line-through"}`}
+                >
+                  {on ? "Used here" : "Off here"}
+                </button>
+              );
+            })()}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">

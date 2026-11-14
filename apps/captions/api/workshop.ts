@@ -32,6 +32,7 @@ import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARC
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
 import { scriptsOwnerFor } from "./lib/workspaces";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -287,7 +288,7 @@ function patchSource(id: string, change: (s: KnowledgeSource) => KnowledgeSource
 const inRead = new Set<string>();
 /** This account's sources its AI is reading, for Home (api/activity.ts); inJob tells "workshop" as they start and end. */
 export const knowledgeWork = async (username: string) =>
-  (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name }] : []));
+  (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name, ...(s.projectId ? { projectId: s.projectId } : {}) }] : []));
 
 /**
  * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,
@@ -1976,7 +1977,12 @@ workshopApp.delete("/projects/:id", async (c) => {
 
 const noKnowledge = (user: SessionUser) => user.role === "visitor";
 
-workshopApp.get("/sources", async (c) => c.json(await listSources(c.get("user"))));
+/** The Knowledge tab: every workspace's sources, and the ones kept to this workspace (one kept to a deleted one shows in the first brand). */
+workshopApp.get("/sources", async (c) => {
+  const user = c.get("user");
+  const here = await inCurrentWorkspace(user);
+  return c.json((await listSources(user)).filter((s) => !s.projectId || !here || here(s.projectId)));
+});
 
 workshopApp.get("/sources/:id/text", async (c) => {
   const s = await readSource(c.req.param("id"), c.get("user"));
@@ -1995,7 +2001,9 @@ async function writePages(id: string, pages: string[]): Promise<number> {
 /** A new source with its text (or a scan's first pages: `more` = further batches follow, read after the last). */
 async function newSource(user: SessionUser, name: string, text: string, projectIdRaw: unknown, pages?: string[], more = false): Promise<KnowledgeSource> {
   if ((await listSources(user)).length >= SOURCE_LIMITS.perAccount) throw new Error(`Up to ${SOURCE_LIMITS.perAccount} sources`);
-  const projectId = okId(projectIdRaw) && (await readProject(projectIdRaw, user)) ? projectIdRaw : undefined;
+  // a source is the workspace's it was added in (each workspace is its own client); `projectId: null` asks for every workspace
+  const projectId =
+    okId(projectIdRaw) && (await readProject(projectIdRaw, user)) ? projectIdRaw : projectIdRaw === null ? undefined : await currentWorkspaceId(user);
   const now = Date.now();
   const s: KnowledgeSource = { id: randomUUID(), owner: user.username, name: name.slice(0, SOURCE_LIMITS.name), chars: text.length, status: "new", createdAt: now, updatedAt: now, ...(projectId ? { projectId } : {}) };
   if (pages?.length) await writePages(s.id, pages);

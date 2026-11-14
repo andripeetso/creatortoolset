@@ -27,6 +27,7 @@ import {
 import { activeSet, effectiveSelection, effortLabel, modelName, modelsOf, useProviders } from "@/lib/providers";
 import { useCachedLoad } from "@/lib/local-cache";
 import { claudeLimitReset } from "@/lib/limits";
+import { useWorkspace } from "@/lib/workspace";
 import { listProjects, type WorkshopProject } from "@/lib/workshop";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
@@ -232,7 +233,8 @@ function TaskDialog({ initial, providers, onClose, onSaved }: { initial: Automat
   const [d, setD] = useState<AutomationDraft>(() => {
     const ai = initial?.ai ?? (initial ? null : defaultAi(providers, ais));
     const device = ais.find((i) => i.id === ai?.instance)?.device ?? ais[0]?.device ?? "";
-    return initial ? draftOf(initial, device) : { ...blankDraft(), ai, device };
+    // a new task is for the workspace it is made in
+    return initial ? draftOf(initial, device) : { ...blankDraft(), ai, device, project: useWorkspace.getState().currentProjectId ?? "" };
   });
   const [projects, setProjects] = useState<WorkshopProject[]>([]);
   const [busy, setBusy] = useState(false);
