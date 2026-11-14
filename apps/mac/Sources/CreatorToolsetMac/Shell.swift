@@ -62,6 +62,9 @@ final class Shell: NSObject, ObservableObject {
     private let serversKey = "servers"
     private let currentKey = "currentServer"
     private let aiKey = "aiOnThisMac"
+    /// The page the window was on when an update relaunched the app (rememberPageForRelaunch), opened again once.
+    private let pageBeforeUpdateKey = "pageBeforeUpdate"
+    private var updateWatch: AnyCancellable?
     private var runner: RelayRunner?
     private var runnerID = UUID()
     private let museLogin = MuseLogin()
@@ -118,6 +121,9 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMac = { [weak self] in self?.openWindowID?("this-mac") }
         view.onRecord = { [weak self] in self?.recorderCommand($0) }
         view.onSignIn = { [weak self] driver, home in self?.signIn(driver: driver, home: home) }
+        updateWatch = UpdateWhenIdle.shared.$held.sink { [weak view] held in
+            DispatchQueue.main.async { view?.macUpdate = held }
+        }
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
@@ -199,10 +205,13 @@ final class Shell: NSObject, ObservableObject {
         aiOn = UserDefaults.standard.bool(forKey: aiKey)
         pluginCount = PluginRecord.live.load().on.count
         markDevice()
+        let back = UserDefaults.standard.url(forKey: pageBeforeUpdateKey).flatMap { isSite($0, base) ? $0 : nil }
+        UserDefaults.standard.removeObject(forKey: pageBeforeUpdateKey)
         if runsHere {
+            pluginWatch.returnTo = back
             startServer()   // the page and the AI runner wait for it
         } else if current != nil {
-            open("/")
+            if let back { webView.load(URLRequest(url: back)) } else { open("/") }
             if aiOn { startAI() }
         }
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
@@ -479,6 +488,11 @@ final class Shell: NSObject, ObservableObject {
     var pairedHere: Bool { DeviceVault.deviceID(for: base.host ?? "") != nil }
 
     // MARK: window and site
+
+    /// Just before an update relaunches the app: the page it is on, for the next launch.
+    func rememberPageForRelaunch() {
+        if let url = webView.url, isSite(url, base) { UserDefaults.standard.set(url, forKey: pageBeforeUpdateKey) }
+    }
 
     func open(_ href: String) {
         guard hasServer, let url = URL(string: href, relativeTo: base)?.absoluteURL else { return }

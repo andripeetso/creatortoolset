@@ -31,6 +31,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var macDevice: String? {
         didSet { if macDevice != oldValue { installScripts() } }
     }
+    /// The downloaded update waiting to install, for the page's Update button (html data-mac-update, Updates.swift).
+    var macUpdate: UpdateWhenIdle.Held? {
+        didSet { if macUpdate != oldValue { installScripts() } }
+    }
     /// A page that posts `this-mac` (older servers' Settings → This Mac): opens the native panel.
     var onThisMac: (() -> Void)?
     /// The page's Settings → This Mac (`thismac-<what>`): servers, the AI on this Mac (ThisMacBridge.swift).
@@ -198,6 +202,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             if let event = lastMouseDown { window.performDrag(with: event) }
         case "this-mac":
             onThisMac?()
+        case "update-install":
+            // the page's Restart to update (NewVersionPill.tsx), from the site's own page only
+            if message.frameInfo.isMainFrame { UpdateWhenIdle.shared.installNow() }
         case let m? where m.hasPrefix("thismac-"):
             // only the site's own page, never a frame inside it (ThisMacBridge.swift)
             if message.frameInfo.isMainFrame { onThisMacCommand?(String(m.dropFirst(8))) }
@@ -301,6 +308,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)
+        let update = macUpdateScript(macUpdate)
+        scripts.addUserScript(WKUserScript(source: update, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        evaluateJavaScript(update)
     }
 }
 

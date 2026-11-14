@@ -118,4 +118,13 @@ final class ServersTests: XCTestCase {
         XCTAssertTrue(macDeviceScript(#"d"1</script>"#).contains(#""d\"1<\/script>""#))
         XCTAssertTrue(macDeviceScript(nil).contains("const id = null"))
     }
+
+    func testThePageLearnsTheHeldUpdateSafely() {
+        let held = UpdateWhenIdle.Held(version: "1.2</script>", critical: true, since: Date(timeIntervalSince1970: 2), waiting: false)
+        let script = macUpdateScript(held)
+        XCTAssertTrue(script.contains(#"\"critical\":true"#))
+        XCTAssertTrue(script.contains(#"\"since\":2000"#))
+        XCTAssertFalse(script.contains("</script>"))
+        XCTAssertTrue(macUpdateScript(nil).contains("const u = null"))
+    }
 }
