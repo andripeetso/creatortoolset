@@ -401,8 +401,10 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         continue;
       }
       page = { id: `f${Date.now().toString(36)}${next.length}`, background: "#ffffff", layers: [] };
-      next.push(page);
-      words.push(undefined);
+      // after the frames, before the loose pictures: its place among frames is its number
+      const at = frameIds().length;
+      next.splice(at, 0, page);
+      words.splice(at, 0, undefined);
       open(page).isNew = true;
     }
     const t = open(page);
