@@ -139,8 +139,13 @@ final class Shell: NSObject, ObservableObject {
         Dictation.shared.start()
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
-        view.onThisMacAsk = { [weak self] ask, done in
+        view.onThisMacAsk = { [weak self, weak view] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
+            // Face Blur's page (FaceBlurBridge.swift): the files it may take are the ones picked or dropped in this window
+            if isFaceBlurAsk(ask) {
+                let allowed = Set((self.pickedFiles + (view?.droppedFiles ?? [])).map(\.path))
+                return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
+            }
             // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
             if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
             // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a

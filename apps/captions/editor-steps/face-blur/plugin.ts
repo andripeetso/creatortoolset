@@ -7,6 +7,7 @@ import { anyVisionConfigured, completeVisionWithFallback } from "../../api/ai-vi
 import { engineRun, ensureMediapipe } from "../../api/editor/mediapipe";
 import { ffmpegCommand } from "../../api/ffmpeg-runtime";
 import { env } from "../../api/lib/env";
+import { chosenIn, NEVER_IDENTIFY } from "../../api/lib/face-pick";
 import { definePlugin, type EditorStepInput } from "../../api/lib/plugin";
 import { ffmpeg, ffmpegSlot } from "../../api/library/media/run";
 import { ENGINE } from "./engine";
@@ -170,15 +171,6 @@ export function pickFrames(t: Pick<Track, "boxes">, n = 3): number[] {
 }
 const clear = (b: Box) => b[4] * Math.sqrt(b[2] * b[3]);
 
-/** The track ids the AI's answer names, of those asked about ({"blur": ["T1", …]}, also inside other text). */
-export function chosenIn(text: string, ids: string[]): Set<string> {
-  const m = /\{[\s\S]*\}/.exec(text);
-  if (!m) throw new Error("The AI's answer had no JSON");
-  const blur = (JSON.parse(m[0]) as { blur?: unknown }).blur;
-  if (!Array.isArray(blur)) throw new Error('The AI\'s answer had no "blur" list');
-  return new Set(blur.map(String).filter((id) => ids.includes(id)));
-}
-
 /** What the AI is told about each track, in words: which footage, whether it is the speaker, where, how big, how long. */
 export function describe(t: Track, info: { w: number; h: number; fps: number }, role: "speaker" | "broll", speaker: boolean): string {
   const boxes = [...t.boxes.values()];
@@ -195,8 +187,8 @@ export function describe(t: Track, info: { w: number; h: number; fps: number }, 
 export const SYSTEM =
   "You choose which faces in a video edit get blurred, following the editor's instruction. Each picture is one face track: the same face at up to three moments of the video, side by side, " +
   "with a line saying where it is and whether it is the person speaking to camera. Match only what the instruction asks, from what is visible and from those lines: where a face is, how big, " +
-  "whether it is the speaker, whether the person looks younger or older. Never identify anyone: don't name, guess or describe who a person is. A track whose pictures show no face is not blurred. " +
-  'Answer with JSON only: {"blur": ["T1", ...]}, the ids of the tracks to blur; an empty list when none match.';
+  "whether it is the speaker, whether the person looks younger or older. " +
+  NEVER_IDENTIFY;
 
 /** One question to the AI: the instruction, the lines, one picture per track (JPEG, base64). Returns its answer's text. */
 export type Ask = (system: string, user: string, images: string[], who: string, signal: AbortSignal) => Promise<string>;
