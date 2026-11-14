@@ -222,11 +222,13 @@ export function useChatModeKey(enabled: boolean): void {
  * Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that is shown with the wave. Pressed
  * again while the wave runs, it switches back once that wave is over, with a wave of its own: a wave is never cut off
  * halfway (owner, 11-14: "clicking it fast interrupts the animation ... that shouldn't happen"). Pressed twice
- * meanwhile, it stays as the running wave leaves it. `held`: the mouse went down on the button (holdChatMode).
+ * meanwhile, it stays as the running wave leaves it. `held`: the mouse went down on the button (holdChatMode); a press
+ * that waited for the running wave still says so, and the app sees whether the mouse is still down by then (owner, 11-14:
+ * "sometimes the hold doesn't trigger, it switches even though I hold").
  */
 export function toggleChatMode(from?: HTMLElement | null, held = false): void {
   if (washing) {
-    again = again ? null : () => toggleChatMode(from);
+    again = again ? null : () => toggleChatMode(from, held);
     return;
   }
   washTo({ on: !useChatMode.getState().on }, from, { wash: true, held });
@@ -243,6 +245,16 @@ export function toggleChatMode(from?: HTMLElement | null, held = false): void {
 export function holdChatMode(from: HTMLElement | null): void {
   pressed = !!macWave() && waves();
   if (pressed) toggleChatMode(from, true);
+}
+
+/**
+ * The pointer came onto chat mode's button, in the Mac app: the app takes its picture of the screen now, so a press shows
+ * the wave at once (a picture of a big window can take half a second; owner, 11-14: "the first time I clicked it it
+ * lagged a bit ... sometimes the hold doesn't trigger").
+ */
+export function readyChatMode(): void {
+  const mac = macWave();
+  if (mac && waves()) void mac.postMessage("ready").catch(() => {});
 }
 
 /** The pointer's press switched chat mode (holdChatMode), and the click it ends with is still to come. */
@@ -313,13 +325,15 @@ let washingTo: Partial<Stored> = {};
 /** Chat mode pressed again while the wave ran (toggleChatMode): what to do once it is over. */
 let again: (() => void) | null = null;
 
-/** The wave is over: chat mode pressed again meanwhile switches now. */
+/** The wave is over: chat mode pressed again meanwhile switches now; with the pointer still on its button, the next
+ *  press is made ready. */
 function over(): void {
   washing = null;
   washingTo = {};
   const next = again;
   again = null;
-  next?.();
+  if (next) return next();
+  if (document.querySelector("[data-chat-toggle]:hover")) readyChatMode();
 }
 /** The new screen's things that are still landing, and the looks still to come for things it fills in late. */
 let landing: Animation[] = [];

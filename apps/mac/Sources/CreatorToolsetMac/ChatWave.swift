@@ -11,7 +11,12 @@
 import AppKit
 import Metal
 import MetalKit
+import OSLog
 import WebKit
+
+/// Each switch's timeline (ms since the press; numbers only), for `log show --predicate 'category == "chat-wave"'`:
+/// whether a hold was seen, when the wave came up, when the button was let go and when it popped.
+private let waveLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CreatorToolsetMac", category: "chat-wave")
 
 /// The page's "chatWave" messages for one web view (AppWebView registers it, for the open server's own page only):
 /// - `{start: {x, y, dark, tint, hold}}`: a picture of the screen as it is goes over the page, the button at (x, y) in
@@ -21,6 +26,8 @@ import WebKit
 /// - `"drawn"`: the page has changed under the picture; a picture of the new screen is taken. Answered when the wave is
 ///   over
 /// - `"stop"`: chat mode was switched again; the wave goes at once
+/// - `"ready"`: the pointer came onto the button; a picture of the screen is taken now, so a press shows the wave at
+///   once (on a big window, a picture can take half a second: what a press would wait for)
 final class ChatWaveHost {
     private weak var view: WKWebView?
     private var wave: ChatWaveView?
@@ -28,6 +35,12 @@ final class ChatWaveHost {
     private var drawn: ((Any?, String?) -> Void)?
     /// The page is from before holding (it says nothing of `hold`): its own entrances still run after the switch.
     private var oldPage = false
+    /// The sound of a held wave (WaveSound.swift); a click makes none.
+    private let sound = WaveSound()
+    /// The picture taken when the pointer came onto the button ("ready"), and who waits for one being taken (nil when
+    /// none is).
+    private var early: (image: CGImage, at: CFTimeInterval)?
+    private var earlyWaiting: [(CGImage?) -> Void]?
 
     init(_ view: WKWebView) {
         self.view = view
@@ -41,6 +54,7 @@ final class ChatWaveHost {
         case "drawn":
             guard let view, let wave else { return reply(true, nil) }
             drawn = reply
+            waveLog.notice("new screen drawn at \(Int(wave.elapsed)) ms")
             // the page has finished its own entrances by now (chat-mode.ts macWash): what it shows is the new screen. A
             // page from before that is given until 420 ms after the press, as it was then (what fades in is there by then)
             let wait = oldPage ? max(0, 420 - wave.elapsed) / 1000 : 0
@@ -49,17 +63,58 @@ final class ChatWaveHost {
                 view.takeSnapshot(with: nil) { [weak wave] image, _ in
                     guard let wave, wave.superview != nil else { return }
                     if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+                    waveLog.notice("new screen's picture at \(Int(wave.elapsed)) ms")
                 }
             }
         case "stop":
             wave?.finish()
+            reply(true, nil)
+        case "ready":
+            prepare()
             reply(true, nil)
         default:
             reply(nil, "unknown")
         }
     }
 
+    /// A picture of the screen as it is now, kept for a press in the next few seconds. Taken after the screen's next
+    /// update, so with the button's look under the pointer.
+    private func prepare() {
+        guard wave == nil, earlyWaiting == nil, let view else { return }
+        earlyWaiting = []
+        view.takeSnapshot(with: nil) { [weak self] image, _ in
+            guard let self else { return }
+            let picture = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            let at = CACurrentMediaTime()
+            if let picture { self.early = (picture, at) }
+            let waiting = self.earlyWaiting ?? []
+            self.earlyWaiting = nil
+            waiting.forEach { $0(picture) }
+            // (a picture of a big window is large: not kept past its use)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.1) { [weak self] in
+                if self?.early?.at == at { self?.early = nil }
+            }
+        }
+    }
+
+    /// The screen as it is on show now: the picture taken as the pointer came onto the button when it is recent (or
+    /// still being taken: that comes sooner than a new one), else a new one.
+    private func screenNow(_ done: @escaping (CGImage?, Bool) -> Void) {
+        if let e = early, CACurrentMediaTime() - e.at < 3 {
+            early = nil
+            return done(e.image, true)
+        }
+        early = nil
+        if earlyWaiting != nil { return earlyWaiting!.append { done($0, true) } }
+        // not after the next update: the page changes only once this is answered
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = false
+        view?.takeSnapshot(with: config) { image, _ in done(image?.cgImage(forProposedRect: nil, context: nil, hints: nil), false) }
+    }
+
     private func begin(_ start: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
+        // the press, as near as the app can tell: the page asks as the mouse goes down
+        let pressed = CACurrentMediaTime()
         wave?.finish()
         guard let view, let renderer = WaveRenderer.shared, let x = start["x"] as? Double, let y = start["y"] as? Double else { return reply(false, nil) }
         let rgb = ((start["tint"] as? String) ?? "").split(separator: " ").compactMap { Float($0) }
@@ -68,13 +123,17 @@ final class ChatWaveHost {
         // (a page from before holding sends none: a click)
         let hold = start["hold"] as? Bool ?? false
         oldPage = start["hold"] == nil
-        // the screen as it is on show now, not after the next update: the page changes only once this is answered
-        let config = WKSnapshotConfiguration()
-        config.afterScreenUpdates = false
-        view.takeSnapshot(with: config) { [weak self] image, _ in
-            guard let self, let view = self.view, let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold)
-            else { return reply(false, nil) }
+        waveLog.notice("start: hold \(hold), mouse down \(ChatWaveView.mouseDown()), page from before holding \(self.oldPage)")
+        if hold { sound.begin() }
+        screenNow { [weak self] image, early in
+            guard let self, let view = self.view, let image,
+                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed, sound: hold ? self.sound : nil)
+            else {
+                waveLog.notice("no wave: no picture of the screen")
+                self?.sound.end()
+                return reply(false, nil)
+            }
+            waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early)")
             self.wave = wave
             wave.onDone = { [weak self] in
                 self?.wave = nil
@@ -108,15 +167,17 @@ struct U {
     float4 d;   // the project's colour (0 to 1), 1 on a dark screen
     float4 e;   // the light at the button (0 to 1), seconds since the press, px a point, colour split
     float4 f;   // how much of the wave is left on the window (1, then down to 0 as it ends), the height its light is for
-                // (px), how far behind the front's middle a point is let go by (front widths)
+                // (px), how far behind the front's middle a point is let go by (front widths), how wild a long hold made it
+                // (0 to 1)
 };
 
 static float grain(float2 p) { return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
 
 // The wave's height across its front (x in front widths, 0 its middle, below 0 behind it): one broad, soft crest, then
-// two very slight ridges behind it as it settles, as water does.
-static float height(float x) {
-    return exp(-1.6 * x * x) - 0.24 * exp(-1.4 * (x + 1.6) * (x + 1.6)) + 0.09 * exp(-1.4 * (x + 3.1) * (x + 3.1));
+// two slight ridges behind it as it settles, as water does; deeper after a long hold (`wild`, 0 to 1).
+static float height(float x, float wild) {
+    return exp(-1.6 * x * x) - 0.24 * (1.0 + 0.9 * wild) * exp(-1.4 * (x + 1.6) * (x + 1.6))
+         + 0.09 * (1.0 + 1.4 * wild) * exp(-1.4 * (x + 3.1) * (x + 3.1));
 }
 
 fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
@@ -128,6 +189,7 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float3 tint = u.d.xyz;
     bool dark = u.d.w > 0.5;
     float bloom = u.e.x, time = u.e.y, pt = u.e.z, split = u.e.w;
+    float wild = u.f.w;
 
     float2 p = in.uv * size;
     float2 v = p - o;
@@ -151,11 +213,14 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     // passes (from 1.5 front widths ahead of its middle to 1.5 behind, further behind the deeper it was drawn in):
     // quick, never in one frame.
     float letgo = smoothstep(-u.f.z, 1.5, x);
-    float sucked = 0.7 * pull * r * exp(-r / reach) * letgo * still;
-    float turn = swirl * pull * exp(-r / (0.6 * reach)) * letgo * still;
-    // Behind the front the new screen is pushed out by the crest and settles after two very slight ridges.
-    float h = height(x) * still;
-    float slope = (height(x + 0.05) - height(x - 0.05)) / 0.1 * still;
+    // Held long it goes wilder: it turns harder, in rings that churn in toward the button, and trembles.
+    float tremor = wild * wild * 3.0 * pt * sin(time * 47.0 + ang * 3.0);
+    float sucked = max(0.7 * pull * r + tremor, 0.0) * exp(-r / reach) * letgo * still;
+    float churn = wild * (0.3 + 0.12 * sin(r / (90.0 * pt) + time * 10.0));
+    float turn = (swirl + churn) * pull * exp(-r / (0.6 * reach)) * letgo * still;
+    // Behind the front the new screen is pushed out by the crest and settles after two slight ridges.
+    float h = height(x, wild) * still;
+    float slope = (height(x + 0.05, wild) - height(x - 0.05, wild)) / 0.1 * still;
     // ... but the window's edges stay put, as a sheet pinned in its frame: a point is never drawn from past the edge
     // (which would smear the picture's last row), and the closer to it the less it moves. `edge` is how far the window
     // goes from the button this way; with nothing drawn in, `rs` is `r`.
@@ -170,15 +235,17 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
 
     // Out of focus: a veil round the button while the screen falls into it, and the crest of the wave.
     // (the crest's blur goes as the wave dies away)
-    float soft = (veil * pull * exp(-r / (0.8 * reach)) * letgo + 9.0 * pt * abs(h) * (amp / (30.0 * pt)) * (0.4 + 0.6 * flash)) * still;
+    // (no wider than a hold of about a second and a half makes it: wider, the blur's taps would show as copies)
+    float soft = (veil * min(pull, 2.6) * exp(-r / (0.8 * reach)) * letgo + 9.0 * pt * abs(h) * (amp / (30.0 * pt)) * (0.4 + 0.6 * flash)) * still;
     // the colours split where the picture bends most
     float sp = split * (abs(slope) * amp * 0.5 + 0.12 * sucked) * still;
     float3 col = float3(0.0);
-    int taps = soft < 0.75 ? 1 : 16;
+    // (a slight blur needs fewer taps: the window can be 6K at 120 frames a second)
+    int taps = soft < 0.75 ? 1 : (soft < 6.0 ? 8 : 16);
     float spin = grain(p) * 6.2831853;
     for (int k = 0; k < taps; k++) {
         float fk = float(k);
-        float ring = taps == 1 ? 0.0 : sqrt((fk + 0.5) / 16.0);
+        float ring = taps == 1 ? 0.0 : sqrt((fk + 0.5) / float(taps));
         float a = fk * 2.3999632 + spin;
         float2 q = base + (ns * cos(a) * 1.8 + ts * sin(a)) * soft * ring;
         float2 qr = (q + ns * sp) / size, qg = q / size, qb = (q - ns * sp) / size;
@@ -200,7 +267,7 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float rim = pow(1.0 - N.z, 3.0);
     float3 sheen = mix(mix(tint, float3(1.0), 0.55), mix(tint, float3(1.0, 0.86, 0.72), 0.5), 0.5 + 0.5 * sin(ang * 3.0 + slope * 2.0 + time * 3.0));
     if (dark) {
-        col += sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * 0.25 * flash;
+        col += sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * (0.25 + 0.3 * wild) * flash;
         col *= 1.0 + facing * 0.6 * flash;
     } else {
         // the shade side in the project's colour, never grey
@@ -242,8 +309,10 @@ struct WaveMoment {
     /// The wave's height as its light sees it (px): as high as a hold of about half a second makes it, at most.
     var lit: Float = 0
     /// How far behind the front's middle a point is let go by (front widths): further the deeper the screen was drawn
-    /// in, so no point moves much more than 40 points in a frame however long the button was held.
+    /// in, so the pop is quick but never a jump however long the button was held.
     var back: Float = 1.5
+    /// How wild a long hold has made it (0 to 1): see `WaveClock.wild`.
+    var wild: Float = 0
     var done: Bool
 }
 
@@ -253,10 +322,19 @@ enum WaveClock {
     /// "only suck when the user holds down the button ... and at a certain point it pops; the longer the button is held
     /// down the stronger the pop").
     static let holdFrom: Double = 140
-    static let longest: Double = 1300
+    static let longest: Double = 2000
+    /// Held past `wildFrom` (ms) it goes wilder until `longest`: it twists harder, churns and trembles, and the pop is an
+    /// explosion: a higher wave with deeper ridges, more split colour and light in the project's colour, and longer
+    /// (owner, 11-14: "the longer the hold, the worse the effect gets and starts twisting stuff and going a bit crazier
+    /// ... and an even bigger explosion for the long one").
+    static let wildFrom: Double = 900
+    static func wild(_ ms: Double) -> Float {
+        let t = Float(min(max((ms - wildFrom) / (longest - wildFrom), 0), 1))
+        return t * t * (3 - 2 * t)
+    }
     /// One wave goes out across the window, quick as it leaves, slowing for a long while as it spreads and dying away to
-    /// nothing as it reaches the far side (ms).
-    static let sweep: Double = 950
+    /// nothing as it reaches the far side (ms): longer after a long hold.
+    static func sweep(held: Double) -> Double { 950 + 450 * Double(wild(held)) }
     /// The widest the front gets (points), and how far past the far corner its middle ends (front widths: its crest and
     /// first ridge have crossed the window; what is left of the wave fades out there).
     static let widest: Float = 240
@@ -276,10 +354,11 @@ enum WaveClock {
             return (0.7 * (1 - exp(-h / 200)) + 0.0016 * h) * (1 - exp(-h / 40))
         }
         if ms <= held { return Float(deep(ms)) }
-        // at the speed it had, slowing over 300 ms; a press little longer than a click (quick to fall in, with little
-        // drawn in yet) slows sooner, so it goes on by no more than it drew in and stays all but a click
+        // at the speed it had, slowing over 300 ms (the new screen's picture can come half a second late on a big
+        // window: no stop meanwhile); a press little longer than a click (quick to fall in, with little drawn in yet)
+        // slows sooner, so it stays all but a click
         let speed = deep(held) - deep(held - 1)
-        let slows = speed > 0 ? min(300, deep(held) / speed) : 300
+        let slows = speed > 0 ? min(300, deep(held) / speed * (1 + max(held - holdFrom - 60, 0) / 40)) : 300
         return Float(deep(held) + speed * slows * (1 - exp(-(ms - held) / slows)))
     }
 
@@ -292,14 +371,17 @@ enum WaveClock {
         let seconds = Float(ms / 1000)
         let lit = Float(1 - pow(1 - min(ms / 80, 1), 3))
         let p = pull(ms, held: held)
+        let w = wild(min(ms, held))
         guard let release, ms >= release else {
+            // (the light at the button throbs as it goes wild)
             return WaveMoment(pull: p, reach: 380 * s, swirl: 0.4, veil: 18 * s, front: -1e6, width: 160 * s, wave: 0, flash: 0,
-                              bloom: lit * (0.55 + 0.45 * min(p, 1)), seconds: seconds, split: 0.08, px: s, done: false)
+                              bloom: lit * (0.55 + 0.45 * min(p, 1)) * (1 + 0.15 * w * sin(seconds * 18)), seconds: seconds,
+                              split: 0.08 * (1 + 0.8 * w), px: s, wild: w, done: false)
         }
-        // the longer the button was held, the harder it pops: a click's wave is about two thirds of a long hold's half
+        // the longer the button was held, the harder it pops: a click's wave is about a third of the longest hold's
         let drawnIn = pull(held, held: held)
-        let pop = 0.65 + 0.35 * min(drawnIn, 2.5)
-        let u = Float(min((ms - release) / sweep, 1))
+        let pop = 0.65 + 0.35 * drawnIn
+        let u = Float(min((ms - release) / sweep(held: held), 1))
         let width = (160 + (widest - 160) * u) * s
         // quick as it leaves, slower and slower after (no point moves more than about 25 points in a frame)
         let from = -behind * 160 * s
@@ -308,9 +390,10 @@ enum WaveClock {
         // over the last quarter what is left of the wave fades into the page
         let fade = Double(min(max((u - 0.75) / 0.25, 0), 1))
         return WaveMoment(pull: p, reach: 380 * s, swirl: 0.4, veil: 18 * s, front: front, width: width, wave: 26 * s * dying * pop,
-                          flash: (0.25 + 0.75 * exp(-2.2 * u)) * pow(1 - u, 0.9) * min(pop, 1), bloom: exp(-7 * u), seconds: seconds,
-                          split: 0.08 * min(pop, 1.35), px: s, left: Float(1 - fade * fade * (3 - 2 * fade)), lit: 26 * s * dying * min(pop, 1),
-                          back: 1.5 * max(1, 1 + 0.5 * (drawnIn - 1)), done: u >= 1)
+                          flash: (0.25 + 0.75 * exp(-2.2 * u)) * pow(1 - u, 0.9) * min(pop, 1),
+                          bloom: exp(-7 * u) * (1 + 0.6 * w * exp(-12 * u)), seconds: seconds,
+                          split: 0.08 * min(pop, 1.35) * (1 + 1.2 * w), px: s, left: Float(1 - fade * fade * (3 - 2 * fade)),
+                          lit: 26 * s * dying * min(pop, 1), back: 1.5 * max(1, 1 + 0.5 * (drawnIn - 1)), wild: w, done: u >= 1)
     }
 }
 
@@ -361,7 +444,7 @@ final class WaveRenderer {
             SIMD4(m.front, m.width, m.wave, m.flash),
             SIMD4(tint.x, tint.y, tint.z, dark ? 1 : 0),
             SIMD4(m.bloom, m.seconds, m.px, m.split),
-            SIMD4(m.left, m.lit, m.back, 0),
+            SIMD4(m.left, m.lit, m.back, m.wild),
         ]
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride * u.count, index: 0)
@@ -380,7 +463,11 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     private let origin: CGPoint
     private let tint: SIMD3<Float>
     private let dark: Bool
-    private var started = CACurrentMediaTime()
+    /// When the button was pressed (moved later by however long the first picture took past `holdFrom`, so the pull
+    /// starts from nothing on the first frame drawn), and that first frame (ms).
+    private var started: CFTimeInterval
+    private var shownAt: Double?
+    private var popped = false
     /// When the picture of the new screen came (the front waits for it, at most `wait` ms after it would have gone).
     private var newAt: Double?
     private let wait: Double = 1000
@@ -392,7 +479,12 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     static var mouseDown: () -> Bool = { NSEvent.pressedMouseButtons & 1 != 0 }
     var onDone: (() -> Void)?
 
-    init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool) throws {
+    private let sound: WaveSound?
+
+    init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool,
+         pressed: CFTimeInterval = CACurrentMediaTime(), sound: WaveSound? = nil) throws {
+        started = pressed
+        self.sound = sound
         self.renderer = renderer
         self.origin = origin
         self.tint = tint
@@ -427,6 +519,8 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
 
     func finish() {
         guard superview != nil else { return }
+        waveLog.notice("done at \(Int(self.elapsed)) ms")
+        sound?.end()
         isPaused = true
         removeFromSuperview()
         renderer.was = nil
@@ -438,8 +532,17 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        let ms = (CACurrentMediaTime() - started) * 1000
-        if hold && goAt == nil && !Self.mouseDown() { goAt = ms }
+        var ms = (CACurrentMediaTime() - started) * 1000
+        if shownAt == nil {
+            started += max(0, ms - WaveClock.holdFrom) / 1000
+            ms = (CACurrentMediaTime() - started) * 1000
+            shownAt = ms
+            waveLog.notice("first frame at \(Int(ms)) ms")
+        }
+        if hold && goAt == nil && !Self.mouseDown() {
+            goAt = ms
+            waveLog.notice("let go at \(Int(ms)) ms")
+        }
         // the button let go (a click: at once), or held so long it pops by itself
         let held = hold ? min(goAt ?? WaveClock.longest, WaveClock.longest) : 0
         if newAt == nil && ms > held + wait { return finish() }
@@ -448,8 +551,17 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
         let scale = window?.backingScaleFactor ?? 2
         let size = drawableSize
         let o = CGPoint(x: origin.x * scale, y: origin.y * scale)
-        let m = WaveClock.at(ms, held: held, release: newAt.map { max(held, $0) }, size: size, origin: o, scale: scale)
+        var m = WaveClock.at(ms, held: held, release: newAt.map { max(held, $0) }, size: size, origin: o, scale: scale)
         if m.done { return finish() }
+        // the light at the button comes up over the first frames drawn, however late the first picture was
+        m.bloom *= Float(1 - pow(1 - min((ms - (shownAt ?? 0)) / 80, 1), 3))
+        if m.front < -1e5 {
+            sound?.hold(pull: m.pull, wild: m.wild)
+        } else if !popped {
+            popped = true
+            sound?.pop(drawnIn: WaveClock.pull(held, held: held), wild: WaveClock.wild(held))
+            waveLog.notice("pops at \(Int(ms)) ms, held \(Int(held)) ms, drawn in \(m.pull)")
+        }
         guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable, let buffer = renderer.queue.makeCommandBuffer() else { return }
         renderer.encode(m, size: size, origin: o, tint: tint, dark: dark, into: pass, on: buffer)
         buffer.present(drawable)
