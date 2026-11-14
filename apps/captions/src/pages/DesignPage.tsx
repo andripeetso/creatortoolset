@@ -293,9 +293,6 @@ function DesignPage({ id }: { id: string }) {
   const setPage = useCallback((next: Page, merge?: string) => setPages([next], merge), [setPages]);
   const pick = useCallback((to: number, ids: string[], frame = false, all: string[] = []) => {
     merging.current = null;
-    // a loose picture is never picked as a frame: its picture is
-    const lone = frame && all.length < 2 ? latest.current[to] : undefined;
-    if (lone?.loose) [ids, frame, all] = [lone.layers.map((l) => l.id), false, []];
     setAt(to);
     setSelected(ids);
     setFramed(frame);
@@ -381,17 +378,20 @@ function DesignPage({ id }: { id: string }) {
   const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }, layers?: (f: { w: number; h: number }) => Layer[]): Page | undefined => {
     if (!design) return undefined;
     if (frameCount >= DESIGN_LIMITS.pages) return void setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
-    const dims = size ?? here ?? { w: design.width, h: design.height };
+    // a loose picture's size is no frame's
+    const dims = size ?? (here && !base?.loose ? here : { w: design.width, h: design.height });
     const v = view.aim();
-    const r = rect ?? (frames.length ? besideFrames(frames, here, dims) : { x: Math.round(((room?.w ?? 0) / 2 - v.x) / v.z - dims.w / 2), y: Math.round(((room?.h ?? 0) / 2 - v.y) / v.z - dims.h / 2), w: dims.w, h: dims.h });
+    // beside the frames, level with the current one (loose pictures are not frames to line up with)
+    const r = rect ?? (frameCount ? besideFrames(frames.filter((_, n) => !pages[n]!.loose), base?.loose ? undefined : here, dims) : { x: Math.round(((room?.w ?? 0) / 2 - v.x) / v.z - dims.w / 2), y: Math.round(((room?.h ?? 0) / 2 - v.y) / v.z - dims.h / 2), w: dims.w, h: dims.h });
     // a copy is a frame of its own: the carousel slide its original draws stays the original's
     const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base?.background ?? "#ffffff", layers: layers?.(r) ?? [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
     change((all) => [...all, fresh]);
     // a canvas's first frame is there: the frame tool (out on an empty canvas) is put away
-    if (!frames.length) setTool("move");
-    pick(pages.length, fresh.layers.length && layers ? fresh.layers.map((l) => l.id) : [], !layers);
+    if (!frameCount) setTool("move");
+    // after the frames, before the loose pictures (hugLoose)
+    pick(frameCount, fresh.layers.length && layers ? fresh.layers.map((l) => l.id) : [], !layers);
     // a size picked from the panel, and a canvas's first frame: it fills the view; else the canvas moves to show it
-    if ((size || !frames.length) && !rect && room) view.glide(fitView(r, room, 56, 1));
+    if ((size || !frameCount) && !rect && room) view.glide(fitView(r, room, 56, 1));
     else if (!rect && room) view.glide({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z });
     return fresh;
   };
@@ -399,7 +399,7 @@ function DesignPage({ id }: { id: string }) {
   const makeFrame = (r: Rect, dragged: boolean) => {
     setTool("move");
     if (!design) return;
-    const like = here ?? { w: design.width, h: design.height };
+    const like = here && !base?.loose ? here : { w: design.width, h: design.height };
     const fit = (n: number) => Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(n)));
     addFrame(undefined, { x: Math.round(r.x), y: Math.round(r.y), w: dragged ? fit(r.w) : like.w, h: dragged ? fit(r.h) : like.h });
   };
@@ -426,14 +426,16 @@ function DesignPage({ id }: { id: string }) {
   const copyFrames = () => {
     if (frameCount + framedIds.length > DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
     const taken = [...frames];
-    const fresh = framedAt.map((n, m): Page => {
+    // loose pictures picked with the frames are not copied: a copy is a frame
+    const fresh = framedAt.filter((n) => !pages[n]!.loose).map((n, m): Page => {
       const r = besideFrames(taken, frames[n]!, frames[n]!);
       taken.push(r);
       // a copy is a frame of its own: the carousel slide its original draws stays the original's
       return { ...pages[n]!, block: undefined, id: `p${Date.now().toString(36)}${m}`, x: r.x, y: r.y, w: r.w, h: r.h };
     });
+    if (!fresh.length) return;
     change((all) => [...all, ...fresh]);
-    pick(pages.length, [], true, fresh.map((p) => p.id));
+    pick(frameCount, [], true, fresh.map((p) => p.id));
   };
   // a copy lies on what it copies, picked: the next drag takes it away
   const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framedIds.length > 1 ? copyFrames() : framed && base ? addFrame(base) : undefined);
@@ -498,8 +500,7 @@ function DesignPage({ id }: { id: string }) {
    * Pictures from this computer (the Picture button, a paste, a drop). `drop`: where on the canvas they were let go.
    * Let go over a frame, they are layers of that frame, the first with its middle at that point. Let go on empty
    * canvas, each lies loose on it, at its own size, outside every frame. Without a `drop` they go onto the current
-   * frame, in its middle (a canvas with no frame yet gets its first one for them; a loose picture picked: loose, in the
-   * middle of the view). Each shows at once, from the file itself, under the id it will have; it is sent to the server
+   * frame, in its middle (with no frame picked or none on the canvas: loose, in the middle of the view). Each shows at once, from the file itself, under the id it will have; it is sent to the server
    * before any save that names it, and taken back out (and why said) when it cannot be.
    */
   const fromComputer = async (given: readonly File[], drop?: { x: number; y: number }) => {
@@ -507,15 +508,13 @@ function DesignPage({ id }: { id: string }) {
     if (!design || !given.length) return;
     if (!files.length) return setError("Only JPEG, PNG and WebP pictures can be put on a canvas");
     // a frame under the point (the later one where two lie over each other); loose pictures are not frames to land in
-    const over = drop ? frames.map((r, n) => !pages[n]!.loose && drop.x >= r.x && drop.x <= r.x + r.w && drop.y >= r.y && drop.y <= r.y + r.h).lastIndexOf(true) : base?.loose ? -1 : k;
-    const alone = over < 0 && (!!drop || !!base?.loose);
+    const over = drop ? frames.map((r, n) => !pages[n]!.loose && drop.x >= r.x && drop.x <= r.x + r.w && drop.y >= r.y && drop.y <= r.y + r.h).lastIndexOf(true) : base && !base.loose ? k : -1;
+    // no frame to land on: they lie loose, where they were let go or in the middle of the view
+    const alone = over < 0;
     const v = view.aim();
     const spot = drop ?? { x: ((room?.w ?? 0) / 2 - v.x) / v.z, y: ((room?.h ?? 0) / 2 - v.y) / v.z };
-    // a canvas with no frame yet gets its first one for the pictures (the design's own size, in the middle of what is in view)
-    const first = alone || (base && here) ? undefined : addFrame();
-    const onto = alone ? undefined : (pages[over]?.id ?? first?.id);
-    const f = alone ? undefined : (frames[over] ?? (first ? { x: first.x!, y: first.y!, w: first.w!, h: first.h! } : undefined));
-    if (!alone && (!onto || !f)) return;
+    const onto = pages[over]?.id;
+    const f = frames[over];
     setError(null);
     const space = alone ? DESIGN_LIMITS.loose - latest.current.filter((p) => p.loose).length : files.length;
     if (space < files.length) setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pictures outside its frames`);
@@ -873,7 +872,7 @@ function DesignPage({ id }: { id: string }) {
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           <h3 data-picked className="sr-only">
-            Picked: {framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
+            Picked: {page?.loose ? "a picture lying loose on the canvas, outside every frame (not a frame to design)" : framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
             {picked.length > 0 &&
               `, ${picked.length === 1 ? "layer" : "layers"} ${picked
                 .slice(0, 8)

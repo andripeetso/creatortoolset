@@ -529,7 +529,10 @@ export function Stage({
     const pickNow = (ev: PointerEvent, r: Rect) => {
       const got = boxPick(all, r, { home, deep: ev.metaKey || (ev.ctrlKey && !ON_A_MAC) });
       let to: [number, string[], boolean, string[]?] = add ? [at, [...selected], framed, [...framedIds]] : [home, [], false];
-      if (got && "frames" in got) {
+      // a loose picture alone is never picked as a frame: its picture is
+      const lone = got && "frames" in got && !add && got.frames.length === 1 && pages[got.frames[0]!]!.loose ? got.frames[0]! : -1;
+      if (lone >= 0) to = [lone, pages[lone]!.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id), false];
+      else if (got && "frames" in got) {
         const ids = [...new Set([...(add ? framedIds : []), ...got.frames.map((n) => pages[n]!.id)])];
         to = [pages.findIndex((p) => p.id === ids[0]), [], true, ids];
       } else if (got) {

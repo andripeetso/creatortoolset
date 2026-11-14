@@ -364,7 +364,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     if (loose && !layers.length) continue;
     pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
   }
-  return { pages, notes };
+  // loose pictures after the frames: a frame's place in the list is its number
+  return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };
 }
 
 /**

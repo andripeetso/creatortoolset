@@ -386,15 +386,17 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   const todo = new Map<string, { layers: unknown[]; more: Raw; isNew: boolean; gave: boolean; whole: boolean; set: string[] }>();
   const open = (p: DesignPage) => todo.get(p.id) ?? todo.set(p.id, { layers: [...p.layers], more: {}, isNew: false, gave: false, whole: false, set: [] }).get(p.id)!;
 
+  // pictures lying loose beside the frames are the person's: no frame of an AI's to write
+  const frameIds = () => next.filter((p) => !p.loose).map((p) => p.id);
   for (const f of frames.slice(0, DESIGN_LIMITS.pages)) {
     if (!f) continue;
-    let page = typeof f.id === "string" ? next.find((p) => p.id === f.id) : undefined;
+    let page = typeof f.id === "string" ? next.find((p) => p.id === f.id && !p.loose) : undefined;
     if (typeof f.id === "string" && !page) {
-      notes.push(`There is no frame ${f.id}: this design's are ${next.map((p) => p.id).join(", ")}`);
+      notes.push(`There is no frame ${f.id}: this design's are ${frameIds().join(", ")}`);
       continue;
     }
     if (!page) {
-      if (next.length >= DESIGN_LIMITS.pages) {
+      if (frameIds().length >= DESIGN_LIMITS.pages) {
         notes.push(`A design holds at most ${DESIGN_LIMITS.pages} frames: the new one was not added`);
         continue;
       }
@@ -413,9 +415,9 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   }
 
   for (const c of changes.slice(0, 200)) {
-    const page = c && next.find((p) => p.id === c.frame);
+    const page = c && next.find((p) => p.id === c.frame && !p.loose);
     if (!c || !page) {
-      notes.push(`A change names no frame of this design (${String(c?.frame)}): its frames are ${next.map((p) => p.id).join(", ")}`);
+      notes.push(`A change names no frame of this design (${String(c?.frame)}): its frames are ${frameIds().join(", ")}`);
       continue;
     }
     const t = open(page);
@@ -681,9 +683,9 @@ designsApp.get("/:id/look", (c) =>
   answer(c, async () => {
     const d = await mine(c);
     const { pages } = await framesForAi(c.get("user"), d);
-    const asked = (c.req.query("frames") ?? "").split(",").map((id) => pages.findIndex((p) => p.id === id) + 1).filter((n) => n > 0);
+    const asked = (c.req.query("frames") ?? "").split(",").map((id) => pages.findIndex((p) => p.id === id && !p.loose) + 1).filter((n) => n > 0);
     const fonts = Object.fromEntries((await fontsOf(d.owner)).map((f) => [f.family, fontFile(d.owner, f)]));
-    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.map((_, k) => k + 1))].slice(0, LOOK_FRAMES), picturesOf(d.owner, d.id), fonts);
+    return pagePictures(d, pages, [...new Set(asked.length ? asked : pages.flatMap((p, k) => (p.loose ? [] : [k + 1])))].slice(0, LOOK_FRAMES), picturesOf(d.owner, d.id), fonts);
   }),
 );
 

@@ -268,7 +268,7 @@ export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame $
 
 /**
  * Pictures lying loose on the canvas, each kept to the box round its layers (a picture moved, resized or turned takes
- * its box with it, so nothing of it is ever cut off); one with no layer left is gone (`drop` false: kept). The pages themselves when none
+ * its box with it, so nothing of it is ever cut off); one with no layer left is gone (`drop` false: kept). Loose pictures come after the frames. The pages themselves when none
  * changed.
  */
 export function hugLoose(pages: DesignPage[], drop = true): DesignPage[] {
@@ -296,7 +296,9 @@ export function hugLoose(pages: DesignPage[], drop = true): DesignPage[] {
     changed = true;
     out.push({ ...p, x: (p.x ?? 0) + x, y: (p.y ?? 0) + y, w, h, layers: p.layers.map((l) => ({ ...l, x: l.x - x, y: l.y - y })) });
   }
-  return changed ? out : pages;
+  // loose pictures after the frames: a frame's place in the list is its number, and loose pictures lie over the frames
+  const sorted = [...out.filter((p) => !p.loose), ...out.filter((p) => p.loose)];
+  return changed || sorted.some((p, n) => p !== out[n]) ? sorted : pages;
 }
 
 
