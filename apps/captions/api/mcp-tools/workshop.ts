@@ -74,11 +74,19 @@ async function projectUpdate(a: Args, ctx: ToolContext) {
   if (!id) throw new ToolError("There is no project yet: give a project's id (workshop_projects lists them).");
   const body: Args = {};
   if (a.name !== undefined) body.name = a.name;
+  // draft_from goes through the form's own Write it for me: the facts a writer needs and nothing on how to write, since
+  // the writer takes the voice from the user's posts and rewrites
+  const from = typeof a.draft_from === "string" ? a.draft_from.trim() : "";
+  const was = from ? (await ctx.json<Args[]>("/api/workshop/projects")).find((p) => p.id === id) : undefined;
+  const name = from && (a.name ?? was?.name);
+  // a draft replaces the instructions whole: ones already written are asked about first (before the draft runs)
+  if (from && String(was?.notes ?? "").trim()) await ctx.sure(`Replace "${String(was?.name ?? "the project")}"'s instructions with a new draft?`);
+  const instructions = from ? (await ctx.json<{ notes: string }>("/api/workshop/projects/draft-notes", "POST", { name, text: from })).notes : a.instructions;
   // the instructions are one text: the old audience, voice and CTA fields are folded into it, as the form does
-  if (a.instructions !== undefined) Object.assign(body, { notes: a.instructions, audience: "", voice: "", cta: "" });
+  if (instructions !== undefined) Object.assign(body, { notes: instructions, audience: "", voice: "", cta: "" });
   if (a.color !== undefined) body.color = a.color;
   if (a.language !== undefined) body.languages = a.language ? [a.language] : [];
-  if (!Object.keys(body).length) throw new ToolError("Nothing to change: give name, instructions, color or language.");
+  if (!Object.keys(body).length) throw new ToolError("Nothing to change: give name, instructions, draft_from, color or language.");
   const next = await ctx.json<Args>(`/api/workshop/projects/${encodeURIComponent(id)}`, "PATCH", body);
   return { project: pick({ ...next, instructions: next.notes }, ["id", "name", "instructions", "color", "languages"]) };
 }
@@ -98,10 +106,10 @@ export const workshopTools: ToolModule = {
     {
       name: "workshop_project_update",
       description:
-        'Change a Workshop project: its name, its instructions (the text always in its prompt; this replaces it whole, so read it with workshop_projects first and keep what holds), its colour, or the language spoken in its videos (a two-letter code, "" = the person\'s own). Only what you give changes. No project = the current one.',
+        'Change a Workshop project: its name, its instructions (the text always in its prompt; this replaces it whole, so read it with workshop_projects first and keep what holds: the user\'s own words, or draft_from = what they gave about the project, written into facts as the form\'s Write it for me does), its colour, or the language spoken in its videos (a two-letter code, "" = the person\'s own). Only what you give changes. No project = the current one.',
       inputSchema: {
         type: "object",
-        properties: { project: str, name: str, instructions: str, color: { type: "string", enum: [...PROJECT_COLORS] }, language: str },
+        properties: { project: str, name: str, instructions: str, draft_from: str, color: { type: "string", enum: [...PROJECT_COLORS] }, language: str },
       },
     },
   ],

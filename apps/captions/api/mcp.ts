@@ -89,9 +89,16 @@ Content Workshop: the same projects, sessions, pieces and chat the user sees on 
 you do here shows there at once. A project is one brand (audience, voice, CTA). A session is one idea: its sources,
 notes, pieces and chat, with a status (draft, writing, production, editing, toPost = ready to post, published,
 shelved). A piece is one reel, carousel, ad, free, youtube script, newsletter, X thread or article: blocks (lines or slides, each with an id), hook
-variations, a caption (post description) and a pinned comment. Two ways to write: workshop_chat asks the Workshop's
-own writer, which reads the project, the user's posts and past rewrites (it runs on a paired Mac and can take minutes), or
-change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
+variations, a caption (post description) and a pinned comment. The words in a piece come from the Workshop's own
+writer (workshop_chat): it reads the project, the user's own posts and how they rewrote its earlier drafts, which you
+don't see, so a piece you write yourself comes out in nobody's voice. Make the piece empty and give the writer what the user
+asked in their own words (not a summary of them), with what you found (facts, examples, links) as findings, not as rules
+for how to write it; it can take minutes on a paired Mac. A change they ask for to a piece's words goes to the writer the
+same way. Write with workshop_new_piece or workshop_edit_piece only the user's own words, or a change they spelled out
+word for word. Locked blocks are ones the user approved: leave them as they are. A project's instructions are facts
+about it (who it is for, what it offers, where people are sent): workshop_project_update with draft_from writes them from
+what the user gave, as the project form does. How the user sounds isn't in them: the writer has it from their posts and
+rewrites.
 
 Designer: the user's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers they then
 edit by hand. You do the designing: design_get lists the designs and reads one (every frame with its layers, a picture
@@ -169,12 +176,12 @@ export const TOOLS = [
   },
   {
     name: "workshop_new_piece",
-    description: "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
+    description: "Add another piece to a session, empty for the writer (workshop_chat), or with the user's own words as text (its first block; split it with workshop_edit_piece).",
     inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str }, required: ["session", "kind"] },
   },
   {
     name: "workshop_edit_piece",
-    description: "Write in a piece yourself. blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
+    description: "Put the user's own words in a piece, or make a change they spelled out word for word (new writing is the writer's: workshop_chat). blocks replaces the whole list in order: keep each kept block's id, leave id out for a new one, drop a block to delete it. Anything left out stays as it is.",
     inputSchema: { type: "object", properties: { session: str, piece: str, title: str, blocks: lines, hooks: lines, caption: str, pinned: str }, required: ["session", "piece"] },
   },
   {

@@ -43,7 +43,7 @@ const notHers = libraryPost("TINYOTHER44", "nico", "Somebody else's post");
 
 const { createUser, newApiKey } = await import("../users");
 const app = (await import("../boot")).default;
-const { streamWithFallback } = await import("../ai-complete");
+const { completeWithFallback, streamWithFallback } = await import("../ai-complete");
 const { pairDevice } = await import("../lib/devices");
 const { saveSettings } = await import("../lib/providers");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
@@ -228,9 +228,21 @@ describe("workshop_project_update", () => {
     expect((await tool(key, "workshop_project_update", { project: id, name: "Puppy class", language: "" })).value).toEqual({
       project: { id, name: "Puppy class", instructions: "For new dog owners. Never promise results.", color: "lime" },
     });
-    expect((await tool(key, "workshop_project_update", { project: id })).error).toBe("Nothing to change: give name, instructions, color or language.");
+    expect((await tool(key, "workshop_project_update", { project: id })).error).toBe("Nothing to change: give name, instructions, draft_from, color or language.");
     const nicos = String((await page(await cookieOf("nico"), "/api/workshop/projects", "POST", { name: "Nico's" })).id);
     expect((await tool(key, "workshop_project_update", { project: nicos, name: "Mine now" })).error).toBe("Not found, or not this account's.");
+  });
+
+  it("drafts the instructions from what the user gave through the form's own Write it for me", async () => {
+    const cookie = await cookieOf("ana");
+    const id = String((await page(cookie, "/api/workshop/projects", "POST", { name: "Puppy school" })).id);
+    const drafted = vi.mocked(completeWithFallback).mockResolvedValueOnce("For new dog owners. Classes at puppyschool.example." as never);
+    const out = await tool(key, "workshop_project_update", { project: id, draft_from: "new dog owners, our classes, our site" });
+    // facts from what was given, with nothing about how to write
+    expect(String(drafted.mock.calls[0]![0])).toContain("Don't describe how they write");
+    expect(String(drafted.mock.calls[0]![1])).toContain("Project: Puppy school");
+    expect(String(drafted.mock.calls[0]![1])).toContain("new dog owners, our classes, our site");
+    expect(out.value!.project).toMatchObject({ id, name: "Puppy school", instructions: "For new dog owners. Classes at puppyschool.example." });
   });
 });
 
