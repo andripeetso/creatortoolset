@@ -51,7 +51,7 @@ import type { AssistantView } from "../../contracts/assistant";
 
 const writer = vi.mocked(streamWithFallback);
 const ana = createUser("ana", "password1");
-createUser("nico", "password1");
+const nico = createUser("nico", "password1");
 const key = `Bearer ${newApiKey(ana, "full")}`;
 const mac = pairDevice("ana", "Ana's Mac");
 await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: mac.device.id }] }, "ana");
@@ -247,18 +247,24 @@ describe("workshop_project_update", () => {
 });
 
 describe("who writes a piece", () => {
-  it("the app's assistant is told the Workshop's writer writes; an AI app outside writes itself, and neither reads the other's", async () => {
+  it("every caller, the app's assistant or an AI app outside, is sent to the Workshop's writer where the account has one; without one it writes itself", async () => {
     const t = await turn(await cookieOf("ana"), "Write me an X thread");
     const guide = async (authorization: string) =>
       String(((await (await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { authorization }) })).json()) as { result: { instructions: string } }).result.instructions);
     const dock = await guide(t.token);
     const outside = await guide(key);
+    const noWriter = await guide(`Bearer ${newApiKey(nico, "full")}`);
     await t.end();
-    expect(dock).toContain("the words in a piece come from the Workshop's own writer");
-    expect(dock).toContain("workshop_project_update with draft_from");
-    expect(dock).not.toContain("Here you are the writer");
-    expect(outside).toContain("Here you are the writer");
-    expect(outside).not.toContain("the words in a piece come from");
+    for (const g of [dock, outside]) {
+      expect(g).toContain("the words in a piece come from the Workshop's own writer");
+      expect(g).toContain("workshop_project_update with draft_from");
+      expect(g).not.toContain("Here you are the writer");
+    }
+    // the cards are an AI app's alone
+    expect(dock).not.toContain("Cards:");
+    expect(outside).toContain("Cards:");
+    expect(noWriter).toContain("Here you are the writer");
+    expect(noWriter).not.toContain("the words in a piece come from");
   });
 
   it("the writer gets what the person typed to the assistant, and the assistant's own message only as its notes", async () => {
@@ -278,15 +284,19 @@ describe("who writes a piece", () => {
     await tool(t.token, "workshop_chat", { session: s.id, piece, message: "Write a punchy launch thread. Found: 3 of 5 top threads open with a number.", wait_s: 0 });
     await answered();
     await t.end();
-    // an AI app outside is the writer's caller itself: its message is the message
+    // an AI app outside has no chat here to read: it sends the user's words in message and its own in notes
     await tool(key, "workshop_chat", { session: s.id, piece, message: "Shorter, please.", wait_s: 0 });
+    await answered();
+    await tool(key, "workshop_chat", { session: s.id, piece, message: "Add the price", notes: "The site says 49 a month.", wait_s: 0 });
     await answered();
 
     const asked = (await page<Row[]>(cookie, `/api/workshop/sessions/${s.id}/chat`)).filter((m) => m.role === "user");
     expect(asked.map((m) => [m.text, m.found])).toEqual([
       [typed, "Write a punchy launch thread. Found: 3 of 5 top threads open with a number."],
       ["Shorter, please.", undefined],
+      ["Add the price", "The site says 49 a month."],
     ]);
+    expect(prompts[2]).toContain("Its notes, not the author's words:\n\nThe site says 49 a month.");
     expect(prompts[0]).toContain(`Its notes, not the author's words:\n\nWrite a punchy launch thread.`);
     expect(prompts[0]).toContain(`Author now: ${typed}`);
     // the assistant's words are never among the author's notes on the piece

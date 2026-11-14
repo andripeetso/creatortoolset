@@ -217,7 +217,12 @@
       "type": "string"
      },
      "message": {
-      "type": "string"
+      "type": "string",
+      "description": "what the user asked, in their own words"
+     },
+     "notes": {
+      "type": "string",
+      "description": "what you found for it (facts, examples, links): the writer reads it as your notes, not as the user's words"
      },
      "scope": {
       "type": "string",

@@ -513,6 +513,8 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 15810 -> 15932: editor_create takes languages (what is spoken in the footage, when not the person's usual)
     // 15932 -> 16151: editor_create's moments (short videos from a long recording: up to that many stand-alone parts,
     // each cut as a video of its own; its 190-byte sentence and the field)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(16151);
+    // 16151 -> 16356: workshop_chat's message is the user's own words and notes is the caller's (what it found), kept
+    // apart so the writer never takes a caller's retelling for the user's words
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(16356);
   });
 });

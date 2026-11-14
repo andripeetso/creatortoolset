@@ -89,9 +89,9 @@ Content Workshop: the same projects, sessions, pieces and chat the user sees on 
 you do here shows there at once. A project is one brand (audience, voice, CTA). A session is one idea: its sources,
 notes, pieces and chat, with a status (draft, writing, production, editing, toPost = ready to post, published,
 shelved). A piece is one reel, carousel, ad, free, youtube script, newsletter, X thread or article: blocks (lines or slides, each with an id), hook
-variations, a caption (post description) and a pinned comment. Two ways to write: workshop_chat asks the Workshop's
-own writer, which reads the project, the user's posts and past rewrites (it runs on a paired Mac and can take minutes), or
-change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
+variations, a caption (post description) and a pinned comment. workshop_chat asks the Workshop's own writer, which reads
+the project, the user's posts and past rewrites (it can take minutes); workshop_edit_piece changes the text as given.
+Locked blocks are ones the user approved: leave them as they are.
 
 Designer: the user's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers they then
 edit by hand. You do the designing: design_get lists the designs and reads one (every frame with its layers, a picture
@@ -185,7 +185,8 @@ export const TOOLS = [
       properties: {
         session: str,
         piece: str,
-        message: str,
+        message: { type: "string", description: "what the user asked, in their own words" },
+        notes: { type: "string", description: "what you found for it (facts, examples, links): the writer reads it as your notes, not as the user's words" },
         scope: { type: "string", enum: ["slight", "rewrite"], description: "how much it may change (unset = normal)" },
         my_words_only: { type: "boolean", description: "it only picks, trims and orders the user's own sentences in message" },
         deep_research: { type: "boolean", description: "web research first (takes minutes): ask the user before" },
@@ -642,9 +643,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       // From the app's own assistant, the writer gets what the person typed in that chat (and pasted with it), as they
       // wrote it; the assistant's message rides along as its notes. Its own retelling came out as the person's brief
       // and the writer took it for their words (owner, 2026-11-14). A scheduled run has nobody typing: its message goes as it is.
+      // Any other caller (an AI app, a script) sends the user's words in message and its own in notes.
       const turn = isJob(auth) ? jobTurn(auth.get("authorization") ?? undefined) : null;
       const typed = turn ? saidInChat(user.username, turn)?.[0]?.text : undefined;
-      const theirs = typed ? { text: typed, found: a.message, pasted: (pastedInChat(user.username, turn!) ?? []).map((text) => ({ name: "Pasted text", text })) } : { text: a.message };
+      const notes = [typed ? a.message : "", a.notes].filter((t): t is string => typeof t === "string" && !!t.trim()).join("\n\n");
+      const theirs = { text: typed ?? a.message, ...(notes ? { found: notes } : {}), ...(typed ? { pasted: (pastedInChat(user.username, turn!) ?? []).map((text) => ({ name: "Pasted text", text })) } : {}) };
       const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, ...theirs, ...(a.scope ? { scope: a.scope } : {}), ...(a.my_words_only === true ? { mine: true } : {}), ...(a.deep_research === true ? { deep: true } : {}) });
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
@@ -1358,22 +1361,34 @@ const CARDS_GUIDE = `Cards: a script (workshop_session and the tools that write 
 comments (get_review), an edit (editor_get, editor_create) and an account's posts (instagram_posts) show in the chat as
 a card, where the app can draw one. The card already shows the content, plays the video where it may, and has its own
 buttons (open it in Creator Toolset, resolve a comment): do not repeat it line by line. Say what you did or found in a
-sentence or two, and what the user could do next.
+sentence or two, and what the user could do next.`;
 
-Here you are the writer: write and change scripts yourself with workshop_new_piece and workshop_edit_piece, so the user
+/** An account whose Workshop has no AI to write with: whoever calls writes the words. */
+const SELF_WRITER_GUIDE = `Here you are the writer: write and change scripts yourself with workshop_new_piece and workshop_edit_piece, so the user
 sees them saved at once. workshop_chat asks the Workshop's own writer, which needs a computer paired to the account:
 use it only when the user asks for that writer.`;
 
 /**
- * The app's own assistant only (an AI app outside keeps CARDS_GUIDE: there it is the writer, on the user's own AI). The
- * assistant doesn't see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13).
+ * Every caller where the account's Workshop can write (the app's own assistant, an AI app, a script). A caller doesn't
+ * see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13); every caller is
+ * to use the worker that has the context (2026-11-14).
  */
 const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer. It reads the project, the
-user's own posts and how they rewrote its earlier drafts, which you don't see. Make the piece empty and call workshop_chat:
-the writer gets the user's message to you as they typed it, and your message beside it as your notes (what you found).
-A change they ask for to a piece's words goes the same way. Write with workshop_new_piece or workshop_edit_piece only
-the user's own words, or a change they spelled out word for word. A project's instructions:
-workshop_project_update with draft_from, as the project form's Write it for me does.`;
+user's own posts and how they rewrote its earlier drafts, which you don't see. Make the piece empty and call workshop_chat
+with what the user asked, in their own words, and what you found in notes. A change they ask for to a piece's words goes
+the same way. Write with workshop_new_piece or workshop_edit_piece only the user's own words, or a change they spelled
+out word for word. A project's instructions: workshop_project_update with draft_from, as the project form's Write it for
+me does.`;
+
+/** The account's Workshop has an AI to write with, on a computer that is on where it runs on one (GET /api/workshop/availability). */
+async function workshopWrites(call: Call, auth: Headers): Promise<boolean> {
+  try {
+    const a = (await (await apiOf(call, auth)("/api/workshop/availability")).json()) as { ai?: boolean; mac?: boolean };
+    return !!a.ai && a.mac !== false;
+  } catch {
+    return false; // a key that can't read the Workshop: it writes with the tools it has
+  }
+}
 
 /** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
 export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser, plugged: PluginTools = pluginToolsOf([])): Promise<Args | null> {
@@ -1388,7 +1403,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? WRITER_GUIDE : CARDS_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, (await workshopWrites(call, auth)) ? WRITER_GUIDE : SELF_WRITER_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});
