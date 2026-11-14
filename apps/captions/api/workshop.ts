@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { streamSSE } from "hono/streaming";
+import { stream, streamSSE } from "hono/streaming";
 import { checkDraft } from "./lib/workshop/rule-check";
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -62,7 +62,7 @@ import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
 import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext, renderInstructions } from "./lib/workshop/prompt";
-import { OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, asKnowledge, knowledgeIndex, knowledgePath, ocrPrompt, parseReading, parseSourcePatch, readPrompt } from "./lib/workshop/sources";
+import { DRAFT_SYSTEM, OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, asKnowledge, inlineFiles, keptFiles, knowledgeFiles, knowledgeIndex, ocrPrompt, parseDraft, parseReading, parseSourcePatch, readPrompt, type Filing } from "./lib/workshop/sources";
 import { documentText, webPageText } from "./lib/workshop/source-files";
 import { parseYoutubeUrl } from "./lib/youtube/url";
 import { channelFiles } from "./connectors";
@@ -974,7 +974,7 @@ async function turnFolder(
     if (pack) files[sourceFile(`S${i + 1}`, e.handle)] = outsideWords(pack.markdown);
   });
   // ponytail: every source's whole text rides along each turn; send hashes the Mac caches once books add up
-  for (const k of project?.knowledge ?? []) if (k.text.trim()) files[knowledgePath(k.name)] = k.text;
+  Object.assign(files, knowledgeFiles(project?.knowledge ?? []));
   const knowledge = knowledgeIndex(project?.knowledge ?? []);
   if (knowledge) files["context/INDEX.md"] = knowledge;
   Object.assign(files, channelFiles(user.username, project?.id));
@@ -1873,64 +1873,91 @@ workshopApp.post("/projects", async (c) => {
 });
 
 /**
- * A project's instructions, drafted for the person to rewrite: the facts a writer needs about it, from whatever they gave
- * (text they pasted or dropped, the pages its links lead to, .docx/.odt/.epub files) and the Instagram bio and posts of
- * the accounts it names. Facts, not a voice.
+ * A project's instructions, drafted for the person to rewrite, from whatever they gave (text they typed, the pages its
+ * links lead to, files and whole folders, the Instagram bio and posts of the accounts it names), and each file filed:
+ * whether a writer keeps it to look things up (the form keeps those as the project's Knowledge) and what is in it.
+ * The material's own rules stay in its files, whole: the instructions point to them, never squeeze them.
  */
 const DRAFT_LINKS = 5;
 const DRAFT_TEXT = 60_000;
+/** Files and their words: on the Mac they go as files the AI reads; elsewhere in the prompt, each an even share. */
+const DRAFT_FILES = 300;
+const DRAFT_INLINE = 600_000;
+/** A file the browser sends: its words (text, Markdown, a PDF it read) or a .docx/.odt/.epub as base64, read here. */
+type GivenFile = { name: string; text?: string; data?: string };
+const givenFiles = (raw: unknown, max: number): GivenFile[] =>
+  (Array.isArray(raw) ? raw : [])
+    .filter((f): f is GivenFile => typeof f?.name === "string" && (typeof f.text === "string" || typeof f.data === "string"))
+    .slice(0, max);
+const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text : documentText(f.name, Buffer.from(f.data ?? "", "base64")));
+
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
   const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text.slice(0, DRAFT_TEXT).trim() : "";
   const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
-  const files = (Array.isArray(body?.files) ? body.files : [])
-    .filter((f): f is { name: string; data: string } => typeof f?.name === "string" && typeof f?.data === "string")
-    .slice(0, 5);
+  const given = givenFiles(body?.files, DRAFT_FILES);
   const links = [...new Set(text.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
   const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
   // each part on its own: one that can't be read is said, the rest still drafts
-  const parts = await Promise.all([
-    ...ids.map(async (id) => {
-      const [account, own] = await Promise.all([ownAccountContextFor(user, id), ownPostsForWorkshop(user, id)]);
-      if (!account) return "";
-      const posts = [...(own?.posts ?? [])]
-        .sort((a, b) => views(b) - views(a))
-        .slice(0, 40)
-        .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
-      return `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
-    }),
-    ...links.map((url) =>
-      webPageText(url).then(
-        (p) => `The page ${url} (${p.title}):\n${p.text.slice(0, 12_000)}`,
-        (e: unknown) => `(${url} could not be read: ${errorMessage(e)})`,
+  const [parts, files] = await Promise.all([
+    Promise.all([
+      ...ids.map(async (id) => {
+        const [account, own] = await Promise.all([ownAccountContextFor(user, id), ownPostsForWorkshop(user, id)]);
+        if (!account) return "";
+        const posts = [...(own?.posts ?? [])]
+          .sort((a, b) => views(b) - views(a))
+          .slice(0, 40)
+          .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
+        return `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
+      }),
+      ...links.map((url) =>
+        webPageText(url).then(
+          (p) => `The page ${url} (${p.title}):\n${p.text.slice(0, 12_000)}`,
+          (e: unknown) => `(${url} could not be read: ${errorMessage(e)})`,
+        ),
       ),
-    ),
-    ...files.map((f) =>
-      documentText(f.name, Buffer.from(f.data, "base64")).then(
-        (t) => `The file ${f.name}:\n${t.slice(0, 20_000)}`,
-        (e: unknown) => `(${f.name} could not be read: ${errorMessage(e)})`,
-      ),
-    ),
+    ]),
+    Promise.all(given.map((f) => fileWords(f).then((t) => ({ name: f.name, text: t }), (e: unknown) => ({ name: f.name, text: "", error: errorMessage(e) })))),
   ]);
-  const given = parts.filter(Boolean);
-  if (!text && !given.some((p) => !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
-  try {
-    const notes = await completeWithFallback(
-      "From what a creator gave about one of their workspaces (their own words, pages and files, and any Instagram bio and posts), write the facts a writer needs about it: who it is for, what it offers, where people are sent (a link, a product, a DM word), and the topics it keeps coming back to. Only what the material says; say so where it doesn't. Plain short lines, under 1,200 characters. Don't describe how they write.",
-      [typeof body?.name === "string" && body.name.trim() ? `Workspace: ${body.name.slice(0, 80)}` : "", text ? `What they wrote:\n${text}` : "", ...given].filter(Boolean).join("\n\n"),
-      undefined,
-      (t) => {
-        const s = t.trim();
-        if (!s) throw new Error("empty");
-        return s.slice(0, LIMITS.projectNotes);
-      },
-      route(user, "workshop", "Workspace setup"),
-    );
-    return c.json({ notes });
-  } catch (e) {
-    return c.json({ error: errorMessage(e) }, 502);
+  const read = files.filter((f) => f.text.trim());
+  const unread = files.filter((f) => !f.text.trim()).map((f) => `(${f.name} could not be read${"error" in f ? `: ${f.error}` : ""})`);
+  if (!text && !read.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
+  const ai = route(user, "workshop", "Workspace setup");
+  // on the Mac the files go as files, read whole; elsewhere into the prompt
+  const mac = onMac(user) && read.length > 0;
+  const prompt = [
+    typeof body?.name === "string" && body.name.trim() ? `Workspace: ${body.name.slice(0, 80)}` : "",
+    text ? `What they wrote:\n${text}` : "",
+    ...parts.filter(Boolean),
+    ...unread,
+    read.length ? (mac ? `The files, in material/ in your folder (read every one):\n${read.map((f) => `- ${f.name}`).join("\n")}` : `The files:\n${inlineFiles(read)}`) : "",
+  ].filter(Boolean).join("\n\n");
+  const draft = () =>
+    completeWithFallback(DRAFT_SYSTEM, prompt, undefined, (t) => parseDraft(t, read.map((f) => f.name), LIMITS.projectNotes), {
+      ...ai,
+      ...(mac ? { mac: { ...ai.mac, label: "Workspace setup", files: Object.fromEntries(read.map((f) => [`material/${f.name.split("/").filter((x) => x && x !== "." && x !== "..").join("/")}`, f.text])) } } : {}),
+    });
+  if (!read.length) {
+    try {
+      return c.json(await draft());
+    } catch (e) {
+      return c.json({ error: errorMessage(e) }, 502);
+    }
   }
+  // reading a folder can take minutes: a space every 15 s keeps the proxies in front from closing the request
+  c.header("Content-Type", "application/json");
+  c.header("X-Accel-Buffering", "no");
+  return stream(c, async (out) => {
+    const tick = setInterval(() => void out.write(" ").catch(() => {}), 15_000);
+    try {
+      await out.write(JSON.stringify(await draft()));
+    } catch (e) {
+      await out.write(JSON.stringify({ error: errorMessage(e) }));
+    } finally {
+      clearInterval(tick);
+    }
+  });
 });
 
 workshopApp.patch("/projects/:id", async (c) => {
@@ -1999,7 +2026,7 @@ async function writePages(id: string, pages: string[]): Promise<number> {
 }
 
 /** A new source with its text (or a scan's first pages: `more` = further batches follow, read after the last). */
-async function newSource(user: SessionUser, name: string, text: string, projectIdRaw: unknown, pages?: string[], more = false): Promise<KnowledgeSource> {
+async function newSource(user: SessionUser, name: string, text: string, projectIdRaw: unknown, pages?: string[], more = false, filed?: Filing): Promise<KnowledgeSource> {
   if ((await listSources(user)).length >= SOURCE_LIMITS.perAccount) throw new Error(`Up to ${SOURCE_LIMITS.perAccount} sources`);
   // a source is the workspace's it was added in (each workspace is its own client); `projectId: null` asks for every workspace
   const projectId =
@@ -2007,6 +2034,11 @@ async function newSource(user: SessionUser, name: string, text: string, projectI
   const now = Date.now();
   const s: KnowledgeSource = { id: randomUUID(), owner: user.username, name: name.slice(0, SOURCE_LIMITS.name), chars: text.length, status: "new", createdAt: now, updatedAt: now, ...(projectId ? { projectId } : {}) };
   if (pages?.length) await writePages(s.id, pages);
+  if (filed) {
+    const done: KnowledgeSource = { ...s, ...filed, status: "read", readAt: now };
+    await writeSource(done, text.slice(0, SOURCE_LIMITS.chars));
+    return done;
+  }
   await writeSource(s, text.slice(0, SOURCE_LIMITS.chars));
   if (more) return s;
   void inJob([user.username], () => fileSource(user, s.id));
@@ -2020,10 +2052,19 @@ async function newSource(user: SessionUser, name: string, text: string, projectI
 workshopApp.post("/sources", async (c) => {
   const user = c.get("user");
   if (noKnowledge(user)) return c.json({ error: "Knowledge needs an account" }, 403);
-  const body = (await c.req.json().catch(() => null)) as { name?: unknown; text?: unknown; file?: unknown; pages?: unknown; more?: unknown; projectId?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { name?: unknown; text?: unknown; file?: unknown; pages?: unknown; more?: unknown; projectId?: unknown; files?: unknown } | null;
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   if (!name) return c.json({ error: "A source needs a name" }, 400);
   try {
+    // a folder's files (or one dropped on the project form), kept together; `about`/`kind` = the draft filed them
+    if (Array.isArray(body?.files)) {
+      const given = givenFiles(body.files, DRAFT_FILES) as Array<GivenFile & { about?: unknown; kind?: unknown }>;
+      const files = await Promise.all(given.map(async (f) => ({ name: f.name, text: await fileWords(f), about: typeof f.about === "string" ? f.about : undefined, kind: f.kind })));
+      const kept = files.filter((f) => f.text.trim());
+      if (!kept.length) return c.json({ error: "Nothing in those files could be read" }, 400);
+      const { text, filed } = keptFiles(kept);
+      return c.json(await newSource(user, name, text, body.projectId, undefined, false, filed), 201);
+    }
     if (typeof body?.file === "string") return c.json(await newSource(user, name, await documentText(name, Buffer.from(body.file, "base64")), body.projectId), 201);
     if (Array.isArray(body?.pages)) {
       const pages = body.pages.filter((p): p is string => typeof p === "string" && p.length > 100);

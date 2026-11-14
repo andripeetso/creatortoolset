@@ -10,6 +10,7 @@ import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type SessionStatus } from 
 import type { InstagramPost } from "./instagram";
 import type { CarouselLayoutSet } from "./carousel-layout";
 import { pieceMarkdown } from "./workshop-markdown";
+import { pdfText } from "./pdf-text";
 import { forgetCached, putCached, readCached } from "./local-cache";
 import { appendProjectId, projectBody, useWorkspace } from "./workspace";
 
@@ -331,10 +332,51 @@ export const deleteProject = async (id: string) => {
   return out;
 };
 
-/** A new project's facts, drafted from its Instagram bio and posts, for the author to rewrite. */
-/** A project's instructions drafted from what the person gave: text (its links are read), .docx/.odt/.epub files, Instagram accounts. */
-export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; data: string }> }) =>
-  fetch("/api/workshop/projects/draft-notes", jsonInit(input)).then((r) => json<{ notes: string }>(r));
+/** A file as the server takes it: its words (text, Markdown, a PDF read here), or a .docx/.odt/.epub to read there. Named by its path in a dropped folder. */
+export const filePath = (f: File) => f.webkitRelativePath || f.name;
+export async function materialOf(f: File): Promise<{ name: string; text?: string; data?: string }> {
+  const name = filePath(f);
+  if (/\.(docx|odt|epub)$/i.test(f.name)) return { name, data: await fileBase64(f) };
+  if (attachKind(f) === "pdf") return { name, text: await pdfText(f) };
+  return { name, text: await f.text() };
+}
+
+/** What Write it for me says of each file: kept (to look things up) or left out, and what is in it. */
+export type FileFiling = { file: string; keep: boolean; kind?: string; about?: string; why?: string };
+/**
+ * A project's instructions drafted from what the person gave: text (its links are read), files and folders, Instagram
+ * accounts; and each file filed. A folder's read answers with spaces while it runs, so an error comes in the body.
+ */
+export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }> }) =>
+  fetch("/api/workshop/projects/draft-notes", jsonInit(input))
+    .then((r) => json<{ notes: string; files?: FileFiling[]; error?: string }>(r))
+    .then((j) => {
+      if (j.error) throw new Error(j.error);
+      return j;
+    });
+
+/**
+ * Files kept as a project's own Knowledge, after it is saved: a dropped folder as one source (each file a section),
+ * a loose file as its own. Filed already when Write it for me said what each is; else read in the background.
+ */
+export async function addProjectFiles(projectId: string, kept: Array<{ file: File; about?: string; kind?: string }>): Promise<void> {
+  const groups = new Map<string, typeof kept>();
+  for (const k of kept) {
+    const path = filePath(k.file);
+    const top = path.includes("/") ? path.split("/")[0]! : path;
+    groups.set(top, [...(groups.get(top) ?? []), k]);
+  }
+  const failed: string[] = [];
+  for (const [name, files] of groups) {
+    try {
+      const body = await Promise.all(files.map(async (k) => ({ ...(await materialOf(k.file)), about: k.about, kind: k.kind })));
+      await fetch("/api/workshop/sources", jsonInit({ name, files: body, projectId })).then((r) => json(r));
+    } catch (e) {
+      failed.push(`${name} (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+  if (failed.length) throw new Error(`The workspace is saved, but these files weren't kept: ${failed.join(", ")}`);
+}
 
 export const listFrameworks = () =>
   fetch("/api/workshop/frameworks").then((r) => json<WorkshopFramework[]>(r));

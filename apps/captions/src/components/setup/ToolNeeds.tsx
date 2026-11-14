@@ -12,7 +12,7 @@ import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
-import { createProject } from "@/lib/workshop";
+import { addProjectFiles, createProject } from "@/lib/workshop";
 import { useSetup } from "@/lib/setup";
 import { webPlugins } from "@/plugins.gen";
 import { Choice } from "./Choice";
@@ -24,7 +24,7 @@ function NeedForm({ need }: { need: Need }) {
   const here = useLocation();
   if (need.form === "keys") return <MyKeysSection only={need.anyOf.filter(isKey)} />;
   if (need.form === "apify") return <ConnectorsSection back={here.pathname + here.search} compact />;
-  if (need.form === "project") return <ProjectForm busy={false} onSave={(f) => createProject(f)} />;
+  if (need.form === "project") return <ProjectForm busy={false} onSave={(f, files) => createProject(f).then((p) => (files.length ? addProjectFiles(p.id, files) : undefined))} />;
   if (need.form === "library")
     return (
       <p className="text-xs text-muted-foreground">

@@ -117,11 +117,42 @@ export const knowledgePath = (name: string) => {
   return `context/${base.toLowerCase() === "index.md" ? `file-${base}` : base}`;
 };
 
+/**
+ * A kept folder (bundleFiles: every section a file, starting at its "# path" heading) as its own files again, so a path
+ * the instructions name is a real file in the writer's folder. Anything else: null.
+ */
+export function bundleParts(f: Pick<KnowledgeFile, "text" | "sections">): Array<{ path: string; text: string; about: string }> | null {
+  const secs = f.sections ?? [];
+  if (secs.length < 2) return null;
+  const lines = f.text.split("\n");
+  // every file a section, to the last line (an edit in Knowledge that cut sections leaves it one file, nothing lost)
+  if (!secs.every((s) => lines[s.from - 1] === `# ${s.title}`) || secs.at(-1)!.to < lines.length) return null;
+  return secs.map((s) => ({
+    path: s.title.split("/").filter((x) => x && x !== "." && x !== "..").join("/") || "untitled",
+    text: lines.slice(s.from + 1, s.to).join("\n").replace(/^\n+/, ""),
+    about: s.about,
+  }));
+}
+
+/** The writer's context folder: each source as a file, a kept folder as its own files (bundleParts). */
+export function knowledgeFiles(files: KnowledgeFile[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of files) {
+    if (!f.text.trim()) continue;
+    const parts = bundleParts(f);
+    if (parts) for (const p of parts) out[`context/${p.path}`] = p.text;
+    else out[knowledgePath(f.name)] = f.text;
+  }
+  return out;
+}
+
 /** context/INDEX.md: what each source is, what it answers, where its parts are, so the right lines get read. */
 export function knowledgeIndex(files: KnowledgeFile[]): string {
   const rows = files.filter((f) => f.text.trim());
   if (!rows.length) return "";
   const blocks = rows.map((f) => {
+    const parts = bundleParts(f);
+    if (parts) return parts.map((p) => `## context/${p.path}\n${p.about || "(not read yet: open the file)"}`).join("\n\n");
     const lines = f.text.split("\n").length;
     const head = `## ${knowledgePath(f.name)}\n${[f.kind, f.title, `${lines.toLocaleString("en-US")} lines`].filter(Boolean).join(" · ")}`;
     const about = f.about ? `\n${f.about}` : "\n(not read yet: open the file)";
@@ -130,4 +161,95 @@ export function knowledgeIndex(files: KnowledgeFile[]): string {
     return `${head}${about}${answers}${secs}`;
   });
   return `# Knowledge\n\nWhat the author added to write from, filed when it was added. Line ranges point into each file (Read with offset/limit, or Grep it).\n\n${blocks.join("\n\n")}\n`;
+}
+
+/* ---- a project's material: the project form's Write it for me (POST /projects/draft-notes) and the files it keeps ---- */
+
+const DRAFT_NOTES = 8_000;
+/** Write it for me on the project form: the instructions from the material, and each file filed. */
+export const DRAFT_SYSTEM = `A creator is setting up one of their workspaces (one brand) and gave you their material: what they typed, pages its links lead to, files (a dropped folder keeps its paths) and Instagram bios and posts. Read all of it. Two jobs.
+
+1. Write the workspace's instructions, which every writer turn reads first. The facts a writer needs: what it is, who it is for, what it offers, where people are sent (exact links, names, dates, prices), what is true now and what isn't yet, the topics it keeps coming back to. Where files disagree, follow what the material itself says is right (a README or summary that says which docs are out of date). If the material holds its own rules for public text (an owner's feedback, copy rules, words to use or never use, hard don'ts), they stay whole in their files, which the writer is given: name each such file by its path, say in a few words what it is, that it is read before writing anything public, and which one wins. Don't restate, summarise or list its rules here; state the facts plainly instead (where the server is, what the currency is called) and leave the don'ts in their files. Only what the material says, in its own terms; don't add rules or describe a voice it doesn't give. Plain lines, as long as the facts need, under ${DRAFT_NOTES.toLocaleString("en-US")} characters.
+
+2. File every file: keep it (a writer may need to look something up in it later) or leave it out (a writer would never need it: a privacy policy, a duplicate of another file, notes about code or tools), with one sentence on what is in it. When unsure, keep it.
+
+Answer with one JSON object and nothing else:
+{"notes": the instructions,
+ "files": [{"file": its path exactly as given, "keep": true or false, "kind": one of ${SOURCE_KINDS.map((k) => `"${k.id}"`).join(", ")}, "about": one sentence on what is in it, "why": a few words on why it is left out, only when keep is false}]}`;
+
+/** What the drafter says of each file; one it skipped is kept. */
+export type FileFiling = { file: string; keep: boolean; kind?: SourceKind; about?: string; why?: string };
+export function parseDraft(text: string, names: string[], notesMax = 20_000): { notes: string; files: FileFiling[] } {
+  const m = /\{[\s\S]*\}/.exec(text);
+  const j = ((): { notes?: unknown; files?: unknown } | null => {
+    try {
+      return m ? (JSON.parse(m[0]) as { notes?: unknown; files?: unknown }) : null;
+    } catch {
+      return null;
+    }
+  })();
+  // no JSON at all: the answer is the instructions, every file kept
+  const notes = (typeof j?.notes === "string" ? j.notes : j ? "" : text).trim();
+  if (!notes) throw new Error("empty");
+  const said = new Map<string, Record<string, unknown>>();
+  // a path as the model saw it ("material/kit/a.md", "./kit/a.md") is the file's own
+  for (const f of Array.isArray(j?.files) ? j.files : []) if (f && typeof f.file === "string") said.set(f.file.replace(/^(?:\.\/|\/)?(?:material\/)?/, ""), f);
+  const files = names.map((file): FileFiling => {
+    const f = said.get(file);
+    const about = typeof f?.about === "string" ? f.about.trim().slice(0, 300) : "";
+    const keep = f?.keep !== false;
+    return {
+      file,
+      keep,
+      ...(KIND_IDS.has(f?.kind as string) ? { kind: f!.kind as SourceKind } : {}),
+      ...(about ? { about } : {}),
+      ...(!keep && typeof f?.why === "string" ? { why: f.why.trim().slice(0, 200) } : {}),
+    };
+  });
+  return { notes: notes.slice(0, notesMax), files };
+}
+
+/** The file part of the draft's prompt off the Mac: every file whole while they fit, else the room shared out, a short file's unused share going to the long ones. */
+export function inlineFiles(files: Array<{ name: string; text: string }>, room = 600_000): string {
+  const cap = new Map<string, number>();
+  let left = room;
+  let n = files.length;
+  for (const f of [...files].sort((a, b) => a.text.length - b.text.length)) {
+    const c = Math.min(f.text.length, Math.max(2_000, Math.floor(left / n--)));
+    cap.set(f.name, c);
+    left -= c;
+  }
+  return files.map((f) => {
+    const c = cap.get(f.name) ?? f.text.length;
+    return `=== ${f.name} ===\n${f.text.length > c ? `${f.text.slice(0, c)}\n…[shortened]` : f.text}`;
+  }).join("\n\n");
+}
+
+/**
+ * Files kept as one source: each under its path as a heading, a section each. Filed already when every file says what
+ * it is (the project form's draft read them); else read in the background like any other.
+ */
+export function bundleFiles(files: Array<{ name: string; text: string; about?: string }>): { text: string; sections: SourceSection[] } {
+  const sections: SourceSection[] = [];
+  const parts: string[] = [];
+  let line = 1;
+  for (const f of files) {
+    const part = `# ${f.name}\n\n${f.text.trim()}`;
+    const n = part.split("\n").length;
+    sections.push({ title: f.name, from: line, to: line + n - 1, about: f.about ?? "" });
+    parts.push(part);
+    line += n + 1;
+  }
+  return { text: parts.join("\n\n"), sections };
+}
+
+/** Files kept as one source (one file: as it is), and its filing when every file says what it is. */
+export function keptFiles(files: Array<{ name: string; text: string; about?: string; kind?: unknown }>): { text: string; filed?: Filing } {
+  if (files.length === 1) {
+    const f = files[0]!;
+    return { text: f.text, filed: f.about ? { kind: KIND_IDS.has(f.kind as string) ? (f.kind as SourceKind) : "other", title: "", about: f.about.slice(0, SOURCE_LIMITS.about), uses: [], sections: [] } : undefined };
+  }
+  const { text, sections } = bundleFiles(files.map((f) => ({ ...f, about: f.about?.slice(0, SOURCE_LIMITS.sectionAbout) })));
+  if (!files.every((f) => f.about)) return { text };
+  return { text, filed: { kind: "brand", title: "", about: `${files.length} files, a section each.`, uses: [], sections } };
 }

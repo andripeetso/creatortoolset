@@ -37,12 +37,11 @@ describe("ProjectForm variant setup", () => {
     expect(setupHtml).not.toContain("Knowledge, frameworks and rules");
   });
 
-  it("the Projects form asks for no handle: accounts are connected once it's made, and the instructions can be written for you", () => {
+  it("the Projects form asks for no handle: a new one's accounts are step 2, once it's made, and the instructions can be written for you", () => {
     expect(fullHtml).not.toContain("My Instagram");
     expect(fullHtml).not.toContain("Sync");
     expect(fullHtml).not.toContain("@yourhandle");
-    expect(fullHtml).toContain("Accounts");
-    expect(fullHtml).toContain("Settings → Social accounts");
+    expect(fullHtml).not.toContain("Accounts");
     expect(fullHtml).toContain("Instructions");
     expect(fullHtml).toContain("Write it for me");
     expect(fullHtml).not.toContain("Where do you post?");

@@ -42,7 +42,12 @@ export async function droppedFiles(
     return { files: top, folder: false, folders: [], paths };
   }
   const walk = async (e: FileSystemEntry): Promise<File[]> => {
-    if (e.isFile) return [await new Promise<File>((ok, no) => (e as FileSystemFileEntry).file(ok, no))];
+    if (e.isFile) {
+      const f = await new Promise<File>((ok, no) => (e as FileSystemFileEntry).file(ok, no));
+      // its path in the drop ("folder/notes/a.md"): the standard field a folder pick fills, empty for a dropped entry
+      if (!f.webkitRelativePath && e.fullPath) Object.defineProperty(f, "webkitRelativePath", { value: e.fullPath.replace(/^\/+/, "") });
+      return [f];
+    }
     const reader = (e as FileSystemDirectoryEntry).createReader();
     const out: File[] = [];
     // readEntries hands them over in batches (about 100) until an empty one

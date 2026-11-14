@@ -237,10 +237,10 @@ describe("workshop_project_update", () => {
   it("drafts the instructions from what the user gave through the form's own Write it for me", async () => {
     const cookie = await cookieOf("ana");
     const id = String((await page(cookie, "/api/workshop/projects", "POST", { name: "Puppy school" })).id);
-    const drafted = vi.mocked(completeWithFallback).mockResolvedValueOnce("For new dog owners. Classes at puppyschool.example." as never);
+    const drafted = vi.mocked(completeWithFallback).mockResolvedValueOnce({ notes: "For new dog owners. Classes at puppyschool.example.", files: [] } as never);
     const out = await tool(key, "workshop_project_update", { project: id, draft_from: "new dog owners, our classes, our site" });
     // facts from what was given, with nothing about how to write
-    expect(String(drafted.mock.calls[0]![0])).toContain("Don't describe how they write");
+    expect(String(drafted.mock.calls[0]![0])).toContain("don't add rules or describe a voice it doesn't give");
     expect(String(drafted.mock.calls[0]![1])).toContain("Workspace: Puppy school");
     expect(String(drafted.mock.calls[0]![1])).toContain("new dog owners, our classes, our site");
     expect(out.value!.project).toMatchObject({ id, name: "Puppy school", instructions: "For new dog owners. Classes at puppyschool.example." });

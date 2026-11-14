@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useCachedList } from "@/lib/local-cache";
-import { Pencil, Plus } from "lucide-react";
+import { Loader2, Pencil, Plus } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { PLATFORMS } from "@contracts/connectors";
-import { ProjectForm } from "@/components/workshop/ProjectForm";
+import { ProjectForm, type KeptFile } from "@/components/workshop/ProjectForm";
 import { listAccounts, mineAccount, type InstagramAccount } from "@/lib/instagram";
 import {
+  addProjectFiles,
   createProject,
   deleteProject,
   foldProjectInstructions,
@@ -30,16 +33,19 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
   const select = useWorkspace((s) => s.select);
   const projects = only ? all.filter((p) => p.id === currentProjectId) : all;
   const [editing, setEditing] = useState<string | "new" | null>(null);
-  // the project just created in the form: it stays open on it, for its accounts, with Done
+  // the workspace just created: step 2, its accounts, in a window of its own (skippable)
   const [made, setMade] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
   // `/projects?add=1` opens the New project form once, `?edit=<id>` that project's own (a chat's menu asks for the
   // current one; a platform sign-in comes back there); then the parameter goes
+  // `?accounts=<id>` reopens step 2, where a sign-in started there comes back to
   useEffect(() => {
     const edit = params.get("add") === "1" ? "new" : params.get("edit");
-    if (!edit || only) return;
-    setEditing(edit);
-    setParams((p) => (p.delete("add"), p.delete("edit"), p), { replace: true });
+    const accounts = params.get("accounts");
+    if ((!edit && !accounts) || only) return;
+    if (edit) setEditing(edit);
+    if (accounts) setMade(accounts);
+    setParams((p) => (p.delete("add"), p.delete("edit"), p.delete("accounts"), p), { replace: true });
   }, [params, setParams, only]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,12 +67,22 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
     }
   };
 
-  const save = (id: string | "new", fields: ProjectFields) =>
+  // the files dropped on its instructions are kept as its own Knowledge once it exists; a new one opens on its own form
+  // first, so a file that fails is said there and the project is never made twice
+  const save = (id: string | "new", fields: ProjectFields, files: KeptFile[]) =>
     id === "new"
-      ? run(() => createProject(fields), (p) => (setEditing(p.id), setMade(p.id)))
-      : run(() => patchProject(id, fields));
+      ? run(async () => {
+          const p = await createProject(fields);
+          setEditing(null);
+          setMade(p.id);
+          if (files.length) await addProjectFiles(p.id, files);
+        }, () => {})
+      : run(async () => {
+          await patchProject(id, fields);
+          if (files.length) await addProjectFiles(id, files);
+        });
   // making one: only its form shows
-  const making = editing === "new" || (!!made && editing === made);
+  const making = editing === "new";
 
   return (
     <section>
@@ -83,7 +99,7 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
       {error ? <p className="mb-3 text-xs text-red-400">{error}</p> : null}
       <div className="flex flex-col gap-2">
         {editing === "new" ? (
-          <ProjectForm busy={busy} onSave={(f) => save("new", f)} onCancel={() => setEditing(null)} />
+          <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)} />
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (
           <p className="py-10 text-center text-sm text-zinc-600">
@@ -92,7 +108,7 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
         ) : null}
         {projects.map((p) =>
           editing === p.id ? (
-            <ProjectForm key={p.id} initial={p} made={made === p.id} busy={busy} onSave={(f) => save(p.id, f)} onCancel={() => setEditing(null)} />
+            <ProjectForm key={p.id} initial={p} busy={busy} onSave={(f, files) => save(p.id, f, files)} onCancel={() => setEditing(null)} />
           ) : making ? null : (
             <ProjectRow
               key={p.id}
@@ -109,7 +125,35 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
           ),
         )}
       </div>
+      {made ? <AccountsStep project={projects.find((p) => p.id === made)} id={made} busy={busy} error={error} onClose={() => setMade(null)} /> : null}
     </section>
+  );
+}
+
+/** Step 2 of a new workspace: its accounts, on their own, skippable. */
+function AccountsStep({ project, id, busy, error, onClose }: { project?: WorkshopProject; id: string; busy: boolean; error: string | null; onClose: () => void }) {
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[min(720px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+        <div className="border-b border-border px-6 py-4">
+          <DialogTitle className="text-lg font-semibold tracking-tight">{project?.name ? `${project.name}: accounts` : "Accounts"}</DialogTitle>
+          <DialogDescription>Step 2 of 2. Optional: they can be connected any time in Settings → Social accounts.</DialogDescription>
+        </div>
+        <div className="min-h-0 flex-auto overflow-y-auto px-6 py-4">
+          <ConnectorsSection projectId={id} back={`/projects?accounts=${id}`} />
+          {busy ? <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Keeping its files</p> : null}
+          {error ? <p className="mt-3 text-xs text-red-400">{error}</p> : null}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border px-6 py-3">
+          <button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
+            Skip for now
+          </button>
+          <button type="button" onClick={onClose} className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">
+            Done
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

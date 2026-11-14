@@ -24,7 +24,7 @@ vi.mock("./lib/mac-claude", async (importOriginal) => ({
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
 const { workspaceScope } = await import("./lib/workshop/workspace");
-const { streamWithFallback } = await import("./ai-complete");
+const { completeWithFallback, streamWithFallback } = await import("./ai-complete");
 const mocked = vi.mocked(streamWithFallback);
 const { createUser } = await import("./users");
 const { pairDevice } = await import("./lib/devices");
@@ -166,6 +166,47 @@ describe("projects kept apart", () => {
     expect(got?.status).toBe("read");
     expect(got!.chars).toBeGreaterThan(0);
     expect(existsSync(ws("sources", first.id))).toBe(false);
+  });
+  it("a dropped folder: Write it for me reads its files whole and files them; saving keeps them as one source of the project's own, a section a file", async () => {
+    const files = [
+      { name: "kit/README.md", text: "Read the rules first." },
+      { name: "kit/rules/copy.md", text: "Say 1x.\nUse the shop's own coin name." },
+      { name: "kit/privacy.md", text: "We keep your email." },
+    ];
+    let asked: { user: string; files?: Record<string, string> } | undefined;
+    vi.mocked(completeWithFallback).mockImplementationOnce(async (_system, user, _c, parse, opts) => {
+      asked = { user, files: (opts as { mac?: { files?: Record<string, string> } }).mac?.files };
+      // the model names a file by the folder it read it in: still that file
+      return parse(JSON.stringify({ notes: "Read kit/rules/copy.md before writing anything public.", files: [
+        { file: "kit/README.md", keep: true, kind: "notes", about: "Where to start." },
+        { file: "material/kit/rules/copy.md", keep: true, kind: "notes", about: "The copy rules." },
+        { file: "kit/privacy.md", keep: false, why: "a privacy policy" },
+      ] }));
+    });
+    const res = await call("POST", "/api/workshop/projects/draft-notes", { name: "Tiny", text: "", files });
+    expect(res.status).toBe(200);
+    const draft = JSON.parse(await res.text()) as { notes: string; files: Array<{ file: string; keep: boolean; about?: string }> };
+    expect(draft.notes).toContain("kit/rules/copy.md");
+    expect(draft.files.map((f) => [f.file, f.keep])).toEqual([["kit/README.md", true], ["kit/rules/copy.md", true], ["kit/privacy.md", false]]);
+    // on the Mac the files go whole, as files
+    expect(asked!.files?.["material/kit/rules/copy.md"]).toBe("Say 1x.\nUse the shop's own coin name.");
+    expect(asked!.user).toContain("- kit/privacy.md");
+
+    const kept = draft.files.filter((f) => f.keep).map((f) => ({ ...files.find((x) => x.name === f.file)!, about: f.about }));
+    const made = (await (await call("POST", "/api/workshop/sources", { name: "kit", files: kept, projectId: tiny })).json()) as Record<string, unknown>;
+    // filed by the draft: no second read
+    expect(made).toMatchObject({ status: "read", projectId: tiny, sections: [{ title: "kit/README.md", about: "Where to start." }, { title: "kit/rules/copy.md", about: "The copy rules." }] });
+    const t = session("Launch", tiny);
+    const folder = await folderOf(t.id, t.docId);
+    // each kept file at its own path in the writer's folder, as the instructions name it
+    expect(folder["context/kit/rules/copy.md"]).toBe("Say 1x.\nUse the shop's own coin name.");
+    expect(folder["context/kit/privacy.md"]).toBeUndefined();
+    expect(folder["context/kit"]).toBeUndefined();
+    expect(folder["context/INDEX.md"]).toContain("## context/kit/rules/copy.md\nThe copy rules.");
+    // another brand never reads it
+    const hh = (await (await call("GET", "/api/workshop/projects")).json() as Array<{ id: string; name: string }>).find((p) => p.name === "Quiet Garden")!;
+    const other = session("Elsewhere", hh.id);
+    expect((await folderOf(other.id, other.docId))["context/kit/rules/copy.md"]).toBeUndefined();
   });
 });
 
