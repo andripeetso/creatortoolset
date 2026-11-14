@@ -22,6 +22,7 @@ import { useToolFolders } from "@/lib/folders";
 import { useCachedLoad } from "@/lib/local-cache";
 import { onTopic } from "@/lib/sync";
 import { useWorkspace } from "@/lib/workspace";
+import { currentWorkspace } from "@/lib/current-workspace";
 import { AnimationStyles, STYLE_WORDS, type OpenAnimation } from "./editor/AnimationStyles";
 
 /**
@@ -85,7 +86,11 @@ export default function DesignsPage() {
 
   // each workspace keeps its own designs: a switch reads its list, with nothing of the last one shown meanwhile
   const workspace = useWorkspace((s) => s.currentProjectId);
-  const load = useCallback(() => listDesigns().then((all) => (setDesigns(all), setError(null)), (e) => setError(message(e))), []);
+  const load = useCallback(() => {
+    const asked = currentWorkspace();
+    // a list that comes back after a switch is the last workspace's: not shown
+    return listDesigns().then((all) => asked === currentWorkspace() && (setDesigns(all), setError(null)), (e) => setError(message(e)));
+  }, []);
   useEffect(() => {
     setDesigns(null);
     void load();

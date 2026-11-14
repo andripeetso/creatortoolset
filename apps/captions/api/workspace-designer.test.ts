@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 
 // Designs, carousel styles, Video Notes and documents: each workspace lists its own; one from before workspaces is the first brand's.
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "ws-designer-"));
@@ -63,6 +63,13 @@ it("Video Notes and documents are listed in their own workspace; old ones in the
   expect(await names("/api/documents", "first")).toEqual(["Old guide"]);
   // the notes a document is written from follow the same workspace
   expect(await names("/api/documents/media", "second", ((r: { clips: { name: string }[] }) => r.clips) as never)).toEqual(["Second's note"]);
+  // one uploaded from a window is saved with that window's workspace (not a real recording: its processing fails)
+  const r = await app.request("/api/clips?name=Uploaded&mime=video/mp4", { method: "POST", headers: { "x-ct-workspace": "second" }, body: "not a video" });
+  const made = (await r.json()) as { id: string; projectId?: string };
+  expect(made.projectId).toBe("second");
+  expect(await names("/api/clips", "second")).toEqual(["Second's note", "Uploaded"]);
+  expect(await names("/api/clips", "first")).toEqual(["Old note"]);
+  await vi.waitFor(async () => expect(((await call(`/api/clips/${made.id}`, "second")) as { status: string }).status).not.toBe("processing"), { timeout: 20_000 });
   // by its id a note in another workspace still opens
   expect(((await call("/api/clips/note-second", "first")) as { name: string }).name).toBe("Second's note");
 });
