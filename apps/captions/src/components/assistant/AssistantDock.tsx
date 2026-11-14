@@ -251,7 +251,8 @@ export function AssistantDock() {
     const list = bottom.current?.parentElement;
     if (!list) return;
     const as = `${chatMode} ${view?.id}`;
-    if (shownAs.current === as) return list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+    // void: a browser with scroll promises returns one here, and an effect that returns anything but a function crashes
+    if (shownAs.current === as) return void list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
     shownAs.current = as;
     list.scrollTop = list.scrollHeight;
   }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed, chatMode, view?.id]);
@@ -852,7 +853,7 @@ export function AssistantDock() {
 
       {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing.
           In chat mode the messages and the box keep to a readable column in the middle */}
-      <div className={cn("relative min-h-0 flex-1 pt-2 pb-3 text-sm", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
+      <div className={cn("relative min-h-0 flex-1 overflow-x-hidden pt-2 pb-3 text-sm [overflow-wrap:anywhere]", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
         {!view && <Dots />}
 
         {view?.provider === "none" && (
@@ -915,7 +916,9 @@ export function AssistantDock() {
                   ? () => void chooseFolderOnMac().then((p) => p && submit({ ...EMPTY_DRAFT, folders: [p] }))
                   : undefined;
               const branch = m.role === "assistant" && m.status !== "thinking" ? () => void branchFrom(m.id) : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} />;
+              // the message the server starts next, once the reply before it ends: Steer ends that reply now
+              const steerNow = m.wait?.for === "reply" && all.find((x) => x.wait?.for === "reply") === m ? stop : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} onSteer={steerNow} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -1050,6 +1053,7 @@ export function Message({
   sending,
   onCancelSend,
   onBranch,
+  onSteer,
 }: {
   m: AssistantMessage;
   onRetry?: () => void;
@@ -1061,6 +1065,8 @@ export function Message({
   onCancelSend?: () => void;
   /** A new chat holding this one up to this reply, opened in its place. */
   onBranch?: () => void;
+  /** A message queued behind the reply being written: that reply stops and this one starts. */
+  onSteer?: () => void;
 }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
@@ -1145,7 +1151,21 @@ export function Message({
             </button>
           </p>
         ) : (
-          m.wait && <p className="ct-shimmer w-fit text-xs text-muted-foreground">{m.wait.text}</p>
+          m.wait && (
+            <div className="flex items-center gap-1.5">
+              <p className="ct-shimmer w-fit text-xs text-muted-foreground">{m.wait.text}</p>
+              {onSteer && (
+                <button
+                  type="button"
+                  onClick={onSteer}
+                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--tint)] hover:bg-[color-mix(in_srgb,var(--tint)_15%,transparent)]"
+                  title="Steer: stop the reply and send this now"
+                >
+                  <CornerDownLeft className="size-3" /> Steer
+                </button>
+              )}
+            </div>
+          )
         )}
       </div>
     );
