@@ -387,7 +387,8 @@ export function ProjectForm({
             value={f.languages?.[0] ?? ""}
             onChange={(code) => setF((cur) => ({ ...cur, languages: code ? [code] : [] }))}
             disabled={locked}
-            className={`${input} mt-1`}
+            // as wide as its list, not the window
+            className={`${input} mt-1 w-64`}
           />
         </div>
       )}

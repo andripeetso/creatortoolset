@@ -32,14 +32,16 @@ export function LanguageSelect({ id, value, onChange, disabled, className, place
     setOpen(false);
   };
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    // modal: inside a window (the Projects one) the window's scroll lock would eat the list's wheel; the popover's own
+    // lock lets the list scroll
+    <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild disabled={disabled}>
         <button id={id} type="button" role="combobox" aria-expanded={open} className={cn("flex items-center justify-between gap-2 text-left", className)}>
           <span className="truncate">{isDefault ? usual : languageName(value)}</span>
           <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-0">
+      <PopoverContent align="start" className="w-64 min-w-(--radix-popover-trigger-width) p-0">
         <Command>
           <CommandInput placeholder="Search languages" />
           <CommandList className="max-h-64">
