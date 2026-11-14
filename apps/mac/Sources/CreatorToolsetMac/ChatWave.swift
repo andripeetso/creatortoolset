@@ -1,10 +1,12 @@
 // Chat mode switched on or off (apps/captions/src/lib/chat-mode.ts washTo): a wave goes through the window's own
 // picture. A page can only move its boxes and paint over them; this bends the picture itself. A view over the web view
-// shows a picture of the screen as it was, and for half a second that screen falls toward the button, faster and
-// faster: what is near the button shrinks into it, what is further is stretched toward it and turns a little round it,
-// under a veil of blur and a light that grows at the button. Then it is let go: one wave goes out across the window,
+// shows a picture of the screen as it was, and from the press that screen falls toward the button, faster and faster:
+// what is near the button shrinks into it, what is further is stretched toward it and turns a little round it, under a
+// veil of blur and a light that grows at the button. Then it is let go at once: one wave goes out across the window,
 // its front wavering, its crest a ridge of glass (lit and shaded, its colours split where it bends most) that pushes
-// the new screen out and lets it settle back after one small trough. Past the settled wave the live page shows.
+// the new screen out and lets it settle back after one small trough. What the front has not reached yet is still being
+// drawn in until the front lets it go: nothing stops between the pull and the wave. Past the settled wave the live page
+// shows.
 import AppKit
 import Metal
 import MetalKit
@@ -138,9 +140,9 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float still = smoothstep(56.0 * pt, 84.0 * pt, p.y);
 
     // The screen that was falls toward the button: what is near it shrinks into it, what is further is stretched
-    // toward it, and all of it turns a little round it. Each point stays so until the front comes, and is let go
-    // gradually as it passes (over three front widths), never in one frame.
-    float letgo = smoothstep(-3.0, 1.5, x);
+    // toward it, and all of it turns a little round it. Each point is drawn in until the front comes, and let go as it
+    // passes (over three front widths round its middle): quick, never in one frame.
+    float letgo = smoothstep(-1.5, 1.5, x);
     float sucked = 0.7 * pull * r * exp(-r / reach) * letgo * still;
     float turn = swirl * pull * exp(-r / (0.6 * reach)) * letgo * still;
     // Behind the front the new screen is pushed out by the crest and settles after two very slight ridges.
@@ -209,7 +211,8 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
 
 /// Where the wave is at `ms` after the press, for a window `size` px with the button at `origin` px, `scale` px a point.
 struct WaveMoment {
-    /// How hard the screen is drawn in toward the button (0 to 1), how far round the button that reaches (px), how far
+    /// How hard the screen is drawn in toward the button (0, 1 when the wave is let go, a little more for what it reaches
+    /// later), how far round the button that reaches (px), how far
     /// it turns round it (radians), how out of focus it is at the button (px).
     var pull: Float, reach: Float, swirl: Float, veil: Float
     /// The front (px from the button), its width (px), the wave's height (px), the light on it (0 to 1).
@@ -225,35 +228,52 @@ struct WaveMoment {
 }
 
 enum WaveClock {
-    /// The screen falls toward the button, gathering speed and easing into its fullest (ms); then it is let go and one
-    /// wave goes out across the window, quick as it leaves, slowing for a long while as it spreads and dying away to
-    /// nothing as it reaches the far side (ms). Nothing starts or stops at once.
+    /// The screen falls toward the button from the press, faster and faster, until the wave is let go (ms, when the
+    /// picture of the new screen is there by then); one wave then goes out across the window, quick as it leaves,
+    /// slowing for a long while as it spreads and dying away to nothing as it reaches the far side (ms). Nothing stops
+    /// in between (owner, 11-14: "it pulls, there's a stop, and then it fires ... there should be continuous pulling until
+    /// it fires"): what the front has not reached yet is still being drawn in until the front lets it go.
     static let gather: Double = 560
     static let sweep: Double = 950
     /// The widest the front gets (points), and how far past the far corner its middle ends (front widths: its crest and
     /// first ridge have crossed the window; what is left of the wave fades out there).
     static let widest: Float = 240
     static let past: Float = 1.8
+    /// The front leaves from this far behind the button (front widths): on the frame it leaves the screen round the
+    /// button has been let go by only a few points (the shader's `letgo` reaches 1.5 widths ahead of its middle), and
+    /// within three frames it is out past the bar, so the wave follows the pull with no pause between them.
+    static let behind: Float = 0.5
 
-    static func at(_ ms: Double, size: CGSize, origin: CGPoint, scale: CGFloat) -> WaveMoment {
+    /// How hard the screen is drawn in `ms` after the press: on its way from the first frames, faster and faster until
+    /// `gather`, then on at a speed that slowly falls (until the front reaches each point, or a late picture comes).
+    static func pull(_ ms: Double) -> Float {
+        let start = 0.3, x = ms / gather
+        if x <= 1 { return Float(start * x + (1 - start) * x * x) }
+        let slows = 300.0
+        return Float(1 + (2 - start) / gather * slows * (1 - exp(-(ms - gather) / slows)))
+    }
+
+    /// The wave `ms` after the press, the front let go at `release` (nil: not yet, the picture of the new screen has not
+    /// come), for a window `size` px with the button at `origin` px, `scale` px a point.
+    static func at(_ ms: Double, release: Double? = gather, size: CGSize, origin: CGPoint, scale: CGFloat) -> WaveMoment {
         let s = Float(scale)
         let far = Float(hypot(max(origin.x, size.width - origin.x), max(origin.y, size.height - origin.y)))
         let seconds = Float(ms / 1000)
         let lit = Float(1 - pow(1 - min(ms / 80, 1), 3))
-        if ms < gather {
-            let g = Float(0.5 - 0.5 * cos(Double.pi * ms / gather))
-            return WaveMoment(pull: g, reach: 340 * s, swirl: 0.3, veil: 16 * s, front: -1e6, width: 160 * s, wave: 0, flash: 0,
-                              bloom: lit * (0.55 + 0.45 * g), seconds: seconds, split: 0.08, px: s, done: false)
+        let p = pull(ms)
+        guard let release, ms >= release else {
+            return WaveMoment(pull: p, reach: 340 * s, swirl: 0.3, veil: 16 * s, front: -1e6, width: 160 * s, wave: 0, flash: 0,
+                              bloom: lit * (0.55 + 0.45 * min(p, 1)), seconds: seconds, split: 0.08, px: s, done: false)
         }
-        let u = Float(min((ms - gather) / sweep, 1))
+        let u = Float(min((ms - release) / sweep, 1))
         let width = (160 + (widest - 160) * u) * s
-        // eases in over its first tenth or so, then slows for the rest of the way (no point moves more than about 20
-        // points in a frame: a quicker start let the screen round the button go in one frame)
-        let front = (1 - pow(1 - u, 1.7)) * (1 - exp(-u / 0.18)) / (1 - exp(-1 / 0.18)) * (far + past * widest * s)
+        // quick as it leaves, slower and slower after (no point moves more than about 25 points in a frame)
+        let from = -behind * 160 * s
+        let front = from + (far + past * widest * s - from) * (1 - pow(1 - u, 1.7))
         let dying = pow(1 - u, 1.3)
         // over the last quarter what is left of the wave fades into the page
         let fade = Double(min(max((u - 0.75) / 0.25, 0), 1))
-        return WaveMoment(pull: 1, reach: 340 * s, swirl: 0.3, veil: 16 * s, front: front, width: width, wave: 26 * s * dying,
+        return WaveMoment(pull: p, reach: 340 * s, swirl: 0.3, veil: 16 * s, front: front, width: width, wave: 26 * s * dying,
                           flash: (0.25 + 0.75 * exp(-2.2 * u)) * pow(1 - u, 0.9), bloom: exp(-7 * u), seconds: seconds, split: 0.08, px: s,
                           left: Float(1 - fade * fade * (3 - 2 * fade)), done: u >= 1)
     }
@@ -376,14 +396,14 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        let elapsed = (CACurrentMediaTime() - started) * 1000
-        // the front leaves only once there is a new screen to show behind it; the gathering waits for it
-        let ms: Double
-        if let newAt { ms = max(elapsed - max(0, newAt - WaveClock.gather), 0) } else if elapsed > wait { return finish() } else { ms = min(elapsed, WaveClock.gather) }
+        let ms = (CACurrentMediaTime() - started) * 1000
+        if newAt == nil && ms > wait { return finish() }
+        // the front leaves once there is a new screen to show behind it (at `gather` when its picture is there by then);
+        // until then the screen goes on falling in, never held
         let scale = window?.backingScaleFactor ?? 2
         let size = drawableSize
         let o = CGPoint(x: origin.x * scale, y: origin.y * scale)
-        let m = WaveClock.at(ms, size: size, origin: o, scale: scale)
+        let m = WaveClock.at(ms, release: newAt.map { max(WaveClock.gather, $0) }, size: size, origin: o, scale: scale)
         if m.done { return finish() }
         guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable, let buffer = renderer.queue.makeCommandBuffer() else { return }
         renderer.encode(m, size: size, origin: o, tint: tint, dark: dark, into: pass, on: buffer)

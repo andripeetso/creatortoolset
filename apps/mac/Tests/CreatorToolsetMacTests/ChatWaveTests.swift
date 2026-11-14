@@ -15,32 +15,51 @@ final class ChatWaveTests: XCTestCase {
         XCTAssertGreaterThan(WaveClock.at(50, size: size, origin: button, scale: 2).bloom, 0.45)
     }
 
-    /// The screen starts falling toward the button at once and eases into its fullest before the wave is let go: no
-    /// stretch where nothing happens and then everything at once (owner, 11-13).
-    func testTheScreenFallsInSmoothlyBeforeTheWaveLeaves() {
-        let first = WaveClock.at(WaveClock.gather / 10, size: size, origin: button, scale: 2)
-        let half = WaveClock.at(WaveClock.gather / 2, size: size, origin: button, scale: 2)
+    /// The screen starts falling toward the button at once and goes faster and faster until the wave is let go: no
+    /// stretch where nothing happens and then everything at once (owner, 11-13), and no stop before the wave (11-14).
+    func testTheScreenFallsInFasterAndFasterUntilTheWaveLeaves() {
+        let frame = 1000.0 / 60
+        let speed = { (ms: Double) in WaveClock.pull(ms + frame) - WaveClock.pull(ms) }
+        XCTAssertGreaterThan(WaveClock.at(2 * frame, size: size, origin: button, scale: 2).pull, 0.005)
+        var last: Float = 0
+        for ms in stride(from: 0, to: WaveClock.gather, by: frame) {
+            XCTAssertGreaterThan(speed(ms), last)
+            last = speed(ms)
+        }
         let late = WaveClock.at(WaveClock.gather - 1, size: size, origin: button, scale: 2)
-        XCTAssertGreaterThan(first.pull, 0.02)
-        XCTAssertEqual(half.pull, 0.5, accuracy: 0.05)
-        XCTAssertGreaterThan(late.pull, 0.99)
+        XCTAssertEqual(late.pull, 1, accuracy: 0.01)
         XCTAssertLessThan(late.front, 0)
         XCTAssertFalse(late.done)
+        // what the front has not reached yet goes on falling in, at a speed that falls only slowly
+        XCTAssertGreaterThan(speed(WaveClock.gather + 300), speed(WaveClock.gather) / 3)
     }
 
-    /// One front, out from the button only, easing in, then slowing for the rest of the way; past the far corner by its
-    /// crest and first ridge when it is done, and the wave died away and faded out by then.
+    /// The picture of the new screen came late: the screen is still falling in, never held, and the front leaves when
+    /// it comes, not before.
+    func testALatePictureHoldsNothing() {
+        let release = WaveClock.gather + 300
+        let waiting = WaveClock.at(release - 1, release: nil, size: size, origin: button, scale: 2)
+        XCTAssertGreaterThan(waiting.pull, WaveClock.at(release - 60, release: nil, size: size, origin: button, scale: 2).pull)
+        XCTAssertLessThan(waiting.front, 0)
+        XCTAssertGreaterThan(WaveClock.at(release + 100, release: release, size: size, origin: button, scale: 2).front, 0)
+    }
+
+    /// One front, out from just behind the button only (out past the bar within three frames), quickest as it
+    /// leaves and slowing for the rest of the way; past the far corner by its crest and first ridge when it is done, and
+    /// the wave died away and faded out by then.
     func testTheFrontGoesOutOnceAndLeavesTheWindow() {
-        var last: Float = 0
+        let first = WaveClock.at(WaveClock.gather, size: size, origin: button, scale: 2)
+        XCTAssertLessThanOrEqual(first.front, -WaveClock.behind * first.width + 1)
+        var last = first.front
         var steps: [Float] = []
-        for ms in stride(from: WaveClock.gather, through: WaveClock.gather + WaveClock.sweep - 1, by: 1000.0 / 60) {
+        for ms in stride(from: WaveClock.gather + 1000.0 / 60, through: WaveClock.gather + WaveClock.sweep - 1, by: 1000.0 / 60) {
             let m = WaveClock.at(ms, size: size, origin: button, scale: 2)
-            XCTAssertGreaterThanOrEqual(m.front, last)
             steps.append(m.front - last)
             last = m.front
         }
-        XCTAssertLessThan(steps[1], steps.max()!)
-        XCTAssertGreaterThan(steps.max()!, steps.last! * 3)
+        XCTAssertTrue(zip(steps, steps.dropFirst()).allSatisfy { $0 >= $1 && $1 > 0 })
+        // no pause after the pull: out past the bar (56 points) within three frames of leaving
+        XCTAssertGreaterThan(WaveClock.at(WaveClock.gather + 3 * 1000.0 / 60, size: size, origin: button, scale: 2).front, 56 * 2)
         let end = WaveClock.at(WaveClock.gather + WaveClock.sweep, size: size, origin: button, scale: 2)
         XCTAssertTrue(end.done)
         let corner = Float(hypot(size.width - button.x, size.height - button.y))
