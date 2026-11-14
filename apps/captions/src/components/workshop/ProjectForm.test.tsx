@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { ProjectForm, setupProjectFields } from "./ProjectForm";
 
@@ -52,7 +53,13 @@ describe("ProjectForm variant setup", () => {
   it("no knowledge, framework or rule switches, for a new project or one already made", () => {
     expect(fullHtml).not.toContain("Knowledge, frameworks and rules");
     const made = { id: "p1", owner: "o", name: "Mine", audience: "", voice: "", cta: "", notes: "", off: ["k1"], createdAt: 0, updatedAt: 0 };
-    expect(renderToStaticMarkup(<ProjectForm initial={made} busy={false} onSave={() => {}} />)).not.toContain("Knowledge, frameworks and rules");
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProjectForm initial={made} busy={false} onSave={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(html).toContain("Instructions");
+    expect(html).not.toContain("Knowledge, frameworks and rules");
   });
 
   it("the name and the button belong to the form, so Enter submits it and never another row's button", () => {
