@@ -81,16 +81,16 @@ picture gets its whole picture from B-roll: the edit's broll_folder, or every cl
 
 Short videos from a long recording (a podcast, a talk): editor_create with moments finds the parts that stand on their
 own and cuts each as a video of its own; editor_get then lists them with each one's title and what is said in it. A
-script from each is a Workshop piece: workshop_new_session, then workshop_new_piece (kind reel) with those words.`;
+script from each goes in a new Workshop project: workshop_new_session, then workshop_new_piece (kind reel) with those words.`;
 
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
-Content Workshop: the same projects, sessions, pieces and chat the user sees on the site and the iPhone app, so whatever
-you do here shows there at once. A project is one brand (audience, voice, CTA). A session is one idea: its sources,
+Content Workshop: the same workspaces, projects, pieces and chat the user sees on the site and the iPhone app, so whatever
+you do here shows there at once. A workspace is one brand (audience, voice, CTA): workshop_projects, workshop_set_project and workshop_project_update work on it (the API calls workspaces projects). A project is one video, reel, carousel or ad being made (the API calls it a session): its sources,
 notes, pieces and chat, with a status (draft, writing, production, editing, toPost = ready to post, published,
 shelved). A piece is one reel, carousel, ad, free, youtube script, newsletter, X thread or article: blocks (lines or slides, each with an id), hook
 variations, a caption (post description) and a pinned comment. workshop_chat asks the Workshop's own writer, which reads
-the project, the user's posts and past rewrites (it can take minutes); workshop_edit_piece changes the text as given.
+the workspace, the user's posts and past rewrites (it can take minutes); workshop_edit_piece changes the text as given.
 Locked blocks are ones the user approved: leave them as they are.
 
 Designer: the user's designs, each a canvas of frames (carousel slides, covers, thumbnails) made of layers they then
@@ -117,7 +117,7 @@ B-roll (the rest); nobody sets that by hand. After adding files, tell the user t
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
 one per version, and the run files each draft's preview in Review by itself. editor_create makes a new one from the takes' version ids and starts it:
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
-the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop session
+the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop project
 that fits its name) and ask once, in one short question, whether that's right and whether to use the usual setup.
 
 Instagram comments: instagram_comments reads what people write under an account's posts (the user's, or another
@@ -143,21 +143,21 @@ const schedule = {
 };
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
 export const TOOLS = [
-  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes. current is the id of the one the app is in.", inputSchema: { type: "object", properties: {} } },
-  { name: "workshop_sessions", description: "Workshop sessions, newest first: id, title, status, project, pinned, posted.", inputSchema: { type: "object", properties: { project: { type: "string", description: "only this project's (id)" } } } },
+  { name: "workshop_projects", description: "The Workshop's workspaces (one per brand; the API calls them projects): id, name, audience, voice, CTA, notes. current is the id of the workspace the app is in.", inputSchema: { type: "object", properties: {} } },
+  { name: "workshop_sessions", description: "Workshop projects, one per video, reel, carousel or ad (the API calls them sessions), newest first: id, title, status, projectId and projectName (the workspace each is in), pinned, posted.", inputSchema: { type: "object", properties: { project: { type: "string", description: "only this workspace's projects (its id from workshop_projects)" } } } },
   {
     name: "workshop_session",
-    description: "One session: title, status, notes, sources, every piece with its blocks (ids and text), hooks, caption and pinned comment, and the last chat messages.",
+    description: "One Workshop project (the API calls it a session): title, status, notes, sources, every piece with its blocks (ids and text), hooks, caption and pinned comment, and the last chat messages.",
     inputSchema: { type: "object", properties: { session: str, messages: { type: "integer", description: "how many recent chat messages (default 10)" } }, required: ["session"] },
   },
   {
     name: "workshop_new_session",
-    description: "Start a session (in the current project unless one is named). It comes with one empty piece to write in.",
+    description: "Start a Workshop project (one video, reel, carousel or ad; the API calls it a session), in the current workspace unless project names another (a workspace id from workshop_projects). It comes with one empty piece to write in.",
     inputSchema: { type: "object", properties: { title: str, project: str, notes: { type: "string", description: "the idea, what it's for, anything the writer should know" } }, required: ["title"] },
   },
   {
     name: "workshop_update_session",
-    description: "Change a session's title, notes or status (moves it through the stages), or its posts: post_url links an Instagram post (the session becomes published), unlink_post_url unlinks that one, remove_post: true unlinks them all.",
+    description: "Change a Workshop project's title, notes or status (moves it through the stages; the API calls it a session), or its posts: post_url links an Instagram post (the project becomes published), unlink_post_url unlinks that one, remove_post: true unlinks them all.",
     inputSchema: {
       type: "object",
       properties: {
@@ -169,7 +169,7 @@ export const TOOLS = [
   },
   {
     name: "workshop_new_piece",
-    description: "Add another piece to a session. Its words are written from the user's own material (workshop_chat): leave text out. text, its first block, is for the user's own words.",
+    description: "Add another piece to a Workshop project. Its words are written from the user's own material (workshop_chat): leave text out. text, its first block, is for the user's own words.",
     inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str, theirs: { type: "boolean", description: "the text is the user's own words" } }, required: ["session", "kind"] },
   },
   {
@@ -179,7 +179,7 @@ export const TOOLS = [
   },
   {
     name: "workshop_chat",
-    description: "Write or change a piece from the user's own material. message is what the user asked, in their own words; notes is what you found. The answer is the piece written by the Workshop's own writer, or the material for you to write it from (the project, the user's posts closest to it, how they rewrote earlier drafts), then you save it with workshop_edit_piece. Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
+    description: "Write or change a piece from the user's own material. message is what the user asked, in their own words; notes is what you found. The answer is the piece written by the Workshop's own writer, or the material for you to write it from (the workspace, the user's posts closest to it, how they rewrote earlier drafts), then you save it with workshop_edit_piece. Waits up to wait_s for the reply; if it's still thinking, call workshop_wait with the reply id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -198,7 +198,7 @@ export const TOOLS = [
   { name: "workshop_wait", description: "Keep waiting for a workshop_chat reply.", inputSchema: { type: "object", properties: { session: str, reply: str, wait_s: { type: "integer" } }, required: ["session", "reply"] } },
   {
     name: "finals_link_session",
-    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
+    description: "Link a Finals piece (its id, from finals_pieces) to the Workshop project, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
     inputSchema: { type: "object", properties: { piece: str, session: str, workshop_piece: str }, required: ["piece", "session"] },
   },
   { name: "list_reviews", description: "His videos in Review: approval, versions, latest file, comment counts, link.", inputSchema: { type: "object", properties: {} } },
@@ -278,7 +278,7 @@ export const TOOLS = [
   {
     name: "schedule_task",
     description:
-      "Create a scheduled task, or change one (id: only the fields given change; enabled=false pauses it). Each run sends prompt to the user's AI with these tools and posts it and the answer in an assistant chat. schedule: {kind:'fixed',at:'HH:MM',weekdays?:[0-6, 0=Sunday; leave out for every day]} (needs timezone: the user's IANA zone, which their message gives), {kind:'once',runAt:'ISO date-time with offset'} or {kind:'interval',everyMinutes}. destination: continue (default from a chat: runs post in this chat), fresh (this chat, each run without earlier runs' context), new_chat (a new chat each run). It runs on the AI answering now; the user changes that in Settings, Scheduled tasks. project = a Workshop project id. Tell the user the returned next_run.",
+      "Create a scheduled task, or change one (id: only the fields given change; enabled=false pauses it). Each run sends prompt to the user's AI with these tools and posts it and the answer in an assistant chat. schedule: {kind:'fixed',at:'HH:MM',weekdays?:[0-6, 0=Sunday; leave out for every day]} (needs timezone: the user's IANA zone, which their message gives), {kind:'once',runAt:'ISO date-time with offset'} or {kind:'interval',everyMinutes}. destination: continue (default from a chat: runs post in this chat), fresh (this chat, each run without earlier runs' context), new_chat (a new chat each run). It runs on the AI answering now; the user changes that in Settings, Scheduled tasks. project = a Workshop workspace id (the API calls workspaces projects). Tell the user the returned next_run.",
     inputSchema: {
       type: "object",
       properties: { id: str, name: str, prompt: str, schedule, timezone: str, destination: { type: "string", enum: ["continue", "fresh", "new_chat"] }, project: { type: ["string", "null"] }, enabled: { type: "boolean" } },
@@ -302,7 +302,7 @@ export const TOOLS = [
 
 /** The assistant's tools (the dock, assistant.ts): listed and callable for its job token only, so a Full key's list stays TOOLS. */
 const ASSISTANT_DEFS = [
-  { name: "setup_status", description: "What is set up: the AI, connected logins, which API keys the user has saved (never their values), the project count, the tools the user picked and their plan, and for each tool what it still needs (missing) and what would add to it (extra).", inputSchema: { type: "object", properties: {} } },
+  { name: "setup_status", description: "What is set up: the AI, connected logins, which API keys the user has saved (never their values), the workspace count, the tools the user picked and their plan, and for each tool what it still needs (missing) and what would add to it (extra).", inputSchema: { type: "object", properties: {} } },
   {
     name: "save_setup",
     description: "Save the user's answers: the tools they want to use (ids from setup_status), their AI plan, or that setup is done.",
@@ -583,7 +583,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     const end = Date.now() + Math.max(0, Math.min(Number(a.wait_s ?? WAIT_MAX_S), WAIT_MAX_S)) * 1000;
     for (;;) {
       const msg = (await ws<Args[]>(`/sessions/${a.session}/chat`)).find((m) => m.id === a.reply);
-      if (!msg) throw new ToolError("That reply isn't in this session's chat.");
+      if (!msg) throw new ToolError("That reply isn't in this project's chat.");
       if (msg.status !== "thinking" || Date.now() >= end) {
         if (msg.status === "thinking") return { reply: message(msg), note: `Still thinking (${msg.stage ?? "working"}): call workshop_wait again.` };
         return { reply: message(msg), ...(msg.docId ? { piece: piece(await ws(`/sessions/${a.session}/docs/${msg.docId}`)) } : {}) };
@@ -627,7 +627,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         // only a post that is linked: the route marks whatever it is given "never match again"
         const code = postedFromUrl(String(a.unlink_post_url))?.shortcode;
         const now = code ? await ws(`/sessions/${a.session}`) : null;
-        if (!now || !((now.postings as Args[] | undefined) ?? (now.posted ? [now.posted as Args] : [])).some((p) => p.shortcode === code)) throw new ToolError("That post is not linked to this session.");
+        if (!now || !((now.postings as Args[] | undefined) ?? (now.posted ? [now.posted as Args] : [])).some((p) => p.shortcode === code)) throw new ToolError("That post is not linked to this project.");
         body.posted = { remove: code };
       } else if (a.post_url) body.posted = a.post_url;
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
@@ -1196,12 +1196,12 @@ const STEPS: Record<string, string> = {
   get_work_prefs: "Checking how you like to work",
   upload_file: "Sending a file",
   set_work_prefs: "Saving how you like to work",
-  workshop_projects: "Looking at your projects",
-  workshop_sessions: "Looking through the Workshop",
-  workshop_session: "Reading a Workshop session",
-  finals_link_session: "Linking the session",
-  workshop_new_session: "Starting a Workshop session",
-  workshop_update_session: "Updating a Workshop session",
+  workshop_projects: "Looking at your workspaces",
+  workshop_sessions: "Looking through the Workshop's projects",
+  workshop_session: "Reading a Workshop project",
+  finals_link_session: "Linking the project",
+  workshop_new_session: "Starting a Workshop project",
+  workshop_update_session: "Updating a Workshop project",
   workshop_new_piece: "Adding a piece",
   workshop_edit_piece: "Editing a piece",
   workshop_chat: "Asking the Workshop's writer",
@@ -1249,19 +1249,19 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
   });
   switch (name) {
     case "workshop_new_session":
-      return r.id ? { card: session(r.id, String(r.title ?? "Workshop session"), "done", "Session started") } : null;
+      return r.id ? { card: session(r.id, String(r.title ?? "Workshop project"), "done", "Project started") } : null;
     case "workshop_chat":
     case "workshop_wait": {
       const reply = (r.reply ?? {}) as Args;
       const status = reply.status === "thinking" ? "running" : reply.status === "error" ? "failed" : "done";
       const detail = status === "running" ? WRITING : status === "failed" ? String(reply.error ?? "The writer stopped") : "The writer is done";
-      return { card: session(a.session, String((r.piece as Args | undefined)?.title ?? "Workshop session"), status, detail, a.piece ?? (r.piece as Args | undefined)?.id) };
+      return { card: session(a.session, String((r.piece as Args | undefined)?.title ?? "Workshop project"), status, detail, a.piece ?? (r.piece as Args | undefined)?.id) };
     }
     case "workshop_session": {
       const chat = (r.chat as Args[] | undefined) ?? [];
       if (!chat.length) return null;
       const writing = chat.some((m) => m.status === "thinking");
-      return { card: session(a.session, String(r.title ?? "Workshop session"), writing ? "running" : "done", writing ? WRITING : "The writer is done"), only: true };
+      return { card: session(a.session, String(r.title ?? "Workshop project"), writing ? "running" : "done", writing ? WRITING : "The writer is done"), only: true };
     }
     case "editor_run": {
       // this editor's run answers "queued" only: the card opens the edit, where the job shows
@@ -1391,16 +1391,16 @@ sentence or two, and what the user could do next.`;
  * piece written without the user's posts and rewrites came out in nobody's voice (owner, 2026-11-13). What differs per
  * account and caller comes back in a tool's answer: pieceWords, and workshop_chat's writer or material.
  */
-const WRITER_GUIDE = `Writing in the Workshop: a piece's words are written from the user's own material: their project, their posts
+const WRITER_GUIDE = `Writing in the Workshop: a piece's words are written from the user's own material: their workspace, their posts
 and how they rewrote earlier drafts. Call workshop_chat on the piece with what the user asked, in their own words, and
 what you found in notes. Its answer is the piece, written by the Workshop's own writer, or that material for you to
 write from; then save the words with workshop_edit_piece. workshop_new_piece and workshop_edit_piece also take the
-user's own words as they are. A project's instructions: workshop_project_update with draft_from, as the project form's
+user's own words as they are. A workspace's instructions: workshop_project_update with draft_from, as the workspace form's
 Write it for me does.`;
 
 const TO_WRITER = "These words aren't the user's own, and this account's Workshop has a writer: it writes a piece's words. Call workshop_chat on the piece with what the user asked, in their own words, and what you found in notes.";
-const TO_MATERIAL = "Call workshop_chat on the piece first: it gives you the user's project, their posts closest to it and how they rewrote earlier drafts, to write these words from.";
-const MATERIAL_ANSWER = "Write the piece's words yourself from this material, then save them with workshop_edit_piece. their_posts and their_rewrites are how the user sounds (what they changed in the AI's drafts is what they want); project is facts about the brand.";
+const TO_MATERIAL = "Call workshop_chat on the piece first: it gives you the user's workspace, their posts closest to it and how they rewrote earlier drafts, to write these words from.";
+const MATERIAL_ANSWER = "Write the piece's words yourself from this material, then save them with workshop_edit_piece. their_posts and their_rewrites are how the user sounds (what they changed in the AI's drafts is what they want); project holds the workspace's facts about the brand.";
 
 /** Pieces whose material was given to a caller, by user and piece: when (an AI that writes, writes from it). */
 const given = new Map<string, number>();

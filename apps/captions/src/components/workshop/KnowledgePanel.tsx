@@ -146,7 +146,7 @@ export function KnowledgePanel() {
         <p className="text-[13px] text-zinc-200">Drop books, studies, old scripts, videos, references, brand docs</p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           PDF (scans too), Word, EPUB, videos, Markdown or text, or a link. Claude reads each one once and files it: what it is,
-          what it answers, where its parts are. Every project uses it unless you switch it off.
+          what it answers, where its parts are. Every workspace uses it unless you switch it off.
         </p>
         <div className="mt-3 flex justify-center gap-2">
           <button type="button" onClick={() => inputRef.current?.click()} disabled={!!adding} className={small}>
@@ -284,15 +284,15 @@ function SourceRow({
               value={s.projectId ?? ""}
               onChange={(e) => void onSave({ projectId: e.target.value || null })}
               className="rounded bg-transparent py-px text-[10px] text-zinc-500 outline-none hover:text-zinc-300"
-              aria-label="Which projects use it"
+              aria-label="Which workspaces use it"
             >
-              <option value="">Every project</option>
+              <option value="">Every workspace</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   Only {p.name}
                 </option>
               ))}
-              {s.projectId && !only && <option value={s.projectId}>Only a deleted project</option>}
+              {s.projectId && !only && <option value={s.projectId}>Only a deleted workspace</option>}
             </select>
             {s.projectId ? null : (
               projects.map((p) => {

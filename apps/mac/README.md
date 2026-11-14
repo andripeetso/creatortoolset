@@ -136,7 +136,7 @@ and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 
 4. The page opens the first-run setup (`SetupDialog` in `apps/captions`) inside the window, three screens
    (`SETUP_PATH` in `src/lib/setup.ts`): **Connect your AI** (a row per AI app on this Mac, whose one button is
    Install, Sign in or Connect, whichever is still missing: `AiPanel.tsx`), **What do you make?** (turns on the
-   tools that fit and makes the first project when the account has none) and **How do you work best?** (in the
+   tools that fit and makes the first workspace when the account has none) and **How do you work best?** (in the
    app, in your own AI, or both). After "In my own AI" or "Both", **Add Creator Toolset to your AI** follows. The
    AI screen looks again every 20 s and whenever the app comes to the front, so an AI app installed in Terminal
    shows up without a reload. Settings → Tools shows what each tool still needs, and after **Not now** Home keeps
@@ -345,7 +345,7 @@ colour image, not a template, with a light rim so it reads on light and dark men
 the dot says how many things wait for you. A click opens a panel (`Activity.swift`):
 
 - **Running**: Workshop replies being written, plug-in work and this Mac's AI requests, each with "Working" on the right;
-- **Waiting on you**: Workshop sessions with a new reply ("Ready") and plug-in items waiting; a row opens its page in
+- **Waiting on you**: Workshop projects with a new reply ("Ready") and plug-in items waiting; a row opens its page in
   the window. A part shows its label only when it has rows; with neither, one quiet line says so;
 - the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
 - menu rows (`PanelMenuRow`: a title, its key in grey on the right): **Open Creator Toolset**, **Record Screen**
@@ -527,7 +527,7 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 - Plug-ins: the record of the Switch On clicks (ids and fingerprints) in the Keychain (see "Plug-ins"); whether
   they are paused, in `UserDefaults`.
 - The runner's folder: `relay/` in the data folder for the server on this Mac (so it moves with the data), else
-  `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop session's
+  `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop project's
   folder while its Claude session is kept (14 days) and `blobs/` big files by their hash (30 days).
 - `~/Library/Application Support/Creator Toolset/assistant/<server>/`: the assistant's own folder (its working folder on this Mac).
 - `cards/<step>/` in the runner's folder: the clip of the card being drawn, removed when its step ends.

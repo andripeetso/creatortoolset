@@ -65,7 +65,7 @@ export function WhereItGoes({ pack }: { pack: Contents }) {
   const c = containsOf(pack);
   const rows = destinations(c);
   const notes = [
-    ...(c.instructions.some((s) => USED_SLOTS.includes(s)) ? ["Instructions go after the app's own and before your own rules and notes. Where they disagree, yours win. Switch them off, or keep them to some projects, under Installed."] : []),
+    ...(c.instructions.some((s) => USED_SLOTS.includes(s)) ? ["Instructions go after the app's own and before your own rules and notes. Where they disagree, yours win. Switch them off, or keep them to some workspaces, under Installed."] : []),
     "Removing it deletes the copies you haven't changed and keeps the ones you have.",
   ];
   return (

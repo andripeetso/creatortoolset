@@ -236,9 +236,9 @@ export default function WorkshopSessionPage() {
     const here = usageTally(messages);
     const elsewhere = session?.projectUsageElsewhere;
     if (!here.turns && !elsewhere?.turns) return "thinking, questions, research";
-    const session$ = `Session $${here.costUsd.toFixed(2)} (${tokensLabel(here.tokens)} tokens)`;
+    const session$ = `Project $${here.costUsd.toFixed(2)} (${tokensLabel(here.tokens)} tokens)`;
     if (!elsewhere?.turns) return `${session$} API-equivalent`;
-    return `${session$} · Project $${(here.costUsd + elsewhere.costUsd).toFixed(2)} (${tokensLabel(here.tokens + elsewhere.tokens)}, ${elsewhere.sessions + 1} sessions) API-equivalent`;
+    return `${session$} · Workspace $${(here.costUsd + elsewhere.costUsd).toFixed(2)} (${tokensLabel(here.tokens + elsewhere.tokens)}, ${elsewhere.sessions + 1} projects) API-equivalent`;
   }, [messages, session?.projectUsageElsewhere]);
   const mineSet = useMemo(
     () =>
@@ -1026,7 +1026,7 @@ export default function WorkshopSessionPage() {
         trail={
         // as wide as the title (an invisible copy sizes it), so the rest of the bar stays free to drag the Mac window
         <span className="inline-grid min-w-0">
-        <span aria-hidden className="invisible col-start-1 row-start-1 truncate whitespace-pre border border-transparent px-2 py-1 text-sm font-medium">{title || "Session title"}</span>
+        <span aria-hidden className="invisible col-start-1 row-start-1 truncate whitespace-pre border border-transparent px-2 py-1 text-sm font-medium">{title || "Project title"}</span>
         <input
           value={title}
           onChange={(e) => {
@@ -1037,7 +1037,7 @@ export default function WorkshopSessionPage() {
             const typed = titleDirty.current;
             titleDirty.current = false;
             if (session && typed && title.trim() !== session.title) {
-              patchSummary(session.id, { title: title.trim() || "Untitled session" });
+              patchSummary(session.id, { title: title.trim() || "Untitled project" });
               patchSession(session.id, { title }).then((m) => setSession((s) => (s ? { ...s, title: m.title } : s))).catch(() => {});
             }
           }}
@@ -1050,7 +1050,7 @@ export default function WorkshopSessionPage() {
               requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur());
             }
           }}
-          placeholder="Session title"
+          placeholder="Project title"
           className="col-start-1 row-start-1 w-full min-w-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-violet-500"
         />
         </span>
@@ -1132,14 +1132,14 @@ export default function WorkshopSessionPage() {
                 >
                 <div className="flex h-[min(100%,820px)] w-[min(100%,1120px)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-zinc-950 shadow-2xl animate-in zoom-in-95 fade-in-0">
                   <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-[12px] text-muted-foreground">
-                    <span className="font-medium text-foreground">{peekInSession ? "This session’s sources" : "From Browse"}</span>
+                    <span className="font-medium text-foreground">{peekInSession ? "This project’s sources" : "From Browse"}</span>
                     {peekAt >= 0 ? <span className="tabular-nums">{peekAt + 1} / {peekList.length}</span> : null}
                     <span className="text-[11px]">← → to step through · Esc to close</span>
                     {selectedIds.includes(peek.id) ? (
-                      <span className="ml-auto rounded-md border border-emerald-500/40 px-2 py-0.5 text-emerald-300">In this session</span>
+                      <span className="ml-auto rounded-md border border-emerald-500/40 px-2 py-0.5 text-emerald-300">In this project</span>
                     ) : (
                       <button type="button" disabled={posts.length >= MAX_SESSION_SOURCES} onClick={() => toggle(peek)} className="ml-auto rounded-md bg-violet-600 px-2.5 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-                        + Add to session
+                        + Add to project
                       </button>
                     )}
                     <button type="button" onClick={() => setPeek(null)} className="rounded-md p-1 hover:bg-muted hover:text-foreground" aria-label="Close the preview" title="Close (Esc)">
@@ -1356,7 +1356,7 @@ export default function WorkshopSessionPage() {
                       <div className="flex flex-col gap-4">
                         <section>
                           <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-                            In this session · {posts.length}/{MAX_SESSION_SOURCES}
+                            In this project · {posts.length}/{MAX_SESSION_SOURCES}
                           </p>
                           <SelectedSourcesStrip
                             posts={posts}
@@ -1392,11 +1392,11 @@ export default function WorkshopSessionPage() {
                         {pastedLinks.length ? (
                           <div className="flex flex-col gap-2 rounded-lg border border-violet-400/30 bg-violet-500/[0.06] p-3 text-[12px]">
                             <p className="text-foreground">
-                              {pastedLinks.length === 1 ? "A post or video" : `${pastedLinks.length} posts or videos`}: add {pastedLinks.length === 1 ? "it" : "them"} to your library and this session. The transcript and on-screen text start at once.
+                              {pastedLinks.length === 1 ? "A post or video" : `${pastedLinks.length} posts or videos`}: add {pastedLinks.length === 1 ? "it" : "them"} to your library and this project. The transcript and on-screen text start at once.
                             </p>
                             <div className="flex items-center gap-2">
                               <button type="button" disabled={adding?.busy || posts.length >= MAX_SESSION_SOURCES} onClick={() => void addFromLinks()} className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-1.5 font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-                                {adding?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Add to the library and this session
+                                {adding?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Add to the library and this project
                               </button>
                               <button type="button" onClick={() => setQuery("")} className="rounded-md px-2 py-1.5 text-muted-foreground hover:text-foreground">
                                 Clear

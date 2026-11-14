@@ -87,10 +87,10 @@ export function SourceSearch({
             type="button"
             aria-pressed={elsewhere.on}
             onClick={elsewhere.onToggle}
-            title={elsewhere.on ? "Showing posts other sessions already use. Click to hide them." : "Posts other sessions already use are hidden. Click to show them too."}
+            title={elsewhere.on ? "Showing posts other projects already use. Click to hide them." : "Posts other projects already use are hidden. Click to show them too."}
             className={`rounded-md border px-2 py-1 ${elsewhere.on ? "border-amber-500/50 bg-amber-500/15 text-amber-950 dark:text-amber-100" : "border-border text-muted-foreground hover:text-foreground"}`}
           >
-            In other sessions · {elsewhere.count}
+            In other projects · {elsewhere.count}
           </button>
         ) : null}
         {order ? (

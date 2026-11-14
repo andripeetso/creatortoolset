@@ -26,7 +26,7 @@ describe("ProjectForm variant setup", () => {
     expect(setupHtml).toContain("Where do you post?");
     expect(setupHtml).toContain("Instagram");
     expect(setupHtml).toContain("Only the handle is saved. Nothing is fetched.");
-    expect(setupHtml).toContain('placeholder="My brand"');
+    expect(setupHtml).toContain('placeholder="My workspace"');
     expect(setupHtml).toContain('id="setup-project"');
   });
 

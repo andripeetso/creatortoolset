@@ -56,7 +56,7 @@ export const finalsTools: ToolModule = {
     {
       name: "finals_pieces",
       description:
-        "The user's Finals pieces (finished work, each kept in versions), newest first: id, name, each version's id and name, which is the winner, the Workshop session it is linked to, its link in the app. limit defaults to 20; piece (an id) gives that one in full, with each version's post description and where it was posted.",
+        "The user's Finals pieces (finished work, each kept in versions), newest first: id, name, each version's id and name, which is the winner, the Workshop project it is linked to, its link in the app. limit defaults to 20; piece (an id) gives that one in full, with each version's post description and where it was posted.",
       inputSchema: { type: "object", properties: { limit: { type: "integer" }, piece: str } },
     },
     {

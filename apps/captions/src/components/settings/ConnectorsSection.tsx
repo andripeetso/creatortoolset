@@ -281,7 +281,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
       action={
         projects.length > 1 && (
           <SettingsSelect
-            label="Project"
+            label="Workspace"
             value={current ?? ""}
             onValueChange={(id) => void useWorkspace.getState().select(id).catch((e) => saveFailed(msg(e)))}
             options={projects.map((p) => ({ value: p.id, label: p.name }))}

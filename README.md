@@ -106,8 +106,8 @@ your own network once **Access from other devices** is on and you put the Mac's 
 This is where you write reel scripts, carousels, ads, YouTube scripts, newsletters, X threads and articles (the right
 half of the first picture). Research a topic across the posts you've saved, keep notes, and draft with AI in your own
 voice, using a storytelling framework you pick. Before you post, **Check accuracy** tests the claims against the web.
-Each project keeps its own instructions (who you write for, how you sound, what never to say), and the AI reads only
-the project you're in.
+Each workspace keeps its own instructions (who you write for, how you sound, what never to say), and the AI reads only
+the workspace you're in.
 
 ### And the rest
 
@@ -174,7 +174,7 @@ there's nothing else to install.
    secret is kept in your Keychain.
 3. **Follow the setup.** Five short screens: **Pick your look**; **Connect your AI** (the AI apps on this Mac for the
    ChatGPT, Claude, Google, Grok or Meta plan you already have, each with Install, Sign in or Connect); **What do you
-   make?** (turns on the tools that fit and makes your first project); **What do you want to do first?**; and **How do
+   make?** (turns on the tools that fit and makes your first workspace); **What do you want to do first?**; and **How do
    you work best?** (talk to your AI in the app, in your own AI, or both). For your own AI, a last screen adds Creator
    Toolset to Claude Code or Codex with one click. Sign-in, the Instagram login and other keys are optional.
 4. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Servers → This Mac… in
@@ -239,7 +239,7 @@ is the step-by-step guide.
 | [`apps/mac/`](apps/mac/README.md) | The Mac app (SwiftUI) |
 | [`apps/ios/`](apps/ios/README.md) | The iPhone app (SwiftUI) |
 | [`apps/relay/`](apps/relay/) | The Connect broker: your computers in one account, and the sign-in for AI apps |
-| [`apps/obsidian/`](apps/obsidian/README.md) | The Obsidian plugin: vault notes and Workshop sessions kept in step |
+| [`apps/obsidian/`](apps/obsidian/README.md) | The Obsidian plugin: vault notes and Workshop projects kept in step |
 | [`SELF_HOSTING.md`](SELF_HOSTING.md) | Running it on your own server |
 | [`docs/operations/self-host-relay.md`](docs/operations/self-host-relay.md) | Running the Connect broker on your own server |
 | [`PLUGINS.md`](PLUGINS.md) | Changing the app for yourself with a plug-in |

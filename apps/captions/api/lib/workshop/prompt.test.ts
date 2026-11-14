@@ -12,7 +12,7 @@ const base = {
 describe("buildGeneratePrompt", () => {
   it("orders the blocks and includes the kind's JSON shape", () => {
     const { system, user } = buildGeneratePrompt({ kind: "reel", ...base });
-    const order = ["Project: Tiny Acrobatics", "PAS — problem first", "1. Problem", "Session notes", "Brief:\nmake it about pools", "Deliverable: A reel script", "Source 1 of 1: @coach — reel — https://x/1", "How to use this source: use the hook", "# @coach"];
+    const order = ["Workspace: Tiny Acrobatics", "PAS — problem first", "1. Problem", "Project notes", "Brief:\nmake it about pools", "Deliverable: A reel script", "Source 1 of 1: @coach — reel — https://x/1", "How to use this source: use the hook", "# @coach"];
     let at = -1;
     for (const needle of order) {
       const next = user.indexOf(needle, at + 1);
@@ -33,7 +33,7 @@ describe("buildGeneratePrompt", () => {
   it("lists the rules before the notes", () => {
     const { user } = buildGeneratePrompt({ kind: "reel", ...base, rules: ["No and then.", "Payoff last."] });
     expect(user).toContain("Rules for this piece (they always apply):\n- No and then.\n- Payoff last.");
-    expect(user.indexOf("Rules for this piece")).toBeLessThan(user.indexOf("Session notes"));
+    expect(user.indexOf("Rules for this piece")).toBeLessThan(user.indexOf("Project notes"));
   });
 
   it("combines several frameworks with an instruction", () => {

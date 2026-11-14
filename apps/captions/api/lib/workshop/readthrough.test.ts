@@ -150,7 +150,7 @@ describe("the description against the author's own captions (a 1,969-character s
       captionExamples: { examples: [{ text: "A reel caption.", keptPer1k: 40 }], saved: ["Saved on Final B."], median: 300, p90: 900 },
     });
     expect(user).not.toContain("other piece's script");
-    expect(user).toContain("Captions the author has saved on the other pieces of this session:\n---\nSaved on Final B.");
+    expect(user).toContain("Captions the author has saved on the other pieces of this project:\n---\nSaved on Final B.");
     expect(user).toContain("The piece this description is for, in full");
     expect(user).toContain("older turn 29");
     expect(user).not.toContain("older turn 0");

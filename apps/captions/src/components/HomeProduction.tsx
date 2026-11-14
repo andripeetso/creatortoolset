@@ -136,7 +136,7 @@ export function ProductionStop({ shut }: { shut: boolean }) {
                   return (
                     <Link key={r.id} to={`/workshop/sessions/${r.id}`} className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent">
                       <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">{r.title || "Untitled session"}</span>
+                      <span className="min-w-0 flex-1 truncate">{r.title || "Untitled project"}</span>
                     </Link>
                   );
                 })}

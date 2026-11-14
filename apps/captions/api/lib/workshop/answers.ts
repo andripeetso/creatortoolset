@@ -92,7 +92,7 @@ const quote = (s: string) => s.split("\n").map((l) => `> ${l}`).join("\n");
 const commentLine = (c: Comment) => `@${c.user.username}: ${c.text}`;
 
 export function buildAnswerPrompt(input: AnswerPromptInput): { system: string; user: string } {
-  const system = `The author posted this and is answering the comments on it. You see the post as written, the author's notes, the conversation the post was made in (the research, the caveats and the reasons behind its lines), the comments, and the author's earlier replies to comments on their posts. Answer what the author asks. When they click Reply on a comment, write the reply they could post under it. You can't change the post or anything in the session. Plain text.`;
+  const system = `The author posted this and is answering the comments on it. You see the post as written, the author's notes, the conversation the post was made in (the research, the caveats and the reasons behind its lines), the comments, and the author's earlier replies to comments on their posts. Answer what the author asks. When they click Reply on a comment, write the reply they could post under it. You can't change the post or anything in the project. Plain text.`;
   const parts: string[] = [];
   parts.push(`# The post\n\n${input.pieces.join("\n\n---\n\n") || "(no text)"}`);
   if (input.notes.trim()) parts.push(`# The author's notes\n\n${input.notes.trim()}`);

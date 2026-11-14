@@ -88,7 +88,7 @@ export function SelectedSourcesStrip({
             <button type="button" onClick={() => onMove(p.id, -1)} disabled={i === 0} className="p-1 text-zinc-300 hover:text-zinc-50 disabled:opacity-30" title="Move left">
               <ChevronLeft className="h-3 w-3" />
             </button>
-            <button type="button" onClick={() => onRemove(p.id)} className="p-1 text-zinc-300 hover:text-red-300" title="Remove from session">
+            <button type="button" onClick={() => onRemove(p.id)} className="p-1 text-zinc-300 hover:text-red-300" title="Remove from project">
               <X className="h-3 w-3" />
             </button>
             <button type="button" onClick={() => onMove(p.id, 1)} disabled={i === posts.length - 1} className="p-1 text-zinc-300 hover:text-zinc-50 disabled:opacity-30" title="Move right">

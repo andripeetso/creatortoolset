@@ -305,14 +305,14 @@ extension AssistantFixtures {
 
         Two other things are still stuck in the same way, if you want them tidied:
         - **Hanging basics V2A and V2B** are still "In progress" in Review. They're also older than V4.
-        - [Sleep routine](/workshop/sessions/s1) looks like the Workshop session for this video, and it's marked shelved even though the video is out.
+        - [Sleep routine](/workshop/sessions/s1) looks like the Workshop project for this video, and it's marked shelved even though the video is out.
         """
     private static let rest = """
 
 
         ## What I would do next
 
-        1. Mark the session published and link the V1B reel to it.
+        1. Mark the project published and link the V1B reel to it.
         2. Leave V2A and V2B where they are.
 
         | Video | Posted | Plays |
@@ -340,7 +340,7 @@ extension AssistantFixtures {
         if more {
             messages += [
                 ["id": "m3", "role": "user", "text": "Leave them", "at": now - 20_000],
-                ["id": "m4", "role": "assistant", "text": "OK, I won't touch Hanging basics V2A and V2B or the Sleep routine session.", "at": now - 10_000, "status": "done"],
+                ["id": "m4", "role": "assistant", "text": "OK, I won't touch Hanging basics V2A and V2B or the Sleep routine project.", "at": now - 10_000, "status": "done"],
             ]
         }
         let view: [String: Any] = [

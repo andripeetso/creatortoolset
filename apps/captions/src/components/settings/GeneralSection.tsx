@@ -48,11 +48,11 @@ function Working() {
         />
         <Row
           id="status-colours"
-          title="Colour bar beside each session in the Workshop"
+          title="Colour bar beside each project in the Workshop"
           control={
             <Switch
               checked={bars}
-              aria-label="Colour bar beside each session in the Workshop"
+              aria-label="Colour bar beside each project in the Workshop"
               onCheckedChange={(on) => {
                 setBars(on);
                 persistStatusBars(on);
@@ -76,8 +76,8 @@ function AskFit() {
   return (
     <Row
       id="ask-fit"
-      title="Ask when dropped footage doesn't fit the open project"
-      control={<Switch checked={prefs.askFit !== false} aria-label="Ask when dropped footage doesn't fit the open project" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
+      title="Ask when dropped footage doesn't fit the open workspace"
+      control={<Switch checked={prefs.askFit !== false} aria-label="Ask when dropped footage doesn't fit the open workspace" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
     />
   );
 }

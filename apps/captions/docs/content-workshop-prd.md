@@ -1,5 +1,7 @@
 # Content Workshop — Product Requirements
 
+> Word note (2026-11-14): in the app a **workspace** is one brand (the API's `project`), and a **project** is one video, reel, carousel or ad (the API's `session`). The table below keeps the original names.
+
 Status: v1 built 2026-09-14
 Route: `/workshop` · API: `/api/workshop` · Source: the Instagram Analyzer library
 
@@ -19,10 +21,10 @@ carousel or an ad — using the storytelling frameworks. Download as markdown."
 
 | Object | What it is | Storage |
 | --- | --- | --- |
-| Project | Who you write for: name, audience, voice, CTA and links, notes | `workshop/projects/<id>.json` |
+| Workspace (the API's project) | Who you write for: name, audience, voice, CTA and links, notes | `workshop/projects/<id>.json` |
 | Framework | A storytelling structure: name, summary, ordered steps, when to use, example. Four starters are seeded once per user and are editable / deletable | `workshop/frameworks/<id>.json`, marker `workshop/users/<username>.json` |
 | Rule | A writing rule the AI follows on every turn (but/therefore, space the payoffs…); seeded per user, on by default, toggled per document | `workshop/rules/<id>.json` |
-| Session | One topic: title, last query, project, ordered sources (post ids + optional note), documents, chat | `workshop/sessions/<id>/meta.json` |
+| Project (the API's session) | One topic: title, last query, workspace, ordered sources (post ids + optional note), documents, chat | `workshop/sessions/<id>/meta.json` |
 | Document | One piece being written with the AI: kind (reel / carousel / ad / free / notes), title, stacked framework ids, rule ids, blocks (`{id, text, author: ai \| user}`), versions (snapshots, newest last, cap 30) | `workshop/sessions/<id>/docs/<docId>.json` |
 | Chat | The conversation with the AI for the session: messages with the document they targeted, pinned context, what was being read, and what each turn edited | `workshop/sessions/<id>/chat.json` |
 | Draft | Legacy one-shot generation, kept for API compatibility; ready drafts become documents on first open | `workshop/sessions/<id>/drafts/<draftId>.md` + `.json` |

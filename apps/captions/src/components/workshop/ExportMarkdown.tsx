@@ -150,7 +150,7 @@ export function ExportMarkdown({
     >
       <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogTitle>Workshop exports</DialogTitle>
-        <DialogDescription>Where a session's note goes when you export it: a download, or the Obsidian plugin writing it into your vault.</DialogDescription>
+        <DialogDescription>Where a project's note goes when you export it: a download, or the Obsidian plugin writing it into your vault.</DialogDescription>
         <ExportsEditor onSaved={() => void reload()} />
       </DialogContent>
     </Dialog>

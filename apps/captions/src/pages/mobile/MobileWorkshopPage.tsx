@@ -94,11 +94,11 @@ export default function MobileWorkshopPage() {
         </div>
 
         <DesktopHint>
-          Search, sources and drafts are on your desktop. On your phone you can read a session and ask the AI to change it.
+          Search, sources and drafts are on your desktop. On your phone you can read a project and ask the AI to change it.
         </DesktopHint>
 
         <section>
-          <p className="mb-2 text-xs text-zinc-500">Sessions</p>
+          <p className="mb-2 text-xs text-zinc-500">Projects</p>
           {list.data === null ? (
             <div aria-hidden className="flex flex-col gap-1.5">
               {[0, 1, 2].map((i) => (
@@ -107,7 +107,7 @@ export default function MobileWorkshopPage() {
             </div>
           ) : sessions.length === 0 ? (
             <p className="py-6 text-center text-sm text-zinc-600">
-              No sessions yet. Start one on your desktop, then read it here.
+              No projects yet. Start one on your desktop, then read it here.
             </p>
           ) : (
             <ul className="flex flex-col gap-1.5">
@@ -161,7 +161,7 @@ export function MobileWorkshopSessionPage() {
   const sessionLoad = useCachedLoad(on ? keys.session : null, () => getSession(sessionId), keys.live);
   const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId), keys.live);
   const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId), keys.live);
-  const title = sessionLoad.data?.title ?? "Session";
+  const title = sessionLoad.data?.title ?? "Project";
   const docs = docsLoad.data ?? [];
   const messages = chatLoad.data ?? [];
   const setMessages = chatLoad.set;
@@ -250,7 +250,7 @@ export function MobileWorkshopSessionPage() {
           </div>
         ) : docs.length === 0 && !shownError ? (
           <p className="py-10 text-center text-sm text-zinc-600">
-            Nothing written yet. Open this session on your desktop to draft.
+            Nothing written yet. Open this project on your desktop to draft.
           </p>
         ) : (
           <>

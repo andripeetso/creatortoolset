@@ -137,9 +137,9 @@ function onBudget(name: string, job: JobId, label: string): ProviderOpts | null 
   const left = budgetLeft(name);
   if (left === null) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
-  if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your workspace's owner or an admin for more" };
+  if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your team's owner or an admin for more" };
   const apiKey = process.env.ANTHROPIC_API_KEY || "";
-  if (!apiKey) return { only: [], off: "The workspace's API key isn't set up: ask the owner" };
+  if (!apiKey) return { only: [], off: "The team's API key isn't set up: ask the owner" };
   return { only: ["anthropic"], retries: 1, apiKey, bill: name, mac: { label } };
 }
 

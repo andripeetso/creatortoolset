@@ -20,7 +20,7 @@ let webTools = "WebSearch,WebFetch"
 /// This Mac's own tools for the assistant (RelayRequest.asks): Claude Code's permission rules decide what asks first.
 let macTools = "Read,Glob,Grep,Bash,Edit,Write"
 let folderNote = "The files this request needs are in the current folder: read them there."
-let piecesNote = "\n- sessions/INDEX.md — every Workshop session that became a post, with the post and its numbers (the app links them)."
+let piecesNote = "\n- sessions/INDEX.md — every Workshop project that became a post, with the post and its numbers (the app links them)."
 /// The drivers this Mac runs (Claude, Gemini, Codex, Grok and Muse Code natively; the ACP kinds over stdio). The rest get the message below.
 let runnableDrivers = ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi", "acp"]
 let onlyRunnableMessage = "This Mac runs Claude, Gemini, Codex, Grok, Muse Code, Cursor, OpenCode, Antigravity, Pi and local ACP commands only for now"

@@ -72,7 +72,7 @@ export function ProjectList() {
         </p>
         {!making && (
           <button type="button" disabled={busy} onClick={() => setEditing("new")} className={secondary}>
-            <Plus className="h-3.5 w-3.5" /> New project
+            <Plus className="h-3.5 w-3.5" /> New workspace
           </button>
         )}
       </div>
@@ -83,7 +83,7 @@ export function ProjectList() {
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (
           <p className="py-10 text-center text-sm text-zinc-600">
-            No projects yet. Analyzer and Workshop both use the current one.
+            No workspaces yet. Analyzer and Workshop both use the current one.
           </p>
         ) : null}
         {projects.map((p) =>

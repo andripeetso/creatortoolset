@@ -50,7 +50,7 @@ export const designTools: ToolModule = {
     },
     {
       name: "design_make",
-      description: "Start a design: blank frames (format, name, pages), a Workshop carousel piece's slides as frames (session, and doc: the piece's id; a piece that has a design gets that one back), or a cover or thumbnail from a library video's frame (version: its version id, t in seconds, title). A frame for a design that exists: design_update.",
+      description: "Start a design: blank frames (format, name, pages), a Workshop carousel piece's slides as frames (session: the Workshop project's id, and doc: the piece's id; a piece that has a design gets that one back), or a cover or thumbnail from a library video's frame (version: its version id, t in seconds, title). A frame for a design that exists: design_update.",
       inputSchema: { type: "object", properties: { format: { type: "string", enum: DESIGN_FORMATS.map((f) => f.id) }, name: str, pages: { type: "integer" }, session: str, doc: str, version: str, t: { type: "number" }, title: str } },
     },
     {
@@ -91,7 +91,7 @@ export const designTools: ToolModule = {
     },
     design_make: async (a, ctx) => {
       const piece = !!a.session && !!a.doc;
-      if (!piece && !a.version && !a.format) throw new ToolError("Say what to design: blank frames (format, and a name), a carousel piece (session and doc), or a library video's frame (version, and t in seconds).");
+      if (!piece && !a.version && !a.format) throw new ToolError("Say what to design: blank frames (format, and a name), a carousel piece (its project as session, and doc), or a library video's frame (version, and t in seconds).");
       if (piece) {
         // the piece's own design, with whatever the person has done on it by hand: never a second one
         const had = (await ctx.json<DesignListed[]>(`/api/designs?session=${enc(a.session)}&doc=${enc(a.doc)}`))[0];

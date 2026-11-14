@@ -61,7 +61,7 @@ function managed(c: Context<{ Variables: AuthVars }>) {
   const u = c.get("user");
   const w = workspaceOf(u.username);
   const me = w && memberIn(w, u.username);
-  if (!w || !me) return { error: c.json({ error: "No workspace" }, 404) };
+  if (!w || !me) return { error: c.json({ error: "No team" }, 404) };
   if (!canManage(me.role)) return { error: c.json({ error: "Only the owner manages the team" }, 403) };
   return { w, me, u };
 }

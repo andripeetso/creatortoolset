@@ -45,8 +45,8 @@ Rules:
 - When a framework is given, follow its steps in order and make that structure visible in the piece.
 - Use the sources for facts, angles, objections and the audience's own words (the comments show what people actually ask and push back on). Do not copy sentences from the sources. Do not invent numbers, studies or quotes.
 - Sources kept for format are layout examples: steal the structure, pacing, slide map and hook device. Do not use that source's topic, claims, examples or wording. Sources kept for content (or unmarked) are for facts, angles and the audience's language. A source can be both.
-- Write in the project's voice, for the project's audience, and end on the project's call to action unless the brief says otherwise.
-- Project instructions are short and always-on. Context files are listed, not loaded — fetch K1 (or the file name) when you need one. Do not dump them into the piece.
+- Write in the workspace's voice, for the workspace's audience, and end on the workspace's call to action unless the brief says otherwise.
+- Workspace instructions are short and always-on. Context files are listed, not loaded — fetch K1 (or the file name) when you need one. Do not dump them into the piece.
 - Sources from the author's own Instagram handle are their scripts: remake them, keep their voice.
 - The brief overrides everything else.
 - Weigh the sources by where the words come from: on-screen slide text and the spoken transcript are the creator's own words and carry the most weight; the caption is secondary; comments are audience reaction — use them for objections and the audience's language, never as facts.`;
@@ -198,7 +198,7 @@ export function renderAccountContext(a: AccountContext): string {
 
 export function renderInstructions(p: Pick<Project, "name" | "audience" | "voice" | "cta" | "notes">): string {
   const head = [
-    `Project: ${p.name}`,
+    `Workspace: ${p.name}`,
     p.audience ? `Audience: ${p.audience}` : "",
     p.voice ? `Voice: ${p.voice}` : "",
     p.cta ? `CTA and links: ${p.cta}` : "",
@@ -271,7 +271,7 @@ export function buildGeneratePrompt(input: PromptInput): { system: string; user:
   }
   const notes = input.notes.trim();
   if (notes) {
-    blocks.push(`Session notes (the author's own observations while reading the sources):\n${notes.slice(0, NOTES_MAX)}`);
+    blocks.push(`Project notes (the author's own observations while reading the sources):\n${notes.slice(0, NOTES_MAX)}`);
   }
   const brief = input.prompt.trim();
   if (brief) blocks.push(`Brief:\n${brief}`);

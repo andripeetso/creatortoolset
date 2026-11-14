@@ -108,9 +108,9 @@ describe("buildTurnPrompt", () => {
       ],
       message: "make it punchier",
     });
-    expect(system).toContain("Project: Sample");
+    expect(system).toContain("Workspace: Sample");
     expect(system).toContain("Rules (they always apply):\n- No and then.");
-    expect(user).not.toContain("Project: Sample");
+    expect(user).not.toContain("Workspace: Sample");
     const order = [
       "Frameworks on this document (1)",
       "Pixar Pitch (shape",
@@ -119,7 +119,7 @@ describe("buildTurnPrompt", () => {
       "edits since your last turn",
       "Pinned by the author",
       "slide 2 — on-screen slide text",
-      "Sources in this session (2)",
+      "Sources in this project (2)",
       "S1 · @coach · carousel · https://x/1 — open on the author's screen at slide 2",
       "SAMPLE HOOK ONE",
       "S2 · @other",
@@ -156,7 +156,7 @@ describe("buildTurnPrompt", () => {
     expect(system).not.toContain("learned");
     expect(user).toContain("every step of each must be present");
     expect(user).not.toContain("Write like you talk");
-    expect(buildTurnPrompt(base).user).toContain("Sources in this session: none");
+    expect(buildTurnPrompt(base).user).toContain("Sources in this project: none");
   });
 
   it("puts project instructions in the system prompt and lists context without loading it", () => {
@@ -177,7 +177,7 @@ describe("buildTurnPrompt", () => {
     expect(system).toContain("The app is tinyacrobatics.com/app");
     expect(user).not.toContain("Instructions:\nnever medical");
     expect(user).not.toContain("Context loaded this turn");
-    expect(system).toContain("Project instructions are always-on");
+    expect(system).toContain("Workspace instructions are always-on");
   });
 
   it("keeps the newest messages when the conversation outgrows its budget, and never cuts the author's words", () => {
@@ -196,7 +196,7 @@ describe("buildTurnPrompt", () => {
     const history = Array.from({ length: 45 }, (_, i) => ({ id: `m${i}`, role: (i % 2 ? "assistant" : "user") as "user" | "assistant", text: `line ${i}`, at: i, docId: "d1" }));
     const message = "z".repeat(45_000);
     const { user } = buildTurnPrompt({ ...base, history, message });
-    expect(user).toContain("Conversation so far (5 earlier messages of this session are not shown here):");
+    expect(user).toContain("Conversation so far (5 earlier messages of this project are not shown here):");
     expect(user).not.toContain("sessions/");
     expect(user).toContain(`Author now: ${message}`);
   });
@@ -240,7 +240,7 @@ describe("buildTurnPrompt", () => {
     expect(user).not.toContain("Conversation so far");
     expect(user).not.toContain("OLD ASK");
     expect(user).not.toContain("SECRET SLIDE TEXT");
-    expect(user).not.toContain("Sources in this session");
+    expect(user).not.toContain("Sources in this project");
     expect(user).toContain("PINNED LINE");
     expect(user).toContain("Document \"Sample\"");
     expect(user).toContain("CHANGED since your last turn:\n- the author edited: b1 (listed above)\n- new source S2 (@other), in sources/S2-other.md");
@@ -261,7 +261,7 @@ describe("buildTurnPrompt", () => {
   it("on the Mac too, a long conversation keeps its last 40 messages and says where the rest is", () => {
     const long: ChatMessage[] = Array.from({ length: 45 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? "assistant" : "user", text: `MSG${i}.`, at: i, docId: "d1" }) as ChatMessage);
     const { user } = buildTurnPrompt({ ...base, history: long, folder: { contextFiles: [] } });
-    expect(user).toContain("(5 earlier messages of this session are not shown here; the whole conversation is in this session's file in sessions/)");
+    expect(user).toContain("(5 earlier messages of this project are not shown here; the whole conversation is in this project's file in sessions/)");
     expect(user).not.toContain("You: MSG3.");
     expect(user).toContain("You: MSG5.");
     expect(user).toContain("- MSG0."); // every note of theirs still listed in full

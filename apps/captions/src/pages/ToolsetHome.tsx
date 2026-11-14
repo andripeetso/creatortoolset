@@ -381,7 +381,7 @@ function WorkshopBadge() {
 
 /** What a badge counts, said on hover. */
 const BADGE_MEANS: Partial<Record<Tool, (n: number) => string>> = {
-  workshop: (n) => `${plural(n, "session")} with replies you haven't read`,
+  workshop: (n) => `${plural(n, "project")} with replies you haven't read`,
   editor: (n) => `${plural(n, "edit")} whose last step failed or needs a key`,
   review: (n) => `${plural(n, "video")} to review`,
 };

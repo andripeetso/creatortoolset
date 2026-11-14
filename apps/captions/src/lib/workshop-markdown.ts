@@ -18,7 +18,7 @@ const KIND_SUFFIX: Record<ExportDocKind, string> = {
   notes: "Notes",
 };
 
-const SKIP_STEM = new Set(["", "untitled", "untitled session", "workshop session"]);
+const SKIP_STEM = new Set(["", "untitled", "untitled session", "untitled project", "workshop session"]);
 const STOCK_STEM = /^(script|reel|reel script|carousel|ad copy|draft|free-form|free form|anything else|newsletter|thread|article|notes)(\s+\d+)?$/i;
 
 /** Letters and digits only, case kept — TinyStory stays TinyStory. */

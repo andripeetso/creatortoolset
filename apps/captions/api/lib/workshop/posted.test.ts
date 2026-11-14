@@ -78,7 +78,7 @@ describe("sessionsIndex", () => {
       ],
       [post("BEANS1", 10 * DAY, BEANS), post("TOOLS1", 11 * DAY, TOOLS)],
     )!;
-    expect(out).toContain("# Workshop sessions and the posts they became (2)");
+    expect(out).toContain("# Workshop projects and the posts they became (2)");
     expect(out).toContain("| 1970-01-06-tinyacrobatics-aaaaaa.md | TinyAcrobatics | my-posts/1970-01-11-BEANS1.md | 20,000 | 20.0 |");
     expect(out).toContain("| 1970-01-06-tinyacrobatics-aaaaaa.md | TinyAcrobatics | my-posts/1970-01-12-TOOLS1.md | 20,000 | 20.0 |");
   });

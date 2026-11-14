@@ -359,7 +359,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
               <ContextMenuItem onSelect={() => copy(c.id, "Chat ID")}>Chat ID</ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
-          <ContextMenuItem onSelect={() => navigate(project ? `/projects?edit=${encodeURIComponent(project)}` : "/projects")}>Project settings</ContextMenuItem>
+          <ContextMenuItem onSelect={() => navigate(project ? `/projects?edit=${encodeURIComponent(project)}` : "/projects")}>Workspace settings</ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onSelect={() => remove(c)}>
             <Trash2 />

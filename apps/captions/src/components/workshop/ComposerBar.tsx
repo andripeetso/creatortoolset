@@ -70,7 +70,7 @@ export function DocView({
           onClick={onNotMine}
           aria-pressed={!!notMine}
           className={`${barBtn} ${notMine ? "!text-amber-300" : ""}`}
-          title={notMine ? "Not mine is on: every word on the AI's slides that you never said in this session is marked. Click to turn it off." : "Not mine: mark every word on the AI's slides that you never said in this session"}
+          title={notMine ? "Not mine is on: every word on the AI's slides that you never said in this project is marked. Click to turn it off." : "Not mine: mark every word on the AI's slides that you never said in this project"}
           aria-label="Not mine"
         >
           <Highlighter className="h-3 w-3" />

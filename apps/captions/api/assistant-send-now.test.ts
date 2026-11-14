@@ -661,7 +661,7 @@ describe("which project a message is for", () => {
     const p = await person("ann");
     await p.send({ text: "Hi" });
     const none = await p.claim();
-    expect(none.user).not.toContain("current project");
+    expect(none.user).not.toContain("current workspace");
     await p.answer(none.id, "Hello.");
     await settled(p);
     const made = async (name: string) => ((await (await app.request("/api/workshop/projects", { method: "POST", ...json({ name }, { cookie: p.cookie }) })).json()) as { id: string }).id;
@@ -670,13 +670,13 @@ describe("which project a message is for", () => {
     await p.send({ text: "What next?" });
     const shop = await p.claim();
     // a new project is the one picked; its name is told on one line
-    expect(shop.user).toContain(`The user's current project is "Tiny Acrobatics shop"`);
+    expect(shop.user).toContain(`The user's current workspace is "Tiny Acrobatics shop"`);
     await p.answer(shop.id, "A reel.");
     await settled(p);
     await app.request("/api/workshop/workspace", { method: "PATCH", ...json({ currentProjectId: first }, { cookie: p.cookie }) });
     await p.send({ text: "And here?" });
     const back = await p.claim();
-    expect(back.user).toContain(`The user's current project is "Tiny Acrobatics" (id ${first})`);
+    expect(back.user).toContain(`The user's current workspace is "Tiny Acrobatics" (id ${first})`);
     await p.answer(back.id, "A carousel.");
   });
 });
@@ -689,7 +689,7 @@ describe("does the dropped footage belong here?", () => {
     const plain = await p.claim();
     expect(plain.user).not.toContain("The project open in the app");
     // every message says which project is open, with its id for the tools
-    expect(plain.user).toMatch(/The user's current project is "Paper grabbers" \(id [0-9a-f-]{36}\)\./);
+    expect(plain.user).toMatch(/The user's current workspace is "Paper grabbers" \(id [0-9a-f-]{36}\)\./);
     await p.answer(plain.id, "Hello.");
     await settled(p);
     const clip = await p.upload("app-walkthrough.mp4");
@@ -698,9 +698,9 @@ describe("does the dropped footage belong here?", () => {
     const asks = await p.claim();
     expect(asks.user).toContain(`The project open in the app is "Paper grabbers"`);
     // named once: the question says which project it is
-    expect(asks.user).not.toContain("The user's current project is");
+    expect(asks.user).not.toContain("The user's current workspace is");
     expect(asks.user).toContain(`"Keep it in Paper grabbers"`);
-    await tool(asks.mcp.token, "offer_choices", { choices: ["New project", "Keep it in Paper grabbers", "Don't ask again"] });
+    await tool(asks.mcp.token, "offer_choices", { choices: ["New workspace", "Keep it in Paper grabbers", "Don't ask again"] });
     await p.answer(asks.id, "This looks like an app walkthrough, not Paper grabbers.");
     await settled(p);
     await p.send({ text: "Don't ask again" });
@@ -712,7 +712,7 @@ describe("does the dropped footage belong here?", () => {
     await p.send({ text: "And this one", files: [clip.id] });
     const quiet = await p.claim();
     expect(quiet.user).not.toContain("The project open in the app");
-    expect(quiet.user).toContain(`The user's current project is "Paper grabbers"`);
+    expect(quiet.user).toContain(`The user's current workspace is "Paper grabbers"`);
     await p.answer(quiet.id, "Ok.");
     await settled(p);
     // the same words with no such offer above them change nothing

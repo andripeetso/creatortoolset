@@ -184,10 +184,10 @@ describe("workshop_sources", () => {
     expect(missing.error).toBe("https://www.instagram.com/p/TINYNEVER99/ is not in the Analyzer's library: instagram_save saves it there, then add it here.");
     // someone else's post, an id nobody has, something that is no link
     for (const ref of [notHers, link("TINYOTHER44"), randomUUID(), "tumbles"]) expect((await tool(key, "workshop_sources", { session: id, add: [ref] })).error).toContain("instagram_save");
-    expect((await tool(key, "workshop_sources", { session: id, remove: [rolls] })).error).toBe(`${rolls} is not one of this session's sources.`);
+    expect((await tool(key, "workshop_sources", { session: id, remove: [rolls] })).error).toBe(`${rolls} is not one of this project's sources.`);
     expect((await tool(key, "workshop_sources", { session: id })).value).toEqual({ sources: [] });
     expect((await tool(key, "workshop_sources", { session: randomUUID() })).error).toBe("Not found, or not this account's.");
-    expect((await tool(key, "workshop_sources", {})).error).toBe("Give the session's id.");
+    expect((await tool(key, "workshop_sources", {})).error).toBe("Give the project's id.");
   });
 });
 
@@ -207,8 +207,8 @@ describe("workshop_set_project", () => {
     // not hers, not a project, or none named: refused, and the current one stays
     const nicos = await project(await cookieOf("nico"), "Nico's brand");
     expect((await tool(key, "workshop_set_project", { project: nicos })).error).toBe("Not found, or not this account's.");
-    expect((await tool(key, "workshop_set_project", { project: "the second one" })).error).toBe("Unknown project");
-    expect((await tool(key, "workshop_set_project", {})).error).toBe("Give the project's id: workshop_projects lists them.");
+    expect((await tool(key, "workshop_set_project", { project: "the second one" })).error).toBe("Unknown workspace");
+    expect((await tool(key, "workshop_set_project", {})).error).toBe("Give the workspace's id: workshop_projects lists them.");
     expect(await current()).toBe(tiny);
   });
 });
@@ -241,7 +241,7 @@ describe("workshop_project_update", () => {
     const out = await tool(key, "workshop_project_update", { project: id, draft_from: "new dog owners, our classes, our site" });
     // facts from what was given, with nothing about how to write
     expect(String(drafted.mock.calls[0]![0])).toContain("Don't describe how they write");
-    expect(String(drafted.mock.calls[0]![1])).toContain("Project: Puppy school");
+    expect(String(drafted.mock.calls[0]![1])).toContain("Workspace: Puppy school");
     expect(String(drafted.mock.calls[0]![1])).toContain("new dog owners, our classes, our site");
     expect(out.value!.project).toMatchObject({ id, name: "Puppy school", instructions: "For new dog owners. Classes at puppyschool.example." });
   });

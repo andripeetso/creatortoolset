@@ -29,7 +29,7 @@ counts what waits there). The app follows the phone's light or dark look:
 
 On a server with a plug-in for the AI Editor, each AI Editor edit is a card on Edits and opens its own thread, and the
 phone registers for push (then it posts no notifications of its own, so nothing is told twice). Share → Creator
-Toolset links your own post to its Workshop session or saves a link to the Analyzer, using the sign-in the app shares
+Toolset links your own post to its Workshop project or saves a link to the Analyzer, using the sign-in the app shares
 through its keychain group.
 
 ## Connecting a computer
