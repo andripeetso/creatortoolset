@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { ProjectForm, setupProjectFields } from "./ProjectForm";
 
@@ -45,17 +46,26 @@ describe("ProjectForm variant setup", () => {
     expect(fullHtml).toContain("Instructions");
     expect(fullHtml).toContain("Write it for me");
     expect(fullHtml).not.toContain("Where do you post?");
-    expect(fullHtml).toContain('placeholder="Tiny Acrobatics"');
+    // no sample name in the box: the label says what goes there
+    expect(fullHtml).not.toContain("Tiny Acrobatics");
   });
 
-  it("a new project shows no knowledge switches", () => {
+  it("no knowledge, framework or rule switches, for a new project or one already made", () => {
     expect(fullHtml).not.toContain("Knowledge, frameworks and rules");
+    const made = { id: "p1", owner: "o", name: "Mine", audience: "", voice: "", cta: "", notes: "", off: ["k1"], createdAt: 0, updatedAt: 0 };
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProjectForm initial={made} busy={false} onSave={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(html).toContain("Instructions");
+    expect(html).not.toContain("Knowledge, frameworks and rules");
   });
 
   it("the name and the button belong to the form, so Enter submits it and never another row's button", () => {
     const id = /<form id="([^"]+)"/.exec(fullHtml)?.[1];
     expect(id).toBeTruthy();
-    expect(fullHtml).toMatch(new RegExp(`<input form="${id}"[^>]*placeholder="Tiny Acrobatics"`));
+    expect(fullHtml).toMatch(new RegExp(`<input form="${id}"[^>]*required`));
     expect(fullHtml).toMatch(new RegExp(`type="submit" form="${id}"`));
   });
 });
