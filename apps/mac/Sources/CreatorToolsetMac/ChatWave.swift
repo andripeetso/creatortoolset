@@ -11,7 +11,12 @@
 import AppKit
 import Metal
 import MetalKit
+import OSLog
 import WebKit
+
+/// Each switch's timeline (ms since the press; numbers only), for `log show --predicate 'category == "chat-wave"'`:
+/// whether a hold was seen, when the wave came up, when the button was let go and when it popped.
+private let waveLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CreatorToolsetMac", category: "chat-wave")
 
 /// The page's "chatWave" messages for one web view (AppWebView registers it, for the open server's own page only):
 /// - `{start: {x, y, dark, tint, hold}}`: a picture of the screen as it is goes over the page, the button at (x, y) in
@@ -49,6 +54,7 @@ final class ChatWaveHost {
                 view.takeSnapshot(with: nil) { [weak wave] image, _ in
                     guard let wave, wave.superview != nil else { return }
                     if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+                    waveLog.notice("new screen's picture at \(Int(wave.elapsed)) ms")
                 }
             }
         case "stop":
@@ -60,6 +66,8 @@ final class ChatWaveHost {
     }
 
     private func begin(_ start: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
+        // the press, as near as the app can tell: the page asks as the mouse goes down
+        let pressed = CACurrentMediaTime()
         wave?.finish()
         guard let view, let renderer = WaveRenderer.shared, let x = start["x"] as? Double, let y = start["y"] as? Double else { return reply(false, nil) }
         let rgb = ((start["tint"] as? String) ?? "").split(separator: " ").compactMap { Float($0) }
@@ -68,13 +76,18 @@ final class ChatWaveHost {
         // (a page from before holding sends none: a click)
         let hold = start["hold"] as? Bool ?? false
         oldPage = start["hold"] == nil
+        waveLog.notice("start: hold \(hold), mouse down \(ChatWaveView.mouseDown()), page from before holding \(self.oldPage)")
         // the screen as it is on show now, not after the next update: the page changes only once this is answered
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = false
         view.takeSnapshot(with: config) { [weak self] image, _ in
             guard let self, let view = self.view, let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold)
-            else { return reply(false, nil) }
+                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed)
+            else {
+                waveLog.notice("no wave: no picture of the screen")
+                return reply(false, nil)
+            }
+            waveLog.notice("up at \(Int(wave.elapsed)) ms")
             self.wave = wave
             wave.onDone = { [weak self] in
                 self?.wave = nil
@@ -380,7 +393,11 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     private let origin: CGPoint
     private let tint: SIMD3<Float>
     private let dark: Bool
-    private var started = CACurrentMediaTime()
+    /// When the button was pressed (moved later by however long the first picture took past `holdFrom`, so the pull
+    /// starts from nothing on the first frame drawn), and that first frame (ms).
+    private var started: CFTimeInterval
+    private var shownAt: Double?
+    private var popped = false
     /// When the picture of the new screen came (the front waits for it, at most `wait` ms after it would have gone).
     private var newAt: Double?
     private let wait: Double = 1000
@@ -392,7 +409,9 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     static var mouseDown: () -> Bool = { NSEvent.pressedMouseButtons & 1 != 0 }
     var onDone: (() -> Void)?
 
-    init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool) throws {
+    init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool,
+         pressed: CFTimeInterval = CACurrentMediaTime()) throws {
+        started = pressed
         self.renderer = renderer
         self.origin = origin
         self.tint = tint
@@ -427,6 +446,7 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
 
     func finish() {
         guard superview != nil else { return }
+        waveLog.notice("done at \(Int(self.elapsed)) ms")
         isPaused = true
         removeFromSuperview()
         renderer.was = nil
@@ -438,8 +458,17 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        let ms = (CACurrentMediaTime() - started) * 1000
-        if hold && goAt == nil && !Self.mouseDown() { goAt = ms }
+        var ms = (CACurrentMediaTime() - started) * 1000
+        if shownAt == nil {
+            started += max(0, ms - WaveClock.holdFrom) / 1000
+            ms = (CACurrentMediaTime() - started) * 1000
+            shownAt = ms
+            waveLog.notice("first frame at \(Int(ms)) ms")
+        }
+        if hold && goAt == nil && !Self.mouseDown() {
+            goAt = ms
+            waveLog.notice("let go at \(Int(ms)) ms")
+        }
         // the button let go (a click: at once), or held so long it pops by itself
         let held = hold ? min(goAt ?? WaveClock.longest, WaveClock.longest) : 0
         if newAt == nil && ms > held + wait { return finish() }
@@ -448,8 +477,14 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
         let scale = window?.backingScaleFactor ?? 2
         let size = drawableSize
         let o = CGPoint(x: origin.x * scale, y: origin.y * scale)
-        let m = WaveClock.at(ms, held: held, release: newAt.map { max(held, $0) }, size: size, origin: o, scale: scale)
+        var m = WaveClock.at(ms, held: held, release: newAt.map { max(held, $0) }, size: size, origin: o, scale: scale)
         if m.done { return finish() }
+        // the light at the button comes up over the first frames drawn, however late the first picture was
+        m.bloom *= Float(1 - pow(1 - min((ms - (shownAt ?? 0)) / 80, 1), 3))
+        if !popped && m.front > -1e5 {
+            popped = true
+            waveLog.notice("pops at \(Int(ms)) ms, held \(Int(held)) ms, drawn in \(m.pull)")
+        }
         guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable, let buffer = renderer.queue.makeCommandBuffer() else { return }
         renderer.encode(m, size: size, origin: o, tint: tint, dark: dark, into: pass, on: buffer)
         buffer.present(drawable)

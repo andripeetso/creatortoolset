@@ -222,11 +222,13 @@ export function useChatModeKey(enabled: boolean): void {
  * Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that is shown with the wave. Pressed
  * again while the wave runs, it switches back once that wave is over, with a wave of its own: a wave is never cut off
  * halfway (owner, 11-14: "clicking it fast interrupts the animation ... that shouldn't happen"). Pressed twice
- * meanwhile, it stays as the running wave leaves it. `held`: the mouse went down on the button (holdChatMode).
+ * meanwhile, it stays as the running wave leaves it. `held`: the mouse went down on the button (holdChatMode); a press
+ * that waited for the running wave still says so, and the app sees whether the mouse is still down by then (owner, 11-14:
+ * "sometimes the hold doesn't trigger, it switches even though I hold").
  */
 export function toggleChatMode(from?: HTMLElement | null, held = false): void {
   if (washing) {
-    again = again ? null : () => toggleChatMode(from);
+    again = again ? null : () => toggleChatMode(from, held);
     return;
   }
   washTo({ on: !useChatMode.getState().on }, from, { wash: true, held });

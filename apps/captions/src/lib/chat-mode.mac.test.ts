@@ -76,6 +76,21 @@ describe("chat mode switched in the Mac app", () => {
     expect(mac.asked).not.toContain("stop");
   });
 
+  it("held while the wave runs: once it is over the switch back still says it is held (the app sees whether it still is)", async () => {
+    const mac = slowMacApp();
+    toggleChatMode();
+    await settled();
+    holdChatMode(null);
+    clickChatMode(null, { detail: 1 });
+    mac.end();
+    await settled();
+    expect(useChatMode.getState().on).toBe(false);
+    expect(mac.asked).toEqual(["start", "drawn", "start", "drawn"]);
+    expect((mac.postMessage.mock.calls[2][0] as { start: { hold: boolean } }).start.hold).toBe(true);
+    mac.end();
+    await settled();
+  });
+
   it("pressed twice while the wave runs: it stays as that wave leaves it", async () => {
     const mac = slowMacApp();
     toggleChatMode();
