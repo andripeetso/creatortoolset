@@ -1271,6 +1271,10 @@ uploadRelayApp.post("/:uid/complete", async (c) => {
   });
 });
 
+/** The library a Review video's copy is in (toLibrary: its workspace's), where its Finals piece goes; else the account's first. */
+const ownLibrary = (assetId: string, owner: string): string =>
+  (libraryDb().prepare("SELECT library_id FROM assets WHERE id = ?").get(assetId) as { library_id: string } | undefined)?.library_id ?? libraryFor(owner);
+
 /** Send a version to Finals (Review's own button): the library's version is linked, never copied. Owners and admins;
  *  a ready version of 1080p or more. The piece is named after the Review project, its item after the version. */
 reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
@@ -1285,7 +1289,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
   const out = await addToFinals(
     {
       owner: v.meta.owner,
-      libraryId: libraryFor(v.meta.owner),
+      libraryId: ownLibrary(v.meta.id, v.meta.owner),
       label: project?.name || v.meta.name,
       item: ver.name || null,
       kind: "review",
@@ -1319,7 +1323,7 @@ reviewApp.post("/assets/:id/v/:n/content", async (c) => {
   let pieceId: string | undefined;
   for (const x of [ver, master]) {
     const out = await addToFinals(
-      { owner: v.meta.owner, libraryId: libraryFor(v.meta.owner), label: project?.name || v.meta.name, item: x.name || null, kind: "review", width: x.width!, height: x.height! },
+      { owner: v.meta.owner, libraryId: ownLibrary(v.meta.id, v.meta.owner), label: project?.name || v.meta.name, item: x.name || null, kind: "review", width: x.width!, height: x.height! },
       { versionId: x.versionId! },
     );
     if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);

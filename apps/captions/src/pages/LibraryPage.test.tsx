@@ -32,6 +32,8 @@ const server = vi.hoisted(() => ({
   items: [] as unknown[],
   trash: [] as unknown[],
   folders: [] as unknown[],
+  /** the plug-in sources this library offers (its Source picker) */
+  sources: [] as { id: string; label: string }[],
   watch: { allowed: true, folders: [] as unknown[], missing: 0 } as unknown,
   /** what the page asked the listing for, and the folder changes it sent */
   asked: [] as Record<string, unknown>[],
@@ -59,7 +61,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
     return { added: 1 };
   },
   listCollections: async () => server.folders,
-  listSources: async () => [],
+  listSources: async () => server.sources,
   getWatch: async () => server.watch,
   getProgress: async () => ({ done: 0, left: 0, clips: 0, seconds: 0, waiting: [] }),
   getLibraryStorage: async () => ({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] }),
@@ -73,6 +75,7 @@ beforeEach(() => {
   server.items = [clip("one")];
   server.trash = [];
   server.folders = [];
+  server.sources = [];
   server.watch = { allowed: true, folders: [], missing: 0 };
   server.asked = [];
   server.changed = [];
@@ -104,6 +107,10 @@ async function mount(at = "/library"): Promise<HTMLElement> {
 }
 
 describe("Media Library page with a plug-in facet", () => {
+  beforeEach(() => {
+    server.sources = [{ id: "tiny-footage", label: "Tiny footage" }];
+  });
+
   it("draws the plug-in facet groups it is scoped to, and not the Finals-only one", async () => {
     const host = await mount();
     expect(host.querySelector('[role="group"][aria-label="Tiny Facet"]')).not.toBeNull();
@@ -120,6 +127,12 @@ describe("Media Library page with a plug-in facet", () => {
       on.click();
     });
     expect(on.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("draws none where the plug-in's source is not offered (another workspace's own library)", async () => {
+    server.sources = [];
+    const host = await mount();
+    expect(host.querySelector('[role="group"][aria-label="Tiny Facet"]')).toBeNull();
   });
 });
 
