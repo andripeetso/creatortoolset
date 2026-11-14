@@ -187,6 +187,8 @@ export interface AssistantTurnInput {
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
   paths?: string[];
   context?: AssistantContext;
+  /** The workspace picked for a new chat; a chat that has one keeps it (AssistantChat.workspace). */
+  workspace?: string;
 }
 
 /** A video or recording dropped in the chat, uploaded in parts while the message goes (api/assistant-files.ts; kept 7 days). */
@@ -247,6 +249,8 @@ export interface AssistantChat {
   limited?: true;
   /** What it last made or opened: its newest card (an edit, a Workshop session, a Review video). */
   on?: Pick<AssistantWork, "kind" | "title">;
+  /** The workspace it works in (a Workshop project's id): set by its first message. */
+  workspace?: string;
 }
 
 export interface AssistantView {
@@ -268,6 +272,8 @@ export interface AssistantView {
   videosLater?: true;
   /** The chat is put away until this time (ms; POST /chats/:id/snooze), as AssistantChat.snoozed. */
   snoozed?: number;
+  /** The workspace the chat works in, once its first message has set it (AssistantChat.workspace). */
+  workspace?: string;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. One per account, from any chat. */
   navigate: string | null;
   /** This server has the many-chats routes (GET /chats, /chats/:id, its /turn) and writes replies in different chats at

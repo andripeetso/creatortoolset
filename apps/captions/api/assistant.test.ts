@@ -655,3 +655,40 @@ describe("a file on this computer, by its path", () => {
     revokeJobTokens("turn-path");
   });
 });
+
+describe("a chat's workspace", () => {
+  it("is set by its first message, and its tools work there whatever the app has open; a switch from the chat takes the chat along", async () => {
+    createUser("wes", "password1");
+    const wesMac = pairDevice("wes", "Wes's Mac");
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: wesMac.device.id }] }, "wes");
+    const cookie = await cookieOf("wes");
+    const make = async (name: string) => ((await (await app.request("/api/workshop/projects", { method: "POST", ...json({ name }, { cookie }) })).json()) as { id: string }).id;
+    const tiny = await make("Tiny Acrobatics");
+    const other = await make("Other Brand");
+    // a chat from before chats had a workspace: the first brand's once the list is read
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "An old one" }, { cookie }) })).status).toBe(202);
+    const chats = async () => ((await (await app.request("/api/assistant/chats", { headers: { cookie } })).json()) as { chats: Array<{ id: string; count: number; workspace?: string }> }).chats;
+    // (the app has Other Brand open: it was made last)
+    const { id } = (await (await app.request("/api/assistant/chats", { method: "POST", headers: { cookie } })).json()) as { id: string };
+    expect((await app.request(`/api/assistant/chats/${id}/turn`, { method: "POST", ...json({ text: "Make a reel", workspace: tiny }, { cookie }) })).status).toBe(202);
+    const listed = await chats();
+    expect(listed.find((c) => c.id === id)?.workspace).toBe(tiny);
+    expect(listed.filter((c) => c.count).every((c) => c.workspace)).toBe(true);
+    const chat = (await (await app.request(`/api/assistant/chats/${id}`, { headers: { cookie } })).json()) as { workspace?: string; messages: Array<{ id: string }> };
+    expect(chat.workspace).toBe(tiny);
+    const token = mintJobToken("wes", chat.messages.at(-1)!.id);
+    const current = async () => (JSON.parse((await toolOf(token, "workshop_projects")).text) as { current: string }).current;
+    expect(await current()).toBe(tiny);
+    // the app's own pick is not changed by it
+    const app0 = (await (await app.request("/api/workshop/workspace", { headers: { cookie } })).json()) as { currentProjectId: string };
+    expect(app0.currentProjectId).toBe(other);
+    // a later message in it keeps it, whatever is picked in the app
+    expect((await app.request(`/api/assistant/chats/${id}/turn`, { method: "POST", ...json({ text: "And another", workspace: other }, { cookie }) })).status).toBe(202);
+    expect((await chats()).find((c) => c.id === id)?.workspace).toBe(tiny);
+    // the AI switches workspace from the chat: the chat goes along
+    expect((await toolOf(token, "workshop_set_project", { project: other })).error).toBe(false);
+    expect((await chats()).find((c) => c.id === id)?.workspace).toBe(other);
+    expect(await current()).toBe(other);
+    revokeJobTokens(chat.messages.at(-1)!.id);
+  });
+});
