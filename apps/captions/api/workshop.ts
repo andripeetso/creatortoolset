@@ -60,7 +60,7 @@ import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, r
 import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN, pieceMarkdown } from "../src/lib/workshop-markdown";
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
-import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext } from "./lib/workshop/prompt";
+import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext, renderInstructions } from "./lib/workshop/prompt";
 import { OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, asKnowledge, knowledgeIndex, knowledgePath, ocrPrompt, parseReading, parseSourcePatch, readPrompt } from "./lib/workshop/sources";
 import { documentText, webPageText } from "./lib/workshop/source-files";
 import { parseYoutubeUrl } from "./lib/youtube/url";
@@ -73,10 +73,10 @@ import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
-import { buildTurnPrompt, wantsComments } from "./lib/workshop/chat-prompt";
+import { buildTurnPrompt, renderDocument, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
 import { readThrough } from "./lib/workshop/readthrough";
-import { type EditPair, editsFile, mergeLog, pairsOf } from "./lib/workshop/edit-log";
+import { type EditPair, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
@@ -3107,6 +3107,49 @@ workshopApp.get("/sessions/:id/chat/:messageId/live", async (c) => {
       stream.onAbort(stop);
       if (!chatting.has(id)) stop();
     });
+  });
+});
+
+/**
+ * What the Workshop's writer would read next to a piece, for an AI that writes it itself: an AI app (ChatGPT, Claude, a
+ * script's model), or the app's assistant when the writer can't run. The usual way for an app inside an AI: its model
+ * writes, the app gives it what it needs, at once (owner, 2026-11-14: "do best practice"). The voice is in the user's
+ * posts and rewrites; the project is facts. `text`: what the user asked, to pick the closest ones.
+ */
+workshopApp.post("/sessions/:id/docs/:docId/material", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedSession(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const doc = await readDoc(meta.id, c.req.param("docId"));
+  if (!doc) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { text?: unknown } | null;
+  const asked = typeof body?.text === "string" ? body.text.slice(0, 20_000) : "";
+  const project = await projectForAi(meta.projectId, user);
+  const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
+  const docs = await listDocs(meta.id);
+  const said = (await readChat(meta.id)).messages.filter((m) => m.role === "user").map((m) => m.text);
+  const near = [...doc.blocks, ...(doc.hooks ?? [])].map((b) => b.text).concat(said, asked).join("\n");
+  const log = await readEditLog(meta.owner);
+  const caption = askedForCaption(asked);
+  const rewrites = [
+    renderPairs(closestRewrites(near, log.filter((p) => p.kind !== "description" && p.kind !== "pinned"), meta.projectId, 6), "slides, hooks and scripts"),
+    caption ? renderPairs(closestRewrites(near, log.filter((p) => p.kind === "description"), meta.projectId, 4), "post descriptions") : "",
+  ].filter(Boolean);
+  const notes = docs.find((d) => d.kind === "notes")?.blocks.filter((b) => b.text.trim()).map((b) => `${b.author === "ai" ? "(written by an AI, not the author)\n" : ""}${b.text}`).join("\n\n");
+  const frameworks = (await Promise.all(doc.frameworkIds.map((id) => readFramework(id, user)))).filter((f): f is Framework => !!f);
+  const captions = caption ? captionExamplesFor(own?.posts ?? [], docs.filter((d) => d.id !== doc.id && d.caption?.text.trim()).map((d) => d.caption!.text)) : undefined;
+  return c.json({
+    project: project ? renderInstructions(project) : null,
+    piece: renderDocument(doc),
+    ...(notes ? { session_notes: notes } : {}),
+    their_posts: (own ? closestPosts(near, own.posts, 6) : []).map((p) => ({
+      date: new Date(p.item.takenAt).toISOString().slice(0, 10),
+      ...(keptPer1k(p.item) !== undefined ? { saves_and_shares_per_1000_views: keptPer1k(p.item) } : {}),
+      text: p.slides?.join("\n") || p.item.caption || "",
+    })),
+    their_rewrites: rewrites.join("\n\n") || null,
+    ...(frameworks.length ? { frameworks: frameworks.map((f) => ({ name: f.name, steps: f.steps, when: f.whenToUse })) } : {}),
+    ...(captions?.examples.length ? { their_captions: captions.examples.map((e) => e.text) } : {}),
   });
 });
 

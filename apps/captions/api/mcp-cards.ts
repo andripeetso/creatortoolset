@@ -161,8 +161,8 @@ const text = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, ma
 export function cardFor(tool: string, args: Args, answer: Args, origin: string, sign: Sign): Args | null {
   switch (KIND[tool]) {
     case "script": {
-      // a write sent to the writer, or a writer that isn't there, saved nothing to show (mcp.ts notTheirs, workshop_chat)
-      if (answer.saved === false || answer.writer === "none") return null;
+      // a write sent back (mcp.ts pieceWords) saved nothing to show
+      if (answer.saved === false) return null;
       const session = String(answer.pieces ? answer.id : (args.session ?? ""));
       const pieces = answer.pieces ? list(answer.pieces) : [answer];
       if (!session || !pieces.length) return null;

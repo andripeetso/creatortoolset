@@ -27,8 +27,8 @@ const mac = pairDevice("ana", "Ana's Mac");
 await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: mac.device.id }] }, "ana");
 
 type Row = Record<string, unknown>;
-const tool = async (name: string, args: Row = {}) => {
-  const r = (await (await app.request("/api/mcp", { method: "POST", headers: { "content-type": "application/json", authorization: key }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })).json()) as {
+const tool = async (name: string, args: Row = {}, authorization = key) => {
+  const r = (await (await app.request("/api/mcp", { method: "POST", headers: { "content-type": "application/json", authorization }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })).json()) as {
     result: { content: Array<{ text: string }>; isError?: boolean };
   };
   const text = r.result.content[0]!.text;
@@ -68,22 +68,28 @@ describe("the lines for api/mcp.ts", () => {
     expect((await tool("workshop_session", { session: id })).value!.notes).toBeUndefined();
   });
 
-  it("workshop_chat passes my words only and deep research to the writer", async () => {
+  it("workshop_chat from the app's assistant passes my words only and deep research to the writer", async () => {
     vi.mocked(streamWithFallback).mockImplementation((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown) => ({ result: parse(JSON.stringify({ reply: "Done.", edits: [] })), provider: "Claude (Mac)" })) as never);
     touchDevice(mac.device.id); // the writer's computer is on: the writer is asked
+    // the app's own assistant asks it (an AI app writes from the material instead)
+    const cookie = (await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "ana", password: "password1" }) })).headers.get("set-cookie")!.split(";")[0]!;
+    await app.request("/api/assistant/turn", { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ text: "I said this. And this." }) });
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${mac.token}` }, body: "{}" })).json()) as { id: string; mcp: { token: string } };
+    const dock = `Bearer ${job.mcp.token}`;
     const s = (await tool("workshop_new_session", { title: "Options" })).value!;
     const piece = (s.pieces as Row[])[0]!.id;
     const chat = async () => (await route(`/api/workshop/sessions/${String(s.id)}/chat`)) as unknown as Row[];
-    await tool("workshop_chat", { session: s.id, piece, message: "I said this. And this.", my_words_only: true, scope: "slight", wait_s: 20 });
+    await tool("workshop_chat", { session: s.id, piece, message: "I said this. And this.", my_words_only: true, scope: "slight", wait_s: 20 }, dock);
     expect((await chat()).find((m) => m.role === "user")).toMatchObject({ mine: true, scope: "slight" });
     expect((await chat()).find((m) => m.role === "user")!.deep).toBeUndefined();
-    await tool("workshop_chat", { session: s.id, piece, message: "Plain.", wait_s: 20 });
+    await tool("workshop_chat", { session: s.id, piece, message: "Plain.", wait_s: 20 }, dock);
     const plain = (await chat()).filter((m) => m.role === "user").at(-1)!;
     expect(plain.mine).toBeUndefined();
     // deep research runs on the person's own AI for minutes: here it is only seen to be asked for, then stopped
-    const deep = (await tool("workshop_chat", { session: s.id, piece, message: "Is it true?", deep_research: true, wait_s: 0 })).value!;
+    const deep = (await tool("workshop_chat", { session: s.id, piece, message: "Is it true?", deep_research: true, wait_s: 0 }, dock)).value!;
     expect((await chat()).filter((m) => m.role === "user").at(-1)).toMatchObject({ deep: true });
     await route(`/api/workshop/sessions/${String(s.id)}/chat/${String((deep.reply as Row).id)}/stop`, "POST", {});
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${mac.token}` }, body: JSON.stringify({ text: "Done." }) });
   }, 30_000);
 
   it("the tool list's new size", () => {
