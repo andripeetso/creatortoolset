@@ -179,7 +179,7 @@ describe("Audio Enhancer workspaces", () => {
     const user = { username: "tinyws", role: "user", cloud: false, off: [] } as never;
     await enhanceHost.persist({ ...old, id: "tinyws-away-1", projectId: "ws-b", status: "queued", remote: { state: "waiting", at: 1 } } as never);
     const { workspaceScope } = await import("./lib/workshop/workspace");
-    const running = (ws: string) => workspaceScope.run(ws, async () => enhancing("tinyws", await inCurrentWorkspace(user)).map((m) => m.id));
+    const running = (ws: string) => workspaceScope.run({ id: ws }, async () => enhancing("tinyws", await inCurrentWorkspace(user)).map((m) => m.id));
     expect(await running("ws-a")).toEqual([]);
     expect(await running("ws-b")).toEqual(["tinyws-away-1"]);
     await enhanceHost.persist({ ...old, id: "tinyws-away-1", status: "done" } as never); // leaves Home's running rows as they were
