@@ -8,6 +8,7 @@ import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, rea
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
 import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
+import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary } from "./library/access";
@@ -299,7 +300,7 @@ export async function useFile(
     // a fix for a video already there: its next version, and only on the owner's own video
     const of = versionOf ? await readReview(versionOf) : null;
     if (versionOf && of?.owner !== user.username) throw new Error("That Review video isn't here, or isn't this account's.");
-    const added = await addVersion(of?.id, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
+    const added = await addVersion(of?.id, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size, workspace: await currentWorkspaceId(user) }, (dest) => linkOrCopy(file, dest));
     if (!added) throw new Error("Review couldn't take it.");
     if (!of) return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
     // the people who commented hear of the new version, as they do when it is uploaded on the page
