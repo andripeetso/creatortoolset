@@ -15,6 +15,7 @@ import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/n
 import { type SessionUser, bumpUsage } from "./users";
 import { type Moves, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
+import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -121,6 +122,8 @@ export interface Meta {
   id: string;
   name: string;
   owner?: string;
+  /** The workspace it was made in (none: from before workspaces, the first brand's). Any engine keeps it: it saves this meta. */
+  projectId?: string;
   hasVideo: boolean;
   duration: number;
   bytes: number;
@@ -158,9 +161,9 @@ let running = 0;
 export const enhancesAtRisk = (): number => running + queue.length;
 /** A plug-in engine's passes waiting for or on its own worker (out of `active`), as their saves say. ponytail: a restart forgets them until they next save. */
 const away = new Map<string, Meta>();
-/** This account's files being enhanced, here or by a plug-in engine's worker, for Home (api/activity.ts). */
-export const enhancing = (username: string) =>
-  [...new Map([...away, ...active]).values()].filter((m) => m.owner === username && (m.status === "queued" || m.status === "running")).map((m) => ({ id: m.id, name: m.name, waits: m.status === "queued", progress: m.progress }));
+/** This account's files being enhanced, here or by a plug-in engine's worker, for Home (api/activity.ts); `keep`: only this workspace's. */
+export const enhancing = (username: string, keep?: ((own?: string) => boolean) | null) =>
+  [...new Map([...away, ...active]).values()].filter((m) => m.owner === username && (m.status === "queued" || m.status === "running") && (!keep || keep(m.projectId))).map((m) => ({ id: m.id, name: m.name, waits: m.status === "queued", progress: m.progress }));
 
 void mkdir(ENHANCE_DIR, { recursive: true }).catch(() => {});
 
@@ -728,12 +731,13 @@ enhanceApp.get("/availability", async (c) => {
   });
 });
 
-/* own sessions, newest first (admins also keep ownerless legacy ones) */
+/* own sessions in this workspace, newest first (admins also keep ownerless legacy ones) */
 enhanceApp.get("/", async (c) => {
   const user = c.get("user");
+  const keep = await inCurrentWorkspace(user);
   const metas = (await Promise.all((await sessionIds()).map(readMeta))).filter(
     (m): m is Meta =>
-      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner))
+      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner)) && (!keep || keep(m.projectId))
   );
   metas.sort((a, b) => b.createdAt - a.createdAt);
   return c.json(metas.map(publicMeta));
@@ -760,6 +764,7 @@ enhanceApp.post("/", async (c) => {
   const name = (c.req.query("name") || "untitled").slice(0, 120);
   const id = randomUUID();
   const dir = sesDir(id);
+  const projectId = await currentWorkspaceId(user);
   try {
     await mkdir(dir, { recursive: true });
     await pipeline(Readable.fromWeb(body as never), createWriteStream(originalPath(id)));
@@ -777,6 +782,7 @@ enhanceApp.post("/", async (c) => {
       id,
       name,
       owner: user.username,
+      ...(projectId ? { projectId } : {}),
       hasVideo,
       duration,
       bytes: st.size,

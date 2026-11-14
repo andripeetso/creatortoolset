@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -65,6 +65,25 @@ describe("Story Splitter's saved splits", () => {
 
     expect((await app.request(`/api/stories/${split.id}`, { method: "DELETE", headers: alex })).status).toBe(200);
     expect((await app.request(`/api/stories/${split.id}`, { headers: alex })).status).toBe(404);
+  });
+
+  it("keeps each workspace's splits to it; one from before workspaces is the first brand's; by id still opens", async () => {
+    createUser("tiny", "password1");
+    const tiny = await login("tiny", "password1");
+    const projects = path.join(process.env.DATA_DIR!, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    for (const [id, at] of [["ws-a", 1], ["ws-b", 2]] as const)
+      writeFileSync(path.join(projects, `${id}.json`), JSON.stringify({ id, owner: "tiny", name: id, createdAt: at, updatedAt: at }));
+    const old = { id: "00000000-0000-4000-8000-000000000001", owner: "tiny", name: "Old.mp4", cuts: [], target: 20, duration: 9, createdAt: 1, updatedAt: 1 };
+    writeFileSync(path.join(process.env.DATA_DIR!, "stories", `${old.id}.json`), JSON.stringify(old));
+    const inA = { ...tiny, "x-ct-workspace": "ws-a" };
+    const inB = { ...tiny, "x-ct-workspace": "ws-b" };
+    const made = (await (await app.request("/api/stories", json(inB, { name: "New.mp4", cuts: [], target: 20, duration: 9 }))).json()) as Split & { projectId?: string };
+    expect(made.projectId).toBe("ws-b");
+    const names = async (h: Record<string, string>) => ((await (await app.request("/api/stories", { headers: h })).json()) as Split[]).map((s) => s.name);
+    expect(await names(inB)).toEqual(["New.mp4"]);
+    expect(await names(inA)).toEqual(["Old.mp4"]);
+    expect((await app.request(`/api/stories/${made.id}`, { headers: inA })).status).toBe(200);
   });
 
   it("keeps nothing without an account", async () => {
