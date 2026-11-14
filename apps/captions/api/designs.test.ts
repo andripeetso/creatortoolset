@@ -373,7 +373,8 @@ describe("designs: an AI that designs", () => {
     expect(typeof got.look === "object" && [got.look.name, got.look.pictures.map((p) => p.what)]).toEqual(["Paper cut", ["a picture the user made and liked in this look", "an inspiration for this look"]]);
     expect(got.how).toContain("Design in one of them");
     expect(typeof got.look === "object" && got.look.brief).toBe("Torn paper edges, one loud colour.");
-    expect(got.how).toContain("Design in rounds, never in one pass");
+    expect(got.how).toContain("design in rounds, never in one pass");
+    expect(got.how).toContain("make that change alone");
     const withLook = await read(d.id, "?look=paper%20cut");
     expect(typeof withLook.look === "object" && withLook.look.pictures.map((p) => p.what)).toEqual(["a picture the user made and liked in this look", "an inspiration for this look"]);
     expect((await read(d.id, "?look=Nope")).look).toBe("There is no look called Nope");
