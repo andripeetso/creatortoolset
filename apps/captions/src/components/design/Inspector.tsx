@@ -796,19 +796,21 @@ export function Inspector({
                   e.currentTarget.value = "";
                   void (async () => {
                     const said: string[] = [];
-                    let first = "";
+                    const added: string[] = [];
                     for (const file of files) {
                       try {
                         const out = await addOwnFont(file);
-                        first ||= out.added[0]?.family ?? "";
+                        added.push(...out.added.map((f) => f.family));
                         said.push(...out.notes);
                       } catch (err) {
                         said.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
                       }
                     }
+                    // several faces at once (a collection holds a family): said by name, and the picked words stay as they are
+                    if (added.length > 1) said.unshift(`Added ${added.join(", ")}`);
                     setFontSaid(said.join(". "));
                     // one face added: the picked words are set in it at once
-                    if (first && files.length === 1) onPatch((l) => (l.type === "text" ? { ...l, font: first } : l));
+                    if (added.length === 1) onPatch((l) => (l.type === "text" ? { ...l, font: added[0]! } : l));
                   })();
                 }}
               />
