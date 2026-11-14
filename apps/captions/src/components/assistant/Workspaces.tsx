@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Check, ChevronDown, ListFilter, Plus, Search } from "lucide-react";
+import { Check, ChevronDown, Layers, ListFilter, Plus, Search } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { isPhoneHub } from "@/lib/mobile";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
@@ -122,7 +122,7 @@ export function ChatFilterButton({ filter, onFilter }: { filter: string | null; 
           onPick={onFilter}
           top={
             <DropdownMenuItem onSelect={() => onFilter(null)}>
-              <span className="inline-flex w-5 justify-center text-muted-foreground">∗</span>
+              <Layers className="size-4 text-muted-foreground" />
               <span className="flex-1">All workspaces</span>
               {!filter && <Check className="size-3.5 text-muted-foreground" />}
             </DropdownMenuItem>

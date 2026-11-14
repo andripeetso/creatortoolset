@@ -326,6 +326,13 @@ export function AssistantDock() {
     // again when the newest message changes or ends
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, view?.id, last?.id, last?.status]);
+  // in chat mode the page shows the open chat's workspace: on opening a chat, on a reload, on turning chat mode on (only
+  // that: what a page does when its own picker changes is not done)
+  const openWs = view?.workspace;
+  const wsLoaded = useWorkspace((s) => s.loaded);
+  useEffect(() => {
+    if (chatMode && wsLoaded) followWorkspace(openWs);
+  }, [chatMode, view?.id, openWs, wsLoaded]);
   // a reply that starts, ends or asks changes the list's groups
   useEffect(() => {
     if (chatMode) reloadChats();
@@ -703,8 +710,6 @@ export function AssistantDock() {
     }
     // from the new-chat screen to a chat that was started: its page comes back beside it
     const cm = useChatMode.getState();
-    // the page shows the opened chat's workspace (only that: what a page does when its own picker changes is not done)
-    if (cm.on) followWorkspace(r.data.workspace);
     land(r.data, r.data.messages.at(-1)?.id ?? null, cm.on && cm.bare && r.data.messages.length ? { bare: false } : null);
   };
   /** A new chat holding the one on screen up to a reply, opened in its place (the one it came from stays in the list). */

@@ -1603,10 +1603,10 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
-  // the chat's workspace: its own once it has one; a new chat's is the one picked for it (else the app's current); a chat
-  // from before chats had one is the first brand's, as its mark in the list says (chatsOf)
+  // the chat's workspace: its own once it has one (a chat from before is given the first brand's when the list is
+  // read, chatsOf); a new chat's is the one picked for it, else the app's current
   const was = target();
-  const ws = was?.workspace ?? (was?.messages.length ? (await projectOf(u).catch(() => null))?.() : await resolveProjectId(u, input.workspace));
+  const ws = was?.workspace ?? (await resolveProjectId(u, was?.messages.length ? undefined : input.workspace));
   const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
   const memory = await inWs(() => memoryBlock(u));
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
