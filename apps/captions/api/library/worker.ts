@@ -15,6 +15,7 @@ import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
+import { SOUNDS } from "../../contracts/library";
 import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
@@ -258,9 +259,12 @@ async function run(job: JobRow): Promise<void> {
   if (job.kind === "probe") {
     p = await probe(src);
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
-    // a file from the account's music folders is music: a thumbnail and a waveform, no transcript, no description,
-    // no search by meaning (each would spend their AI or keys on a song nobody asked about)
-    const music = !!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine));
+    // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
+    // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
+    // or keys on a song nobody asked about)
+    const music =
+      (!!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine))) ||
+      !!db.prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map((s) => `'${s.tag}'`).join(", ")})`).get(v.id);
     // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);

@@ -366,3 +366,8 @@ export function applyS3Preset<T extends { endpoint: string; region: string; path
   const p = S3_PRESETS.find((x) => x.id === id);
   return p ? { ...form, endpoint: p.endpoint || (p.endpointHint ? form.endpoint : ""), region: p.region, pathStyle: p.pathStyle } : form;
 }
+
+/** A song or a sound effect added as one (the assistant's use_file sound): its tag, which keeps the worker's AI steps
+ *  (transcript, description, search by meaning) off it, and the top-level folder it is filed in, made on first use. */
+export const SOUNDS = { music: { tag: "music", folder: "Music" }, effect: { tag: "sound effect", folder: "Sound effects" } } as const;
+export type Sound = keyof typeof SOUNDS;
