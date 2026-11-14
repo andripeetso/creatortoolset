@@ -29,7 +29,11 @@ final class ChatWaveTests: XCTestCase {
         XCTAssertGreaterThan(at(release + 3 * frame, held: click, release: release).front, 56 * 2)
         // a slow click, a little past `holdFrom`, draws in next to nothing, even while its picture is late
         let slow = WaveClock.holdFrom + 40
-        XCTAssertLessThan(at(slow + 200, held: slow, release: nil).pull, 0.2)
+        XCTAssertLessThan(at(slow + 200, held: slow, release: nil).pull, 0.25)
+        // and a short hold goes on at the speed it had as the mouse comes up: no stop before the wave
+        let short = 230.0
+        let speed = { (ms: Double) in WaveClock.pull(ms + self.frame, held: short) - WaveClock.pull(ms, held: short) }
+        XCTAssertGreaterThan(speed(short), speed(short - frame) * 0.7)
     }
 
     /// Held, the screen is on its way within a few frames and well in after a tenth of a second (owner, 11-14: "stronger
@@ -60,6 +64,29 @@ final class ChatWaveTests: XCTestCase {
         let pops = [100.0, 300, 700, WaveClock.longest].map { held in at(held + 100, held: held, release: held) }
         XCTAssertTrue(zip(pops, pops.dropFirst()).allSatisfy { $0.wave < $1.wave && $0.flash <= $1.flash })
         XCTAssertGreaterThan(pops[0].wave, 0.4 * pops[3].wave)
+    }
+
+    /// However long the button was held, no point of the screen moves more than about 40 points in a frame as it is let
+    /// go (the shader's own maths, along 45° from the button): the pop is quick, never a jump (owner, 11-13: "then
+    /// suddenly over").
+    func testThePopIsNeverAJump() {
+        func height(_ x: Float) -> Float { exp(-1.6 * x * x) - 0.24 * exp(-1.4 * (x + 1.6) * (x + 1.6)) + 0.09 * exp(-1.4 * (x + 3.1) * (x + 3.1)) }
+        func smooth(_ a: Float, _ b: Float, _ v: Float) -> Float { let t = min(max((v - a) / (b - a), 0), 1); return t * t * (3 - 2 * t) }
+        func point(_ m: WaveMoment, _ r: Float) -> CGPoint {
+            let x = (r - m.front) / m.width, letgo = smooth(-m.back, 1.5, x)
+            let rs = max(r + 0.7 * m.pull * r * exp(-r / m.reach) * letgo - m.wave * height(x), 0)
+            let a = Float.pi / 4 + m.swirl * m.pull * exp(-r / (0.6 * m.reach)) * letgo
+            return CGPoint(x: CGFloat(cos(a) * rs / 2), y: CGFloat(sin(a) * rs / 2))
+        }
+        for held in [100.0, 440, 800, WaveClock.longest] {
+            var last: [CGPoint]?
+            for ms in stride(from: held - 200, to: held + WaveClock.sweep, by: frame) {
+                let m = at(ms, held: held, release: held)
+                let now = stride(from: Float(150), through: 1700, by: 10).map { point(m, $0) }
+                if let last { XCTAssertLessThan(zip(last, now).map { hypot($0.x - $1.x, $0.y - $1.y) }.max()!, 42) }
+                last = now
+            }
+        }
     }
 
     /// The picture of the new screen came late: the screen is still falling in, never held, and the front leaves when

@@ -26,6 +26,8 @@ final class ChatWaveHost {
     private var wave: ChatWaveView?
     /// The answer to "drawn", given when the wave is over (or cut short).
     private var drawn: ((Any?, String?) -> Void)?
+    /// The page is from before holding (it says nothing of `hold`): its own entrances still run after the switch.
+    private var oldPage = false
 
     init(_ view: WKWebView) {
         self.view = view
@@ -39,10 +41,15 @@ final class ChatWaveHost {
         case "drawn":
             guard let view, let wave else { return reply(true, nil) }
             drawn = reply
-            // the page has finished its own entrances by now (chat-mode.ts macWash): what it shows is the new screen
-            view.takeSnapshot(with: nil) { [weak wave] image, _ in
-                guard let wave, wave.superview != nil else { return }
-                if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+            // the page has finished its own entrances by now (chat-mode.ts macWash): what it shows is the new screen. A
+            // page from before that is given until 420 ms after the press, as it was then (what fades in is there by then)
+            let wait = oldPage ? max(0, 420 - wave.elapsed) / 1000 : 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak view, weak wave] in
+                guard let view, let wave, wave.superview != nil else { return }
+                view.takeSnapshot(with: nil) { [weak wave] image, _ in
+                    guard let wave, wave.superview != nil else { return }
+                    if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+                }
             }
         case "stop":
             wave?.finish()
@@ -60,6 +67,7 @@ final class ChatWaveHost {
         let dark = start["dark"] as? Bool ?? false
         // (a page from before holding sends none: a click)
         let hold = start["hold"] as? Bool ?? false
+        oldPage = start["hold"] == nil
         // the screen as it is on show now, not after the next update: the page changes only once this is answered
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = false
@@ -99,7 +107,8 @@ struct U {
     float4 c;   // front (px from the button), its width (px), the wave's height (px), its light (0 to 1)
     float4 d;   // the project's colour (0 to 1), 1 on a dark screen
     float4 e;   // the light at the button (0 to 1), seconds since the press, px a point, colour split
-    float4 f;   // how much of the wave is left on the window (1, then down to 0 as it ends), the height its light is for (px)
+    float4 f;   // how much of the wave is left on the window (1, then down to 0 as it ends), the height its light is for
+                // (px), how far behind the front's middle a point is let go by (front widths)
 };
 
 static float grain(float2 p) { return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
@@ -139,8 +148,9 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
 
     // The screen that was falls toward the button: what is near it shrinks into it, what is further is stretched
     // toward it, and all of it turns a little round it. Each point is drawn in until the front comes, and let go as it
-    // passes (over three front widths round its middle): quick, never in one frame.
-    float letgo = smoothstep(-1.5, 1.5, x);
+    // passes (from 1.5 front widths ahead of its middle to 1.5 behind, further behind the deeper it was drawn in):
+    // quick, never in one frame.
+    float letgo = smoothstep(-u.f.z, 1.5, x);
     float sucked = 0.7 * pull * r * exp(-r / reach) * letgo * still;
     float turn = swirl * pull * exp(-r / (0.6 * reach)) * letgo * still;
     // Behind the front the new screen is pushed out by the crest and settles after two very slight ridges.
@@ -231,6 +241,9 @@ struct WaveMoment {
     var left: Float = 1
     /// The wave's height as its light sees it (px): as high as a hold of about half a second makes it, at most.
     var lit: Float = 0
+    /// How far behind the front's middle a point is let go by (front widths): further the deeper the screen was drawn
+    /// in, so no point moves much more than 40 points in a frame however long the button was held.
+    var back: Float = 1.5
     var done: Bool
 }
 
@@ -263,11 +276,11 @@ enum WaveClock {
             return (0.7 * (1 - exp(-h / 200)) + 0.0016 * h) * (1 - exp(-h / 40))
         }
         if ms <= held { return Float(deep(ms)) }
-        // (a press little longer than a click, still quick to fall in when let go, goes on by no more than half of what
-        // it drew in: it stays all but a click)
-        let speed = deep(held) - deep(held - 1), slows = 300.0
-        let more = min(speed * slows, deep(held) / 2)
-        return Float(deep(held) + more * (1 - exp(-(ms - held) / slows)))
+        // at the speed it had, slowing over 300 ms; a press little longer than a click (quick to fall in, with little
+        // drawn in yet) slows sooner, so it goes on by no more than it drew in and stays all but a click
+        let speed = deep(held) - deep(held - 1)
+        let slows = speed > 0 ? min(300, deep(held) / speed) : 300
+        return Float(deep(held) + speed * slows * (1 - exp(-(ms - held) / slows)))
     }
 
     /// The wave `ms` after the press, the button held until `held` (ms; 0 for a click), the front let go at `release`
@@ -284,7 +297,8 @@ enum WaveClock {
                               bloom: lit * (0.55 + 0.45 * min(p, 1)), seconds: seconds, split: 0.08, px: s, done: false)
         }
         // the longer the button was held, the harder it pops: a click's wave is about two thirds of a long hold's half
-        let pop = 0.65 + 0.35 * min(pull(held, held: held), 2.5)
+        let drawnIn = pull(held, held: held)
+        let pop = 0.65 + 0.35 * min(drawnIn, 2.5)
         let u = Float(min((ms - release) / sweep, 1))
         let width = (160 + (widest - 160) * u) * s
         // quick as it leaves, slower and slower after (no point moves more than about 25 points in a frame)
@@ -296,7 +310,7 @@ enum WaveClock {
         return WaveMoment(pull: p, reach: 380 * s, swirl: 0.4, veil: 18 * s, front: front, width: width, wave: 26 * s * dying * pop,
                           flash: (0.25 + 0.75 * exp(-2.2 * u)) * pow(1 - u, 0.9) * min(pop, 1), bloom: exp(-7 * u), seconds: seconds,
                           split: 0.08 * min(pop, 1.35), px: s, left: Float(1 - fade * fade * (3 - 2 * fade)), lit: 26 * s * dying * min(pop, 1),
-                          done: u >= 1)
+                          back: 1.5 * max(1, 1 + 0.5 * (drawnIn - 1)), done: u >= 1)
     }
 }
 
@@ -347,7 +361,7 @@ final class WaveRenderer {
             SIMD4(m.front, m.width, m.wave, m.flash),
             SIMD4(tint.x, tint.y, tint.z, dark ? 1 : 0),
             SIMD4(m.bloom, m.seconds, m.px, m.split),
-            SIMD4(m.left, m.lit, 0, 0),
+            SIMD4(m.left, m.lit, m.back, 0),
         ]
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride * u.count, index: 0)
