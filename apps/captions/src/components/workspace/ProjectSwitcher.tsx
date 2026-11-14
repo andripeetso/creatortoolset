@@ -40,22 +40,22 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
       <DropdownMenuTrigger asChild>
         <button
           data-project-switcher={frame ? undefined : ""}
-          title="Current project"
+          title="Current workspace"
           className={`flex max-w-[min(14rem,100%)] items-center gap-1.5 h-7 rounded-md border px-2.5 text-xs text-zinc-200 outline-none hover:bg-zinc-900 data-[state=open]:bg-zinc-900 ${project ? PROJECT_COLORS[projectColor(project)].ring : "border-zinc-800"}`}
         >
           {/* the project's colour, so the current one shows at a glance */}
           <span className={`h-2 w-2 shrink-0 rounded-full ${project ? PROJECT_COLORS[projectColor(project)].dot : "bg-zinc-600"}`} />
-          <span className="min-w-0 truncate">{project?.name ?? "No project"}</span>
+          <span className="min-w-0 truncate">{project?.name ?? "No workspace"}</span>
           <ChevronDown className="h-3 w-3 shrink-0 text-zinc-500" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={frame ? "start" : "end"} className="w-64">
         <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">
-          Current project
+          Current workspace
         </DropdownMenuLabel>
         {projects.length === 0 ? (
           <DropdownMenuItem asChild>
-            <Link to="/projects?add=1">Create a project</Link>
+            <Link to="/projects?add=1">Create a workspace</Link>
           </DropdownMenuItem>
         ) : (
           projects.map((p) => (
@@ -81,12 +81,12 @@ export function ProjectSwitcher({ onSelect, frame }: { onSelect?: (id: string) =
         {projects.length > 0 && !isPhoneHub() && (
           <DropdownMenuItem asChild>
             <Link to="/projects?add=1">
-              <Plus className="size-3.5" /> New project…
+              <Plus className="size-3.5" /> New workspace…
             </Link>
           </DropdownMenuItem>
         )}
         <DropdownMenuItem asChild>
-          <Link to="/projects">Manage projects…</Link>
+          <Link to="/projects">Manage workspaces…</Link>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

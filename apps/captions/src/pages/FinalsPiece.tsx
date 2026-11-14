@@ -565,7 +565,7 @@ function WorkshopLink({
     setNote(null);
     try {
       await linkPieceToSession(sessionId, piece.id);
-      setNote("Linked. Each version of this piece gets a post description in that session.");
+      setNote("Linked. Each version of this piece gets a post description in that project.");
     } catch (e) {
       setError(message(e));
     }
@@ -583,8 +583,8 @@ function WorkshopLink({
   };
 
   return (
-    <section aria-label="Workshop session" className="flex flex-col gap-2 border-t border-zinc-500/25 pt-4">
-      <h2 className="text-sm font-medium">Workshop session</h2>
+    <section aria-label="Workshop project" className="flex flex-col gap-2 border-t border-zinc-500/25 pt-4">
+      <h2 className="text-sm font-medium">Workshop project</h2>
       {linked && (
         <Link to={sessionPath(linked.sessionId)} className="text-xs text-zinc-400 hover:text-zinc-200">
           {linked.status === "toPost" ? "Ready to post · " : ""}Open the linked session →
@@ -593,13 +593,13 @@ function WorkshopLink({
       <p className="text-xs text-zinc-500">Link a session, and each version here gets a post description there.</p>
       <div className="flex flex-wrap gap-2">
         <select
-          aria-label="Session to link"
+          aria-label="Project to link"
           value={pick}
           disabled={disabled || !sessions?.length}
           onChange={(e) => setPick(e.target.value)}
           className="min-w-0 max-w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1.5 text-sm sm:max-w-md"
         >
-          <option value="">{sessions ? (sessions.length ? "Choose a session" : "No sessions yet") : "Loading sessions…"}</option>
+          <option value="">{sessions ? (sessions.length ? "Choose a project" : "No projects yet") : "Loading projects…"}</option>
           {(sessions ?? []).map((s) => (
             <option key={s.id} value={s.id}>
               {s.title}

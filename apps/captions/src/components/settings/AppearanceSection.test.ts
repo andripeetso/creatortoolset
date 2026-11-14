@@ -96,7 +96,7 @@ describe("a tool's row says what stops it and where that is fixed", () => {
   it("lists only what is missing and required: one line each, nothing once it is set up", () => {
     expect(labels("enhance", [])).toEqual(["Needs an API key"]);
     expect(labels("enhance", ["NVIDIA_API_KEY"])).toEqual([]);
-    expect(labels("instagram", [])).toEqual(["Needs a project", "Needs an Apify key"]);
+    expect(labels("instagram", [])).toEqual(["Needs a workspace", "Needs an Apify key"]);
     expect(labels("instagram", ["project", "instagram"])).toEqual([]); // its own Instagram login reads the posts too
   });
 
@@ -110,7 +110,7 @@ describe("a tool's row says what stops it and where that is fixed", () => {
   it("sends each kind of need to the place that sets it up", () => {
     const need = (tool: Tool, i: number) => TOOL_NEEDS[tool][i]!;
     expect(needFix(need("enhance", 0))).toEqual({ label: "Add key", to: "/settings/keys#api-key-ELEVENLABS_API_KEY" });
-    expect(needFix(need("instagram", 0))).toEqual({ label: "New project", to: "/projects" });
+    expect(needFix(need("instagram", 0))).toEqual({ label: "New workspace", to: "/projects" });
     expect(needFix(need("instagram", 1))).toEqual({ label: "Add key", to: "/settings/keys#apify-key" });
     expect(needFix(need("workshop", 1))).toEqual({ label: "Add AI", to: "/settings/providers" });
     expect(needFix(need("media", 0))).toEqual({ label: "Open Media Library", to: "/library" });

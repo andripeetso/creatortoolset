@@ -140,7 +140,7 @@ describe("parseSources / parseSessionPatch", () => {
       notes: "n",
     });
     expect(parseSessionPatch({ projectId: "abcdef-123456" })).toEqual({ projectId: "abcdef-123456" });
-    expect(() => parseSessionPatch({ projectId: "x" })).toThrow(/Unknown project/);
+    expect(() => parseSessionPatch({ projectId: "x" })).toThrow(/Unknown workspace/);
     expect(parseSessionPatch({ status: "production" })).toEqual({ status: "production" });
     expect(() => parseSessionPatch({ status: "live" })).toThrow(/Unknown status/);
     expect(parseSessionPatch({})).toEqual({});

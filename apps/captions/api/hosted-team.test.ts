@@ -47,7 +47,7 @@ describe("hosted team", () => {
     expect(token).toMatch(/^[a-f0-9]{40}$/);
 
     const info = (await (await call("GET", `/api/auth/invite/${token}`)).json()) as { workspace: string; invitedBy: string; expired: boolean };
-    expect(info).toMatchObject({ workspace: "Workspace", invitedBy: admin, expired: false });
+    expect(info).toMatchObject({ workspace: "Team", invitedBy: admin, expired: false });
   });
 
   it("joining makes a team member whose plug-in gate starts off", async () => {

@@ -27,7 +27,7 @@ function codeOf(link: string): string {
 const notSaved = (ref: string) => new ToolError(`${ref} is not in the Analyzer's library: instagram_save saves it there, then add it here.`);
 
 async function sources(a: Args, ctx: ToolContext) {
-  if (!a.session) throw new ToolError("Give the session's id.");
+  if (!a.session) throw new ToolError("Give the project's id.");
   const at = `/api/workshop/sessions/${String(a.session)}`;
   const read = () => ctx.json<{ sources: Source[]; posts: Post[] }>(at);
   let session = await read();
@@ -38,7 +38,7 @@ async function sources(a: Args, ctx: ToolContext) {
     for (const ref of remove) {
       const code = UUID.test(ref) ? "" : codeOf(ref);
       const id = code ? session.posts.find((p) => p.shortcode === code)?.id : ref;
-      if (!id || !session.sources.some((s) => s.postId === id)) throw new ToolError(`${ref} is not one of this session's sources.`);
+      if (!id || !session.sources.some((s) => s.postId === id)) throw new ToolError(`${ref} is not one of this project's sources.`);
       out.add(id);
     }
     // ponytail: a link is matched against the whole library list (no route finds a post by its link); a by-link route when libraries get big
@@ -71,7 +71,7 @@ async function sources(a: Args, ctx: ToolContext) {
 /** A project's name, instructions, colour or language, as its form saves them; none named = the current project. */
 async function projectUpdate(a: Args, ctx: ToolContext) {
   const id = a.project ? String(a.project) : (await ctx.json<{ currentProjectId: string | null }>("/api/workshop/workspace")).currentProjectId;
-  if (!id) throw new ToolError("There is no project yet: give a project's id (workshop_projects lists them).");
+  if (!id) throw new ToolError("There is no workspace yet: give a workspace's id (workshop_projects lists them).");
   const body: Args = {};
   if (a.name !== undefined) body.name = a.name;
   // draft_from goes through the form's own Write it for me: the facts a writer needs and nothing on how to write, since
@@ -99,18 +99,18 @@ export const workshopTools: ToolModule = {
   defs: [
     {
       name: "workshop_sources",
-      description: "A session's sources: the posts from the Analyzer's library its writer reads. With only the session it lists them; add and remove take posts by library id or by their link.",
+      description: "A Workshop project's sources (the API calls them a session's): the posts from the Analyzer's library its writer reads. With only the session it lists them; add and remove take posts by library id or by their link.",
       inputSchema: { type: "object", properties: { session: str, add: { type: "array", items: str }, remove: { type: "array", items: str } }, required: ["session"] },
     },
     {
       name: "workshop_set_project",
-      description: "Switch the Workshop's current project (its id from workshop_projects): new sessions start in it, and the app opens in it next time. A window that is open stays in its own project.",
+      description: "Switch the Workshop's current workspace (its id from workshop_projects; the API calls workspaces projects): new Workshop projects start in it, and the app opens in it next time. A window that is open stays in its own workspace.",
       inputSchema: { type: "object", properties: { project: str }, required: ["project"] },
     },
     {
       name: "workshop_project_update",
       description:
-        'Change a Workshop project: its name, its instructions (the text always in its prompt; this replaces it whole, so read it with workshop_projects first and keep what holds: the user\'s own words, or draft_from = what they gave about the project, written into facts as the form\'s Write it for me does), its colour, or the language spoken in its videos (a two-letter code, "" = the person\'s own). Only what you give changes. No project = the current one.',
+        'Change a workspace (one brand; the API calls it a project): its name, its instructions (the text always in its prompt; this replaces it whole, so read it with workshop_projects first and keep what holds: the user\'s own words, or draft_from = what they gave about the workspace, written into facts as the form\'s Write it for me does), its colour, or the language spoken in its videos (a two-letter code, "" = the person\'s own). Only what you give changes. No project (id) = the current workspace.',
       inputSchema: {
         type: "object",
         properties: { project: str, name: str, instructions: str, theirs: { type: "boolean", description: "instructions are the user's own words" }, draft_from: str, color: { type: "string", enum: [...PROJECT_COLORS] }, language: str },
@@ -122,10 +122,10 @@ export const workshopTools: ToolModule = {
     workshop_project_update: projectUpdate,
     workshop_set_project: async (a, ctx) => {
       // the route reads an empty id as "no current project": never what switching means
-      if (!a.project) throw new ToolError("Give the project's id: workshop_projects lists them.");
+      if (!a.project) throw new ToolError("Give the workspace's id: workshop_projects lists them.");
       const w = await ctx.json<{ currentProjectId: string | null; projects: Args[] }>("/api/workshop/workspace", "PATCH", { currentProjectId: a.project });
       return { current: pick(w.projects.find((p) => p.id === w.currentProjectId) ?? {}, ["id", "name"]) };
     },
   },
-  steps: { workshop_sources: "Going through the session's sources", workshop_set_project: "Switching the project", workshop_project_update: "Changing the project" },
+  steps: { workshop_sources: "Going through the project's sources", workshop_set_project: "Switching the workspace", workshop_project_update: "Changing the workspace" },
 };

@@ -151,11 +151,11 @@ export function sessionsIndex(sessions: Array<Pick<SessionMeta, "id" | "title" |
     return `| ${name(s)} | ${s.title.replace(/\|/g, "/")} | ${p ? (hasFile(p) ? postFile(p.item) : `${day(p.item.takenAt)} in my-posts/INDEX.md`) : post.url} | ${p && viewsOf(p.item) ? num(viewsOf(p.item)) : ""} | ${k === undefined ? "" : k.toFixed(1)} |`;
   };
   return [
-    `# Workshop sessions and the posts they became (${rows.length})`,
+    `# Workshop projects and the posts they became (${rows.length})`,
     "",
-    "Linked by the app when a post's words clearly match a session's pieces, or by the author pasting the link.",
+    "Linked by the app when a post's words clearly match a project's pieces, or by the author pasting the link.",
     "",
-    "| session | title | the post it became | views | saves+shares per 1,000 views |",
+    "| project | title | the post it became | views | saves+shares per 1,000 views |",
     "|---|---|---|---|---|",
     ...rows.map(row),
     ...(waiting.length ? ["", "## In production or published, no post linked yet", "", ...waiting.map((s) => `- ${name(s)} (${s.title})`)] : []),
@@ -264,7 +264,7 @@ export function sessionText(
 ): string {
   const titleOf = new Map(docs.map((d) => [d.id, d.title]));
   return [
-    `# ${current ? "THIS SESSION: " : ""}${s.title}${project ? ` (project ${project})` : ""}`,
+    `# ${current ? "THIS PROJECT: " : ""}${s.title}${project ? ` (workspace ${project})` : ""}`,
     "",
     `Started ${day(s.createdAt)}, last change ${day(s.updatedAt)}.${s.status ? ` Status: ${s.status}.` : ""}${postingsOf(s).length ? ` Posted as ${postingsOf(s).map((p) => p.url).join(", ")}` : ""}`,
     "",

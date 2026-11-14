@@ -336,7 +336,7 @@ describe("projects are kept apart", () => {
     await newChat();
     const here = await turn("Hello");
     expect(here.job.system.slice(UNCHANGED.length)).toBe(
-      '\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone\nOnly for their current project, "Tiny Acrobatics":\n- we never show faces',
+      '\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone\nOnly for their current workspace, "Tiny Acrobatics":\n- we never show faces',
     );
     await here.end();
 

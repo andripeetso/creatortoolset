@@ -28,7 +28,7 @@ export function SessionStatusSelect({
     <select
       value={current}
       disabled={disabled}
-      aria-label="Session status"
+      aria-label="Project status"
       title="Where this piece sits"
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => onChange(e.target.value as SessionStatus)}

@@ -119,7 +119,7 @@ export function PackHereSwitch({ id, name, installed, reload }: { id: string; na
   const { busy, run } = usePackRun(reload);
   const ids = packProjects(installed);
   if (!currentId || installed.off.includes("*") || (ids.length > 0 && !ids.includes(currentId))) return null;
-  const current = projects.find((p) => p.id === currentId)?.name ?? "this project";
+  const current = projects.find((p) => p.id === currentId)?.name ?? "this workspace";
   return (
     <Row
       title={`On in ${current}`}

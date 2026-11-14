@@ -105,24 +105,24 @@ const SHARED_RULES = `How this works:
 - Facts, numbers, studies and quotes come from the sources, the context files, the web research you ask for or the author. Never claim to have checked something you did not.`;
 
 /** Without the folder (Claude on the API key): sources and context files arrive by fetch. */
-const FETCH_RULES = `- Sources: you get an index of every source in the session — what each one has — with its on-screen slide text loaded. When you need more of a source, set fetch with the parts you want; they come back to you in this same turn (say what you are pulling, make no edits yet, finish when they arrive). Slide text and transcript are the creator's own words; the caption is secondary; comments are the audience talking — objections and their language, never facts. What you pull stays loaded for the rest of the session, so pull a part once. "*" as the source means every source.
+const FETCH_RULES = `- Sources: you get an index of every source in the project — what each one has — with its on-screen slide text loaded. When you need more of a source, set fetch with the parts you want; they come back to you in this same turn (say what you are pulling, make no edits yet, finish when they arrive). Slide text and transcript are the creator's own words; the caption is secondary; comments are the audience talking — objections and their language, never facts. What you pull stays loaded for the rest of the session, so pull a part once. "*" as the source means every source.
 - Sources marked kept for format are layout examples: their structure, pacing and hook device, not their topic or claims. Sources marked as the author's own post are their scripts.
 - To look for more material in the author's library, set search to a short topic query (2–5 words); the results go back to the author as suggestions to add.
 - To check something on the web, set research with one precise question: "quick" (about a minute) or "deep" (5–15 minutes of reading). Either one is asked of the author first and runs only if they say yes, so finish your answer without it. When a whole piece should be fact-checked claim by claim, set audit ("quick" or "deep").
-- Project instructions are always-on. Context files are an index (K1, K2…), not loaded until you fetch [{"source":"K1"}] (or the file name); they are reference material, not a brief. Linked Instagram is an index — fetch [{"source":"account"}] for live followers, mix and bio.`;
+- Workspace instructions are always-on. Context files are an index (K1, K2…), not loaded until you fetch [{"source":"K1"}] (or the file name); they are reference material, not a brief. Linked Instagram is an index — fetch [{"source":"account"}] for live followers, mix and bio.`;
 
 /** On the Mac: a Claude Code session in a folder with everything. */
 const FOLDER_GUIDE = `Your folder (Read, Glob and Grep it; it is everything there is):
 - account.md — the author's Instagram account as the live snapshot shows it: followers, posts, posting pace, mix, bio.
 - my-posts/INDEX.md — every post on the author's account, newest first, with views and saves + shares per 1,000 views (what people kept and sent on: the clearest sign a post landed), where the numbers came from, how each post opened, and the most saved and shared ones on top. my-posts/<date>-<code>.md — one post in full.
-- channels/ — the project's other platforms (YouTube, TikTok, Facebook, X), when connected: followers and each recent post with its numbers.
-- sources/ — this session's sources in full (S1, S2…), comments included.
+- channels/ — the workspace's other platforms (YouTube, TikTok, Facebook, X), when connected: followers and each recent post with its numbers.
+- sources/ — this project's sources in full (S1, S2…), comments included.
 - context/ — the author's knowledge (books, studies, old scripts, examples, brand facts): reference material, not a brief and not a list of angles to use. context/INDEX.md: what each file is, what it answers, its parts by line.
-- sessions/ — every Workshop session: the pieces as they stand, the author's edits to the AI's text, and everything they said. THIS SESSION is marked.
+- sessions/ — every Workshop project (one file each; the folder keeps the name sessions/): the pieces as they stand, the author's edits to the AI's text, and everything they said. THIS PROJECT is marked.
 - library/INDEX.md — the author's whole Analyzer library (other creators' posts they kept), a file per post.
 - pasted/ — everything the author pasted into a Workshop chat as an attachment, whole.
 - my-edits/INDEX.md — every time the author rewrote the AI's text: what it wrote and what they made it. The clearest evidence of how they want things said.
-Look before you answer: what has the author already posted on this, how did it do, what have they said about it in earlier sessions. Their followers have seen what they posted: an angle they already used is old news to them unless the author asks for a remake. Then think it through yourself. You don't search the web on your own (owner: "it should ask me before launching a web search"): to check something on the web, set research to one precise question ("quick" about a minute, "deep" 5–15 minutes) and the author decides whether it runs. Your last message is the JSON object and nothing else; fetch stays null (everything is in the folder). search sends the author library suggestions; audit becomes a proposal.`;
+Look before you answer: what has the author already posted on this, how did it do, what have they said about it in earlier projects. Their followers have seen what they posted: an angle they already used is old news to them unless the author asks for a remake. Then think it through yourself. You don't search the web on your own (owner: "it should ask me before launching a web search"): to check something on the web, set research to one precise question ("quick" about a minute, "deep" 5–15 minutes) and the author decides whether it runs. Your last message is the JSON object and nothing else; fetch stays null (everything is in the folder). search sends the author library suggestions; audit becomes a proposal.`;
 
 const INTRO = `You are co-writing with the author. What they want from you is a piece they would post as it stands, in their own voice, that their followers save and send on. The document is the deliverable and nothing else: the script, the slides, the copy. Everything else — analysis, options, objections, questions, reasoning — goes in the reply, and only when the author asks or it is needed to do what they asked. You edit the document in place through operations; you never paste the piece into the reply. English.`;
 
@@ -147,10 +147,10 @@ export interface TurnPromptInput {
   /** Installed packs' instructions for workshop.write (api/lib/packs.ts): after the app's text, before the rules. */
   packText?: string;
   doc: Document;
-  /** The session's other written pieces (another format of the same idea): read here, edits go to doc only. */
+  /** The project's other written pieces (another format of the same idea): read here, edits go to doc only. */
   others?: Document[];
   pinned: ContextSnippet[];
-  /** Every source in the session: what it has, what is loaded (as markdown), which one is open. */
+  /** Every source in the project: what it has, what is loaded (as markdown), which one is open. */
   sources: SourceView[];
   /** Findings from the web research the model asked for earlier in this turn. */
   research?: { question: string; answer: string; citations: string[] };
@@ -339,7 +339,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   const typeLine = carouselTypePrompt(input.doc.carouselType);
   if (typeLine) blocks.push(typeLine);
   // a caption turn reads the other pieces' captions (captionExamples.saved), not their scripts
-  for (const o of captionOnly ? [] : input.others ?? []) blocks.push(`Another piece in this session, for reading (edits go only to the document below):\n${cut(renderDocument(o), TURN_BUDGET.document)}`);
+  for (const o of captionOnly ? [] : input.others ?? []) blocks.push(`Another piece in this project, for reading (edits go only to the document below):\n${cut(renderDocument(o), TURN_BUDGET.document)}`);
   // a caption turn reads the whole piece: its script is what the description has to follow
   if (captionOnly) blocks.push(`The piece this description is for, in full (the video's own words, block by block):\n${renderDocument(input.doc)}`);
   else blocks.push(folder ? renderDocument(input.doc) : cut(renderDocument(input.doc), TURN_BUDGET.document));
@@ -367,7 +367,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   if (resumed) {
     blocks.push(changedNote(input.doc, resumed.newSources));
   } else if (folder && input.sources.length) {
-    blocks.push(`Sources in this session (${input.sources.length}), each in full in sources/:\n\n${input.sources.map((v) => `${renderSourceHead(v)}\n  file: ${sourceFile(v.ref, v.handle)}`).join("\n\n")}`);
+    blocks.push(`Sources in this project (${input.sources.length}), each in full in sources/:\n\n${input.sources.map((v) => `${renderSourceHead(v)}\n  file: ${sourceFile(v.ref, v.handle)}`).join("\n\n")}`);
   } else if (input.sources.length) {
     let used = 0;
     const items: string[] = [];
@@ -382,9 +382,9 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
       items.push(body ? `${head}\n${body}` : head);
       used += body.length;
     }
-    blocks.push(`Sources in this session (${input.sources.length}) — fetch pulls more parts of one (or "*" for all):\n\n${items.join("\n\n")}`);
+    blocks.push(`Sources in this project (${input.sources.length}) — fetch pulls more parts of one (or "*" for all):\n\n${items.join("\n\n")}`);
   } else {
-    blocks.push("Sources in this session: none — the author has not added any.");
+    blocks.push("Sources in this project: none — the author has not added any.");
   }
   if (input.research) {
     const sources = input.research.citations.slice(0, 12).map((u, i) => `[${i + 1}] ${u}`);
@@ -415,7 +415,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
     // Say how many older messages are left out (the 40-turn slice or the budget); on the Mac they are in sessions/.
     const hidden = input.history.length - lines.length;
     const earlier = hidden
-      ? ` (${hidden} earlier message${hidden === 1 ? "" : "s"} of this session ${hidden === 1 ? "is" : "are"} not shown here${folder ? "; the whole conversation is in this session's file in sessions/" : ""})`
+      ? ` (${hidden} earlier message${hidden === 1 ? "" : "s"} of this project ${hidden === 1 ? "is" : "are"} not shown here${folder ? "; the whole conversation is in this project's file in sessions/" : ""})`
       : "";
     blocks.push(`Conversation so far${earlier}:\n${lines.join("\n")}`);
   }
@@ -452,7 +452,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
     );
   }
   if (input.captionExamples?.saved?.length) {
-    blocks.push(`Captions the author has saved on the other pieces of this session:\n${input.captionExamples.saved.map((t) => `---\n${t}`).join("\n")}\n---`);
+    blocks.push(`Captions the author has saved on the other pieces of this project:\n${input.captionExamples.saved.map((t) => `---\n${t}`).join("\n")}\n---`);
   }
   if (input.web) {
     blocks.push(`The author approved one web search for this turn: «${input.web}». Search for it (WebSearch, WebFetch), then answer with what you found, and say what it doesn't support.`);

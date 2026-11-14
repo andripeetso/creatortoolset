@@ -54,14 +54,14 @@ function Row({ r, active, n }: { r: SessionSummary; active: boolean; n?: number 
         }}
         onBlur={(e) => {
           setEditing(false);
-          const t = e.currentTarget.value.trim() || "Untitled session";
+          const t = e.currentTarget.value.trim() || "Untitled project";
           if (t === r.title) return;
           patchSummary(r.id, { title: t });
           window.dispatchEvent(new CustomEvent("workshop:renamed", { detail: { id: r.id, title: t } }));
           patchSession(r.id, { title: t }).catch(() => refreshSummaries());
         }}
         className="w-full rounded-md border border-violet-500/60 bg-zinc-900 px-2 py-1 text-[13px] text-zinc-50 outline-none"
-        aria-label="Session name"
+        aria-label="Project name"
       />
     );
   }
@@ -83,7 +83,7 @@ function Row({ r, active, n }: { r: SessionSummary; active: boolean; n?: number 
       {/* the status at a glance, only when switched on in Settings → General */}
       {storedStatusBars() ? <span className={`absolute inset-y-1.5 left-0 w-[3px] rounded-full ${STATUS_BAR[r.status] ?? STATUS_BAR.draft}`} title={r.status} aria-hidden /> : null}
       <KindTile kind={r.kinds[0] as PieceKind | undefined} />
-      <span className={`min-w-0 flex-1 truncate ${unseen ? "font-medium" : ""}`}>{r.title || "Untitled session"}</span>
+      <span className={`min-w-0 flex-1 truncate ${unseen ? "font-medium" : ""}`}>{r.title || "Untitled project"}</span>
       {r.working ? (
         <span className="flex shrink-0 items-center gap-1 text-[11px] text-violet-300">
           <Loader2 className="h-3 w-3 animate-spin" /> Working
@@ -177,7 +177,7 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
   if (collapsed) {
     return (
       <div className="flex shrink-0 flex-col items-center gap-2 pb-10 pl-2 pt-2">
-        <button type="button" onClick={() => (localStorage.setItem("workshop:sidebar", "open"), setCollapsed(false))} className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" title="Show sessions" aria-label="Show sessions">
+        <button type="button" onClick={() => (localStorage.setItem("workshop:sidebar", "open"), setCollapsed(false))} className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" title="Show projects" aria-label="Show projects">
           <PanelLeftOpen className="h-4 w-4" />
         </button>
         {working ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" aria-label={`${working} replies being written`} /> : null}
@@ -188,9 +188,9 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
   }
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col pb-10 pl-2 pt-2" aria-label="Sessions">
+    <aside className="flex w-60 shrink-0 flex-col pb-10 pl-2 pt-2" aria-label="Projects">
       <div className="flex items-center gap-0.5 px-1 pb-2">
-        <label className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-[13px] text-zinc-500 focus-within:bg-zinc-800/60" title="Search sessions (⌘K)">
+        <label className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-[13px] text-zinc-500 focus-within:bg-zinc-800/60" title="Search projects (⌘K)">
           <Search className="h-4 w-4 shrink-0" />
           <input
             ref={searchRef}
@@ -256,12 +256,12 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
               .finally(() => setMaking(false));
           }}
           className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-50"
-          title="New session"
-          aria-label="New session"
+          title="New project"
+          aria-label="New project"
         >
           {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <SquarePen className="h-4 w-4" />}
         </button>
-        <button type="button" onClick={() => (localStorage.setItem("workshop:sidebar", "closed"), setCollapsed(true))} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" title="Hide sessions" aria-label="Hide sessions">
+        <button type="button" onClick={() => (localStorage.setItem("workshop:sidebar", "closed"), setCollapsed(true))} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" title="Hide projects" aria-label="Hide projects">
           <PanelLeftClose className="h-4 w-4" />
         </button>
       </div>
@@ -316,7 +316,7 @@ function Finder({ rows, onClose }: { rows: SessionSummary[]; onClose: () => void
             }
             else if (e.key === "Enter") go(hits[at]);
           }}
-          placeholder="Find a session…"
+          placeholder="Find a project…"
           className="w-full border-b border-zinc-800 bg-transparent px-4 py-3 text-[15px] text-zinc-100 outline-none placeholder:text-zinc-500"
         />
         <div className="max-h-80 overflow-y-auto p-1.5">
@@ -330,12 +330,12 @@ function Finder({ rows, onClose }: { rows: SessionSummary[]; onClose: () => void
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] ${i === at ? "bg-zinc-800 text-zinc-50" : "text-zinc-300"}`}
               >
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.kinds[0] ? KIND_DOT[r.kinds[0]] : "bg-zinc-600"}`} />
-                <span className="min-w-0 flex-1 truncate">{r.title || "Untitled session"}</span>
+                <span className="min-w-0 flex-1 truncate">{r.title || "Untitled project"}</span>
                 {r.working ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" /> : r.ready ? <span className="h-2 w-2 rounded-full bg-violet-400" /> : null}
               </button>
             ))
           ) : (
-            <p className="px-3 py-4 text-center text-[12px] text-zinc-500">No session by that name.</p>
+            <p className="px-3 py-4 text-center text-[12px] text-zinc-500">No project by that name.</p>
           )}
         </div>
       </div>

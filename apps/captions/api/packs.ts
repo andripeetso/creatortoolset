@@ -45,7 +45,7 @@ packsApp.patch("/:id", async (c) => {
   if (cantSave(c)) return c.json({ error: "Sign in to change packs" }, 403);
   const b = await c.req.json().catch(() => null);
   if (b && "projectIds" in b) {
-    if (b.projectIds !== null && !Array.isArray(b.projectIds)) return c.json({ error: "projectIds: a list, or null for every project" }, 400);
+    if (b.projectIds !== null && !Array.isArray(b.projectIds)) return c.json({ error: "projectIds: a list, or null for every workspace" }, 400);
     const p = await setPackProjects(c.get("user").username, c.req.param("id"), b.projectIds === null ? undefined : parseProjectIds(b));
     return p ? c.json(p) : c.json({ error: "Not installed" }, 404);
   }

@@ -86,7 +86,7 @@ describe("home order and need copy", () => {
         // more than one key does: the row names where they go, not each brand
         if (n.form === "keys" && n.anyOf.length > 1) expect(n.what, `${t}: ${n.what}`).toMatch(/^An API key\b/);
       }
-    expect(needsLine([TOOL_NEEDS.instagram[0], TOOL_NEEDS.instagram[1]])).toBe("Needs a project and an Apify key");
+    expect(needsLine([TOOL_NEEDS.instagram[0], TOOL_NEEDS.instagram[1]])).toBe("Needs a workspace and an Apify key");
     expect(needsLine([TOOL_NEEDS.workshop[1]])).toBe("Needs an AI provider");
   });
 });

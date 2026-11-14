@@ -252,7 +252,7 @@ function Colour({ dark }: { dark: boolean }) {
       <div role="radiogroup" aria-label="Colour" className="flex flex-wrap gap-2">
         {tile(
           "project",
-          "Project",
+          "Workspace",
           projectTint,
           () => persistProjectTint(true),
           <span className="flex flex-1 items-center justify-center bg-muted">

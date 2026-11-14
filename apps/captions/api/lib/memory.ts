@@ -142,7 +142,7 @@ export async function listMemory(user: SessionUser, here = false): Promise<Memor
   const projects = ws?.projects ?? [];
   return facts
     .filter((f) => !here || !f.project || f.project === ws?.currentProjectId)
-    .map(({ id, text, at, project }) => ({ id, text, at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A project that is gone" } } : {}) }))
+    .map(({ id, text, at, project }) => ({ id, text, at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A workspace that is gone" } } : {}) }))
     .reverse();
 }
 
@@ -153,7 +153,7 @@ export const currentProject = async (user: SessionUser) => {
 };
 
 const HEAD = "Things the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):";
-const forProject = (name: string) => `Only for their current project, ${JSON.stringify(name.replace(/\s+/g, " ").trim().slice(0, 60))}:`;
+const forProject = (name: string) => `Only for their current workspace, ${JSON.stringify(name.replace(/\s+/g, " ").trim().slice(0, 60))}:`;
 /** The longest the block can ever be: its two headings and a full store. */
 export const MEMORY_BLOCK_MAX = 2 + HEAD.length + 1 + forProject("x".repeat(60)).length + 1 + MEMORY_CAP;
 

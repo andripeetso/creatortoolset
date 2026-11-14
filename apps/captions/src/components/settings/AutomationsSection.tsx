@@ -311,12 +311,12 @@ function TaskDialog({ initial, providers, onClose, onSaved }: { initial: Automat
           className="sm:w-full"
         />
       </Field>
-      <Field label="Project">
+      <Field label="Workspace">
         <SettingsSelect
-          label="Project"
+          label="Workspace"
           value={d.project || "none"}
           onValueChange={(v) => set({ project: v === "none" ? "" : v })}
-          options={[{ value: "none", label: "No project" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
+          options={[{ value: "none", label: "No workspace" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
           className="sm:w-full"
         />
       </Field>

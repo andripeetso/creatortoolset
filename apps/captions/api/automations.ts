@@ -130,7 +130,7 @@ export function readiness(username: string, a: Automation): Readiness {
 }
 
 const prefaceOf = (a: Automation): string =>
-  `This is a run of the scheduled task "${a.name}". Nobody is at the screen: do the work with the app's tools, and don't open pages with navigate.${a.project ? ` Its Workshop project is ${a.project}.` : ""}`;
+  `This is a run of the scheduled task "${a.name}". Nobody is at the screen: do the work with the app's tools, and don't open pages with navigate.${a.project ? ` Its workspace is ${a.project}.` : ""}`;
 
 /** Records a run's outcome on the task and tells the inbox. Never fails the run that reports. */
 async function finish(username: string, id: string, result: Omit<AutomationResult, "at">): Promise<void> {
@@ -264,7 +264,7 @@ function readFields(b: Input): { fields: Omit<Partial<Automation>, "ai"> & { ai?
     fields.enabled = b.enabled;
   }
   if ("project" in b) {
-    if (b.project !== null && (typeof b.project !== "string" || b.project.length > 100)) return { fields, error: "project: a Workshop project id, or null" };
+    if (b.project !== null && (typeof b.project !== "string" || b.project.length > 100)) return { fields, error: "project: a Workshop workspace id, or null" };
     fields.project = b.project ? (b.project as string) : undefined;
   }
   if ("timezone" in b) {

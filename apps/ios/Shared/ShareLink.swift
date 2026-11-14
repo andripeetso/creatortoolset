@@ -108,7 +108,7 @@ struct ShareLink {
 
     func workspace() async throws -> Workspace {
         try JSONDecoder().decode(Workspace.self, from: try await call("/api/workshop/workspace", method: "GET",
-                                                                       fallback: "Couldn't load your projects"))
+                                                                       fallback: "Couldn't load your workspaces"))
     }
 
     /// One of the account's own posts (`POST /api/workshop/own-post`): the session it is linked to already, or the
@@ -140,7 +140,7 @@ struct ShareLink {
     func link(session id: String, to url: String) async throws -> String {
         let data = try await call("/api/workshop/sessions/\(id)", method: "PATCH", json: ["posted": url],
                                   fallback: "Couldn't link it")
-        return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["title"] as? String ?? "the session"
+        return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["title"] as? String ?? "the project"
     }
 
     /// A Workshop status in the website's words (the extension can't see the app's `WorkshopStatus`).

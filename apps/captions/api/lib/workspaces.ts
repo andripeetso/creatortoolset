@@ -45,7 +45,7 @@ function migrate(): Store {
     workspaces: [
       {
         id: randomUUID(),
-        name: "Workspace",
+        name: "Team",
         plan: "team",
         comped: true,
         createdAt: now,
@@ -118,7 +118,7 @@ export const canManage = (role: WorkspaceRole | undefined) => role === "owner";
 
 export function renameWorkspace(w: Workspace, name: string): void {
   const n = name.trim().slice(0, 60);
-  if (!n) throw new Error("Give the workspace a name");
+  if (!n) throw new Error("Give the team a name");
   w.name = n;
   persist();
 }

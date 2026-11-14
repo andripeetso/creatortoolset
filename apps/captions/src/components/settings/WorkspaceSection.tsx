@@ -121,7 +121,7 @@ export function WorkspaceSection() {
               <TextField
                 label="Team name"
                 placeholder="Team name"
-                value={view.workspace.name === "Workspace" ? "" : view.workspace.name}
+                value={view.workspace.name === "Workspace" || view.workspace.name === "Team" ? "" : view.workspace.name}
                 onCommit={async (next) => {
                   if (!next.trim()) throw new Error("A team needs a name.");
                   await act(renameWorkspace(next.trim()));

@@ -1962,7 +1962,7 @@ export default function InstagramPage() {
                     type="button"
                     onClick={() => navigate(`/workshop?add=${[...selected].join(",")}`)}
                     className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
-                    title="Open a Content Workshop session with these posts as sources"
+                    title="Open a Content Workshop project with these posts as sources"
                   >
                     Send to Workshop
                   </button>

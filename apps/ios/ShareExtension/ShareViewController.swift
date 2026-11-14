@@ -230,7 +230,7 @@ struct ShareCard: View {
         } label: {
             HStack(spacing: 8) {
                 Circle().fill(Self.color(project?.color)).frame(width: 10, height: 10)
-                Text(project?.name ?? "Pick a project").font(.headline).foregroundStyle(.primary)
+                Text(project?.name ?? "Pick a workspace").font(.headline).foregroundStyle(.primary)
                 Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14)
@@ -268,7 +268,7 @@ struct ShareCard: View {
             if let line = post.caption?.split(whereSeparator: \.isNewline).first {
                 Text(String(line)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }
-            Text("Which session is it?").font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
+            Text("Which project is it?").font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
             let candidates = post.candidates ?? []
             ScrollView {
                 VStack(spacing: 8) {
@@ -291,7 +291,7 @@ struct ShareCard: View {
                         .buttonStyle(.plain)
                     }
                     if candidates.isEmpty {
-                        Text("No open session matches it.").font(.subheadline).foregroundStyle(.secondary)
+                        Text("No open project matches it.").font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
             }

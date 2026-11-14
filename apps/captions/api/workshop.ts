@@ -717,7 +717,7 @@ async function piecePictures(sessionId: string, docs: Document[], files: Folder)
       }
     }
   }
-  if (index.length) files["pieces/INDEX.md"] = `# Pictures in this session's pieces\n\nEach picture as written in the piece, and the file that holds it.\n\n${index.join("\n")}\n`;
+  if (index.length) files["pieces/INDEX.md"] = `# Pictures in this project's pieces\n\nEach picture as written in the piece, and the file that holds it.\n\n${index.join("\n")}\n`;
   return docs;
 }
 async function readPasted(sessionId: string, refs: PastedRef[] | undefined): Promise<Array<PastedRef & { text: string }>> {
@@ -900,7 +900,7 @@ async function startTurn(sessionId: string, pair: ChatMessage[], retryOf: string
  * A session nobody named gets a name once the AI has written into it: the author's other sessions' names go along as examples; the reply is the
  * name. A name the author typed is never replaced.
  */
-const UNTITLED = /^(untitled( session)?)?$/i;
+const UNTITLED = /^(untitled( (session|project))?)?$/i;
 async function nameSession(sessionId: string, user: SessionUser, docId: string, force = false): Promise<string | null> {
   const meta = await readSession(sessionId);
   if (!meta || (!force && !UNTITLED.test(meta.title.trim()))) return null;
@@ -914,15 +914,15 @@ async function nameSession(sessionId: string, user: SessionUser, docId: string, 
     if (m?.owner === user.username && !UNTITLED.test(m.title.trim())) names.push(m.title.trim());
   }
   const name = await completeWithFallback(
-    "Name this writing session. Reply with the name only.",
-    `${names.length ? `The author's other sessions are named:\n${names.slice(0, 15).map((n) => `- ${n}`).join("\n")}\n\n` : ""}The piece:\n${text.slice(0, 2000)}`,
+    "Name this project. Reply with the name only.",
+    `${names.length ? `The author's other projects are named:\n${names.slice(0, 15).map((n) => `- ${n}`).join("\n")}\n\n` : ""}The piece:\n${text.slice(0, 2000)}`,
     undefined,
     (t) => {
       const line = t.trim().split("\n")[0]!.replace(/^["'“”*`\s-]+|["'“”*`\s.]+$/g, "").slice(0, 60);
       if (!line) throw new Error("no name");
       return line;
     },
-    route(user, "workshop", "Session title"),
+    route(user, "workshop", "Project title"),
   );
   await updateSession(sessionId, (m) => {
     if (force || UNTITLED.test(m.title.trim())) m.title = name;
@@ -1517,7 +1517,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       notes.push(
         hits?.length
           ? `I searched the library for “${plan.search}” — ${hits.length} related post${hits.length === 1 ? "" : "s"} below, add the ones you want.`
-          : `I searched the library for “${plan.search}” — nothing beyond what is already in the session.`,
+          : `I searched the library for “${plan.search}” — nothing beyond what is already in the project.`,
       );
     }
     // Codex's sandbox has no network: an approved search runs only on Claude Code on the Mac (or Perplexity), say so otherwise
@@ -1527,7 +1527,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     if (searched.length) notes.push(`Searched the web for ${searched.join(", ")}.`);
     if (unreadFiles.length) {
       const list = unreadFiles.map((f) => f.name).join(", ");
-      notes.push(macReads ? `Not read, the file is no longer in this session: ${list}.` : `Not read: ${list}. PDFs reach the AI only through the Mac, so this reply did not read them.`);
+      notes.push(macReads ? `Not read, the file is no longer in this project: ${list}.` : `Not read: ${list}. PDFs reach the AI only through the Mac, so this reply did not read them.`);
     }
     if (refused.size) {
       const at = (await readDoc(session.id, target.id))?.blocks.map((b) => b.id) ?? [];
@@ -1840,7 +1840,7 @@ workshopApp.patch("/workspace", async (c) => {
   const raw = body?.currentProjectId;
   try {
     if (raw === null || raw === "") return c.json(await setCurrentProjectId(user, null));
-    if (!okId(raw)) return c.json({ error: "Unknown project" }, 400);
+    if (!okId(raw)) return c.json({ error: "Unknown workspace" }, 400);
     return c.json(await setCurrentProjectId(user, raw));
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 404);
@@ -1913,18 +1913,18 @@ workshopApp.post("/projects/draft-notes", async (c) => {
     ),
   ]);
   const given = parts.filter(Boolean);
-  if (!text && !given.some((p) => !p.startsWith("("))) return c.json({ error: "Paste or drop something about the project first" }, 400);
+  if (!text && !given.some((p) => !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
   try {
     const notes = await completeWithFallback(
-      "From what a creator gave about one of their projects (their own words, pages and files, and any Instagram bio and posts), write the facts a writer needs about it: who it is for, what it offers, where people are sent (a link, a product, a DM word), and the topics it keeps coming back to. Only what the material says; say so where it doesn't. Plain short lines, under 1,200 characters. Don't describe how they write.",
-      [typeof body?.name === "string" && body.name.trim() ? `Project: ${body.name.slice(0, 80)}` : "", text ? `What they wrote:\n${text}` : "", ...given].filter(Boolean).join("\n\n"),
+      "From what a creator gave about one of their workspaces (their own words, pages and files, and any Instagram bio and posts), write the facts a writer needs about it: who it is for, what it offers, where people are sent (a link, a product, a DM word), and the topics it keeps coming back to. Only what the material says; say so where it doesn't. Plain short lines, under 1,200 characters. Don't describe how they write.",
+      [typeof body?.name === "string" && body.name.trim() ? `Workspace: ${body.name.slice(0, 80)}` : "", text ? `What they wrote:\n${text}` : "", ...given].filter(Boolean).join("\n\n"),
       undefined,
       (t) => {
         const s = t.trim();
         if (!s) throw new Error("empty");
         return s.slice(0, LIMITS.projectNotes);
       },
-      route(user, "workshop", "Project setup"),
+      route(user, "workshop", "Workspace setup"),
     );
     return c.json({ notes });
   } catch (e) {
@@ -2081,7 +2081,7 @@ workshopApp.patch("/sources/:id", async (c) => {
   if (!s) return c.json({ error: "Not found" }, 404);
   try {
     const { projectId, ...fields } = parseSourcePatch(await c.req.json().catch(() => null), lineCount(await readSourceText(s.id)));
-    if (projectId && !(await readProject(projectId, user))) return c.json({ error: "Unknown project" }, 400);
+    if (projectId && !(await readProject(projectId, user))) return c.json({ error: "Unknown workspace" }, 400);
     const next = await patchSource(s.id, (cur) => {
       const x: KnowledgeSource = { ...cur, ...fields, updatedAt: Date.now() };
       if (projectId === null) delete x.projectId;
@@ -2353,7 +2353,7 @@ workshopApp.get("/kept", async (c) => {
       if (share !== undefined) pieces.push({ at: meta.createdAt, share });
     }
   }
-  return c.json({ about: "Median share of the AI's text left as it was in finished pieces, by the week the session started.", weeks: keptByWeek(pieces) });
+  return c.json({ about: "Median share of the AI's text left as it was in finished pieces, by the week the project started.", weeks: keptByWeek(pieces) });
 });
 
 /**
@@ -2462,7 +2462,7 @@ workshopApp.post("/sessions", async (c) => {
     const meta: SessionMeta = {
       id: randomUUID(),
       owner: user.username,
-      title: patch.title || "Untitled session",
+      title: patch.title || "Untitled project",
       query: patch.query ?? "",
       status: patch.status ?? "draft",
       ...(projectId ? { projectId } : {}),
@@ -2500,7 +2500,7 @@ workshopApp.patch("/sessions/:id", async (c) => {
   try {
     const patch = parseSessionPatch(await c.req.json().catch(() => null));
     const next = await updateSession(meta.id, (m) => {
-      if (patch.title !== undefined) m.title = patch.title || "Untitled session";
+      if (patch.title !== undefined) m.title = patch.title || "Untitled project";
       if (patch.query !== undefined) m.query = patch.query;
       if (patch.projectId === null) delete m.projectId;
       else if (patch.projectId) m.projectId = patch.projectId;
@@ -2602,7 +2602,7 @@ workshopApp.post("/sessions/:id/duplicate", async (c) => {
   const copy: SessionMeta = {
     id: randomUUID(),
     owner: user.username,
-    title: `${meta.title.trim() || "Untitled session"} copy`,
+    title: `${meta.title.trim() || "Untitled project"} copy`,
     query: meta.query,
     // a copy of a finished or shelved session starts as Writing: nothing has been made from the copy yet
     status: meta.status === "published" || meta.status === "shelved" ? "writing" : (meta.status ?? "draft"),
@@ -2896,7 +2896,7 @@ workshopApp.post("/sessions/:id/finals", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { pieceId?: unknown; docId?: unknown } | null;
   if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
   const docId = typeof body.docId === "string" ? body.docId : undefined;
-  if (docId && !(await readDoc(meta.id, docId))) return c.json({ error: "No such piece of this session" }, 404);
+  if (docId && !(await readDoc(meta.id, docId))) return c.json({ error: "No such piece of this project" }, 404);
   return linkFinalsPiece(body.pieceId, meta.id, docId, user.username) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
 });
 
@@ -3038,7 +3038,7 @@ workshopApp.delete("/sessions/:id/docs/:docId", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   const doc = await readDoc(meta.id, c.req.param("docId"));
   if (!doc) return c.json({ error: "Not found" }, 404);
-  if (doc.kind === "notes") return c.json({ error: "Notes stay with the session" }, 400);
+  if (doc.kind === "notes") return c.json({ error: "Notes stay with the project" }, 400);
   await rm(trashPath(meta.id, doc.id), { force: true });
   await rename(docPath(meta.id, doc.id), trashPath(meta.id, doc.id));
   return c.json({ ok: true });
@@ -3552,7 +3552,7 @@ workshopApp.get("/sessions/:id/export.md", async (c) => {
   const project = await projectForAi(meta.projectId, user);
   const working = docs.filter((d) => d.kind !== "notes" && d.blocks.length);
   const primary = working[0];
-  const heading = primary ? exportStem(project?.name, primary.kind, meta.title) : meta.title || "Workshop session";
+  const heading = primary ? exportStem(project?.name, primary.kind, meta.title) : meta.title || "Workshop project";
   let body = buildExportMarkdown({ ...meta, title: heading }, notes, sources, drafts);
   if (working.length) {
     body += `\n## Documents\n\n${working
@@ -3586,7 +3586,7 @@ workshopApp.get("/sessions/:id/obsidian.md", async (c) => {
   const docs = await listDocs(meta.id);
   // one note per piece (reel, carousel): `part` picks one; without it, a session with several says how many
   const types = await pieceTypes(meta.id, docs);
-  if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This session has no reel or carousel with words yet" }, 400);
+  if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words yet" }, 400);
   // the note says what a share would make it (In Production, not the Ready it had in the Workshop); this read shows
   // that without moving the session: the share route does the move
   const stored = meta.status ?? "draft";
@@ -3659,7 +3659,7 @@ async function sessionFromNote(user: SessionUser, body: Record<string, unknown>,
   const meta: SessionMeta = {
     id,
     owner: user.username,
-    title: (typeof body.title === "string" && body.title.trim().slice(0, LIMITS.title)) || "Untitled session",
+    title: (typeof body.title === "string" && body.title.trim().slice(0, LIMITS.title)) || "Untitled project",
     query: "",
     status: status ?? "draft",
     ...(projectId ? { projectId } : {}),
@@ -3771,7 +3771,7 @@ workshopApp.post("/sessions/:id/export/:exportId", async (c) => {
   const day = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : new Date().toISOString().slice(0, 10);
   const docs = await listDocs(meta.id);
   const types = await pieceTypes(meta.id, docs);
-  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This session has no reel or carousel with words yet" }, 400);
+  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This project has no reel or carousel with words yet" }, 400);
   const status = await sharedForProduction(meta);
   const files = obsidianPieces({ ...meta, status }, docs, day, types).map((piece) => {
     const vars = exportVars(piece, status, day);
@@ -3929,7 +3929,7 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (!aiOn(user)) return c.json({ error: "AI is not configured" }, 400);
   if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is already generating in this session — wait for it" }, 409);
+    return c.json({ error: "A draft is already generating in this project — wait for it" }, 409);
   }
   const made = draftFrom(meta, await c.req.json().catch(() => null));
   if ("error" in made) return c.json({ error: made.error }, 400);

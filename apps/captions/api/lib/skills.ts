@@ -98,7 +98,7 @@ function tooManyOn(skills: Skill[], place: SkillPlace): boolean {
   for (const s of on) for (const p of s.projectIds ?? []) perProject.set(p, (perProject.get(p) ?? 0) + 1);
   return on.filter((s) => !s.projectIds?.length).length + Math.max(0, ...perProject.values()) > SKILL_LIMITS.perTurn;
 }
-const TOO_MANY = `${SKILL_LIMITS.perTurn} skills can be on in one place of one project. Switch one off first.`;
+const TOO_MANY = `${SKILL_LIMITS.perTurn} skills can be on in one place of one workspace. Switch one off first.`;
 
 /** The name is the skill's file name in a turn's folder and how the AI asks for it, so no two of one place may read the same. */
 const sameName = (a: string, b: string) => slug(a, SKILL_LIMITS.name) === slug(b, SKILL_LIMITS.name);
@@ -117,7 +117,7 @@ export function projectIdsOf(raw: unknown): string[] | undefined {
 
 /** A job at this place runs with no project, so a skill there can't be kept to some. */
 const noProjects = (place: SkillPlace, projectIds: string[] | undefined) => {
-  if (projectIds && everyProject(place)) throw new SkillError(`A skill for ${placeLabel(place)} goes to every project.`);
+  if (projectIds && everyProject(place)) throw new SkillError(`A skill for ${placeLabel(place)} goes to every workspace.`);
 };
 
 /**
