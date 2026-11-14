@@ -222,7 +222,7 @@ export default function ToolsetHome() {
       }`}
     >
       {homeGlow && dark && ( // light: no glow (it banded and distracted there)
-        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <div aria-hidden className="home-glow-wrap pointer-events-none absolute inset-0 -z-10 overflow-hidden">
           <div
             className="home-glow absolute inset-0"
             style={{ background: "radial-gradient(ellipse 70% 50% at 50% 55%, color-mix(in srgb, var(--tint) 10%, transparent), transparent 70%)" }}
