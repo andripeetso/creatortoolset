@@ -5,6 +5,7 @@ import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, Pe
 import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
+import { CtMark } from "@/components/CtMark";
 import { FramePresets } from "@/components/design/FramePresets";
 import { Inspector, type ExportAs } from "@/components/design/Inspector";
 import { usePageNeeds } from "@/lib/chat-mode";
@@ -20,6 +21,7 @@ import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
+import { onThisMac } from "@/lib/thisMac";
 import { downloadBlob } from "@/lib/download";
 import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -592,7 +594,7 @@ function DesignPage({ id }: { id: string }) {
     setCutting(true);
     setError(null);
     try {
-      const cut = await cutOutPicture(design.id, l.picture);
+      const cut = await onThisMac(() => cutOutPicture(design.id, l.picture));
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, cut] } : d));
       // onto the layer as it is by now: the cutting took a while
       const page = latest.current.find((p) => p.id === onto);
@@ -615,7 +617,7 @@ function DesignPage({ id }: { id: string }) {
     setCutting(true);
     setError(null);
     try {
-      const a = await splitPicture(design.id, l.picture);
+      const a = await onThisMac(() => splitPicture(design.id, l.picture));
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, a.background, ...a.pieces.map((p) => p.picture)] } : d));
       // onto the frame as it is by now: the Mac took a while
       const page = latest.current.find((p) => p.id === onto);
@@ -925,7 +927,11 @@ function DesignPage({ id }: { id: string }) {
                   {mine.length === 1 && mine[0]!.type === "image" && (
                     <>
                       <ContextMenuSeparator />
-                      {item(cutting ? "Your Mac is on it" : "Split into layers", "", () => void split(), cutting)}
+                      {/* the AI makes the layers: its mark where a shortcut would be */}
+                      <ContextMenuItem disabled={cutting} onSelect={() => void split()}>
+                        {cutting ? "Your Mac is on it" : "Split into layers"}
+                        <CtMark className="ml-auto size-4 text-violet-500" />
+                      </ContextMenuItem>
                     </>
                   )}
                   <ContextMenuSeparator />
@@ -961,6 +967,15 @@ function DesignPage({ id }: { id: string }) {
                 <ImagePlus className="h-4 w-4" />
               </button>
             </Tip>
+            {/* one picture picked: what the AI can make of it, in a pill of its own beside the tools, so they never move */}
+            {mine.length === 1 && mine[0]!.type === "image" && (
+              <div className={cn("absolute left-full top-1/2 ml-2 flex -translate-y-1/2 rounded-xl border p-1.5 shadow-lg", BAR)}>
+                <button type="button" disabled={cutting} onClick={(e) => (void split(), e.currentTarget.blur())} className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm enabled:hover:bg-zinc-500/15 disabled:opacity-50">
+                  <CtMark className="h-4 w-4 text-violet-500" />
+                  {cutting ? "Your Mac is on it" : "Split into layers"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

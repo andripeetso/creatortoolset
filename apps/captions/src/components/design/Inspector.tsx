@@ -33,6 +33,7 @@ import {
   WrapText,
   X,
 } from "lucide-react";
+import { CtMark } from "@/components/CtMark";
 import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -952,12 +953,14 @@ export function Inspector({
                     Put the background back
                   </button>
                 ) : (
-                  <button type="button" disabled={cutting} onClick={onCutOut} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
+                  <button type="button" disabled={cutting} onClick={onCutOut} className="flex h-7 items-center justify-center gap-1.5 rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
+                    <CtMark className="size-3.5" />
                     {cutting ? "Your Mac is on it" : "Remove background"}
                   </button>
                 ))}
               {one?.type === "image" && (
-                <button type="button" disabled={cutting} onClick={onSplit} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
+                <button type="button" disabled={cutting} onClick={onSplit} className="flex h-7 items-center justify-center gap-1.5 rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 disabled:opacity-50 dark:border-[#4d4d4d]">
+                  <CtMark className="size-3.5" />
                   Split into layers
                 </button>
               )}
