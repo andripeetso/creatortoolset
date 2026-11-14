@@ -1,9 +1,10 @@
 // Chat mode switched on or off (apps/captions/src/lib/chat-mode.ts washTo): a wave goes through the window's own
 // picture. A page can only move its boxes and paint over them; this bends the picture itself. A view over the web view
-// shows a picture of the screen as it was, gathers it toward the button for a moment, then lets one front go out across
-// the window. At the front the picture is drawn in toward the button, blurred a little, its colours split a little
-// where it bends most, and lit in the project's colour. Behind the front is the new screen: a picture of it where the
-// front still bends it, the live page past that. Nothing is drawn behind the front once it has passed.
+// shows a picture of the screen as it was, and for half a second that screen falls toward the button, faster and
+// faster: what is near the button shrinks into it, what is further is stretched toward it and turns a little round it,
+// under a veil of blur and a light that grows at the button. Then it is let go: one wave goes out across the window,
+// its front wavering, its crest a ridge of glass (lit and shaded, its colours split where it bends most) that pushes
+// the new screen out and lets it settle back after one small trough. Past the settled wave the live page shows.
 import AppKit
 import Metal
 import MetalKit
@@ -34,9 +35,16 @@ final class ChatWaveHost {
         case "drawn":
             guard let view, let wave else { return reply(true, nil) }
             drawn = reply
-            view.takeSnapshot(with: nil) { [weak wave] image, _ in
-                guard let wave else { return }
-                if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+            // The picture of the new screen is taken just before the wave is let go, not now: what the page fills in a
+            // moment after the switch (the list of chats, the open chat's messages) is there by then, and the picture
+            // of the screen as it was hides the page until that moment anyway.
+            let wait = max(0, WaveClock.gather - 140 - wave.elapsed) / 1000
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak view, weak wave] in
+                guard let view, let wave, wave.superview != nil else { return }
+                view.takeSnapshot(with: nil) { [weak wave] image, _ in
+                    guard let wave else { return }
+                    if let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) { wave.setNew(image) } else { wave.finish() }
+                }
             }
         case "stop":
             wave?.finish()
@@ -87,117 +95,146 @@ vertex V waveVertex(uint id [[vertex_id]]) {
 
 struct U {
     float4 a;   // size of the picture (px), the button (px)
-    float4 b;   // front (px from the button), half width of the front (px), how far it bends (px), colour split
-    float4 c;   // gathered (0 to 1), how far round the button that reaches (px), light (0 to 1), blur (px)
+    float4 b;   // how hard the screen is drawn in (0 to 1), how far round the button that reaches (px), turn (radians), veil (px of blur)
+    float4 c;   // front (px from the button), its width (px), the wave's height (px), its light (0 to 1)
     float4 d;   // the project's colour (0 to 1), 1 on a dark screen
-    float4 e;   // the light at the button (0 to 1)
+    float4 e;   // the light at the button (0 to 1), seconds since the press, px a point, colour split
 };
+
+static float grain(float2 p) { return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
+
+// The wave's height across its front (x in front widths, 0 its middle, below 0 behind it): one crest, then one small
+// trough as it settles, as water does.
+static float height(float x) {
+    return exp(-3.0 * x * x) - 0.32 * exp(-2.2 * (x + 1.35) * (x + 1.35));
+}
 
 fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
                              texture2d<float> was [[texture(0)]], texture2d<float> now [[texture(1)]]) {
     constexpr sampler sm(address::clamp_to_edge, filter::linear);
     float2 size = u.a.xy, o = u.a.zw;
-    float front = u.b.x, w = u.b.y, bend = u.b.z, split = u.b.w;
-    float gather = u.c.x, reach = u.c.y, light = u.c.z, blur = u.c.w;
+    float pull = u.b.x, reach = u.b.y, swirl = u.b.z, veil = u.b.w;
+    float front = u.c.x, w = u.c.y, amp = u.c.z, flash = u.c.w;
     float3 tint = u.d.xyz;
-    float dark = u.d.w;
+    bool dark = u.d.w > 0.5;
+    float bloom = u.e.x, time = u.e.y, pt = u.e.z, split = u.e.w;
 
     float2 p = in.uv * size;
     float2 v = p - o;
     float r = max(length(v), 0.001);
     float2 n = v / r;
-    float2 t = float2(-n.y, n.x);
-    // where this point is against the front: below 0 the new screen, above 0 the one that was
-    float x = (r - front) / w;
-    // well behind the front: the page itself shows
-    if (x < -2.4) return float4(0.0);
-    float lens = exp(-2.2 * x * x);
+    float ang = atan2(v.y, v.x);
 
-    // How far toward the button this point's picture is drawn from: the screen is pulled in, never pushed out. While
-    // it gathers, the screen round the button is drawn in (most a little way out, none at the button itself) and held
-    // so until the front reaches it; the front takes it from there and lets it go behind. So each point moves in once
-    // and back once.
-    float ahead = smoothstep(-0.6, 0.2, x);
-    float held = 0.16 * r * gather * exp(-(r * r) / (reach * reach)) * ahead;
-    float lensShift = bend * lens;
-    float shift = max(lensShift, held);
-    // out of focus where the two screens meet, so they dissolve into each other and no text is seen twice; nothing
-    // ahead of the front is
-    float soft = blur * exp(-5.0 * x * x);
-    float m = smoothstep(-0.3, 0.3, x);
+    // the front is no circle: it wavers along its length, and the wavering moves
+    float waver = 0.6 * sin(ang * 7.0 + time * 3.5) + 0.32 * sin(ang * 13.0 - time * 5.5 + 1.3) + 0.08 * sin(ang * 23.0 + time * 8.0 + 2.1);
+    float x = (r - front - waver * w * 0.28) / w;
+    // well behind the front, once its wave has settled: the page itself shows
+    if (x < -3.2) return float4(0.0);
+    float ahead = smoothstep(-0.4, 0.4, x);
+
+    // The screen that was falls toward the button: what is near it shrinks into it, what is further is stretched
+    // toward it, and all of it turns a little round it. Each point stays so until the front reaches it.
+    float sucked = pull * r * exp(-r / reach) * ahead;
+    float turn = swirl * pull * exp(-r / (0.6 * reach)) * ahead;
+    // Behind the front the new screen is pushed out by the crest and settles back after one small trough.
+    float h = height(x);
+    float slope = (height(x + 0.05) - height(x - 0.05)) / 0.1;
+    float rs = max(r + sucked - amp * h, 0.0);
+    float as = ang + turn;
+    float2 ns = float2(cos(as), sin(as));
+    float2 ts = float2(-ns.y, ns.x);
+    float2 base = o + ns * rs;
+
+    // Out of focus: a veil round the button while the screen falls into it, and the crest of the wave.
+    float soft = veil * pull * exp(-r / (0.8 * reach)) * ahead + 9.0 * pt * abs(h) * (0.4 + 0.6 * flash);
+    // the colours split where the picture bends most
+    float sp = split * (abs(slope) * amp * 0.5 + 0.12 * sucked);
     float3 col = float3(0.0);
-    float total = 0.0;
-    // the middle and two rings round it, longer along the way the front goes
-    for (int k = 0; k < 13; k++) {
-        float ring = k == 0 ? 0.0 : (k < 7 ? 0.5 : 1.0);
-        float ang = float(k) * 1.0472 + (k < 7 ? 0.0 : 0.5236);
-        float2 off = (n * cos(ang) * 1.6 + t * sin(ang)) * soft * ring;
-        float wk = k == 0 ? 1.0 : (k < 7 ? 0.8 : 0.5);
-        // each colour bent a little more or less than the next, only where the front bends the picture
-        float3 at = shift + float3(1.0, 0.0, -1.0) * split * lensShift;
-        float2 base = p + off;
-        float2 qr = (base + n * at.r) / size, qg = (base + n * at.g) / size, qb = (base + n * at.b) / size;
-        float3 a = float3(was.sample(sm, qr).r, was.sample(sm, qg).g, was.sample(sm, qb).b);
-        float3 b = float3(now.sample(sm, qr).r, now.sample(sm, qg).g, now.sample(sm, qb).b);
-        col += mix(b, a, m) * wk;
-        total += wk;
+    int taps = soft < 0.75 ? 1 : 16;
+    float spin = grain(p) * 6.2831853;
+    for (int k = 0; k < taps; k++) {
+        float fk = float(k);
+        float ring = taps == 1 ? 0.0 : sqrt((fk + 0.5) / 16.0);
+        float a = fk * 2.3999632 + spin;
+        float2 q = base + (ns * cos(a) * 1.8 + ts * sin(a)) * soft * ring;
+        float2 qr = (q + ns * sp) / size, qg = q / size, qb = (q - ns * sp) / size;
+        float3 A = float3(was.sample(sm, qr).r, was.sample(sm, qg).g, was.sample(sm, qb).b);
+        float3 B = float3(now.sample(sm, qr).r, now.sample(sm, qg).g, now.sample(sm, qb).b);
+        col += mix(B, A, ahead);
     }
-    col /= total;
+    col /= float(taps);
 
-    // the light rides just behind the middle of the front; while the screen gathers it is a small glow at the button
-    // A wide halo in the project's colour and a narrow core near white: on a dark screen the light, on a light one a
-    // sheen over what the front bends
-    float bloom = u.e.x * exp(-(r * r) / (0.09 * reach * reach));
-    float halo = clamp(light * (exp(-2.8 * (x + 0.15) * (x + 0.15)) + bloom), 0.0, 1.0);
-    float core = clamp(light * (exp(-16.0 * (x + 0.08) * (x + 0.08)) + 0.6 * bloom * bloom), 0.0, 1.0);
-    if (dark > 0.5) {
-        float3 l = tint * halo * 0.42 + mix(tint, float3(1.0), 0.7) * core * 0.5;
-        col = 1.0 - (1.0 - col) * (1.0 - clamp(l, 0.0, 1.0));
+    // The wave as a surface of glass, lit from the button's side: a highlight where it faces the light, a shade where
+    // it turns away, a sheen at its edges in the project's colour turning warm; brightest as it leaves the button.
+    float3 N = normalize(float3(-slope * amp / w * 2.2 * n, 1.0));
+    float3 L = normalize(float3(-0.5, -0.6, 0.62));
+    float3 Hv = normalize(L + float3(0.0, 0.0, 1.0));
+    float spec = pow(max(dot(N, Hv), 0.0), 60.0) * smoothstep(0.02, 0.2, abs(slope) * amp / w * 2.2);
+    float facing = dot(N, L) - L.z;
+    float rim = pow(1.0 - N.z, 3.0);
+    float3 sheen = mix(mix(tint, float3(1.0), 0.55), mix(tint, float3(1.0, 0.86, 0.72), 0.5), 0.5 + 0.5 * sin(ang * 3.0 + slope * 2.0 + time * 3.0));
+    if (dark) {
+        col += sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * 0.25 * flash;
+        col *= 1.0 + facing * 0.6 * flash;
     } else {
-        col = mix(col, mix(tint, float3(1.0), 0.45), halo * 0.32);
-        col = mix(col, float3(1.0), core * 0.45);
+        // the shade side in the project's colour, never grey
+        col *= mix(float3(1.0), mix(tint, float3(1.0), 0.6), clamp(-min(facing, 0.0) * 0.8 * flash, 0.0, 0.35));
+        col = mix(col, float3(1.0), clamp(spec * 1.6 * flash, 0.0, 1.0));
+        col = mix(col, sheen, clamp((rim * 1.2 + max(h, 0.0) * 0.18) * flash, 0.0, 0.45));
     }
-    float alpha = smoothstep(-2.4, -1.6, x);
-    return float4(col * alpha, alpha);
+    // the light at the button: a white core in a halo of the project's colour
+    float core = exp(-(r * r) / (2116.0 * pt * pt));
+    float halo = exp(-r / (110.0 * pt));
+    if (dark) {
+        col = 1.0 - (1.0 - col) * (1.0 - clamp((float3(core * 0.9) + tint * halo * 0.6) * bloom, 0.0, 1.0));
+    } else {
+        col = mix(col, mix(tint, float3(1.0), 0.35), clamp(halo * 0.45 * bloom, 0.0, 1.0));
+        col = mix(col, float3(1.0), clamp(core * 0.85 * bloom, 0.0, 1.0));
+    }
+    // a fine grain in what is out of focus, like frosted glass
+    col += (grain(p + time) - 0.5) * 0.05 * clamp(soft / (8.0 * pt), 0.0, 1.0);
+    float alpha = smoothstep(-3.2, -2.6, x);
+    return float4(clamp(col, 0.0, 1.0) * alpha, alpha);
 }
 """
 
 /// Where the wave is at `ms` after the press, for a window `size` px with the button at `origin` px, `scale` px a point.
 struct WaveMoment {
-    var front: Float, width: Float, bend: Float, split: Float
-    var gather: Float, reach: Float, light: Float, blur: Float
-    /// The light at the button: up within a few frames of the press, so the press is answered at once.
-    var bloom: Float = 0
+    /// How hard the screen is drawn in toward the button (0 to 1), how far round the button that reaches (px), how far
+    /// it turns round it (radians), how out of focus it is at the button (px).
+    var pull: Float, reach: Float, swirl: Float, veil: Float
+    /// The front (px from the button), its width (px), the wave's height (px), the light on it (0 to 1).
+    var front: Float, width: Float, wave: Float, flash: Float
+    /// The light at the button (up within a few frames of the press, so the press is answered at once), the seconds
+    /// since the press (the front's wavering moves with them), how far the colours split.
+    var bloom: Float, seconds: Float, split: Float
+    /// Pixels a point.
+    var px: Float
     var done: Bool
 }
 
 enum WaveClock {
-    /// The screen gathers toward the button (ms), then the front crosses the window (ms): slow to leave, fast at the end.
-    static let gather: Double = 200
-    static let sweep: Double = 600
+    /// The screen falls toward the button, faster and faster (ms); then it is let go and one wave goes out across the
+    /// window, fast as it leaves and slowing as it spreads (ms).
+    static let gather: Double = 520
+    static let sweep: Double = 560
 
     static func at(_ ms: Double, size: CGSize, origin: CGPoint, scale: CGFloat) -> WaveMoment {
         let s = Float(scale)
         let far = Float(hypot(max(origin.x, size.width - origin.x), max(origin.y, size.height - origin.y)))
-        let smooth = { (e0: Double, e1: Double, v: Double) -> Float in
-            let t = min(max((v - e0) / (e1 - e0), 0), 1)
-            return Float(t * t * (3 - 2 * t))
-        }
-        // the light at the button: up at once, and gone into the front as it leaves
+        let seconds = Float(ms / 1000)
         let lit = Float(1 - pow(1 - min(ms / 80, 1), 3))
         if ms < gather {
-            let g = smooth(0, gather, ms)
-            return WaveMoment(front: -1e6, width: 70 * s, bend: 0, split: 0.07, gather: g, reach: 260 * s, light: 0.8, blur: 10 * s, bloom: lit, done: false)
+            let g = Float(pow(ms / gather, 2.2))
+            return WaveMoment(pull: g, reach: 220 * s, swirl: 0.35, veil: 16 * s, front: -1e6, width: 55 * s, wave: 0, flash: 0,
+                              bloom: lit * (0.55 + 0.45 * g), seconds: seconds, split: 0.08, px: s, done: false)
         }
         let u = Float(min((ms - gather) / sweep, 1))
-        let width = (70 + 50 * u) * s
-        // the front's middle ends past the far corner by the part of the front that still bends the picture
-        let front = (0.3 * u + 0.7 * u * u) * (far + 2.4 * width)
-        // the screen stays gathered until the front reaches it (the shader lets each point go there); the light at the
-        // button goes into the front
-        let fading = 1 - smooth(0, 0.3, Double(u))
-        return WaveMoment(front: front, width: width, bend: 22 * s * smooth(0, 0.12, Double(u)), split: 0.07,
-                          gather: 1, reach: 260 * s, light: 0.8 * (1 - 0.4 * u), blur: 10 * s, bloom: fading, done: u >= 1)
+        let width = (55 + 70 * u) * s
+        // the front ends past the far corner by all of its wave and the most it wavers
+        let front = (1 - pow(1 - u, 1.4)) * (far + 3.8 * 125 * s)
+        return WaveMoment(pull: 1, reach: 220 * s, swirl: 0.35, veil: 16 * s, front: front, width: width, wave: 26 * s * (1 - 0.45 * u),
+                          flash: 0.25 + 0.75 * exp(-2.2 * u), bloom: max(0, 1 - 4 * u), seconds: seconds, split: 0.08, px: s, done: u >= 1)
     }
 }
 
@@ -244,10 +281,10 @@ final class WaveRenderer {
         guard let was, let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         var u: [SIMD4<Float>] = [
             SIMD4(Float(size.width), Float(size.height), Float(origin.x), Float(origin.y)),
-            SIMD4(m.front, m.width, m.bend, m.split),
-            SIMD4(m.gather, m.reach, m.light, m.blur),
+            SIMD4(m.pull, m.reach, m.swirl, m.veil),
+            SIMD4(m.front, m.width, m.wave, m.flash),
             SIMD4(tint.x, tint.y, tint.z, dark ? 1 : 0),
-            SIMD4(m.bloom, 0, 0, 0),
+            SIMD4(m.bloom, m.seconds, m.px, m.split),
         ]
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride * u.count, index: 0)
@@ -269,7 +306,7 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     private var started = CACurrentMediaTime()
     /// When the picture of the new screen came (the front waits for it, at most `wait` ms after the press).
     private var newAt: Double?
-    private let wait: Double = 700
+    private let wait: Double = 1000
     var onDone: (() -> Void)?
 
     init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool) throws {
@@ -295,6 +332,9 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     required init(coder: NSCoder) { fatalError("not used") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Milliseconds since the wave went up.
+    var elapsed: Double { (CACurrentMediaTime() - started) * 1000 }
 
     func setNew(_ image: CGImage) {
         renderer.now = try? renderer.texture(image)
