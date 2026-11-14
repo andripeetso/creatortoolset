@@ -233,7 +233,7 @@ export async function warmCached<T>(url: string, load: () => Promise<T>): Promis
  */
 export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opts?: CacheOpts) {
   const user = useAuth((s) => s.me?.username ?? null);
-  useSyncExternalStore(onWorkspaceChange, currentWorkspace); // a switch re-reads under the new workspace's key
+  useSyncExternalStore(onWorkspaceChange, currentWorkspace, currentWorkspace); // a switch re-reads under the new workspace's key
   const k = url && user ? keyOf(user, url) : null;
   const topics = [opts?.topic ?? (url ? topicOf(url) : null)].flat().filter((t): t is string => !!t);
   const topicKey = topics.join(" ");
