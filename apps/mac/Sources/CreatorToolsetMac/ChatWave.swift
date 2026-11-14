@@ -121,15 +121,17 @@ struct U {
     float4 d;   // the project's colour (0 to 1), 1 on a dark screen
     float4 e;   // the light at the button (0 to 1), seconds since the press, px a point, colour split
     float4 f;   // how much of the wave is left on the window (1, then down to 0 as it ends), the height its light is for
-                // (px), how far behind the front's middle a point is let go by (front widths)
+                // (px), how far behind the front's middle a point is let go by (front widths), how wild a long hold made it
+                // (0 to 1)
 };
 
 static float grain(float2 p) { return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
 
 // The wave's height across its front (x in front widths, 0 its middle, below 0 behind it): one broad, soft crest, then
-// two very slight ridges behind it as it settles, as water does.
-static float height(float x) {
-    return exp(-1.6 * x * x) - 0.24 * exp(-1.4 * (x + 1.6) * (x + 1.6)) + 0.09 * exp(-1.4 * (x + 3.1) * (x + 3.1));
+// two slight ridges behind it as it settles, as water does; deeper after a long hold (`wild`, 0 to 1).
+static float height(float x, float wild) {
+    return exp(-1.6 * x * x) - 0.24 * (1.0 + 0.9 * wild) * exp(-1.4 * (x + 1.6) * (x + 1.6))
+         + 0.09 * (1.0 + 1.4 * wild) * exp(-1.4 * (x + 3.1) * (x + 3.1));
 }
 
 fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
@@ -141,6 +143,7 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float3 tint = u.d.xyz;
     bool dark = u.d.w > 0.5;
     float bloom = u.e.x, time = u.e.y, pt = u.e.z, split = u.e.w;
+    float wild = u.f.w;
 
     float2 p = in.uv * size;
     float2 v = p - o;
@@ -164,11 +167,14 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     // passes (from 1.5 front widths ahead of its middle to 1.5 behind, further behind the deeper it was drawn in):
     // quick, never in one frame.
     float letgo = smoothstep(-u.f.z, 1.5, x);
-    float sucked = 0.7 * pull * r * exp(-r / reach) * letgo * still;
-    float turn = swirl * pull * exp(-r / (0.6 * reach)) * letgo * still;
-    // Behind the front the new screen is pushed out by the crest and settles after two very slight ridges.
-    float h = height(x) * still;
-    float slope = (height(x + 0.05) - height(x - 0.05)) / 0.1 * still;
+    // Held long it goes wilder: it turns harder, in rings that churn in toward the button, and trembles.
+    float tremor = wild * wild * 3.0 * pt * sin(time * 47.0 + ang * 3.0);
+    float sucked = max(0.7 * pull * r + tremor, 0.0) * exp(-r / reach) * letgo * still;
+    float churn = wild * (0.3 + 0.12 * sin(r / (90.0 * pt) + time * 10.0));
+    float turn = (swirl + churn) * pull * exp(-r / (0.6 * reach)) * letgo * still;
+    // Behind the front the new screen is pushed out by the crest and settles after two slight ridges.
+    float h = height(x, wild) * still;
+    float slope = (height(x + 0.05, wild) - height(x - 0.05, wild)) / 0.1 * still;
     // ... but the window's edges stay put, as a sheet pinned in its frame: a point is never drawn from past the edge
     // (which would smear the picture's last row), and the closer to it the less it moves. `edge` is how far the window
     // goes from the button this way; with nothing drawn in, `rs` is `r`.
@@ -183,15 +189,17 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
 
     // Out of focus: a veil round the button while the screen falls into it, and the crest of the wave.
     // (the crest's blur goes as the wave dies away)
-    float soft = (veil * pull * exp(-r / (0.8 * reach)) * letgo + 9.0 * pt * abs(h) * (amp / (30.0 * pt)) * (0.4 + 0.6 * flash)) * still;
+    // (no wider than a hold of about a second and a half makes it: wider, the blur's taps would show as copies)
+    float soft = (veil * min(pull, 2.6) * exp(-r / (0.8 * reach)) * letgo + 9.0 * pt * abs(h) * (amp / (30.0 * pt)) * (0.4 + 0.6 * flash)) * still;
     // the colours split where the picture bends most
     float sp = split * (abs(slope) * amp * 0.5 + 0.12 * sucked) * still;
     float3 col = float3(0.0);
-    int taps = soft < 0.75 ? 1 : 16;
+    // (a slight blur needs fewer taps: the window can be 6K at 120 frames a second)
+    int taps = soft < 0.75 ? 1 : (soft < 6.0 ? 8 : 16);
     float spin = grain(p) * 6.2831853;
     for (int k = 0; k < taps; k++) {
         float fk = float(k);
-        float ring = taps == 1 ? 0.0 : sqrt((fk + 0.5) / 16.0);
+        float ring = taps == 1 ? 0.0 : sqrt((fk + 0.5) / float(taps));
         float a = fk * 2.3999632 + spin;
         float2 q = base + (ns * cos(a) * 1.8 + ts * sin(a)) * soft * ring;
         float2 qr = (q + ns * sp) / size, qg = q / size, qb = (q - ns * sp) / size;
@@ -213,7 +221,7 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float rim = pow(1.0 - N.z, 3.0);
     float3 sheen = mix(mix(tint, float3(1.0), 0.55), mix(tint, float3(1.0, 0.86, 0.72), 0.5), 0.5 + 0.5 * sin(ang * 3.0 + slope * 2.0 + time * 3.0));
     if (dark) {
-        col += sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * 0.25 * flash;
+        col += sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * (0.25 + 0.3 * wild) * flash;
         col *= 1.0 + facing * 0.6 * flash;
     } else {
         // the shade side in the project's colour, never grey
@@ -255,8 +263,10 @@ struct WaveMoment {
     /// The wave's height as its light sees it (px): as high as a hold of about half a second makes it, at most.
     var lit: Float = 0
     /// How far behind the front's middle a point is let go by (front widths): further the deeper the screen was drawn
-    /// in, so no point moves much more than 40 points in a frame however long the button was held.
+    /// in, so the pop is quick but never a jump however long the button was held.
     var back: Float = 1.5
+    /// How wild a long hold has made it (0 to 1): see `WaveClock.wild`.
+    var wild: Float = 0
     var done: Bool
 }
 
@@ -266,10 +276,19 @@ enum WaveClock {
     /// "only suck when the user holds down the button ... and at a certain point it pops; the longer the button is held
     /// down the stronger the pop").
     static let holdFrom: Double = 140
-    static let longest: Double = 1300
+    static let longest: Double = 2000
+    /// Held past `wildFrom` (ms) it goes wilder until `longest`: it twists harder, churns and trembles, and the pop is an
+    /// explosion: a higher wave with deeper ridges, more split colour and light in the project's colour, and longer
+    /// (owner, 11-14: "the longer the hold, the worse the effect gets and starts twisting stuff and going a bit crazier
+    /// ... and an even bigger explosion for the long one").
+    static let wildFrom: Double = 900
+    static func wild(_ ms: Double) -> Float {
+        let t = Float(min(max((ms - wildFrom) / (longest - wildFrom), 0), 1))
+        return t * t * (3 - 2 * t)
+    }
     /// One wave goes out across the window, quick as it leaves, slowing for a long while as it spreads and dying away to
-    /// nothing as it reaches the far side (ms).
-    static let sweep: Double = 950
+    /// nothing as it reaches the far side (ms): longer after a long hold.
+    static func sweep(held: Double) -> Double { 950 + 450 * Double(wild(held)) }
     /// The widest the front gets (points), and how far past the far corner its middle ends (front widths: its crest and
     /// first ridge have crossed the window; what is left of the wave fades out there).
     static let widest: Float = 240
@@ -305,14 +324,17 @@ enum WaveClock {
         let seconds = Float(ms / 1000)
         let lit = Float(1 - pow(1 - min(ms / 80, 1), 3))
         let p = pull(ms, held: held)
+        let w = wild(min(ms, held))
         guard let release, ms >= release else {
+            // (the light at the button throbs as it goes wild)
             return WaveMoment(pull: p, reach: 380 * s, swirl: 0.4, veil: 18 * s, front: -1e6, width: 160 * s, wave: 0, flash: 0,
-                              bloom: lit * (0.55 + 0.45 * min(p, 1)), seconds: seconds, split: 0.08, px: s, done: false)
+                              bloom: lit * (0.55 + 0.45 * min(p, 1)) * (1 + 0.15 * w * sin(seconds * 18)), seconds: seconds,
+                              split: 0.08 * (1 + 0.8 * w), px: s, wild: w, done: false)
         }
-        // the longer the button was held, the harder it pops: a click's wave is about two thirds of a long hold's half
+        // the longer the button was held, the harder it pops: a click's wave is about a third of the longest hold's
         let drawnIn = pull(held, held: held)
-        let pop = 0.65 + 0.35 * min(drawnIn, 2.5)
-        let u = Float(min((ms - release) / sweep, 1))
+        let pop = 0.65 + 0.35 * drawnIn
+        let u = Float(min((ms - release) / sweep(held: held), 1))
         let width = (160 + (widest - 160) * u) * s
         // quick as it leaves, slower and slower after (no point moves more than about 25 points in a frame)
         let from = -behind * 160 * s
@@ -321,9 +343,10 @@ enum WaveClock {
         // over the last quarter what is left of the wave fades into the page
         let fade = Double(min(max((u - 0.75) / 0.25, 0), 1))
         return WaveMoment(pull: p, reach: 380 * s, swirl: 0.4, veil: 18 * s, front: front, width: width, wave: 26 * s * dying * pop,
-                          flash: (0.25 + 0.75 * exp(-2.2 * u)) * pow(1 - u, 0.9) * min(pop, 1), bloom: exp(-7 * u), seconds: seconds,
-                          split: 0.08 * min(pop, 1.35), px: s, left: Float(1 - fade * fade * (3 - 2 * fade)), lit: 26 * s * dying * min(pop, 1),
-                          back: 1.5 * max(1, 1 + 0.5 * (drawnIn - 1)), done: u >= 1)
+                          flash: (0.25 + 0.75 * exp(-2.2 * u)) * pow(1 - u, 0.9) * min(pop, 1),
+                          bloom: exp(-7 * u) * (1 + 0.6 * w * exp(-12 * u)), seconds: seconds,
+                          split: 0.08 * min(pop, 1.35) * (1 + 1.2 * w), px: s, left: Float(1 - fade * fade * (3 - 2 * fade)),
+                          lit: 26 * s * dying * min(pop, 1), back: 1.5 * max(1, 1 + 0.5 * (drawnIn - 1)), wild: w, done: u >= 1)
     }
 }
 
@@ -374,7 +397,7 @@ final class WaveRenderer {
             SIMD4(m.front, m.width, m.wave, m.flash),
             SIMD4(tint.x, tint.y, tint.z, dark ? 1 : 0),
             SIMD4(m.bloom, m.seconds, m.px, m.split),
-            SIMD4(m.left, m.lit, m.back, 0),
+            SIMD4(m.left, m.lit, m.back, m.wild),
         ]
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride * u.count, index: 0)
