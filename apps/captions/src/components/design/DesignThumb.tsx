@@ -5,6 +5,9 @@ import { frameOf } from "@/lib/design/hands";
 import { useOwnFonts } from "@/lib/design/own-fonts";
 import { getDesign, pictureUrl } from "@/lib/designs";
 
+/** The first frame (pictures lying loose beside the frames are not a design's face), else whatever there is. */
+const coverOf = (d: Design | null) => d?.pages.find((p) => !p.loose) ?? d?.pages[0];
+
 /**
  * A design's first frame, small and in its own shape, drawn by the same function as the designer's canvas. `stamp` is
  * the design's last change: a new one reads and draws it again. `width` and `height` hold the card's shape until the
@@ -28,7 +31,7 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
   }, [id, stamp]);
 
   useEffect(() => {
-    const page = design?.pages[0];
+    const page = coverOf(design);
     if (!design || !page) return;
     const again = () => setDrawn((n) => n + 1);
     for (const l of page.layers) {
@@ -45,7 +48,7 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
 
   useEffect(() => {
     const c = canvas.current;
-    const page = design?.pages[0];
+    const page = coverOf(design);
     if (!c || !design || !page) return;
     const f = frameOf(page, 0, design.width, design.height);
     // drawn at twice the card's size at most: sharp on a dense screen, small in memory
@@ -57,7 +60,8 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
     drawPage(ctx, page, f.w, f.h, loaded);
   }, [design, drawn, loaded]);
 
-  const first = design?.pages[0] && frameOf(design.pages[0], 0, design.width, design.height);
+  const cover = coverOf(design);
+  const first = design && cover && frameOf(cover, 0, design.width, design.height);
   const w = first ? first.w : width;
   const h = first ? first.h : height;
   if (tile === undefined) return <canvas ref={canvas} aria-hidden className="block w-full bg-zinc-500/10" style={{ aspectRatio: `${w} / ${h}` }} />;

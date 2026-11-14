@@ -360,4 +360,14 @@ describe("the pages a design starts with", () => {
     expect(cleanPages([page], { w: 1080, h: 1920, pictures: ["ab12cd34.jpg"] }).pages).toEqual([page]);
     expect(coverPage("ab12cd34.jpg", "  ", 1280, 720).layers).toHaveLength(1);
   });
+
+  it("keeps pictures lying loose on the canvas apart from the frames, and drops an empty one", () => {
+    const pic = { type: "image", picture: "ab12cd34.jpg", fit: "cover", x: 0, y: 0, w: 100, h: 80 };
+    const frames = Array.from({ length: DESIGN_LIMITS.pages }, (_, k) => ({ id: `f${k}`, x: k * 2000, y: 0, w: 1080, h: 1350, layers: [] }));
+    const { pages } = cleanPages([...frames, { id: "pa", loose: true, x: -400, y: 0, w: 100, h: 80, layers: [pic] }, { id: "pb", loose: true, x: 0, y: 0, w: 10, h: 10, layers: [] }, { id: "pc", loose: "yes", layers: [] }], rules);
+    // the loose picture does not take a frame's place, and a frame past the limit is still left out
+    expect(pages).toHaveLength(DESIGN_LIMITS.pages + 1);
+    expect(pages.at(-1)).toMatchObject({ id: "pa", loose: true, x: -400, w: 100, h: 80 });
+    expect(pages.filter((p) => p.loose)).toHaveLength(1);
+  });
 });

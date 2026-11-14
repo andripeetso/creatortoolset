@@ -14,7 +14,7 @@
  *   GET    /api/designs/:id/pages       ?look=<name> → what an AI designs from: the fonts, pictures, looks' briefs (one look's pictures when named), each frame with its id, size, words and layers, and how frames and changes are written
  *   POST   /api/designs/:id/pages       { frames?: [{ id?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? }] } → DesignAnswer & { touched: frame ids } (an AI's work: whole frames replaced or added, or single layers changed; checked as above)
  *   GET    /api/designs/:id/look        ?frames=<id>,<id> → { pictures: [{ page, jpeg (base64), spills }], why? }: the frames as small pictures, for the AI to look at
- *   POST   /api/designs/:id/pictures    { name, type, data (base64) } → { id }   (JPEG, PNG or WebP); or { version, t }: that moment of a library video, copied in
+ *   POST   /api/designs/:id/pictures    { name, type, data (base64), id? } → { id, updatedAt, was }   (JPEG, PNG or WebP; `id`: the one the window gave it, so it is shown before it is here; `was`: the design's updatedAt before it); or { version, t }: that moment of a library video, copied in
  *   POST   /api/designs/:id/pictures/:pid/cutout   → { id }: that picture with its background taken away, as a new picture of the design (cut by a Mac of the person's own)
  *   POST   /api/designs/:id/pictures/:pid/split    → SplitAnswer: that picture split into its words, its pieces and what is behind them (by a Mac of the person's own)
  *   GET    /api/designs/:id/pictures/:pid
@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 60, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -210,6 +210,12 @@ export interface DesignPage {
   h?: number;
   /** the Workshop carousel slide (its block's id) this frame draws: its words are that slide's, as the piece has them now */
   block?: string;
+  /**
+   * not a frame: pictures lying on the canvas outside every frame (one dropped on empty canvas, or dragged out of a
+   * frame). Its box is always the box round its layers, it has no background, no name and no export, and it is gone
+   * once it has no layer left
+   */
+  loose?: true;
   /** "#rrggbb" */
   background: string;
   gradient?: Gradient;

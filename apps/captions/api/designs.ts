@@ -127,7 +127,7 @@ async function save(d: Design): Promise<Design> {
 /** When a design is changed now: always after its last change, so a window can tell that it has not seen this one (`since`, on a save). */
 const stamp = (d: Design): number => Math.max(Date.now(), d.updatedAt + 1);
 
-const summaryOf = (d: Design): DesignSummary => ({ id: d.id, name: d.name, kind: d.kind, format: d.format, width: d.width, height: d.height, pages: d.pages.length, ...(d.from ? { from: d.from } : {}), ...(d.project ? { project: d.project } : {}), updatedAt: d.updatedAt });
+const summaryOf = (d: Design): DesignSummary => ({ id: d.id, name: d.name, kind: d.kind, format: d.format, width: d.width, height: d.height, pages: d.pages.filter((p) => !p.loose).length, ...(d.from ? { from: d.from } : {}), ...(d.project ? { project: d.project } : {}), updatedAt: d.updatedAt });
 
 /**
  * The designs as the lists show them: each with what it was made from (the Workshop piece's title, the library
@@ -164,8 +164,10 @@ async function listed(user: AuthVars["user"], all: readonly Design[]): Promise<D
   );
 }
 
-async function addPicture(d: Design, bytes: Buffer, ext: string): Promise<string> {
-  const id = `${randomBytes(4).toString("hex")}.${ext}`;
+async function addPicture(d: Design, bytes: Buffer, ext: string, given?: unknown): Promise<string> {
+  // the id the window gave it (it shows the picture before it is here), when it is one and not taken
+  const id = typeof given === "string" && PICTURE.test(given) && given.endsWith(`.${ext}`) && !d.pictures.includes(given) ? given : `${randomBytes(4).toString("hex")}.${ext}`;
+  if (given !== undefined && id !== given) throw new DesignError("That picture id cannot be used");
   await mkdir(picturesOf(d.owner, d.id), { recursive: true });
   await writeFile(path.join(picturesOf(d.owner, d.id), id), bytes);
   d.pictures.push(id);
@@ -358,7 +360,8 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
     ...(!lookNamed && carousels.length > 1 ? { look: `Pick the carousel style this design is in (${carousels.slice(0, 12).map((l) => `"${l.name}"`).join(", ")}; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.` } : {}),
     ...(!lookNamed && !carousels.length ? { look: `The user has no carousel style yet. ${toAnalyzer(animated.map((l) => l.name))}` } : {}),
     ...(style && shown ? { look: { name: style.name, ...(style.brief.trim() ? { brief: style.brief.trim().slice(0, LOOK_BRIEF) } : {}), pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })), ...(shown.length ? {} : { more: `It has no pictures yet. ${toAnalyzer([])}` }) } } : {}),
-    frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), layers: p.layers })),
+    // pictures lying loose beside the frames are the person's, not frames to design
+    frames: pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), layers: p.layers }])),
     how: HOW,
   };
 }
@@ -700,10 +703,13 @@ designsApp.post("/:id/pictures", (c) =>
       } catch (e) {
         throw new DesignError(e instanceof Error ? e.message : String(e));
       }
-      id = await addPicture(d, sent.bytes, PICTURE_EXT[sent.type]);
+      id = await addPicture(d, sent.bytes, PICTURE_EXT[sent.type], b.id);
     }
-    await save({ ...d, updatedAt: stamp(d) });
-    return { id };
+    // `was`: the window that sent it knows the design is newer only by this picture when it knew `was`
+    const was = d.updatedAt;
+    const updatedAt = stamp(d);
+    await save({ ...d, updatedAt });
+    return { id, updatedAt, was };
   }),
 );
 

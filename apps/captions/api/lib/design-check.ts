@@ -321,7 +321,11 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
 export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; notes: string[] } {
   const notes: string[] = [];
   const pages: DesignPage[] = [];
-  for (const [k, p] of (Array.isArray(raw) ? raw : []).slice(0, DESIGN_LIMITS.pages).entries()) {
+  // frames and loose pictures are counted apart: pictures lying beside the frames take no frame's place
+  const count = { frames: 0, loose: 0 };
+  for (const [k, p] of (Array.isArray(raw) ? raw : []).slice(0, DESIGN_LIMITS.pages + DESIGN_LIMITS.loose).entries()) {
+    const loose = obj(p) && p.loose === true;
+    if (loose ? ++count.loose > DESIGN_LIMITS.loose : ++count.frames > DESIGN_LIMITS.pages) continue;
     if (!obj(p)) {
       // an AI's answer keeps a page's place: what comes after it stays with its own words
       if (r.words) pages.push({ id: `p${k + 1}`, background: "#ffffff", layers: [] });
@@ -356,7 +360,9 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       }
       if (left.length) notes.push(`Page ${k + 1}: these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`);
     }
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
+    // a loose picture with nothing left on it is gone
+    if (loose && !layers.length) continue;
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
   }
   return { pages, notes };
 }

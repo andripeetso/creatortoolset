@@ -123,11 +123,13 @@ export function LayersPanel({
       </div>
       <div role="tree" className="min-h-0 flex-1 select-none overflow-y-auto py-1">
         {pages.map((p, k) => {
-          const open = !shut.includes(p.id);
+          // a picture lying loose on the canvas has no frame row: its layers stand on their own
+          const open = p.loose || !shut.includes(p.id);
           const pageKey = `p:${p.id}`;
           const layerKey = `l:${p.id}:`;
           return (
             <div key={p.id}>
+              {!p.loose && (
               <div
                 role="treeitem"
                 data-row={pageKey}
@@ -163,6 +165,7 @@ export function LayersPanel({
                 {renaming === pageKey ? rename(pageName(p, k), (name) => onPage({ ...p, name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{pageName(p, k)}</span>}
                 {line(pageKey)}
               </div>
+              )}
               {open &&
                 [...p.layers].reverse().map((l, n, shown) => {
                   const key = layerKey + l.id;
@@ -209,7 +212,7 @@ export function LayersPanel({
                         onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
                       }}
                       onDoubleClick={() => setRenaming(key)}
-                      className={cn(ROW, grouped ? "pl-14" : "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
+                      className={cn(ROW, p.loose ? "pl-4" : grouped ? "pl-14" : "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
                     >
                       <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
                       {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}

@@ -1,4 +1,4 @@
-import { DESIGN_GAP, type DesignPage, type Layer } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "@contracts/design";
 
 /**
  * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
@@ -265,6 +265,40 @@ export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "T
 /** What the layers list calls a layer: its own name, or what it is. */
 export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : SHAPE_NAMES[l.shape]);
 export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
+
+/**
+ * Pictures lying loose on the canvas, each kept to the box round its layers (a picture moved, resized or turned takes
+ * its box with it, so nothing of it is ever cut off); one with no layer left is gone (`drop` false: kept). The pages themselves when none
+ * changed.
+ */
+export function hugLoose(pages: DesignPage[], drop = true): DesignPage[] {
+  let changed = false;
+  const out: DesignPage[] = [];
+  for (const p of pages) {
+    if (!p.loose) {
+      out.push(p);
+      continue;
+    }
+    if (!p.layers.length) {
+      if (drop) changed = true;
+      else out.push(p);
+      continue;
+    }
+    const b = boundsOf(p.layers);
+    const x = Math.floor(b.x);
+    const y = Math.floor(b.y);
+    const w = Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.ceil(b.x + b.w) - x));
+    const h = Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.ceil(b.y + b.h) - y));
+    if (!x && !y && w === p.w && h === p.h) {
+      out.push(p);
+      continue;
+    }
+    changed = true;
+    out.push({ ...p, x: (p.x ?? 0) + x, y: (p.y ?? 0) + y, w, h, layers: p.layers.map((l) => ({ ...l, x: l.x - x, y: l.y - y })) });
+  }
+  return changed ? out : pages;
+}
+
 
 /**
  * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was

@@ -593,8 +593,9 @@ export function Inspector({
               </Tap>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {num("X", "X", box.x, (n) => (l) => ({ ...l, x: round(l.x + n - box.x) }))}
-              {num("Y", "Y", box.y, (n) => (l) => ({ ...l, y: round(l.y + n - box.y) }))}
+              {/* a loose picture's place is on the canvas: its own box only follows it */}
+              {num("X", "X", box.x + (page.loose ? (page.x ?? 0) : 0), (n) => (l) => ({ ...l, x: round(l.x + n - box.x - (page.loose ? (page.x ?? 0) : 0)) }))}
+              {num("Y", "Y", box.y + (page.loose ? (page.y ?? 0) : 0), (n) => (l) => ({ ...l, y: round(l.y + n - box.y - (page.loose ? (page.y ?? 0) : 0)) }))}
               {one && num("∠", "Rotation in degrees", one.rotate ?? 0, (n) => (l) => ({ ...l, rotate: n || undefined }), { min: -180, max: 180 })}
             </div>
           </Section>
@@ -996,6 +997,8 @@ export function Inspector({
         </>
       )}
 
+      {/* a picture lying loose on the canvas is no frame to save */}
+      {!page.loose && (
       <Section title="Export">
         <div className="grid grid-cols-2 gap-2">
           <Choice label="File type" value={as.jpeg ? "jpeg" : "png"} options={[["png", "PNG"], ["jpeg", "JPG"]] as const} onPick={(t) => setAs({ ...as, jpeg: t === "jpeg" })} />
@@ -1010,6 +1013,7 @@ export function Inspector({
           </button>
         )}
       </Section>
+      )}
     </aside>
   );
 }

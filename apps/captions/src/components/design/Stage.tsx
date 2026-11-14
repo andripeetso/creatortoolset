@@ -383,8 +383,8 @@ export function Stage({
     return { x: (e.clientX - r.left - v.x) / v.z, y: (e.clientY - r.top - v.y) / v.z };
   };
   /** The frame under a point of the canvas: where two lie over each other, the later one. */
-  const frameUnder = (p: Point): number => {
-    for (let k = fr.length - 1; k >= 0; k--) if (p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
+  const frameUnder = (p: Point, framesOnly = false): number => {
+    for (let k = fr.length - 1; k >= 0; k--) if ((!framesOnly || !pages[k]!.loose) && p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
     return -1;
   };
   const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null);
@@ -454,23 +454,28 @@ export function Stage({
     // Alt drags a copy and leaves the layer where it was
     const copy = e.altKey;
     const b0 = boundsOf(moving);
+    const looseId = `p${Date.now().toString(36)}`;
     let last: { pages: DesignPage[]; to: number; ids: string[] } | null = null;
     drag(
       e,
       (ev) => {
         const m = moveOf(ev, from);
         const mid = { x: f.x + b0.x + m.dx + b0.w / 2, y: f.y + b0.y + m.dy + b0.h / 2 };
-        const over = frameUnder(mid);
+        // a loose picture is no frame to land in
+        const over = frameUnder(mid, true);
         // another frame takes them only when it has room for them; a copy stays in a frame that has room too
         const fits = (n: number) => pages[n]!.layers.length + moving.length <= DESIGN_LIMITS.layers;
         const to = over >= 0 && over !== k && fits(over) ? over : k;
+        // pictures taken out of their frame onto empty canvas lie loose there, uncut
+        const out = over < 0 && !p.loose && !copy && moving.every((l) => l.type === "image");
         if (to === k && copy && !fits(k)) return;
         const host = pages[to]!;
         const g = fr[to]!;
         // in the host frame's own pixels
         const ox = f.x - g.x;
         const oy = f.y - g.y;
-        const targets: Rect[] = [{ x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l]))];
+        // a loose picture's own box is where it was: nothing to catch on
+        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l]))];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
         const s = snapMove(at, targets, near);
@@ -490,7 +495,11 @@ export function Stage({
         // copies, and layers landing in another frame, are a group among themselves, not part of one that is there
         const next = to !== k || copy ? regroup(placed, host.layers.filter((l) => to !== k || copy || !ids.includes(l.id))) : placed;
         const home = copy ? p : { ...p, layers: p.layers.filter((l) => !moving.includes(l)) };
-        last = to === k ? { pages: [copy ? { ...p, layers: [...p.layers, ...next] } : withLayers(p, next)], to, ids: next.map((l) => l.id) } : { pages: [home, { ...host, layers: [...host.layers, ...next] }], to, ids: next.map((l) => l.id) };
+        last = out
+          ? { pages: [home, { id: looseId, loose: true, x: f.x, y: f.y, w: f.w, h: f.h, background: "#ffffff", layers: next }], to: pages.length, ids: next.map((l) => l.id) }
+          : to === k
+            ? { pages: [copy ? { ...p, layers: [...p.layers, ...next] } : withLayers(p, next)], to, ids: next.map((l) => l.id) }
+            : { pages: [home, { ...host, layers: [...host.layers, ...next] }], to, ids: next.map((l) => l.id) };
         onLive(last.pages);
       },
       (moved) => {
@@ -498,7 +507,9 @@ export function Stage({
         onLive(null);
         if (last) {
           onCommit(last.pages);
-          if (last.to !== k || copy) onPick(last.to, last.ids);
+          // a loose picture whose last picture went into a frame is gone, and the frames after it move up one
+          const gone = p.loose && !copy && last.to !== k && !last.pages[0]!.layers.length;
+          if (last.to !== k || copy) onPick(gone && last.to > k ? last.to - 1 : last.to, last.ids);
         } else if (!moved && ids.length > 1) {
           // a click on one of several picked: that one alone (with its group)
           const one = p.layers.find((l) => l.id === hit);
@@ -792,10 +803,14 @@ export function Stage({
       onShape(null);
     }
     if (tool === "frame") return make(e, -1);
-    // a canvas with no frame yet: there is nothing to draw a layer on
-    if (tool !== "move" && !fr.length) return;
-    if (tool === "pen") return penDown(e, p, k);
-    if (tool !== "move") return make(e, k >= 0 ? k : at);
+    // a layer is drawn on the frame under the press, else the current one (a loose picture is no frame to draw on);
+    // a canvas with no frame yet has nothing to draw a layer on
+    if (tool !== "move") {
+      const under = frameUnder(p, true);
+      const onto = under >= 0 ? under : pages[at] && !pages[at]!.loose ? at : pages.findIndex((x) => !x.loose);
+      if (onto < 0) return;
+      return tool === "pen" ? penDown(e, p, onto) : make(e, onto);
+    }
     // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it)
     if (!hit && k >= 0 && (framedIds.includes(pages[k]!.id) || !pages[k]!.layers.some((l) => !l.hidden && !l.locked))) return moveFrame(e, k);
     if (!hit) return marquee(e, k);
@@ -891,7 +906,7 @@ export function Stage({
           }}
         >
           <canvas ref={canvas} aria-label="The frames" className="pointer-events-none block h-full w-full" />
-          {pages.map((p, k) => (
+          {pages.map((p, k) => !p.loose && (
             <button
               key={p.id}
               type="button"

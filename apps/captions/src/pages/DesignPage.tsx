@@ -14,11 +14,11 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
+import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
-import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureSize, pictureUrl, saveDesign, splitPicture } from "@/lib/designs";
+import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
 import { downloadBlob } from "@/lib/download";
 import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
@@ -168,7 +168,9 @@ function DesignPage({ id }: { id: string }) {
   const k = Math.max(0, Math.min(at, pages.length - 1));
   /** The frame the picked layers are on: as saved (what a change starts from), and as shown (mid-drag). */
   const base = pages[k];
-  const shown = useMemo(() => (live ? pages.map((p) => live.find((l) => l.id === p.id) ?? p) : pages), [pages, live]);
+  // a page new in the drag (a picture dragged out of its frame) is shown too, and a loose picture round what is on it
+  // (one left empty stays in its place until the drag ends, so the frames keep their numbers)
+  const shown = useMemo(() => (live ? hugLoose([...pages.map((p) => live.find((l) => l.id === p.id) ?? p), ...live.filter((l) => !pages.some((p) => p.id === l.id))], false) : pages), [pages, live]);
   const page = shown[k];
   /** Where every frame lies on the canvas, and the one the picked layers are on. */
   const frames = useMemo(() => (design ? pages.map((p, n) => frameOf(p, n, design.width, design.height)) : []), [pages, design]);
@@ -179,6 +181,8 @@ function DesignPage({ id }: { id: string }) {
   /** Every frame that is picked, by id: the one at `at` first. A frame that is gone (deleted somewhere else) is not among them. */
   const framedIds = useMemo(() => (framed && base ? [base.id, ...others.filter((id) => id !== base.id && pages.some((p) => p.id === id))] : []), [framed, base, others, pages]);
   const framedAt = framedIds.map((id) => pages.findIndex((p) => p.id === id));
+  /** The frames, without the pictures lying loose beside them: what is saved as PNGs, and what the limit counts. */
+  const frameCount = pages.filter((p) => !p.loose).length;
 
   // every picture and drawing the pages show, loaded once each
   useEffect(() => {
@@ -281,13 +285,17 @@ function DesignPage({ id }: { id: string }) {
     const join = !!merge && merging.current === merge;
     merging.current = merge ?? null;
     setLive(null);
-    setHist((h) => (!h ? h : join ? { ...h, now: fn(h.now) } : histChange(h, fn)));
+    // a loose picture keeps to the box round it, whatever changed it
+    setHist((h) => (!h ? h : join ? { ...h, now: hugLoose(fn(h.now)) } : histChange(h, (all) => hugLoose(fn(all)))));
   }, []);
-  /** Frames changed in one step: each takes the place of the one with its id. */
-  const setPages = useCallback((next: readonly Page[], merge?: string) => change((all) => all.map((p) => next.find((n) => n.id === p.id) ?? p), merge), [change]);
+  /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
+  const setPages = useCallback((next: readonly Page[], merge?: string) => change((all) => [...all.map((p) => next.find((n) => n.id === p.id) ?? p), ...next.filter((n) => !all.some((p) => p.id === n.id))], merge), [change]);
   const setPage = useCallback((next: Page, merge?: string) => setPages([next], merge), [setPages]);
   const pick = useCallback((to: number, ids: string[], frame = false, all: string[] = []) => {
     merging.current = null;
+    // a loose picture is never picked as a frame: its picture is
+    const lone = frame && all.length < 2 ? latest.current[to] : undefined;
+    if (lone?.loose) [ids, frame, all] = [lone.layers.map((l) => l.id), false, []];
     setAt(to);
     setSelected(ids);
     setFramed(frame);
@@ -372,7 +380,7 @@ function DesignPage({ id }: { id: string }) {
    */
   const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }, layers?: (f: { w: number; h: number }) => Layer[]): Page | undefined => {
     if (!design) return undefined;
-    if (pages.length >= DESIGN_LIMITS.pages) return void setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
+    if (frameCount >= DESIGN_LIMITS.pages) return void setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
     const dims = size ?? here ?? { w: design.width, h: design.height };
     const v = view.aim();
     const r = rect ?? (frames.length ? besideFrames(frames, here, dims) : { x: Math.round(((room?.w ?? 0) / 2 - v.x) / v.z - dims.w / 2), y: Math.round(((room?.h ?? 0) / 2 - v.y) / v.z - dims.h / 2), w: dims.w, h: dims.h });
@@ -416,7 +424,7 @@ function DesignPage({ id }: { id: string }) {
   };
   /** A copy of every picked frame, each beside the rightmost frame and level with the one it copies; the copies are picked. */
   const copyFrames = () => {
-    if (pages.length + framedIds.length > DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
+    if (frameCount + framedIds.length > DESIGN_LIMITS.pages) return setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
     const taken = [...frames];
     const fresh = framedAt.map((n, m): Page => {
       const r = besideFrames(taken, frames[n]!, frames[n]!);
@@ -489,52 +497,76 @@ function DesignPage({ id }: { id: string }) {
   /**
    * Pictures from this computer (the Picture button, a paste, a drop). `drop`: where on the canvas they were let go.
    * Let go over a frame, they are layers of that frame, the first with its middle at that point. Let go on empty
-   * canvas, each becomes a frame of its own, the picture's size, with the picture filling it. Without a `drop` they
-   * go onto the current frame, in its middle (a canvas with no frame yet gets its first one for them).
+   * canvas, each lies loose on it, at its own size, outside every frame. Without a `drop` they go onto the current
+   * frame, in its middle (a canvas with no frame yet gets its first one for them; a loose picture picked: loose, in the
+   * middle of the view). Each shows at once, from the file itself, under the id it will have; it is sent to the server
+   * before any save that names it, and taken back out (and why said) when it cannot be.
    */
   const fromComputer = async (given: readonly File[], drop?: { x: number; y: number }) => {
     const files = given.filter(isPicture);
     if (!design || !given.length) return;
     if (!files.length) return setError("Only JPEG, PNG and WebP pictures can be put on a canvas");
-    const over = drop ? frames.findIndex((r) => drop.x >= r.x && drop.x <= r.x + r.w && drop.y >= r.y && drop.y <= r.y + r.h) : k;
-    const alone = !!drop && over < 0;
+    // a frame under the point (the later one where two lie over each other); loose pictures are not frames to land in
+    const over = drop ? frames.map((r, n) => !pages[n]!.loose && drop.x >= r.x && drop.x <= r.x + r.w && drop.y >= r.y && drop.y <= r.y + r.h).lastIndexOf(true) : base?.loose ? -1 : k;
+    const alone = over < 0 && (!!drop || !!base?.loose);
+    const v = view.aim();
+    const spot = drop ?? { x: ((room?.w ?? 0) / 2 - v.x) / v.z, y: ((room?.h ?? 0) / 2 - v.y) / v.z };
     // a canvas with no frame yet gets its first one for the pictures (the design's own size, in the middle of what is in view)
     const first = alone || (base && here) ? undefined : addFrame();
     const onto = alone ? undefined : (pages[over]?.id ?? first?.id);
     const f = alone ? undefined : (frames[over] ?? (first ? { x: first.x!, y: first.y!, w: first.w!, h: first.h! } : undefined));
     if (!alone && (!onto || !f)) return;
     setError(null);
-    try {
-      const got: { picture: string; w: number; h: number }[] = [];
-      for (const file of files) {
-        const size = await pictureSize(file);
-        const picture = await addPicture(design.id, file);
-        setDesign((d) => (d ? { ...d, pictures: [...d.pictures, picture] } : d));
-        got.push({ picture, ...size });
+    const space = alone ? DESIGN_LIMITS.loose - latest.current.filter((p) => p.loose).length : files.length;
+    if (space < files.length) setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pictures outside its frames`);
+    const got: { picture: string; w: number; h: number }[] = [];
+    for (const file of files.slice(0, Math.max(0, space))) {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.src = url;
+      try {
+        await img.decode();
+      } catch {
+        URL.revokeObjectURL(url);
+        setError(`${file.name} could not be read`);
+        continue;
       }
-      if (alone) {
-        const room = DESIGN_LIMITS.pages - latest.current.length;
-        if (room < got.length) setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
-        const fresh = pictureFrames(got.slice(0, Math.max(0, room)), drop.x, drop.y, got.map((_, n) => `p${Date.now().toString(36)}${n}`));
-        if (!fresh.length) return;
-        const from = latest.current.length;
-        change((all) => [...all, ...fresh]);
-        setTool("move");
-        pick(from, [], true, fresh.map((p) => p.id));
-        return;
-      }
-      // at most 60 % of the frame's width, in the picture's own shape; at the point they were let go, else in the middle
-      const made = got.map((g) => {
-        const w = Math.round(Math.min(f!.w * 0.6, g.w));
-        return { picture: g.picture, w, h: Math.round((w * g.h) / g.w) };
-      });
-      const cx = drop ? drop.x - f!.x : f!.w / 2;
-      const cy = drop ? drop.y - f!.y : f!.h / 2;
-      // onto the frame it was started on, as that frame is by now; several step down and to the right
-      put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round(cx - m.w / 2) + n * 24, y: Math.round(cy - m.h / 2) + n * 24, w: m.w, h: m.h })));
-    } catch (e) {
-      setError(message(e));
+      // ponytail: the file's address stays open while the page does, as what the picture is drawn from
+      const picture = pictureId(file);
+      loaded.set(picture, img);
+      got.push({ picture, w: img.naturalWidth, h: img.naturalHeight });
+      // sent before any save that names it: a save naming a picture the server does not have yet would lose it.
+      // The design is newer by this picture alone when this window knew it just before: it goes on from the new stamp
+      saving.current = saving.current.then(() =>
+        addPicture(design.id, file, picture, (updatedAt, was) => void (server.current.at === was && (server.current = { ...server.current, at: updatedAt }))).then(
+          () => {},
+          (e) => {
+            setError(`${file.name}: ${message(e)}`);
+            setDesign((d) => (d ? { ...d, pictures: d.pictures.filter((x) => x !== picture) } : d));
+            change((all) => all.map((p) => (p.layers.some((l) => l.type === "image" && l.picture === picture) ? { ...p, layers: p.layers.filter((l) => l.type !== "image" || l.picture !== picture) } : p)));
+          },
+        ),
+      );
     }
+    if (!got.length) return;
+    setDesign((d) => (d ? { ...d, pictures: [...d.pictures, ...got.map((g) => g.picture)] } : d));
+    if (alone) {
+      const fresh = pictureFrames(got, spot.x, spot.y, got.map((_, n) => `p${Date.now().toString(36)}${n}`)).map((p) => ({ ...p, loose: true as const }));
+      const from = latest.current.length;
+      change((all) => [...all, ...fresh]);
+      setTool("move");
+      pick(from, fresh[0]!.layers.map((l) => l.id));
+      return;
+    }
+    // at most 60 % of the frame's width, in the picture's own shape; at the point they were let go, else in the middle
+    const made = got.map((g) => {
+      const w = Math.round(Math.min(f!.w * 0.6, g.w));
+      return { picture: g.picture, w, h: Math.round((w * g.h) / g.w) };
+    });
+    const cx = drop ? drop.x - f!.x : f!.w / 2;
+    const cy = drop ? drop.y - f!.y : f!.h / 2;
+    // onto the frame it was started on, as that frame is by now; several step down and to the right
+    put(latest.current.findIndex((p) => p.id === onto), made.length, (ids) => made.map((m, n) => ({ id: ids[n]!, type: "image", picture: m.picture, fit: "cover", x: Math.round(cx - m.w / 2) + n * 24, y: Math.round(cy - m.h / 2) + n * 24, w: m.w, h: m.h })));
   };
   /** Files held over the page: the canvas shows that it takes them. */
   const [dropping, setDropping] = useState(false);
@@ -770,7 +802,7 @@ function DesignPage({ id }: { id: string }) {
     try {
       const files: { name: string; data: Uint8Array }[] = [];
       for (const n of pages.keys()) {
-        if (only !== undefined && !(typeof only === "number" ? n === only : only.includes(n))) continue;
+        if (only === undefined ? pages[n]!.loose : !(typeof only === "number" ? n === only : only.includes(n))) continue;
         // each frame at its own size (or twice it)
         const blob = await frameBlob(n, type, as.scale);
         files.push({ name: `${fileName(design.name)}-${String(n + 1).padStart(2, "0")}${as.scale > 1 ? `@${as.scale}x` : ""}.${as.jpeg ? "jpg" : "png"}`, data: new Uint8Array(await blob.arrayBuffer()) });
@@ -828,9 +860,9 @@ function DesignPage({ id }: { id: string }) {
         <Button size="icon" variant="ghost" aria-label="Redo" disabled={!hist.future.length} onClick={() => step(false)}>
           <Redo2 className="h-4 w-4" />
         </Button>
-        <Button size="sm" disabled={!pages.length} onClick={() => void exportPngs()}>
+        <Button size="sm" disabled={!frameCount} onClick={() => void exportPngs()}>
           <Download className="h-4 w-4" />
-          {pages.length === 1 ? "Export PNG" : `Export ${pages.length} PNGs`}
+          {frameCount === 1 ? "Export PNG" : `Export ${frameCount} PNGs`}
         </Button>
       </AppBar>
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
@@ -919,7 +951,7 @@ function DesignPage({ id }: { id: string }) {
             {TOOLS.map(([t, label, keys, Icon]) => (
               // the button lets the keys go again, so Space still drags the canvas after a click here
               <Tip key={t} label={label} keys={keys}>
-              <button type="button" aria-label={label} aria-pressed={tool === t} disabled={!pages.length && !NEED_NO_FRAME.includes(t)} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
+              <button type="button" aria-label={label} aria-pressed={tool === t} disabled={!frameCount && !NEED_NO_FRAME.includes(t)} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
                 <Icon className="h-4 w-4" />
               </button>
               </Tip>
@@ -934,14 +966,14 @@ function DesignPage({ id }: { id: string }) {
         </div>
 
         {/* the frame tool out, or no frame yet: the sizes a frame can be made in; else what is picked */}
-        {tool === "frame" || !page || !here ? (
+        {tool === "frame" || !page || !here || (page.loose && !picked.length) ? (
           <FramePresets view={view} onZoom={zoom} onAdd={(size) => (setTool("move"), addFrame(undefined, undefined, size))} />
         ) : (
         <Inspector
           design={design}
           page={page}
           at={k}
-          count={pages.length}
+          count={frameCount}
           picked={picked}
           onPreview={(fn) => {
             const next = fn && through(fn);

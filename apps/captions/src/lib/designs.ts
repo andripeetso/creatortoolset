@@ -35,16 +35,25 @@ export const cutOutPicture = async (id: string, picture: string) => (await send<
 /** The picture split by a Mac of the person's own: what is behind its words and pieces, each piece, and its lines (lib/design/split.ts makes them layers). */
 export const splitPicture = (id: string, picture: string) => send<SplitAnswer>(`${base(id)}/pictures/${picture}/split`, "POST", {});
 
-/** A picture from this computer into the design's own folder, as it is (no shrinking, transparency kept); answers its id. */
-export async function addPicture(id: string, file: File): Promise<string> {
+/**
+ * A picture from this computer into the design's own folder, as it is (no shrinking, transparency kept); answers its
+ * id. `as`: the id it gets (pictureId), so a window shows it before it is there. `stamp` hears the design's updatedAt
+ * after it and before it.
+ */
+export async function addPicture(id: string, file: File, as?: string, stamp?: (updatedAt: number, was: number) => void): Promise<string> {
   const data = await new Promise<string>((done, fail) => {
     const r = new FileReader();
     r.onload = () => done(String(r.result).split(",")[1] ?? "");
     r.onerror = () => fail(new Error(`${file.name} could not be read`));
     r.readAsDataURL(file);
   });
-  return (await send<{ id: string }>(`${base(id)}/pictures`, "POST", { name: file.name, type: file.type, data })).id;
+  const r = await send<{ id: string; updatedAt: number; was: number }>(`${base(id)}/pictures`, "POST", { name: file.name, type: file.type, data, ...(as ? { id: as } : {}) });
+  stamp?.(r.updatedAt, r.was);
+  return r.id;
 }
+
+/** A new picture id for a file of a type isPicture takes, as the server makes them. */
+export const pictureId = (file: File): string => `${[...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, "0")).join("")}.${file.type === "image/jpeg" ? "jpg" : file.type.slice(6)}`;
 
 /** The picture types a design takes. */
 export const isPicture = (f: File): boolean => /^image\/(jpeg|png|webp)$/.test(f.type);

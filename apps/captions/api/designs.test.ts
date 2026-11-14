@@ -110,6 +110,11 @@ describe("designs: made from a carousel piece", () => {
     expect((await call("POST", `/api/designs/${d.id}/pictures`, { name: "x.txt", type: "image/png", data: Buffer.from("not a picture").toString("base64") })).body).toEqual({ error: "That file is not a picture" });
     const { body } = await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "dot.png", type: "image/png", data: png.toString("base64") });
     expect(body.id).toMatch(/^[a-z0-9]{8}\.png$/);
+    // the id the window gave it (so it shows before it is here), and the stamps it saved under; a taken or odd one is refused
+    const given = await call<{ id: string; updatedAt: number; was: number }>("POST", `/api/designs/${d.id}/pictures`, { name: "dot.png", type: "image/png", data: png.toString("base64"), id: "0a1b2c3d.png" });
+    expect(given.body.id).toBe("0a1b2c3d.png");
+    expect(given.body.updatedAt).toBeGreaterThan(given.body.was);
+    for (const id of ["0a1b2c3d.png", "0a1b2c3e.jpg", "../x.png"]) expect((await call("POST", `/api/designs/${d.id}/pictures`, { name: "dot.png", type: "image/png", data: png.toString("base64"), id })).status).toBe(400);
     as = "jordan";
     const got = await app.request(`/api/designs/${d.id}/pictures/${body.id}`);
     expect([got.status, got.headers.get("content-type")]).toEqual([200, "image/png"]);

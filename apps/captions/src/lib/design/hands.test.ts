@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -212,5 +212,21 @@ describe("a group's own name", () => {
     expect(groupName(undefined)).toBeNull();
     // a name that only starts like a hand-made one is a name
     expect(groupName("glow")).toBe("Glow");
+  });
+
+  it("keeps a loose picture's box round its picture, and lets one with nothing left go", () => {
+    const pic: Layer = { id: "l1", type: "image", picture: "ab12cd34.jpg", fit: "cover", x: 30, y: -10, w: 100, h: 50 };
+    const frame: DesignPage = { id: "f", x: 0, y: 0, w: 10, h: 10, background: "#ffffff", layers: [] };
+    const loose: DesignPage = { id: "p", loose: true, x: 500, y: 500, w: 100, h: 50, background: "#ffffff", layers: [pic] };
+    const [f, hugged] = hugLoose([frame, loose]);
+    expect(f).toBe(frame);
+    // the picture stays where it was on the canvas; the box comes to it
+    expect(hugged).toMatchObject({ x: 530, y: 490, w: 100, h: 50, layers: [{ x: 0, y: 0, w: 100, h: 50 }] });
+    // a turned picture: the box round its corners
+    expect(hugLoose([{ ...loose, layers: [{ ...pic, x: 0, y: 0, w: 100, h: 100, rotate: 45 }] }])[0]).toMatchObject({ w: 142, h: 142, layers: [{ x: 21, y: 21 }] });
+    const settled = [frame, { ...loose, layers: [{ ...pic, x: 0, y: 0 }] }];
+    expect(hugLoose(settled)).toBe(settled);
+    expect(hugLoose([frame, { ...loose, layers: [] }])).toEqual([frame]);
+    expect(hugLoose([frame, { ...loose, layers: [] }], false)).toHaveLength(2);
   });
 });

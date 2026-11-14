@@ -571,10 +571,13 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: st
 
 /** `exact`: for a file that is saved (or a picture an AI is shown): a retouched picture is worked at every pixel it is drawn at, where the canvas works at fewer when the picture is big. */
 export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded, exact = false): void {
-  ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
-  ctx.fillRect(0, 0, w, h);
+  // pictures lying loose on the canvas have no ground and no finish of a frame's
+  if (!page.loose) {
+    ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
+    ctx.fillRect(0, 0, w, h);
+  }
   for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact);
-  finishFrame(ctx, page, w, h);
+  if (!page.loose) finishFrame(ctx, page, w, h);
 }
 
 /** A point of the page in a layer's own box (its rotation taken out): inside when 0..w and 0..h. */
