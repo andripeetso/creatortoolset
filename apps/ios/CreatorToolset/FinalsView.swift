@@ -422,7 +422,8 @@ final class FinalsModel: ObservableObject {
             error = nil
             needsSignIn = false
         } catch {
-            guard key == self.key else { return }
+            // a load SwiftUI called off (the screen restarted it or was left) is no lost connection
+            guard key == self.key, !Task.isCancelled else { return }
             needsSignIn = error.needsToolsetSignIn
             self.error = needsSignIn ? nil : error.localizedDescription
         }
