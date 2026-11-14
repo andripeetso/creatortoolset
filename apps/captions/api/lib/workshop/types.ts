@@ -447,6 +447,8 @@ export interface ChatMessage {
   /** The turn writes this Finals version's own post description (its key in `captions`): the writer sees and sets
    *  it as the piece's post description. */
   captionFor?: string;
+  /** The app's assistant sent the author's message here (mcp.ts workshop_chat): what it looked up for it. Never the author's words. */
+  found?: string;
   /** Sent by Creator Toolset itself (a Finals version's description when the finals arrived), not typed by him. */
   auto?: boolean;
   status?: "thinking" | "done" | "error";
@@ -573,6 +575,8 @@ export interface TurnInput {
   web?: string;
   /** The turn writes this Finals version's own post description (its key in `captions`). */
   captionFor?: string;
+  /** The app's assistant's notes for the writer (ChatMessage.found). */
+  found?: string;
   /** A retry: the failed question and reply, removed in the same write that starts this turn. */
   retryOf?: string[];
 }

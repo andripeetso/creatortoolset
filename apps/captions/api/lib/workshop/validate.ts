@@ -599,7 +599,7 @@ export function parseTurnInput(raw: unknown): TurnInput {
     isRec(body.reading) && okId(body.reading.postId)
       ? { postId: body.reading.postId, ...(typeof body.reading.slide === "number" ? { slide: Math.max(0, Math.floor(body.reading.slide)) } : {}) }
       : undefined;
-  return { docId: body.docId, text, context: parseSnippets(body.context), reading, deep: body.deep === true, comments: body.comments === true, mine: body.mine === true, ...(body.scope === "slight" || body.scope === "rewrite" ? { scope: body.scope } : {}), ...(quotes.length ? { quotes } : {}), ...(pasted.length ? { pasted } : {}), ...(refs.length ? { pastedRefs: refs } : {}), ...(images.length ? { images } : {}), ...(imageRefs.length ? { imageRefs } : {}), ...(files.length ? { files } : {}), ...(fileRefs.length ? { fileRefs } : {}), ...(library.length ? { library } : {}), ...(str(body.web, 600) ? { web: str(body.web, 600) } : {}), ...(retryOf.length ? { retryOf } : {}) };
+  return { docId: body.docId, text, context: parseSnippets(body.context), reading, deep: body.deep === true, comments: body.comments === true, mine: body.mine === true, ...(body.scope === "slight" || body.scope === "rewrite" ? { scope: body.scope } : {}), ...(quotes.length ? { quotes } : {}), ...(pasted.length ? { pasted } : {}), ...(refs.length ? { pastedRefs: refs } : {}), ...(images.length ? { images } : {}), ...(imageRefs.length ? { imageRefs } : {}), ...(files.length ? { files } : {}), ...(fileRefs.length ? { fileRefs } : {}), ...(library.length ? { library } : {}), ...(str(body.web, 600) ? { web: str(body.web, 600) } : {}), ...(str(body.found, LIMITS.turnText) ? { found: str(body.found, LIMITS.turnText) } : {}), ...(retryOf.length ? { retryOf } : {}) };
 }
 
 export interface AuditInput {

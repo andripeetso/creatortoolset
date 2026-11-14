@@ -254,11 +254,44 @@ describe("who writes a piece", () => {
     const dock = await guide(t.token);
     const outside = await guide(key);
     await t.end();
-    expect(dock).toContain("the words in a piece come from the Workshop's own writer (workshop_chat)");
+    expect(dock).toContain("the words in a piece come from the Workshop's own writer");
     expect(dock).toContain("workshop_project_update with draft_from");
     expect(dock).not.toContain("Here you are the writer");
     expect(outside).toContain("Here you are the writer");
     expect(outside).not.toContain("the words in a piece come from");
+  });
+
+  it("the writer gets what the person typed to the assistant, and the assistant's own message only as its notes", async () => {
+    const cookie = await cookieOf("ana");
+    const prompts: string[] = [];
+    writer.mockImplementation((async (_s: string, user: string, _sig: AbortSignal, parse: (t: string) => unknown) => {
+      prompts.push(user);
+      return { result: parse(JSON.stringify({ reply: "Drafted.", edits: [] })), provider: "Claude (Mac)" };
+    }) as never);
+    const typed = "Make me an X thread for the puppy school, it's like the dogs just learn to sit on the first day";
+    const t = await turn(cookie, typed);
+    const s = (await tool(t.token, "workshop_new_session", { title: "Rainy day tumbles" })).value!;
+    const piece = String((s.pieces as Row[])[0]!.id);
+    const answered = async () => {
+      for (let i = 0; i < 2000 && (await page<Row[]>(cookie, `/api/workshop/sessions/${s.id}/chat`)).some((m) => m.status === "thinking"); i++) await new Promise((r) => setTimeout(r, 10));
+    };
+    await tool(t.token, "workshop_chat", { session: s.id, piece, message: "Write a punchy launch thread. Found: 3 of 5 top threads open with a number.", wait_s: 0 });
+    await answered();
+    await t.end();
+    // an AI app outside is the writer's caller itself: its message is the message
+    await tool(key, "workshop_chat", { session: s.id, piece, message: "Shorter, please.", wait_s: 0 });
+    await answered();
+
+    const asked = (await page<Row[]>(cookie, `/api/workshop/sessions/${s.id}/chat`)).filter((m) => m.role === "user");
+    expect(asked.map((m) => [m.text, m.found])).toEqual([
+      [typed, "Write a punchy launch thread. Found: 3 of 5 top threads open with a number."],
+      ["Shorter, please.", undefined],
+    ]);
+    expect(prompts[0]).toContain(`Its notes, not the author's words:\n\nWrite a punchy launch thread.`);
+    expect(prompts[0]).toContain(`Author now: ${typed}`);
+    // the assistant's words are never among the author's notes on the piece
+    expect(prompts[1]).toContain(`Author: ${typed}`);
+    expect(prompts[1]).not.toContain("punchy");
   });
 });
 

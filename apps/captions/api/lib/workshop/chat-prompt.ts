@@ -156,6 +156,8 @@ export interface TurnPromptInput {
   research?: { question: string; answer: string; citations: string[] };
   history: ChatMessage[];
   message: string;
+  /** What the app's assistant looked up for this message (ChatMessage.found): not the author's words. */
+  found?: string;
   /** "My words only": build the piece from what the author said, the app highlights every word they didn't. */
   mine?: boolean;
   /** The composer's slider: how much this message may change (unset = normal). */
@@ -520,6 +522,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
         .join("\n")}`,
     );
   }
+  if (input.found) blocks.push(`The author asked the app's assistant, which sent their message here with what it looked up for it. Its notes, not the author's words:\n\n${input.found}`);
   blocks.push(`Author now: ${input.message}`);
   return { system: systemBits.join("\n\n"), user: blocks.join("\n\n") };
 }

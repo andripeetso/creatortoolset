@@ -598,6 +598,8 @@ export interface ChatMessage {
   review?: { model: string };
   /** A web search you approved for this turn. */
   web?: string;
+  /** Sent by the app's assistant: what it looked up for the message. */
+  found?: string;
   /** What the turn did, step by step, each with its own time. */
   steps?: Array<{ label: string; at: number; end?: number }>;
 }
@@ -861,6 +863,8 @@ export interface TurnInput {
   library?: Array<{ assetId: string; versionId: string } | { refId: string }>;
   /** A retry of a web search you approved. */
   web?: string;
+  /** A retry of a message the app's assistant sent: its notes. */
+  found?: string;
   /** A retry: the server removes these messages in the same write that appends the new pair. */
   retryOf?: string[];
 }

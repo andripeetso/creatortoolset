@@ -1287,6 +1287,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         research: research?.answer ? { question: research.question, answer: research.answer, citations: research.citations ?? [] } : undefined,
         history,
         message: ask.text,
+        found: ask.found,
         mine: ask.mine,
         scope: ask.scope,
         captionVersion,
@@ -3173,6 +3174,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     library: library.length ? library : undefined,
     web: input.web,
     captionFor: input.captionFor,
+    found: input.found,
     status: "done",
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking" };

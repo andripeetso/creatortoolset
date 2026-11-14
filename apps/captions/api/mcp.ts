@@ -11,7 +11,7 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSend, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { askConfirm, askFolder, askSend, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
 import { SESSION_STATUSES } from "./lib/workshop/types";
@@ -639,7 +639,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
-      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}), ...(a.my_words_only === true ? { mine: true } : {}), ...(a.deep_research === true ? { deep: true } : {}) });
+      // From the app's own assistant, the writer gets what the person typed in that chat (and pasted with it), as they
+      // wrote it; the assistant's message rides along as its notes. Its own retelling came out as the person's brief
+      // and the writer took it for their words (owner, 2026-11-14). A scheduled run has nobody typing: its message goes as it is.
+      const turn = isJob(auth) ? jobTurn(auth.get("authorization") ?? undefined) : null;
+      const typed = turn ? saidInChat(user.username, turn)?.[0]?.text : undefined;
+      const theirs = typed ? { text: typed, found: a.message, pasted: (pastedInChat(user.username, turn!) ?? []).map((text) => ({ name: "Pasted text", text })) } : { text: a.message };
+      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, ...theirs, ...(a.scope ? { scope: a.scope } : {}), ...(a.my_words_only === true ? { mine: true } : {}), ...(a.deep_research === true ? { deep: true } : {}) });
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
@@ -1362,14 +1368,12 @@ use it only when the user asks for that writer.`;
  * The app's own assistant only (an AI app outside keeps CARDS_GUIDE: there it is the writer, on the user's own AI). The
  * assistant doesn't see what the writer reads, so a piece it wrote itself came out in nobody's voice (owner, 2026-11-13).
  */
-const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer (workshop_chat). It reads the
-project, the user's own posts and how they rewrote its earlier drafts, which you don't see. Make the piece empty and give
-the writer what the user asked in their own words (not a summary of them), with what you found (facts, examples, links)
-as findings, not as rules for how to write it. A change they ask for to a piece's words goes to the writer the same way.
-Write with workshop_new_piece or workshop_edit_piece only the user's own words, or a change they spelled out word for
-word. A project's instructions are facts about it (who it is for, what it offers, where people are sent):
-workshop_project_update with draft_from writes them from what the user gave, as the project form does. How the user
-sounds isn't in them: the writer has it from their posts and rewrites.`;
+const WRITER_GUIDE = `Writing in the Workshop: the words in a piece come from the Workshop's own writer. It reads the project, the
+user's own posts and how they rewrote its earlier drafts, which you don't see. Make the piece empty and call workshop_chat:
+the writer gets the user's message to you as they typed it, and your message beside it as your notes (what you found).
+A change they ask for to a piece's words goes the same way. Write with workshop_new_piece or workshop_edit_piece only
+the user's own words, or a change they spelled out word for word. A project's instructions:
+workshop_project_update with draft_from, as the project form's Write it for me does.`;
 
 /** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
 export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser, plugged: PluginTools = pluginToolsOf([])): Promise<Args | null> {
