@@ -105,7 +105,7 @@ export function KnowledgePanel() {
 
   const put = (s: KnowledgeSource) => setSources((list) => (list.some((x) => x.id === s.id) ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]));
   // kept to another workspace: it leaves this one's list, as the server's would
-  const moved = (s: KnowledgeSource) => (s.projectId && here && s.projectId !== here ? setSources((l) => l.filter((x) => x.id !== s.id)) : put(s));
+  const moved = (s: KnowledgeSource) => (s.projectId && here && s.projectId !== here && projects.some((p) => p.id === s.projectId) ? setSources((l) => l.filter((x) => x.id !== s.id)) : put(s));
   const act = (p: Promise<unknown>) => p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const add = async (files: FileList | File[] | null) => {
