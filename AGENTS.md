@@ -153,6 +153,22 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
   needs a newer Mac app, raise `MIN_MAC_APP` (`apps/captions/src/components/MacAppUpdateBanner.tsx`) to that
   release in the same commit: older apps then show "Update Creator Toolset" instead of a feature that does nothing.
 
+## The words for where work lives
+
+Three levels, the same in every screen, doc, notice and AI prompt (tool names stay as they are):
+
+- **Server**: where the data lives. Creator Toolset Cloud is one server; a studio's own box is another
+  (Settings → Servers).
+- **Workspace**: one brand you make content for, with its audience, voice, call to action, context files and social
+  accounts. In code it is still the Workshop `Project` (`api/lib/workshop/types.ts`), `projectId`, `ProjectSwitcher`,
+  `useWorkspace`.
+- **Project**: one video, reel, carousel or ad being made. In code: a Workshop session (`SessionMeta`), a Caption
+  Studio project (`api/projects.ts`), a Review project. An AI Editor edit is called an edit.
+- A **piece** is one written document inside a project (`Document`). The **team** is the people who share a server
+  (Settings → Team, `contracts/workspaces.ts`), not a level above workspaces.
+
+Never put "project" on screen for the brand-level thing, or "session" for a project.
+
 ## Working in the code
 
 - Routes: each `api/*.ts` file exports a Hono app; `api/boot.ts` mounts them and applies the account gate.
