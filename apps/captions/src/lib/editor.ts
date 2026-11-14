@@ -48,19 +48,23 @@ export const createStyle = (body: (EditingStyleInput & { first?: true }) | { fro
 export const updateStyle = (id: string, body: EditingStyleInput) => send<EditingStyle>(`/api/editor/styles/${id}`, "PUT", body);
 export const markStylesAsked = () => send<{ ok: true }>("/api/editor/styles/asked", "POST");
 export const deleteStyle = (id: string) => send<{ ok: true }>(`/api/editor/styles/${id}`, "DELETE");
-/** The person's animation styles (contracts/editor-styles.ts): a name, a brief and pictures. */
-const animation = "/api/editor/animation-styles";
-export const listAnimationStyles = () => send<AnimationStylesView>(animation);
-export const createAnimationStyle = (body: { name: string; brief: string }) => send<AnimationStyle>(animation, "POST", body);
-export const updateAnimationStyle = (id: string, body: { name?: string; brief?: string }) => send<AnimationStyle>(`${animation}/${id}`, "PUT", body);
-export const deleteAnimationStyle = (id: string) => send<{ ok: true }>(`${animation}/${id}`, "DELETE");
-export const stylePictureUrl = (id: string, pictureId: string) => `${animation}/${id}/pictures/${pictureId}`;
-export const removeStylePicture = (id: string, pictureId: string) => send<AnimationStyle>(stylePictureUrl(id, pictureId), "DELETE");
+/**
+ * The person's animation styles, and their carousel styles for the Designer (contracts/editor-styles.ts): each a name,
+ * a brief and pictures, kept alike at two places.
+ */
+export type StyleKind = "animation" | "carousel";
+const stylesAt = (kind: StyleKind) => (kind === "carousel" ? "/api/designs/styles" : "/api/editor/animation-styles");
+export const listAnimationStyles = (kind: StyleKind = "animation") => send<AnimationStylesView>(stylesAt(kind));
+export const createAnimationStyle = (body: { name: string; brief: string }, kind: StyleKind = "animation") => send<AnimationStyle>(stylesAt(kind), "POST", body);
+export const updateAnimationStyle = (id: string, body: { name?: string; brief?: string }, kind: StyleKind = "animation") => send<AnimationStyle>(`${stylesAt(kind)}/${id}`, "PUT", body);
+export const deleteAnimationStyle = (id: string, kind: StyleKind = "animation") => send<{ ok: true }>(`${stylesAt(kind)}/${id}`, "DELETE");
+export const stylePictureUrl = (id: string, pictureId: string, kind: StyleKind = "animation") => `${stylesAt(kind)}/${id}/pictures/${pictureId}`;
+export const removeStylePicture = (id: string, pictureId: string, kind: StyleKind = "animation") => send<AnimationStyle>(stylePictureUrl(id, pictureId, kind), "DELETE");
 /** Adds pictures to a style, each as an inspiration. */
-export async function addStylePictures(id: string, files: File[]): Promise<AnimationStyle> {
+export async function addStylePictures(id: string, files: File[], kind: StyleKind = "animation"): Promise<AnimationStyle> {
   const form = new FormData();
   for (const f of files) form.append("file", f);
-  const r = await fetch(`${animation}/${id}/pictures`, { method: "POST", body: form });
+  const r = await fetch(`${stylesAt(kind)}/${id}/pictures`, { method: "POST", body: form });
   const out = (await r.json().catch(() => ({}))) as AnimationStyle & { error?: string };
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
   return out;

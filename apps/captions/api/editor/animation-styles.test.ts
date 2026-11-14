@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Edit } from "../../contracts/editor";
 import {
   ANIMATION_BRIEF_MAX,
+  CAROUSEL_BRIEF_MAX,
   MAX_ANIMATION_STYLES,
   MAX_INSPIRATIONS,
   MAX_MADE,
@@ -186,5 +187,42 @@ describe.skipIf(rootReplaced)("animation styles", () => {
     expect(existsSync(folder)).toBe(false);
     const left = (await json<{ styles: EditingStyle[] }>(call("maker", "GET", "/api/editor/styles"))).styles.find((x) => x.id === withCards.id)!;
     expect(left.animation).toBeNull();
+  });
+});
+
+// Carousel styles: the same collection for the Designer, at its own routes and in a list of its own (beside the
+// built-in animation styles, so where a plug-in replaces the AI Editor this is not run)
+describe.skipIf(rootReplaced)("carousel styles", () => {
+  const at = "/api/designs/styles";
+  const carousels = async (user: string) => (await json<AnimationStylesView>(call(user, "GET", at))).styles;
+
+  it("are kept apart from animation styles: each list's routes find only their own, and the brief may be a pasted guide", async () => {
+    const mine = await json<AnimationStyle>(call("maker", "POST", at, { name: "Paper slides", brief: "Cream paper, one loud word." }));
+    expect(mine).toMatchObject({ name: "Paper slides", pictures: [] });
+    expect((await carousels("maker")).map((s) => s.name)).toEqual(["Paper slides"]);
+    expect((await carousels("other")).map((s) => s.name)).toEqual([]);
+    expect((await json<AnimationStylesView>(call("maker", "GET", "/api/editor/animation-styles"))).styles.map((s) => s.id)).not.toContain(mine.id);
+    expect((await call("maker", "PUT", `${at}/${mine.id}`, { brief: "g".repeat(CAROUSEL_BRIEF_MAX) })).status).toBe(200);
+    expect((await call("maker", "PUT", `${at}/${mine.id}`, { brief: "g".repeat(CAROUSEL_BRIEF_MAX + 1) })).status).toBe(400);
+    // an animation style is not reached through the carousel routes, nor the other way round
+    const anim = await json<AnimationStyle>(call("maker", "POST", "/api/editor/animation-styles", { name: "Not a carousel" }));
+    expect((await call("maker", "PUT", `${at}/${anim.id}`, { name: "Moved" })).status).toBe(404);
+    expect((await call("maker", "DELETE", `/api/editor/animation-styles/${mine.id}`)).status).toBe(404);
+    // a picture: added and read at the carousel style's own place only
+    const form = new FormData();
+    form.append("file", new File([readFileSync(small)], "card.png"));
+    const pictured = await json<AnimationStyle>(app.request(`${at}/${mine.id}/pictures`, { method: "POST", headers: { cookie: cookies.maker! }, body: form }));
+    const pic = pictured.pictures[0]!;
+    expect(pic.kind).toBe("inspiration");
+    expect((await call("maker", "GET", `${at}/${mine.id}/pictures/${pic.id}`)).headers.get("content-type")).toBe("image/jpeg");
+    expect((await call("maker", "GET", `/api/editor/animation-styles/${mine.id}/pictures/${pic.id}`)).status).toBe(404);
+    expect((await call("other", "GET", `${at}/${mine.id}/pictures/${pic.id}`)).status).toBe(404);
+    // gone: its folder too, and the animation style stays
+    const folder = path.join(dir, "editor-styles", "maker", mine.id);
+    expect(existsSync(folder)).toBe(true);
+    expect((await call("maker", "DELETE", `${at}/${mine.id}`)).status).toBe(200);
+    expect(existsSync(folder)).toBe(false);
+    expect(await carousels("maker")).toEqual([]);
+    expect((await json<AnimationStylesView>(call("maker", "GET", "/api/editor/animation-styles"))).styles.map((s) => s.id)).toContain(anim.id);
   });
 });

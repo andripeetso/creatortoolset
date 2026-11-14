@@ -74,14 +74,14 @@ export const analyzerTools: ToolModule = {
     {
       name: "instagram_post",
       description:
-        "One post saved in the Analyzer's library, by its library id, link or shortcode: who posted it, when, the counts, the whole post description, the idea, and per slide what is said and the text on screen (subtitles = that text only repeats what is said). state says when it is still being read; a link that is not saved yet goes to instagram_save.",
-      inputSchema: { type: "object", properties: { post: str }, required: ["post"] },
+        "One post saved in the Analyzer's library, by its library id, link or shortcode: who posted it, when, the counts, the whole post description, the idea, and per slide what is said and the text on screen (subtitles = that text only repeats what is said). pictures: true shows its slides too. state says when it is still being read; a link that is not saved yet goes to instagram_save.",
+      inputSchema: { type: "object", properties: { post: str, pictures: { type: "boolean" } }, required: ["post"] },
     },
     {
       name: "instagram_search",
       description:
-        "Find saved posts in the Analyzer's library by words (any of them, in what is said, on screen, the post description, the idea or the comments), best match first, each with the id instagram_post reads. kind = reel, carousel or post; account = a handle.",
-      inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["reel", "carousel", "post"] }, account: str, limit: { type: "integer", description: "default 20, max 50" } }, required: ["q"] },
+        "Find saved posts in the Analyzer's library by words (any of them, in what is said, on screen, the post description, the idea or the comments), best match first, each with the id instagram_post reads. kind = reel, carousel or post (with no words: that kind's most watched); account = a handle.",
+      inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["reel", "carousel", "post"] }, account: str, limit: { type: "integer", description: "default 20, max 50" } } },
     },
     {
       name: "instagram_save",
@@ -123,7 +123,10 @@ export const analyzerTools: ToolModule = {
       }
       const state = stateOf(p);
       const problems = ((p.jobs as Args[] | undefined) ?? []).filter((j) => j.status === "error").map((j) => `${j.type}: ${j.error ?? "failed"}`);
+      // its slides as pictures, after the answer (a video slide by its thumbnail)
+      const pictures = a.pictures === true ? (await ctx.json<{ pictures: Array<{ slide: number; jpeg: string }> }>(`/api/instagram/${p.id}/pictures`)).pictures : [];
       return {
+        ...(pictures.length ? { _images: pictures.map((x) => ({ text: `Slide ${x.slide} of ${String(p.url ?? p.id)}:`, jpeg: x.jpeg })) } : {}),
         ...head(p),
         state,
         ...(state === "reading" ? pick(p, ["step"]) : {}),
@@ -142,13 +145,18 @@ export const analyzerTools: ToolModule = {
       };
     },
     instagram_search: async (a, ctx) => {
-      const q = new URLSearchParams({ q: String(a.q ?? ""), limit: String(Math.max(1, Math.min(Number(a.limit) || 20, 50))) });
+      const words = String(a.q ?? "").trim();
+      const limit = Math.max(1, Math.min(Number(a.limit) || 20, 50));
+      // no words and a kind: that kind's most watched (with neither, the search's own refusal)
+      const listing = words.length < 2 && !!a.kind;
+      const q = new URLSearchParams(listing ? { shelf: "all", sort: "plays" } : { q: words, limit: String(limit) });
       if (a.kind) q.set("kind", String(a.kind));
       if (a.account) q.set("account", await accountOf(String(a.account), ctx));
       // as the page's search: the project the person is in
       const { currentProjectId } = await ctx.json<{ currentProjectId?: string | null }>("/api/workshop/workspace");
       if (currentProjectId) q.set("projectId", currentProjectId);
-      const { hits } = await ctx.json<{ hits: Array<{ post: Args }> }>(`/api/instagram/find?${q}`);
+      // a listing is the library's own list, most watched first (it takes no kind or limit of its own)
+      const hits = listing ? (await ctx.json<Args[]>(`/api/instagram?${q}`)).filter((p) => p.kind === a.kind).slice(0, limit).map((post) => ({ post })) : (await ctx.json<{ hits: Array<{ post: Args }> }>(`/api/instagram/find?${q}`)).hits;
       return {
         posts: hits.map(({ post }) => {
           const text = String(post.caption ?? "").replace(/\s+/g, " ").trim();

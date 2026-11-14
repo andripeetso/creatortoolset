@@ -24,6 +24,7 @@ import {
 } from "./ai-vision";
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import { extractClipJpegFrame } from "./lib/clip-frame";
+import { smallJpeg } from "./lib/small-jpeg";
 import {
   availabilitySnapshot,
   checkApify,
@@ -4677,6 +4678,28 @@ instagramApp.get("/:id/thumb/:slide", async (c) => {
   const p = slide.thumb ? abs(meta.id, slide.thumb) : "";
   if (!p || !existsSync(p)) return c.json({ error: "No thumbnail" }, 404);
   return streamFile(c, p, "image/jpeg", SLIDE_CACHE_S);
+});
+
+/** How many of a post's slides an AI is shown, and how big. */
+const PICTURES_MAX = 10;
+const PICTURE_SIDE = 768;
+
+/**
+ * A saved post's slides as small JPEGs for an AI to look at (instagram_post with pictures): an image slide's own
+ * picture, a video slide's thumbnail, the first PICTURES_MAX. A slide not downloaded yet is passed over.
+ */
+instagramApp.get("/:id/pictures", async (c) => {
+  const meta = await ownedMeta(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const pictures: { slide: number; jpeg: string }[] = [];
+  for (const s of meta.slides) {
+    if (pictures.length >= PICTURES_MAX) break;
+    const file = s.kind === "video" ? s.thumb : s.file;
+    const p = file ? abs(meta.id, file) : "";
+    const jpeg = p && existsSync(p) ? await smallJpeg(p, PICTURE_SIDE) : null;
+    if (jpeg) pictures.push({ slide: s.index + 1, jpeg });
+  }
+  return c.json({ pictures });
 });
 
 instagramApp.get("/:id/transcript/:slide", async (c) => {

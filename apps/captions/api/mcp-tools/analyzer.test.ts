@@ -204,6 +204,25 @@ describe("instagram_post", () => {
   });
 });
 
+describe("instagram_post with pictures", () => {
+  it("shows the slides as small pictures after its answer, a slide not downloaded passed over", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { ffmpegCommand } = await import("../ffmpeg-runtime");
+    // the carousel's first slide is downloaded, a big picture; its second is not
+    mkdirSync(ig(carousel, "media"), { recursive: true });
+    execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xE9E2D0:s=1080x1350", "-frames:v", "1", ig(carousel, "media", "00.jpg")]);
+    const r = (await rpc(anaKey, "tools/call", { name: "instagram_post", arguments: { post: carousel, pictures: true } })).result as { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> };
+    expect(JSON.parse(r.content[0]!.text!)).toMatchObject({ id: carousel, kind: "carousel" });
+    expect(r.content.slice(1).map((c) => [c.type, c.text ?? c.mimeType])).toEqual([["text", "Slide 1 of https://www.instagram.com/p/TinyCar01/:"], ["image", "image/jpeg"]]);
+    // no longer than 768 px on its long side, read from the JPEG's own frame header
+    const jpeg = Buffer.from(r.content[2]!.data!, "base64");
+    const sof = jpeg.findIndex((b, i) => b === 0xff && (jpeg[i + 1] === 0xc0 || jpeg[i + 1] === 0xc2));
+    expect([jpeg.readUInt16BE(sof + 5), jpeg.readUInt16BE(sof + 7)]).toEqual([768, 614]);
+    // without it, words only
+    expect((await rpc(anaKey, "tools/call", { name: "instagram_post", arguments: { post: carousel } })).result.content).toHaveLength(1);
+  });
+});
+
 describe("instagram_search", () => {
   it("finds saved posts by words, each with the id instagram_post reads and a short piece of the post description", async () => {
     const out = (await tool(anaKey, "instagram_search", { q: "forward roll" })).value;
@@ -231,6 +250,9 @@ describe("instagram_search", () => {
     expect(await ids({ q: "cartwheel roll balance", kind: "carousel" })).toEqual([carousel]);
     expect(await ids({ q: "cartwheel roll balance", account: "@TinyTumblers" })).toEqual([tumblers]);
     expect(await ids({ q: "cartwheel roll balance", limit: 1 })).toHaveLength(1);
+    // a kind with no words: its saved posts, most watched first
+    expect(await ids({ kind: "carousel" })).toEqual([carousel]);
+    expect(await tool(anaKey, "instagram_search", {})).toEqual({ error: true, value: "Type at least two characters" });
     expect(await tool(anaKey, "instagram_search", { q: "roll", account: "nobody" })).toEqual({ error: true, value: "No account of yours is called @nobody: instagram_add_account adds it." });
     expect(await tool(anaKey, "instagram_search", { q: "r" })).toEqual({ error: true, value: "Type at least two characters" });
   });

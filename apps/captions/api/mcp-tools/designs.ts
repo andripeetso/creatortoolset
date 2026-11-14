@@ -1,4 +1,5 @@
 import { DESIGN_FORMATS, type Design, type DesignAnswer, type DesignListed } from "../../contracts/design";
+import { saveStyle } from "./editor-styles";
 import { type Args, pick, str, ToolError, type ToolContext, type ToolModule, when } from "./types";
 
 // The Designer's tools, for the AI that designs: find a design, read it, start one, change it. The AI designs the
@@ -9,7 +10,7 @@ import { type Args, pick, str, ToolError, type ToolContext, type ToolModule, whe
 // carousel slide's words held. The person sees the frames change in the open designer and takes it back with ⌘Z.
 
 type Frame = Args & { id: string; n: number };
-type ForAi = Args & { id: string; name: string; frames: Frame[]; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string };
+type ForAi = Args & { id: string; name: string; frames: Frame[]; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }>; more?: string } | string };
 type Look = { pictures: Array<{ page: number; jpeg: string; spills: string[] }>; why?: string };
 type Image = { text: string; jpeg: string };
 
@@ -55,8 +56,14 @@ export const designTools: ToolModule = {
       description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers, picture copies a library video's moment in. The answer shows the changed frames as pictures and says what was left out or does not fit.",
       inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, picture: { type: "object" } }, required: ["id"] },
     },
+    {
+      name: "carousel_style_save",
+      description: "Make or change a carousel style, a look the user keeps for their designs (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add.",
+      inputSchema: { type: "object", properties: { id: str, name: str, brief: str, pictures: { type: "integer" } } },
+    },
   ],
   handlers: {
+    carousel_style_save: saveStyle("carousel"),
     design_get: async (a, ctx) => {
       if (!a.id) {
         const all = await ctx.json<DesignListed[]>("/api/designs");
@@ -75,7 +82,7 @@ export const designTools: ToolModule = {
         ...read,
         link: `${ctx.origin}/design/${read.id}`,
         // the look's pictures go as pictures, after the answer
-        ...(look ? { look: { name: look.name, ...(look.brief ? { brief: look.brief } : {}), pictures: look.pictures.length } } : {}),
+        ...(look ? { look: { name: look.name, ...(look.brief ? { brief: look.brief } : {}), pictures: look.pictures.length, ...(look.more ? { more: look.more } : {}) } } : {}),
         ...drawn.said,
         _images: [...(look?.pictures ?? []).map((p, n) => ({ text: `The look "${look!.name}", picture ${n + 1}: ${p.what}.`, jpeg: p.jpeg })), ...drawn.images],
       };

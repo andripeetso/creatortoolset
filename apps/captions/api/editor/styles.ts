@@ -42,6 +42,8 @@ export interface Saved {
   voice?: string;
   /** the person's animation styles (animation-styles.ts) */
   animation?: AnimationStyle[];
+  /** the person's carousel styles, for the Designer: the same kind of collection (animation-styles.ts) */
+  carousel?: AnimationStyle[];
   [other: string]: unknown;
 }
 

@@ -149,6 +149,14 @@ describe.skipIf(rootReplaced)("an animation style set up by talking", () => {
     expect(await tool(anaKey, "animation_style_save", { brief: "No name" })).toMatchObject({ error: true, text: "Give the new style a name." });
     expect(await tool(anaKey, "animation_style_save", { id: "nobody's" })).toMatchObject({ error: true, text: expect.stringContaining("No style has that id or name") });
   });
+
+  it("carousel_style_save makes a carousel style the same way: kept among the Designer's styles, its sheet on the Designer", async () => {
+    const made = await tool(anaKey, "carousel_style_save", { name: "Tiny slides", brief: "Cream paper and one loud word" });
+    expect(made.value).toEqual({ id: expect.any(String), name: "Tiny slides", has_brief: true, pictures: 0, made: true, link: `http://localhost/design?tab=styles&style=${made.value.id}` });
+    expect(((await (await site("/api/designs/styles")).json()) as AnimationStylesView).styles.map((s) => s.name)).toEqual(["Tiny slides"]);
+    expect((await styles()).map((s) => s.name)).not.toContain("Tiny slides");
+    expect(await tool(anaKey, "carousel_style_save", { id: "nobody's" })).toMatchObject({ error: true, text: expect.stringContaining("No style has that id or name") });
+  });
 });
 
 // what a long paste looks like: a heading, line breaks, more than one thing in it

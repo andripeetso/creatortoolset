@@ -121,6 +121,15 @@ export interface EditStyleCopy {
  *   DELETE /api/editor/animation-styles/:id/pictures/:pid   → AnimationStyle
  */
 
+/**
+ * Carousel styles: the same kind of collection, for the Designer's slides, kept in a list of their own (an animation
+ * style is how a video's cards look; a carousel is made and read differently). The same routes at /api/designs/styles,
+ * and the Designer's AI designs in one (api/designs.ts). Its brief is read whole by the Designer's AI, so it may run
+ * to a pasted guide.
+ */
+export const MAX_CAROUSEL_STYLES = 20;
+export const CAROUSEL_BRIEF_MAX = 6000;
+
 /** How many animation styles one account keeps. */
 export const MAX_ANIMATION_STYLES = 20;
 /** The brief is the only text of a style an AI reads (the card step), so this is the most a style adds to a prompt. */

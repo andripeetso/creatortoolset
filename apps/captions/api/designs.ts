@@ -5,13 +5,15 @@ import { Hono, type Context } from "hono";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
-import { animationStyles } from "./editor/animation-styles";
+import type { AnimationStyle } from "../contracts/editor-styles";
+import { animationStyles, carouselApp, carouselStyles } from "./editor/animation-styles";
 import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { extractClipJpegFrame } from "./lib/clip-frame";
 import { cutOut } from "./lib/cutouts";
 import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
+import { smallJpeg } from "./lib/small-jpeg";
 import { FontError, fontFaces } from "./lib/font-file";
 import { env } from "./lib/env";
 import { pluginLooks } from "./lib/plugin";
@@ -239,7 +241,7 @@ const HOW = `A design is a canvas of frames. A frame is one still picture (a car
 
 ${DESIGN_LAYERS}
 
-"looks" are the user's looks: each a collection of pictures they made and liked, and inspirations, with a few words of their own. Design in one of them. Its pictures and all its words ("brief": what the user likes and hates in it) come with this answer when the user has one look, and with "look": its name otherwise: study them before your first change, and carry their finish into the frames (the ground and how it is lit, the type, the materials, the shadows, how much is left empty), never their words or one of them copied. A look's words may also say how its videos move: take from them what a still picture can carry. A design made without a look's pictures comes out generic.
+"looks" are the user's looks: each a collection of pictures they made and liked, and inspirations, with a few words of their own. A "carousel style" is made for these frames: design in one of them. An "animation style" is how the cards in the user's videos look: design in one when the user names it, or as "look" says. A look's pictures and all its words ("brief": what the user likes and hates in it) come with this answer when the user has one carousel style, and with "look": its name otherwise: study them before your first change, and carry their finish into the frames (the ground and how it is lit, the type, the materials, the shadows, how much is left empty), never their words or one of them copied. A look's words may also say how its videos move: take from them what a still picture can carry. A design made without a look's pictures comes out generic.
 
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
@@ -277,35 +279,24 @@ async function framesForAi(user: AuthVars["user"], d: Design): Promise<{ pages: 
 interface Look {
   id?: string;
   name: string;
+  /** a carousel style is made for the Designer; an animation style is how a video's cards look (a plug-in's collections are those too) */
+  kind: "carousel style" | "animation style";
   brief: string;
   pictures: number;
   show: (max: number) => Promise<{ jpeg: string; made: boolean }[]>;
 }
 
-/** A picture file of any size as a small JPEG; null when it cannot be read. */
-async function smallJpeg(file: string): Promise<string | null> {
-  const tmp = path.join(env.dataDir, "designs", `.look-${randomBytes(6).toString("hex")}.jpg`);
-  try {
-    await mkdir(path.dirname(tmp), { recursive: true });
-    await ffmpeg(["-y", "-i", file, "-frames:v", "1", "-vf", `scale=w='min(${LOOK_SIDE},iw)':h='min(${LOOK_SIDE},ih)':force_original_aspect_ratio=decrease`, "-q:v", "5", "-f", "image2", "-c:v", "mjpeg", tmp], true);
-    return (await readFile(tmp)).toString("base64");
-  } catch {
-    return null;
-  } finally {
-    await rm(tmp, { force: true });
-  }
-}
-
 /**
- * The looks an AI may design in: the account's own animation styles, then the ones a plug-in keeps (a studio's own
- * collections). A plug-in's look named like one of the account's own is left out.
+ * The looks an AI may design in: the account's own carousel styles, its animation styles, then the ones a plug-in
+ * keeps (a studio's own collections). A plug-in's look named like one of the account's own is left out.
  * ponytail: a plug-in's pictures are made small at every read that shows them (ffmpeg, a few a call); kept by file and
  * change time when that is felt.
  */
 async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
-  const own = animationStyles(owner).map((s): Look => ({
+  const ownOf = (list: AnimationStyle[], kind: Look["kind"]) => list.map((s): Look => ({
     id: s.id,
     name: s.name,
+    kind,
     brief: s.brief,
     pictures: s.pictures.length,
     show: async (max) => {
@@ -313,18 +304,20 @@ async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
       return p.images.map((i, n) => ({ jpeg: i.jpegBase64, made: n < p.made }));
     },
   }));
+  const own = [...ownOf(carouselStyles(owner), "carousel style"), ...ownOf(animationStyles(owner), "animation style")];
   const theirs = (await pluginLooks(user)).filter((l) => l.name.trim() && !own.some((o) => o.name.toLowerCase() === l.name.toLowerCase()));
   return [
     ...own,
     ...theirs.map((l): Look => ({
       name: l.name,
+      kind: "animation style",
       brief: l.brief,
       pictures: l.pictures.length,
       show: async (max) => {
         const out: { jpeg: string; made: boolean }[] = [];
         for (const p of [...l.pictures.filter((x) => x.made), ...l.pictures.filter((x) => !x.made)]) {
           if (out.length >= max) break;
-          const jpeg = await smallJpeg(p.file);
+          const jpeg = await smallJpeg(p.file, LOOK_SIDE);
           if (jpeg) out.push({ jpeg, made: p.made });
         }
         return out;
@@ -333,17 +326,25 @@ async function looksOf(user: AuthVars["user"], owner: string): Promise<Look[]> {
   ];
 }
 
+/** Where an AI finds pictures to design from when the person's carousel styles give none, in order. */
+const toAnalyzer = (animated: string[]) =>
+  `Before you design, look at carousels they saved in the Content Analyzer: instagram_search with "kind":"carousel" (with words of this design's subject, or none for the most watched), then instagram_post with "pictures":true for two or three that fit what they asked; carry their finish into the frames, never their words or one of them copied.${animated.length ? ` With none saved, design in one of their animation styles (${animated.slice(0, 12).map((n) => `"${n}"`).join(", ")}: design_get with "look": its name); it was made for a video's cards, so take what a still slide can carry.` : ""} The user keeps carousel styles in the Designer (Carousel styles).`;
+
 /**
  * What an AI is given to design from: each frame with its size, its words and its layers, the fonts, the pictures,
  * the person's looks in their own words, one look's pictures, and how a design is changed. The look whose pictures it
- * gets: the one it asked for by name; unasked, the person's one look when they have exactly one with pictures (an AI
- * that never asks still designs from it). With several, it is told to pick one and read it first.
+ * gets: the one it asked for by name; unasked, the person's one carousel style when they have exactly one with
+ * pictures or words (an AI that never asks still designs from it; one with words alone is sent for pictures too). With several, it is told to pick one and read it first.
+ * With none, it is sent to the carousels they saved in the Content Analyzer, and then to an animation style: a look
+ * made for a video's cards is what it designed in before carousel styles were there, and better than none.
  */
 async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | undefined) {
   const { pages, words } = await framesForAi(user, d);
   const looks = await looksOf(user, d.owner);
-  const pictured = looks.filter((l) => l.pictures > 0);
-  const style = lookNamed ? looks.find((s) => s.id === lookNamed || s.name.toLowerCase() === lookNamed.toLowerCase()) : pictured.length === 1 ? pictured[0] : undefined;
+  // a carousel style counts with pictures or with words of the person's: its words are read whole
+  const carousels = looks.filter((l) => l.kind === "carousel style" && (l.pictures > 0 || l.brief.trim()));
+  const animated = looks.filter((l) => l.kind === "animation style" && l.pictures > 0);
+  const style = lookNamed ? looks.find((s) => s.id === lookNamed || s.name.toLowerCase() === lookNamed.toLowerCase()) : carousels.length === 1 ? carousels[0] : undefined;
   const shown = style ? await style.show(lookNamed ? LOOK_PICTURES : LOOK_UNASKED) : null;
   return {
     id: d.id,
@@ -352,10 +353,11 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
     fonts: [...DESIGN_FONTS.map((f) => f.family), ...(await fontsOf(d.owner)).map((f) => f.family)],
     pictures: d.pictures.map((id) => ({ id, what: d.from && "version" in d.from && id === d.pictures[0] ? "the video's own frame" : "a picture added to this design" })),
     // a look is its pictures first: its name and brief are what words carry, and its pictures come when it is asked for
-    looks: looks.slice(0, 12).map((s) => ({ name: s.name, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, LOOK_LISTED) } : {}), pictures: s.pictures })),
+    looks: looks.slice(0, 12).map((s) => ({ name: s.name, kind: s.kind, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, LOOK_LISTED) } : {}), pictures: s.pictures })),
     ...(lookNamed && !style ? { look: `There is no look called ${lookNamed}` } : {}),
-    ...(!lookNamed && pictured.length > 1 ? { look: `Pick the look this design is in (${pictured.slice(0, 12).map((l) => `"${l.name}"`).join(", ")}; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.` } : {}),
-    ...(style && shown ? { look: { name: style.name, ...(style.brief.trim() ? { brief: style.brief.trim().slice(0, LOOK_BRIEF) } : {}), pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })) } } : {}),
+    ...(!lookNamed && carousels.length > 1 ? { look: `Pick the carousel style this design is in (${carousels.slice(0, 12).map((l) => `"${l.name}"`).join(", ")}; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.` } : {}),
+    ...(!lookNamed && !carousels.length ? { look: `The user has no carousel style yet. ${toAnalyzer(animated.map((l) => l.name))}` } : {}),
+    ...(style && shown ? { look: { name: style.name, ...(style.brief.trim() ? { brief: style.brief.trim().slice(0, LOOK_BRIEF) } : {}), pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })), ...(shown.length ? {} : { more: `It has no pictures yet. ${toAnalyzer([])}` }) } } : {}),
     frames: pages.map((p, k) => ({ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), layers: p.layers })),
     how: HOW,
   };
@@ -506,6 +508,9 @@ const mine = async (c: C): Promise<Design> => {
   if (!d) throw new DesignError("Not found", 404);
   return d;
 };
+
+// The person's carousel styles, kept as their animation styles are (before the routes of one design, as the fonts).
+designsApp.route("/styles", carouselApp);
 
 // The person's own fonts (before the routes of one design: "fonts" is no design's id).
 const shown = (list: KeptFont[]): DesignFont[] => list.map((f) => ({ id: f.id, family: f.family }));

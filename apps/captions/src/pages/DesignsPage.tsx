@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Pencil, PenTool, Plus, Trash2 } from "lucide-react";
 import { DESIGN_LIMITS, type DesignListed } from "@contracts/design";
+import type { AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { askRename } from "@/components/browse/browse";
@@ -11,12 +12,17 @@ import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/comp
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { DesignThumb } from "@/components/design/DesignThumb";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { showAssistantNotice, useAssistant } from "@/lib/assistant";
 import { addPicture, createDesign, deleteDesign, isPicture, listDesigns, pictureFrames, pictureSize, saveDesign } from "@/lib/designs";
 import { confirmDialog } from "@/lib/dialogs";
+import { listAnimationStyles } from "@/lib/editor";
 import { timeAgo } from "@/lib/exports";
 import { useToolFolders } from "@/lib/folders";
+import { useCachedLoad } from "@/lib/local-cache";
 import { onTopic } from "@/lib/sync";
 import { useWorkspace } from "@/lib/workspace";
+import { AnimationStyles, STYLE_WORDS, type OpenAnimation } from "./editor/AnimationStyles";
 
 /**
  * The Designer's start (/design): every design of this account, in the person's own folders, as cards or rows, found
@@ -28,7 +34,17 @@ import { useWorkspace } from "@/lib/workspace";
  * opens it), and a search finds a design by that name too. With more than one brand project, each design says which
  * it is in. A design made or changed somewhere else (the assistant, another window) shows without a reload.
  * Pictures dropped on the page start a canvas of their own: a frame each, the picture's size, and it opens.
+ *
+ * Its second tab (/design?tab=styles) is the person's carousel styles: each a name, their own words and pictures, the
+ * looks the Designer's AI designs in (kept as the AI Editor's animation styles are: pages/editor/AnimationStyles.tsx).
+ * /design?tab=styles&style=<id> opens one's sheet (the assistant, after it saved one).
  */
+
+/** A first carousel style is set up by talking to the assistant, as a first animation style is (EditorPage's styleChat). */
+function carouselChat(): void {
+  useAssistant.getState().setQuote(STYLE_WORDS.carousel.new);
+  showAssistantNotice({ text: "Describe the carousel style you want, and drop in pictures of carousels you like. Say it your way and I'll set up the style." });
+}
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** What it was made from, in words: by its name while that script or video is there, else only what kind of thing it was. */
@@ -41,6 +57,26 @@ const TILE = 1;
 
 export default function DesignsPage() {
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "styles" ? "styles" : "canvases";
+  const styles = useCachedLoad<AnimationStylesView>("/api/designs/styles", () => listAnimationStyles("carousel"), { own: true });
+  const [openStyle, setOpenStyle] = useState<OpenAnimation>(null);
+  const chat = useAssistant((s) => s.connected);
+  // ?tab=styles&style=<id>: that style's sheet, read from the server (what was just saved), then the tab's own address again
+  const wanted = tab === "styles" ? params.get("style") : null;
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    const done = () => live && setParams({ tab: "styles" }, { replace: true });
+    void listAnimationStyles("carousel").then((v) => {
+      const found = v.styles.find((x) => x.id === wanted);
+      if (live && found) setOpenStyle(found);
+      void styles.refresh();
+      done();
+    }, done);
+    return () => void (live = false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted]);
   const [designs, setDesigns] = useState<DesignListed[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useBrowseView("design");
@@ -92,7 +128,8 @@ export default function DesignsPage() {
   };
   /** Pictures dropped on the page: a new canvas named after the first, a frame for each (the picture's size, the picture filling it), opened. */
   const [dropping, setDropping] = useState(false);
-  const hasFiles = (e: React.DragEvent) => [...e.dataTransfer.types].includes("Files");
+  // on the styles tab a picture goes into a style's sheet, never into a new canvas
+  const hasFiles = (e: React.DragEvent) => tab === "canvases" && [...e.dataTransfer.types].includes("Files");
   const fromPictures = async (given: readonly File[]) => {
     const files = given.filter(isPicture).slice(0, DESIGN_LIMITS.pages);
     if (!files.length) return setError("Only JPEG, PNG and WebP pictures can start a canvas");
@@ -149,16 +186,38 @@ export default function DesignsPage() {
       }}
     >
       <AppBar tool="Designer">
-        {!!designs?.length && <NewFolderButton onClick={() => void folders.newFolder()} />}
-        <Button size="sm" onClick={() => void start()}>
-          <Plus className="h-4 w-4" />
-          New canvas
-        </Button>
+        {tab === "styles" ? (
+          !!styles.data?.styles.length && (
+            <Button size="sm" onClick={() => setOpenStyle("new")}>
+              <Plus className="h-4 w-4" />
+              {STYLE_WORDS.carousel.new}
+            </Button>
+          )
+        ) : (
+          <>
+            {!!designs?.length && <NewFolderButton onClick={() => void folders.newFolder()} />}
+            <Button size="sm" onClick={() => void start()}>
+              <Plus className="h-4 w-4" />
+              New canvas
+            </Button>
+          </>
+        )}
       </AppBar>
       <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-10 sm:px-6">
         <ToolIntro icon={PenTool} title="Designer" line="Carousels, covers and thumbnails in layers: your AI designs them, you edit anything and save the PNGs" />
+        <Tabs value={tab} onValueChange={(t) => setParams(t === "styles" ? { tab: t } : {})} className="mb-4">
+          <TabsList>
+            <TabsTrigger value="canvases">Canvases</TabsTrigger>
+            <TabsTrigger value="styles">Carousel styles</TabsTrigger>
+          </TabsList>
+        </Tabs>
         {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
-        {designs?.length === 0 ? (
+        {tab === "styles" ? (
+          <>
+            {styles.data && <AnimationStyles kind="carousel" styles={styles.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styles.refresh} onChat={chat ? carouselChat : undefined} />}
+            {!styles.data && styles.error && <p className="text-sm text-red-400">{styles.error}</p>}
+          </>
+        ) : designs?.length === 0 ? (
           <p className="py-16 text-center text-sm text-zinc-500">
             Nothing here yet. New canvas opens an empty canvas; Design on a carousel piece in the <Link to="/workshop" className="underline">Content Workshop</Link> starts from its slides.
           </p>

@@ -1,5 +1,5 @@
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStylesView } from "../../contracts/editor-styles";
-import { BRIEF_NOT_TYPED } from "../editor/animation-styles";
+import { briefNotTyped, type StyleKind } from "../editor/animation-styles";
 import { WORDS_FROM } from "../editor/own-words";
 import { stylesView } from "../editor/styles";
 import { ToolError, pick, str, type Args, type ToolContext, type ToolModule } from "./types";
@@ -37,8 +37,8 @@ async function saved<S>(ctx: ToolContext, route: string, method: string, body: A
   return { style: (await res.json()) as S, pasted: res.headers.get(WORDS_FROM) === "pasted" };
 }
 const FROM_PASTE = (what: string) => `${what} taken word for word from the text the user pasted: tell them so in one short line.`;
-/** A style's own sheet: its tab with the style named, which the page opens (src/pages/EditorPage.tsx). */
-const sheetOf = (tab: "styles" | "animation", id: string) => `/editor?tab=${tab}&style=${id}`;
+/** A style's own sheet: its tab with the style named, which the page opens (src/pages/EditorPage.tsx; a carousel style's: src/pages/DesignsPage.tsx). */
+const sheetOf = (tab: "styles" | "animation" | "carousel", id: string) => (tab === "carousel" ? `/design?tab=styles&style=${id}` : `/editor?tab=${tab}&style=${id}`);
 
 /** One of the person's styles by its id, or by its name in any case. `kind`: "editing" or "animation", for the words of a miss. */
 function one<S extends { id: string; name: string }>(all: S[], key: unknown, kind = "editing", maker = "editor_style_save"): S {
@@ -49,6 +49,55 @@ function one<S extends { id: string; name: string }>(all: S[], key: unknown, kin
   if (!all.length) throw new ToolError(`The user has no ${kind} style yet: ${maker} makes one.`);
   throw new ToolError(`${found.length ? "Several styles have that name: give the id" : "No style has that id or name"}. The user's styles: ${all.map((s) => `${s.name} (${s.id})`).join(", ")}.`);
 }
+
+/** animation_style_save, and the Designer's carousel_style_save (designs.ts): a style of that kind made or changed, its sheet opened. */
+export const saveStyle = (kind: StyleKind) => async (a: Args, ctx: ToolContext) => {
+  const at = kind === "carousel" ? "/api/designs/styles" : "/api/editor/animation-styles";
+  const name = a.name == null ? undefined : String(a.name);
+  const brief = typeof a.brief === "string" ? a.brief.trim() : "";
+  const pictures = a.pictures == null ? 0 : Number(a.pictures);
+  const was = a.id == null ? null : one((await ctx.json<AnimationStylesView>(at)).styles, a.id, kind, `${kind}_style_save`);
+  if (!was && !name) throw new ToolError("Give the new style a name.");
+  if (was && name === undefined && !brief && !pictures) throw new ToolError("Nothing to change: give name, brief or pictures.");
+  let pasted = false;
+  const save = async (body: Args) => {
+    const r = await saved<AnimationStyle>(ctx, was ? `${at}/${was.id}` : at, was ? "PUT" : "POST", body);
+    pasted ||= r.pasted;
+    return r.style;
+  };
+  // a brief that is not the person's words never stops the style: the rest is saved and they write it on its sheet.
+  // On a change the words are added under the brief it has and never replace it
+  let unsaid = false;
+  let s = await save({ ...(name !== undefined ? { name } : {}), ...(brief ? { [was ? "addBrief" : "brief"]: brief } : {}) }).catch((e: unknown) => {
+    if (!(brief && e instanceof ToolError && e.message === briefNotTyped(kind))) throw e;
+    unsaid = true;
+    return was && name === undefined ? was : save({ name });
+  });
+  let added: number | undefined;
+  let full = false;
+  if (pictures) {
+    const r = await ctx.json<{ style: AnimationStyle; added: number; full?: true }>(`${at}/${s.id}/pictures/chat`, "POST", { newest: pictures });
+    ({ style: s, added } = r);
+    full = !!r.full;
+  }
+  await ctx.open?.(sheetOf(kind, s.id));
+  const notes = [
+    unsaid ? "The description was not saved: it is not a whole phrase the user typed in this chat, or a passage of a text they pasted with this message. They write or paste it on the style's sheet." : "",
+    pasted ? FROM_PASTE("The description was") : "",
+    added !== undefined && added < pictures ? (full ? "The style holds all the pictures it keeps: the rest were not added." : "Fewer pictures were added than asked: the others are already in the style, are not in this chat, or could not be read.") : "",
+    ctx.open ? "Its sheet is open for the user." : "",
+  ].filter(Boolean);
+  return {
+    id: s.id,
+    name: s.name,
+    has_brief: !!s.brief,
+    pictures: s.pictures.length,
+    ...(was ? {} : { made: true }),
+    ...(added !== undefined ? { added } : {}),
+    ...(notes.length ? { note: notes.join(" ") } : {}),
+    link: `${ctx.origin}${sheetOf(kind, s.id)}`,
+  };
+};
 
 export const editorStyleTools: ToolModule = {
   defs: [
@@ -90,53 +139,7 @@ export const editorStyleTools: ToolModule = {
       const note = [notes ? "The words were added under the style's notes. The user rewrites or shortens the notes on the style's sheet." : "", pasted ? FROM_PASTE("They were") : ""].filter(Boolean).join(" ");
       return { ...out(now), ...(note ? { note } : {}), link: `${ctx.origin}${sheetOf("styles", now.id)}` };
     },
-    animation_style_save: async (a, ctx) => {
-      const at = "/api/editor/animation-styles";
-      const name = a.name == null ? undefined : String(a.name);
-      const brief = typeof a.brief === "string" ? a.brief.trim() : "";
-      const pictures = a.pictures == null ? 0 : Number(a.pictures);
-      const was = a.id == null ? null : one((await ctx.json<AnimationStylesView>(at)).styles, a.id, "animation", "animation_style_save");
-      if (!was && !name) throw new ToolError("Give the new style a name.");
-      if (was && name === undefined && !brief && !pictures) throw new ToolError("Nothing to change: give name, brief or pictures.");
-      let pasted = false;
-      const save = async (body: Args) => {
-        const r = await saved<AnimationStyle>(ctx, was ? `${at}/${was.id}` : at, was ? "PUT" : "POST", body);
-        pasted ||= r.pasted;
-        return r.style;
-      };
-      // a brief that is not the person's words never stops the style: the rest is saved and they write it on its sheet.
-      // On a change the words are added under the brief it has and never replace it
-      let unsaid = false;
-      let s = await save({ ...(name !== undefined ? { name } : {}), ...(brief ? { [was ? "addBrief" : "brief"]: brief } : {}) }).catch((e: unknown) => {
-        if (!(brief && e instanceof ToolError && e.message === BRIEF_NOT_TYPED)) throw e;
-        unsaid = true;
-        return was && name === undefined ? was : save({ name });
-      });
-      let added: number | undefined;
-      let full = false;
-      if (pictures) {
-        const r = await ctx.json<{ style: AnimationStyle; added: number; full?: true }>(`${at}/${s.id}/pictures/chat`, "POST", { newest: pictures });
-        ({ style: s, added } = r);
-        full = !!r.full;
-      }
-      await ctx.open?.(sheetOf("animation", s.id));
-      const notes = [
-        unsaid ? "The description was not saved: it is not a whole phrase the user typed in this chat, or a passage of a text they pasted with this message. They write or paste it on the style's sheet." : "",
-        pasted ? FROM_PASTE("The description was") : "",
-        added !== undefined && added < pictures ? (full ? "The style holds all the pictures it keeps: the rest were not added." : "Fewer pictures were added than asked: the others are already in the style, are not in this chat, or could not be read.") : "",
-        ctx.open ? "Its sheet is open for the user." : "",
-      ].filter(Boolean);
-      return {
-        id: s.id,
-        name: s.name,
-        has_brief: !!s.brief,
-        pictures: s.pictures.length,
-        ...(was ? {} : { made: true }),
-        ...(added !== undefined ? { added } : {}),
-        ...(notes.length ? { note: notes.join(" ") } : {}),
-        link: `${ctx.origin}${sheetOf("animation", s.id)}`,
-      };
-    },
+    animation_style_save: saveStyle("animation"),
     editor_style_use: async (a, ctx) => {
       const all = await styles(ctx);
       if (a.edit == null && a.style == null) return { styles: all.map(out), link: sheet(ctx) };

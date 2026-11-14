@@ -4,7 +4,9 @@ import path from "node:path";
 import { Hono } from "hono";
 import {
   ANIMATION_BRIEF_MAX,
+  CAROUSEL_BRIEF_MAX,
   MAX_ANIMATION_STYLES,
+  MAX_CAROUSEL_STYLES,
   MAX_INSPIRATIONS,
   MAX_MADE,
   PICTURE_MAX_BYTES,
@@ -19,12 +21,13 @@ import { jobTurn, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { ffmpeg } from "../library/media/run";
 import { notTyped } from "./own-words";
-import { change, read } from "./styles";
+import { change, read, type Saved } from "./styles";
 
 /**
- * Animation styles (contracts/editor-styles.ts): the `animation` list in the account's styles file (styles.ts), and
- * each style's pictures as files, $DATA_DIR/editor-styles/<username>/<styleId>/<pictureId>.jpg. A style is what the
- * person typed and the pictures they chose: nothing an AI wrote is saved here, and it holds no drawing code.
+ * Animation styles and carousel styles (contracts/editor-styles.ts): the `animation` and the `carousel` list in the
+ * account's styles file (styles.ts), and each style's pictures as files,
+ * $DATA_DIR/editor-styles/<username>/<styleId>/<pictureId>.jpg (a style's id is its own across both lists). A style is
+ * what the person typed and the pictures they chose: nothing an AI wrote is saved here, and it holds no drawing code.
  * A picture is `made` only when addPicture is called with it, which the 👍 on an edit's card does with a still this
  * account's Mac drew. Every upload is an inspiration, and no route takes a picture's kind from its caller.
  */
@@ -34,23 +37,36 @@ const USER = /^[a-zA-Z0-9_-]{1,64}$/;
 /** The biggest file taken as a picture, before it is made small. */
 const UPLOAD_MAX = 20 * 1024 * 1024;
 
+export type StyleKind = "animation" | "carousel";
+/** What sets the two lists apart: how many an account keeps, the longest brief, and where the person finds them. */
+const KIND = {
+  animation: { most: MAX_ANIMATION_STYLES, brief: ANIMATION_BRIEF_MAX, many: "animation styles", place: "AI Editor, Animation styles" },
+  carousel: { most: MAX_CAROUSEL_STYLES, brief: CAROUSEL_BRIEF_MAX, many: "carousel styles", place: "Designer, Carousel styles" },
+} as const;
+
 /** What a save from the assistant's reply is told when the brief is not the person's own words (own-words.ts). */
-export const BRIEF_NOT_TYPED = "The description was not saved: it is not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave brief out: they write it on the style's sheet (AI Editor, Animation styles).";
+export const briefNotTyped = (kind: StyleKind) =>
+  `The description was not saved: it is not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave brief out: they write it on the style's sheet (${KIND[kind].place}).`;
+export const BRIEF_NOT_TYPED = briefNotTyped("animation");
 const FULL = `A style keeps ${MAX_INSPIRATIONS} inspirations. Take one out first.`;
 
 const dirOf = (username: string, styleId: string) => path.join(env.dataDir, "editor-styles", username, styleId);
 
-export const animationStyles = (username: string): AnimationStyle[] => read(username).animation ?? [];
+export const stylesOf = (username: string, kind: StyleKind): AnimationStyle[] => read(username)[kind] ?? [];
+export const animationStyles = (username: string): AnimationStyle[] => stylesOf(username, "animation");
+export const carouselStyles = (username: string): AnimationStyle[] => stylesOf(username, "carousel");
 export const findAnimation = (username: string, id: string): AnimationStyle | null => animationStyles(username).find((s) => s.id === id) ?? null;
+/** A style of either list, in a file read now or in hand. */
+const inFile = (f: Saved, id: string) => [...(f.animation ?? []), ...(f.carousel ?? [])].find((s) => s.id === id) ?? null;
 
-/** A picture's file, or null when the style has no such picture. */
+/** A picture's file, or null when no style of the account has such a picture. */
 export function pictureFile(username: string, styleId: string, pictureId: string): string | null {
   if (!USER.test(username) || !ID.test(styleId) || !ID.test(pictureId)) return null;
-  return findAnimation(username, styleId)?.pictures.some((p) => p.id === pictureId) ? path.join(dirOf(username, styleId), `${pictureId}.jpg`) : null;
+  return inFile(read(username), styleId)?.pictures.some((p) => p.id === pictureId) ? path.join(dirOf(username, styleId), `${pictureId}.jpg`) : null;
 }
 
 /** The name and the brief a body carries, checked. A string is what is wrong with it. Nothing else of a style can be sent. */
-function clean(body: Record<string, unknown>): { name?: string; brief?: string } | string {
+function clean(body: Record<string, unknown>, kind: StyleKind): { name?: string; brief?: string } | string {
   const out: { name?: string; brief?: string } = {};
   if (body.name !== undefined) {
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -61,44 +77,45 @@ function clean(body: Record<string, unknown>): { name?: string; brief?: string }
   if (body.brief !== undefined) {
     if (typeof body.brief !== "string") return "brief is text";
     const brief = body.brief.trim();
-    if (brief.length > ANIMATION_BRIEF_MAX) return `The brief is at most ${ANIMATION_BRIEF_MAX} characters`;
+    if (brief.length > KIND[kind].brief) return `The brief is at most ${KIND[kind].brief} characters`;
     out.brief = brief;
   }
   return out;
 }
 
-export function createAnimation(username: string, body: Record<string, unknown>): AnimationStyle | string {
-  const given = clean(body);
+export function createAnimation(username: string, body: Record<string, unknown>, kind: StyleKind = "animation"): AnimationStyle | string {
+  const given = clean(body, kind);
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const now = Date.now();
   const style: AnimationStyle = { id: randomUUID(), name: given.name, brief: given.brief ?? "", pictures: [], createdAt: now, updatedAt: now };
   return change(username, (f) => {
-    const list = (f.animation ??= []);
-    if (list.length >= MAX_ANIMATION_STYLES) return `You have ${MAX_ANIMATION_STYLES} animation styles, the most an account keeps. Delete one first.`;
+    const list = (f[kind] ??= []);
+    if (list.length >= KIND[kind].most) return `You have ${KIND[kind].most} ${KIND[kind].many}, the most an account keeps. Delete one first.`;
     list.push(style);
     return style;
   });
 }
 
 /** Changes the name or the brief. Null: no such style. A string is why it was refused. */
-export function updateAnimation(username: string, id: string, body: Record<string, unknown>): AnimationStyle | string | null {
-  const given = clean(body);
+export function updateAnimation(username: string, id: string, body: Record<string, unknown>, kind: StyleKind = "animation"): AnimationStyle | string | null {
+  const given = clean(body, kind);
   if (typeof given === "string") return given;
   return change(username, (f) => {
-    const at = (f.animation ?? []).findIndex((s) => s.id === id);
+    const list = f[kind] ?? [];
+    const at = list.findIndex((s) => s.id === id);
     if (at < 0) return null;
-    return (f.animation![at] = { ...f.animation![at]!, ...given, updatedAt: Date.now() });
+    return (list[at] = { ...list[at]!, ...given, updatedAt: Date.now() });
   });
 }
 
-/** The style goes with its pictures, and the editing styles that named it name none. False: no such style. */
-export async function deleteAnimation(username: string, id: string): Promise<boolean> {
+/** The style goes with its pictures, and the editing styles that named an animation style name none. False: no such style. */
+export async function deleteAnimation(username: string, id: string, kind: StyleKind = "animation"): Promise<boolean> {
   const gone = change(username, (f) => {
-    const n = f.animation?.length ?? 0;
-    f.animation = (f.animation ?? []).filter((s) => s.id !== id);
-    for (const s of f.editing) if (s.animation === id) s.animation = null;
-    return f.animation.length < n;
+    const n = f[kind]?.length ?? 0;
+    const left = (f[kind] = (f[kind] ?? []).filter((s) => s.id !== id));
+    if (kind === "animation") for (const s of f.editing) if (s.animation === id) s.animation = null;
+    return left.length < n;
   });
   if (gone && USER.test(username) && ID.test(id)) await rm(dirOf(username, id), { recursive: true, force: true });
   return gone;
@@ -126,8 +143,9 @@ export async function fitJpeg(src: string, out: string, side: number, bytes: num
  */
 export async function addPicture(username: string, styleId: string, src: string, kind: StylePicture["kind"], chat?: string): Promise<AnimationStyle | string | null> {
   const full = FULL;
-  const now = findAnimation(username, styleId);
-  if (!now || !USER.test(username) || !ID.test(styleId)) return null;
+  if (!USER.test(username) || !ID.test(styleId)) return null;
+  const now = inFile(read(username), styleId);
+  if (!now) return null;
   if (chat && now.pictures.some((p) => p.chat === chat)) return now;
   if (kind === "inspiration" && now.pictures.filter((p) => p.kind === kind).length >= MAX_INSPIRATIONS) return full;
   const dir = dirOf(username, styleId);
@@ -142,7 +160,7 @@ export async function addPicture(username: string, styleId: string, src: string,
   }
   const dropped: string[] = [];
   const saved = change(username, (f) => {
-    const s = f.animation?.find((x) => x.id === styleId);
+    const s = inFile(f, styleId);
     if (!s) return null;
     const same = s.pictures.filter((p) => p.kind === kind);
     if (kind === "inspiration" && same.length >= MAX_INSPIRATIONS) return full;
@@ -162,7 +180,7 @@ export async function removePicture(username: string, styleId: string, pictureId
   const file = pictureFile(username, styleId, pictureId);
   if (!file) return null;
   const saved = change(username, (f) => {
-    const s = f.animation?.find((x) => x.id === styleId);
+    const s = inFile(f, styleId);
     if (!s) return null;
     s.pictures = s.pictures.filter((p) => p.id !== pictureId);
     s.updatedAt = Date.now();
@@ -172,104 +190,113 @@ export async function removePicture(username: string, styleId: string, pictureId
   return saved;
 }
 
-/** The routes, mounted inside /api/editor at /animation-styles (routes.ts), before /:id. */
-export const animationApp = new Hono<{ Variables: AuthVars }>();
-
 const notFound = { error: "Not found", code: "not_found" };
 const json = async (req: { json: () => Promise<unknown> }): Promise<Record<string, unknown>> => {
   const b = await req.json().catch(() => null);
   return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
 };
 
-animationApp.get("/", (c) => c.json({ styles: animationStyles(c.get("user").username) } satisfies AnimationStylesView));
+/** One list's routes: animation styles inside /api/editor at /animation-styles (routes.ts), carousel styles inside /api/designs at /styles (designs.ts), each before /:id. */
+function stylesApp(kind: StyleKind) {
+  const app = new Hono<{ Variables: AuthVars }>();
+  const ofKind = (username: string, id: string) => stylesOf(username, kind).find((s) => s.id === id) ?? null;
+  const unsaid = briefNotTyped(kind);
 
-// the brief is the person's own words, also when the assistant saves it (own-words.ts)
-animationApp.post("/", async (c) => {
-  const b = await json(c.req);
-  if (notTyped(c, b, ["brief"])) return c.json({ error: BRIEF_NOT_TYPED, code: "not_typed" }, 409);
-  const made = createAnimation(c.get("user").username, b);
-  return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
-});
+  app.get("/", (c) => c.json({ styles: stylesOf(c.get("user").username, kind) } satisfies AnimationStylesView));
 
-// `addBrief` adds a line under the brief the style has (one it already holds is not added twice): what the person
-// wrote before stays, as with an editing style's notes
-animationApp.put("/:id", async (c) => {
-  const b = await json(c.req);
-  if (notTyped(c, b, ["brief", "addBrief"])) return c.json({ error: BRIEF_NOT_TYPED, code: "not_typed" }, 409);
-  if (typeof b.addBrief === "string" && b.addBrief.trim()) {
-    const had = findAnimation(c.get("user").username, c.req.param("id"))?.brief ?? "";
-    const add = b.addBrief.trim();
-    b.brief = had.toLowerCase().includes(add.toLowerCase()) ? had : [had, add].filter(Boolean).join("\n");
-  }
-  const changed = updateAnimation(c.get("user").username, c.req.param("id"), b);
-  if (!changed) return c.json(notFound, 404);
-  return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
-});
+  // the brief is the person's own words, also when the assistant saves it (own-words.ts)
+  app.post("/", async (c) => {
+    const b = await json(c.req);
+    if (notTyped(c, b, ["brief"])) return c.json({ error: unsaid, code: "not_typed" }, 409);
+    const made = createAnimation(c.get("user").username, b, kind);
+    return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
+  });
 
-animationApp.delete("/:id", async (c) => ((await deleteAnimation(c.get("user").username, c.req.param("id"))) ? c.json({ ok: true }) : c.json(notFound, 404)));
-
-/** Pictures the person adds: each `file` of the form becomes an inspiration. Whatever else the form says is not read. */
-animationApp.post("/:id/pictures", async (c) => {
-  const user = c.get("user").username;
-  const id = c.req.param("id");
-  if (!findAnimation(user, id) || !ID.test(id)) return c.json(notFound, 404);
-  const form = await c.req.parseBody({ all: true }).catch(() => ({}) as Record<string, unknown>);
-  const files = [form.file].flat().filter((f): f is File => f instanceof File);
-  if (!files.length) return c.json({ error: "Send the picture as file", code: "invalid" }, 400);
-  let style: AnimationStyle | null = null;
-  for (const f of files) {
-    if (f.size > UPLOAD_MAX) return c.json({ error: "A picture is at most 20 MB", code: "invalid" }, 400);
-    const dir = dirOf(user, id);
-    const tmp = path.join(dir, `${randomUUID()}.upload`);
-    await mkdir(dir, { recursive: true });
-    await writeFile(tmp, Buffer.from(await f.arrayBuffer()));
-    const added = await addPicture(user, id, tmp, "inspiration").finally(() => rm(tmp, { force: true }));
-    if (!added) return c.json(notFound, 404);
-    if (typeof added === "string") return c.json({ error: added, code: "invalid" }, 400);
-    style = added;
-  }
-  return c.json(style);
-});
-
-/**
- * The newest `newest` pictures the person sent in the chat a reply is being written in become inspirations. The
- * assistant's own call only: the pictures are found by that reply's token, never by an id or a path the caller names.
- * One the style already has from that chat is passed over, so asking twice adds nothing twice; a picture the app can't
- * read is passed over too. `added` is how many went in, `full` that the style holds all it keeps.
- */
-animationApp.post("/:id/pictures/chat", async (c) => {
-  const user = c.get("user").username;
-  const id = c.req.param("id");
-  if (!findAnimation(user, id) || !ID.test(id)) return c.json(notFound, 404);
-  const auth = c.req.header("authorization");
-  const sent = /^Bearer ctj_/.test(auth ?? "") ? picturesInChat(user, jobTurn(auth) ?? "") : null;
-  if (!sent) return c.json({ error: "Pictures come from the app's own chat. Outside it the user adds them on the style's sheet (AI Editor, Animation styles).", code: "invalid" }, 400);
-  const n = Number((await json(c.req)).newest);
-  if (!Number.isInteger(n) || n < 1) return c.json({ error: "Give newest: how many of the newest pictures the user sent in this chat to add", code: "invalid" }, 400);
-  let added = 0;
-  let full = false;
-  for (const p of sent.slice(-n)) {
-    const had = findAnimation(user, id)?.pictures.length ?? 0;
-    const now = await addPicture(user, id, p.file, "inspiration", p.id);
-    if (!now) return c.json(notFound, 404);
-    if (now === FULL) {
-      full = true;
-      break;
+  // `addBrief` adds a line under the brief the style has (one it already holds is not added twice): what the person
+  // wrote before stays, as with an editing style's notes
+  app.put("/:id", async (c) => {
+    const b = await json(c.req);
+    if (notTyped(c, b, ["brief", "addBrief"])) return c.json({ error: unsaid, code: "not_typed" }, 409);
+    if (typeof b.addBrief === "string" && b.addBrief.trim()) {
+      const had = ofKind(c.get("user").username, c.req.param("id"))?.brief ?? "";
+      const add = b.addBrief.trim();
+      b.brief = had.toLowerCase().includes(add.toLowerCase()) ? had : [had, add].filter(Boolean).join("\n");
     }
-    if (typeof now !== "string" && now.pictures.length > had) added++;
-  }
-  return c.json({ style: findAnimation(user, id), added, ...(sent.length ? {} : { none: true }), ...(full ? { full: true } : {}) });
-});
+    const changed = updateAnimation(c.get("user").username, c.req.param("id"), b, kind);
+    if (!changed) return c.json(notFound, 404);
+    return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
+  });
 
-animationApp.get("/:id/pictures/:pid", async (c) => {
-  const file = pictureFile(c.get("user").username, c.req.param("id"), c.req.param("pid"));
-  const bytes = file && (await readFile(file).catch(() => null));
-  if (!bytes) return c.json(notFound, 404);
-  // a picture never changes under its id
-  return new Response(bytes, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=31536000, immutable" } });
-});
+  app.delete("/:id", async (c) => ((await deleteAnimation(c.get("user").username, c.req.param("id"), kind)) ? c.json({ ok: true }) : c.json(notFound, 404)));
 
-animationApp.delete("/:id/pictures/:pid", async (c) => {
-  const style = await removePicture(c.get("user").username, c.req.param("id"), c.req.param("pid"));
-  return style ? c.json(style) : c.json(notFound, 404);
-});
+  /** Pictures the person adds: each `file` of the form becomes an inspiration. Whatever else the form says is not read. */
+  app.post("/:id/pictures", async (c) => {
+    const user = c.get("user").username;
+    const id = c.req.param("id");
+    if (!ofKind(user, id) || !ID.test(id)) return c.json(notFound, 404);
+    const form = await c.req.parseBody({ all: true }).catch(() => ({}) as Record<string, unknown>);
+    const files = [form.file].flat().filter((f): f is File => f instanceof File);
+    if (!files.length) return c.json({ error: "Send the picture as file", code: "invalid" }, 400);
+    let style: AnimationStyle | null = null;
+    for (const f of files) {
+      if (f.size > UPLOAD_MAX) return c.json({ error: "A picture is at most 20 MB", code: "invalid" }, 400);
+      const dir = dirOf(user, id);
+      const tmp = path.join(dir, `${randomUUID()}.upload`);
+      await mkdir(dir, { recursive: true });
+      await writeFile(tmp, Buffer.from(await f.arrayBuffer()));
+      const added = await addPicture(user, id, tmp, "inspiration").finally(() => rm(tmp, { force: true }));
+      if (!added) return c.json(notFound, 404);
+      if (typeof added === "string") return c.json({ error: added, code: "invalid" }, 400);
+      style = added;
+    }
+    return c.json(style);
+  });
+
+  /**
+   * The newest `newest` pictures the person sent in the chat a reply is being written in become inspirations. The
+   * assistant's own call only: the pictures are found by that reply's token, never by an id or a path the caller names.
+   * One the style already has from that chat is passed over, so asking twice adds nothing twice; a picture the app can't
+   * read is passed over too. `added` is how many went in, `full` that the style holds all it keeps.
+   */
+  app.post("/:id/pictures/chat", async (c) => {
+    const user = c.get("user").username;
+    const id = c.req.param("id");
+    if (!ofKind(user, id) || !ID.test(id)) return c.json(notFound, 404);
+    const auth = c.req.header("authorization");
+    const sent = /^Bearer ctj_/.test(auth ?? "") ? picturesInChat(user, jobTurn(auth) ?? "") : null;
+    if (!sent) return c.json({ error: `Pictures come from the app's own chat. Outside it the user adds them on the style's sheet (${KIND[kind].place}).`, code: "invalid" }, 400);
+    const n = Number((await json(c.req)).newest);
+    if (!Number.isInteger(n) || n < 1) return c.json({ error: "Give newest: how many of the newest pictures the user sent in this chat to add", code: "invalid" }, 400);
+    let added = 0;
+    let full = false;
+    for (const p of sent.slice(-n)) {
+      const had = ofKind(user, id)?.pictures.length ?? 0;
+      const now = await addPicture(user, id, p.file, "inspiration", p.id);
+      if (!now) return c.json(notFound, 404);
+      if (now === FULL) {
+        full = true;
+        break;
+      }
+      if (typeof now !== "string" && now.pictures.length > had) added++;
+    }
+    return c.json({ style: ofKind(user, id), added, ...(sent.length ? {} : { none: true }), ...(full ? { full: true } : {}) });
+  });
+
+  app.get("/:id/pictures/:pid", async (c) => {
+    const file = ofKind(c.get("user").username, c.req.param("id")) && pictureFile(c.get("user").username, c.req.param("id"), c.req.param("pid"));
+    const bytes = file && (await readFile(file).catch(() => null));
+    if (!bytes) return c.json(notFound, 404);
+    // a picture never changes under its id
+    return new Response(bytes, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=31536000, immutable" } });
+  });
+
+  app.delete("/:id/pictures/:pid", async (c) => {
+    const style = ofKind(c.get("user").username, c.req.param("id")) && (await removePicture(c.get("user").username, c.req.param("id"), c.req.param("pid")));
+    return style ? c.json(style) : c.json(notFound, 404);
+  });
+
+  return app;
+}
+
+export const animationApp = stylesApp("animation");
+export const carouselApp = stylesApp("carousel");

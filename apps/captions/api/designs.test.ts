@@ -185,7 +185,7 @@ describe("designs: frames on a canvas", () => {
 
 describe("designs: an AI that designs", () => {
   type Frame = { id: string; n: number; name?: string; w: number; h: number; words?: string; background: string; layers: Array<{ id: string; type: string; text?: string; x: number; size?: number }> };
-  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[] };
+  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; kind: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[] };
   type Wrote = DesignAnswer & { touched: string[] };
   const text = { type: "text", font: "Anton", size: 90, color: "#ffffff", align: "center", x: 90, y: 400, w: 900, h: 300 };
   const read = async (id: string, more = "") => (await call<Read>("GET", `/api/designs/${id}/pages${more}`)).body;
@@ -354,24 +354,29 @@ describe("designs: an AI that designs", () => {
     }
   });
 
-  it("a cover's words are what the chat asks for; the person's looks come as their own words, and a look's pictures when it is asked for by name", async () => {
-    const style = createAnimation("jordan", { name: "Paper cut", brief: "Torn paper edges, one loud colour." });
+  /** A style of the person's with pictures, written as its own files are: one made and liked, then inspirations. */
+  const styleWith = (who: string, name: string, brief: string, ids: string[], kind: "carousel" | "animation" = "carousel") => {
+    const style = createAnimation(who, { name, brief }, kind);
     if (typeof style === "string") throw new Error(style);
-    // two pictures of the look, written as its own files are
-    for (const [id, kind] of [["11111111-0000-4000-8000-000000000001", "made"], ["22222222-0000-4000-8000-000000000002", "inspiration"]] as const) {
-      change("jordan", (f) => void f.animation!.find((s) => s.id === style.id)!.pictures.push({ id, kind, at: kind === "made" ? 2 : 1 }));
-      const file = pictureFile("jordan", style.id, id)!;
+    for (const [n, id] of ids.entries()) {
+      change(who, (f) => void f[kind]!.find((s) => s.id === style.id)!.pictures.push({ id, kind: n ? "inspiration" : "made", at: n ? 1 : 2 }));
+      const file = pictureFile(who, style.id, id)!;
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
     }
+    return style;
+  };
+
+  it("a cover's words are what the chat asks for; the person's looks come as their own words, and a look's pictures when it is asked for by name", async () => {
+    styleWith("jordan", "Paper cut", "Torn paper edges, one loud colour.", ["11111111-0000-4000-8000-000000000001", "22222222-0000-4000-8000-000000000002"]);
     const d = (await call<Design>("POST", "/api/designs", { format: "thumbnail", version: "ver_v", t: 1, title: "Floor time" })).body;
     const got = await read(d.id);
     expect(got.frames[0]).not.toHaveProperty("words");
     expect(got.pictures).toEqual([{ id: d.pictures[0], what: "the video's own frame" }]);
-    expect(got.looks).toContainEqual({ name: "Paper cut", brief: "Torn paper edges, one loud colour.", pictures: 2 });
-    // the person's one look comes with its pictures unasked: an AI that never asks for a look still designs from it
+    expect(got.looks).toContainEqual({ name: "Paper cut", kind: "carousel style", brief: "Torn paper edges, one loud colour.", pictures: 2 });
+    // the person's one carousel style comes with its pictures unasked: an AI that never asks for a look still designs from it
     expect(typeof got.look === "object" && [got.look.name, got.look.pictures.map((p) => p.what)]).toEqual(["Paper cut", ["a picture the user made and liked in this look", "an inspiration for this look"]]);
-    expect(got.how).toContain("Design in one of them");
+    expect(got.how).toContain('A "carousel style" is made for these frames: design in one of them.');
     expect(typeof got.look === "object" && got.look.brief).toBe("Torn paper edges, one loud colour.");
     expect(got.how).toContain("design in rounds, never in one pass");
     expect(got.how).toContain("make that change alone");
@@ -383,7 +388,10 @@ describe("designs: an AI that designs", () => {
     expect(out.notes).toEqual(["Frame 1: a picture that is not in this design: left out"]);
   });
 
-  it("with several looks the AI is told to pick one and read it first; a plug-in's own looks are listed after the account's, their pictures made small", async () => {
+  it("with several carousel styles the AI is told to pick one and read it first; animation styles and a plug-in's own looks are listed after, read when named, their pictures made small", async () => {
+    styleWith("jordan", "Soft clay", "Rounded shapes, pastel.", ["33333333-0000-4000-8000-000000000003"]);
+    // an animation style with pictures is never the one picked unasked here
+    styleWith("jordan", "Big reveal", "Numbers count up.", ["44444444-0000-4000-8000-000000000004"], "animation");
     const { Hono } = await import("hono");
     const { definePlugin, mountPlugins } = await import("./lib/plugin");
     // a studio's guide runs long, and what the person likes and hates comes after its first lines
@@ -412,9 +420,14 @@ describe("designs: an AI that designs", () => {
       const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
       const got = await read(d.id);
       expect(asked).toBe("jordan");
-      expect(got.looks).toEqual([{ name: "Paper cut", brief: "Torn paper edges, one loud colour.", pictures: 2 }, { name: "Tiny Mobile", brief: TINY.slice(0, 600), pictures: 2 }]);
-      // two looks with pictures: none is shown unasked, and the answer says to pick one
-      expect(got.look).toBe('Pick the look this design is in ("Paper cut", "Tiny Mobile"; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.');
+      expect(got.looks).toEqual([
+        { name: "Paper cut", kind: "carousel style", brief: "Torn paper edges, one loud colour.", pictures: 2 },
+        { name: "Soft clay", kind: "carousel style", brief: "Rounded shapes, pastel.", pictures: 1 },
+        { name: "Big reveal", kind: "animation style", brief: "Numbers count up.", pictures: 1 },
+        { name: "Tiny Mobile", kind: "animation style", brief: TINY.slice(0, 600), pictures: 2 },
+      ]);
+      // two carousel styles with pictures: none is shown unasked, and the answer says to pick one of those
+      expect(got.look).toBe('Pick the carousel style this design is in ("Paper cut", "Soft clay"; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.');
       // the plug-in's look by name: the picture it made first, as a small JPEG; the file that is gone is left out
       const tiny = (await read(d.id, "?look=tiny%20mobile")).look;
       if (typeof tiny !== "object") throw new Error(String(tiny));
@@ -430,6 +443,34 @@ describe("designs: an AI that designs", () => {
     } finally {
       mountPlugins(new Hono(), []);
     }
+  });
+
+  it("with no carousel style the AI is sent to the carousels saved in the Content Analyzer, then to an animation style; the two lists are kept apart", async () => {
+    const lookOf = async () => {
+      const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true }, "robin")).body;
+      return (await call<Read>("GET", `/api/designs/${d.id}/pages`, undefined, "robin")).body;
+    };
+    // nothing at all: the Analyzer, and where carousel styles are kept
+    const bare = await lookOf();
+    expect(bare.looks).toEqual([]);
+    expect(bare.look).toBe('The user has no carousel style yet. Before you design, look at carousels they saved in the Content Analyzer: instagram_search with "kind":"carousel" (with words of this design\'s subject, or none for the most watched), then instagram_post with "pictures":true for two or three that fit what they asked; carry their finish into the frames, never their words or one of them copied. The user keeps carousel styles in the Designer (Carousel styles).');
+    // an animation style with pictures, and a carousel style with neither words nor pictures: the animation style is the one after the Analyzer
+    styleWith("robin", "Night card", "White on deep blue.", ["55555555-0000-4000-8000-000000000005"], "animation");
+    const empty = styleWith("robin", "Empty yet", "", []);
+    const after = await lookOf();
+    expect(after.look).toContain('With none saved, design in one of their animation styles ("Night card": design_get with "look": its name)');
+    expect(after.looks.map((l) => [l.name, l.kind])).toEqual([["Empty yet", "carousel style"], ["Night card", "animation style"]]);
+    // a carousel style of words alone is the one: all its words, and the Analyzer for pictures
+    const GUIDE = `Cream paper and one loud word. ${"Lots of empty space, nothing glossy. ".repeat(30)}What they hate: drop shadows.`;
+    change("robin", (f) => void (f.carousel!.find((s) => s.id === empty.id)!.brief = GUIDE));
+    const words = (await lookOf()).look;
+    if (typeof words !== "object") throw new Error(String(words));
+    expect([words.name, words.brief, words.pictures]).toEqual(["Empty yet", GUIDE, []]);
+    expect((words as { more?: string }).more).toMatch(/^It has no pictures yet\. Before you design, look at carousels they saved in the Content Analyzer/);
+    // the carousel style is not among the animation styles, nor the other way round
+    expect((await call<{ styles: Array<{ name: string }> }>("GET", "/api/designs/styles", undefined, "robin")).body.styles.map((s) => s.name)).toEqual(["Empty yet"]);
+    const { animationStyles } = await import("./editor/animation-styles");
+    expect(animationStyles("robin").map((s) => s.name)).toEqual(["Night card"]);
   });
 
   it("a look at the frames: with no browser to draw them, no pictures and a line saying why; another account's is not found", async () => {
