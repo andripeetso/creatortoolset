@@ -87,6 +87,7 @@ export function ChatsAside({
     <>
       {onClose && <div className="absolute inset-0 z-20 bg-black/40 motion-safe:animate-in motion-safe:fade-in" onClick={onClose} aria-hidden />}
       <aside
+        data-chat-side
         aria-label="Chats"
         style={{ width: dragged ?? layout?.listW ?? LIST_W }}
         className={cn(

@@ -7,6 +7,8 @@ const plugin = require("tailwindcss/plugin")
  * turns 950-600, accent backgrounds and borders 800-950 turn 200-50. Dark keeps Tailwind's own values. Accents
  * 500-700 and solid accent fills 50-400 are the same in both. zinc-925 sits between 900 and 950 (old #101014 panels).
  */
+/** The chat side in chat mode: the list of chats and the open chat. */
+const CHAT_SIDE = ":is([data-chat-side], [data-chat-panel])"
 const themed = (() => {
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(" ")
   const mirror = { 50: 950, 100: 900, 200: 800, 300: 700, 400: 600, 500: 500, 600: 400, 700: 300, 800: 200, 900: 100, 950: 50 }
@@ -42,6 +44,17 @@ const themed = (() => {
       for (const n of [50, 100, 200, 300, 400]) v[`--t-violet-${n}`] = pick(n, mirror[n])
       for (const n of [800, 900, 950]) v[`--s-violet-${n}`] = pick(n, mirror[n])
       base[`${sel}[data-tint="${h}"]`] = v
+    }
+  // In chat mode the chats keep one colour, the person's own (Settings → Appearance), whatever workspace the page beside
+  // them wears (owner, 11-14): <html data-own-tint> (useRootTint) points the chat side's violet back at it
+  for (const [sel, isDark] of [[":root", false], [".dark", true]])
+    for (const h of ["violet", ...tints]) {
+      const v = {}
+      const pick = (n, m) => rgb(colors[h][isDark ? n : m])
+      for (const n of shades) v[`--violet-${n}`] = pick(n, n)
+      for (const n of [50, 100, 200, 300, 400]) v[`--t-violet-${n}`] = pick(n, mirror[n])
+      for (const n of [800, 900, 950]) v[`--s-violet-${n}`] = pick(n, mirror[n])
+      base[`${sel}[data-own-tint="${h}"] ${CHAT_SIDE}`] = v
     }
   return { ...out, base }
 })()
