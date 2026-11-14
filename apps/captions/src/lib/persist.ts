@@ -119,7 +119,7 @@ export async function listSessions(): Promise<SessionMeta[]> {
   for (const project of local) {
     const server = merged.get(project.id);
     // the server has it but doesn't list it here: another workspace's (or deleted). Unsaved changes still show
-    if (remote && !server && project.serverProjectReady && !project.unsynced) continue;
+    if (remote && !server && project.serverProjectReady && !project.unsynced && !project.serverConflict) continue;
     merged.set(project.id, {
       ...(server ?? {
         id: project.id,

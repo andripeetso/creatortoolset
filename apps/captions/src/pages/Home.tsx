@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { currentWorkspace, onWorkspaceChange } from "@/lib/current-workspace";
 import { useCachedList } from "@/lib/local-cache";
 import { useLocation, useNavigate } from "react-router";
 import {
@@ -240,6 +241,26 @@ export default function Home() {
       }
     })();
   }, [navigate, projectRequested, clipRequested]);
+  // the project left open (this device's last one, or the one open at a switch) is another workspace's: the list
+  // shows instead. It stays loaded, so nothing unsaved is lost, and opening it by its link still works
+  const workspace = useSyncExternalStore(onWorkspaceChange, currentWorkspace);
+  useEffect(() => {
+    const { projectId: open, serverProjectReady } = useStudio.getState();
+    if (!open || !serverProjectReady || projectRequested) return;
+    let live = true;
+    void fetch("/api/projects")
+      .then((r) => (r.ok ? (r.json() as Promise<{ id: string }[]>) : null))
+      .then((list) => {
+        if (live && list && useStudio.getState().projectId === open && !list.some((p) => p.id === open))
+          useStudio.getState().openProjectLibrary();
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // the workspace only: a project opened here afterwards is this workspace's choice
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace]);
   useEffect(() => {
     if (!projectLibraryRequested) return;
     useStudio.getState().openProjectLibrary();
