@@ -77,8 +77,8 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // the description, the name and ten typed fields (those alone are 387 bytes; size is 52, passes 28), and the comma before it in the
     // list: 534; upload_file adds 345 (its 182-byte description, path and size); channel_posts 426 (the connected
     // social accounts' numbers and posts, read again first when over an hour old; its 279-byte description, platform and refresh)
-    // design_get, design_make and design_update add 1804 (the Designer's three tools: find and read a design, start
-    // one, change its frames and single layers and copy a video's moment in; their 391-, 328- and 286-byte descriptions). Reading is a tool of its
+    // design_get, design_make and design_update add 1907 (the Designer's three tools: find and read a design, start
+    // one, change its frames and single layers and copy a video's moment in; their 391-, 328- and 364-byte descriptions; design_update's name renames a design). Reading is a tool of its
     // own so an AI app outside does not ask before every look. How a design is written and changed is not in them:
     // design_get hands it over when a design is read, so it costs nothing on a turn that designs nothing
     // editor_cut adds 519 (a draft's timeline as Review shows it, and its edits cut into the next version; its 273-byte
@@ -95,8 +95,8 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // description, project, name, instructions, the sixteen colours and language); its draft_from adds 158 (instructions
     // drafted from what the user gave, as the project form's Write it for me does); its theirs adds 82 (instructions that
     // are the user's own words, where the account's writer would otherwise draft them)
-    expect(bytes(dock) - bytes(main(dock))).toBe(6597);
+    expect(bytes(dock) - bytes(main(dock))).toBe(6700);
     // an outside key gets those and use_file (1217, as the dock lists it): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7109);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7212);
   });
 });
