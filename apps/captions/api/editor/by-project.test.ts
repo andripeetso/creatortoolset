@@ -66,6 +66,22 @@ describe.skipIf(rootReplaced)("AI Editor: edits kept apart by project", () => {
     // nobody else's edits, whatever is asked
     expect(await names("other", `?projectId=${theirs}`)).toEqual([]);
     expect(await names("other", `?projectId=${first}`)).toEqual([]);
+    // the whole list says each edit's project (the Edits page keeps them apart by it): the old one is the first brand's
+    // and no other's
+    const where = Object.fromEntries((await json<EditSummary[]>(call("maker", "GET", "/api/editor"))).map((e) => [e.name, e.projectId]));
+    expect(where).toEqual({ "Old take": first, "First's reel": first, "Second's reel": second, "Asked for theirs": second });
+  });
+
+  it("a person with no project: every edit, and none says a project", async () => {
+    await login("solo");
+    libraryDb().exec(`
+      INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_solo', 'solo', 'A', 'local', 0);
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_solo', 'lib_solo', 'video', 'Take 1', 'solo', 0, NULL);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_solo', 'ast_solo', 1, 'k1', 1, 'x1', 'ready', 'solo', 0);
+    `);
+    await edit("solo", "Solo take");
+    const list = await json<EditSummary[]>(call("solo", "GET", "/api/editor"));
+    expect(list.map((e) => [e.name, e.projectId])).toEqual([["Solo take", undefined]]);
   });
 
   it("an edit whose project is deleted goes with the first brand's", async () => {
