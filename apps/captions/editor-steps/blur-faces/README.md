@@ -68,5 +68,11 @@ type Item = {
 
 ## The iPhone app
 
-`GET /api/plugins` lists `blur-faces` → More shows Face Blur. Same settings and `/pick`, the same engine
-(`FaceBlur/` in both apps, the same files), saves to Photos.
+`GET /api/plugins` lists `blur-faces` and the account has its gate → More shows Face Blur (`FaceBlurView.swift`). The
+same settings (editable there too) and `/pick`; photos and videos are picked in Photos and copied as they are into the
+app's temporary folder, covered one at a time and saved to Photos (add-only). A failed pick fails that file and
+writes nothing. A done file shows its faces with a switch each and Blur again, which saves a new copy to Photos. The
+picked files are removed when Face Blur opens next.
+
+The engine is `FaceBlur/` in both apps, byte for byte the same files: change it in one, copy it to the other.
+`diff -r apps/mac/Sources/CreatorToolsetMac/FaceBlur apps/ios/CreatorToolset/FaceBlur` prints nothing when they match.
