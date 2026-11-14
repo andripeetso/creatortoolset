@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { useInRouterContext, useNavigate } from "react-router";
 import remarkGfm from "remark-gfm";
+import { CopyButton } from "@/components/workshop/CopyButton";
 
 /** A path of this app ("/review/…"), not another site's address. */
 const inApp = (href?: string) => !!href && /^\/(?!\/)/.test(href);
@@ -50,6 +51,23 @@ function AppLink({ href, className, children }: { href: string; className: strin
   );
 }
 
+/** A block of text to paste somewhere (a prompt, code): its long lines wrap, and Copy takes it word for word. */
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  return (
+    <div className="relative my-2">
+      <pre ref={ref} className="rounded-md bg-muted p-2 pr-9 text-xs whitespace-pre-wrap [overflow-wrap:anywhere] [&_code]:bg-transparent [&_code]:p-0">
+        {children}
+      </pre>
+      <CopyButton
+        text={() => ref.current?.textContent?.replace(/\n$/, "") ?? ""}
+        title="Copy"
+        className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+      />
+    </div>
+  );
+}
+
 /** The AI's reply as formatted text, not markdown source; a single line break stays a break. */
 const REPLY: Components = {
   p: ({ children }) => <p className="my-2 whitespace-pre-line first:mt-0 last:mb-0">{children}</p>,
@@ -64,8 +82,7 @@ const REPLY: Components = {
   // A picture from another site is never loaded: the request itself would hand that site whatever the address
   // carries, and an AI can be talked into writing one (a pasted source, a page it read). It shows as a link.
   img: ({ src, alt }) => (inApp(src) ? <img src={src} alt={alt ?? ""} className="my-2 max-w-full rounded-md" /> : <ReplyLink href={src}>{alt || src}</ReplyLink>),
-  // a code block scrolls sideways by itself, never the chat around it
-  pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md bg-muted p-2 text-xs [overflow-wrap:normal] [&_code]:bg-transparent [&_code]:p-0">{children}</pre>,
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 text-[0.9em]">{children}</code>,
   blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>,
   table: ({ children }) => (

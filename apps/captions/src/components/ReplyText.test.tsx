@@ -35,3 +35,9 @@ it("a picture from another site is not loaded: it shows as a link, and one of th
   expect(html).toMatch(/<a href="https:\/\/example.com\/p.png\?q=secret" target="_blank" rel="noreferrer"[^>]*>the chart<\/a>/);
   expect(html).toMatch(/<img src="\/api\/review\/r1\/thumb" alt="a still"/);
 });
+
+it("a code block wraps its long lines and has a Copy button", () => {
+  const html = renderToStaticMarkup(<ReplyText text={"```\nYou write as Tiny Acrobatics, in first person.\n```"} />);
+  expect(html).toMatch(/<pre class="[^"]*whitespace-pre-wrap[^"]*">/);
+  expect(html).toContain('aria-label="Copy"');
+});
