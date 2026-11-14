@@ -10,6 +10,7 @@
  * This tab's own writes carry its id (X-CT-Client) and their notices are skipped here unless a list asks for them
  * (`own`): the page already shows what it saved, and a refetch could undo typing. Other tabs and devices refetch.
  */
+import { currentWorkspace } from "./current-workspace";
 
 /** The topic of a saved list's key or an /api address: "/api/review/x" → "review", "workshop/sessions?p=" → "workshop". */
 export function topicOf(key: string): string | null {
@@ -165,7 +166,11 @@ export function stopSync() {
   hello = Promise.resolve();
 }
 
-/** Every same-origin write from this tab carries its id, so its own change notices are skipped here. */
+/**
+ * Every same-origin request from this tab says the workspace it is in (X-CT-Workspace: the server keeps each tool's
+ * things to it, api/lib/workspace-scope.ts), and every write carries the tab's id, so its own change notices are
+ * skipped here.
+ */
 export function tagWrites() {
   const orig = globalThis.fetch;
   if ((orig as { ctTagged?: boolean }).ctTagged) return;
@@ -173,9 +178,12 @@ export function tagWrites() {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const same = url.startsWith("/") || url.startsWith(location.origin);
-    if (method !== "GET" && method !== "HEAD" && same) {
+    const write = method !== "GET" && method !== "HEAD";
+    const ws = currentWorkspace();
+    if (same && (write || ws)) {
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-      headers.set("X-CT-Client", clientId);
+      if (write) headers.set("X-CT-Client", clientId);
+      if (ws && !headers.has("X-CT-Workspace")) headers.set("X-CT-Workspace", ws);
       return orig(input, { ...init, headers });
     }
     return orig(input, init);

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../env";
@@ -105,6 +106,12 @@ export async function ownedProject(id: string, user: SessionUser): Promise<Proje
   return p && p.owner === user.username ? p : null;
 }
 
+/**
+ * The workspace a chat's reply works in (assistant.ts, mcp.ts): while it is set, it is the current one for this call
+ * and everything it calls, whatever the app has open. Never written down: the app's own pick stays as it was.
+ */
+export const workspaceScope = new AsyncLocalStorage<string>();
+
 export interface Workspace {
   currentProjectId: string | null;
   projects: Project[];
@@ -114,7 +121,8 @@ export interface Workspace {
 export async function getWorkspace(user: SessionUser): Promise<Workspace> {
   const projects = await ownedProjects(user.username);
   const marker = (await readUserMarker(user.username)) ?? {};
-  let current = marker.currentProjectId;
+  const scoped = workspaceScope.getStore();
+  let current = scoped && projects.some((p) => p.id === scoped) ? scoped : marker.currentProjectId;
   if (current && !projects.some((p) => p.id === current)) current = undefined;
   if (!current && projects[0]) {
     current = projects[0].id;

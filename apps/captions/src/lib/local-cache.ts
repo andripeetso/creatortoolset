@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { currentWorkspace, onWorkspaceChange } from "./current-workspace";
 import { useAuth } from "./auth";
 import { boot, onTopic, seqNow, syncReady, topicOf, whenVisible } from "./sync";
 
@@ -28,8 +29,15 @@ const meta = new Map<string, Meta>();
 const versions = new Map<string, number>();
 let epoch = 0;
 
-const keyOf = (user: string, url: string) => `${PREFIX}${encodeURIComponent(user)}|${url}`;
-const urlOf = (k: string) => k.slice(k.indexOf("|") + 1);
+const baseOf = (user: string, url: string) => `${PREFIX}${encodeURIComponent(user)}|${url}`;
+/** The lists that name every workspace (the switcher's own): kept once, not per workspace. */
+const ACROSS_WORKSPACES = new Set(["workshop/workspace", "instagram/accounts?all"]);
+/** Each workspace keeps its own copy of a list (current-workspace.ts), so a switch never paints the last workspace's. */
+const keyOf = (user: string, url: string) => {
+  const ws = currentWorkspace();
+  return baseOf(user, url) + (ws && !ACROSS_WORKSPACES.has(url) ? `#ws=${ws}` : "");
+};
+const urlOf = (k: string) => k.slice(k.indexOf("|") + 1).replace(/#ws=[^#]*$/, "");
 const stamp = (k: string) => `${epoch}.${versions.get(k) ?? 0}`;
 const touch = (k: string) => versions.set(k, (versions.get(k) ?? 0) + 1);
 
@@ -225,6 +233,7 @@ export async function warmCached<T>(url: string, load: () => Promise<T>): Promis
  */
 export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opts?: CacheOpts) {
   const user = useAuth((s) => s.me?.username ?? null);
+  useSyncExternalStore(onWorkspaceChange, currentWorkspace); // a switch re-reads under the new workspace's key
   const k = url && user ? keyOf(user, url) : null;
   const topics = [opts?.topic ?? (url ? topicOf(url) : null)].flat().filter((t): t is string => !!t);
   const topicKey = topics.join(" ");
@@ -329,7 +338,7 @@ export function cachedUrls(user: string | null | undefined): string[] {
 export function forgetCached(prefix: string) {
   const user = useAuth.getState().me?.username;
   if (!user) return;
-  const base = keyOf(user, prefix);
+  const base = baseOf(user, prefix);
   for (const k of [...mem.keys()]) if (k.startsWith(base)) drop(k);
 }
 

@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type { WorkshopProject } from "./workshop";
 import { useAuth } from "./auth";
 import { putCached, readCached, warmCached } from "./local-cache";
+import { setCurrentWorkspace } from "./current-workspace";
 
 /**
  * The logged-in account's current brand project. Analyzer and Workshop
@@ -87,6 +88,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   reset: () => set({ currentProjectId: null, projects: [], loaded: false }),
 }));
+
+// the window's workspace for every request and saved copy (current-workspace.ts), in step at once: a switch's own
+// PATCH already says the new one
+useWorkspace.subscribe((s) => setCurrentWorkspace(s.currentProjectId));
 
 export const currentProject = (s: WorkspaceState): WorkshopProject | null =>
   s.projects.find((p) => p.id === s.currentProjectId) ?? null;

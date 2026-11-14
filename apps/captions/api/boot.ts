@@ -67,6 +67,7 @@ import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRo
 import { serverPlugins } from "./plugins.gen";
 import { clearLoadingMark, loadFolderPlugins, mountFolderPlugins, startFolderPlugin } from "./lib/folder-plugins";
 import { announceWrites, syncApp } from "./lib/sync";
+import { inRequestWorkspace } from "./lib/workspace-scope";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { mcpChallenge, oauthApp } from "./oauth";
 import { cardApp } from "./mcp-cards";
@@ -360,6 +361,8 @@ app.use("/api/*", async (c, next) => {
   if (!viewed) touchActive(user.username);
   return next();
 });
+// the workspace the window is in (X-CT-Workspace): every tool keeps its things to it (lib/workspace-scope.ts)
+app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
