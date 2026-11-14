@@ -936,6 +936,15 @@ function DesignPage({ id }: { id: string }) {
                 <ImagePlus className="h-4 w-4" />
               </button>
             </Tip>
+            {/* one picture picked: what the AI can make of it, in a pill of its own beside the tools, so they never move */}
+            {mine.length === 1 && mine[0]!.type === "image" && (
+              <div className={cn("absolute left-full top-1/2 ml-2 flex -translate-y-1/2 rounded-xl border p-1.5 shadow-lg", BAR)}>
+                <button type="button" disabled={cutting} onClick={(e) => (void split(), e.currentTarget.blur())} className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm enabled:hover:bg-zinc-500/15 disabled:opacity-50">
+                  <CtMark className="h-4 w-4 text-violet-500" />
+                  {cutting ? "Your Mac is on it" : "Split into layers"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
