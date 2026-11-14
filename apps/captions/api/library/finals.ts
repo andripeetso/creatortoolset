@@ -44,7 +44,10 @@ export type FinalsOutcome =
   | { ok: true; pieceId: string; assetId: string | null; versionId: string | null }
   | { ok: false; code: "below_hd" | "refused" | "no_access" | "not_found" | "failed"; error: string };
 
-/** The Media Library the account's Finals live in: its first library, made when there is none. */
+/**
+ * The account's first library, made when there is none: for a check by id (a plug-in's clip), where any of the account's
+ * libraries answers alike. A new Finals piece goes to its workspace's library instead (ensureLibrary, access.ts).
+ */
 export function libraryOf(owner: string): string {
   const home = homeOf(owner);
   const d = libraryDb();

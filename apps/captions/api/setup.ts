@@ -93,7 +93,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
   )
     have.push("instagram");
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
-  ensureLibrary(u);
+  await ensureLibrary(u);
   if (
     libraryDb()
       .prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1")

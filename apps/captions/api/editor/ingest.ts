@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FootageTarget } from "../../contracts/editor";
-import { homeOf, libraryRole } from "../library/access";
+import { librariesHere, libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
 import { pluginFootageTarget } from "../lib/plugin";
 
@@ -11,15 +11,13 @@ const A_ROLL_QUERY = JSON.stringify({ roll: "a" });
 
 /**
  * Where footage added to an edit from outside the library is filed: a plug-in's target when one answers (editor.ingest),
- * else the account's own library's A-roll folder (a smart folder over the clips' roll), made on first use. Null when the account has no library it may write to.
+ * else the workspace's own library's A-roll folder (a smart folder over the clips' roll), made on first use. Null when the account has no library it may write to.
  */
 export async function footageTargetFor(username: string): Promise<FootageTarget | null> {
   const plugin = await pluginFootageTarget(username);
   if (plugin) return plugin;
   const d = libraryDb();
-  const lib = d.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(homeOf(username)) as
-    | { id: string }
-    | undefined;
+  const lib = (await librariesHere(username))[0]; // the workspace this request works in
   if (!lib || !libraryRole(username, lib.id)) return null;
   const found = d
     .prepare("SELECT id FROM collections WHERE library_id = ? AND kind = 'smart' AND query = ? ORDER BY created_at, id LIMIT 1")

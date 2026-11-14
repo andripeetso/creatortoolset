@@ -117,7 +117,7 @@ describe("a card's media links", () => {
   const sign = () => mediaLinks(key, "cardowner", ORIGIN);
   /** A clip in the owner's library: a thumbnail, and a playable copy when `proxy`. */
   const clip = async (v: string, proxy: boolean) => {
-    ensureLibrary("cardowner");
+    await ensureLibrary("cardowner");
     const d = libraryDb();
     const lib = (d.prepare("SELECT id FROM libraries WHERE workspace_id = ?").get(homeOf("cardowner")) as { id: string }).id;
     d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, 'video', ?, ?, 'cardowner', 1)").run(`a_${v}`, lib, v, v);

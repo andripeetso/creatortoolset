@@ -1,6 +1,6 @@
 import type { LibraryProgress } from "../../contracts/library";
 import type { SessionUser } from "../users";
-import { homeOf } from "./access";
+import { librariesHere } from "./access";
 import { libraryDb } from "./db";
 import { progress } from "./estimate";
 
@@ -22,7 +22,7 @@ const STAGE_MS = 7 * 86_400_000;
 
 export async function libraryWork(user: SessionUser, now = Date.now()): Promise<LibraryWork[]> {
   const db = libraryDb();
-  const ids = db.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id").all(homeOf(user.username)) as { id: string }[];
+  const ids = await librariesHere(user.username); // the workspace this request works in
   return Promise.all(
     ids.map(async ({ id }) => {
       const up = db

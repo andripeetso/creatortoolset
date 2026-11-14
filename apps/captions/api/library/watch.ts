@@ -8,7 +8,7 @@ import type { AuthVars } from "../auth";
 import type { WatchFolder, WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, homeOf, libraryChanged, libraryRole } from "./access";
+import { ensureLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
@@ -241,8 +241,7 @@ watchApp.post("/import-folder", async (c) => {
   if (user.role === "visitor") return c.json({ error: "Not for guests", code: "forbidden" }, 403);
   if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer, so it cannot read your folders. Upload the files instead.", code: "forbidden" }, 403);
   const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; since?: unknown; libraryId?: unknown; collectionId?: unknown };
-  ensureLibrary(user.username);
-  const libraryId = typeof body.libraryId === "string" ? body.libraryId : homeLibrary(user.username);
+  const libraryId = typeof body.libraryId === "string" ? body.libraryId : await ensureLibrary(user.username);
   if (!libraryId || !libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const f = await checkFolder(libraryId, { path: expandHome(typeof body.path === "string" ? body.path.trim() : ""), mode: "reference", collectionId: body.collectionId }, user.username);
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
@@ -308,18 +307,16 @@ const writeWatch = (libraryId: string, folders: WatchFolder[]) => {
 };
 
 const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
-const homeLibrary = (username: string) =>
-  (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at LIMIT 1").get(homeOf(username)) as { id: string } | undefined)?.id;
 
 /**
  * Adds one folder to the account's own Library watch list, read in place. The Library and the AI Editor both read that
  * list, so setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or null when it is
- * in the list (already there counts as added). `libraryId` is the library the person is looking at (default: their own).
+ * in the list (already there counts as added). `libraryId` is the library the person is looking at (default: their own
+ * in the workspace this request works in).
  */
 export async function addWatchFolder(username: string, folderPath: string, libraryId?: string): Promise<string | null> {
   if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
-  ensureLibrary(username);
-  const target = libraryId ?? homeLibrary(username);
+  const target = libraryId ?? (await ensureLibrary(username));
   if (!target) return "The Library is not made yet. Try again.";
   if (!libraryRole(username, target)) return "That library is not yours to add a folder to.";
   const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference" }, username);
@@ -333,14 +330,14 @@ export async function addWatchFolder(username: string, folderPath: string, libra
   return null;
 }
 
-/** Stops watching a folder (Settings → Devices: forget). The files already in the Library stay. */
+/** Stops watching a folder in any of the account's libraries (Settings → Devices: forget). The files already in the Library stay. */
 export async function removeWatchFolder(username: string, folderPath: string): Promise<void> {
-  const libraryId = homeLibrary(username);
-  if (!libraryId) return;
   const p = expandHome(folderPath);
   const real = await realpath(p).catch(() => p);
-  const current = foldersOf(libraryId);
-  if (current.some((g) => g.path === real || g.path === p)) writeWatch(libraryId, current.filter((g) => g.path !== real && g.path !== p));
+  for (const { id } of await librariesHere(username, "")) {
+    const current = foldersOf(id);
+    if (current.some((g) => g.path === real || g.path === p)) writeWatch(id, current.filter((g) => g.path !== real && g.path !== p));
+  }
 }
 
 // ---- the scan ----------------------------------------------------------------------------------------------------

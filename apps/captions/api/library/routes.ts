@@ -6,7 +6,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, homeOf, libraryChanged, libraryRole, mayWrite } from "./access";
+import { ensureLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayWrite } from "./access";
+import { currentWorkspaceId } from "../lib/workspace-scope";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb, librarySetting, libraryStore, meter, SETTING_DEFAULTS } from "./db";
 import { estimate, progress } from "./estimate";
@@ -169,7 +170,8 @@ export function recordVersion(
 /**
  * A finished file saved into a library as a new asset (a Caption Studio export): copied, so the file stays where it
  * is. `sources` are the library versions it was made from; each one the caller may read gets a `derived_from` row.
- * Without `libraryId`, the first library of the caller's workspace. Null: no library the caller may use.
+ * Without `libraryId`, the library of the first source the caller may use, else the first library of the workspace this
+ * request works in. Null: no library the caller may use.
  */
 export async function saveToLibrary(
   username: string,
@@ -181,7 +183,10 @@ export async function saveToLibrary(
 ): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
   const lib =
     libraryId ??
-    (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(homeOf(username)) as { id: string } | undefined)?.id;
+    sources
+      .map((v) => (db().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(v) as { library_id: string } | undefined)?.library_id)
+      .find((l) => l && libraryRole(username, l)) ??
+    (await librariesHere(username))[0]?.id;
   if (!lib || !libraryRole(username, lib)) return null;
   const { size } = await stat(file);
   await mkdir(stagingDir(), { recursive: true });
@@ -571,14 +576,12 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
   }
 });
 
-// GET /api/library → the caller's libraries
-libraryApp.get("/", (c) => {
+// GET /api/library → the caller's libraries in the workspace this request works in (each workspace has its own)
+libraryApp.get("/", async (c) => {
   const user = c.get("user");
-  ensureLibrary(user.username);
-  const rows = db()
-    .prepare("SELECT id, name, storage_kind, settings FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
-    .all(homeOf(user.username)) as { id: string; name: string; storage_kind: LibrarySummary["storage"]; settings: string }[];
-  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings) }));
+  await ensureLibrary(user.username);
+  const rows = await librariesHere(user.username);
+  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind as LibrarySummary["storage"], settings: settingsOf(r.settings) }));
   return c.json({ libraries });
 });
 
@@ -633,14 +636,17 @@ libraryApp.patch("/:id", async (c) => {
   return c.json(updated);
 });
 
-// POST /api/library { name } → a local library of the caller's own
+// POST /api/library { name } → a local library of the caller's own, in the workspace this request works in
 libraryApp.post("/", async (c) => {
   const user = c.get("user");
   if (user.role === "visitor") return c.json({ error: "Sign in to make a library", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
   const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  db().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, 'local', ?)").run(id, homeOf(user.username), name, Date.now());
+  const ws = await currentWorkspaceId(user);
+  db()
+    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
+    .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
   const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS } };
   return c.json(created, 201);
 });
@@ -774,10 +780,10 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   return serveBlob(c, file.key, file.type, kind === "source" ? downloadName(versionId) : undefined);
 }
 
-// GET /api/library/versions/:versionId/similar → the videos in the caller's libraries that share its pictures
+// GET /api/library/versions/:versionId/similar → the videos in the caller's libraries of this workspace that share its pictures
 libraryApp.get("/versions/:versionId/similar", async (c) => {
   const username = c.get("user").username;
-  const found = similar(username, c.req.param("versionId"));
+  const found = similar(username, c.req.param("versionId"), (await librariesHere(username)).map((l) => l.id));
   if (!found) return c.json({ error: "Not fingerprinted yet", code: "not_found" }, 404);
   const matches = [];
   for (const m of found.matches) {
