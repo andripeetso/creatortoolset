@@ -33,6 +33,8 @@ final class ChatWaveHost {
     private var drawn: ((Any?, String?) -> Void)?
     /// The page is from before holding (it says nothing of `hold`): its own entrances still run after the switch.
     private var oldPage = false
+    /// The sound of a held wave (WaveSound.swift); a click makes none.
+    private let sound = WaveSound()
 
     init(_ view: WKWebView) {
         self.view = view
@@ -77,12 +79,13 @@ final class ChatWaveHost {
         let hold = start["hold"] as? Bool ?? false
         oldPage = start["hold"] == nil
         waveLog.notice("start: hold \(hold), mouse down \(ChatWaveView.mouseDown()), page from before holding \(self.oldPage)")
+        if hold { sound.begin() }
         // the screen as it is on show now, not after the next update: the page changes only once this is answered
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = false
         view.takeSnapshot(with: config) { [weak self] image, _ in
             guard let self, let view = self.view, let image = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed)
+                  let wave = try? ChatWaveView(over: view, was: image, renderer: renderer, origin: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), tint: tint, dark: dark, hold: hold, pressed: pressed, sound: hold ? self.sound : nil)
             else {
                 waveLog.notice("no wave: no picture of the screen")
                 return reply(false, nil)
@@ -432,9 +435,12 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     static var mouseDown: () -> Bool = { NSEvent.pressedMouseButtons & 1 != 0 }
     var onDone: (() -> Void)?
 
+    private let sound: WaveSound?
+
     init(over view: NSView, was: CGImage, renderer: WaveRenderer, origin: CGPoint, tint: SIMD3<Float>, dark: Bool, hold: Bool,
-         pressed: CFTimeInterval = CACurrentMediaTime()) throws {
+         pressed: CFTimeInterval = CACurrentMediaTime(), sound: WaveSound? = nil) throws {
         started = pressed
+        self.sound = sound
         self.renderer = renderer
         self.origin = origin
         self.tint = tint
@@ -470,6 +476,7 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
     func finish() {
         guard superview != nil else { return }
         waveLog.notice("done at \(Int(self.elapsed)) ms")
+        sound?.end()
         isPaused = true
         removeFromSuperview()
         renderer.was = nil
@@ -504,8 +511,11 @@ final class ChatWaveView: MTKView, MTKViewDelegate {
         if m.done { return finish() }
         // the light at the button comes up over the first frames drawn, however late the first picture was
         m.bloom *= Float(1 - pow(1 - min((ms - (shownAt ?? 0)) / 80, 1), 3))
-        if !popped && m.front > -1e5 {
+        if m.front < -1e5 {
+            sound?.hold(pull: m.pull, wild: m.wild)
+        } else if !popped {
             popped = true
+            sound?.pop(drawnIn: WaveClock.pull(held, held: held), wild: WaveClock.wild(held))
             waveLog.notice("pops at \(Int(ms)) ms, held \(Int(held)) ms, drawn in \(m.pull)")
         }
         guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable, let buffer = renderer.queue.makeCommandBuffer() else { return }
