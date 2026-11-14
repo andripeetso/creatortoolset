@@ -222,15 +222,42 @@ export function useChatModeKey(enabled: boolean): void {
  * Turn chat mode on or off from its button (⌘J: the one on screen): the one switch that is shown with the wave. Pressed
  * again while the wave runs, it switches back once that wave is over, with a wave of its own: a wave is never cut off
  * halfway (owner, 11-14: "clicking it fast interrupts the animation ... that shouldn't happen"). Pressed twice
- * meanwhile, it stays as the running wave leaves it.
+ * meanwhile, it stays as the running wave leaves it. `held`: the mouse went down on the button (holdChatMode).
  */
-export function toggleChatMode(from?: HTMLElement | null): void {
+export function toggleChatMode(from?: HTMLElement | null, held = false): void {
   if (washing) {
     again = again ? null : () => toggleChatMode(from);
     return;
   }
-  washTo({ on: !useChatMode.getState().on }, from, { wash: true });
+  washTo({ on: !useChatMode.getState().on }, from, { wash: true, held });
 }
+
+/**
+ * Chat mode pressed with the mouse, in the Mac app: it switches at once, under a picture of the screen as it was.
+ * While the mouse button stays down that screen is drawn into the button, more and more; when it comes up (or, held
+ * long, by itself) it pops, the harder the longer it was held (the app watches the mouse: ChatWave.swift). A click
+ * only pops (owner, 11-14: "only suck when the user holds down the button ... normal click just pops"). The click that
+ * follows is the same press (clickChatMode). Where there is no such wave (a browser, the wave switched off) the click
+ * switches.
+ */
+export function holdChatMode(from: HTMLElement | null): void {
+  pressed = !!macWave() && waves();
+  if (pressed) toggleChatMode(from, true);
+}
+
+/** The pointer's press switched chat mode (holdChatMode), and the click it ends with is still to come. */
+let pressed = false;
+
+/** Chat mode's button clicked: the end of a press that switched it already (whichever button the pointer is over by
+ *  then: the page's or the chats'), or a press of its own (Enter, Space, a screen reader: no click count). */
+export function clickChatMode(from: HTMLElement | null, e: { detail: number }): void {
+  const same = pressed && e.detail > 0;
+  pressed = false;
+  if (!same) toggleChatMode(from);
+}
+
+/** The wave is shown: not switched off in Settings → Appearance, motion not turned down. */
+const waves = () => storedChatWave() && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 /** How long the front takes to cross the window (ms). */
 export const WASH = 780;
@@ -400,7 +427,7 @@ function things(x: number, y: number, most: number, pictures: boolean, within: P
  * The page shown or hidden beside the chats, a new chat, a chat's first page: those happen all day, and an effect on
  * each of them was too much.
  */
-export function washTo(patch: Partial<Stored>, from?: Element | null, how: { also?: () => void; wash?: boolean } = {}): void {
+export function washTo(patch: Partial<Stored>, from?: Element | null, how: { also?: () => void; wash?: boolean; held?: boolean } = {}): void {
   const { set } = useChatMode.getState();
   // what else changes with the layout (another chat is opened) is part of the same new screen
   const change = () => {
@@ -412,14 +439,14 @@ export function washTo(patch: Partial<Stored>, from?: Element | null, how: { als
   if (washing && !how.wash) return change();
   const mac = macWave();
   // the wave switched off in Settings → Appearance, or motion turned down: the new screen is there at once
-  if (!how.wash || washing || !storedChatWave() || (!mac && !document.startViewTransition) || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+  if (!how.wash || washing || !waves() || (!mac && !document.startViewTransition)) {
     cutShort();
     return change();
   }
   const root = document.documentElement;
   // no button on screen: about where it stands in the chats' bar
   const { x, y } = middleOf(from) ?? middleOf() ?? { x: 28, y: 28 };
-  if (mac) return void macWash(mac, x, y, patch, change);
+  if (mac) return void macWash(mac, x, y, patch, change, !!how.held);
   // the front is the middle of the rim; it ends half a rim past the window's far corner, which is then all new
   const reach = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)) + RIM / 2;
   /** When (ms after the start) the front is `d` px from the button. */
@@ -467,22 +494,26 @@ const macWave = (): MacWave | undefined =>
 
 /**
  * The wave in the Mac app: a picture of the screen as it is goes up over the page, the page changes under it, and once
- * that is on screen the app takes a picture of the new screen and the front goes. Chat mode switched again meanwhile
- * (cutShort) ends it at once. No picture (an old app, no Metal): the page changes with no wave.
+ * that is on screen the app takes a picture of the new screen; the front goes once there is one, or, `held` (the mouse
+ * went down on the button), once the app sees the mouse button come up (holdChatMode). Chat mode switched again
+ * meanwhile (cutShort) ends it at once. No picture (an old app, no Metal): the page changes with no wave.
  */
-async function macWash(mac: MacWave, x: number, y: number, patch: Partial<Stored>, change: () => void): Promise<void> {
+async function macWash(mac: MacWave, x: number, y: number, patch: Partial<Stored>, change: () => void, held: boolean): Promise<void> {
   const root = document.documentElement;
   const run = { skipTransition: () => void mac.postMessage("stop").catch(() => {}) };
   washing = run;
   washingTo = patch;
   try {
     const up = await mac
-      .postMessage({ start: { x, y, dark: root.classList.contains("dark"), tint: getComputedStyle(root).getPropertyValue("--violet-600").trim() } })
+      .postMessage({ start: { x, y, dark: root.classList.contains("dark"), tint: getComputedStyle(root).getPropertyValue("--violet-600").trim(), hold: held } })
       .catch(() => false);
     flushSync(change);
     if (up !== true || washing !== run) return;
     // the new screen is drawn before its picture is taken
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // its own entrances (the open chat's messages fading in) are over by then: the wave is its entrance, and a click
+    // pops as soon as the picture is taken
+    for (const a of document.getAnimations?.() ?? []) if ((a as CSSAnimation).animationName === "enter") a.finish();
     await mac.postMessage("drawn").catch(() => {});
   } finally {
     if (washing === run) over();

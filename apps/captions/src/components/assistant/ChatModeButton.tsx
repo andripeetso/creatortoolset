@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { toggleChatMode, useChatMode } from "@/lib/chat-mode";
+import { clickChatMode, holdChatMode, useChatMode } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
 
 /** A speech bubble: an outline while chat mode is off, filled in the project's colour while it's on. */
@@ -14,7 +14,10 @@ export function ChatModeIcon({ on, className }: { on: boolean; className?: strin
   );
 }
 
-/** Chat mode on or off: first in the top bar, where the window's own buttons end. */
+/**
+ * Chat mode on or off: first in the top bar, where the window's own buttons end. In the Mac app it switches as the
+ * pointer goes down, so a press held there draws the screen in (holdChatMode); the click after it is the same press.
+ */
 export function ChatModeButton({ className, ...rest }: { className?: string } & React.HTMLAttributes<HTMLButtonElement>) {
   const on = useChatMode((s) => s.on);
   const ref = useRef<HTMLButtonElement>(null);
@@ -25,7 +28,9 @@ export function ChatModeButton({ className, ...rest }: { className?: string } & 
       // ⌘J presses whichever of these is on screen (lib/chat-mode.ts)
       data-chat-toggle
       type="button"
-      onClick={() => toggleChatMode(ref.current)}
+      // (a Control-click is the Mac's right click: it opens no chat mode)
+      onPointerDown={(e) => e.button === 0 && !e.ctrlKey && holdChatMode(ref.current)}
+      onClick={(e) => clickChatMode(ref.current, e)}
       aria-pressed={on}
       aria-label={on ? "Leave chat mode" : "Chat mode"}
       title={on ? "Leave chat mode (⌘J)" : "Chat mode: your chats beside the page (⌘J)"}
