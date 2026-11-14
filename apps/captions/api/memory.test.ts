@@ -353,6 +353,8 @@ describe("projects are kept apart", () => {
     expect((await kept()).map((f) => f.text)).toEqual(["I only film on my phone"]);
     await enter(tumbles);
     expect((await kept()).length).toBe(2);
+    // a chat keeps its workspace: this one is the garden's, so the faces fact is forgotten from a chat in the tumbles one
+    await newChat();
     const back = await turn("Forget the faces thing");
     expect(JSON.parse((await tool(back.token, "forget", { quote: "we never show faces" })).text)).toEqual({ forgot: "we never show faces" });
     await back.end();

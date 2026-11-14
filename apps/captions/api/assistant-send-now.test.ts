@@ -657,7 +657,7 @@ describe("headless: the user's own AI sends a file with upload_file", () => {
 });
 
 describe("which project a message is for", () => {
-  it("says nothing with no project, and names the one picked when it is changed", async () => {
+  it("says nothing with no project, then names the chat's own: the app's pick changes a new chat's, not this one's", async () => {
     const p = await person("ann");
     await p.send({ text: "Hi" });
     const none = await p.claim();
@@ -676,7 +676,9 @@ describe("which project a message is for", () => {
     await app.request("/api/workshop/workspace", { method: "PATCH", ...json({ currentProjectId: first }, { cookie: p.cookie }) });
     await p.send({ text: "And here?" });
     const back = await p.claim();
-    expect(back.user).toContain(`The user's current workspace is "Tiny Acrobatics" (id ${first})`);
+    // the chat keeps the workspace its first message with one set
+    expect(back.user).toContain(`The user's current workspace is "Tiny Acrobatics shop"`);
+    expect(back.user).not.toContain(`(id ${first})`);
     await p.answer(back.id, "A carousel.");
   });
 });

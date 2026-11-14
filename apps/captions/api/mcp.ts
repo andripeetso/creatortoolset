@@ -11,7 +11,8 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSend, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { askConfirm, askFolder, askSend, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended, workspaceOfTurn } from "./assistant";
+import { workspaceScope } from "./lib/workshop/workspace";
 import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
 import { SESSION_STATUSES } from "./lib/workshop/types";
@@ -1544,11 +1545,15 @@ export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {
     // this server's public address: PUBLIC_ORIGIN, else the address the request came in on (as connectors.ts)
     const url = new URL(c.req.url);
     const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
+    // a reply in a chat works in that chat's workspace, whichever one the app has open meanwhile
+    const turn = jobTurn(auth.get("authorization") ?? undefined);
+    const ws = workspaceOfTurn(user.username, turn);
+    const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws, turn: turn! }, fn) : fn());
     if (Array.isArray(body)) {
-      const out = (await Promise.all(body.map((m) => handle(inner, auth, m, origin, user, plugged)))).filter(Boolean);
+      const out = (await inWs(() => Promise.all(body.map((m) => handle(inner, auth, m, origin, user, plugged))))).filter(Boolean);
       return out.length ? c.json(out) : c.body(null, 202);
     }
-    const out = await handle(inner, auth, body, origin, user, plugged);
+    const out = await inWs(() => handle(inner, auth, body, origin, user, plugged));
     return out ? c.json(out) : c.body(null, 202);
   });
   // no server-sent stream: everything is answered in the POST

@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { venvDir } from "../../api/editor/mediapipe";
 import { ffmpeg } from "../../api/library/media/run";
-import { type Box, blurFaces, blurRanges, buildTracks, chosenIn, copyKey, ellipseOf, ellipses, pickFrames, trackBoxes, countsNote } from "./plugin";
+import { type Box, blurFaces, blurRanges, buildTracks, copyKey, ellipseOf, ellipses, pickFrames, trackBoxes, countsNote } from "./plugin";
+import { chosenIn } from "../../api/lib/face-pick";
 
 const dir = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), "face-blur-"));
 const tl = (v1: object[], v2: object[] = [], sources: object = { t: { fps: 25, dur: 1000, w: 1080, h: 1920 }, b: { fps: 25, dur: 500, w: 1080, h: 1920 } }) =>

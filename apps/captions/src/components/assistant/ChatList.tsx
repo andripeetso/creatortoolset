@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { AlarmClock, AlarmClockOff, Check, ChevronDown, CircleAlert, Clock, Loader2, Pin, PinOff, Search, Trash2, Undo2, X } from "lucide-react";
+import { AlarmClock, AlarmClockOff, Check, ChevronDown, CircleAlert, Clock, FolderPlus, Loader2, Pin, PinOff, Search, Trash2, Undo2, X } from "lucide-react";
+import { Link } from "react-router";
 import type { AssistantChat } from "@contracts/assistant";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,12 +10,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { deletePast, pinChat, renameChat, settleChat, snoozeChat, unreadChat } from "@/lib/assistant";
 import { confirmDialog } from "@/lib/dialogs";
 import { localInput, snoozeChoices, snoozeLeft } from "@/lib/snooze";
-import { useWorkspace } from "@/lib/workspace";
 import { onTopic } from "@/lib/sync";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { WorkingFor } from "./WorkCards";
 import { WORK_ICONS } from "./work-icons";
+import { ChatFilterButton, useChatFilter, useWorkspaceMarks, WorkspaceBadge } from "./Workspaces";
 
 /** The longest a timer may wait (a longer one fires at once): past that the half-minute look brings a chat back. */
 const TIMER_MOST = 24 * 3600_000;
@@ -109,10 +110,24 @@ const rowBtn = "flex items-center rounded-md px-1.5 text-muted-foreground hover:
  * delete, which asks first. Settling, putting away or deleting the open chat opens the next one. The search box
  * narrows the list as you type: ↓ and ↑ move through it, Enter opens, Escape clears.
  */
-export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantChat[] | null; onOpen: (id: string) => Promise<unknown> | void; onNew: () => Promise<unknown> | void; reload: () => void }) {
+export function ChatList({
+  chats,
+  onOpen,
+  onNew,
+  reload,
+  newButton,
+}: {
+  chats: AssistantChat[] | null;
+  onOpen: (id: string) => Promise<unknown> | void;
+  onNew: () => Promise<unknown> | void;
+  reload: () => void;
+  /** New chat, at the end of the search row. */
+  newButton?: ReactNode;
+}) {
   const navigate = useNavigate();
-  // a chat works in the account's current project: its menu opens that project's settings
-  const project = useWorkspace((s) => s.currentProjectId);
+  // chats of every workspace, each with its mark; the filter keeps one workspace's (owner, 11-14)
+  const { byId, many } = useWorkspaceMarks();
+  const [filter, setFilter] = useChatFilter();
   const [showSettled, setShowSettled] = useState(false);
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [query, setQuery] = useState("");
@@ -122,7 +137,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
   const [renaming, setRenaming] = useState<string | null>(null);
   const [custom, setCustom] = useState<AssistantChat | null>(null);
   const box = useRef<HTMLInputElement>(null);
-  const { groups, snoozed, settled } = useMemo(() => groupChats(chats ?? [], query), [chats, query]);
+  const { groups, snoozed, settled } = useMemo(() => groupChats((chats ?? []).filter((c) => !filter || !c.workspace || c.workspace === filter), query), [chats, query, filter]);
   // while searching, the folded chats are in the list too: a search finds everything
   const searching = !!query.trim();
   const snoozedOpen = showSnoozed || searching;
@@ -206,6 +221,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
     const marked = rows[at]?.id === c.id;
     const title = chatTitle(c);
     const Made = c.on && WORK_ICONS[c.on.kind];
+    const ws = c.workspace ? byId.get(c.workspace) : undefined;
     // what the row's own buttons are: a settled chat comes back, one put away wakes, any other is put away or settled
     const buttons: ReactNode = c.settled ? (
       <button type="button" onClick={() => settle(c, false)} className={rowBtn} aria-label={`Un-settle "${title}"`} title="Un-settle">
@@ -256,6 +272,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
             />
             <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5 px-2.5 py-2">
               <span className="flex h-5 min-w-0 items-center gap-1.5">
+                {many && ws && <WorkspaceBadge ws={ws} />}
                 {!!c.pinned && (
                   <button type="button" onClick={() => pin(c, false)} className="group/pin pointer-events-auto -ml-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label={`Unpin "${title}"`} title="Unpin">
                     <Pin className="size-3 group-hover/pin:hidden" />
@@ -359,7 +376,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
               <ContextMenuItem onSelect={() => copy(c.id, "Chat ID")}>Chat ID</ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
-          <ContextMenuItem onSelect={() => navigate(project ? `/projects?edit=${encodeURIComponent(project)}` : "/projects")}>Workspace settings</ContextMenuItem>
+          <ContextMenuItem onSelect={() => navigate(c.workspace ? `/projects?edit=${encodeURIComponent(c.workspace)}` : "/projects")}>Workspace settings</ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onSelect={() => remove(c)}>
             <Trash2 />
@@ -385,7 +402,9 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
     );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <label className="mx-2 mt-2 mb-1 flex h-8 shrink-0 items-center gap-2 rounded-lg bg-zinc-500/10 px-2.5 text-muted-foreground focus-within:ring-1 focus-within:ring-[rgb(var(--violet-600))]">
+      {/* one row: the search, the workspace filter, a new workspace, a new chat */}
+      <div className="mx-2 mt-2 mb-1 flex shrink-0 items-center gap-0.5">
+      <label className="mr-1 flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg bg-zinc-500/10 px-2.5 text-muted-foreground focus-within:ring-1 focus-within:ring-[rgb(var(--violet-600))]">
         <Search className="size-3.5 shrink-0" aria-hidden />
         <input
           ref={box}
@@ -413,6 +432,12 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
           </button>
         )}
       </label>
+      {many && <ChatFilterButton filter={filter} onFilter={setFilter} />}
+      <Link to="/projects?add=1" className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="New workspace" title="New workspace">
+        <FolderPlus className="size-4" />
+      </Link>
+      {newButton}
+      </div>
       {/* keeps its bar's room at all times: a list that starts to scroll moves nothing; scrolling it never scrolls the page */}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-scroll overscroll-contain py-2 pr-2 pl-2 bars:pr-0">
         {groups.map((g) => (
@@ -424,7 +449,7 @@ export function ChatList({ chats, onOpen, onNew, reload }: { chats: AssistantCha
             <ul className="flex flex-col gap-px">{g.chats.map(row)}</ul>
           </section>
         ))}
-        {!rows.length && !snoozed.length && !settled.length && <p className="px-2.5 py-1 text-[13px] text-muted-foreground">{searching ? "No chat has those words." : "No chats yet."}</p>}
+        {!rows.length && !snoozed.length && !settled.length && <p className="px-2.5 py-1 text-[13px] text-muted-foreground">{searching ? "No chat has those words." : filter && byId.get(filter) ? `No chats in ${byId.get(filter)!.name} yet.` : "No chats yet."}</p>}
         {fold("Snoozed", snoozed, snoozedOpen, () => setShowSnoozed((v) => !v))}
         {fold("Settled", settled, settledOpen, () => setShowSettled((v) => !v))}
       </div>

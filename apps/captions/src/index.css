@@ -271,6 +271,9 @@ html:has(button[data-assistant-dock][data-corner="bl"]) [data-sonner-toaster] { 
 html[data-chat-mode] body { padding-left: var(--chat-w); }
 html[data-chat-mode] main [data-chat-toggle] { display: none; }
 html[data-chat-list] main :is([data-home-link], [data-user-menu], [data-project-switcher], [data-activity], [data-plan-pill]) { display: none; }
+/* a page's workspace picker is never shown in chat mode, the list folded too: the open chat says which workspace the
+   page shows, and a new chat picks its own (owner, 11-14) */
+html[data-chat-mode] main [data-project-switcher] { display: none; }
 /* Only chats: the page is not drawn at all. */
 html[data-chat-mode="full"] main { display: none; }
 /* What a page pins to the window from edge to edge (its own dialogs and drop overlays, a selection bar centred at the

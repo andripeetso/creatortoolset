@@ -24,7 +24,9 @@ counts what waits there). The app follows the phone's light or dark look:
   it into stories, send it to the team or mark it published.
 - **More**: the tools the account has (Scripts opens a script to read while filming, with a record button that films
   with the script by the lens; Story Splitter cuts a video into stories on the phone; Caption Studio captions
-  a video with the server's own layout and keeps the video on the phone until the server has it), and Settings: your
+  a video with the server's own layout and keeps the video on the phone until the server has it; Face Blur, on a
+  server with the plug-in `blur-faces`, covers faces in photos and videos from Photos on the phone and saves the
+  covered copy to Photos), and Settings: your
   computers, the account, notifications, appearance, Wi-Fi-only uploads and Photos access.
 
 On a server with a plug-in for the AI Editor, each AI Editor edit is a card on Edits and opens its own thread, and the

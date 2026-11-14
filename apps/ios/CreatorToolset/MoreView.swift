@@ -5,6 +5,7 @@ import SwiftUI
 /// settings in one list read as the same kind of thing).
 struct MoreView: View {
     @ObservedObject private var access = ToolsetAccess.shared
+    @ObservedObject private var plugins = ServerPlugins.shared
     /// A debug build opens Settings without a tap: -MoreOpen settings.
     @State private var settingsOpen = debugArg("MoreOpen") == "settings"
 
@@ -18,6 +19,7 @@ struct MoreView: View {
                     if ToolsetAccess.showsScripts(me: access.me) { ToolTile(title: "Scripts", systemImage: "doc.text") { ScriptsView() } }
                     if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
                     if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
+                    if FaceBlurView.shows(plugins: plugins.known.plugins, me: access.me) { ToolTile(title: "Face Blur", systemImage: "face.dashed") { FaceBlurView() } }
                 }
                 Button {
                     settingsOpen = true

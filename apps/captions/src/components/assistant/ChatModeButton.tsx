@@ -29,7 +29,8 @@ export function ChatModeButton({ className, ...rest }: { className?: string } & 
       data-chat-toggle
       type="button"
       // (a Control-click is the Mac's right click: it opens no chat mode)
-      onPointerEnter={readyChatMode}
+      onPointerEnter={() => readyChatMode()}
+      onPointerLeave={() => readyChatMode(false)}
       onPointerDown={(e) => e.button === 0 && !e.ctrlKey && holdChatMode(ref.current)}
       onClick={(e) => clickChatMode(ref.current, e)}
       aria-pressed={on}

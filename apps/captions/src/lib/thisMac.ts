@@ -232,3 +232,62 @@ export async function pluginsAuto(): Promise<PluginsAuto | null> {
 export const setPluginsAuto = (on: boolean) => pluginAsk(`plugins:auto:${on ? "on" : "off"}`);
 /** Shows the plug-in's folder in Finder ("" = the plug-ins folder). */
 export const showPluginFolder = (folder: string) => pluginAsk(`plugin:show:${folder}`);
+
+/**
+ * Face Blur on this Mac (editor-steps/blur-faces/README.md): the Mac app finds and covers the faces in files on this Mac
+ * itself and writes the covered copy beside each one. The page starts a job, reads its state, and answers with the faces
+ * to cover.
+ */
+/** `picture` only from faceBlurFaces: the state the page polls leaves the pictures out. */
+export type FaceBlurFace = { id: string; picture?: string; note: string; blur: boolean };
+export type FaceBlurItem = {
+  path: string;
+  name: string;
+  stage: "queued" | "scanning" | "choosing" | "writing" | "done" | "failed";
+  progress: number;
+  faces?: FaceBlurFace[];
+  out?: string;
+  error?: string;
+  /** a done file that wrote nothing ("No face found, nothing written") */
+  note?: string;
+};
+/** One ask; throws with the Mac's sentence when it answers with a problem. */
+async function faceBlurAsk(ask: string): Promise<Record<string, unknown>> {
+  const bridge = thisMacBridge();
+  if (!bridge) throw new Error("Face Blur runs in the Creator Toolset Mac app.");
+  let r: Record<string, unknown>;
+  try {
+    r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Record<string, unknown>;
+  } catch {
+    throw new Error("The Creator Toolset Mac app did not answer. Try again.");
+  }
+  if (typeof r.problem === "string") throw new Error(r.problem);
+  return r;
+}
+/** "ok": this Mac app covers faces; "old": a Mac app from before it could (it answers with its state); "none": a browser. */
+export async function faceBlurHere(): Promise<"ok" | "old" | "none"> {
+  if (!thisMacBridge()) return "none";
+  const r = await faceBlurAsk("faceblur:hello").catch(() => null);
+  return r?.ok === true ? "ok" : "old";
+}
+/** Starts covering these files (paths on this Mac); the job's id, or throws with the Mac's reason. */
+export async function faceBlurStart(files: string[], mode: "all" | "some", look: string): Promise<string> {
+  const r = await faceBlurAsk(`faceblur:start:${JSON.stringify({ files, mode, look })}`);
+  if (typeof r.job !== "string") throw new Error("The Mac app did not start. Try again.");
+  return r.job;
+}
+export async function faceBlurState(job: string): Promise<{ done: boolean; items: FaceBlurItem[] }> {
+  const r = await faceBlurAsk(`faceblur:state:${job}`);
+  return { done: r.done === true, items: Array.isArray(r.items) ? (r.items as FaceBlurItem[]) : [] };
+}
+/** One file's faces with their pictures (read once; the state leaves them out). */
+export async function faceBlurFaces(job: string, path: string): Promise<FaceBlurFace[]> {
+  const r = await faceBlurAsk(`faceblur:faces:${JSON.stringify({ job, path })}`);
+  return Array.isArray(r.faces) ? (r.faces as FaceBlurFace[]) : [];
+}
+/** Writes (again) one file of the job with these faces covered. `error`: the pick failed; the Mac ends that file as
+ * failed with this sentence and writes nothing. */
+export const faceBlurChoose = (job: string, path: string, blur: string[], error?: string) =>
+  faceBlurAsk(`faceblur:choose:${JSON.stringify({ job, path, blur, ...(error ? { error } : {}) })}`);
+export const faceBlurCancel = (job: string) => faceBlurAsk(`faceblur:cancel:${job}`);
+export const faceBlurShow = (path: string) => faceBlurAsk(`faceblur:show:${path}`);
