@@ -215,11 +215,15 @@ export interface LibrarySummary {
  * left out to keep the ones already saved; they are never sent back. Bunny takes the account's API key once: the server
  * makes a storage zone and a token-signed pull zone with it and keeps only the zone's own keys, never the account key.
  */
+/**
+ * `proxies: true` on a bucket or Bunny: only the proxies go there, one for every video, and the originals stay on this
+ * disk ("Proxies only"); allowed while the library holds files. `{ kind: "local" }` then brings the proxies back here.
+ */
 export type LibraryStorageInput =
   | { kind: "local" }
-  | { kind: "s3"; mode: "server" }
-  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string }
-  | { kind: "bunny"; apiKey?: string; region?: BunnyRegion };
+  | { kind: "s3"; mode: "server"; proxies?: boolean }
+  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string; proxies?: boolean }
+  | { kind: "bunny"; apiKey?: string; region?: BunnyRegion; proxies?: boolean };
 
 /** Bunny Storage's main regions, as its API names them. */
 export const BUNNY_REGIONS = [
@@ -244,6 +248,8 @@ export interface LibraryStorage {
   locked: boolean; // the library holds files: where they live can't change (the keys can)
   storedBytes?: number; // bucket libraries: bytes in the bucket now
   days: { day: string; storedBytes: number }[]; // bucket libraries: the last 30 days with a change, newest first
+  /** kind "local" with "Proxies only": where the proxies are (storedBytes and days are then theirs) */
+  proxies?: { kind: "s3" | "bunny"; mode?: "server" | "own"; bucket?: string; zone?: string; endpoint?: string; region?: string; pathStyle?: boolean; keysSet: boolean };
 }
 
 export interface AssetPage {
@@ -307,6 +313,8 @@ export interface SharedView {
 export interface WatchFolder {
   path: string; // absolute, on the server's disk
   mode: "reference" | "copy"; // reference: the file stays where it is; copy: stored in the library like an upload
+  /** reference only: each file is first copied into a folder of this folder's name here (on this disk, subfolders kept), then read where the copy is */
+  copyTo?: string;
   collectionId?: string; // a manual folder the files go into
   addedBy: string; // the owner who added it; imports are theirs
 }
@@ -314,6 +322,8 @@ export interface WatchFolder {
 /** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */
 export interface WatchStatus {
   allowed: boolean;
+  /** where a folder's files are copied when the person keeps a copy (their Library folder's Footage on this computer); "~/" is the home folder */
+  copyTo?: string;
   /** `files`: the media files the last look at the folder found; `adding`: how many of them are still to be taken in. */
   folders: (WatchFolder & { found: boolean; imported: number; files: number; adding: number })[];
   missing: number; // versions whose original is gone from its folder

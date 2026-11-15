@@ -1,14 +1,14 @@
 import { useState, type DragEvent, type ReactNode } from "react";
 import type { WatchStatus } from "@contracts/library";
-import { BIG_DROP, BigUploadDialog, dropOf, type FolderSize } from "@/components/LibraryProcessing";
+import { useBigFolder } from "@/components/LibraryProcessing";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
 import { droppedOnMac } from "@/lib/thisMac";
 
 /**
  * Files and folders dropped anywhere on the Media Library page. A folder in the Mac app, with the server on this
- * computer (`readsFolders`), comes as its path and is read where it is, as Choose a folder does (a big one asks first,
- * with the offer to organize it); anywhere else a folder's videos, pictures and sounds upload like files dropped one by
+ * computer (`readsFolders`), comes as its path and opens the same one dialog as Choose a folder (copy or keep, and for a
+ * big one what it takes and the offer to organize it); anywhere else a folder's videos, pictures and sounds upload like files dropped one by
  * one (`addFiles`, which asks first for a big drop). Returns the page root's handlers, the drop outline and the dialog.
  */
 
@@ -33,21 +33,16 @@ export function useLibraryDrop({
   onError: (e: string) => void;
 }): { props: { onDragOver: (e: DragEvent) => void; onDragLeave: (e: DragEvent) => void; onDrop: (e: DragEvent) => void }; overlay: ReactNode; dialog: ReactNode } {
   const [dropping, setDropping] = useState(false);
-  const [asking, setAsking] = useState<{ folder: string; size: FolderSize } | null>(null);
+  const big = useBigFolder();
 
-  // ponytail: the same two calls as FootageFolderCard's add and check; one helper if a third caller comes
-  const addFolder = async (folder: string) => {
+  // ponytail: the same call as FootageFolderCard's add; one helper if a third caller comes
+  const addFolder = async (folder: string, copyTo?: string) => {
     if (!libraryId) return;
-    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId }) });
+    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId, copyTo }) });
     if (!r.ok) return onError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Couldn't add that folder (${r.status})`);
     onWatch(await getWatch(libraryId));
   };
-  const folderIn = async (folder: string) => {
-    const r = await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(folder)}`).catch(() => null);
-    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    if (size && size.files >= BIG_DROP) setAsking({ folder, size });
-    else await addFolder(folder);
-  };
+  const folderIn = (folder: string) => big.check(folder, (copyTo) => addFolder(folder, copyTo), { libraryId, offerCopy: true, organize: { offer, answer: answerOffer } });
 
   const props = {
     onDragOver: (e: DragEvent) => {
@@ -80,21 +75,5 @@ export function useLibraryDrop({
     </div>
   );
 
-  const dialog = asking && libraryId && (
-    <BigUploadDialog
-      libraryId={libraryId}
-      drop={dropOf(asking.size)}
-      title={`Add ${asking.size.files.toLocaleString()} clips from this folder?`}
-      go="Add folder"
-      offer={offer}
-      onClose={() => setAsking(null)}
-      onUpload={async (ai) => {
-        setAsking(null);
-        await answerOffer(ai); // before the folder: its files are filed as they come in
-        await addFolder(asking.folder);
-      }}
-    />
-  );
-
-  return { props, overlay, dialog };
+  return { props, overlay, dialog: big.dialog };
 }

@@ -71,7 +71,7 @@ export function LibrarySettings({
             {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
             {open && <OrganizeRow library={library} onChange={onChange} onError={onError} />}
             <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
-              {open && <SpaceRows library={library} onChange={onChange} onError={onError} />}
+              {(saved) => open && <SpaceRows library={library} cloud={!!saved?.proxies} onChange={onChange} onError={onError} />}
             </LibraryStorageSettings>
             {open && <AiSwitches library={library} onChange={onChange} onError={onError} />}
           </div>
@@ -162,12 +162,13 @@ const size = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 
 
 /**
  * The library's own made files (api/library/space.ts): the proxies switch, what the proxies take with Clear, the cards'
- * pictures, and the downloaded speech and search models with Clear. The person's own files are never in it.
+ * pictures, and the downloaded speech and search models with Clear. The person's own files are never in it. `cloud`:
+ * the proxies are kept in the cloud, one for every video, so neither the switch nor Clear would do anything there.
  */
-function SpaceRows({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+function SpaceRows({ library, cloud, onChange, onError }: { library: LibrarySummary; cloud: boolean; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
-  useEffect(() => void read(), [library.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => void read(), [library.id, cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
       what === "proxies"
@@ -184,17 +185,20 @@ function SpaceRows({ library, onChange, onError }: { library: LibrarySummary; on
       .catch((e) => onError(message(e)));
   return (
     <>
-      <Row
-        title="Make proxies"
-        description="For videos this window can't play as they are"
-        control={<Switch aria-label="Make proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
-      />
+      {!cloud && (
+        <Row
+          title="Make proxies"
+          description="For videos this window can't play as they are"
+          control={<Switch aria-label="Make proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
+        />
+      )}
       {space && (
         <Row
           title="Proxies"
           description={size(space.proxies.bytes)}
           control={
-            space.proxies.files > 0 && (
+            space.proxies.files > 0 &&
+            !cloud && (
               <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
                 Clear
               </Button>

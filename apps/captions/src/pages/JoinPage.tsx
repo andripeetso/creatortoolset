@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Lock, UserRound } from "lucide-react";
+import { AtSign, Lock, UserRound } from "lucide-react";
 import { ToolsetLogo } from "@/components/HomeLink";
 import type { InviteInfo } from "@contracts/workspaces";
 import { inviteInfo, joinWithInvite } from "@/lib/workspaces";
@@ -17,6 +17,7 @@ const inMacApp = typeof document !== "undefined" && document.documentElement.dat
 export function JoinPage({ token }: { token: string }) {
   const [info, setInfo] = useState<InviteInfo | null>(null);
   const [error, setError] = useState("");
+  const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,7 +31,7 @@ export function JoinPage({ token }: { token: string }) {
     setBusy(true);
     setError("");
     try {
-      await joinWithInvite(token, info?.signedInAs ? undefined : { username, password });
+      await joinWithInvite(token, info?.signedInAs ? undefined : { name, username, password });
       window.location.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -53,7 +54,7 @@ export function JoinPage({ token }: { token: string }) {
           <p className="min-h-5 text-sm text-zinc-500">{info && `${info.invitedBy} invited you to join`}</p>
         </div>
       </div>
-      <div className="flex min-h-[192px] w-72 flex-col gap-2">
+      <div className="flex min-h-[240px] w-72 flex-col gap-2">
         {!info && !error && <p className="text-sm text-zinc-500">Checking the invite…</p>}
         {info?.expired && <p className="text-sm text-zinc-400">This invite link has expired. Ask {info.invitedBy} for a new one.</p>}
         {info && !info.expired && info.member && (
@@ -71,16 +72,20 @@ export function JoinPage({ token }: { token: string }) {
         )}
         {info && !info.expired && !info.member && !info.signedInAs && (
           <form onSubmit={join} className="flex flex-col gap-2">
-            <p className="text-xs text-zinc-500">Make your account: pick a username and a password (10 characters or more).</p>
+            <p className="text-xs text-zinc-500">Make your account: your name, a username and a password (10 characters or more).</p>
             <div className={field}>
               <UserRound className="h-4 w-4 shrink-0 text-zinc-500" />
-              <input autoFocus autoCapitalize="none" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" className={input} />
+              <input autoFocus autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" aria-label="Your name" className={input} />
+            </div>
+            <div className={field}>
+              <AtSign className="h-4 w-4 shrink-0 text-zinc-500" />
+              <input autoCapitalize="none" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" className={input} />
             </div>
             <div className={field}>
               <Lock className="h-4 w-4 shrink-0 text-zinc-500" />
               <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className={input} />
             </div>
-            <button type="submit" className={button} disabled={busy || !username || password.length < 10}>
+            <button type="submit" className={button} disabled={busy || !name.trim() || !username || password.length < 10}>
               {busy ? "Joining…" : "Create account and join"}
             </button>
             <a href={`/?next=${encodeURIComponent(`/join/${token}`)}`} className="text-center text-xs text-zinc-500 hover:text-zinc-300">

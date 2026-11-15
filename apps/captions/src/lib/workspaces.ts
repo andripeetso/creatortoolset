@@ -26,7 +26,7 @@ export const removeMember = (username: string) =>
 
 export const inviteInfo = (token: string) => fetch(`/api/auth/invite/${token}`).then((r) => json<InviteInfo>(r));
 /** Join: signed in = as that account (no body); else a new account. */
-export const joinWithInvite = (token: string, account?: { username: string; password: string }) =>
+export const joinWithInvite = (token: string, account?: { name: string; username: string; password: string }) =>
   send(`/api/auth/invite/${token}`, "POST", account ?? {}).then((r) => json<{ ok: true; username: string }>(r));
 
 export const inviteUrl = (token: string) => `${window.location.origin}/join/${token}`;

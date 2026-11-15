@@ -10,11 +10,12 @@ import { chooseFolderOnMac, thisMacBridge } from "@/lib/thisMac";
 
 /**
  * The library's footage folders, for its owner, in the library's settings (api/library/watch.ts): folders on this
- * computer whose videos join the library by themselves, left where they are or copied in. Only when the server runs on
+ * computer whose videos join the library by themselves, left where they are or copied into the Library's Footage folder
+ * there (status.copyTo; a library whose originals are in a bucket copies them in instead). Only when the server runs on
  * the person's computer; the page leaves the section out on a hosted server.
  */
 
-type Change = Pick<WatchFolder, "path" | "mode" | "collectionId">;
+type Change = Pick<WatchFolder, "path" | "mode" | "collectionId" | "copyTo">;
 
 async function call(libraryId: string, folders?: Change[]): Promise<WatchStatus> {
   const r = await fetch(`/api/library/${libraryId}/watch`, {
@@ -46,7 +47,7 @@ export function LibraryWatchFolders({
   const [failed, setError] = useState<string | null>(null);
   const error = failed ?? (status ? null : live.error || null);
   const [path, setPath] = useState("");
-  const [mode, setMode] = useState<WatchFolder["mode"]>("reference");
+  const [mode, setMode] = useState<WatchFolder["mode"] | "copyTo">("reference");
   const [into, setInto] = useState("");
   const big = useBigFolder(onOrganized); // a big folder says first what adding it takes, as from the first screen
 
@@ -59,8 +60,12 @@ export function LibraryWatchFolders({
       setError((e as Error).message);
     }
   };
-  const current = (status?.folders ?? []).map(({ path, mode, collectionId }) => ({ path, mode, collectionId }));
-  const add = () => big.check(path.trim(), () => save([...current, { path: path.trim(), mode, collectionId: into || undefined }]));
+  const current = (status?.folders ?? []).map(({ path, mode, collectionId, copyTo }) => ({ path, mode, collectionId, copyTo }));
+  const add = () =>
+    big.check(path.trim(), () =>
+      save([...current, { path: path.trim(), collectionId: into || undefined, ...(mode === "copyTo" ? { mode: "reference", copyTo: status?.copyTo } : { mode }) }]),
+      { libraryId },
+    );
   const choose = async () => {
     const picked = await chooseFolderOnMac();
     if (picked) setPath(picked);
@@ -76,7 +81,8 @@ export function LibraryWatchFolders({
             title={folderName(f.path)}
             subtitle={
               <span title={f.path}>
-                {f.imported.toLocaleString()} {f.imported === 1 ? "clip" : "clips"} · {f.mode === "reference" ? "left where they are" : "copied in"} · {f.path}
+                {f.imported.toLocaleString()} {f.imported === 1 ? "clip" : "clips"} ·{" "}
+                {f.copyTo ? `copied to ${f.copyTo}/${folderName(f.path)}` : f.mode === "reference" ? "left where they are" : "copied in"} · {f.path}
               </span>
             }
             status={!f.found && <Status tone="attention">Not found. Plug its drive back in, or remove it here.</Status>}
@@ -107,9 +113,9 @@ export function LibraryWatchFolders({
               Choose…
             </Button>
           )}
-          <select aria-label="Mode" value={mode} onChange={(e) => setMode(e.target.value as WatchFolder["mode"])} className={select}>
+          <select aria-label="Mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className={select}>
             <option value="reference">Leave files where they are</option>
-            <option value="copy">Copy into the library</option>
+            {status?.copyTo ? <option value="copyTo">Copy to {folderName(status.copyTo)}</option> : <option value="copy">Copy into the library</option>}
           </select>
           {libraryFolders.length > 0 && (
             <select aria-label="Into folder" value={into} onChange={(e) => setInto(e.target.value)} className={select}>

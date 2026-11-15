@@ -84,7 +84,7 @@ const ID = /^[A-Za-z0-9_-]{1,80}$/;
 function pathOf(t: Pick<Token, "m" | "i" | "n">): string | null {
   if (typeof t.i !== "string" || !ID.test(t.i) || t.i.startsWith("ext_")) return null;
   if (t.m === "lt") return `/api/library/media/${t.i}/thumb`;
-  if (t.m === "lp") return hasProxy(t.i) ? `/api/library/media/${t.i}/play` : null;
+  if (t.m === "lp") return hasProxy(t.i) ? `/api/library/media/${t.i}/proxy` : null;
   if (t.m !== "rt" && t.m !== "rp") return null;
   return Number.isInteger(t.n) && t.n! > 0 && t.n! < 10_000 ? `/api/review/assets/${t.i}/v/${t.n}/${t.m === "rt" ? "thumb" : "play"}` : null;
 }

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibraryProgress, WatchStatus } from "@contracts/library";
-import { LibraryProgressBar } from "./LibraryProcessing";
+import { KeepChoice, LibraryProgressBar } from "./LibraryProcessing";
 
 // The library's processing: one line and a moving bar by default, the steps when the person opens it (remembered), and
 // what waits for them in a few words, said by itself when nothing else runs.
@@ -67,5 +67,32 @@ describe("the library's processing line", () => {
     const el = await render();
     expect(el.textContent).toBe("5 AI descriptions need an AI");
     expect(el.querySelector('[role="progressbar"]')).toBeNull();
+  });
+});
+
+describe("where a chosen folder's files are kept", () => {
+  async function choice(free: number) {
+    const picked: (string | undefined)[] = [];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<KeepChoice libraryId="lib_1" folder="/Volumes/Card/Trip" bytes={5e9} to="~/Movies/Creator Toolset/Footage" free={free} onChange={(c) => picked.push(c)} />));
+    await flush();
+    const radio = (text: string) => [...host!.querySelectorAll("label")].find((l) => l.textContent?.startsWith(text))!.querySelector("input")!;
+    return { picked, copy: radio("Copy them to"), keep: radio("Keep them where they are") };
+  }
+
+  it("copies into the library folder when there is room", async () => {
+    const { picked, copy } = await choice(50e9);
+    expect(copy.checked).toBe(true);
+    expect(picked.at(-1)).toBe("~/Movies/Creator Toolset/Footage");
+  });
+
+  it("keeps them where they are when the copy would not fit, and says how much room there is", async () => {
+    const { picked, copy, keep } = await choice(2e9);
+    expect(copy.disabled).toBe(true);
+    expect(keep.checked).toBe(true);
+    expect(picked.at(-1)).toBeUndefined();
+    expect(host!.textContent).toContain("Not enough space there: 2.0 GB free");
   });
 });

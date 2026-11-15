@@ -7,8 +7,11 @@ import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { CreateBucketCommand, GetBucketCorsCommand, HeadBucketCommand, PutBucketCorsCommand } from "@aws-sdk/client-s3";
 import { BUNNY_REGIONS, type LibraryStorage, type LibraryStorageInput } from "../../contracts/library";
-import { libraryRole } from "./access";
-import { libraryDb, placeOf, serverBucket, type BunnyConfig, type StorageConfig } from "./db";
+import { libraryChanged, libraryRole } from "./access";
+import { libraryDb, placeOf, proxyPlace, serverBucket, type BunnyConfig, type ProxyPlace, type StorageConfig } from "./db";
+import { enqueueJob } from "./jobs";
+import { unproxied } from "./routes";
+import { clearProxies } from "./space";
 import { bunnyBlobs, createBunnyZone } from "./storage/bunny";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
@@ -46,12 +49,22 @@ function view(libraryId: string): LibraryStorage {
   const c = configOf(r);
   const zone = zoneOf(r);
   const base = { kind: r.storage_kind, keysSet: false, serverBucket: !!serverBucket(), locked: holdsFiles(libraryId), days: [] };
-  if (!c && !zone) return base;
+  const proxies = proxyPlace(libraryId);
+  if (!c && !zone && !proxies) return base;
   // ponytail: egress is not metered: playback is a 302 to the bucket, so the server never sees the bytes; the
   // provider's own bill has it
   const days = db()
     .prepare("SELECT day, stored_bytes AS storedBytes FROM usage_daily WHERE library_id = ? ORDER BY day DESC LIMIT 30")
     .all(libraryId) as { day: string; storedBytes: number }[];
+  if (proxies) {
+    const where =
+      proxies.kind === "bunny"
+        ? { kind: "bunny" as const, zone: proxies.zone, keysSet: !!proxies.accessKey }
+        : proxies.mode === "own"
+          ? { kind: "s3" as const, mode: "own" as const, endpoint: proxies.endpoint ?? "", region: proxies.region ?? "", bucket: proxies.bucket ?? "", pathStyle: !!proxies.pathStyle, keysSet: !!proxies.accessKey && !!proxies.secretKey }
+          : { kind: "s3" as const, mode: "server" as const, keysSet: false };
+    return { ...base, proxies: where, storedBytes: days[0]?.storedBytes ?? 0, days };
+  }
   if (zone) return { ...base, zone: zone.zone, keysSet: !!zone.accessKey, storedBytes: days[0]?.storedBytes ?? 0, days };
   if (!c) return base;
   const own = c.mode === "own" ? { endpoint: c.endpoint ?? "", region: c.region ?? "", bucket: c.bucket ?? "", pathStyle: !!c.pathStyle } : {};
@@ -183,6 +196,46 @@ async function prepareBucket(place: S3Place): Promise<string | null> {
   return null;
 }
 
+/** Checks a bucket before it is used (made when it doesn't exist yet, a test file written): the error, or null. */
+async function checkBucket(libraryId: string, next: StorageConfig): Promise<string | null> {
+  const place = placeOf(next);
+  if (!place) return "The bucket is not set up";
+  return (
+    (next.mode === "own" ? await prepareBucket(place) : null) ??
+    (await tryStore(libraryId, s3Blobs(s3Client(place), place.bucket, path.join(env.dataDir, "library", "cache"), { cacheBytes: 0 })))
+  );
+}
+
+/** A Bunny zone made from the account key in `body`, tested: the zone, or the error to send. */
+async function bunnyZone(libraryId: string, body: Record<string, unknown>): Promise<BunnyConfig | string> {
+  const apiKey = typeof body.apiKey === "string" && /^\S{10,200}$/.test(body.apiKey.trim()) ? body.apiKey.trim() : null;
+  if (!apiKey) return "Paste your Bunny account's API key";
+  const region = BUNNY_REGIONS.find((x) => x.id === body.region)?.id ?? "DE";
+  try {
+    return await createBunnyZone(apiKey, region, (z) => tryStore(libraryId, bunnyBlobs(z, path.join(env.dataDir, "library", "cache"), { cacheBytes: 0 })));
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/**
+ * The library's proxies to `next` (null: back beside the originals on this disk). A new place clears the proxies in
+ * the old one and makes them again in the new one (every video while in the cloud); new keys for the same place keep them.
+ * ponytail: a proxy that finishes between the clear and the switch is filed under the old place; Clear in Library
+ * settings fixes it. Moving them across instead of making them again would spare the work, if switching gets common.
+ */
+export async function moveProxies(libraryId: string, next: ProxyPlace | null): Promise<void> {
+  const where = (p: ProxyPlace | null) => (p ? placeKey(p.kind, p) : "local");
+  if (where(proxyPlace(libraryId)) !== where(next)) {
+    await clearProxies(libraryId, true);
+    // the ones still to make were wanted by the old rule (every video, or only what the window can't play)
+    db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
+  }
+  db().prepare("UPDATE libraries SET storage_config = ? WHERE id = ?").run(next ? JSON.stringify({ proxies: next }) : null, libraryId);
+  for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);
+  libraryChanged(libraryId);
+}
+
 // GET /api/library/:id/usage → LibraryStorage; the owner only
 storageApp.get("/:id/usage", (c) => {
   const libraryId = c.req.param("id");
@@ -205,34 +258,48 @@ storageApp.put("/:id/storage", async (c) => {
   const watch = (JSON.parse(r.settings || "{}") as { watch?: { mode: string }[] }).watch ?? [];
   const inPlace = "A bucket can't hold files left in their folders: remove the watch folders that do that first";
 
+  // a platform admin runs the server: they may point it at their own network
+  const trusted = !env.isProduction || user.role === "admin";
+
+  // proxies only: the originals stay on this disk, so neither files in the library nor folders read in place hold it back
+  if (body?.proxies === true && (body.kind === "s3" || body.kind === "bunny")) {
+    if (r.storage_kind !== "local") return conflict("The originals are kept in the cloud already");
+    const before = proxyPlace(libraryId);
+    if (body.kind === "bunny") {
+      if (before?.kind === "bunny" && !body.apiKey) return c.json(view(libraryId)); // already set up, nothing new
+      const zone = await bunnyZone(libraryId, body);
+      if (typeof zone === "string") return c.json({ error: zone, code: "invalid" }, 400);
+      await moveProxies(libraryId, { kind: "bunny", ...zone });
+      return c.json(view(libraryId));
+    }
+    const next = parse(body, before?.kind === "s3" ? before : null, trusted);
+    if (typeof next === "string" || !next) return c.json({ error: next ?? "Storage is local, s3 or bunny", code: "invalid" }, 400);
+    const failed = await checkBucket(libraryId, next);
+    if (failed) return c.json({ error: failed, code: "invalid" }, 400);
+    await moveProxies(libraryId, { kind: "s3", ...next });
+    return c.json(view(libraryId));
+  }
+  if (body?.kind === "local" && r.storage_kind === "local" && proxyPlace(libraryId)) {
+    await moveProxies(libraryId, null);
+    return c.json(view(libraryId));
+  }
+
   if (body?.kind === "bunny") {
     if (r.storage_kind === "bunny" && !body.apiKey) return c.json(view(libraryId)); // already set up, nothing new
     if (holdsFiles(libraryId)) return conflict(moving);
     if (watch.some((f) => f.mode === "reference")) return conflict(inPlace);
-    const apiKey = typeof body.apiKey === "string" && /^\S{10,200}$/.test(body.apiKey.trim()) ? body.apiKey.trim() : null;
-    if (!apiKey) return c.json({ error: "Paste your Bunny account's API key", code: "invalid" }, 400);
-    const region = BUNNY_REGIONS.find((x) => x.id === body.region)?.id ?? "DE";
-    let zone: BunnyConfig;
-    try {
-      zone = await createBunnyZone(apiKey, region, (z) => tryStore(libraryId, bunnyBlobs(z, path.join(env.dataDir, "library", "cache"), { cacheBytes: 0 })));
-    } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e), code: "invalid" }, 400);
-    }
+    const zone = await bunnyZone(libraryId, body);
+    if (typeof zone === "string") return c.json({ error: zone, code: "invalid" }, 400);
     db().prepare("UPDATE libraries SET storage_kind = 'bunny', storage_config = ? WHERE id = ?").run(JSON.stringify(zone), libraryId);
     return c.json(view(libraryId));
   }
 
-  // a platform admin runs the server: they may point it at their own network
-  const next = parse(body, configOf(r), !env.isProduction || user.role === "admin");
+  const next = parse(body, configOf(r), trusted);
   if (typeof next === "string") return c.json({ error: next, code: "invalid" }, 400);
   if (current !== placeKey(next ? "s3" : "local", next) && holdsFiles(libraryId)) return conflict(moving);
   if (next && watch.some((f) => f.mode === "reference")) return conflict(inPlace);
   if (next) {
-    const place = placeOf(next);
-    if (!place) return c.json({ error: "The bucket is not set up", code: "invalid" }, 400);
-    const failed =
-      (next.mode === "own" ? await prepareBucket(place) : null) ??
-      (await tryStore(libraryId, s3Blobs(s3Client(place), place.bucket, path.join(env.dataDir, "library", "cache"), { cacheBytes: 0 })));
+    const failed = await checkBucket(libraryId, next);
     if (failed) return c.json({ error: failed, code: "invalid" }, 400);
   }
   db().prepare("UPDATE libraries SET storage_kind = ?, storage_config = ? WHERE id = ?").run(next ? "s3" : "local", next ? JSON.stringify(next) : null, libraryId);
