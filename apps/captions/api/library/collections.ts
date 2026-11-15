@@ -15,7 +15,7 @@ import { readerOf } from "./reader";
 import { blobs, libraryDb } from "./db";
 import { ffmpegTo } from "./media/run";
 import { externalCanSee, externalRefById } from "./refs";
-import { KINDS } from "./query";
+import { FINISHED, KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
 import { fileRoll, rollFolder } from "./roll";
 
@@ -99,13 +99,13 @@ collectionApp.get("/:id/collections", async (c) => {
   const rows = db()
     .prepare(
       `SELECT c.*, (SELECT COUNT(*) FROM collection_items i JOIN assets a ON a.id = i.asset_id
-          WHERE i.collection_id = c.id AND a.trashed_at IS NULL) AS n
+          WHERE i.collection_id = c.id AND a.trashed_at IS NULL AND NOT ${FINISHED}) AS n
        FROM collections c WHERE c.library_id = ? ORDER BY c.created_at, c.id`,
     )
     .all(libraryId) as unknown as (Row & { n: number })[];
   const pictures = db().prepare(
     `SELECT a.current_version_id AS v FROM collection_items i JOIN assets a ON a.id = i.asset_id
-     WHERE i.collection_id = ? AND a.trashed_at IS NULL
+     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}
        AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
      ORDER BY i.position, i.asset_id LIMIT 4`,
   );

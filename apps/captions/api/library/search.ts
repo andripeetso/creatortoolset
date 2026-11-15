@@ -12,7 +12,7 @@ import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
 import { enqueueJob, prepareFirst } from "./jobs";
-import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
+import { CARD, FINISHED, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
 import { filterClauses } from "./query";
 import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
@@ -140,7 +140,8 @@ searchApp.get("/:id/search", async (c) => {
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
   const query = parseSearch(c.req.query());
   const { roll } = query;
-  const where = searchClauses(query);
+  // footage only, by text and by meaning (query.ts FINISHED)
+  const where = [...searchClauses(query), { sql: `NOT ${FINISHED}`, params: [] }];
   const text = searchLibrary(libraryId, q, LIMIT, where);
   const meaning = await semanticHits(libraryId, q, user.username, where).catch(() => null);
   const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
@@ -159,7 +160,7 @@ searchApp.get("/:id/tags", async (c) => {
   const tags = db()
     .prepare(
       `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT 500`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED} GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT 500`,
     )
     .all(libraryId) as { tag: string; count: number }[];
   return c.json({ tags });
@@ -173,7 +174,7 @@ searchApp.get("/:id/places", async (c) => {
   const places = db()
     .prepare(
       `SELECT json_extract(v.probe, '$.country') AS place, COUNT(*) AS count FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND place != '' GROUP BY place ORDER BY count DESC, place`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED} AND place != '' GROUP BY place ORDER BY count DESC, place`,
     )
     .all(libraryId) as { place: string; count: number }[];
   return c.json({ places });
