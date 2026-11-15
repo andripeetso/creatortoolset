@@ -37,7 +37,8 @@ struct FaceBlurAutoJob {
     let folder: URL
 
     var isVideo: Bool { step.options["media"] != "photo" }
-    var preset: LookPreset { LookPreset(look: CoverLook(rawValue: step.options["look"] ?? "") ?? .blur) }
+    /// the style from the job's options (look, strength, softness, size, color)
+    var preset: LookPreset { LookPreset(values: step.options) }
 
     /// The ids `faces` lists in the server's answer, or nil when it lists none.
     static func chosen(_ data: Data) -> Set<String>? {
@@ -74,7 +75,7 @@ struct FaceBlurAutoJob {
             let out = folder.appendingPathComponent(isVideo ? "covered.mp4" : "covered.jpg")
             let chosen = blur
             do {
-                try waitAsync { try await CoverPipeline.write(scan, from: source, blur: chosen, to: out) { _ in } }
+                try waitAsync { try await CoverPipeline.write(scan, from: source, blur: chosen, style: preset, to: out) { _ in } }
             } catch let nothing as CoverPipeline.NothingToCover {
                 let reply = try api.call("POST", base, ["nothing": nothing.why], tries: 3)
                 return reply.status == 200 ? (.done, RelayRunner.editorWaits(reply.data)) : (.gone, false)

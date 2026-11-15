@@ -85,6 +85,8 @@ struct Cover: Codable, Hashable, Sendable {
     /// 0…1. Feathers outward only; the circle itself is always fully covered.
     var softness: Double = 0.45
     var colorHex = "#343434"
+    /// The cover's size against the face's own cover (1 = as found; the style's Size).
+    var scale: Double = 1
 
     static let leadHold = 0.25
     static let tailHold = 0.25
@@ -95,7 +97,7 @@ struct Cover: Codable, Hashable, Sendable {
     func placement(at time: Double) -> (rect: NormRect, angle: Double)? {
         guard time >= start - 1e-3, time <= end + 1e-3, !path.isEmpty else { return nil }
         let base = Self.pathSample(path, at: time)
-        return (base.rect.clamped(), base.angle)
+        return (base.rect.scaled(scale).clamped(), base.angle)
     }
 
     /// Interpolated path position, holding before the first and after the last sample. Long gaps become a circle that
@@ -144,17 +146,48 @@ struct Cover: Codable, Hashable, Sendable {
     }
 }
 
-/// The look every cover of a job gets.
+/// The look every cover of a job gets: the style the person built in Settings → Face Blur.
 struct LookPreset: Hashable, Sendable {
     var look: CoverLook = .blur
     var colorHex = "#343434"
+    /// 0…1: how strong the blur or how big the mosaic's squares
     var strength = 0.5
+    /// 0…1: how far the edge fades out; nil = the look's own (none for Solid)
+    var softness: Double?
+    /// the cover against the face's own: 0.8…2 (below about 0.75 it no longer covers the face itself)
+    var size = 1.0
+
+    static let sizes = 0.8...2.0
+
+    /// The style from the settings' values (numbers or their text, as a device job's options carry them); a value that is
+    /// missing or out of range keeps its default.
+    init(look: CoverLook = .blur, values: [String: Any] = [:]) {
+        self.look = (values["look"] as? String).flatMap(CoverLook.init(rawValue:)) ?? look
+        func number(_ key: String, _ range: ClosedRange<Double>) -> Double? {
+            let v = values[key]
+            let d = (v as? Double) ?? (v as? Int).map(Double.init) ?? (v as? String).flatMap(Double.init)
+            return d.flatMap { range.contains($0) ? $0 : nil }
+        }
+        strength = number("strength", 0...1) ?? strength
+        softness = number("softness", 0...1)
+        size = number("size", Self.sizes) ?? size
+        if let hex = values["color"] as? String, hex.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) != nil { colorHex = hex }
+    }
 
     func apply(to cover: inout Cover) {
         cover.look = look
         cover.colorHex = colorHex
         cover.strength = strength
-        cover.softness = look == .solid ? 0 : 0.45
+        cover.softness = softness ?? (look == .solid ? 0 : 0.45)
+        cover.scale = size
+    }
+
+    func styled(_ covers: [Cover]) -> [Cover] {
+        covers.map { cover in
+            var c = cover
+            apply(to: &c)
+            return c
+        }
     }
 }
 

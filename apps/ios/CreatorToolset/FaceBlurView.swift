@@ -128,6 +128,21 @@ struct FaceBlurSettings: Codable, Equatable {
     var mode: Mode
     var who: String
     var look: CoverLook
+    /// the style built in Settings → Face Blur on the computer; nil from a server before it had them
+    var strength: Double?
+    var softness: Double?
+    var size: Double?
+    var color: String?
+
+    /// The look every cover gets.
+    var preset: LookPreset {
+        var values: [String: Any] = [:]
+        values["strength"] = strength
+        values["softness"] = softness
+        values["size"] = size
+        values["color"] = color
+        return LookPreset(look: look, values: values)
+    }
 }
 
 @MainActor
@@ -270,7 +285,7 @@ final class FaceBlurModel: ObservableObject {
             var scan = item(id)?.scan
             if scan == nil {
                 update(id) { $0.stage = .scanning; $0.progress = 0 }
-                let found = try await CoverPipeline.scan(source, preset: LookPreset(look: settings.look)) { p in
+                let found = try await CoverPipeline.scan(source, preset: settings.preset) { p in
                     Task { @MainActor in self.update(id) { $0.progress = p } }
                 }
                 scan = found
@@ -290,7 +305,7 @@ final class FaceBlurModel: ObservableObject {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let out = CoverPipeline.outputURL(for: folder.appendingPathComponent(source.lastPathComponent), kind: scan.kind, exists: { _ in false })
             try? FileManager.default.removeItem(at: out)
-            try await CoverPipeline.write(scan, from: source, blur: Set(faces.filter(\.blur).map(\.id)), to: out) { p in
+            try await CoverPipeline.write(scan, from: source, blur: Set(faces.filter(\.blur).map(\.id)), style: settings.preset, to: out) { p in
                 Task { @MainActor in self.update(id) { $0.progress = p } }
             }
             try await SaveToPhotos.add([out])

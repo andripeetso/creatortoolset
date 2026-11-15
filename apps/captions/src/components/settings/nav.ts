@@ -1,4 +1,4 @@
-import { AudioLines, Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { AudioLines, Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, Share2, ShieldCheck, SlidersHorizontal, UserRound, Users } from "lucide-react";
 import { settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -34,28 +34,32 @@ interface BuiltinEntry extends SettingsEntry {
 }
 
 /**
- * The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "People" are headed.
- * What is added to one tool (its plug-ins, packs, skills) is on that tool's page under Tools (/settings/tools/<tile>); a
- * plug-in's own section with no group goes in a "Plug-ins" block before People (lib/plugin.ts PLUGINS_GROUP).
+ * The built-in sections in sidebar order, grouped by whose setting it is (owner, 2026-11-14: "admin and team are like
+ * mixed up and weird"): "You" (the same in every workspace), "AI", "Server" (what is kept on this server and who is on
+ * it; an admin sees everyone's, a member their own). A workspace's own settings (its voice, accounts, knowledge) open
+ * from the workspace switcher, not here. What is added to one tool is on that tool's page under Tools
+ * (/settings/tools/<tile>); a plug-in's own section with no group goes in a "Plug-ins" block at the end
+ * (lib/plugin.ts PLUGINS_GROUP). There is no Admin page any more: its old addresses go to Team, Storage, API keys and
+ * the plug-ins' own pages (AdminSection.tsx).
  */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
-  { id: "general", title: "General", icon: SlidersHorizontal },
-  { id: "appearance", title: "Appearance", icon: Palette },
-  { id: "tools", title: "Tools", icon: LayoutGrid },
+  { id: "general", title: "General", icon: SlidersHorizontal, group: "You" },
+  { id: "appearance", title: "Appearance", icon: Palette, group: "You" },
+  { id: "tools", title: "Tools", icon: LayoutGrid, group: "You" },
+  { id: "voice", title: "Voice", icon: AudioLines, group: "You" },
+  { id: "devices", title: "Devices", icon: Monitor, group: "You" },
+  { id: "servers", title: "Servers", icon: Server, group: "You", macOnly: true },
+  { id: "connectors", title: "Social accounts", icon: Share2, group: "You" },
+  { id: "own-ai", title: "Headless access", icon: Bot, group: "You" },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
-  { id: "voice", title: "Voice", icon: AudioLines, group: "AI" },
-  { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "AI" },
+  { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
   { id: "usage", title: "Usage", icon: Gauge, group: "AI" },
-  { id: "devices", title: "Devices", icon: Monitor, group: "Hardware" },
-  { id: "folders", title: "Storage", icon: HardDrive, group: "Hardware" },
-  { id: "servers", title: "Servers", icon: Server, group: "Hardware", macOnly: true },
-  { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
-  { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
-  { id: "own-ai", title: "Headless access", icon: Bot, group: "Connections" },
-  { id: "team", title: "Team", icon: Users, group: "People", hostedOnly: true },
-  { id: "admin", title: "Admin", icon: ShieldCheck, group: "People", hostedOnly: true, adminOnly: true },
+  { id: "team", title: "Team", icon: Users, group: "Server", hostedOnly: true },
+  { id: "folders", title: "Storage", icon: HardDrive, group: "Server" },
+  { id: "keys", title: "API keys", icon: KeyRound, group: "Server" },
   { id: "account", title: "Account", icon: UserRound, listed: false },
+  { id: "admin", title: "Admin", icon: ShieldCheck, listed: false },
 ];
 
 /** Old ids and where they go, as full paths. */
@@ -74,7 +78,9 @@ export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): 
   const allowed = BUILTIN.filter(
     (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly),
   );
-  return visibleSettings(settingsWithPlugins(allowed, plugins), { role: ctx.admin ? "admin" : "user" });
+  // a plug-in's server-wide page (adminTab, was an Admin tab): admins on a hosted server only, as Admin was
+  const shown = settingsWithPlugins(allowed, plugins).filter((s) => (ctx.hosted && ctx.admin) || !("adminTab" in s && s.adminTab));
+  return visibleSettings(shown, { role: ctx.admin ? "admin" : "user" });
 }
 
 /** The sections the sidebar lists: sectionsFor without the routable-only ones (account). */

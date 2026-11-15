@@ -8,22 +8,20 @@ const hostedMember: NavContext = { hosted: true, admin: false, mac: false };
 const ids = (ctx: NavContext) => sectionsFor(ctx, []).map((s) => s.id);
 
 describe("Settings sections by server mode", () => {
-  it("a local server has no team and no admin section, for anyone", () => {
+  it("a local server has no team, for anyone", () => {
     expect(ids(local)).not.toContain("team");
-    expect(ids(local)).not.toContain("admin");
     expect(ids(localMember)).not.toContain("team");
   });
 
-  it("a hosted server shows the team to everyone and the admin only to admins", () => {
+  it("a hosted server shows the team to everyone", () => {
     expect(ids(hostedMember)).toContain("team");
-    expect(ids(hostedMember)).not.toContain("admin");
-    expect(ids(hostedAdmin)).toEqual(expect.arrayContaining(["team", "admin"]));
+    expect(ids(hostedAdmin)).toContain("team");
   });
 
-  it("keeps General first and the admin block last", () => {
-    const all = ids(hostedAdmin).filter((id) => id !== "account"); // account is routable, not in the sidebar
+  it("keeps General first and the server's pages last", () => {
+    const all = ids(hostedAdmin).filter((id) => id !== "account" && id !== "admin"); // routable, not in the sidebar
     expect(all[0]).toBe("general");
-    expect(all.at(-1)).toBe("admin");
+    expect(all.at(-1)).toBe("keys");
   });
 
   it("shows one keys page to everyone, and no separate setup, this-mac or my-keys sections", () => {
@@ -52,7 +50,6 @@ describe("Settings redirects", () => {
 
   it("sends a page this install does not show to General", () => {
     expect(resolveSection("team", local)).toEqual({ kind: "redirect", to: "/settings/general" });
-    expect(resolveSection("admin", hostedMember)).toEqual({ kind: "redirect", to: "/settings/general" });
     expect(resolveSection("nope", local)).toEqual({ kind: "redirect", to: "/settings/general" });
   });
 

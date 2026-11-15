@@ -66,3 +66,20 @@ it("the join page names the inviter by their name, and the new account keeps the
   expect((await call("POST", `/api/auth/invite/${token}`, undefined, { name: " Ann Lee ", username: "ann", password: "ann-secret-123" })).status).toBe(200);
   expect(findUser("ann")?.displayName).toBe("Ann Lee");
 });
+
+it("access set on a pending invite is what the person gets once they join", async () => {
+  const cookie = await login();
+  const { findUser } = await import("./users");
+  const { invite, token } = (await (await call("POST", "/api/workspace/invites", cookie, {})).json()) as { invite: { id: string }; token: string };
+  const set = await call("PATCH", `/api/workspace/invites/${invite.id}`, cookie, { off: ["design", 42], scripts: true });
+  expect(set.status).toBe(200);
+  const shown = ((await set.json()) as { invites: { id: string; off: string[]; scripts: boolean }[] }).invites.find((i) => i.id === invite.id);
+  expect(shown).toMatchObject({ off: ["design"], scripts: true });
+  expect((await call("PATCH", `/api/workspace/invites/${invite.id}`, cookie, { scripts: "yes" })).status).toBe(400);
+  expect((await call("PATCH", "/api/workspace/invites/nope", cookie, { scripts: true })).status).toBe(404);
+
+  expect((await call("POST", `/api/auth/invite/${token}`, undefined, { name: "Bo", username: "bo", password: "bo-secret-12" })).status).toBe(200);
+  expect(findUser("bo")?.off).toEqual(["design"]);
+  const view = (await (await call("GET", "/api/workspace", cookie)).json()) as { members: { username: string; scripts?: boolean }[] };
+  expect(view.members.find((m) => m.username === "bo")?.scripts).toBe(true);
+});

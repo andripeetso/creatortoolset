@@ -92,6 +92,12 @@ final class FaceBlurScreenTests: XCTestCase {
         let back = try JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: String]
         XCTAssertEqual(back, ["mode": "some", "who": "Every child's face", "look": "mosaic"])
         XCTAssertThrowsError(try JSONDecoder().decode(FaceBlurSettings.self, from: Data(#"{"mode":"every","who":"","look":"blur"}"#.utf8)))
+        // the style built on the computer is drawn with here; a server before styles leaves today's look
+        let styled = try JSONDecoder().decode(FaceBlurSettings.self, from: Data(##"{"mode":"all","who":"x","look":"solid","strength":0.7,"softness":0.2,"size":1.5,"color":"#112233","auto":true}"##.utf8))
+        XCTAssertEqual([styled.preset.strength, styled.preset.softness, styled.preset.size], [0.7, 0.2, 1.5])
+        XCTAssertEqual(styled.preset.colorHex, "#112233")
+        XCTAssertEqual(s.preset.size, 1)
+        XCTAssertNil(s.preset.softness)
     }
 }
 

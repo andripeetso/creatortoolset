@@ -178,9 +178,12 @@ Never put "project" on screen for the brand-level thing, or "session" for a proj
 - Types shared by client and server live in `contracts/`.
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
-    top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up: General, Appearance, Tools,
-    AI (Providers, Voice, Scheduled tasks, Memory, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
-    API keys, Headless access), People (Team, Admin; on a hosted server). **The account button** = you.
+    top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up, grouped by whose setting it
+    is: You (General, Appearance, Tools, Voice, Devices, Servers, Social accounts, Headless access: the same in every
+    workspace), AI (Providers, Memory, Scheduled tasks, Usage), Server (Team, Storage, API keys: who is on this server
+    and what it keeps; an admin sees everyone's, a member their own), Plug-ins. There is no Admin page: the server's
+    own accounts are in Team, its projects in Storage, its keys in API keys. A workspace's own settings (its voice,
+    accounts, knowledge) open from the workspace switcher, not Settings. **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **A tool is what you use; plug-ins, packs and skills are what you add to it; Community is where you find more.**
     Settings → Tools lists every tile with its Home switch; a tool something can be added to (packs reach it, or a
@@ -194,7 +197,7 @@ Never put "project" on screen for the brand-level thing, or "session" for a proj
     folders in the person's plug-ins folder, each with its switch) and then **Packs**. **Skills** lists every skill by
     the place it acts, the assistant's included (no tool page has those).
   - A plug-in's pieces show up where the built-in ones do: its steps and skills on its tool's page, its Settings
-    section in the matching group (no group: a Plug-ins block before People) or Admin tab, its tiles on Home, its pages
+    section in the matching group (no group, or a server-wide `adminTab` one: the Plug-ins block), its tiles on Home, its pages
     in place of built-in ones. Community → Installed is the one place that names the whole plug-in.
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
     in both `plugin.ts` and `web.tsx` (`plugin-examples/hello` shows it). `GET /api/plugins` and Community read these.

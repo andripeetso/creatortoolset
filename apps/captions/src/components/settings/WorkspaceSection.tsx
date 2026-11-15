@@ -1,15 +1,16 @@
 import { Plus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import type { AiRoute, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
+import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { useMe } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
-import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
+import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateInvite, updateMember } from "@/lib/workspaces";
+import { AskEveryone, Tick, useServerAccounts } from "@/components/AdminPanel";
+import type { RowMenuItem } from "./kit-controls";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
 import { useSignInApps } from "./AccountSection";
 import { lastActiveText, msg } from "./helpers";
@@ -38,13 +39,13 @@ export const signInId = (opts: ReturnType<typeof signInOptions>, saved: readonly
 
 /**
  * Settings → Team (hosted servers only). The owner renames the team, sets how it signs in, invites people and removes
- * them. A member sees the team and their own row. Tools for a member are edited in one place for each viewer: a team
- * owner who is not a platform admin changes them here; a platform admin changes them in Admin → Access (the same
- * account setting, api/admin.ts and api/workspace.ts both write `off`).
+ * them. A member sees the team and their own row. A platform admin also runs every account on the server here (each
+ * member's menu, Create account, Other accounts, Ask everyone for a sign-in code; api/admin.ts). Access is one grid of everyone in the team and everyone invited: the
+ * apps each may open (the account's `off`) and whether they read the owner's scripts; an invite's row is what that
+ * person gets once they join (api/workspace.ts PATCH /invites/:id).
  */
 export function WorkspaceSection() {
   const me = useMe();
-  const navigate = useNavigate();
   // "not in a team" is an answer too (team: null), kept apart from "not known yet"
   const saved = useCachedLoad<{ team: WorkspaceView | null }>("/api/workspace", () => getWorkspace().then((team) => ({ team })), { own: true });
   const view: WorkspaceView | null | undefined = saved.data ? saved.data.team : undefined;
@@ -57,7 +58,6 @@ export function WorkspaceSection() {
     if (view?.me === "owner") setInviting(true);
     setParams((p) => (p.delete("add"), p), { replace: true });
   }, [params, setParams, view]);
-  const [editing, setEditing] = useState<MemberView | null>(null);
   const [aiFor, setAiFor] = useState<MemberView | null>(null);
   // the sign-ins this server has switched on (the Account page's list): the team can only be set to these
   const apps = useSignInApps();
@@ -65,6 +65,8 @@ export function WorkspaceSection() {
 
   const refresh = saved.refresh;
   const load = useCallback(() => refresh().catch(() => {}), [refresh]);
+  // a platform admin also runs the server's accounts here (was Admin → Accounts): passwords, locks, admin or not, delete
+  const accounts = useServerAccounts(me?.role === "admin", () => void load());
 
   if (failed) {
     return (
@@ -151,18 +153,28 @@ export function WorkspaceSection() {
         </Card>
       </Section>
 
+      {me?.role === "admin" && <AskEveryone />}
+
       <Section
         id="team-members"
         title="Members"
         action={
-          <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
-            <Plus className="size-3" /> Invite
-          </Button>
+          <div className="flex gap-1">
+            {me?.role === "admin" && (
+              <Button size="xs" variant="ghost" onClick={accounts.create}>
+                <Plus className="size-3" /> Create account
+              </Button>
+            )}
+            <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
+              <Plus className="size-3" /> Invite
+            </Button>
+          </div>
         }
       >
         <Card>
           {view.members.map((m) => {
             const self = m.username === me?.username;
+            const acct = accounts.users?.find((u) => u.username === m.username);
             return (
               <ListRow
                 key={m.username}
@@ -173,16 +185,10 @@ export function WorkspaceSection() {
                     {self && <span className="ml-1.5 font-normal text-muted-foreground">(you)</span>}
                   </>
                 }
-                subtitle={memberLine(m, self, true)}
+                subtitle={[memberLine(m, self, true), acct?.role === "admin" && m.role !== "owner" ? "Admin" : null, acct?.locked ? "Locked" : null].filter(Boolean).join(" · ")}
                 actions={
                   m.role !== "owner" && !self ? (
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        Can read your scripts
-                        <Switch checked={!!m.scripts} onCheckedChange={(on) => attempt(updateMember(m.username, { scripts: on }))} />
-                      </label>
-                      <MemberMenu m={m} canEditHere={me?.role !== "admin"} onAi={() => setAiFor(m)} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} />
-                    </div>
+                    <MemberMenu m={m} account={acct ? accounts.menuItems(acct) : []} onAi={() => setAiFor(m)} onRemove={() => attempt(removeMember(m.username))} />
                   ) : undefined
                 }
               />
@@ -211,9 +217,48 @@ export function WorkspaceSection() {
         </Section>
       )}
 
+      {(view.members.some((m) => m.role !== "owner") || view.invites.length > 0) && (
+        <Section id="team-access" title="Access">
+          <AccessGrid
+            rows={[
+              ...view.members
+                .filter((m) => m.role !== "owner")
+                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, scripts: !!m.scripts, save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
+              ...view.invites.map((i) => ({
+                key: i.id,
+                label: (
+                  <>
+                    {i.email ?? "Invite link"} <span className="font-normal text-muted-foreground">invited</span>
+                  </>
+                ),
+                off: i.off ?? [],
+                scripts: !!i.scripts,
+                save: (p: AccessPatch) => act(updateInvite(i.id, p as InvitePatch)),
+              })),
+            ]}
+          />
+        </Section>
+      )}
+
+      {(() => {
+        // accounts on the server that are in no team: made by hand, or left one
+        const others = accounts.users?.filter((u) => !view.members.some((m) => m.username === u.username)) ?? [];
+        return (
+          others.length > 0 && (
+            <Section id="team-other-accounts" title="Other accounts">
+              <Card>
+                {others.map((u) => (
+                  <ListRow key={u.username} title={u.name || u.username} subtitle={accounts.lineOf(u)} actions={<RowMenu label={`More for ${u.username}`} items={accounts.menuItems(u)} />} />
+                ))}
+              </Card>
+            </Section>
+          )
+        );
+      })()}
+
+      {accounts.dialogs}
       <InviteDialog open={inviting} mail={Boolean(view.mail)} onOpenChange={setInviting} onCreated={() => void load()} />
       {aiFor && <AiDialog member={aiFor} onClose={() => setAiFor(null)} onSave={(m, patch) => act(updateMember(m.username, patch))} />}
-      <ToolsDialog member={editing} onClose={() => setEditing(null)} onChange={(m, off) => attempt(updateMember(m.username, { off }))} />
     </>
   );
 }
@@ -241,21 +286,21 @@ export function budgetFrom(text: string): { ok: true; usd: number } | { ok: fals
   return { ok: true, usd: Math.round(n * 100) / 100 };
 }
 
-function MemberMenu({ m, canEditHere, onAi, onTools, onAdmin, onRemove }: { m: MemberView; canEditHere: boolean; onAi: () => void; onTools: () => void; onAdmin: () => void; onRemove: () => Promise<void> }) {
+/** A member's menu: AI, the account's own items for a platform admin (`account`), Remove from team, Delete account last. */
+function MemberMenu({ m, account, onAi, onRemove }: { m: MemberView; account: RowMenuItem[]; onAi: () => void; onRemove: () => Promise<void> }) {
   return (
     <RowMenu
       label={`More for ${m.username}`}
       items={[
         { label: "AI…", onSelect: onAi },
-        canEditHere
-          ? { label: "Tools…", onSelect: onTools }
-          : { label: "Tools in Admin", onSelect: onAdmin },
+        ...account.filter((i) => !i.destructive),
         {
           label: "Remove from team",
           destructive: true,
           confirm: { title: `Remove ${m.username} from the team?`, body: "Their account stays theirs.", ok: "Remove" },
           onSelect: onRemove,
         },
+        ...account.filter((i) => i.destructive),
       ]}
     />
   );
@@ -302,25 +347,66 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
   );
 }
 
-/** A member's apps: one switch per app, each saved at once (the `off` list of the account). */
-function ToolsDialog({ member, onClose, onChange }: { member: MemberView | null; onClose: () => void; onChange: (m: MemberView, off: string[]) => Promise<void> }) {
-  if (!member) return null;
-  const toggle = (t: Tool, on: boolean) => {
-    void onChange(member, offAfterToggle(member.off, t, on));
+type AccessPatch = { off?: string[]; scripts?: boolean };
+interface AccessRow {
+  key: string;
+  label: ReactNode;
+  off: string[];
+  scripts: boolean;
+  save: (patch: AccessPatch) => Promise<unknown>;
+}
+
+/**
+ * Who opens what: a row for each member and each pending invite, a tick per app and one for reading your scripts. A tick
+ * shows at once; `draft` holds a row while its save is on its way, so a second tick builds on the first, and a failed
+ * save falls back to what the server has.
+ */
+function AccessGrid({ rows }: { rows: AccessRow[] }) {
+  const [draft, setDraft] = useState<Record<string, { off: string[]; scripts: boolean }>>({});
+  const now = (r: AccessRow) => draft[r.key] ?? { off: r.off, scripts: r.scripts };
+  const change = (r: AccessRow, next: { off: string[]; scripts: boolean }, patch: AccessPatch) => {
+    setDraft((d) => ({ ...d, [r.key]: next }));
+    void r
+      .save(patch)
+      .catch((e) => saveFailed(msg(e)))
+      .finally(() => setDraft((d) => (d[r.key] === next ? (({ [r.key]: _, ...rest }) => rest)(d) : d)));
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent aria-describedby={undefined} className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Tools for {member.username}</DialogTitle>
-        </DialogHeader>
-        <Card>
-          {TOOLS.map((t) => (
-            <Row key={t} title={TOOL_NAMES[t]} control={<Switch checked={!member.off.includes(t)} aria-label={TOOL_NAMES[t]} onCheckedChange={(on) => toggle(t, on)} />} />
-          ))}
-        </Card>
-      </DialogContent>
-    </Dialog>
+    <Card>
+      <div className="overflow-x-auto py-3 sm:py-4">
+        <table className="w-full min-w-[640px] text-left text-xs">
+          <thead>
+            <tr className="text-[11px] leading-tight text-muted-foreground">
+              <th className="sticky left-0 z-10 bg-card pb-2 pl-3 pr-3 text-left align-bottom text-[10px] font-medium uppercase tracking-wider sm:pl-4">Person</th>
+              {TOOLS.map((t) => (
+                <th key={t} className="px-1 pb-2 text-center align-bottom font-normal">
+                  {TOOL_NAMES[t]}
+                </th>
+              ))}
+              <th className="px-1 pb-2 text-center align-bottom font-normal">Your scripts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const cur = now(r);
+              return (
+                <tr key={r.key} className="border-t border-border/50 hover:bg-accent/50">
+                  <td className="sticky left-0 z-10 bg-card py-2 pl-3 pr-3 font-medium text-foreground sm:pl-4">
+                    <span className="block max-w-[14rem] truncate">{r.label}</span>
+                  </td>
+                  {TOOLS.map((t: Tool) => {
+                    const on = !cur.off.includes(t);
+                    const off = offAfterToggle(cur.off, t, !on);
+                    return <Tick key={t} on={on} title={`${TOOL_NAMES[t]} for ${typeof r.label === "string" ? r.label : "this invite"}`} onClick={() => change(r, { ...cur, off }, { off })} />;
+                  })}
+                  <Tick on={cur.scripts} title="Can read your scripts" onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
