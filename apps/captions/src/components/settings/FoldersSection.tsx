@@ -64,7 +64,8 @@ function Folders() {
   // the computers a folder can go on: this account's own, and for an admin the team's AI worker (the server takes both)
   const own = devices.filter((d) => d.owner === me.username || (me.role === "admin" && d.owner === "workspace"));
   const drives = driveList(own, storage.serverDisks);
-  const almost = drives.filter((l) => isFull(l.disk)).length;
+  // the drives that are almost full, by name, so the summary says which
+  const full = drives.filter((l) => isFull(l.disk)).map((l) => l.disk.name);
 
   // a hosted member with no computer has nothing to put a folder on: say so once, instead of three Set folder buttons
   if (hosted && own.length === 0 && storage.folders.length === 0) {
@@ -92,13 +93,13 @@ function Folders() {
 
       {me.role === "admin" && drives.length > 0 && (
         <Card>
-          <Advanced summary={<>Drives{almost > 0 && <span className="text-amber-600 dark:text-amber-400"> · {almost} almost full</span>}</>}>
+          <Advanced summary={<>Drives{full.length > 0 && <span className="text-amber-600 dark:text-amber-400"> · {full.join(", ")} almost full</span>}</>}>
             {drives.map(({ key, disk, on }) => (
               <ListRow
                 key={key}
                 icon={<HardDrive className="size-4" />}
                 title={disk.name}
-                subtitle={`${disk.network ? "Network" : disk.path === "/" ? "Built in" : "Drive"} · ${on} · ${spaceOf(disk)}`}
+                subtitle={<>{disk.network ? "Network" : disk.path === "/" ? "Built in" : "Drive"} · {on} · {spaceOf(disk)}</>}
               />
             ))}
           </Advanced>

@@ -44,8 +44,13 @@ const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
 /** Almost full: under 20 GB free, or under a tenth of the disk. */
 export const isFull = (d: { freeGb: number; totalGb?: number }) => d.freeGb < 20 || (d.totalGb !== undefined && d.freeGb / d.totalGb < 0.1);
-export const spaceOf = (d: { freeGb: number; totalGb?: number }) =>
-  `${size(d.freeGb)} free${d.totalGb !== undefined ? ` of ${size(d.totalGb)}` : ""}${isFull(d) ? " · almost full" : ""}`;
+/** "29 GB free of 460 GB", and an amber "almost full" after it on the drive that is. */
+export const spaceOf = (d: { freeGb: number; totalGb?: number }) => (
+  <>
+    {size(d.freeGb)} free{d.totalGb !== undefined && ` of ${size(d.totalGb)}`}
+    {isFull(d) && <span className="text-amber-600 dark:text-amber-400"> · almost full</span>}
+  </>
+);
 
 /** The disk a folder sits on: the longest drive path that holds it, else the system disk. A computer that reports no
  *  drives is read from the server's own disks (a local install: the computer is this machine). */
@@ -387,6 +392,3 @@ export function driveList(devices: Computer[], serverDisks: Disk[]): Array<{ key
     ...serverDisks.map((disk) => ({ key: `server:${disk.path}`, disk, on: "this server" })),
   ];
 }
-
-/** Whether a drive is almost full (for the Advanced summary). */
-export const almostFull = (drives: Array<{ disk: Disk }>) => drives.filter((l) => isFull(l.disk)).length;
