@@ -57,14 +57,16 @@ function videosOf(libraryId: string): LibrarySpace["videos"] {
 /**
  * Deletes the library's proxies and forgets them, so each is made again when it is wanted. A clip being prepared keeps
  * its proxy (a step may be reading it right now), unless `all`: the proxies move to another place, and one left behind
- * would point where the routing no longer looks (db.ts storeOf).
+ * would point where the routing no longer looks (db.ts storeOf). A proxy that is its version's source (the original
+ * stays on a Mac, worker.ts dropOriginal) is all the library has of it, so it stays.
+ * ponytail: with `all` that proxy stays where it was while reads look in the new place; copy it over if such a library moves
  */
 export async function clearProxies(libraryId: string, all = false): Promise<{ cleared: number; kept: number }> {
   const db = libraryDb();
   const rows = db
     .prepare(
       `SELECT d.version_id, d.storage_key, d.bytes, ${OPEN} AS busy FROM derivatives d JOIN asset_versions v ON v.id = d.version_id
-       JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND d.kind = 'proxy' AND d.storage_key IS NOT NULL`,
+       JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND d.kind = 'proxy' AND d.storage_key IS NOT NULL AND d.storage_key <> v.source_key`,
     )
     .all(libraryId) as { version_id: string; storage_key: string; bytes: number; busy: number }[];
   const going = rows.filter((x) => all || !x.busy);

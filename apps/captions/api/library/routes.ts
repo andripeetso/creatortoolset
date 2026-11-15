@@ -26,7 +26,7 @@ import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
-import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
+import { buildAssetQuery, indexAsset, macPlace, pageOf, parseSearch, type CardRow } from "./query";
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
@@ -139,6 +139,9 @@ export function recordVersion(
     sha256: string;
     by: string;
     collectionId?: string | null;
+    /** where an uploaded file is on the computer it came from (uploads.from_path, from_device) */
+    fromPath?: string | null;
+    fromDevice?: string | null;
   },
 ): string {
   const now = Date.now();
@@ -155,9 +158,9 @@ export function recordVersion(
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
   d.prepare(
-    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
-  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now);
+    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?)`,
+  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null);
   d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(o.versionId, assetId);
   if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(o.collectionId, o.libraryId)) {
     d.prepare(
@@ -258,6 +261,8 @@ interface UploadRow {
   collection_id: string | null;
   state: string;
   direct_upload_id: string | null;
+  from_path: string | null;
+  from_device: string | null;
 }
 
 const db = () => libraryDb();
@@ -359,6 +364,8 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       sha256,
       by: row.created_by,
       collectionId: row.collection_id,
+      fromPath: row.from_path,
+      fromDevice: row.from_device,
     });
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
     d.exec("COMMIT");
@@ -386,7 +393,8 @@ libraryApp.post("/:id/uploads/check", async (c) => {
   return c.json(dup ? { duplicateOf: dup.id } : {});
 });
 
-// POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId? } → 201 { id, offset, chunkSize }
+// POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice? } → 201 { id, offset, chunkSize }
+// fromPath / fromDevice: where the file is on the Mac it is sent from (a library that keeps only proxies keeps that place)
 libraryApp.post("/:id/uploads", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -419,6 +427,8 @@ libraryApp.post("/:id/uploads", async (c) => {
   await sweepStale();
   const id = randomUUID();
   const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
+  const from = typeof body?.fromPath === "string" && body.fromPath.startsWith("/") && body.fromPath.length <= 2048 && !body.fromPath.split("/").includes("..") ? body.fromPath : null;
+  const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
   const staging = path.join(stagingDir(), id);
   // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
   const direct = libraryStore(libraryId).direct;
@@ -434,8 +444,8 @@ libraryApp.post("/:id/uploads", async (c) => {
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?)`,
     )
     .run(
       id,
@@ -448,6 +458,8 @@ libraryApp.post("/:id/uploads", async (c) => {
       collection,
       Date.now() + STAGE_DAYS * 86_400_000,
       started?.uploadId ?? null,
+      from,
+      fromDevice,
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -622,6 +634,8 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         sha256,
         by: row.created_by,
         collectionId: row.collection_id, // the folder it was dropped in
+        fromPath: row.from_path,
+        fromDevice: row.from_device,
       });
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
       d.exec("COMMIT");
@@ -816,10 +830,10 @@ libraryApp.get("/:id/assets", async (c) => {
  * card's link, api/mcp-cards.ts) or source. A clip that plays as it is plays from this disk, not from its proxy in the
  * cloud. Null: no such kind.
  */
-export function mediaFile(versionId: string, kind: string): { key?: string; type: string } | null {
-  const v = db().prepare("SELECT v.source_key, v.mime, v.probe, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
-    | { source_key: string; mime: string | null; probe: string | null; library_id: string }
-    | undefined;
+export function mediaFile(versionId: string, kind: string): { key?: string; type: string; onMac?: string } | null {
+  const v = db()
+    .prepare("SELECT v.source_key, v.mime, v.probe, v.mac_path, v.mac_device, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
+    .get(versionId) as { source_key: string; mime: string | null; probe: string | null; mac_path: string | null; mac_device: string | null; library_id: string } | undefined;
   if (!v) return null;
   const derived = (k: string) =>
     (db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = ?").get(versionId, k) as
@@ -829,6 +843,10 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
   if (kind === "thumb") return { key: derived("thumb"), type: "image/jpeg" };
   if (kind === "proxy") return { key: derived("proxy"), type: "video/mp4" };
   if (kind === "sprite") return { key: derived("sprite"), type: "image/jpeg" };
+  // the original is on a Mac (indexed there, or uploaded to a library that keeps only proxies): it plays from its proxy
+  // when it has one, and a download says where the original is
+  if (v.mac_path && kind === "source") return { type: original, onMac: macPlace(v.mac_path, v.mac_device) };
+  if (v.mac_path && kind === "play") return { key: derived("proxy"), type: "video/mp4" };
   if (kind === "play") {
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
     const proxy = p && proxiesInCloud(v.library_id) && !needsProxy(p) ? undefined : derived("proxy");
@@ -883,6 +901,7 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   }
   const file = mediaFile(versionId, kind);
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (file.onMac) return c.json({ error: `The original is on ${file.onMac}, not on this server`, code: "on_mac" }, 409);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
   // a clip whose proxy was cleared (Library settings → Storage) gets it again when it is opened
   if (kind === "play" && unproxied(v.library_id, versionId).length) {

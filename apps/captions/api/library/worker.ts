@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting, proxiesInCloud } from "./db";
+import { blobs, libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "./db";
 import { describeSlot, describeVersion } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -72,6 +72,7 @@ interface VersionRow {
   source_path: string | null;
   probe: string | null;
   mac_path: string | null;
+  from_path: string | null;
 }
 
 /** Seconds a describe should wait before it tries again, or 0 when its error is a real failure. */
@@ -209,6 +210,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     if (device) onDevice--;
     clearInterval(beat);
     release();
+    await dropOriginal(job.version_id ?? "").catch((e: unknown) => console.error("[library] dropping an original:", e));
     sortAfter(job); // A-roll or B-roll, again with what this job added (roll.ts)
     libraryChanged(job.library_id); // a picture, a transcript or the card's state: the open pages refetch
   }
@@ -276,18 +278,46 @@ export async function backfillSprite(): Promise<boolean> {
   return true;
 }
 
+/** The steps that read a version's original (the rest read its proxy once there is one, run's lighter and orProxy). */
+const READS_ORIGINAL = ["probe", "thumb", "wave", "proxy", "transcribe"];
+
+/**
+ * A video uploaded from a Mac to a library whose upload is "proxies": once its proxy is made and no step that reads the
+ * original is queued or running, the original is deleted from the library's store. The version keeps its place on the
+ * Mac (mac_path, mac_device: shown as on that Mac, downloads say so) and its source becomes the proxy, so every reader
+ * of the source (playback, the AI Editor, Caption Studio, the steps here) reads the proxy from then on. Pictures and
+ * sounds have no proxy: they stay as uploaded. True when it dropped one.
+ */
+export async function dropOriginal(versionId: string): Promise<boolean> {
+  const db = libraryDb();
+  const v = db
+    .prepare(
+      `SELECT v.source_key, a.library_id, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
+       WHERE v.id = ? AND a.kind = 'video' AND v.from_path IS NOT NULL AND v.mac_path IS NULL AND v.source_path IS NULL
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
+    )
+    .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
+  if (!v || v.source_key === v.proxy || libraryUpload(v.library_id) !== "proxies") return false;
+  // the rows first: a delete that fails leaves an unread file behind, never a version pointing at nothing
+  db.prepare("UPDATE asset_versions SET source_key = ?, mac_path = from_path, mac_device = from_device WHERE id = ?").run(v.proxy, versionId);
+  await blobs.delete(v.source_key);
+  return true;
+}
+
 async function run(job: JobRow): Promise<void> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id, a.kind, v.source_key, v.source_path, v.probe, v.mac_path FROM asset_versions v
+      `SELECT v.id, a.library_id, a.kind, v.source_key, v.source_path, v.probe, v.mac_path, v.from_path FROM asset_versions v
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
   if (!v) throw new Error("The version is gone");
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
-  // sent run here (the description from its stills, search by meaning from words)
-  if (v.mac_path) {
+  // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
+  // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
+  if (v.source_key.startsWith("mac:")) {
     if (job.kind === "embed") return embedVersion(db, v.id, job.actor);
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
@@ -341,7 +371,9 @@ async function run(job: JobRow): Promise<void> {
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
     // a photo is probed as a one-frame video but shows as itself: no proxy
-    if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id), on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
+    const onlyProxy = v.kind === "video" && !!v.from_path && libraryUpload(v.library_id) === "proxies";
+    if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
     if (video && !music && v.kind !== "image") enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
