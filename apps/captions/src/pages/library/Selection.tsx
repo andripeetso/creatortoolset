@@ -195,6 +195,8 @@ export function ClipMenu({ inTrash, moveTo, tags, on, extra }: { inTrash: boolea
 }
 
 const barButton = "h-8 gap-1.5 px-2.5";
+// the bar's menus are not modal: New tag… opens a question while its menu is still fading out, and a modal menu's lock
+// on the page can then outlive both and leave the page unclickable
 
 /** The bar for the picked clips, at the foot of the page, apart from any one clip's buttons. */
 export function PickBar({
@@ -213,7 +215,8 @@ export function PickBar({
   on: Omit<ClipMoves, "open" | "share" | "copyLink"> & { redo: (kind: string) => void; clear: () => void };
 }) {
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+    // on a narrow screen it sits above the assistant's round button while that is in a bottom corner
+    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4 max-md:[html:has(button[data-assistant-dock][data-corner^=b])_&]:bottom-20">
       <div
         data-keep-picked
         role="toolbar"
@@ -228,7 +231,7 @@ export function PickBar({
         ) : (
           <>
             {moveTo.length > 0 && (
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" className={cn(barButton, "bg-violet-600 text-white hover:bg-violet-500")} title="Move to">
                     <Folder /> <span className="hidden sm:inline">Move to</span>
@@ -239,7 +242,7 @@ export function PickBar({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="ghost" className={barButton} title="Add tag">
                   <Tag /> <span className="hidden sm:inline">Add tag</span>
@@ -256,7 +259,7 @@ export function PickBar({
         </Button>
         {!inTrash && (
           <>
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="ghost" className={barButton} title="Redo">
                   <RefreshCw /> <span className="hidden sm:inline">Redo</span>

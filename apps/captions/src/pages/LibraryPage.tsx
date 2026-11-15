@@ -147,8 +147,16 @@ export default function LibraryPage() {
   const adding = !!watch?.folders.some((f) => f.adding > 0);
 
   // ?clip= is the clip open (?asset= in older links), ?library= the library when not the first: Back closes the clip,
-  // Forward opens it again, a link opens it
-  const clipId = linked.get("clip") ?? linked.get("asset");
+  // Forward opens it again, a link opens it. Read from the address itself on Back and Forward too: the router's copy can
+  // stay behind while the clip's window is open
+  const clipIn = (p: URLSearchParams) => p.get("clip") ?? p.get("asset");
+  const [clipId, setClipId] = useState(() => clipIn(linked));
+  useEffect(() => setClipId(clipIn(linked)), [linked]);
+  useEffect(() => {
+    const onPop = () => setClipId(clipIn(new URLSearchParams(window.location.search)));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const linkedLib = linked.get("library");
   useEffect(() => {
     if (linkedLib) setLibraryId(linkedLib);
@@ -248,11 +256,18 @@ export default function LibraryPage() {
     if (libId && libId !== libraries?.[0]?.id) p.set("library", libId);
     else p.delete("library");
     // a clip opened over another (the window's arrows) takes its place: Back still closes the window
-    navigate({ search: `?${p}` }, clipId ? { replace: true, state: loc.state } : { state: { clip: true } });
+    navigate({ search: `?${p}` }, clipId ? { replace: true, state: pushedHere() ? { clip: true } : null } : { state: { clip: true } });
+    setClipId(a.id);
+  };
+  /** this page put the open clip in the history (Back closes it), rather than a link opening it */
+  const pushedHere = () => {
+    const h = window.history.state as { usr?: { clip?: boolean } | null } | null; // the browser's entry; a test's router has none
+    return !!(h && "usr" in h ? h.usr : (loc.state as { clip?: boolean } | null))?.clip;
   };
   const closeClip = () => {
     setPreview(null);
-    if ((loc.state as { clip?: boolean } | null)?.clip) return void navigate(-1);
+    setClipId(null);
+    if (pushedHere()) return void navigate(-1);
     const p = new URLSearchParams(linked);
     p.delete("clip");
     p.delete("asset");
