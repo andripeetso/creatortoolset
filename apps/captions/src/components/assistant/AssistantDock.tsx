@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, CornerDownLeft, FileText, Film, Folder, GitFork, KeyRound, MessageCircle, PanelRight, PanelRightClose, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import type { Selection } from "@contracts/providers";
@@ -33,7 +33,8 @@ import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud
 import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { whenSaid } from "@/lib/when-said";
-import { Composer, PictureOverlay } from "./Composer";
+import { Composer } from "./Composer";
+import { ChatPicture } from "@/components/chat/ChatPicture";
 import { AiPicker } from "./AiPicker";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
@@ -46,6 +47,8 @@ import { useWorkspace } from "@/lib/workspace";
 import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
 import { Steps } from "@/components/chat/Steps";
+import { QueuedRow } from "@/components/chat/QueuedRow";
+import { useFollowEnd } from "@/components/chat/useFollowEnd";
 import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { CopyButton } from "@/components/workshop/CopyButton";
 import { VideoCards } from "./VideoCard";
@@ -267,21 +270,9 @@ export function AssistantDock() {
   const showChatMode = real && chatMode;
   const layout = useChatModeLayout(showChatMode);
   useChatModeKey(real);
-  // The newest message in view. When the chat is put on screen (chat mode switched, the box opened, another chat) it is
-  // there at once, before the screen is drawn: never seen scrolling down to it (owner, 11-14). What comes in while the
-  // chat shows scrolls into view. Both go to the very end of the list, so neither moves what the other left. After the
-  // chat-mode layout above, which gives the list its width, and so its height
-  const shownAs = useRef("");
-  useLayoutEffect(() => {
-    if (collapsed && !chatMode) return void (shownAs.current = "");
-    const list = bottom.current?.parentElement;
-    if (!list) return;
-    const as = `${chatMode} ${view?.id}`;
-    // void: a browser with scroll promises returns one here, and an effect that returns anything but a function crashes
-    if (shownAs.current === as) return void list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
-    shownAs.current = as;
-    list.scrollTop = list.scrollHeight;
-  }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed, chatMode, view?.id]);
+  // The newest message in view (useFollowEnd). After the chat-mode layout above, which gives the list its width, and so
+  // its height
+  const follow = useFollowEnd(() => bottom.current?.parentElement, collapsed && !chatMode ? null : `${chatMode} ${view?.id}`, [view?.messages.length, last?.text, last?.steps?.length, view?.pending]);
   // the list folded away opens over the chat from its button, until a chat is picked
   const [listOpen, setListOpen] = useState(false);
   // the page beside the chats is the open chat's own (useChatPage): its newest card or video is what it works on
@@ -570,6 +561,7 @@ export function AssistantDock() {
   });
   // the pending highlighted text goes with this message and leaves the box
   const submit = ({ files, folders, ...d }: Draft) => {
+    follow();
     const it: Queued = {
       id: `${Date.now()}-${queue.length}`,
       ...(view?.id ? { chat: view.id } : {}),
@@ -1031,30 +1023,7 @@ export function AssistantDock() {
           {shownQueue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
               {shownQueue.map((it) => (
-                <li
-                  key={it.id}
-                  className="flex items-center gap-2 rounded-xl border bg-muted/60 px-3 py-1.5 text-[13px] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1"
-                >
-                  <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{held.includes(it.id) ? "Not sent" : "Queued"}</span>
-                  <span className="min-w-0 flex-1 truncate" title={it.text}>
-                    {it.text.trim() || attachmentsLabel(it)}
-                    {it.text.trim() && attachmentsLabel(it) ? <span className="ml-1.5 text-[11px] text-muted-foreground">+ {attachmentsLabel(it)}</span> : null}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => steer(it.id)}
-                    className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--tint)] hover:bg-[color-mix(in_srgb,var(--tint)_15%,transparent)]"
-                    title={thinking ? "Steer: stop the reply and send this now" : "Send this now"}
-                  >
-                    <CornerDownLeft className="size-3" /> {thinking ? "Steer" : "Send"}
-                  </button>
-                  <button type="button" onClick={() => editQueued(it)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground" title="Edit: back into the message box" aria-label="Edit queued message">
-                    <Pencil className="size-3" />
-                  </button>
-                  <button type="button" onClick={() => unqueue(it)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground" title="Remove from the queue" aria-label="Remove queued message">
-                    <X className="size-3" />
-                  </button>
-                </li>
+                <QueuedRow key={it.id} text={it.text} extra={attachmentsLabel(it)} held={held.includes(it.id)} thinking={thinking} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />
               ))}
             </ul>
           )}
@@ -1145,7 +1114,6 @@ export function Message({
   /** A reply a usage limit stopped, said only by the bar over the message box (it is not said twice in the chat). */
   quiet?: boolean;
 }) {
-  const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
   if (m.role === "user")
@@ -1164,7 +1132,7 @@ export function Message({
         {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length || !!m.localFiles?.length) && (
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
-              <ChatPicture key={im.id} id={im.id} name={im.name} onOpen={setBig} />
+              <ChatPicture key={im.id} src={`/api/assistant/images/${encodeURIComponent(im.id)}`} name={im.name} />
             ))}
             {m.files?.map((f) => (
               <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
@@ -1213,7 +1181,6 @@ export function Message({
             )}
           </div>
         )}
-        {big && <PictureOverlay src={big} onClose={() => setBig(null)} />}
       </div>
     );
   const steps = m.steps ?? [];
@@ -1365,18 +1332,3 @@ function Dots() {
 }
 
 /** A message's picture, opened big on a click; one emptied in Settings → Storage shows as removed and opens nothing. */
-function ChatPicture({ id, name, onOpen }: { id: string; name: string; onOpen: (src: string) => void }) {
-  const [gone, setGone] = useState(false);
-  const src = `/api/assistant/images/${encodeURIComponent(id)}`;
-  if (gone)
-    return (
-      <span className="flex size-16 items-center justify-center rounded-lg border bg-muted text-muted-foreground" title={`${name} (removed)`}>
-        <ImageOff className="size-4" aria-label="Picture removed" />
-      </span>
-    );
-  return (
-    <button type="button" onClick={() => onOpen(src)} title={name} aria-label={`Show ${name}`} className="cursor-zoom-in">
-      <img src={src} alt={name} loading="lazy" onError={() => setGone(true)} className="size-16 rounded-lg border bg-muted object-cover" />
-    </button>
-  );
-}

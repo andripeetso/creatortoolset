@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CornerDownLeft, ExternalLink, Eye, FileText, Pencil, Globe, Loader2, Mic, Paperclip, Plus, Quote, RotateCcw, Send, ShieldCheck, Square, Telescope, X } from "lucide-react";
+import { ExternalLink, Eye, FileText, Globe, Loader2, Mic, Paperclip, Plus, Quote, RotateCcw, ShieldCheck, Telescope, X } from "lucide-react";
 import { ReplyText } from "@/components/ReplyText";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type { InstagramPost } from "@/lib/instagram";
@@ -9,7 +9,12 @@ import { CopyButton } from "./CopyButton";
 import { SourceResultCard } from "./SourceResultCard";
 import { CiteButton, SelectionPill, citeAt } from "./SelectionPill";
 import { WhatChanged } from "./WhatChanged";
-import { ModelChip } from "./ModelChip";
+import { AiPicker } from "@/components/assistant/AiPicker";
+import { ChatPicture } from "@/components/chat/ChatPicture";
+import { useFollowEnd } from "@/components/chat/useFollowEnd";
+import { QueuedRow } from "@/components/chat/QueuedRow";
+import { ICON_BTN, MicButton, SendButton, VoiceDone, VoiceError, VoiceStatus, boxClass, useChatVoice } from "@/components/chat/MessageBox";
+import { cn } from "@/lib/utils";
 import { Steps, type Step } from "@/components/chat/Steps";
 import { Notice } from "./Notice";
 import { ChipComposer, numbered, readable, type ComposerHandle } from "./ChipComposer";
@@ -141,8 +146,6 @@ export function ChatPane({
   const [now, setNow] = useState(() => Date.now());
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<ComposerHandle>(null);
-  // follow the reply only while the reader is at the bottom; a scroll up to re-read stays put
-  const pinnedToEnd = useRef(true);
   const sending = useRef(false);
   // Cite on the AI's replies: select words, a pill where you let go
   const [cite, setCite] = useState<{ text: string; at: { x: number; y: number } } | null>(null);
@@ -161,10 +164,8 @@ export function ChatPane({
   const liveBlocks = live?.edits?.blockIds?.length ?? 0;
   const liveSteps = live?.steps?.length ?? 0;
 
-  useEffect(() => {
-    const el = listRef.current;
-    if (el && pinnedToEnd.current) el.scrollTop = el.scrollHeight;
-  }, [messages.length, thinking, liveText, liveBlocks, liveSteps]);
+  // follow the reply only while the reader is at the bottom; a scroll up to re-read stays put
+  const follow = useFollowEnd(() => listRef.current, draftKey, [messages.length, thinking, liveText, liveBlocks, liveSteps]);
 
   useEffect(() => {
     if (text) localStorage.setItem(draftKey, text);
@@ -306,7 +307,7 @@ export function ChatPane({
     const next = queue[0];
     if (!next || thinking || held || !activeDoc || !aiAvailable || sending.current) return;
     sending.current = true;
-    pinnedToEnd.current = true;
+    follow();
     void deliver(next)
       .catch(() => false)
       .then((ok) => {
@@ -362,7 +363,7 @@ export function ChatPane({
     const sentImages = images;
     const sentFiles = pendingFiles;
     sending.current = true;
-    pinnedToEnd.current = true;
+    follow();
     try {
       const ok = await deliver({ id: "", text: sentText, pasted: sentPasted, images: sentImages, files: sentFiles, quotes: quotesIn(sentText) });
       if (!ok) return;
@@ -382,7 +383,13 @@ export function ChatPane({
     }
   };
   // Undo puts the question back in the box when the box is empty, so the wording can be changed and sent again.
+  const aiChip = onAiChange ? <AiPicker ai={ai} onChange={onAiChange} /> : null;
   const composerBusy = text.trim() !== "" || pasted.length > 0 || images.length > 0 || pendingFiles.length > 0;
+  // talking instead of typing: the words go at the end of the box, for you to check before sending
+  const v = useChatVoice((said) => {
+    setText((t) => (t.trim() ? `${t.trimEnd()} ${said}` : said));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  });
   const undo = (m: ChatMessage) => {
     onRevert(m);
     const at = messages.indexOf(m);
@@ -408,10 +415,6 @@ export function ChatPane({
     <div className="flex h-full min-h-0 flex-col bg-transparent">
       <div
         ref={listRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          pinnedToEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
         onMouseUp={onQuote ? pickCite : undefined}
         className="clears-bubble min-h-0 flex-1 overflow-y-scroll px-3 py-2 bars:pr-1"
       >
@@ -452,10 +455,7 @@ export function ChatPane({
                 {m.images?.length && sessionId ? (
                   <p className="mt-1.5 flex flex-wrap gap-1.5">
                     {m.images.map((im, i) => (
-                      <a key={im.id} href={imageUrl(sessionId, im.id)} target="_blank" rel="noreferrer" className="relative" title={im.name}>
-                        <img src={imageUrl(sessionId, im.id)} alt={im.name} loading="lazy" className="h-20 w-16 rounded-md border border-border object-cover" />
-                        <span className="absolute left-0.5 top-0.5 rounded bg-black/70 px-1 text-[9px] tabular-nums text-white">{i + 1}</span>
-                      </a>
+                      <ChatPicture key={im.id} src={imageUrl(sessionId, im.id)} name={im.name} badge={i + 1} className="h-20 w-16" />
                     ))}
                   </p>
                 ) : null}
@@ -626,24 +626,11 @@ export function ChatPane({
         )}
         {queue.length > 0 && (
           <ul className="mb-1.5 flex flex-col gap-1">
-            {queue.map((it, i) => (
-              <li key={it.id} className="group flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-[13px] text-foreground">
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">{i === 0 && held ? "Not sent" : "Queued"}</span>
-                <span className="min-w-0 flex-1 truncate" title={readable(it.text, it.quotes ?? [])}>
-                  {readable(it.text, it.quotes ?? []).trim() || [it.images.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", it.pasted.map((p) => p.name).join(", "), (it.files ?? []).map((f) => f.name).join(", ")].filter(Boolean).join(", ")}
-                  {it.text.trim() && (it.images.length || it.pasted.length || it.files?.length) ? <span className="ml-1.5 text-[11px] text-muted-foreground">+{it.images.length + it.pasted.length + (it.files?.length ?? 0)}</span> : null}
-                </span>
-                <button type="button" onClick={() => steer(it.id)} className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-violet-300 hover:bg-violet-500/15" title={thinking ? "Steer: stop the reply and send this now" : "Send this now"}>
-                  <CornerDownLeft className="h-3 w-3" /> {thinking ? "Steer" : "Send"}
-                </button>
-                <button type="button" onClick={() => editQueued(it)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground" title="Edit: back into the message box" aria-label="Edit queued message">
-                  <Pencil className="h-3 w-3" />
-                </button>
-                <button type="button" onClick={() => unqueue(it)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground" title="Remove from the queue" aria-label="Remove queued message">
-                  <X className="h-3 w-3" />
-                </button>
-              </li>
-            ))}
+            {queue.map((it, i) => {
+              const words = readable(it.text, it.quotes ?? []);
+              const extra = [it.images.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...it.pasted.map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
+              return <QueuedRow key={it.id} text={words} extra={extra} held={i === 0 && held} thinking={thinking} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />;
+            })}
           </ul>
         )}
         {!aiAvailable ? <Notice tone="warn" className="mb-2">No AI is set up for you yet: connect one in Settings → Providers.</Notice> : null}
@@ -724,8 +711,10 @@ export function ChatPane({
             ))}
           </ul>
         )}
+        <VoiceError v={v} />
         <div
-          className="flex cursor-text items-end gap-2 rounded-2xl border border-border bg-background px-2 py-2"
+          className={cn(boxClass(v.recording), "cursor-text pl-1.5")}
+          onKeyDown={(e) => v.recording && e.key === "Escape" && v.voice.cancel()}
           onMouseDown={(e) => {
             // The box is bigger than the text field: a click on its padding puts you in it too.
             if (e.target !== e.currentTarget) return;
@@ -733,7 +722,7 @@ export function ChatPane({
             inputRef.current?.focus();
           }}
         >
-          <ChipComposer
+          {v.recording || v.writing ? <VoiceStatus v={v} /> : <ChipComposer
             ref={inputRef}
             value={text}
             onChange={setText}
@@ -759,26 +748,16 @@ export function ChatPane({
             onEditQuote={(id, at) => onEditQuote?.(id, at)}
             onRemoveQuote={(id) => onUnquote?.(id)}
             onAddQuote={(q) => onQuote?.(q)}
-          />
-          <button type="button" onClick={() => pickRef.current?.click()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground" title="Attach files: pictures, text files, PDFs. Or drop or paste them here." aria-label="Attach files">
+          />}
+          {v.recording ? <VoiceDone v={v} /> : <>
+          <button type="button" onClick={() => pickRef.current?.click()} className={cn(ICON_BTN, "text-muted-foreground hover:bg-muted hover:text-foreground")} title="Attach files: pictures, text files, PDFs. Or drop or paste them here." aria-label="Attach files">
             <Paperclip className="h-4 w-4" />
           </button>
+          <MicButton v={v} />
+          {aiChip}
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
-          {thinking && !composerBusy ? (
-            <button type="button" onClick={onStop} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white hover:bg-violet-500" title="Stop" aria-label="Stop">
-              <Square className="h-3.5 w-3.5 fill-current" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={(!text.trim() && !pasted.length && !images.length && !pendingFiles.length) || !activeDoc || !aiAvailable}
-              className={`flex h-9 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 ${thinking || queue.length ? "px-3 text-[12px]" : "w-9"}`}
-              title={thinking || queue.length ? "Queue: sends when the reply is done" : "Send"}
-            >
-              {thinking || queue.length ? "Queue" : <Send className="h-4 w-4" />}
-            </button>
-          )}
+          <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
+          </>}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <input
@@ -860,7 +839,6 @@ export function ChatPane({
               ))}
             </span>
           ) : null}
-          {onAiChange ? <ModelChip ai={ai} onChange={onAiChange} /> : null}
           {audit}
           {messages.some((m) => m.text.trim()) ? (
             <CopyButton text={() => chatText(messages)} title="Copy the whole chat as plain text" className={`${chipIdle} ml-auto py-1.5`} />

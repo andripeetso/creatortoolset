@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Camera, Check, FileText, Film, Folder, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
-import { BARS, useVoiceInput } from "@/lib/voice-input";
-import { tell, useMicMode } from "@/components/settings/ThisMacSection";
+import { Camera, FileText, Film, Folder, Loader2, Paperclip, Quote, X } from "lucide-react";
+import { ICON_BTN, MicButton, SendButton, VoiceDone, VoiceError, VoiceStatus, boxClass, useChatVoice } from "@/components/chat/MessageBox";
 import { attachScreen } from "@/lib/assistant";
 import { canSnapshot } from "@/lib/page-context";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -57,12 +56,11 @@ export function Composer({
   const [shotFailed, setShotFailed] = useState(false);
   const { text } = draft;
   const setText = (t: string) => setDraft((d) => ({ ...d, text: t }));
-  const voice = useVoiceInput((said) => {
+  const v = useChatVoice((said) => {
     setDraft((d) => ({ ...d, text: d.text.trim() ? `${d.text.trimEnd()} ${said}` : said }));
     requestAnimationFrame(() => box.current?.focus());
   });
-  // in the Mac app the mic is the way into its own dictation, and gone once that is set up (the talk key types here)
-  const { mic, watch } = useMicMode();
+  const { voice, recording, writing } = v;
 
   // the box grows with what you write, up to a few lines
   useLayoutEffect(() => {
@@ -92,9 +90,7 @@ export function Composer({
     }
   };
 
-  const recording = voice.phase === "recording";
-  const writing = voice.phase === "writing";
-  const iconBtn = "flex size-8 shrink-0 items-center justify-center rounded-full transition-all duration-200 disabled:pointer-events-none";
+  const iconBtn = ICON_BTN;
   const chipX =
     "absolute -top-1.5 -right-1.5 rounded-full border bg-background p-0.5 text-muted-foreground opacity-0 shadow-sm hover:text-foreground focus-visible:opacity-100 group-hover/chip:opacity-100 [@media(hover:none)]:opacity-100";
 
@@ -108,14 +104,7 @@ export function Composer({
           </button>
         </p>
       )}
-      {voice.error && (
-        <p role="alert" className="flex items-center gap-2 px-1 text-xs text-destructive motion-safe:animate-in motion-safe:fade-in">
-          <span className="min-w-0 flex-1 truncate" title={voice.error}>{voice.error}</span>
-          <button type="button" onClick={voice.clearError} aria-label="Dismiss" className="opacity-70 hover:opacity-100">
-            <X className="size-3.5" />
-          </button>
-        </p>
-      )}
+      <VoiceError v={v} />
 
       {quote && (
         <div className="flex items-start gap-2 rounded-xl border bg-muted/60 px-3 py-1.5 text-xs motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1">
@@ -217,36 +206,11 @@ export function Composer({
       )}
 
       <div
-        className={cn(
-          "flex items-end gap-1.5 rounded-[22px] border bg-background p-1.5 pl-3.5 shadow-sm transition-[border-color,box-shadow] duration-200",
-          "focus-within:border-[color-mix(in_srgb,var(--tint)_60%,transparent)] focus-within:shadow-[0_0_0_3px] focus-within:shadow-[color:color-mix(in_srgb,var(--tint)_15%,transparent)]",
-          recording && "border-[color-mix(in_srgb,var(--tint)_60%,transparent)] shadow-[0_0_0_3px] shadow-[color:color-mix(in_srgb,var(--tint)_15%,transparent)]",
-        )}
+        className={boxClass(recording)}
         onKeyDown={(e) => recording && e.key === "Escape" && voice.cancel()}
       >
-        {recording ? (
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 motion-safe:animate-in motion-safe:fade-in" aria-live="polite">
-            <span className="size-2 shrink-0 rounded-full bg-red-500 motion-safe:animate-pulse" aria-hidden />
-            <span className="w-9 shrink-0 text-xs tabular-nums text-muted-foreground">
-              {Math.floor(voice.seconds / 60)}:{String(voice.seconds % 60).padStart(2, "0")}
-            </span>
-            <span className="flex h-6 flex-1 items-center justify-end gap-[2px] overflow-hidden" aria-label="Listening">
-              {voice.bars.map((b, i) => (
-                <span
-                  key={i}
-                  className="w-[3px] shrink-0 rounded-full bg-[var(--tint)] transition-[height] duration-75"
-                  style={{ height: `${Math.max(3, Math.min(24, b * 24))}px`, opacity: 0.35 + (i / BARS) * 0.65 }}
-                />
-              ))}
-            </span>
-          </div>
-        ) : writing ? (
-          <p className="flex h-8 flex-1 items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            {voice.progress !== null && voice.progress < 1
-              ? `Getting the speech model ready · ${Math.round(voice.progress * 100)}%`
-              : "Writing it down…"}
-          </p>
+        {recording || writing ? (
+          <VoiceStatus v={v} />
         ) : (
           <textarea
             ref={box}
@@ -262,14 +226,7 @@ export function Composer({
         )}
 
         {recording ? (
-          <>
-            <button type="button" onClick={voice.cancel} className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground")} aria-label="Cancel" title="Cancel (Esc)">
-              <X className="size-4" />
-            </button>
-            <button type="button" onClick={voice.toggle} className={cn(iconBtn, "bg-[var(--tint)] text-white hover:brightness-110")} aria-label="Done talking" title="Done: write it down">
-              <Check className="size-4" />
-            </button>
-          </>
+          <VoiceDone v={v} />
         ) : (
           <>
             <input
@@ -325,35 +282,9 @@ export function Composer({
                 <Paperclip className="size-4" />
               </button>
             )}
-            {mic !== "none" && (
-              <button
-                type="button"
-                onClick={mic === "setup" ? () => { tell("dictation:guide"); watch(); } : voice.toggle}
-                disabled={writing}
-                className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
-                aria-label={mic === "setup" ? "Dictation, in any app" : "Talk instead of typing"}
-                title={mic === "setup" ? "Dictation, in any app" : "Talk instead of typing"}
-              >
-                <Mic className="size-4" />
-              </button>
-            )}
+            <MicButton v={v} />
             {aiPicker}
-            {waiting && empty ? (
-              <button type="button" onClick={onStop} className={cn(iconBtn, "bg-foreground text-background hover:opacity-80")} aria-label="Stop the reply" title="Stop">
-                <Square className="size-3 fill-current" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={send}
-                disabled={empty || writing || uploading}
-                className={cn(iconBtn, !empty && !uploading ? "scale-100 bg-[var(--tint)] text-white hover:brightness-110" : "scale-90 bg-muted text-muted-foreground")}
-                aria-label={waiting ? "Queue" : "Send"}
-                title={uploading ? "Waiting for the video to upload" : waiting ? "Queue: sends when the reply is done (Enter)" : "Send (Enter)"}
-              >
-                <ArrowUp className="size-4" />
-              </button>
-            )}
+            <SendButton empty={empty} waiting={waiting} blocked={uploading ? "Waiting for the video to upload" : undefined} disabled={writing} onSend={send} onStop={onStop} />
           </>
         )}
       </div>
