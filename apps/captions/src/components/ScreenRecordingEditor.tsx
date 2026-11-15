@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { createPortal } from "react-dom";
 import { Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   alphaFileName,
   cameraCut,
   cameraPlace,
+  deadEdges,
   defaultCamera,
   defaultLook,
   faceFollower,
@@ -24,7 +24,6 @@ import {
   type ScreenEvents,
   type ScreenLook,
 } from "@/lib/screen-recording";
-import { clock } from "@/lib/screen-timeline";
 import { renderScreenVideo } from "@/lib/screen-export";
 import { canSaveTransparent, transparentVideoMade } from "@/lib/mac-record";
 import type { ScreenSource } from "@/lib/screen-source";
@@ -33,6 +32,7 @@ import { Timeline } from "@/components/screen-editor/Timeline";
 import { Segmented } from "@/components/screen-editor/controls";
 import { useMacRecorderState } from "@/components/settings/ThisMacSection";
 import { usePlayer } from "@/components/screen-editor/usePlayer";
+import { ExportDialog } from "@/components/screen-editor/ExportDialog";
 
 /** A way out for the finished video. `run` gets it (`name` has no extension) and reports its own steps. */
 export type EditorAction = {
@@ -55,6 +55,39 @@ const typing = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 };
+
+/** A window's dead corners and edge lines (deadEdges), read from a frame half a second in; null where none or it can't be read. */
+async function readDead(url: string): Promise<ScreenEvents["dead"] | null> {
+  const v = document.createElement("video");
+  v.muted = true;
+  v.preload = "auto";
+  v.src = url;
+  try {
+    await new Promise<void>((done, fail) => {
+      setTimeout(() => fail(new Error("too slow")), 10_000);
+      v.onloadeddata = () => {
+        v.onseeked = () => done();
+        v.currentTime = Math.min(0.5, (v.duration || 1) / 2);
+      };
+      v.onerror = () => fail(new Error("unreadable"));
+    });
+    const w = v.videoWidth;
+    const h = v.videoHeight;
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (!ctx || !w || !h) return null;
+    ctx.drawImage(v, 0, 0);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    return deadEdges((x, y) => Math.max(px[(y * w + x) * 4], px[(y * w + x) * 4 + 1], px[(y * w + x) * 4 + 2]), w, h);
+  } catch {
+    return null; // a picture from elsewhere can't be read: its corners stay as recorded
+  } finally {
+    v.removeAttribute("src");
+    v.load();
+  }
+}
 
 /**
  * The editor of a screen recording: the picture with its look, playing as it opens; under it the recording and its
@@ -95,9 +128,10 @@ export function ScreenRecordingEditor({
   const [tab, setTab] = useState<InspectorTab>("background");
   const [uhd, setUhd] = useState(() => {
     try {
-      return localStorage.getItem(SIZE_KEY) === "4k";
+      // 4K unless 1080p was picked: a Retina recording's text is about 4K's size, and blurs at half that
+      return localStorage.getItem(SIZE_KEY) !== "hd";
     } catch {
-      return false;
+      return true;
     }
   });
   const [exporting, setExporting] = useState(false);
@@ -135,7 +169,7 @@ export function ScreenRecordingEditor({
     return () => {
       gone = true;
     };
-  }, [events]);
+  }, [events?.cursors]);
   const mac = useMacRecorderState();
   const canFind = !!source.findFaces && !!mac && !!mac.faces;
   const findFaces = async () => {
@@ -162,6 +196,8 @@ export function ScreenRecordingEditor({
         if (!events) throw new Error("This recording has no pointer log");
         loaded.current = { events, look };
         setEvents(events);
+        // a window's recording has black corners: read them from a frame, so they are drawn see-through
+        if (!events.dead) void readDead(sourceRef.current.url).then((dead) => dead && setEvents((e) => (e ? { ...e, dead } : e)));
       })
       .catch((e: Error) => setError(e.message));
     // the url names the recording; a new source for the same one must not reload and lose edits
@@ -409,7 +445,6 @@ export function ScreenRecordingEditor({
   const sizes = look ? { hd: outputSize(look.shape, width, height, false), uhd: outputSize(look.shape, width, height, true) } : null;
   // no background (only where the see-through video can be made): one way out, at 1080p
   const clear = look?.background === "none";
-  const size = sizes && (uhd && !clear ? sizes.uhd : sizes.hd);
   const kept = look ? trimOf(look, duration) : null;
   // where zooms fill the whole frame, none is shallower than what covers it: the panel and the timeline say that depth
   const shape = (width && height ? width / height : player.ratio()) || 16 / 9;
@@ -430,64 +465,39 @@ export function ScreenRecordingEditor({
           <Loader2 className="animate-spin" /> {making.step} {making.pct}% · Stop
         </Button>
       ) : (
-        <Popover open={exporting} onOpenChange={setExporting}>
-          <PopoverTrigger asChild>
-            <Button size="sm" disabled={!look} className="bg-violet-600 text-white hover:bg-violet-500">
-              <Upload /> Export
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-72 space-y-3 border-zinc-800 bg-zinc-950 p-3 text-zinc-100">
-            {size && kept && (
-              <>
-                {!clear && (
-                  <Segmented
-                    label="Video size"
-                    value={uhd ? "4k" : "hd"}
-                    options={[
-                      { id: "hd", label: "1080p" },
-                      { id: "4k", label: "4K" },
-                    ]}
-                    onChange={(v) => {
-                      setUhd(v === "4k");
-                      try {
-                        localStorage.setItem(SIZE_KEY, v);
-                      } catch {
-                        // kept for this visit only
-                      }
-                    }}
-                  />
-                )}
-                <p className="text-center text-[11px] tabular-nums text-zinc-400">
-                  {size.width} × {size.height} pixels · {clock(kept.end - kept.start, true)}
-                </p>
-              </>
-            )}
-            <div className="space-y-1.5">
-              {clear && (
-                <Button
-                  size="sm"
-                  title="Makes a .mov with a transparent background (ProRes 4444) where you choose, to lay over other video"
-                  onClick={() => void run(null)}
-                  className="w-full bg-violet-600 text-white hover:bg-violet-500"
-                >
-                  Save transparent video…
-                </Button>
-              )}
-              {(clear ? [] : actions).map((a) => (
-                <Button
-                  key={a.label}
-                  size="sm"
-                  title={a.title}
-                  variant={a.primary ? "default" : "outline"}
-                  onClick={() => void run(a)}
-                  className={cn("w-full", a.primary && "bg-violet-600 text-white hover:bg-violet-500")}
-                >
-                  {a.label}
-                </Button>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
+        <>
+          <Button size="sm" disabled={!look} onClick={() => setExporting(true)} className="bg-violet-600 text-white hover:bg-violet-500">
+            <Upload /> Export
+          </Button>
+          {look && events && sizes && kept && (
+            <ExportDialog
+              open={exporting}
+              onOpenChange={setExporting}
+              name={meta.name}
+              look={look}
+              events={events}
+              hasCamera={!!source.cameraUrl}
+              sizes={sizes}
+              uhd={uhd}
+              onUhd={(v) => {
+                setUhd(v);
+                try {
+                  localStorage.setItem(SIZE_KEY, v ? "4k" : "hd");
+                } catch {
+                  // kept for this visit only
+                }
+              }}
+              length={kept.end - kept.start}
+              whole={duration}
+              clear={clear}
+              ways={
+                clear
+                  ? [{ label: "Export transparent video…", primary: true, title: "Makes a .mov with a transparent background (ProRes 4444) where you choose, to lay over other video", run: () => void run(null) }]
+                  : actions.map((a) => ({ label: a.label, title: a.title, primary: a.primary, run: () => void run(a) }))
+              }
+            />
+          )}
+        </>
       )}
     </>
   );
@@ -545,7 +555,7 @@ export function ScreenRecordingEditor({
                 onPointerMove={(e) => {
                   if (e.buttons === 0) e.currentTarget.style.cursor = camAt(e) ? "grab" : "";
                 }}
-                className={cn("cursor-pointer rounded-md shadow-2xl transition-opacity", player.ready && look ? "opacity-100" : "opacity-0")}
+                className={cn("cursor-pointer shadow-2xl transition-opacity", player.ready && look ? "opacity-100" : "opacity-0")}
               />
             </div>
             {(!player.ready || !look) && (

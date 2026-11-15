@@ -124,6 +124,7 @@ type TabProps = { look: ScreenLook; initial: ScreenLook; change: (patch: Partial
 function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClear: boolean }) {
   const [from, to] = backgroundStops(look);
   const kind = look.background === "none" ? "none" : look.background === "color" ? "color" : "gradient";
+  const edgeToEdge = look.padding === 0 && look.radius === 0;
   return (
     <>
       {/* the frame's shape is chosen above the picture */}
@@ -175,6 +176,20 @@ function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClea
       </Group>
 
       <Group>
+        {/* the recording alone: no padding, corners or shadow. Back on, they are as the editor opened with them (or as at first) */}
+        <SwitchRow
+          label="Edge to edge"
+          checked={edgeToEdge}
+          onChange={(on) =>
+            change(
+              on
+                ? { padding: 0, radius: 0, shadow: false }
+                : initial.padding > 0
+                  ? { padding: initial.padding, radius: initial.radius, shadow: initial.shadow, shadowAmount: initial.shadowAmount }
+                  : { padding: 0.06, radius: 0.018, shadow: true },
+            )
+          }
+        />
         <SliderRow label="Padding" value={look.padding} min={0} max={0.15} step={0.005} format={pct} initial={initial.padding} onChange={(padding) => change({ padding })} />
         <SliderRow label="Rounded corners" value={look.radius} min={0} max={0.06} step={0.002} format={(v) => `${Math.round(v * 1000)}`} initial={initial.radius} onChange={(radius) => change({ radius })} />
         {/* the shadow falls on the padding: with none, there is nothing to see */}
