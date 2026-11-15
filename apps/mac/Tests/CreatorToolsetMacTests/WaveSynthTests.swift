@@ -2,7 +2,7 @@ import XCTest
 @testable import CreatorToolsetMac
 
 /// The chat-mode wave's sound (WaveSound.swift), made as the wave makes it with the wee the app carries: a click is
-/// silent, a hold builds, the pop is louder than the hold and never clips, the wee is gone within its own length, and a
+/// silent, a hold builds, the pop is about as loud as the hold and never clips, the wee is gone within its own length, and a
 /// shorter hold's wee is shorter.
 final class WaveSynthTests: XCTestCase {
     private func play(held: Double, seconds: Double) -> [Float] {
@@ -39,12 +39,14 @@ final class WaveSynthTests: XCTestCase {
         XCTAssertEqual(play(held: 90, seconds: 2).map(abs).max(), 0)
     }
 
-    func testAHoldBuildsThenPopsLouderAndDiesAway() {
+    func testAHoldBuildsThenPopsAndDiesAway() {
         let s = play(held: WaveClock.longest, seconds: 5)
         XCTAssertFalse(s.contains { $0.isNaN })
         let early = loudness(s, from: 0.3, to: 0.5), late = loudness(s, from: 1.7, to: 1.95), pop = loudness(s, from: 2.0, to: 2.2)
         XCTAssertGreaterThan(late, early * 3)
-        XCTAssertGreaterThan(pop, late * 1.5)
+        // the wee is heard, but no louder than the oooo (owner, 11-15: louder was "still a bit loud")
+        XCTAssertGreaterThan(pop, late * 0.6)
+        XCTAssertLessThan(pop, late * 1.3)
         XCTAssertLessThan(s.map(abs).max()!, 0.9)
         XCTAssertLessThan(loudness(s, from: 3.6, to: 4), 0.003)
         // smooth: no sample jumps far from the one before (noise, a click)

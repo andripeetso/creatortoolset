@@ -26,6 +26,10 @@ struct WaveSynth {
     /// The tone's pitch and loudness on the last sample, where the handover to the wee starts from.
     private var freq: Float = 220, amp: Float = 0
     private var popAge: Float = 10, from: (freq: Float, amp: Float) = (220, 0), weeLoud: Float = 0, weeEnd: Float = 0
+    /// Where in the wee it is (samples), and its two low-pass stages (it goes off into the distance).
+    private var weeAt: Float = 0, far1: Float = 0, far2: Float = 0
+    /// The soft pop under the wee's start: how loud, and where its wave is.
+    private var popLoud: Float = 0, popPhase: Float = 0
 
     init(rate: Float) { self.rate = rate }
 
@@ -47,6 +51,11 @@ struct WaveSynth {
         weeLoud = loud * (0.6 + 0.4 * size)
         weeEnd = Float(wee.count) / weeRate * (0.5 + 0.5 * size)
         from = (freq, amp)
+        weeAt = 0
+        far1 = 0
+        far2 = 0
+        popLoud = weeLoud
+        popPhase = 0
         h = 0
         popAge = 0
     }
@@ -71,7 +80,7 @@ struct WaveSynth {
             if tone > tau { tone -= tau }
             // and swells over 30 ms from the oooo's loudness to the wee's (a little under its opening, so it leads in)
             let r = min(popAge / 0.03, 1), swell = r * r * (3 - 2 * r)
-            let loud = 0.48 * from.amp + (0.135 * weeLoud - 0.48 * from.amp) * swell
+            let loud = 0.48 * from.amp + (0.087 * weeLoud - 0.48 * from.amp) * swell
             bridge = loud * sqrt(max(1 - into * into, 0)) * (sin(tone) + 0.12 * sin(2 * tone))
         } else {
             // while held: the oooo, a soft round tone rising as the screen is drawn in, wobbling a little as it goes wild
@@ -85,22 +94,36 @@ struct WaveSynth {
                 out += amp * (sin(tone) + 0.12 * sin(2 * tone))
             }
         }
+        // a slight soft pop as it lets go (owner, 11-15): a round bubble chirping up a little, no click, gone in 0.1 s
+        var bubble: Float = 0
+        if popAge < 0.15 {
+            popPhase += 2 * Float.pi * 240 * (1 + 0.7 * (1 - exp(-popAge / 0.012))) * dt
+            bubble = 0.07 * popLoud * min(popAge / 0.003, 1) * exp(-popAge / 0.03) * sin(popPhase)
+        }
         var voice: Float = 0
         if popAge < weeEnd {
-            let at = popAge * weeRate, i = Int(at)
+            // it goes off into the distance (owner, 11-15: "the wee should go to the distance more"): duller (3.5 kHz down
+            // to 700 Hz), quieter, and a little lower, as something moving away
+            let away = min(popAge / weeEnd, 1), far = away * away * (3 - 2 * away)
+            let i = Int(weeAt)
             if i + 1 < wee.count {
-                let s = wee[i] + (wee[i + 1] - wee[i]) * (at - Float(i))
+                let raw = wee[i] + (wee[i + 1] - wee[i]) * (weeAt - Float(i))
+                weeAt += weeRate / rate * (1 - 0.05 * far)
+                let k = 1 - exp(-2 * Float.pi * 3500 * pow(0.2, far) / rate)
+                far1 += (raw - far1) * k
+                far2 += (far1 - far2) * k
+                let s = far2 / (1 + 2.5 * far)
                 // a shorter wee fades out over its second half
                 let cut = Float(wee.count) / weeRate
                 let f = weeEnd < cut ? min(max((popAge - 0.5 * weeEnd) / (0.5 * weeEnd), 0), 1) : 0
                 let fade = cos(f * Float.pi / 2)
-                voice = 0.17 * weeLoud * into * fade * fade * s
+                voice = 0.11 * weeLoud * into * fade * fade * s
             }
         }
         if popAge < 10 { popAge += dt }
-        // (the oooo peaks about as loud as the Mac's own "Pop"; the wee only a little louder: owner, 11-15, 5 dB louder
-        // than now was "a bit too loud compared to the ooh")
-        return tanh(out * 1.2) * 0.4 + bridge + voice
+        // (the oooo peaks about as loud as the Mac's own "Pop"; the wee starts about as loud as the oooo ends: owner,
+        // 11-15, 9 then 4 dB louder were "a bit too loud compared to the ooh", "still a bit loud")
+        return tanh(out * 1.2) * 0.4 + bridge + bubble + voice
     }
 }
 
