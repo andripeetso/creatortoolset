@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Settings2 } from "lucide-react";
-import { NEEDS, type Collection, type LibraryEstimate, type LibrarySpace, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { NEEDS, type Collection, type LibraryEstimate, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -11,7 +11,9 @@ import { ORGANIZE } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
 import { redoKinds } from "./Selection";
-import { LibraryStorageSettings } from "../LibraryStorage";
+import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
+import { thisMacBridge } from "@/lib/thisMac";
+import { UploadSwitch, uploadSwitchApplies } from "./UploadSwitch";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
@@ -72,7 +74,7 @@ export function LibrarySettings({
             {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
             {open && <OrganizeRow library={library} onChange={onChange} onError={onError} />}
             <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
-              {(saved) => open && <SpaceRows library={library} cloud={!!saved?.proxies} onChange={onChange} onError={onError} />}
+              {(saved) => open && <SpaceRows library={library} saved={saved} onThisComputer={watch.allowed} onChange={onChange} onError={onError} />}
             </LibraryStorageSettings>
             {open && <AiSwitches library={library} onChange={onChange} onError={onError} />}
             {open && <RedoAll library={library} onError={onError} />}
@@ -160,21 +162,47 @@ function OrganizeRow({ library, onChange, onError }: { library: LibrarySummary; 
   );
 }
 
-const size = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : n > 0 ? "under 1 MB" : "nothing");
+const size = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : "under 1 MB");
+const files = (n: number) => `${n.toLocaleString()} ${n === 1 ? "file" : "files"}`;
 
 /**
- * The library's own made files (api/library/space.ts): the proxies switch, what the proxies take with Clear, the cards'
- * pictures, and the downloaded speech and search models with Clear. The person's own files are never in it. `cloud`:
- * the proxies are kept in the cloud, one for every video, so neither the switch nor Clear would do anything there.
+ * Where the library's videos are, in a few words (api/library/space.ts videos): on a Mac and not uploaded, read where
+ * they are on this computer, or stored by the server (its disk or a bucket, with the size). An empty library says
+ * where new files go. `onMac`: the Mac app with the server elsewhere, and its upload switch.
  */
-function SpaceRows({ library, cloud, onChange, onError }: { library: LibrarySummary; cloud: boolean; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+export function videoPlace(v: LibrarySpace["videos"], o: { saved: LibraryStorage | null; onThisComputer: boolean; onMac: { upload: boolean } | null }): string {
+  const here = thisComputer();
+  const cloud = o.saved && o.saved.kind !== "local" && !o.saved.proxies ? storeName(o.saved) : null;
+  const stored = cloud ? `uploaded to ${cloud}` : o.onThisComputer ? `on ${here}` : "uploaded to the server";
+  const mac = thisMacBridge() ? "this Mac" : "a Mac";
+  if (!v.onMac && !v.inPlace && !v.stored.files) {
+    const next = o.onMac && !o.onMac.upload ? `on ${mac}, not uploaded` : stored;
+    return next[0]!.toUpperCase() + next.slice(1);
+  }
+  return [
+    v.onMac ? `${files(v.onMac)} on ${mac}, not uploaded` : "",
+    v.inPlace ? `${files(v.inPlace)} on ${here}` : "",
+    v.stored.files ? `${files(v.stored.files)} ${stored}, ${size(v.stored.bytes)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * Where the files are, and what the library makes (api/library/space.ts): the videos, the upload switch in the Mac app
+ * with the server elsewhere, the proxies switch and what they take with Clear, the thumbnails, and the downloaded speech
+ * and search models with Clear. The person's own files are never cleared. Proxies kept in the cloud (one for every
+ * video) have no switch and no Clear: both would do nothing there.
+ */
+function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { library: LibrarySummary; saved: LibraryStorage | null; onThisComputer: boolean; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
+  const cloud = saved?.proxies ?? null;
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
-  useEffect(() => void read(), [library.id, cloud]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => void read(), [library.id, !!cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
       what === "proxies"
-        ? { title: "Clear the proxies?", body: `They take ${size(bytes)}. Each is made again when a clip that needs one is opened. Your own footage is not touched.`, ok: "Clear" }
+        ? { title: "Clear the proxies?", body: `They take ${size(bytes)}. Each is generated again when a clip that needs one is opened. Your own footage is not touched.`, ok: "Clear" }
         : { title: "Clear the speech and search models?", body: `They take ${size(bytes)} and download again the next time they are needed. Your own footage is not touched.`, ok: "Clear" },
     );
     if (!ok) return;
@@ -185,19 +213,22 @@ function SpaceRows({ library, cloud, onChange, onError }: { library: LibrarySumm
     updateLibrary(library.id, { settings: { proxy: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
+  const onMac = uploadSwitchApplies(onThisComputer) ? { upload: library.settings.upload } : null;
   return (
     <>
+      {space && <Row title="Video files" description={videoPlace(space.videos, { saved, onThisComputer, onMac })} />}
+      {onMac && <UploadSwitch library={library} onChange={onChange} onError={onError} />}
       {!cloud && (
         <Row
-          title="Make proxies"
-          description="For videos this window can't play as they are"
-          control={<Switch aria-label="Make proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
+          title="Generate proxies"
+          description="Smaller copies of 4K, 10-bit and camera files, for smooth playback"
+          control={<Switch aria-label="Generate proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
         />
       )}
       {space && (
         <Row
           title="Proxies"
-          description={size(space.proxies.bytes)}
+          description={cloud ? `In ${storeName(cloud)}, ${size(saved?.storedBytes ?? 0)}` : space.proxies.files ? size(space.proxies.bytes) : "None yet"}
           control={
             space.proxies.files > 0 &&
             !cloud && (
@@ -208,7 +239,7 @@ function SpaceRows({ library, cloud, onChange, onError }: { library: LibrarySumm
           }
         />
       )}
-      {space && space.pictures.files > 0 && <Row title="Pictures" description={size(space.pictures.bytes)} />}
+      {space && <Row title="Thumbnails" description={space.pictures.files ? size(space.pictures.bytes) : "None yet"} />}
       {space?.models && space.models.bytes > 0 && (
         <Row
           title="Speech and search models"

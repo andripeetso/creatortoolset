@@ -58,7 +58,7 @@ describe("the library's space", () => {
   it("says what its made files take, to its owner only", async () => {
     await clip("v1");
     await clip("v2");
-    expect(await space()).toEqual({ proxies: { bytes: 28, files: 2 }, pictures: { bytes: 6, files: 2 }, models: null });
+    expect(await space()).toEqual({ videos: { onMac: 0, inPlace: 0, stored: { files: 2, bytes: 18 } }, proxies: { bytes: 28, files: 2 }, pictures: { bytes: 6, files: 2 }, models: null });
     expect((await app.request("/api/library/lib_s/space", { headers: { "x-user": "stranger" } })).status).toBe(404);
     expect((await clear("proxies", "stranger")).status).toBe(404);
   });

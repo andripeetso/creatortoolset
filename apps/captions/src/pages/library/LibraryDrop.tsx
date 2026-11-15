@@ -3,13 +3,15 @@ import type { WatchStatus } from "@contracts/library";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
-import { droppedOnMac } from "@/lib/thisMac";
+import { droppedOnMac, thisMacBridge } from "@/lib/thisMac";
+import { pathsInDrop } from "@/lib/onMac";
 
 /**
  * Files and folders dropped anywhere on the Media Library page. A folder in the Mac app, with the server on this
  * computer (`readsFolders`), comes as its path and opens the same one dialog as Choose a folder (copy or keep, and for a
- * big one what it takes and the offer to organize it); anywhere else a folder's videos, pictures and sounds upload like files dropped one by
- * one (`addFiles`, which asks first for a big drop); a loose file dropped in the Mac app is added where it is. Returns
+ * big one what it takes and the offer to organize it). Anywhere else a folder's videos, pictures and sounds go like files dropped one by
+ * one (`addFiles`, which asks first for a big drop): in the Mac app with the server elsewhere each is indexed where it is on
+ * this Mac, its path from the drop (pathsInDrop), and uploads only with the library's upload switch on; in a browser they upload. Returns
  * the page root's handlers, whether files are held over it and the dialog. A drag of the type `ignore` (the page's own
  * clips) is not a drop of files.
  */
@@ -61,14 +63,19 @@ export function useLibraryDrop({
       if (!libraryId || !e.dataTransfer.files.length) return;
       e.preventDefault();
       e.stopPropagation();
+      // the Mac app with the server elsewhere: a folder is read here, and each file gets its place on this Mac from the
+      // drop's own paths, so it is indexed where it is (lib/onMac.ts) instead of uploaded
+      const onMac = !readsFolders && !!thisMacBridge();
+      const items = onMac ? droppedOnMac() : undefined;
       // takes the drop's items now: they are gone after the event
       droppedFiles(e.dataTransfer, readsFolders ? droppedOnMac : undefined).then(
         async (d) => {
           await Promise.all(d.folders.map((f) => folderIn(f)));
           // a folder opened here: only what the library takes (a loose file dropped by itself goes in as it is)
           const files = d.folder ? d.files.filter((f) => !f.webkitRelativePath.includes("/") || MEDIA.test(f.name)) : d.files;
+          const paths = onMac ? pathsInDrop(files, (await items) ?? [], d.paths) : d.paths;
           // loose files dropped beside folders come once the folders' dialogs are answered: one dialog at a time
-          if (files.length) big.after(() => void addFiles(files, d.paths.size ? d.paths : undefined));
+          if (files.length) big.after(() => void addFiles(files, paths.size ? paths : undefined));
         },
         (x: unknown) => onError(x instanceof Error ? x.message : String(x)),
       );

@@ -132,7 +132,8 @@ export function describeSlot(actor: string | null): (() => void) | null {
  * Describes one version as its job's actor: the route first (no frame is cut without one), then the frames and the AI.
  * Their own Anthropic key goes first (preferKey: bulk work runs many at once on it).
  */
-export async function describeVersion(db: DatabaseSync, versionId: string, src: string, duration: number, actor: string | null, scratch: string): Promise<void> {
+/** `made`: stills already made (a file indexed on a Mac, on-mac.ts): used as they are, and left for the caller to delete. */
+export async function describeVersion(db: DatabaseSync, versionId: string, src: string, duration: number, actor: string | null, scratch: string, made?: string[]): Promise<void> {
   // a job with no actor runs as nobody: never on the server's own providers
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
   const who = whoFor(actor);
@@ -142,7 +143,8 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
   const segments = segmentsOf(db, versionId);
   const files: string[] = [];
   try {
-    for (const t of frameTimes(duration)) {
+    if (made) files.push(...made);
+    else for (const t of frameTimes(duration)) {
       const file = path.join(scratch, `describe-${randomUUID()}.jpg`);
       files.push(file);
       await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", "scale=512:-2", "-q:v", "4"]);
@@ -161,6 +163,6 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     saveDescribed(db, versionId, value, provider);
     if (filing && value.folder && folders.includes(value.folder)) fileInto(db, filing, value.folder);
   } finally {
-    await Promise.all(files.map((f) => rm(f, { force: true })));
+    if (!made) await Promise.all(files.map((f) => rm(f, { force: true })));
   }
 }

@@ -38,7 +38,7 @@ import {
   updateAsset,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
-import { pathOnMac } from "@/lib/thisMac";
+import { pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
@@ -118,6 +118,8 @@ export default function LibraryPage() {
   const loading = useRef<string | null>(null); // the cursor of the page on its way
   const loc = useLocation();
   const keys = useRef(0);
+  const controllers = useRef(new Map<number, AbortController>());
+  const cancelled = useRef(new Set<number>());
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
@@ -312,21 +314,39 @@ export default function LibraryPage() {
   const patch = (key: number, change: Partial<UploadItem>) =>
     setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, ...change } : u)));
 
+  // the Mac app with the server elsewhere: files are indexed where they are, never uploaded, unless the library's
+  // upload switch is on (Library settings and Settings → Storage, UploadSwitch)
+  const onMac = !!thisMacBridge() && !watch?.allowed && !library?.settings.upload;
   const send = async (u: UploadItem) => {
-    if (!libId) return;
+    if (!libId || cancelled.current.has(u.key)) return;
+    const ctl = new AbortController();
+    controllers.current.set(u.key, ctl);
     try {
       const here = u.path ?? (await pathOnMac(u.file));
-      // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks too)
-      const dup = await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+      // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks
+      // too). Indexed on the Mac it is matched there by its first and last MiB, so no gigabytes are hashed here
+      const dup = onMac ? null : await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+      ctl.signal.throwIfAborted();
       if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
-      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here);
+      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here, { signal: ctl.signal, onMac });
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {
-      patch(u.key, { status: "failed", error: message(e), final: (e as { code?: string }).code === "too_large" });
+      if (ctl.signal.aborted) patch(u.key, { status: "cancelled", error: undefined });
+      else patch(u.key, { status: "failed", error: message(e), final: ["too_large", "not_uploaded"].includes((e as { code?: string }).code ?? "") });
+    } finally {
+      controllers.current.delete(u.key);
     }
+  };
+  // Cancel: the file stops (what reached the server is deleted) and never starts again by itself; Retry starts it
+  const cancel = (keys: number[]) => {
+    for (const k of keys) {
+      cancelled.current.add(k);
+      controllers.current.get(k)?.abort();
+    }
+    setUploads((prev) => prev.map((u) => (keys.includes(u.key) && (u.status === "waiting" || u.status === "checking" || u.status === "uploading") ? { ...u, status: "cancelled", error: undefined } : u)));
   };
 
   // a big upload says first what preparing it takes (time, and money on whose AI and keys)
@@ -334,7 +354,8 @@ export default function LibraryPage() {
     if (!files?.length) return;
     const all = Array.from(files); // before the picker is cleared
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
-    const here = paths ? paths.size === all.length : !!(await pathOnMac(all[0]!));
+    // indexed on this Mac: nothing uploads either
+    const here = onMac || (paths ? paths.size === all.length : !!(await pathOnMac(all[0]!)));
     if (all.length >= BIG_DROP) {
       askingPaths.current = paths;
       setAskingHere(here);
@@ -864,7 +885,12 @@ export default function LibraryPage() {
 
                 <LibraryProgressBar libraryId={library.id} />
 
-                <UploadTray uploads={uploads} onRetry={(u) => void send(u)} onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting"))} />
+                <UploadTray
+                  uploads={uploads}
+                  onRetry={(u) => (cancelled.current.delete(u.key), void send(u))}
+                  onCancel={cancel}
+                  onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting" || u.status === "checking"))}
+                />
 
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Search by meaning is getting ready.</p>}
 

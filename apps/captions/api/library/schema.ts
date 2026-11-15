@@ -369,4 +369,10 @@ export const MIGRATIONS: string[] = [
   // 18: photos were placed from a video's location tag only, so each got country ""; placeUnplaced reads their EXIF once
   `UPDATE asset_versions SET probe = json_remove(probe, '$.country')
      WHERE json_extract(probe, '$.country') = '' AND asset_id IN (SELECT id FROM assets WHERE kind = 'image');`,
+  // 19: a file indexed where it is on a person's Mac, for a server elsewhere (routes.ts on-mac): its path there and the
+  // Mac's device id. The server holds only what the Mac made (probe, pictures); source_key is "mac:<version id>", no blob
+  `
+  ALTER TABLE asset_versions ADD COLUMN mac_path TEXT;
+  ALTER TABLE asset_versions ADD COLUMN mac_device TEXT;
+  `,
 ];
