@@ -7,8 +7,10 @@ import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
  * with each clip's own sound, a marker per line on the clip it falls in. Times are exact rationals: 1001-based for
  * 23.976, 29.97 and 59.94 fps.
  *
- * Not yet checked on import (the owner's manual check): adjust-transform position units (written as percent of the
- * frame height, + up) and whether a relative media-rep src (in a zip) relinks without asking.
+ * Checked in Resolve 21.2: each clip lands on its frame from 01:00:00:00 with its source in-point, at 25 and 50 fps,
+ * and a file that is not at its path is found by name in a folder the import is told to search (with none, a scripted
+ * import fails). Resolve leaves out the markers on clips. Not yet checked: adjust-transform position units (written
+ * as percent of the frame height, + up) and whether a relative media-rep src (in a zip) relinks without asking.
  */
 
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
@@ -55,13 +57,15 @@ export function toFcpxml(tl: Timeline, files: Record<string, string>): string {
   });
 
   // ponytail: V1 with its own sound only; B-roll, music and effects (V2, A2, A3) become connected clips with the B-roll slice
+  // the sequence starts at 01:00:00:00 and a spine's offsets are in its time, so they count from there (as Resolve writes them)
+  const t0 = 3600 * Math.round(tl.fps);
   const spine: string[] = [];
   let at = 0;
   const items = [...tl.tracks.V1.items].sort((a, b) => a.rec - b.rec);
   for (const i of items) {
     if (i.rec < at) throw new Error(`V1: the clip at ${i.rec} overlaps the one before`);
-    if (i.rec > at) spine.push(`          <gap name="Gap" offset="${time(at, tl.fps)}" duration="${time(i.rec - at, tl.fps)}"/>`);
-    spine.push(...assetClip(tl, i, tl.sources[i.src]!, ids.get(i.src)!));
+    if (i.rec > at) spine.push(`          <gap name="Gap" offset="${time(t0 + at, tl.fps)}" duration="${time(i.rec - at, tl.fps)}"/>`);
+    spine.push(...assetClip(tl, i, tl.sources[i.src]!, ids.get(i.src)!, t0));
     at = i.rec + i.len;
   }
   return [
@@ -74,7 +78,7 @@ export function toFcpxml(tl: Timeline, files: Record<string, string>): string {
     `  <library>`,
     `    <event name="AI Editor">`,
     `      <project name="${esc(tl.name)}">`,
-    `        <sequence format="r1" duration="${time(at, tl.fps)}" tcStart="${time(3600 * Math.round(tl.fps), tl.fps)}" tcFormat="NDF" audioLayout="stereo" audioRate="48k">`,
+    `        <sequence format="r1" duration="${time(at, tl.fps)}" tcStart="${time(t0, tl.fps)}" tcFormat="NDF" audioLayout="stereo" audioRate="48k">`,
     `          <spine>`,
     ...spine.map((l) => `  ${l}`),
     `          </spine>`,
@@ -87,7 +91,7 @@ export function toFcpxml(tl: Timeline, files: Record<string, string>): string {
   ].join("\n");
 }
 
-function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string; format: string }): string[] {
+function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string; format: string }, t0: number): string[] {
   // a clip's start and its markers are in its source's time
   const srcFrames = (rec: number) => s.tc + i.in + Math.round(((rec - i.rec) * s.fps) / tl.fps);
   const inner: string[] = [];
@@ -99,6 +103,6 @@ function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string
     if (m.rec < i.rec || m.rec >= i.rec + i.len) continue;
     inner.push(`<marker start="${time(srcFrames(m.rec), s.fps)}" duration="${time(1, s.fps)}" value="${esc(m.name)}" note="${esc(m.note)}"/>`);
   }
-  const open = `<asset-clip ref="${id.asset}" name="${esc(s.name)}" offset="${time(i.rec, tl.fps)}" start="${time(srcFrames(i.rec), s.fps)}" duration="${time(i.len, tl.fps)}" format="${id.format}" tcFormat="NDF"`;
+  const open = `<asset-clip ref="${id.asset}" name="${esc(s.name)}" offset="${time(t0 + i.rec, tl.fps)}" start="${time(srcFrames(i.rec), s.fps)}" duration="${time(i.len, tl.fps)}" format="${id.format}" tcFormat="NDF"`;
   return inner.length ? [`          ${open}>`, ...inner.map((l) => `            ${l}`), `          </asset-clip>`] : [`          ${open}/>`];
 }
