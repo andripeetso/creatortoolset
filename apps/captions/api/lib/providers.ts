@@ -165,7 +165,7 @@ const knownDriver = (id: unknown): boolean => DRIVERS.some((d) => d.id === id) |
 const runs = (driver: Driver) => DRIVERS.find((d) => d.id === driver)?.runs ?? false;
 const isEffort = (e: unknown): e is Effort => EFFORTS.includes(e as Effort);
 const ID_RE = /^[A-Za-z0-9_-]{1,60}$/;
-const MODEL_RE = /^[A-Za-z0-9._/:-]{1,80}$/;
+export const MODEL_RE = /^[A-Za-z0-9._/:-]{1,80}$/;
 
 /** The device an instance runs on ("" when none is picked: it runs nowhere). */
 export const deviceIdOf = (i: ProviderInstance): string => i.device ?? "";

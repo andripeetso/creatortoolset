@@ -22,6 +22,8 @@
  * chat one at a time, in order. Stop ({ reply }), approvals and confirms are found by their own ids in any chat.
  */
 
+import type { Selection } from "./providers";
+
 /** "none" = no AI connected yet (the dock can't talk), "claude" = Claude Code on a paired Mac (the only one for now), "other" = any other provider. */
 export type AssistantProvider = "none" | "claude" | "other";
 
@@ -189,6 +191,9 @@ export interface AssistantTurnInput {
   context?: AssistantContext;
   /** The workspace picked for a new chat; a chat that has one keeps it (AssistantChat.workspace). */
   workspace?: string;
+  /** The AI this chat is sent to from now on, one of the person's own (400 when it isn't, or can't run); null = back to
+   *  their default. Absent: the chat keeps what it has. */
+  ai?: Selection | null;
 }
 
 /** A video or recording dropped in the chat, uploaded in parts while the message goes (api/assistant-files.ts; kept 7 days). */
@@ -251,6 +256,8 @@ export interface AssistantChat {
   on?: Pick<AssistantWork, "kind" | "title">;
   /** The workspace it works in (a Workshop project's id): set by its first message. */
   workspace?: string;
+  /** Its own AI (AssistantTurnInput.ai); absent = the person's default. */
+  ai?: Selection;
 }
 
 export interface AssistantView {
@@ -274,6 +281,11 @@ export interface AssistantView {
   snoozed?: number;
   /** The workspace the chat works in, once its first message has set it (AssistantChat.workspace). */
   workspace?: string;
+  /** The chat's own AI while it can run; absent = the default answers it (`aiName`, `provider` and `tools` are of the
+   *  AI that answers, either way). */
+  ai?: Selection;
+  /** What answers a chat with no AI of its own (the person's default for the assistant). */
+  defaultAi?: Selection;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. One per account, from any chat. */
   navigate: string | null;
   /** This server has the many-chats routes (GET /chats, /chats/:id, its /turn) and writes replies in different chats at

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addInstanceTo, driverFields, type ProviderInstance, type ProviderSettings } from "@contracts/providers";
-import { autoTestDue, effectiveSelection, modelChoices } from "./providers";
+import { autoTestDue, effectiveSelection, modelChoices, shortSelectionLabel } from "./providers";
 
 const ready = { enabled: true, runs: true, online: true, reportAt: 100, installed: true };
 
@@ -86,5 +86,13 @@ describe("driverFields", () => {
     expect(driverFields("claude")).toEqual({ home: true, program: false, args: false, env: true });
     expect(driverFields("grok")).toEqual({ home: false, program: false, args: false, env: false });
     expect(driverFields("cursor")).toEqual({ home: false, program: true, args: true, env: true });
+  });
+});
+
+describe("shortSelectionLabel: the message box's AI button", () => {
+  it("drops the maker's name, and names the AI when it has no model of its own", () => {
+    expect(shortSelectionLabel({ instance: "claude", model: "claude-opus-5-5", effort: "high" }, "Claude")).toBe("Opus 5.5 High");
+    expect(shortSelectionLabel({ instance: "codex", model: "gpt-5", effort: "xhigh" }, "Codex")).toBe("GPT 5 Extra high");
+    expect(shortSelectionLabel({ instance: "codex", model: "", effort: "low" }, "Codex")).toBe("Codex Low");
   });
 });

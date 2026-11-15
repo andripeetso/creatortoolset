@@ -692,3 +692,49 @@ describe("a chat's workspace", () => {
     revokeJobTokens(chat.messages.at(-1)!.id);
   });
 });
+
+describe("a chat's own AI", () => {
+  it("runs the turn on the AI picked in the message box, keeps it for the chat, refuses one that isn't theirs, and falls back when it is gone", async () => {
+    createUser("pia", "password1");
+    const piaMac = pairDevice("pia", "Pia's Mac");
+    const claude = { id: "claude", driver: "claude" as const, name: "Claude", enabled: true, device: piaMac.device.id };
+    const codex = { id: "codex", driver: "codex" as const, name: "Codex", enabled: true, device: piaMac.device.id };
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [claude, codex], default: { instance: "claude", model: "claude-opus-5-5", effort: "medium" } }, "pia");
+    const cookie = await cookieOf("pia");
+    const device = { authorization: `Bearer ${piaMac.token}` };
+    type View = { id: string; aiName: string; ai?: { instance: string }; messages: Array<{ role: string; status?: string }> };
+    const turn = (body: Record<string, unknown>) => app.request("/api/assistant/turn", { method: "POST", ...json(body, { cookie }) });
+    /** The relay job the turn queued, answered, and its reply done. */
+    const answered = async () => {
+      const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver: string; model: string; effort?: string };
+      await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hi." }, device) });
+      await vi.waitFor(async () => expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).messages.at(-1)?.status).toBe("done"));
+      return job;
+    };
+    const pick = { instance: "codex", model: "gpt-x", effort: "high" };
+    const r = await turn({ text: "hello", ai: pick });
+    expect(r.status).toBe(202);
+    expect((await r.json()) as View).toMatchObject({ ai: { instance: "codex" }, aiName: "Codex" });
+    expect(await answered()).toMatchObject({ driver: "codex", model: "gpt-x", effort: "high" });
+    // the next message in the chat, sent without `ai`, stays on it
+    expect((await turn({ text: "and again" })).status).toBe(202);
+    expect(await answered()).toMatchObject({ driver: "codex", model: "gpt-x" });
+    // an AI that isn't one of theirs is refused, and nothing is added to the chat
+    const before = ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).messages.length;
+    const bad = await turn({ text: "nope", ai: { instance: "someone-elses", model: "gpt-x", effort: "high" } });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toMatch(/pick another/);
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).messages.length).toBe(before);
+    // its AI removed: the chat goes on, on the default
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [claude], default: { instance: "claude", model: "claude-opus-5-5", effort: "medium" } }, "pia");
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).ai).toBeUndefined();
+    expect((await turn({ text: "still there?" })).status).toBe(202);
+    expect(await answered()).toMatchObject({ driver: "claude", model: "claude-opus-5-5" });
+    // null puts a chat back on the default; a new chat starts there
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [claude, codex], default: { instance: "claude", model: "claude-opus-5-5", effort: "medium" } }, "pia");
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).ai).toMatchObject({ instance: "codex" });
+    expect((await turn({ text: "back to default", ai: null })).status).toBe(202);
+    expect(await answered()).toMatchObject({ driver: "claude" });
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).ai).toBeUndefined();
+  });
+});

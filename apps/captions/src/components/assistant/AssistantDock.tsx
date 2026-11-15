@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
+import type { Selection } from "@contracts/providers";
 import { LinkedText, ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,7 @@ import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { whenSaid } from "@/lib/when-said";
 import { Composer, PictureOverlay } from "./Composer";
+import { AiPicker } from "./AiPicker";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
@@ -64,7 +66,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; chat?: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; quote?: string };
+type Queued = { id: string; chat?: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; local?: string[]; folders?: string[]; quote?: string; ai?: Selection | null };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -367,10 +369,13 @@ export function AssistantDock() {
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
       // a new chat is filed in the workspace picked for it (a chat that has one keeps it)
       ...(useWorkspace.getState().currentProjectId ? { workspace: useWorkspace.getState().currentProjectId! } : {}),
+      ...(it.ai !== undefined ? { ai: it.ai } : {}),
     };
     // a message goes to the chat it was written in, even when another one is open by now
     const r = it.chat && view?.chats ? await sendTurnTo(it.chat, input) : await sendTurn(input);
     setBusy(false);
+    // the server has the chat's AI now: its view says it from here on
+    if (r.ok && it.chat && it.ai !== undefined && picks[it.chat] === it.ai) setPicks(({ [it.chat!]: _, ...rest }) => rest);
     if (r.ok) {
       if (r.data.id === openId.current) setView(r.data);
       else reloadChats();
@@ -384,6 +389,8 @@ export function AssistantDock() {
   // The queue, as in the Workshop's chat: Enter while a reply runs adds the message here, and the first one sends
   // when the reply is done. Steer stops the reply and sends that one now; Edit puts it back in the box.
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  // the AI picked in a chat's message box (null: back to the default), by chat, until a message takes it to the server
+  const [picks, setPicks] = useState<Record<string, Selection | null>>({});
   const draftRef = useRef(draft);
   draftRef.current = draft;
   // Each chat keeps its own unsent box: switching chats puts this one's aside and brings the other's back (kept for as
@@ -565,6 +572,7 @@ export function AssistantDock() {
       ...(files.some((f) => f.path) ? { local: files.flatMap((f) => (f.path ? [f.path] : [])) } : {}),
       ...(folders.length ? { folders } : {}),
       ...(quote ? { quote } : {}),
+      ...(view?.id && view.id in picks ? { ai: picks[view.id] } : {}),
     };
     setQuote(null);
     // the first thing sent ends the welcome and any notice a tool left
@@ -1049,6 +1057,11 @@ export function AssistantDock() {
             onDropQuote={() => setQuote(null)}
             waiting={busy || thinking}
             autoFocus
+            aiPicker={
+              view && view.provider !== "none" ? (
+                <AiPicker ai={view.id in picks ? (picks[view.id] ?? undefined) : view.ai} fallback={view.defaultAi} onChange={(ai) => setPicks((p) => ({ ...p, [view.id]: ai }))} />
+              ) : null
+            }
           />
           </div>
         </div>

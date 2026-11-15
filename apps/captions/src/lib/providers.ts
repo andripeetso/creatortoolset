@@ -75,6 +75,9 @@ export function modelName(id: string): string {
 /** "Claude Opus 5.5 · High" */
 export const selectionLabel = (s: Selection) => `${modelName(s.model)} · ${effortLabel(s.effort)}`;
 
+/** The message box's short form: "Opus 5.5 High" (the maker's name dropped), or the AI's name with no model of its own. */
+export const shortSelectionLabel = (s: Selection, name: string) => `${s.model ? modelName(s.model).replace(/^Claude /, "") : name} ${effortLabel(s.effort)}`;
+
 /** A failed test is not repeated by itself for this long (the person can press Test now at any time). */
 export const RETEST_AFTER_MS = 5 * 60_000;
 

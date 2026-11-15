@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUp, Camera, Check, FileText, Film, Folder, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
@@ -30,6 +30,7 @@ export function Composer({
   onDropQuote,
   waiting,
   autoFocus,
+  aiPicker,
 }: {
   draft: Draft;
   setDraft: (d: Draft | ((cur: Draft) => Draft)) => void;
@@ -45,6 +46,8 @@ export function Composer({
   onDropQuote: () => void;
   waiting: boolean;
   autoFocus?: boolean;
+  /** The AI button (AiPicker), before send. */
+  aiPicker?: ReactNode;
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   const pick = useRef<HTMLInputElement>(null);
@@ -333,6 +336,7 @@ export function Composer({
                 <Mic className="size-4" />
               </button>
             )}
+            {aiPicker}
             {waiting && empty ? (
               <button type="button" onClick={onStop} className={cn(iconBtn, "bg-foreground text-background hover:opacity-80")} aria-label="Stop the reply" title="Stop">
                 <Square className="size-3 fill-current" />

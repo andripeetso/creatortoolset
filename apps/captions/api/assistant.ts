@@ -7,8 +7,8 @@ import type { SessionUser } from "./users";
 import { mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
-import { routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
-import type { Selection } from "../contracts/providers";
+import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
+import { EFFORTS, type Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
 import { adoptKept, adoptMacClaude, dropUnowned, keptOpen, onAdopt, SILENT_MS, streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
@@ -111,10 +111,12 @@ interface Chat {
   /** The workspace (a Workshop project's id) it works in: set by its first message, kept for good. Its tools work there,
    *  whatever the app has open meanwhile (workspaceOfTurn, mcp.ts). */
   workspace?: string;
+  /** The AI it is sent to, picked in its message box (the turn's `ai`); none = the person's default for the assistant. */
+  ai?: Selection;
 }
 
 /** What a chat keeps besides its messages, on its way among the earlier chats and back to being the open one. */
-const kept = (c: Omit<Chat, "id" | "messages" | "made">) => ({ title: c.title, task: c.task, settled: c.settled, seen: c.seen, pinned: c.pinned, snooze: c.snooze, workspace: c.workspace });
+const kept = (c: Omit<Chat, "id" | "messages" | "made">) => ({ title: c.title, task: c.task, settled: c.settled, seen: c.seen, pinned: c.pinned, snooze: c.snooze, workspace: c.workspace, ai: c.ai });
 
 interface Conv {
   /** The open chat's id, title and task (it keeps them going into `past` and coming back). */
@@ -126,6 +128,7 @@ interface Conv {
   pinned?: number;
   snooze?: { until: number; at: number };
   workspace?: string;
+  ai?: Selection;
   messages: AssistantMessage[];
   /** One key asked for (ask_secret), account-wide; `turn` is the reply that asked (its chat shows the box). */
   pending?: { env: string; why: string; at: number; turn?: string };
@@ -144,7 +147,7 @@ interface Conv {
   resume?: Record<string, Resume>;
 }
 
-type Resume = Pick<Held, "url" | "admin" | "memory" | "skills">;
+type Resume = Pick<Held, "url" | "admin" | "memory" | "skills" | "ai">;
 
 /** What a chat says by itself when a usage limit that stopped its reply has reset. */
 export const CONTINUE = "Continue where you left off.";
@@ -171,6 +174,8 @@ interface Held {
   send?: AssistantFileUse;
   /** Starts without waiting for its videos (the turn's `later`): the client keeps uploading them after it ends. */
   later?: true;
+  /** Its chat's own AI when it was sent (Chat.ai); one that can't run any more falls back to the default (startHeld). */
+  ai?: Selection;
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
@@ -187,7 +192,7 @@ function archive(username: string, conv: Conv): void {
   // a page this chat asked for goes with it; one another chat asked for waits for that chat
   if (!conv.navigateChat || conv.navigateChat === conv.id) conv.navigate = conv.navigateChat = undefined;
   conv.id = randomUUID();
-  conv.title = conv.task = conv.settled = conv.seen = conv.pinned = conv.snooze = conv.workspace = undefined;
+  conv.title = conv.task = conv.settled = conv.seen = conv.pinned = conv.snooze = conv.workspace = conv.ai = undefined;
   conv.messages = [];
 }
 
@@ -284,6 +289,8 @@ interface TurnInput {
   uploading?: Array<{ id: string; name: string }>;
   /** The workspace picked for a new chat (its first message only: a chat keeps the one it has). */
   workspace?: string;
+  /** The AI picked in the message box: a Selection for this chat from now on, null back to the default, absent = as it was. */
+  ai?: Selection | null;
 }
 
 const nameOf = (v: unknown, fallback: string) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, 80) : fallback);
@@ -339,7 +346,16 @@ function parseTurn(raw: unknown): TurnInput {
         ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
-  return { text, images, pasted, fileIds, files: [], paths, local, context, ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
+  const ai = b.ai === null ? null : b.ai === undefined ? undefined : readSelection(b.ai);
+  return { text, images, pasted, fileIds, files: [], paths, local, context, ...(ai !== undefined ? { ai } : {}), ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
+}
+
+/** A turn's `ai`, checked for shape (its model goes to the AI program as an argument); whose AI it is, sendTurn checks. */
+function readSelection(v: unknown): Selection {
+  const x = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  if (typeof x.instance !== "string" || !x.instance || x.instance.length > 60 || typeof x.model !== "string" || (x.model !== "" && !MODEL_RE.test(x.model)) || !(EFFORTS as readonly unknown[]).includes(x.effort))
+    throw new Error("That AI isn't one of yours: pick another in the message box.");
+  return { instance: x.instance, model: x.model, effort: x.effort as Selection["effort"] };
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
@@ -732,7 +748,10 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
   const conv = load(username);
   const ask = conv.pending && (!chat || !conv.pending.turn || chat.messages.some((m) => m.id === conv.pending!.turn)) ? conv.pending : undefined;
   const pending = ask ? MY_KEYS.find((k) => k.env === ask.env) : undefined;
-  const route = routeOf(username, admin);
+  const c = chat ?? (conv as Chat);
+  const own = c.ai && routeOf(username, admin, c.ai);
+  const fallback = routeOf(username, admin);
+  const route = own || fallback;
   return {
     id: chat?.id ?? conv.id!,
     provider: providerOf(route),
@@ -744,6 +763,9 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     pending: pending && ask ? { env: pending.env, name: pending.name, why: ask.why } : null,
     ...(isSnoozed(conv, chat ?? (conv as Chat)) ? { snoozed: (chat ?? conv).snooze!.until } : {}),
     ...((chat ?? conv).workspace ? { workspace: (chat ?? conv).workspace } : {}),
+    // the chat's own AI while it can still run (one that can't: the chat is on the default again)
+    ...(own ? { ai: c.ai } : {}),
+    ...(fallback ? { defaultAi: fallback.selection } : {}),
     navigate: (!conv.navigateChat || conv.navigateChat === (chat?.id ?? conv.id) ? conv.navigate : undefined) ?? null,
     sendNow: true,
     videosLater: true,
@@ -810,6 +832,7 @@ function chatList(username: string): AssistantChat[] {
         ...(c.messages.at(-1)?.limit ? { limited: true as const } : {}),
         ...(onOf(c) ? { on: onOf(c) } : {}),
         ...(c.workspace ? { workspace: c.workspace } : {}),
+        ...(c.ai ? { ai: c.ai } : {}),
       };
     })
     .sort((a, b) => b.at - a.at);
@@ -1349,7 +1372,8 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   const asked = list.find((x) => x.id === h.ask);
   delete conv.held![reply.id];
   reply.wait = undefined;
-  const route = routeOf(username, h.admin);
+  // the chat's own AI; one that can't run any more (removed, turned off) answers on the default instead of failing
+  const route = (h.ai && routeOf(username, h.admin, h.ai)) || routeOf(username, h.admin);
   if (!route || !asked) {
     Object.assign(reply, { status: "error", text: route ? "The message is gone." : "Connect your AI first." });
     sayLater(username, reply.id);
@@ -1368,7 +1392,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   void runTurn(username, reply.id, route, h.url, promptFor(list.slice(0, i + 1), input), filesFor(input), h.memory, h.skills).then(() => {
     // a usage limit stopped it: what it needs to carry on when the limit resets (pump)
     if (!messageOf(username, reply.id)?.limit?.until) return;
-    (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, memory: h.memory, skills: h.skills };
+    (load(username).resume ??= {})[reply.id] = { url: h.url, admin: h.admin, memory: h.memory, skills: h.skills, ...(h.ai ? { ai: h.ai } : {}) };
     save(username);
     void pump(username);
   });
@@ -1403,6 +1427,7 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
     admin: user.role === "admin",
     at: reply.at,
     send: to,
+    ai: chatWith(conv, turn)?.ai,
   };
   save(user.username);
   void pump(user.username);
@@ -1623,9 +1648,12 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
+  // an AI picked in the message box: one of this account's own that the assistant can run on
+  if (input.ai && !routeOf(u.username, u.role === "admin", input.ai)) return c.json({ error: "That AI can't answer here: pick another in the message box." }, 400);
   // read after the last await: a New chat meanwhile swaps what the open chat is
   const chat = target();
   if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (input.ai !== undefined) chat.ai = input.ai ?? undefined;
   const now = Date.now();
   // whoever sends has seen the chat up to here: the reply to this is unread until they look again
   chat.seen = now;
@@ -1660,6 +1688,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     at: now,
     ...(fit ? { fit } : {}),
     ...(input.later ? { later: true as const } : {}),
+    ...(chat.ai ? { ai: chat.ai } : {}),
   };
   save(u.username);
   await pump(u.username);
@@ -1782,7 +1811,7 @@ assistantApp.post("/chats/:id/limit", async (c) => {
   };
   if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
-  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: await memoryBlock(u), skills: skillLines(await dockSkills(u.username), "tool") } : null;
+  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: await memoryBlock(u), skills: skillLines(await dockSkills(u.username), "tool"), ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
   const m = found();
   if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   if (r) (load(u.username).resume ??= {})[m.id] = r;
@@ -1854,7 +1883,7 @@ assistantApp.post("/chats/:id/branch", async (c) => {
     if (m.images) m.images = m.images.map((im) => copyImage(u.username, im));
     return m;
   });
-  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now(), workspace: chat.workspace }, ...(conv.past ?? [])]);
+  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now(), workspace: chat.workspace, ai: chat.ai }, ...(conv.past ?? [])]);
   save(u.username);
   tell(u.username);
   return c.json({ id, chats: await chatsOf(u) });
