@@ -107,13 +107,7 @@ export function original(a: AssetCard, detail: AssetDetail | null) {
 export const linksOf = (shares: ShareRow[], assetId: string, versionId: string) =>
   shares.filter((s) => (s.target.kind === "asset" && s.target.id === assetId) || (s.target.kind === "version" && s.target.id === versionId));
 
-/**
- * A clip's own address in the app, for people who can open the library: `?clip=` and, when it is not the first library,
- * `&library=`. The same as clipHref in folders.ts (the grid's); kept here too until the two are one.
- */
-export function clipHref(libraryId: string, assetId: string, first = false): string {
-  return `/library?clip=${encodeURIComponent(assetId)}${first ? "" : `&library=${encodeURIComponent(libraryId)}`}`;
-}
+export { clipHref } from "./folders";
 
 /** The library's tags that fit what is typed and the clip lacks: those starting with it first, then the most used; at most 8. */
 export function tagSuggestions(all: TagCount[], have: string[], typed: string): string[] {

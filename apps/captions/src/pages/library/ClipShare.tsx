@@ -71,7 +71,7 @@ export function ClipShare({
   const [loaded, setLoaded] = useState(false);
   const [turning, setTurning] = useState(false);
   const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries).data;
-  const appUrl = `${location.origin}${clipHref(libraryId, assetId, libs?.[0]?.id === libraryId)}`;
+  const appUrl = `${location.origin}${clipHref(libs?.[0]?.id === libraryId ? null : libraryId, assetId)}`;
   const [others, setOthers] = useState<ShareRow[]>([]);
   const [lock, setLock] = useState(false); // the password row is on (its field shows)
   const [password, setPassword] = useState("");

@@ -43,6 +43,7 @@ import { adminApp } from "./admin";
 import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
+import { bulkApp } from "./library/bulk";
 import { assistantApp, resumeFromDisk } from "./assistant";
 import { answersAtRisk, leave } from "./lib/mac-claude";
 import { captionJobsAtRisk } from "./captions-job";
@@ -457,6 +458,7 @@ app.route("/api/library", relatedApp);
 app.route("/api/library", watchApp);
 app.route("/api/library", storageApp);
 app.route("/api/library", grantsApp);
+app.route("/api/library", bulkApp);
 // a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)
 mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);

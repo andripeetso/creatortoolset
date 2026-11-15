@@ -91,3 +91,52 @@ describe("library asset query", () => {
     expect(ids(page(db, "lib_a", { q: "walk" }))).toEqual(["a1"]);
   });
 });
+
+describe("library asset query, sorted by the server", () => {
+  // five clips: a tie on the time added, a tie on length, a name with a colon, a picture (no length), one never read (no probe)
+  function sorted(): DatabaseSync {
+    const db = openLibraryDb(":memory:");
+    db.exec("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_s', 'ws_s', 'S', 'local', 0)");
+    const add = (id: string, kind: string, title: string, at: number, probe: object | null) => {
+      db.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_s', ?, ?, ?, 'owner', ?)").run(id, kind, title, `v_${id}`, at);
+      db.prepare(
+        "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, probe, created_by, created_at) VALUES (?, ?, 1, 'k', 1, 'h', 'ready', ?, 'owner', ?)",
+      ).run(`v_${id}`, id, probe ? JSON.stringify(probe) : null, at);
+    };
+    add("c1", "video", "beach: morning", 1000, { duration: 30, capturedAt: 500 });
+    add("c2", "video", "Apple orchard", 2000, { duration: 10 });
+    add("c3", "video", "cliff walk", 2000, { duration: 30, capturedAt: 9000 });
+    add("c4", "image", "Dune", 3000, { duration: 0 });
+    add("c5", "video", "attic", 4000, null);
+    return db;
+  }
+  /** every page at one clip a page, walked by cursor */
+  const walk = (sort: string) => {
+    const db = sorted();
+    const out: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const p = page(db, "lib_s", { sort, limit: "1", ...(cursor ? { cursor } : {}) });
+      out.push(...ids(p));
+      cursor = p.next;
+    } while (cursor && out.length < 10);
+    return out;
+  };
+
+  it.each([
+    ["new", ["c5", "c4", "c3", "c2", "c1"]],
+    ["old", ["c1", "c2", "c3", "c4", "c5"]],
+    ["name", ["c2", "c5", "c1", "c3", "c4"]],
+    ["longest", ["c3", "c1", "c2", "c5", "c4"]],
+    ["shortest", ["c2", "c1", "c3", "c4", "c5"]],
+    ["filmed", ["c3", "c5", "c4", "c2", "c1"]],
+  ])("%s: one page at a time gives the same order as one big page, nothing skipped or repeated", (sort, order) => {
+    expect(ids(page(sorted(), "lib_s", { sort }))).toEqual(order);
+    expect(walk(sort)).toEqual(order);
+  });
+
+  it("an unknown order is newest first", () => {
+    expect(parseSearch({ sort: "best" }).sort).toBeUndefined();
+    expect(ids(page(sorted(), "lib_s", { sort: "best" }))).toEqual(["c5", "c4", "c3", "c2", "c1"]);
+  });
+});

@@ -351,6 +351,21 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
   return c.json({ assetId, versionId: row.id });
 }
 
+// POST /api/library/:id/uploads/check { size, sha256? } → { maybe } | { duplicateOf? }: whether a file is in this library
+// already, before any of it is sent. With only the size: whether a clip of that size is there (the page hashes the file
+// only then). With the sha256: the clip it is, by the same check an upload's finish makes.
+libraryApp.post("/:id/uploads/check", async (c) => {
+  const libraryId = c.req.param("id");
+  if (!libraryRole(c.get("user").username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown } | null;
+  const size = Number(b?.size);
+  if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
+  const live = "FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL";
+  if (typeof b?.sha256 !== "string") return c.json({ maybe: !!db().prepare(`SELECT 1 ${live} AND v.bytes = ? LIMIT 1`).get(libraryId, size) });
+  const dup = db().prepare(`SELECT a.id ${live} AND v.sha256 = ? LIMIT 1`).get(libraryId, b.sha256.toLowerCase()) as { id: string } | undefined;
+  return c.json(dup ? { duplicateOf: dup.id } : {});
+});
+
 // POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId? } → 201 { id, offset, chunkSize }
 libraryApp.post("/:id/uploads", async (c) => {
   const user = c.get("user");

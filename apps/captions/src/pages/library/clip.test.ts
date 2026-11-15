@@ -79,6 +79,6 @@ describe("the clip's tags and link", () => {
 
   it("links to the clip in the app, naming its library unless it is the first", () => {
     expect(clipHref("lib 2", "a1")).toBe("/library?clip=a1&library=lib%202");
-    expect(clipHref("lib_1", "a1", true)).toBe("/library?clip=a1");
+    expect(clipHref(null, "a1")).toBe("/library?clip=a1");
   });
 });
