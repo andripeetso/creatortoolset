@@ -83,3 +83,22 @@ it("access set on a pending invite is what the person gets once they join", asyn
   const view = (await (await call("GET", "/api/workspace", cookie)).json()) as { members: { username: string; scripts?: boolean }[] };
   expect(view.members.find((m) => m.username === "bo")?.scripts).toBe(true);
 });
+
+it("the email and the join page name the workspaces the invite gives and the server, else the server alone", async () => {
+  const cookie = await login();
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const dir = path.join(process.env.DATA_DIR!, "workshop", "projects");
+  mkdirSync(dir, { recursive: true });
+  const id = "bbbbbbbb-0000-4000-8000-0000000000aa";
+  writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({ id, owner: env.adminUsername, name: "Tiny Acrobatics", createdAt: 1, updatedAt: 1 }));
+  process.env.RESEND_API_KEY = "re_test";
+  process.env.MAIL_FROM = "Creator Toolset <invites@example.com>";
+  const sent: { subject: string; text: string }[] = [];
+  vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => (sent.push(JSON.parse(String(init.body))), Response.json({ id: "1" })));
+  const { token } = (await (await call("POST", "/api/workspace/invites", cookie, { email: "cy@example.com", workspaces: [id] })).json()) as { token: string };
+  expect(sent[0]!.subject).toContain("to Tiny Acrobatics on Creator Toolset");
+  expect(sent[0]!.text).toContain("work in Tiny Acrobatics on tools.example.com");
+  expect(await (await call("GET", `/api/auth/invite/${token}`)).json()).toMatchObject({ workspace: "Team", target: "Tiny Acrobatics", server: "tools.example.com" });
+  await call("POST", "/api/workspace/invites", cookie, { email: "di@example.com" });
+  expect(sent[1]!.text).toContain("work in tools.example.com.");
+});

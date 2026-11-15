@@ -1,10 +1,11 @@
+import { SettingsDialog } from "./kit-dialog";
 import { ChevronDown, Plus } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -373,7 +374,7 @@ function WorkspacePicker({ brands, given, onChange }: { brands: { id: string; na
       .finally(() => setDraft((d) => (d === next ? null : d)));
   };
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button size="xs" variant="ghost" className="max-w-[16rem] gap-1.5 font-normal text-muted-foreground" aria-label="Workspaces">
           {picked.length > 0 && (
@@ -519,7 +520,7 @@ function InviteDialog({
     }
   };
   return (
-    <Dialog open={open} onOpenChange={close}>
+    <SettingsDialog open={open} onOpenChange={close}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Invite someone</DialogTitle>
@@ -574,6 +575,6 @@ function InviteDialog({
           )}
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+    </SettingsDialog>
   );
 }

@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
 const inDock = (t: EventTarget | null) => t instanceof Element && !!t.closest("[data-assistant-dock]");
 /** Another layer on top of Settings (a toast, a confirm, another dialog): a click there does not close Settings. */
 const inOtherLayer = (t: EventTarget | null) => t instanceof Element && !!t.closest('[data-sonner-toaster], [role="alertdialog"], [role="dialog"]');
+/** A menu of Settings is open (its menus are not modal, kit-controls.tsx): a click outside closes the menu, not Settings too. */
+const menuOpen = () => !!document.querySelector('[role="menu"][data-state="open"]');
 
 /** One sidebar item. The active one is the only one with a background; hover and focus never look selected. */
 const itemCls = (on: boolean, railOpen: boolean) =>
@@ -156,7 +158,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
         showCloseButton={false}
         aria-describedby={undefined}
         onFocusOutside={(e) => e.preventDefault()}
-        onPointerDownOutside={(e) => (inDock(e.target) || inOtherLayer(e.target)) && e.preventDefault()}
+        onPointerDownOutside={(e) => (inDock(e.target) || inOtherLayer(e.target) || menuOpen()) && e.preventDefault()}
         onEscapeKeyDown={(e) => {
           if (inDock(document.activeElement)) e.preventDefault();
           else if (query) {

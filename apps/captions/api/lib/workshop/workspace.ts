@@ -121,6 +121,19 @@ export async function sharedProjects(username: string): Promise<Project[]> {
   return out;
 }
 
+/**
+ * What an invite says it is for (the email, the join page): the names of the owner's workspaces it gives, as one line
+ * ("Tiny Acrobatics and Northlight"), else the server's own name (its host): the person joins the server either way.
+ */
+export async function inviteTarget(owner: string, ids: string[] | undefined, host: string): Promise<string> {
+  const names: string[] = [];
+  for (const id of ids ?? []) {
+    const p = okId(id) ? await readJson<Project>(projectPath(id)) : null;
+    if (p?.owner === owner) names.push(p.name);
+  }
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? host);
+}
+
 /** A workspace this account may work in: its own, or one given to it. */
 async function openableProject(id: string, user: SessionUser): Promise<Project | null> {
   return (await ownedProject(id, user)) ?? (await sharedProjects(user.username)).find((p) => p.id === id) ?? null;

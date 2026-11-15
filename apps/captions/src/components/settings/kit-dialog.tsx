@@ -1,6 +1,25 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogPortal, DialogTitle } from "@/components/ui/dialog";
+
+/**
+ * A dialog over Settings. Not modal: a modal one locks the page's scroll and hides the rest of the window from screen
+ * readers each time it opens, and the browser restyles the whole window for both (Settings and the page behind it): 90 to
+ * 180 ms a click in WebKit, against 13 to 25 ms this way (owner, 2026-11-15: buttons "don't respond right away"). The
+ * backdrop dims the page as before and takes a click outside: it closes the dialog and presses nothing under it.
+ */
+export function SettingsDialog({ open, onOpenChange, children }: { open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} modal={false}>
+      {open && (
+        <DialogPortal>
+          <div aria-hidden data-slot="dialog-overlay" className="fixed inset-0 z-50 bg-black/50" />
+        </DialogPortal>
+      )}
+      {children}
+    </Dialog>
+  );
+}
 
 /**
  * A small form dialog for a key, a task or a computer: a title, the fields (`children`), an error line and one primary
@@ -24,7 +43,7 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
   children: ReactNode;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <SettingsDialog open={open} onOpenChange={onOpenChange}>
       {/* no description: say so to Radix, or it logs a warning on every open */}
       <DialogContent {...(description ? {} : { "aria-describedby": undefined })} className={wide ? "max-h-[90vh] overflow-y-auto sm:max-w-2xl" : "sm:max-w-md"}>
         <form
@@ -50,6 +69,6 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
           </DialogFooter>
         </form>
       </DialogContent>
-    </Dialog>
+    </SettingsDialog>
   );
 }
