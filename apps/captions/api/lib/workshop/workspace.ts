@@ -149,13 +149,18 @@ export async function setCurrentProjectId(
     throw new Error("Not found");
   }
   await writeUserMarker(user.username, { ...marker, currentProjectId: projectId });
-  // asked by a chat's reply: the chat, and the rest of this call, work there from now on
-  const scope = workspaceScope.getStore();
-  if (scope) {
-    scope.id = projectId;
-    if (scope.turn) chatMoves?.(user.username, scope.turn, projectId);
-  }
+  movesTo(user, projectId);
   return getWorkspace(user);
+}
+
+/** Asked by a chat's reply: the chat, and the rest of this call, work in `projectId` from now on. Also when a reply
+ *  makes something in another workspace by naming it (owner, 2026-11-15: a chat filed under one brand wrote its
+ *  Workshop project in another and kept the first one's badge). */
+export function movesTo(user: SessionUser, projectId: string): void {
+  const scope = workspaceScope.getStore();
+  if (!scope || scope.id === projectId) return;
+  scope.id = projectId;
+  if (scope.turn) chatMoves?.(user.username, scope.turn, projectId);
 }
 
 /** Prefer an explicit id the user owns, otherwise the current workspace project. */
@@ -163,7 +168,10 @@ export async function resolveProjectId(
   user: SessionUser,
   requested?: string | null,
 ): Promise<string | undefined> {
-  if (requested && (await ownedProject(requested, user))) return requested;
+  if (requested && (await ownedProject(requested, user))) {
+    movesTo(user, requested);
+    return requested;
+  }
   const { currentProjectId } = await getWorkspace(user);
   return currentProjectId ?? undefined;
 }
