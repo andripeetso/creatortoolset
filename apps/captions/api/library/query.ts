@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AssetCard, AssetKind, AssetPage, SearchQuery } from "../../contracts/library";
+import type { AssetCard, AssetKind, AssetPage, LibrarySort, SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
@@ -13,6 +13,22 @@ import { facetClauses } from "./sources";
 export const DEFAULT_LIMIT = 60;
 export const MAX_LIMIT = 200;
 export const KINDS: AssetKind[] = ["video", "image", "audio", "doc"];
+
+/**
+ * Each order as one SQL key and its direction; the id breaks ties in the same direction, and the cursor carries the key
+ * and the id of a page's last row. The same expression orders and pages, so a page never skips or repeats a clip.
+ * A clip with no length (a picture, a document, one not read yet) is last both ways; Filmed falls back to when it was added.
+ * ponytail: Name is SQLite's NOCASE ("clip 10" before "clip 2"); a numeric-aware collation if people number their clips
+ */
+const LENGTH = "json_extract(v.probe, '$.duration')";
+export const SORTS: Record<LibrarySort, { key: string; desc: boolean; text?: true }> = {
+  new: { key: "a.created_at", desc: true },
+  old: { key: "a.created_at", desc: false },
+  name: { key: "a.title COLLATE NOCASE", desc: false, text: true },
+  longest: { key: `COALESCE(NULLIF(${LENGTH}, 0), -1)`, desc: true },
+  shortest: { key: `COALESCE(NULLIF(${LENGTH}, 0), 1e15)`, desc: false },
+  filmed: { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: true },
+};
 
 /** FTS5 query: each word quoted as a prefix match, words ANDed. Null when there are no words. */
 export function ftsQuery(q: string): string | null {
@@ -74,6 +90,7 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.roll === "a" || p.roll === "b" ? { roll: p.roll } : {}),
     ...(p.versions ? { versions: p.versions.split(",").filter(Boolean).slice(0, MAX_LIMIT) } : {}),
     ...(Object.keys(picked).length ? { facets: picked } : {}),
+    ...(p.sort && p.sort in SORTS ? { sort: p.sort as LibrarySort } : {}),
     limit: Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT))),
   };
 }
@@ -108,6 +125,8 @@ export interface CardRow {
   failed?: string | null;
   roll: AssetCard["roll"] | null;
   finished: number;
+  /** the row's value in the listing's order (buildAssetQuery), for the next page's cursor */
+  sort_key?: string | number | null;
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -156,24 +175,29 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     where.push(f.sql);
     params.push(...f.params);
   }
-  const at = query.cursor ? cursorOf(query.cursor) : null;
+  const order = SORTS[query.sort ?? "new"] ?? SORTS.new;
+  const at = query.cursor ? cursorOf(query.cursor, !!order.text) : null;
   if (at) {
-    where.push("(a.created_at < ? OR (a.created_at = ? AND a.id < ?))");
-    params.push(at.createdAt, at.createdAt, at.id);
+    const cmp = order.desc ? "<" : ">";
+    where.push(`((${order.key}) ${cmp} ? OR ((${order.key}) = ? AND a.id ${cmp} ?))`);
+    params.push(at.key, at.key, at.id);
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(query.limit ?? DEFAULT_LIMIT)));
   params.push(limit + 1);
-  const sql = `SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-    WHERE ${where.join(" AND ")} ORDER BY a.created_at DESC, a.id DESC LIMIT ?`;
+  const dir = order.desc ? "DESC" : "ASC";
+  const sql = `SELECT ${CARD}, ${order.key} AS sort_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+    WHERE ${where.join(" AND ")} ORDER BY ${order.key} ${dir}, a.id ${dir} LIMIT ?`;
   return { sql, params, limit };
 }
 
-/** Cursor = "<created_at>:<id>" of the last row on a page. Ids never contain a colon. */
-export const cursorFor = (r: { created_at: number; id: string }) => `${r.created_at}:${r.id}`;
-function cursorOf(c: string): { createdAt: number; id: string } | null {
-  const i = c.indexOf(":");
-  const createdAt = Number(c.slice(0, i));
-  return i > 0 && Number.isFinite(createdAt) ? { createdAt, id: c.slice(i + 1) } : null;
+/** Cursor = "<sort value>:<id>" of the last row on a page (the value is created_at when newest first). Ids never contain a
+ *  colon, so the last colon splits it: a name may have one. */
+export const cursorFor = (r: { created_at: number; id: string; sort_key?: string | number | null }) => `${r.sort_key ?? r.created_at}:${r.id}`;
+function cursorOf(c: string, text: boolean): { key: string | number; id: string } | null {
+  const i = c.lastIndexOf(":");
+  if (i < 0) return null;
+  const key = text ? c.slice(0, i) : Number(c.slice(0, i));
+  return text || (i > 0 && Number.isFinite(key)) ? { key, id: c.slice(i + 1) } : null;
 }
 
 /** A row as the browser sees it. The probe is read field by field: GPS and other tags never leave the server. */
