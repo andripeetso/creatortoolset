@@ -15,7 +15,9 @@ import {
 } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { promptDialog } from "@/lib/dialogs";
+import { getAsset } from "@/lib/library";
 import { cn } from "@/lib/utils";
+import { revealClip } from "./clip";
 
 /**
  * Picking several clips in the Media Library (LibraryPage.tsx), as Review picks videos: a plain click still opens a clip,
@@ -155,7 +157,31 @@ export interface ClipMoves {
 }
 
 /** One clip's right-click menu. `extra` goes after Copy link (Show in Finder, where the Mac app can). */
-export function ClipMenu({ inTrash, moveTo, tags, on, extra }: { inTrash: boolean; moveTo: MoveTarget[]; tags: string[]; on: ClipMoves; extra?: ReactNode }) {
+export function ClipMenu({
+  inTrash,
+  readOnly,
+  moveTo,
+  tags,
+  on,
+  extra,
+}: {
+  inTrash: boolean;
+  /** someone else's library to look at: open, download, copy the link */
+  readOnly?: boolean;
+  moveTo: MoveTarget[];
+  tags: string[];
+  on: ClipMoves;
+  extra?: ReactNode;
+}) {
+  if (readOnly)
+    return (
+      <>
+        <ContextMenuItem onSelect={on.open}>Open</ContextMenuItem>
+        <ContextMenuItem onSelect={on.download}>Download</ContextMenuItem>
+        <ContextMenuItem onSelect={on.copyLink}>Copy link</ContextMenuItem>
+        {extra}
+      </>
+    );
   if (inTrash)
     return (
       <>
@@ -300,4 +326,33 @@ export function saveFile(href: string) {
   document.body.append(a);
   a.click();
   a.remove();
+}
+
+/** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
+export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+
+/** clip id → whether its file is on a computer (its detail names the path): asked once a visit */
+const onComputer = new Map<string, boolean>();
+
+/**
+ * Show in Finder, in the Mac app. On the server on this Mac every clip has its file here; on a server elsewhere only a
+ * clip the server names a file for (one read where it lies) can be, inside a folder this Mac granted (apps/mac
+ * Reveal.swift): an upload from a phone has none, so it is not offered there.
+ */
+export function RevealItem({ libraryId, assetId, onProblem }: { libraryId: string; assetId: string; onProblem: (p: string) => void }) {
+  const [ok, setOk] = useState(() => (servedHere() ? true : onComputer.get(assetId)));
+  useEffect(() => {
+    if (ok !== undefined) return;
+    let live = true;
+    getAsset(libraryId, assetId).then(
+      (d) => {
+        onComputer.set(assetId, !!d.sourcePath);
+        if (live) setOk(!!d.sourcePath);
+      },
+      () => live && setOk(false),
+    );
+    return () => void (live = false);
+  }, [ok, libraryId, assetId]);
+  if (!ok) return null;
+  return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }

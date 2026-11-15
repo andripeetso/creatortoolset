@@ -48,11 +48,16 @@ const server = vi.hoisted(() => ({
   sent: [] as string[],
   trashed: [] as string[],
   uploaded: [] as string[],
+  /** the library is someone else's, given to look at */
+  readOnly: false,
+  gate: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
-  listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings } }],
+  listLibraries: async () => [
+    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}) },
+  ],
   // Default folders makes the six folders (api/library/organize.ts)
   uploadFile: async (_: string, f: File) => {
     server.sent.push(`upload ${f.name}`);
@@ -86,6 +91,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   changeFolderItems: async (...a: unknown[]) => {
     server.changed.push(a);
+    await server.gate; // a test holds the answer to see the page before it
     return { added: 1 };
   },
   listCollections: async () => server.folders,
@@ -94,6 +100,11 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   getProgress: async () => ({ done: 0, left: 0, clips: 0, seconds: 0, waiting: [] }),
   getLibraryStorage: async () => ({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] }),
   listTags: async () => [{ tag: "beach", count: 2 }],
+  listPlaces: async () => [],
+  deleteCollection: async (_: string, id: string) => {
+    server.changed.push(["delete", id]);
+    return { ok: true };
+  },
   setTrashed: async (_: string, id: string) => {
     server.trashed.push(id);
     server.items = (server.items as Card[]).filter((x) => x.id !== id);
@@ -103,7 +114,19 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
 }));
 
+vi.mock("./library/api", () => ({
+  tabCounts: async () => {
+    const items = server.items as Card[];
+    return { a: items.filter((x) => x.roll === "a").length, b: items.filter((x) => x.roll === "b").length, image: items.filter((x) => x.kind === "image").length };
+  },
+  restoreFolder: async (_: string, id: string) => {
+    server.changed.push(["restore", id]);
+    return { id };
+  },
+}));
+
 const { default: LibraryPage } = await import("./LibraryPage");
+const { undoLatest } = await import("@/lib/undo");
 
 let root: Root | null = null;
 beforeEach(() => {
@@ -121,6 +144,8 @@ beforeEach(() => {
   server.filed = new Set();
   server.trashed = [];
   server.uploaded = [];
+  server.readOnly = false;
+  server.gate = undefined;
   localStorage.clear();
 });
 afterEach(() => {
@@ -314,10 +339,11 @@ describe("Media Library page", () => {
     expect(sheet()).not.toContain("Footage folders");
   });
 
-  it("A-roll and B-roll ask the server for that roll, so the whole library is narrowed", async () => {
+  it("the A-roll and B-roll tabs ask the server for that roll, so the whole library is narrowed", async () => {
     server.items = [clip("talk", { roll: "a" }), clip("cover", { roll: "b" })];
     const host = await mount();
-    const b = [...host.querySelectorAll('[aria-label="Roll"] button')].find((x) => x.textContent === "B-roll") as HTMLButtonElement;
+    expect(host.querySelector('[data-tab="a"]')?.textContent).toBe("A-roll1");
+    const b = host.querySelector('[data-tab="b"]') as HTMLButtonElement;
     await act(async () => b.click());
     expect(host.textContent).toContain("Tiny Acrobatics cover");
     expect(host.textContent).not.toContain("Tiny Acrobatics talk");
@@ -331,15 +357,16 @@ describe("Media Library page", () => {
     const host = await mount();
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(host.textContent).not.toContain("Tiny Acrobatics cover"); // filed: not loose at the top
-    const b = [...host.querySelectorAll('[aria-label="Roll"] button')].find((x) => x.textContent === "B-roll") as HTMLButtonElement;
+    const b = host.querySelector('[data-tab="b"]') as HTMLButtonElement;
     await act(async () => b.click());
     expect(host.textContent).toContain("Tiny Acrobatics cover");
     expect(host.textContent).not.toContain("Tiny Acrobatics talk");
   });
 
-  it("offers no roll row when no clip has been sorted", async () => {
+  it("offers no A-roll or B-roll tab when no clip has been sorted and no such folder exists", async () => {
     const host = await mount();
-    expect(host.querySelector('[aria-label="Roll"]')).toBeNull();
+    expect(host.querySelector('[data-tab="a"]')).toBeNull();
+    expect(host.querySelector('[data-tab="b"]')).toBeNull();
   });
 
   it("a clip being prepared says so until its picture comes, with no amber", async () => {
@@ -387,10 +414,16 @@ describe("Media Library folders", () => {
     expect(buttons(host)).toContain("New folder");
   });
 
-  it("a folder opens from the address with the trail back up and its own folders; a clip dropped on one moves there", async () => {
+  it("a folder opens from the address under its tab, a folder inside it with the trail back up; a clip dropped on one moves there", async () => {
     server.folders = folders;
+    const nested = await mount("/library?f=col_b");
+    expect(nested.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyTripBeach");
+    expect(nested.querySelector('[data-tab="col_t"]')?.getAttribute("aria-current")).toBe("page");
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
     const host = await mount("/library?f=col_t");
-    expect(host.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyTrip");
+    expect(host.querySelector('[data-tab="col_t"]')?.getAttribute("aria-current")).toBe("page");
+    expect(host.querySelector('nav[aria-label="Folder"]')).toBeNull(); // the tab says where
     expect(link(host, "Beach")).toBeDefined();
     expect(link(host, "Apples")).toBeUndefined();
     expect(server.asked.at(-1)).toMatchObject({ collectionId: "col_t" });
@@ -520,5 +553,130 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await settle();
     expect(server.uploaded).toEqual(["Tiny drop.mp4"]);
     expect(host.querySelector('[aria-label="Uploads"]')?.textContent).toContain("Tiny drop.mp4");
+  });
+});
+
+describe("Media Library layout, tabs, instant moves and menus", () => {
+  const folders = [
+    { id: "col_a", name: "A-roll", parentId: null, kind: "smart", query: { roll: "a" }, createdBy: "admin" },
+    { id: "col_b", name: "B-roll", parentId: null, kind: "smart", query: { roll: "b" }, createdBy: "admin" },
+    { id: "col_m", name: "Music", parentId: null, kind: "manual", count: 0, createdBy: "admin" },
+  ];
+  const tab = (host: HTMLElement, id: string) => host.querySelector(`[data-tab="${id}"]`) as HTMLElement | null;
+  const dropOn = (el: Element, id: string) => {
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { types: ["application/x-ct-media-item"], getData: (t: string) => (t === "application/x-ct-media-item" ? id : ""), files: [] } });
+    el.dispatchEvent(e);
+  };
+  const rightClick = (el: Element) => {
+    const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 });
+    el.dispatchEvent(e);
+    return e;
+  };
+  const menuItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((x) => x.textContent?.includes(text));
+
+  it("the bar on top keeps the workspace and leaves Upload, New folder and Trash to the page's own row", async () => {
+    const host = await mount();
+    const bar = host.querySelector("[data-appbar]")!;
+    expect(bar.textContent).not.toContain("Upload");
+    expect(bar.querySelector('a[aria-label="Trash"]')).toBeNull();
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Upload", "New folder"]));
+    expect(host.querySelector('a[aria-label="Trash"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Kind"]')).toBeNull(); // the kinds are in the sidebar now
+    expect(host.querySelector('aside [aria-label="Kinds"]')).not.toBeNull();
+  });
+
+  it("the tabs are All, A-roll, B-roll, Photos, then the top folders, with counts", async () => {
+    server.folders = folders;
+    server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
+    const host = await mount();
+    expect([...host.querySelectorAll('nav[aria-label="Library tabs"] button')].map((b) => b.textContent)).toEqual(["All", "A-roll1", "B-roll0", "Photos1", "Music0"]);
+    await act(async () => tab(host, "photos")!.click());
+    expect(server.asked.at(-1)).toMatchObject({ kind: ["image"] });
+    await act(async () => tab(host, "a")!.click());
+    expect(where()).toBe("?f=col_a");
+  });
+
+  it("a clip moved onto a folder's tab leaves at once; Undo puts it back at once, then asks the server", async () => {
+    server.folders = folders;
+    server.items = [clip("one"), clip("two")];
+    const host = await mount();
+    let answer!: () => void;
+    server.gate = new Promise((r) => (answer = r));
+    await act(async () => dropOn(tab(host, "col_m")!, "one"));
+    expect(host.textContent).not.toContain("Tiny Acrobatics one"); // before the server has answered
+    act(() => void undoLatest());
+    expect(host.textContent).toContain("Tiny Acrobatics one");
+    answer();
+    await settle();
+    await settle();
+    expect(server.changed).toEqual([
+      ["lib_tiny", "col_m", ["one"], true],
+      ["lib_tiny", "col_m", ["one"], false],
+    ]);
+  });
+
+  it("a clip dropped on the B-roll tab is filed so, and Undo files it as nothing again; a photo is never sent", async () => {
+    server.folders = folders;
+    server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
+    const host = await mount();
+    await act(async () => dropOn(tab(host, "b")!, "pic"));
+    expect(server.changed).toEqual([]);
+    await act(async () => dropOn(tab(host, "b")!, "talk"));
+    await settle();
+    expect(server.changed).toEqual([["lib_tiny", "col_b", ["talk"], true]]);
+    await act(async () => void undoLatest());
+    await settle();
+    expect(server.changed.at(-1)).toEqual(["lib_tiny", "col_b", ["talk"], false]);
+  });
+
+  it("right-click on the empty space offers New folder and Upload; the browser's own menu never shows", async () => {
+    const host = await mount();
+    let e!: MouseEvent;
+    await act(async () => void (e = rightClick(host.querySelector("[data-space-menu]")!)));
+    expect(e.defaultPrevented).toBe(true);
+    expect(menuItem("New folder")).toBeDefined();
+    expect(menuItem("Upload…")).toBeDefined();
+    let elsewhere!: MouseEvent;
+    await act(async () => void (elsewhere = rightClick(host.querySelector("main")!)));
+    expect(elsewhere.defaultPrevented).toBe(true);
+  });
+
+  it("a folder's tab menu deletes it at once and Undo brings it back", async () => {
+    server.folders = folders;
+    const host = await mount();
+    await act(async () => void rightClick(tab(host, "col_m")!));
+    expect(menuItem("Rename…")).toBeDefined();
+    expect(menuItem("New folder inside")).toBeDefined();
+    await act(async () => menuItem("Delete folder")!.click());
+    expect(tab(host, "col_m")).toBeNull();
+    await settle();
+    expect(server.changed).toContainEqual(["delete", "col_m"]);
+    await act(async () => void undoLatest());
+    expect(tab(host, "col_m")).not.toBeNull();
+    await settle();
+    expect(server.changed).toContainEqual(["restore", "col_m"]);
+  });
+
+  it("the Gallery shows only clips, from the whole library, and the pick is kept on this device", async () => {
+    server.folders = folders;
+    const host = await mount();
+    expect(host.querySelector('a[href="/library?f=col_m"]')).not.toBeNull(); // Folders: the folder cards
+    await act(async () => (host.querySelector('[aria-label="Gallery"]') as HTMLButtonElement).click());
+    expect(host.querySelector('a[href="/library?f=col_m"]')).toBeNull();
+    expect(server.asked.at(-1)).not.toHaveProperty("unfiled");
+    expect(localStorage.getItem("library:view")).toBe("gallery");
+  });
+
+  it("a library given to look at has no Upload, New folder, Trash, page menu or drops", async () => {
+    server.readOnly = true;
+    server.folders = folders;
+    const host = await mount();
+    expect(buttons(host)).not.toContain("Upload");
+    expect(buttons(host)).not.toContain("New folder");
+    expect(host.querySelector('a[aria-label="Trash"]')).toBeNull();
+    expect(host.querySelector("[data-space-menu]")).toBeNull();
+    await act(async () => dropOn(tab(host, "col_m")!, "one"));
+    expect(server.changed).toEqual([]);
   });
 });
