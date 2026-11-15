@@ -16,10 +16,12 @@ it("says 'no app tools' only for an AI that has none", () => {
 it("a reply that waits says what it waits for, not that it is working", () => {
   const reply = { id: "r", role: "assistant", text: "", at: Date.now() - 60_000, status: "thinking" } as const;
   const html = (m: AssistantMessage) => renderToStaticMarkup(<MemoryRouter><Message m={m} onView={() => {}} /></MemoryRouter>);
-  const waiting = html({ ...reply, wait: { for: "videos", videos: 1, text: "Waiting for a video to upload" } });
-  expect(waiting).toContain("Waiting for a video to upload");
-  expect(waiting).not.toContain("Working");
+  // the waiting reply shows nothing of its own: its line and Steer are under the person's message
+  expect(html({ ...reply, wait: { for: "reply", text: "Waiting for the reply before it" } })).toBe("");
   expect(html(reply)).toContain("Working for 1m");
+  const mine = renderToStaticMarkup(<MemoryRouter><Message m={{ id: "u", role: "user", text: "And this", at: Date.now() }} onView={() => {}} waiting={{ text: "Waiting for the reply before it", onSteer: () => {} }} /></MemoryRouter>);
+  expect(mine.indexOf("Waiting for the reply before it")).toBeGreaterThan(mine.indexOf("And this"));
+  expect(mine).toContain("Steer");
 });
 
 it("folds the steps into one row: the current step while working, the count once done", () => {

@@ -959,9 +959,15 @@ export function AssistantDock() {
                   ? () => void chooseFolderOnMac().then((p) => p && submit({ ...EMPTY_DRAFT, folders: [p] }))
                   : undefined;
               const branch = m.role === "assistant" && m.status !== "thinking" ? () => void branchFrom(m.id) : undefined;
-              // the message the server starts next, once the reply before it ends: Steer ends that reply now
-              const steerNow = m.wait?.for === "reply" && all.find((x) => x.wait?.for === "reply") === m ? stop : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} onSteer={steerNow} quiet={quiet} />;
+              // a reply that waits (for its videos, or for the reply before it) is said under the message it answers
+              // (owner, 2026-11-15: "it should be placed underneath my message"); the server starts the first one
+              // waiting for a reply next, and Steer ends the reply before it now
+              const next = all[i + 1];
+              const waiting =
+                m.role === "user" && next?.wait
+                  ? { text: next.wait.text, onSteer: next.wait.for === "reply" && all.find((x) => x.wait?.for === "reply") === next ? stop : undefined }
+                  : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} waiting={waiting} quiet={quiet} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -1106,7 +1112,7 @@ export function Message({
   sending,
   onCancelSend,
   onBranch,
-  onSteer,
+  waiting,
   quiet,
 }: {
   m: AssistantMessage;
@@ -1119,8 +1125,9 @@ export function Message({
   onCancelSend?: () => void;
   /** A new chat holding this one up to this reply, opened in its place. */
   onBranch?: () => void;
-  /** A message queued behind the reply being written: that reply stops and this one starts. */
-  onSteer?: () => void;
+  /** The person's message whose reply waits (for its videos or the reply before it): the line under it, and Steer
+   * when it is the next one queued behind the reply being written (that reply stops and this one starts). */
+  waiting?: { text: string; onSteer?: () => void };
   /** A reply a usage limit stopped, said only by the bar over the message box (it is not said twice in the chat). */
   quiet?: boolean;
 }) {
@@ -1177,11 +1184,28 @@ export function Message({
             <LinkedText text={m.text} linkClass="underline decoration-white/50 underline-offset-2 hover:decoration-white" />
           </div>
         )}
+        {waiting && (
+          <div className="flex items-center gap-1.5">
+            <p className="ct-shimmer w-fit text-xs text-muted-foreground">{waiting.text}</p>
+            {waiting.onSteer && (
+              <button
+                type="button"
+                onClick={waiting.onSteer}
+                className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--tint)] hover:bg-[color-mix(in_srgb,var(--tint)_15%,transparent)]"
+                title="Steer: stop the reply and send this now"
+              >
+                <CornerDownLeft className="size-3" /> Steer
+              </button>
+            )}
+          </div>
+        )}
         {big && <PictureOverlay src={big} onClose={() => setBig(null)} />}
       </div>
     );
   const steps = m.steps ?? [];
   const working = m.status === "thinking";
+  // a reply waiting for its videos or its turn hasn't started: its line is under the message it answers
+  if (working && !m.text && m.wait && !steps.length && !m.send) return null;
   if (working && !m.text)
     return (
       <div className="space-y-1">
@@ -1207,21 +1231,7 @@ export function Message({
             </button>
           </p>
         ) : (
-          m.wait && (
-            <div className="flex items-center gap-1.5">
-              <p className="ct-shimmer w-fit text-xs text-muted-foreground">{m.wait.text}</p>
-              {onSteer && (
-                <button
-                  type="button"
-                  onClick={onSteer}
-                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--tint)] hover:bg-[color-mix(in_srgb,var(--tint)_15%,transparent)]"
-                  title="Steer: stop the reply and send this now"
-                >
-                  <CornerDownLeft className="size-3" /> Steer
-                </button>
-              )}
-            </div>
-          )
+          m.wait && <p className="ct-shimmer w-fit text-xs text-muted-foreground">{m.wait.text}</p>
         )}
       </div>
     );
