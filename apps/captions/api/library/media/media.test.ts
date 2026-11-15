@@ -186,6 +186,16 @@ describe("sprite", () => {
     expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
   });
 
+  it("a clip of a second, and one whose picture ends before its sound, still get every frame", async () => {
+    const clip = path.join(dir, "short-picture.mp4");
+    ff(["-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=30", "-f", "lavfi", "-i", "sine=duration=1.5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", clip]);
+    for (const [src, length] of [[h264, (await probe(h264)).duration], [clip, (await probe(clip)).duration]] as const) {
+      const out = path.join(dir, `short-${path.basename(src)}.jpg`);
+      await makeSprite(src, out, length);
+      expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
+    }
+  });
+
   it("refuses a clip with no length", async () => {
     await expect(makeSprite(h264, path.join(dir, "none.jpg"), 0)).rejects.toThrow(/length/);
   });
