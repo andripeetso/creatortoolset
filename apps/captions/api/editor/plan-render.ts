@@ -191,7 +191,8 @@ export async function renderPlanPreview(tl: Timeline, files: Record<string, stri
     await writeFile(listFile, list.join("\n"));
     const song = tl.tracks.A2.items[0];
     const songSrc = song && tl.sources[song.src];
-    const norm = "loudnorm=I=-14:TP=-1:LRA=11";
+    // nothing heard at all (every shot's sound off, no song): silence stays silence, as levelling it divides by zero
+    const norm = songSrc || tl.tracks.A1.items.length ? "loudnorm=I=-14:TP=-1:LRA=11" : "anull";
     const mix = songSrc
       ? `[0:a]aresample=48000[x];[1:a]atrim=0:${total.toFixed(6)},asetpts=PTS-STARTPTS,${song.gainDb ? `volume=${song.gainDb}dB,` : ""}aresample=48000,aformat=channel_layouts=stereo,afade=t=out:st=${Math.max(0, total - 0.6).toFixed(3)}:d=0.6[s];[x][s]amix=inputs=2:duration=first:normalize=0,${norm}[a]`
       : `[0:a]${norm}[a]`;

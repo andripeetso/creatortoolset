@@ -19,7 +19,9 @@ import type { StepContext } from "./engine";
 import { fitted } from "./framing";
 import { clearPasses } from "./passes";
 import { macAway } from "./script";
-import { generateClip, indexSources, songBeats, styles } from "./standins";
+import { describeShots, indexSources, songBeats } from "./index";
+import { readable } from "./media";
+import { generateClip, styles } from "./standins";
 import { editDir, readEdit, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import { emptyTracks, sourceOf } from "./timeline";
@@ -53,6 +55,8 @@ const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const HEX = /^#[0-9a-f]{6}$/i;
+/** A source with a picture to cut (a song's cover art is none). */
+const pictured = (s: IndexSource) => s.w > 0 && s.shots.length > 0;
 
 /* ---------------- which edits are planned ---------------- */
 
@@ -77,9 +81,10 @@ export function allBroll(edit: Pick<EditMeta, "sources" | "song">): boolean {
   return picture.length > 0 && picture.every((id) => (q.get(id) as { roll: string | null } | undefined)?.roll === "b");
 }
 
-/** The share of the sources' sound (songs aside) that is in sentences. */
+/** The share of the sources' sound (songs aside) that is in sentences; with its length unknown, any sentence is all of it. */
 export function speechShare(sentences: Pick<Sentence, "s" | "e">[], soundS: number): number {
-  return soundS > 0 ? sentences.reduce((n, s) => n + Math.max(0, s.e - s.s), 0) / soundS : 0;
+  if (!(soundS > 0)) return sentences.length ? 1 : 0;
+  return sentences.reduce((n, s) => n + Math.max(0, s.e - s.s), 0) / soundS;
 }
 
 /** Whether this edit is planned rather than cut around speech: asked for, or nobody speaks in its footage. */
@@ -99,6 +104,8 @@ export function isPlanned(edit: EditMeta, sentences: Sentence[]): boolean {
 
 export interface Song {
   id: string;
+  /** where its file is in the library */
+  key: string;
   title: string;
   dur: number;
   /** what the notes say about where it came from */
@@ -109,11 +116,12 @@ interface MusicRow {
   id: string;
   title: string;
   probe: string | null;
+  source_key: string;
 }
 
 const songOf = (r: MusicRow, from: string): Song | null => {
   const p = JSON.parse(r.probe ?? "null") as ProbeSummary | null;
-  return p?.acodec && p.duration > 1 ? { id: r.id, title: r.title, dur: p.duration, from } : null;
+  return p?.acodec && p.duration > 1 ? { id: r.id, key: r.source_key, title: r.title, dur: p.duration, from } : null;
 };
 
 /**
@@ -123,7 +131,7 @@ const songOf = (r: MusicRow, from: string): Song | null => {
  */
 export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
   const db = libraryDb();
-  const row = db.prepare("SELECT v.id, a.title, v.probe, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL");
+  const row = db.prepare("SELECT v.id, a.title, v.probe, v.source_key, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL");
   const mine = (id: string) => sourcesWorkspace(edit.createdBy, [id]) === edit.workspaceId;
   if (edit.song && mine(edit.song)) {
     const r = row.get(edit.song) as MusicRow | undefined;
@@ -131,7 +139,7 @@ export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
     if (s) return s;
   }
   for (const src of index.sources) {
-    if (!(isMusic(src.id) || (!src.w && src.sound && !src.speech))) continue;
+    if (!(isMusic(src.id) || (!pictured(src) && src.sound && !src.speech))) continue;
     const r = row.get(src.id) as MusicRow | undefined;
     const s = r && songOf(r, "a song among the sources");
     if (s) return s;
@@ -139,7 +147,7 @@ export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
   const lib = (row.get(edit.sources[0] ?? "") as { library_id: string } | undefined)?.library_id;
   if (!lib) return null;
   const rows = db
-    .prepare(`SELECT v.id, a.title, v.probe FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ${musicSql} ORDER BY a.created_at DESC LIMIT 200`)
+    .prepare(`SELECT v.id, a.title, v.probe, v.source_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ${musicSql} ORDER BY a.created_at DESC LIMIT 200`)
     .all(lib) as unknown as MusicRow[];
   const brief = edit.brief.toLowerCase();
   const named = rows.find((r) => r.title.trim().length >= 3 && brief.includes(r.title.trim().toLowerCase()));
@@ -197,7 +205,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   parts.push(`Versions: ${i.versions}${i.versions > 1 ? " (each different, says how in its variation)" : ""}`);
   if (i.targetS) parts.push(`Length: about ${i.targetS} seconds`);
   const src = i.index.sources.map((s) => {
-    const head = `${tagOf(i.index, s.id)} ${JSON.stringify(s.title)}: ${s.dur.toFixed(1)} s, ${s.w ? `${s.w}x${s.h} at ${Math.round(s.fps)} fps` : "sound only (no picture: not a shot)"}, ${s.sound === false ? "no sound" : "sound"}${s.speech ? ", someone speaks" : ""}`;
+    const head = `${tagOf(i.index, s.id)} ${JSON.stringify(s.title)}: ${s.dur.toFixed(1)} s, ${pictured(s) ? `${s.w}x${s.h} at ${Math.round(s.fps)} fps` : "sound only (no picture: not a shot)"}, ${s.sound === false ? "no sound" : "sound"}${s.speech ? ", someone speaks" : ""}`;
     const shots = s.shots.slice(0, 60).map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
     const said = i.words[s.id] ? [`  said: ${i.words[s.id]}`] : [];
     return [head, ...shots, ...said].join("\n");
@@ -217,6 +225,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
       ].join("\n"),
     );
   } else parts.push("No song: the footage's own sound leads.");
+  if (i.index.story) parts.push(`What happens across the footage, from the pictures:\n${i.index.story}`);
   if (i.gen.length) parts.push(`A shot can also be a clip made from nothing: {"generate":{"style":"${i.gen.join('" or "')}","palette":["#rrggbb"]},"dur":2} in place of src and in.`);
   return { system: i.packText ? `${SYSTEM}\n\n${i.packText}` : SYSTEM, user: parts.join("\n\n") };
 }
@@ -330,7 +339,7 @@ function srcOf(s: Record<string, unknown>, index: FootageIndex): Src | string {
   const tag = /^s(\d+)$/i.exec(ref.trim());
   const source = index.sources.find((x) => x.id === ref) ?? (tag ? index.sources[Number(tag[1]) - 1] : undefined);
   if (!source) return `a shot from “${ref || "nothing"}”, which is not one of the sources: left out`;
-  if (!source.w) return `a shot from ${tagOf(index, source.id)}, which has no picture: left out`;
+  if (!pictured(source)) return `a shot from ${tagOf(index, source.id)}, which has no picture: left out`;
   return { source, inS };
 }
 
@@ -515,9 +524,9 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
 
 /** The footage in turn, a shot every two beats (else 3 s), until `upTo`: an edit when the AI gave none. */
 function fallbackShots(c: RepairContext, upTo: number): (Omit<PlanShot, "src" | "at"> & { src: Src })[] {
-  const step = c.index.song ? 120 / c.index.song.bpm : 3;
+  const step = c.index.song?.bpm ? 120 / c.index.song.bpm : 3;
   const want = Math.min(upTo, c.targetS || 30);
-  const pics = c.index.sources.filter((s) => s.w > 0);
+  const pics = c.index.sources.filter(pictured);
   const out: (Omit<PlanShot, "src" | "at"> & { src: Src })[] = [];
   for (let k = 0; k * step < want && k < 400; k++) {
     if (!pics.length) {
@@ -619,7 +628,7 @@ async function workspaceSetup(edit: EditMeta): Promise<string> {
 
 /** The frame: the edit's working size, else the first source with a picture, at its rate. */
 function frameOf(edit: EditMeta, index: FootageIndex): RepairContext["size"] {
-  const pic = index.sources.find((s) => s.w > 0);
+  const pic = index.sources.find(pictured);
   const fps = pic ? Math.round(pic.fps * 1000) / 1000 : 30;
   if (edit.size?.w && edit.size.h) return { w: edit.size.w, h: edit.size.h, fps };
   return pic ? { w: pic.w, h: pic.h, fps } : { w: 1080, h: 1920, fps };
@@ -633,13 +642,20 @@ function frameOf(edit: EditMeta, index: FootageIndex): RepairContext["size"] {
 export async function planStep({ edit, job, signal }: StepContext, sentences: Sentence[]): Promise<void> {
   const route = aiFor(whoFor(job.actor!), "editor", "AI Editor plan");
   if (route.off) throw new NeedsKey(route.off);
-  const index = await indexSources(edit.sources);
-  const speaks = new Set(sentences.map((s) => s.src));
-  for (const s of index.sources) s.speech = speaks.has(s.id);
+  let index = await indexSources(edit, signal);
+  // speech as the script step judged it (a few words made up over music are nobody speaking), and which have sound
+  const probe = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?");
+  for (const s of index.sources) {
+    s.speech = s.dur > 0 && speechShare(sentences.filter((x) => x.src === s.id), s.dur) >= SPEECH_SHARE;
+    s.sound = !!(JSON.parse((probe.get(s.id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null)?.acodec;
+  }
   const song = songFor(edit, index);
-  if (song) index.song = await songBeats(song.id, song.dur);
+  if (song) index.song = await songBeats(await readable(song.id, song.key), 0, signal);
   // the song is what is heard, not footage to cut
-  if (song) index.sources = index.sources.filter((s) => s.id !== song.id || s.w > 0);
+  if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
+  // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
+  index = await describeShots(index, { actor: job.actor!, story: true }, signal);
+  if (signal.aborted) return;
   const size = frameOf(edit, index);
   const gen = styles();
   const setup = [await workspaceSetup(edit), styleBlock(edit.style)].filter(Boolean).join("\n\n");

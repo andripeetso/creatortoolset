@@ -9,6 +9,11 @@ vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
   return { ...m, aiFor: vi.fn(m.aiFor), completeWithFallback: vi.fn(m.completeWithFallback) };
 });
+// the AI looking at contact sheets (index.ts): it sees a test pattern
+vi.mock("../ai-vision", async (real) => ({
+  ...(await real<typeof import("../ai-vision")>()),
+  completeVisionWithFallback: vi.fn(async (_s: string, _u: string, _i: unknown, _sig: unknown, parse: (t: string) => unknown) => ({ value: parse('{"shots":{"1":"a moving test pattern"},"story":"A test pattern moves."}') })),
+}));
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
@@ -28,6 +33,7 @@ const { MIN_SHOT_S, parsePlans, planPrompt, planTimeline, repairPlan, snapCuts, 
 const { qaOf } = await import("./qa");
 const { createEdit, readDraft, readEdit, readStep } = await import("./store");
 const { tick } = await import("./worker");
+const { songBeats } = await import("./index");
 
 /** Two sources with a picture (one without sound), a song with no picture, beats at 120 bpm from 0. */
 const index = (): FootageIndex => ({
@@ -153,7 +159,7 @@ describe("the plan: checked and repaired, never trusted", () => {
   });
 
   it("asks with the brief, the setup, every source by tag and the song's beats in the edit's time", () => {
-    const { system, user } = planPrompt({ brief: "An overdone hard edit", versions: 1, targetS: 25, setup: "Workspace: Tiny Acrobatics", index: { ...index(), song: beatsAt(120, 1, 60) }, words: {}, song: { id: "ver_song", title: "Song", dur: 60, from: "" }, gen: [] });
+    const { system, user } = planPrompt({ brief: "An overdone hard edit", versions: 1, targetS: 25, setup: "Workspace: Tiny Acrobatics", index: { ...index(), song: beatsAt(120, 1, 60) }, words: {}, song: { id: "ver_song", key: "k", title: "Song", dur: 60, from: "" }, gen: [] });
     expect(system).toMatch(/Make exactly the kind of edit the brief asks for/);
     expect(user).toContain("Brief:\nAn overdone hard edit");
     expect(user).toContain("The workspace's setup:\nWorkspace: Tiny Acrobatics");
@@ -247,16 +253,25 @@ describe("footage where nobody speaks reaches Review", () => {
     expect(d.prepare("SELECT 1 FROM jobs WHERE version_id = 'ver_song' AND kind = 'transcribe'").get()).toBeUndefined();
     expect(readStep(e.id, "analysis")!.notes).toContain(`${NO_SPEECH}. If someone does speak in it, pick the language on the edit and run it again`);
     expect(asked).toContain('S1 "Tiny Acrobatics run"');
+    expect(asked).toContain(": a moving test pattern");
+    expect(asked).toContain("What happens across the footage, from the pictures:\nA test pattern moves.");
     expect(asked).toContain('Song "Tiny Acrobatics theme" leads');
     expect(readStep(e.id, "plan")!.notes[0]).toBe("Cut to “Tiny Acrobatics theme” (a song among the sources)");
     expect(readEdit(e.id)!.name).toBe("Hard edit");
     const tl = readDraft(e.id, "v1")!.timeline;
     expect(tl.plan?.kind).toBe("hard edit");
-    expect(tl.tracks.V1.items.map((i) => [i.rec, i.len, i.speed ?? 1])).toEqual([[0, 30, 1], [30, 45, 2], [75, 15, 1]]);
-    expect(tl.tracks.A2.items).toEqual([{ src: "ver_song", in: 0, len: 90, rec: 0 }]);
+    // cut on the song's beats as measured (index.ts), no longer than the 3 s asked and less than a beat short of it
+    const beats = await songBeats(path.join(dir, "song.wav"), 0, new AbortController().signal);
+    const items = tl.tracks.V1.items;
+    const end = items.at(-1)!.rec + items.at(-1)!.len;
+    for (const i of items.slice(1)) expect(beats.beats.map((x) => Math.round(x * 30))).toContain(i.rec);
+    expect(end).toBeLessThanOrEqual(90);
+    expect(end).toBeGreaterThan(90 - (60 / beats.bpm) * 30);
+    expect(items[1]!.speed).toBe(2);
+    expect(tl.tracks.A2.items).toEqual([{ src: "ver_song", in: 0, len: end, rec: 0 }]);
     const filed = readStep(e.id, "review")!.v1!;
     const v = (await readMeta(filed.assetId))!.versions[0]!;
     expect(v.status).toBe("ready");
-    expect(Math.abs(v.duration - 3)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(v.duration - end / 30)).toBeLessThanOrEqual(0.1);
   }, 240_000);
 });
