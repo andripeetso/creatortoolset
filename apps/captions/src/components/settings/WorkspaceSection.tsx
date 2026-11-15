@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
@@ -6,7 +6,9 @@ import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } fro
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { PROJECT_COLORS, projectColor } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateInvite, updateMember } from "@/lib/workspaces";
@@ -189,7 +191,10 @@ export function WorkspaceSection() {
                 subtitle={[memberLine(m, self, true), acct?.role === "admin" && m.role !== "owner" ? "Admin" : null, acct?.locked ? "Locked" : null].filter(Boolean).join(" · ")}
                 actions={
                   m.role !== "owner" && !self ? (
-                    <MemberMenu m={m} account={acct ? accounts.menuItems(acct) : []} onAi={() => setAiFor(m)} onRemove={() => attempt(removeMember(m.username))} />
+                    <>
+                      <WorkspacePicker brands={view.brands ?? []} given={m.workspaces ?? []} onChange={(workspaces) => act(updateMember(m.username, { workspaces }))} />
+                      <MemberMenu m={m} account={acct ? accounts.menuItems(acct) : []} onAi={() => setAiFor(m)} onRemove={() => attempt(removeMember(m.username))} />
+                    </>
                   ) : undefined
                 }
               />
@@ -207,10 +212,13 @@ export function WorkspaceSection() {
                 title={i.email ? `Emailed to ${i.email}` : "Link for one person"}
                 subtitle={`Expires ${new Date(i.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`}
                 actions={
+                  <>
+                  <WorkspacePicker brands={view.brands ?? []} given={i.workspaces ?? []} onChange={(workspaces) => act(updateInvite(i.id, { workspaces }))} />
                   <RowMenu
                     label="More for this invite"
                     items={[{ label: "Revoke", destructive: true, confirm: { title: "Revoke this invite link?", body: "Nobody can join with it after this.", ok: "Revoke" }, onSelect: () => attempt(revokeInvite(i.id)) }]}
                   />
+                  </>
                 }
               />
             ))}
@@ -224,7 +232,7 @@ export function WorkspaceSection() {
             rows={[
               ...view.members
                 .filter((m) => m.role !== "owner")
-                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, scripts: !!m.scripts, workspaces: m.workspaces ?? [], save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
+                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, scripts: !!m.scripts, save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
               ...view.invites.map((i) => ({
                 key: i.id,
                 label: (
@@ -234,11 +242,9 @@ export function WorkspaceSection() {
                 ),
                 off: i.off ?? [],
                 scripts: !!i.scripts,
-                workspaces: i.workspaces ?? [],
                 save: (p: AccessPatch) => act(updateInvite(i.id, p as InvitePatch)),
               })),
             ]}
-            brands={view.brands ?? []}
           />
         </Section>
       )}
@@ -350,8 +356,52 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
   );
 }
 
-type AccessPatch = { off?: string[]; scripts?: boolean; workspaces?: string[] };
-type Access = { off: string[]; scripts: boolean; workspaces: string[] };
+/**
+ * Which of your workspaces a person works in (Member.workspaces): the row's own button, their workspaces' dots and
+ * names, ticked in a menu that stays open. A tick shows at once; a failed save falls back to what the server has.
+ */
+function WorkspacePicker({ brands, given, onChange }: { brands: { id: string; name: string }[]; given: string[]; onChange: (ids: string[]) => Promise<unknown> }) {
+  const [draft, setDraft] = useState<string[] | null>(null);
+  if (!brands.length) return null;
+  const ids = (draft ?? given).filter((id) => brands.some((b) => b.id === id));
+  const picked = brands.filter((b) => ids.includes(b.id));
+  const toggle = (id: string) => {
+    const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+    setDraft(next);
+    void onChange(next)
+      .catch((e) => saveFailed(msg(e)))
+      .finally(() => setDraft((d) => (d === next ? null : d)));
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="xs" variant="ghost" className="max-w-[16rem] gap-1.5 font-normal text-muted-foreground" aria-label="Workspaces">
+          {picked.length > 0 && (
+            <span className="flex shrink-0 -space-x-0.5">
+              {picked.slice(0, 3).map((b) => (
+                <span key={b.id} className={`h-2 w-2 rounded-full ring-1 ring-card ${PROJECT_COLORS[projectColor(b)].dot}`} />
+              ))}
+            </span>
+          )}
+          <span className="truncate">{picked.length === 0 ? "No workspace" : picked.length === 1 ? picked[0]!.name : `${picked.length} workspaces`}</span>
+          <ChevronDown className="size-3 shrink-0" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">Works in</DropdownMenuLabel>
+        {brands.map((b) => (
+          <DropdownMenuCheckboxItem key={b.id} checked={ids.includes(b.id)} onSelect={(e) => e.preventDefault()} onCheckedChange={() => toggle(b.id)}>
+            <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(b)].dot}`} />
+            <span className="truncate">{b.name}</span>
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+type AccessPatch = { off?: string[]; scripts?: boolean };
+type Access = { off: string[]; scripts: boolean };
 interface AccessRow extends Access {
   key: string;
   label: ReactNode;
@@ -359,14 +409,13 @@ interface AccessRow extends Access {
 }
 
 /**
- * Who opens what: a row for each member and each pending invite, a tick per app, one for reading your scripts, and one
- * per workspace of yours they work in (it shows in their workspace switcher, your things there read-only). A tick
+ * Who opens what: a row for each member and each pending invite, a tick per app and one for reading your scripts. A tick
  * shows at once; `draft` holds a row while its save is on its way, so a second tick builds on the first, and a failed
  * save falls back to what the server has.
  */
-function AccessGrid({ rows, brands }: { rows: AccessRow[]; brands: { id: string; name: string }[] }) {
+function AccessGrid({ rows }: { rows: AccessRow[] }) {
   const [draft, setDraft] = useState<Record<string, Access>>({});
-  const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, scripts: r.scripts, workspaces: r.workspaces };
+  const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, scripts: r.scripts };
   const change = (r: AccessRow, next: Access, patch: AccessPatch) => {
     setDraft((d) => ({ ...d, [r.key]: next }));
     void r
@@ -387,11 +436,6 @@ function AccessGrid({ rows, brands }: { rows: AccessRow[]; brands: { id: string;
                 </th>
               ))}
               <th className="px-1 pb-2 text-center align-bottom font-normal">Your scripts</th>
-              {brands.map((b, i) => (
-                <th key={b.id} className={`px-1 pb-2 text-center align-bottom font-normal${i === 0 ? " border-l border-border/50 pl-2" : ""}`}>
-                  {b.name}
-                </th>
-              ))}
             </tr>
           </thead>
           <tbody>
@@ -408,11 +452,6 @@ function AccessGrid({ rows, brands }: { rows: AccessRow[]; brands: { id: string;
                     return <Tick key={t} on={on} title={`${TOOL_NAMES[t]} for ${typeof r.label === "string" ? r.label : "this invite"}`} onClick={() => change(r, { ...cur, off }, { off })} />;
                   })}
                   <Tick on={cur.scripts} title="Can read your scripts" onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
-                  {brands.map((b) => {
-                    const on = cur.workspaces.includes(b.id);
-                    const workspaces = on ? cur.workspaces.filter((x) => x !== b.id) : [...cur.workspaces, b.id];
-                    return <Tick key={b.id} on={on} title={`Works in ${b.name}`} onClick={() => change(r, { ...cur, workspaces }, { workspaces })} />;
-                  })}
                 </tr>
               );
             })}
@@ -506,6 +545,7 @@ function InviteDialog({
             {brands.map((b) => (
               <label key={b.id} className="flex items-center gap-2 text-sm">
                 <Checkbox checked={given.includes(b.id)} onCheckedChange={(on) => setGiven((g) => (on ? [...g, b.id] : g.filter((x) => x !== b.id)))} />
+                <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_COLORS[projectColor(b)].dot}`} />
                 {b.name}
               </label>
             ))}
