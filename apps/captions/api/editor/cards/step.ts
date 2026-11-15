@@ -288,6 +288,7 @@ export async function cardsStep(ctx: StepContext): Promise<void> {
   if (!variant || !styleId) return; // only a version of an edit whose style names an animation style
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to put cards on`);
+  if (draft.timeline.plan) return; // a planned edit's texts are its plan's (plan.ts)
   try {
     let st = readCards(edit.id, variant);
     // the edit was given another style since: its cards are that style's no more

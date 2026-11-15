@@ -9,6 +9,7 @@ import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
+import type { EditPlan } from "../../contracts/edit-plan";
 import { cardsView } from "./cards/state";
 import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
@@ -93,6 +94,8 @@ export interface StepFiles {
   finished: { removed: boolean };
   /** the passes Carry on queued for each version, in order (passes.ts) */
   passes: Record<string, string[]>;
+  /** each planned version's plan as checked and repaired, and what was changed (plan.ts) */
+  shots: Record<string, { plan: EditPlan; notes: string[] }>;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -338,6 +341,12 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   // null or [] = the person's Voice languages again; anything not a list of codes is ignored
   if (body.languages === null) out.languages = [];
   else if (Array.isArray(body.languages) && body.languages.every(isLanguage)) out.languages = [...new Set(body.languages as string[])].slice(0, 5);
+  // planned from the brief, not cut around speech (plan.ts); kept only when asked for, so every other edit is as it was
+  if (body.plan === true) out.plan = true;
+  else if (body.plan === false) out.plan = false;
+  // a song the person may read in this workspace; anything else is left out
+  if (body.song === null) out.song = null;
+  else if (typeof body.song === "string" && sourcesWorkspace(username, [body.song]) === ws) out.song = body.song;
   const punch = num((body.framing as { punch?: unknown } | undefined)?.punch, 1, 2);
   if (punch !== undefined) out.framing = { punch };
   // only the flags a loaded plug-in declares, each one a boolean; the others are ignored

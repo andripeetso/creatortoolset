@@ -293,6 +293,7 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   if (!variant) return; // a whole-edit step is not a draft: each version's draft queues its own
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to add B-roll to`);
+  if (draft.timeline.plan) return; // a planned edit's picture is its plan's (plan.ts)
   const cover = noPicture(draft.timeline);
   if (!edit.brollCollectionId && !cover) return;
   const lib = cover && !edit.brollCollectionId ? (libraryDb().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(edit.sources[0] ?? "") as { library_id: string } | undefined) : undefined;

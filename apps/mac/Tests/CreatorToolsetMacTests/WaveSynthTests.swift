@@ -1,11 +1,16 @@
 import XCTest
 @testable import CreatorToolsetMac
 
-/// The chat-mode wave's sound (WaveSound.swift), made as the wave makes it: a click is silent, a hold builds, the pop is
-/// louder than the hold and never clips, and it is gone within half a second: a bubble's bop, never a boom.
+/// The chat-mode wave's sound (WaveSound.swift), made as the wave makes it with the wee the app carries: a click is
+/// silent, a hold builds, the pop is louder than the hold and never clips, the wee is gone within its own length, and a
+/// shorter hold's wee is shorter.
 final class WaveSynthTests: XCTestCase {
     private func play(held: Double, seconds: Double) -> [Float] {
         var synth = WaveSynth(rate: 48000)
+        let wee = WaveSynth.loadWee(URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../wave-wee.wav"))!
+        synth.wee = wee.samples
+        synth.weeRate = wee.rate
         var out: [Float] = []
         let size = CGSize(width: 2880, height: 1800), o = CGPoint(x: 56, y: 56)
         var popped = false
@@ -18,7 +23,7 @@ final class WaveSynthTests: XCTestCase {
             } else if !popped {
                 popped = true
                 synth.held = 0
-                synth.pop(drawnIn: WaveClock.pull(held, held: held), wild: WaveClock.wild(held))
+                synth.pop(drawnIn: WaveClock.pull(held, held: held))
             }
             for _ in 0 ..< 400 { out.append(synth.next()) }
         }
@@ -41,8 +46,17 @@ final class WaveSynthTests: XCTestCase {
         XCTAssertGreaterThan(late, early * 3)
         XCTAssertGreaterThan(pop, late * 1.5)
         XCTAssertLessThan(s.map(abs).max()!, 0.9)
-        XCTAssertLessThan(loudness(s, from: 2.5, to: 3), 0.003)
+        XCTAssertLessThan(loudness(s, from: 3.6, to: 4), 0.003)
         // smooth: no sample jumps far from the one before (noise, a click)
         XCTAssertLessThan(zip(s, s.dropFirst()).map { abs($0 - $1) }.max()!, 0.08)
+    }
+
+    func testAShortHoldsWeeIsShorter() {
+        let short = play(held: 400, seconds: 3), long = play(held: WaveClock.longest, seconds: 4)
+        func lastSound(_ s: [Float], after: Double) -> Double {
+            let i = s.lastIndex { abs($0) > 0.002 } ?? 0
+            return Double(i) / 48000 - after
+        }
+        XCTAssertLessThan(lastSound(short, after: 0.4), lastSound(long, after: 2) - 0.3)
     }
 }
