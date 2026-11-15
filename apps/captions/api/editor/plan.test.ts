@@ -171,6 +171,22 @@ describe("the plan: checked and repaired, never trusted", () => {
     expect(speechShare([{ s: 0, e: 2 }, { s: 5, e: 6 }], 30)).toBeCloseTo(0.1, 5);
   });
 
+  it("opens on the first shot's picture: no entry, and no flash, negative or strobe on the first frame", () => {
+    const { plan } = repairPlan(
+      { kind: "hard edit", shots: [
+        { src: "S1", in: 2, dur: 1, enter: "flash", fx: [{ type: "flash", at: 0 }, { type: "strobe", at: 0 }, { type: "punch", at: 0 }, { type: "flash", at: 0.5 }] },
+        { src: "S2", in: 0, dur: 1, enter: "flash", fx: [{ type: "flash", at: 0 }] },
+      ] },
+      ctx(),
+    );
+    const src = (id: string) => ({ versionId: id, name: id, fps: 30, tc: 0, dur: 1800, w: 1920, h: 1080 });
+    const [first, second] = planTimeline(plan, { ver_game: src("ver_game"), ver_mute: src("ver_mute") }, "Run v1").tracks.V1.items;
+    expect(first!.enter).toBeUndefined();
+    expect(first!.fx?.map((f) => [f.type, "at" in f && f.at])).toEqual([["punch", 0], ["flash", 0.5]]);
+    expect(second!.enter).toBe("flash");
+    expect(second!.fx?.map((f) => f.type)).toEqual(["flash"]);
+  });
+
   it("lays a plan as the draft: shots filling the frame on V1 with their speed and effects, their own sound where asked, the song on A2", () => {
     const { plan } = repairPlan(
       { kind: "hard edit", texts: [{ at: 0.5, dur: 1, text: "GO", place: "top" }], shots: [{ src: "S1", in: 2, dur: 1, speed: 2, fx: [{ type: "shake", at: 0 }], sound: "under" }, { src: "S2", in: 0, dur: 1 }] },

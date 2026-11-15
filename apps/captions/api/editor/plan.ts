@@ -873,6 +873,10 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
     const zoom = src.w ? frameZoom(s, f, W, H) : 1;
     const inF = "source" in s.src ? Math.round(s.src.inS * src.fps) : 0;
     const link = `c${k + 1}`;
+    // the cut opens on its picture (Review shows the first frame before Play): the first shot has no entry and no white
+    // flash or negative on its first frame
+    const fx = rec === 0 ? s.fx?.filter((x) => !("at" in x && ["flash", "invert", "strobe"].includes(x.type) && fr(x.at ?? 0) < 1)) : s.fx;
+    const enter = rec === 0 ? undefined : s.enter;
     const item: Item = {
       src: key,
       in: inF,
@@ -882,8 +886,8 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
       ...(Math.abs(zoom - 1) > 0.0005 ? { zoom: r3(zoom) } : {}),
       ...(s.speed && s.speed !== 1 ? { speed: s.speed } : {}),
       ...(s.ramp ? { ramp: s.ramp } : {}),
-      ...(s.fx?.length ? { fx: s.fx } : {}),
-      ...(s.enter && s.enter !== "cut" ? { enter: s.enter } : {}),
+      ...(fx?.length ? { fx } : {}),
+      ...(enter && enter !== "cut" ? { enter } : {}),
       ...(s.frame && s.frame !== "fill" ? { frame: s.frame } : {}),
     };
     const split = (s.split ?? []).filter((p) => sources[p.source]);
