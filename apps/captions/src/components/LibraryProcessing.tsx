@@ -422,8 +422,14 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   dialog: ReactNode;
 } {
   type Asking = { libraryId: string; path: string; files: number; drop: Drop; big: boolean; to?: string; free?: number; add: (copyTo?: string) => unknown; offer?: OrganizeOffer };
-  const [asking, setAsking] = useState<Asking | null>(null);
+  // folders dropped together are asked one after another, each in its own dialog
+  const [queue, setQueue] = useState<Asking[]>([]);
+  const asking = queue[0];
   const [copyTo, setCopyTo] = useState<string | undefined>();
+  const next = () => {
+    setCopyTo(undefined);
+    setQueue((q) => q.slice(1));
+  };
   // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
   const check = async (path: string, add: (copyTo?: string) => unknown, opts: { music?: boolean; libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer } = {}) => {
     // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
@@ -435,24 +441,24 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
     const size = r?.ok ? ((await r.json()) as FolderSize) : null;
     const big = !!size && size.files >= BIG_DROP;
     if (libraryId && size && (big || to)) {
-      setCopyTo(undefined);
       // a big folder only, and a music folder is music, not something to organize
       const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (ai) => void (await updateLibrary(library.id, offerAnswer(ai)).then(onOrganized, () => {})) } : undefined;
       const organize = opts.organize ?? own;
-      setAsking({ libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add, offer: big && !opts.music && organize?.offer ? organize : undefined });
+      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add, offer: big && !opts.music && organize?.offer ? organize : undefined }]);
     } else await add();
   };
   const dialog = asking && (
     <BigUploadDialog
+      key={asking.path}
       libraryId={asking.libraryId}
       drop={asking.drop}
       estimate={asking.big}
       title={`Add ${asking.files.toLocaleString()} ${asking.files === 1 ? "file" : "files"} from ${folderName(asking.path)}?`}
       go="Add folder"
       offer={!!asking.offer}
-      onClose={() => setAsking(null)}
+      onClose={next}
       onUpload={async (ai) => {
-        setAsking(null);
+        next();
         // before the folder: its files are filed as they come in; a failed save never stops the folder
         if (asking.offer) await asking.offer.answer(ai).catch(() => {});
         void asking.add(copyTo);
