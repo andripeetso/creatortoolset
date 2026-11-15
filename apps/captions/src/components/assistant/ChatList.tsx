@@ -7,7 +7,7 @@ import type { AssistantChat } from "@contracts/assistant";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { deletePast, pinChat, renameChat, settleChat, snoozeChat, unreadChat } from "@/lib/assistant";
+import { chatText, deletePast, getChat, pinChat, renameChat, settleChat, snoozeChat, unreadChat } from "@/lib/assistant";
 import { confirmDialog } from "@/lib/dialogs";
 import { localInput, snoozeChoices, snoozeLeft } from "@/lib/snooze";
 import { onTopic } from "@/lib/sync";
@@ -106,7 +106,7 @@ const rowBtn = "flex items-center rounded-md px-1.5 text-muted-foreground hover:
  * The chats in chat mode. On a row, under the pointer, the time gives its place to two buttons: the clock puts the
  * chat away until a time (it is back then, or sooner if it asks something or fails), and Settle is done with it, kept
  * (it folds under Settled on every device). ⌘Z takes back a settle, a snooze or an unpin. A right-click has the rest:
- * pin, rename (also a double-click, or F2), mark unread, copy the chat's link or id, the project's settings, and
+ * pin, rename (also a double-click, or F2), mark unread, copy the chat's link, id or whole text, the project's settings, and
  * delete, which asks first. Settling, putting away or deleting the open chat opens the next one. The search box
  * narrows the list as you type: ↓ and ↑ move through it, Enter opens, Escape clears.
  */
@@ -206,6 +206,13 @@ export function ChatList({
       reload();
     })();
   const copy = (text: string, what: string) => void navigator.clipboard.writeText(text).then(() => toast.success(`${what} copied`, { description: text }), () => toast.error("Could not copy it"));
+  // The write starts inside the click, with the text still on its way: WebKit refuses a copy made after an await.
+  const copyWhole = (id: string) => {
+    const text = getChat(id).then((r) => (r.ok ? chatText(r.data.messages) : Promise.reject(new Error(r.error))));
+    void navigator.clipboard
+      .write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })])
+      .then(() => toast.success("Whole chat copied"), () => void text.then(() => toast.error("Could not copy it"), (e: Error) => toast.error(e.message)));
+  };
   const remove = (c: AssistantChat) =>
     void (async () => {
       if (!(await confirmDialog({ title: `Delete "${chatTitle(c)}"?`, body: "The chat and its pictures are deleted for good.", ok: "Delete", danger: true }))) return;
@@ -374,6 +381,7 @@ export function ChatList({
             <ContextMenuSubContent>
               <ContextMenuItem onSelect={() => copy(chatLink(c.id), "Chat link")}>Chat link</ContextMenuItem>
               <ContextMenuItem onSelect={() => copy(c.id, "Chat ID")}>Chat ID</ContextMenuItem>
+              <ContextMenuItem onSelect={() => copyWhole(c.id)}>Whole chat</ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
           <ContextMenuItem onSelect={() => navigate(c.workspace ? `/projects?edit=${encodeURIComponent(c.workspace)}` : "/projects")}>Workspace settings</ContextMenuItem>
