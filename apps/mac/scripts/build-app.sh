@@ -118,6 +118,7 @@ if [ -f "$src" ]; then
 fi
 
 cp "$repo/LICENSE" "$repo/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/"   # the licences travel with the app
+cp "$here/wave-wee.wav" "$app/Contents/Resources/"   # the chat-mode wave's pop (WaveSound.swift)
 
 # ---- the server the app runs (Server.swift starts server/bin/node dist/boot.js in server/) ----
 NODE_VERSION=v22.23.4
