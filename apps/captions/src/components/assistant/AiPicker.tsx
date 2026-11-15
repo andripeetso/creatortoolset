@@ -8,14 +8,16 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { cn } from "@/lib/utils";
 
 /**
- * The message box's AI button: which of the person's AIs answers this chat, with its model and reasoning level. `ai` is
- * the chat's own pick, `fallback` what answers a chat with none (their default). Picking sets it for this chat; Default
- * goes back to theirs. Nothing shows until their AIs are known.
+ * The message box's AI button, in both chats: which of the person's AIs answers this chat (or Workshop session), with
+ * its model and reasoning level. `ai` is its own pick, `fallback` what answers one with none (their default; the
+ * default of the AIs that answer them when not given). Picking sets it here; Default goes back to theirs. Nothing
+ * shows until their AIs are known.
  */
-export function AiPicker({ ai, fallback, onChange }: { ai?: Selection; fallback?: Selection; onChange: (ai: Selection | null) => void }) {
+export function AiPicker({ ai, fallback: given, onChange }: { ai?: Selection; fallback?: Selection; onChange: (ai: Selection | null) => void }) {
   const [open, setOpen] = useState(false);
   const view = useProviders().data;
   const set = view && activeSet(view);
+  const fallback = given ?? set?.settings.default;
   const shown = ai ?? fallback;
   if (!view || !set || !shown) return null;
   // the AIs a computer can run for this account (the server refuses any other)

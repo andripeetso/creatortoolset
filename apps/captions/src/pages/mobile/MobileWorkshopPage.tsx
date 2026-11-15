@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, ArrowUp, Copy, Loader2, NotebookPen, Square } from "lucide-react";
-import { ModelChip } from "@/components/workshop/ModelChip";
+import { AiPicker } from "@/components/assistant/AiPicker";
 import type { Selection } from "@contracts/providers";
 import { UserMenu } from "@/components/UserMenu";
 import { ProjectList } from "@/components/workspace/ProjectList";
@@ -340,7 +340,7 @@ export function MobileWorkshopSessionPage() {
             {/* Send stays on the right when the model chip has nothing to show (no AI connected yet) */}
             <div className="flex items-center justify-between gap-2">
               {me?.role === "admin" ? (
-                <ModelChip
+                <AiPicker
                   ai={ai}
                   onChange={(next) => {
                     setAi(next ?? undefined);

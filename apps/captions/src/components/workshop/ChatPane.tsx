@@ -9,7 +9,7 @@ import { CopyButton } from "./CopyButton";
 import { SourceResultCard } from "./SourceResultCard";
 import { CiteButton, SelectionPill, citeAt } from "./SelectionPill";
 import { WhatChanged } from "./WhatChanged";
-import { ModelChip } from "./ModelChip";
+import { AiPicker } from "@/components/assistant/AiPicker";
 import { Steps, type Step } from "@/components/chat/Steps";
 import { Notice } from "./Notice";
 import { ChipComposer, numbered, readable, type ComposerHandle } from "./ChipComposer";
@@ -860,7 +860,7 @@ export function ChatPane({
               ))}
             </span>
           ) : null}
-          {onAiChange ? <ModelChip ai={ai} onChange={onAiChange} /> : null}
+          {onAiChange ? <AiPicker ai={ai} onChange={onAiChange} /> : null}
           {audit}
           {messages.some((m) => m.text.trim()) ? (
             <CopyButton text={() => chatText(messages)} title="Copy the whole chat as plain text" className={`${chipIdle} ml-auto py-1.5`} />
