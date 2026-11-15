@@ -108,6 +108,12 @@ export function listTags(libraryId: string): Promise<TagCount[]> {
     .then((d) => d.tags);
 }
 
+/** Up to 8 clips close in meaning to this one (api/library/related.ts); none without vectors. */
+export const relatedAssets = (libraryId: string, assetId: string) =>
+  fetch(`/api/library/${libraryId}/assets/${assetId}/related`)
+    .then((r) => json<{ related: AssetCard[] }>(r))
+    .then((d) => d.related);
+
 /** The plug-in sources this account may browse in the library (the built-in library is not one of them). */
 export function listSources(libraryId: string): Promise<{ id: string; label: string }[]> {
   return fetch(`/api/library/${libraryId}/sources`)

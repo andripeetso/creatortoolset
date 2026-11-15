@@ -44,7 +44,8 @@ export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];
   transcript?: { provider: string; segments: { start: number; end: number; text: string }[] };
   collections: { id: string; name: string }[];
-  sourcePath?: string; // reference-mode only, shown to owner/admin only
+  /** the file on this computer (read in place, or kept on the Mac app's own server on this Mac): the admin only (search.ts sourcePathFor) */
+  sourcePath?: string;
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
 }

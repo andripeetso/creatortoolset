@@ -1,7 +1,12 @@
 import { Hono, type Context } from "hono";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { AuthVars } from "../auth";
 import type { AssetDetail, SearchHit, SearchQuery } from "../../contracts/library";
 import { deviceEmbedStatus } from "../lib/device-embed";
+import { env, hostedMode } from "../lib/env";
+import type { SessionUser } from "../users";
+import { keyParts } from "./storage/types";
 import { deviceStatus } from "../lib/device-transcribe";
 import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
@@ -69,8 +74,25 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
   ];
 }
 
-/** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. */
-export function assetDetail(libraryId: string, assetId: string): AssetDetail | null {
+/**
+ * Where the clip's file is on this computer, for its Copy path and Show in Finder: the admin only. A clip read in place
+ * from a footage folder: that file. A clip kept on this server's own disk: the stored copy, only when the server is the
+ * Mac app's own on this Mac (CT_LOCAL=1, never hosted), so a path is never given for a disk the viewer can't open.
+ */
+export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined): string | undefined {
+  if (user?.role !== "admin") return undefined;
+  const v = db()
+    .prepare("SELECT v.source_key, v.source_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
+    .get(versionId, libraryId) as { source_key: string; source_path: string | null; storage_kind: string } | undefined;
+  if (!v) return undefined;
+  if (v.source_path) return v.source_path;
+  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return undefined;
+  const file = path.join(env.dataDir, "library", "blobs", ...keyParts(v.source_key)); // the local store's layout (storage/local.ts)
+  return existsSync(file) ? file : undefined;
+}
+
+/** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */
+export function assetDetail(libraryId: string, assetId: string, user?: Pick<SessionUser, "role">): AssetDetail | null {
   const row = db()
     .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?`)
     .get(assetId, libraryId) as CardRow | undefined;
@@ -100,6 +122,7 @@ export function assetDetail(libraryId: string, assetId: string): AssetDetail | n
     collections,
     jobs,
     ...(t ? { transcript: { provider: t.provider, segments: segmentsOf(db(), row.version_id) } } : {}),
+    ...((p) => (p ? { sourcePath: p } : {}))(sourcePathFor(libraryId, row.version_id, user)),
   };
 }
 
@@ -145,7 +168,7 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   const libraryId = c.req.param("id");
   const viewer = viewerOf(c.get("user").username, libraryId);
   if (!viewer) return notFound(c);
-  const detail = assetDetail(libraryId, c.req.param("assetId"));
+  const detail = assetDetail(libraryId, c.req.param("assetId"), c.get("user"));
   if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
   if (detail.state === "processing") prepareFirst(detail.versionId); // opened while it is prepared: it goes first (worker.ts)
   return c.json(detail);
@@ -217,7 +240,7 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     d.exec("ROLLBACK");
     throw e;
   }
-  return c.json(assetDetail(libraryId, assetId));
+  return c.json(assetDetail(libraryId, assetId, user));
 });
 
 const opening = new Map<string, Promise<string>>();
