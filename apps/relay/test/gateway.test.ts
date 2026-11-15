@@ -61,7 +61,7 @@ async function fakeComputer() {
       const ok = (result: unknown) => send(200, { jsonrpc: '2.0', id: m.id, result });
       if (m.method === 'tools/list') return ok({ tools: [{ name: 'media_search' }] });
       if (m.method === 'resources/read') {
-        return ok({ contents: [{ uri: 'ui://card', text: '<html>', _meta: { ui: { csp: { resourceDomains: [`https://${host}`], connectDomains: [] } }, 'openai/widgetCSP': { resource_domains: [`https://${host}`] } } }] });
+        return ok({ contents: [{ uri: 'ui://card-now', text: '<html>', _meta: { ui: { csp: { resourceDomains: [`https://${host}`], connectDomains: [] } }, 'openai/widgetCSP': { resource_domains: [`https://${host}`] } } }] });
       }
       if (m.method === 'tools/call') {
         return ok({
@@ -243,6 +243,8 @@ test("a card's pictures come through the broker, its video does not", async () =
   assert.equal(answer.result.content[0].text, '{"files":1}');
 
   const page = await call(rpc('resources/read', { uri: 'ui://card' }));
+  // the computer answers with the name its own version uses: the AI app gets the one it asked for
+  assert.equal(page.result.contents[0].uri, 'ui://card');
   assert.deepEqual(page.result.contents[0]._meta.ui.csp.resourceDomains, [SELF]);
   assert.deepEqual(page.result.contents[0]._meta['openai/widgetCSP'].resource_domains, [SELF]);
 

@@ -1504,9 +1504,10 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
     case "resources/templates/list":
       return ok({ resourceTemplates: [] });
     case "resources/read": {
-      // any card name answers with the page as it is now: an app may still hold an older name from its last listing
+      // any card name answers with the page as it is now, under the name asked for: an app may still hold an older
+      // name from its last listing (an AI app's store keeps the one it scanned)
       if (!String(params.uri ?? "").startsWith("ui://creator-toolset/card")) return { jsonrpc: "2.0", id: msg.id, error: { code: -32002, message: "Resource not found" } };
-      return ok({ contents: [cardResource(origin)] });
+      return ok({ contents: [{ ...cardResource(origin), uri: String(params.uri) }] });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));
