@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,6 +9,8 @@ import { browserPlayable, probe, parseProbe } from "./probe";
 import { ffmpeg } from "./run";
 import { makeProxy, needsProxy } from "./proxy";
 import { makeWave } from "./wave";
+import { makeSprite, SPRITE_H, SPRITE_W } from "./sprite";
+import { SPRITE_FRAMES } from "../../../contracts/library";
 
 // Fixtures are generated at run time, one second each, in scratch. Nothing large is committed.
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-media-"));
@@ -151,5 +153,40 @@ describe("wave", () => {
     const out = path.join(dir, "wave-none.json");
     await makeWave(h264, out, false);
     expect(JSON.parse(readFileSync(out, "utf8")).peaks).toEqual([]);
+  });
+});
+
+describe("sprite", () => {
+  // the mean grey of frame `i` of a strip, 0 to 255
+  const grey = (file: string, i: number) => {
+    const raw = execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-i", file, "-vf", `crop=${SPRITE_W}:${SPRITE_H}:${i * SPRITE_W}:0,scale=1:1:flags=area,format=gray`, "-f", "rawvideo", "-"]);
+    return raw[0]!;
+  };
+
+  it("lays the frames across the clip side by side, in time order, and leaves no parts behind", async () => {
+    // dark for the first second, light for the second: the strip's first half is dark, its second half light
+    const clip = path.join(dir, "dark-light.mp4");
+    ff(["-f", "lavfi", "-i", "color=c=black:s=320x180:r=25:d=2,geq=lum='if(lt(T,1),20,230)':cb=128:cr=128", "-c:v", "libx264", "-g", "50", "-pix_fmt", "yuv420p", clip]);
+    const out = path.join(dir, "sprite.jpg");
+    await makeSprite(clip, out, 2);
+    expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
+    expect(grey(out, 0)).toBeLessThan(60);
+    expect(grey(out, SPRITE_FRAMES / 2 - 1)).toBeLessThan(60);
+    expect(grey(out, SPRITE_FRAMES / 2)).toBeGreaterThan(180);
+    expect(grey(out, SPRITE_FRAMES - 1)).toBeGreaterThan(180);
+    expect(readFileSync(out).length).toBeLessThan(150_000);
+    expect(readdirSync(dir).filter((f) => /^sprite\.jpg\.|\.part\./.test(f))).toEqual([]);
+  });
+
+  it("cuts an upright 10-bit clip to the same frame shape", async () => {
+    const clip = path.join(dir, "upright10.mp4");
+    ff(["-f", "lavfi", "-i", "testsrc=duration=2:size=360x640:rate=25", "-c:v", "libx264", "-pix_fmt", "yuv420p10le", clip]);
+    const out = path.join(dir, "upright-sprite.jpg");
+    await makeSprite(clip, out, 2);
+    expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
+  });
+
+  it("refuses a clip with no length", async () => {
+    await expect(makeSprite(h264, path.join(dir, "none.jpg"), 0)).rejects.toThrow(/length/);
   });
 });

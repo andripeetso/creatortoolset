@@ -81,11 +81,12 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
 export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
+  EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
   ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished,
   (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
-    ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
+    ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy sprite fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
   CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
     AND j.kind IN ('probe', 'thumb', 'wave', 'proxy') LIMIT 1) END AS failed`;
 
@@ -101,6 +102,7 @@ export interface CardRow {
   state: AssetCard["state"];
   probe: string | null;
   has_thumb: number;
+  has_sprite?: number;
   tags: string | null;
   ai_tags: string | null;
   description: string | null;
@@ -191,6 +193,7 @@ export function toCard(r: CardRow): AssetCard {
     ...(p.duration ? { durationS: p.duration } : {}),
     ...(p.width ? { width: p.width, height: p.height } : {}),
     ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb` } : {}),
+    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),

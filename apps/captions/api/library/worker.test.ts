@@ -35,6 +35,12 @@ beforeEach(() => {
 // a transcript whose speech model is not downloaded yet: the stand-in for transcribeVersion says so (lib/device-transcribe.ts)
 import { vi } from "vitest";
 const stuck = vi.hoisted(() => ({ model: false }));
+// a probe's answer, set by a test (the files here are not media): null = the real ffprobe
+const probed = vi.hoisted(() => ({ value: null as import("./media/probe").ProbeSummary | null }));
+vi.mock("./media/probe", async (real) => {
+  const m = await real<typeof import("./media/probe")>();
+  return { ...m, probe: (f: string) => (probed.value ? Promise.resolve(probed.value) : m.probe(f)) };
+});
 vi.mock("./transcribe", async (real) => {
   const m = await real<typeof import("./transcribe")>();
   const { ModelNotReady } = await import("../lib/device-transcribe");
@@ -81,6 +87,12 @@ describe("the order clips are prepared in", () => {
     for (const v of ["v2", "v3"]) for (const k of ["proxy", "fingerprint"]) enqueueJob(d, "lib_a", v, k, "local");
     expect(next("transcripts")).toBe("v1 transcribe");
     expect([1, 2, 3, 4, 5, 6].map(() => next("files"))).toEqual(["v1 proxy", "v2 proxy", "v3 proxy", "v1 fingerprint", "v2 fingerprint", "v3 fingerprint"]);
+  });
+
+  it("a video's strip of frames after every picture and lighter copy, before the duplicate checks", () => {
+    for (const v of ["v1", "v2"]) for (const k of ["fingerprint", "sprite", "proxy"]) enqueueJob(d, "lib_a", v, k, "local");
+    enqueueJob(d, "lib_a", "v3", "thumb", "local");
+    expect([1, 2, 3, 4, 5, 6].map(() => next("files"))).toEqual(["v3 thumb", "v1 proxy", "v2 proxy", "v1 sprite", "v2 sprite", "v1 fingerprint"]);
   });
 
   it("slow steps wait while the library's folders hand clips over, and a picture waiting for its retry holds nothing back", () => {
@@ -190,5 +202,58 @@ describe("a step is running only while it really runs", () => {
       delete process.env.CT_LOCAL;
       delete process.env.DEEPGRAM_API_KEY;
     }
+  });
+});
+
+describe("strips of frames", () => {
+  const add = (id: string, kind: string, opts: { state?: string; trashed?: boolean; created?: number } = {}) => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at) VALUES (?, 'lib_a', ?, ?, ?, 'local', ?, ?)").run(
+      `a_${id}`, kind, id, id, opts.created ?? 1, opts.trashed ? 2 : null,
+    );
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+       VALUES (?, ?, 1, ?, 1, ?, '{"duration":5,"vcodec":"h264","acodec":"aac"}', ?, 'local', 1)`,
+    ).run(id, `a_${id}`, `k/${id}`, id, opts.state ?? "ready");
+  };
+
+  it("a probe queues one for a video, never for a photo (probed as a one-frame video)", async () => {
+    probed.value = { duration: 5, width: 320, height: 240, fps: 25, rotation: 0, format: "mov,mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" };
+    try {
+      for (const [id, kind] of [["pv", "video"], ["pi", "image"]] as const) {
+        add(id, kind, { state: "processing" });
+        const f = path.join(dir, `${id}.bin`);
+        writeFileSync(f, id);
+        await blobs.put(`k/${id}`, f);
+        enqueueJob(d, "lib_a", id, "probe", "local");
+        expect(await tick(Date.now(), ["probe"])).toBe(true);
+      }
+      const kinds = (v: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? ORDER BY kind").all(v) as { kind: string }[]).map((r) => r.kind);
+      expect(kinds("pv")).toContain("sprite");
+      expect(kinds("pi")).not.toContain("sprite");
+    } finally {
+      probed.value = null;
+    }
+  });
+
+  it("an older video gets one once, newest first, outside the queue; photos, music, trash and failed clips are left alone", async () => {
+    const { backfillSprite } = await import("./worker");
+    // only these have a duplicate check (the jobs are cleared before each test): the other tests' clips are not candidates
+    add("old", "video", { created: 1 });
+    add("new", "video", { created: 5 });
+    add("photo", "image");
+    add("song", "video"); // from a music folder: never checked for duplicates
+    add("binned", "video", { trashed: true });
+    add("broken", "video", { state: "failed" });
+    for (const v of ["old", "new", "photo", "binned", "broken"]) d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_a', ?, 'fingerprint', 'done')").run(v);
+    const sprite = () => d.prepare("SELECT version_id, state, error FROM jobs WHERE kind = 'sprite' ORDER BY id").all() as { version_id: string; state: string; error: string }[];
+    // their files are not video here: each try fails, and is kept so it is not tried again
+    expect(await backfillSprite()).toBe(true);
+    expect(sprite().map((j) => [j.version_id, j.state])).toEqual([["new", "failed"]]);
+    expect(nextJob(d, Date.now(), lane("files"))).toBeNull(); // nothing queued: nothing counts as preparing
+    expect(await backfillSprite()).toBe(true);
+    expect(await backfillSprite()).toBe(false);
+    expect(sprite().map((j) => j.version_id)).toEqual(["new", "old"]);
+    expect(sprite()[0]!.error).toBeTruthy();
+    expect(d.prepare("SELECT state FROM asset_versions WHERE id = 'old'").get()).toEqual({ state: "ready" }); // an extra: the clip stays ready
   });
 });

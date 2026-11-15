@@ -9,7 +9,7 @@ import { canUse, useMe } from "@/lib/auth";
 import { getAsset, openInCaptions, rerunJobs, updateAsset, useLibraryChanges } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { clock, factsOf, original, useClipView } from "./clip";
-import { ClipPlayer } from "./ClipPlayer";
+import { ClipImage, ClipPlayer } from "./ClipPlayer";
 import { ClipShare } from "./ClipShare";
 
 /**
@@ -298,7 +298,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const picture = playable ? (
     <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} />
   ) : a.kind === "image" ? (
-    <img src={`/api/library/media/${a.versionId}/play`} alt={a.title} className={win ? "h-full max-h-[45dvh] w-full object-contain md:max-h-none" : "w-full rounded-lg"} />
+    <ClipImage asset={a} fill={win} />
   ) : (
     win && (
       <div className="flex h-40 w-full items-center justify-center text-zinc-600 md:h-full">

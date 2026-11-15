@@ -27,7 +27,7 @@ export interface AssetCard {
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
   /** while the clip is being prepared: the step it is on (running) or waits for next (LibraryProcessing.tsx ClipStage draws it) */
-  preparing?: { step: LibraryStage["kind"] | "probe" | "wave"; running: boolean };
+  preparing?: { step: LibraryStage["kind"] | "probe" | "wave" | "sprite"; running: boolean };
   /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
   failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
   /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
@@ -39,6 +39,9 @@ export interface AssetCard {
   /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
   place?: string;
 }
+
+/** Frames in a clip's strip (`spriteUrl`), side by side; frame i shows the middle of the clip's i-th share (api/library/media/sprite.ts). */
+export const SPRITE_FRAMES = 20;
 
 export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];
