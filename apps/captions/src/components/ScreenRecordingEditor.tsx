@@ -32,7 +32,7 @@ import { Timeline } from "@/components/screen-editor/Timeline";
 import { Segmented } from "@/components/screen-editor/controls";
 import { useMacRecorderState } from "@/components/settings/ThisMacSection";
 import { usePlayer } from "@/components/screen-editor/usePlayer";
-import { ExportDialog } from "@/components/screen-editor/ExportDialog";
+import { ExportDialog, type ExportSettings } from "@/components/screen-editor/ExportDialog";
 
 /** A way out for the finished video. `run` gets it (`name` has no extension) and reports its own steps. */
 export type EditorAction = {
@@ -43,6 +43,7 @@ export type EditorAction = {
 };
 
 const SIZE_KEY = "screen-editor-size";
+const SETTINGS_KEY = "screen-editor-export";
 
 const SHAPES: { id: FrameShape; label: string; title: string }[] = [
   { id: "source", label: "Auto", title: "The shape of what you recorded" },
@@ -132,6 +133,14 @@ export function ScreenRecordingEditor({
       return localStorage.getItem(SIZE_KEY) !== "hd";
     } catch {
       return true;
+    }
+  });
+  const [settings, setSettings] = useState<ExportSettings>(() => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Partial<ExportSettings>;
+      return { fps: kept.fps === 30 ? 30 : 60, detail: kept.detail === "smaller" || kept.detail === "best" ? kept.detail : "standard" };
+    } catch {
+      return { fps: 60, detail: "standard" };
     }
   });
   const [exporting, setExporting] = useState(false);
@@ -420,6 +429,7 @@ export function ScreenRecordingEditor({
         cursors: cursorImages,
         ...out,
         trim: look.trim ? kept : undefined,
+        ...(a ? settings : {}),
         alpha: !a,
         signal: ctl.signal,
         onProgress: (p) => setMaking({ step: "Making", pct: Math.round(p * 100) }),
@@ -483,6 +493,15 @@ export function ScreenRecordingEditor({
                 setUhd(v);
                 try {
                   localStorage.setItem(SIZE_KEY, v ? "4k" : "hd");
+                } catch {
+                  // kept for this visit only
+                }
+              }}
+              settings={settings}
+              onSettings={(s) => {
+                setSettings(s);
+                try {
+                  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
                 } catch {
                   // kept for this visit only
                 }
