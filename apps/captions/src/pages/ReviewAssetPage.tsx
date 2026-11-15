@@ -952,11 +952,6 @@ function Review({
             onPick={focusComment}
           />
 
-          {/* the timeline on a version with a timeline, between the scrub bar and play/pause, as it always was (everyone; its edit tools are the managers') */}
-          {version.status === "ready" && !version.removed && (
-            <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} faceAt={faceAt} />
-          )}
-
           <div className="flex items-center gap-1 px-3 pb-2 text-zinc-300">
             <IconBtn label={playing ? "Pause (space)" : "Play (space)"} onClick={toggle}>
               {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
@@ -1004,6 +999,11 @@ function Review({
               </IconBtn>
             </div>
           </div>
+
+          {/* the timeline on a version with a timeline, under play/pause, so the controls sit by the picture (everyone; its edit tools are the managers') */}
+          {version.status === "ready" && !version.removed && (
+            <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} faceAt={faceAt} />
+          )}
 
           {version.stems && version.status === "ready" && !version.removed && (
             <VoiceMix
