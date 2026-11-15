@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "./auth";
 import type { DeviceJob } from "../contracts/devices";
 
@@ -13,7 +13,7 @@ process.env.DATA_DIR = path.join(dir, "data");
 delete process.env.APP_SECRET;
 const { assistantApp } = await import("./assistant");
 const { devicesApp } = await import("./devices");
-const { pairDevice } = await import("./lib/devices");
+const { isOnline, pairDevice, touchDevice } = await import("./lib/devices");
 const { mountPlugins } = await import("./lib/plugin");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => delete process.env.CT_MODE);
@@ -93,13 +93,33 @@ describe("folder_list on a hosted server", () => {
     expect(r.looked_at).toBe(3);
   });
 
-  it("says when the Mac that holds it is not on, instead of waiting", async () => {
+  it("says how long the Mac that holds it has been quiet, never why, instead of waiting", async () => {
     process.env.CT_MODE = "hosted";
     const mac = pairDevice("ana", "Ana's Old Mac");
     keep([{ host: mac.device.id, path: "/Volumes/Tiny/SHOOT" }]);
     const r = await list({ path: "/Volumes/Tiny/SHOOT/FOOTAGE" });
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toContain("Ana's Old Mac is unreachable");
+    expect(((await r.json()) as { error: string }).error).toBe("Ana's Old Mac hasn't answered yet.");
+  });
+
+  it("waits for a Mac heard from a moment ago (an update restarts the app), and it walks the folder when back", async () => {
+    process.env.CT_MODE = "hosted";
+    const mac = pairDevice("ana", "Ana's Restarting Mac");
+    keep([{ host: mac.device.id, path: "/Volumes/Tiny/SHOOT" }]);
+    const claim = async () => ((await (await post("/api/devices/relay/editor/claim", { kinds: ["folder-list"] }, { authorization: `Bearer ${mac.token}` })).json()) as { job: DeviceJob | null }).job;
+    expect(await claim()).toBeNull(); // it takes folder listings
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() - 50_000 });
+    touchDevice(mac.device.id); // last heard from 50 s ago: not on now
+    vi.useRealTimers();
+    expect(isOnline(mac.device.id)).toBe(false);
+    const asked = list({ path: "/Volumes/Tiny/SHOOT/FOOTAGE" });
+    let job: DeviceJob | null = null;
+    for (let i = 0; i < 50 && !job; i++) {
+      job = await claim(); // back: its first poll claims the walk that waited
+      if (!job) await new Promise((r) => setTimeout(r, 20));
+    }
+    expect((await post(`/api/devices/relay/job/folder-list/${job!.id}`, { entries: [] }, { authorization: `Bearer ${mac.token}` })).status).toBe(200);
+    expect((await asked).status).toBe(200);
   });
 });
 

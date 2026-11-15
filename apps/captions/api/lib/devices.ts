@@ -123,6 +123,16 @@ export const isOnline = (id: string): boolean => {
   return last > 0 && Date.now() - last < ONLINE_MS;
 };
 
+/** Heard from within 2 min: a device quiet now is most likely restarting (an update), so a job for it waits instead of failing. */
+export const seenLately = (d: Pick<Device, "lastSeen">): boolean => !!d.lastSeen && Date.now() - d.lastSeen < 120_000;
+
+/** All that is known of a device that is not on now: "Ana's Mac hasn't answered for 3 min". Never a cause. */
+export function quietLine(d: Pick<Device, "name" | "lastSeen">): string {
+  const s = d.lastSeen ? Math.round((Date.now() - d.lastSeen) / 1000) : 0;
+  const n = s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : s < 172_800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86_400)} days`;
+  return s ? `${d.name} hasn't answered for ${n}` : `${d.name} hasn't answered yet`;
+}
+
 /** The device a `ctd_` Bearer token belongs to (boot.ts checks it before the cookie gate). */
 export function deviceForToken(authorization: string | undefined): Device | null {
   const token = /^Bearer (.+)$/.exec(authorization ?? "")?.[1];
