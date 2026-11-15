@@ -297,11 +297,20 @@ async function run(job: JobRow): Promise<void> {
   // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original; a proxy in the cloud of
   // a clip that plays as it is would be a download of what is on this disk already
   let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
+  const proxyKey = () => (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(v.id) as { storage_key: string | null } | undefined)?.storage_key;
   const lighter = async () => {
     if (p && proxiesInCloud(v.library_id) && !needsProxy(p)) return src();
-    const k = (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(v.id) as { storage_key: string | null } | undefined)?.storage_key;
+    const k = proxyKey();
     return k ? blobs.localCopy(k) : src();
   };
+  // the original, else its proxy when the original is not on this server (a library whose originals stay on the user's
+  // computer with proxies in the cloud, a drive unplugged): the proxy's sound keeps the original's times
+  const orProxy = () =>
+    src().catch((e: unknown) => {
+      const k = proxyKey();
+      if (!k) throw e;
+      return blobs.localCopy(k);
+    });
 
   if (job.kind === "probe") {
     p = await probe(await src());
@@ -348,9 +357,10 @@ async function run(job: JobRow): Promise<void> {
     await makeSprite(await lighter(), file, p.duration);
     await keep("sprite", file, `${base}/sprite.jpg`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
-    // the sound from the original (cut from a 4K clip in 0.2 s at most, and the lighter copy's is re-encoded); the
-    // frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
-    if (job.kind === "transcribe") await transcribeVersion(db, v.id, await src(), job.actor, dir);
+    // the sound from the original (cut from a 4K clip in 0.2 s at most, and the lighter copy's is re-encoded; the proxy's
+    // only when the original is not here); the frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the
+    // original took 1 to 5.5 s
+    if (job.kind === "transcribe") await transcribeVersion(db, v.id, await orProxy(), job.actor, dir);
     else await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
     // new words to search by meaning: embed (again) when the library has semantic search on and the actor a route for it
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
