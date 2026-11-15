@@ -315,10 +315,7 @@ watchApp.post("/import-folder", async (c) => {
   if (!libraryId || !libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const f = await checkFolder(libraryId, { path: expandHome(typeof body.path === "string" ? body.path.trim() : ""), mode: "reference", collectionId: body.collectionId }, user.username);
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
-  const home = await realpath(os.homedir()).catch(() => os.homedir());
-  // a disk's own top folder (/, /Users, a drive mounted at /Volumes/<name>) would be read whole
-  const mount = (await stat(f.path)).dev !== (await stat(path.dirname(f.path))).dev;
-  if (f.path === path.parse(f.path).root || f.path === home || path.dirname(f.path) === path.parse(f.path).root || mount) {
+  if (await wholeDisk(f.path)) {
     return c.json({ error: `${f.path} is a whole disk or home folder: name the folder the files are in`, code: "invalid" }, 400);
   }
   const since = typeof body.since === "number" && Number.isFinite(body.since) ? body.since : 0;
@@ -370,6 +367,17 @@ watchApp.post("/import-folder", async (c) => {
   }
   return c.json({ libraryId, imported: [...imported], scripts, working, copying: [...copying] });
 });
+
+/**
+ * Whether a folder (its real path) would be read whole: a disk's own top folder (/, /Users, a drive mounted at
+ * /Volumes/<name>) or the home folder. `drive`: a drive's own top folder is fine (a workspace's own Storage folder).
+ */
+export async function wholeDisk(real: string, drive = false): Promise<boolean> {
+  const home = await realpath(os.homedir()).catch(() => os.homedir());
+  const root = path.parse(real).root;
+  if (real === root || real === home || path.dirname(real) === root) return true;
+  return !drive && (await stat(real)).dev !== (await stat(path.dirname(real))).dev;
+}
 
 /** Only the watch key: other settings (transcription and the rest) are written by other code. */
 const writeWatch = (libraryId: string, folders: WatchFolder[]) => {

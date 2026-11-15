@@ -67,6 +67,16 @@ export const SPLIT_KIND = "split";
  */
 export const TRANSCRIBE_KIND = "transcribe";
 
+/**
+ * The kind that lists a folder on the person's own Mac for the assistant's folder_list (api/lib/folder-list.ts; the Mac
+ * app's FolderListJob.swift), when the folder is not on the computer this server runs on. Not an edit step: claimed on
+ * the road above, through the device job routes. The claim's options: `path` (absolute, on that Mac), `depth` (levels,
+ * "1" to "6") and `disk` ("1": the folder may be a drive's own top folder, as a workspace's own Storage folder may be).
+ *   POST job/folder-list/:id        FolderWalk → DeviceEnded
+ *   POST job/folder-list/:id/fail   { error } → DeviceEnded
+ */
+export const FOLDER_LIST_KIND = "folder-list";
+
 /** What a computer sends back: the words heard, with times in seconds, and the language heard (ISO 639-1) or null. */
 export interface TranscribeResult {
   words: { text: string; start: number; end: number }[];

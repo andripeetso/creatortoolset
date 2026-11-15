@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
-import { CUTOUT_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
+import { CUTOUT_KIND, FOLDER_LIST_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy } from "./editor/engine";
 import { cardsDraw, saveCard } from "./editor/cards/device";
@@ -21,6 +21,7 @@ import { findUser } from "./users";
 import { resolveGranted } from "./lib/packs";
 import { storageApp } from "./devices-storage";
 import { pluginDeviceJobs } from "./lib/plugin";
+import { folderListJob } from "./lib/folder-list";
 import { env } from "./lib/env";
 
 /**
@@ -44,6 +45,9 @@ import { env } from "./lib/env";
  */
 
 export const devicesApp = new Hono<{ Variables: AuthVars }>();
+
+/** The jobs on the device job road: the app's own folder listing (lib/folder-list.ts), then each plug-in's. */
+const deviceJobs = () => [folderListJob, ...pluginDeviceJobs()];
 
 /** The device behind a ctd_ token on an editor route; a 401 when there is none. Keeps the device here (it is alive). */
 function deviceCaller(c: Context): Device | null {
@@ -83,7 +87,7 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing
   // the Resolve bridge is switched on by a pack with Resolve items (the owner's Resolve plug-in or a downloaded one)
   const granted = kinds.includes(RESOLVE_KIND) && (await resolveGranted(d.owner));
-  const plugin = new Set(pluginDeviceJobs().map((j) => j.kind));
+  const plugin = new Set(deviceJobs().map((j) => j.kind));
   const claimable = [...claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted), ...kinds.filter((k) => k === CUTOUT_KIND || k === SPLIT_KIND || k === TRANSCRIBE_KIND || plugin.has(k))];
   setDeviceKinds(d.id, claimable);
   return balancedKinds(d, claimable);
@@ -103,11 +107,11 @@ async function editorWaits(device: string, listed: unknown): Promise<boolean> {
  * or a transcript it would be handed (lib/computer-transcribe.ts); a computer whose wanted speech models changed is told too.
  */
 const waits = async (d: Device, kinds: string[]) =>
-  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) || pluginDeviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner)) ||
+  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) || deviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner, d.id)) ||
   (kinds.includes(TRANSCRIBE_KIND) && (modelsOutOfStep(d) || transcriptWaits(d, await readBalance(d.owner))));
 /** A plug-in's job of one of these kinds for this device (ServerPlugin.deviceJobs), now its own; null when none waits. */
 function claimPluginJob(d: { id: string; owner: string }, kinds: string[]): ReturnType<typeof claimCutout> {
-  for (const j of pluginDeviceJobs()) if (kinds.includes(j.kind)) {
+  for (const j of deviceJobs()) if (kinds.includes(j.kind)) {
     const job = j.claim(d);
     if (job) return job;
   }
@@ -172,7 +176,7 @@ devicesApp.post("/relay/cutout/:id/fail", async (c) => {
 });
 
 // a plug-in's job (lib/plugin.ts DeviceJobSlot): its input, the device's answers, a file it made, or why it could not
-const slotOf = (c: Context) => pluginDeviceJobs().find((j) => j.kind === c.req.param("kind"));
+const slotOf = (c: Context) => deviceJobs().find((j) => j.kind === c.req.param("kind"));
 /** The most a file a device sends for a plug-in's job may weigh. */
 export const DEVICE_FILE_MAX = 8 * 1024 ** 3;
 devicesApp.get("/relay/job/:kind/:id", async (c) => {
@@ -288,8 +292,9 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
       never: kinds.filter((k) => !(x.kinds ?? []).includes(k)),
     }));
   const balance = await readBalance(d.owner);
-  // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card)
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  // a transcript picks its computer itself (lib/computer-transcribe.ts strongest: by the model it has and its graphics card),
+  // and a folder listing goes to the computer that holds the folder
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */
