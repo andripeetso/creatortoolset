@@ -441,7 +441,7 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
   const check = async (path: string, add: (copyTo?: string) => unknown, opts: { music?: boolean; libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer } = {}) => {
     // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
-    const library = opts.libraryId && opts.organize ? undefined : (await listLibraries().catch(() => [])).find((l) => !opts.libraryId || l.id === opts.libraryId);
+    const library = opts.libraryId && opts.organize ? undefined : (await listLibraries().catch(() => []))?.find((l) => !opts.libraryId || l.id === opts.libraryId);
     const libraryId = opts.libraryId ?? library?.id;
     // a copy is offered where the server can make one on this computer (it says where: WatchStatus.copyTo)
     const to = libraryId && opts.offerCopy && !opts.music ? (await getWatch(libraryId).catch(() => null))?.copyTo : undefined;
