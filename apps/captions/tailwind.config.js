@@ -153,10 +153,12 @@ module.exports = {
     addVariant("bars", "@media (hover: hover) and (pointer: fine)");
     // a page laid out for the room beside the chats in chat mode (lib/chat-mode.ts)
     addVariant("chat", "html[data-chat-mode] &");
-    // Home's room (pages/ToolsetHome.tsx): the page's width after a docked chat, where the window's would overflow
-    addVariant("hub", "@container hub (min-width: 900px)");
+    // Home's room (pages/ToolsetHome.tsx): the page's width after a docked chat, where the window's would overflow. The
+    // boxes go into one row from 1040px: Plan 2, Make 4, Distribute 1 needs 950px of the 94% it gets (1011px). From
+    // 900px, Home beside a chat ran past the window's edge and the window scrolled both ways (owner, 2026-11-15).
+    addVariant("hub", "@container hub (min-width: 1040px)");
     addVariant("hub-2xl", "@container hub (min-width: 1536px)");
-    addVariant("hub-narrow", "@container hub (max-width: 899.98px)");
+    addVariant("hub-narrow", "@container hub (max-width: 1039.98px)");
     // the Workshop's writing header (DocumentTabs): narrower than its tabs and its tools' names need side by side.
     // There the tools show their icons only, so the header stays one row at any width and nothing is cut off
     addVariant("docbar-narrow", "@container docbar (max-width: 43.99rem)");
