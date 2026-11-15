@@ -37,16 +37,40 @@ beforeEach(() => {
 });
 
 describe("Face Blur's settings", () => {
+  const start = { ...DEFAULTS, softness: 0.45 };
   it("start from the defaults, keep each account's own, and refuse what isn't one", async () => {
-    expect(await (await call("GET", "/settings")).json()).toEqual(DEFAULTS);
-    const mine = { mode: "some", who: "Everyone but me", look: "mosaic", auto: false };
+    expect(await (await call("GET", "/settings")).json()).toEqual(start);
+    const mine = { mode: "some", who: "Everyone but me", look: "mosaic", strength: 0.8, softness: 0.2, size: 1.4, color: "#112233", auto: false };
     expect((await call("PUT", "/settings", mine)).status).toBe(200);
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);
-    expect(await (await as("ada")("GET", "/settings")).json()).toEqual(DEFAULTS);
-    for (const bad of [{ ...mine, mode: "most" }, { ...mine, look: "emoji" }, { ...mine, who: "x".repeat(LIMITS.who + 1) }, { ...mine, who: 3 }, { ...mine, auto: "yes" }, null]) {
-      expect((await call("PUT", "/settings", bad)).status).toBe(400);
-    }
+    expect(await (await as("ada")("GET", "/settings")).json()).toEqual(start);
+    const bad = [
+      { mode: "most" }, { look: "emoji" }, { who: "x".repeat(LIMITS.who + 1) }, { who: 3 }, { auto: "yes" }, { strength: 1.5 },
+      { softness: -0.1 }, { size: 0.7 }, { size: 2.5 }, { size: "1" }, { color: "red" }, { color: "#12345" }, null, [],
+    ];
+    for (const b of bad) expect((await call("PUT", "/settings", b)).status).toBe(400);
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);
+  });
+
+  it("change only what a save sends, so an app from before the style keeps it", async () => {
+    const u = as("grace");
+    await u("PUT", "/settings", { look: "solid", size: 1.2, color: "#ABCDEF", auto: true });
+    // an older phone app sends only these three
+    const r = await u("PUT", "/settings", { mode: "some", who: "The people in the background", look: "solid" });
+    expect(await r.json()).toEqual({ ...start, mode: "some", who: "The people in the background", look: "solid", size: 1.2, color: "#abcdef", auto: true });
+  });
+
+  it("read settings saved before the style as today's look: Solid stays hard-edged", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const dir = path.join(process.env.DATA_DIR!, "plugins", "blur-faces");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "linus.json"), JSON.stringify({ mode: "all", who: "x", look: "solid", auto: false }));
+    expect(await (await as("linus")("GET", "/settings")).json()).toEqual({ ...DEFAULTS, who: "x", look: "solid", softness: 0 });
+  });
+
+  it("give the example picture", async () => {
+    const { picture } = (await (await call("GET", "/example")).json()) as { picture: string };
+    expect(Buffer.from(picture, "base64").subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
   });
 
   it("are behind the plug-in's switch", async () => {

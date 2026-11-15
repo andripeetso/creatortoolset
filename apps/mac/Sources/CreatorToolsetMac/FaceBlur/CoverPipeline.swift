@@ -88,10 +88,16 @@ enum CoverPipeline {
         let why: String
     }
 
-    /// Writes `source` to `url` with the faces in `blur` covered (ids from the scan); the others stay as they are.
-    /// Throws `NothingToCover` (and writes nothing) when no face was found or none is chosen.
-    static func write(_ scan: FaceScan, from source: URL, blur: Set<String>, to url: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+    /// The covers of the faces in `blur`, in `style` when given (else as the scan made them).
+    static func chosen(_ scan: FaceScan, blur: Set<String>, style: LookPreset?) -> [Cover] {
         let covers = scan.covers.enumerated().filter { blur.contains(faceID($0.offset)) }.map(\.element)
+        return style?.styled(covers) ?? covers
+    }
+
+    /// Writes `source` to `url` with the faces in `blur` covered (ids from the scan) in `style`; the others stay as they
+    /// are. Throws `NothingToCover` (and writes nothing) when no face was found or none is chosen.
+    static func write(_ scan: FaceScan, from source: URL, blur: Set<String>, style: LookPreset? = nil, to url: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+        let covers = chosen(scan, blur: blur, style: style)
         if scan.covers.isEmpty { throw NothingToCover(why: "No face found, nothing written") }
         if covers.isEmpty { throw NothingToCover(why: "No face chosen, nothing written") }
         switch scan.kind {
@@ -101,6 +107,47 @@ enum CoverPipeline {
             try CoverExporter.exportPhoto(image: try uprightPhoto(source), covers: covers, to: url)
             progress(1)
         }
+    }
+
+    // MARK: Pictures of the result, written nowhere
+
+    /// The covered result as pictures, for a preview or a test run: the photo, or three moments of the video (where the
+    /// covered faces show, else a quarter, half and three quarters in). Base64 JPEGs at most `side` px on the long side.
+    static func frames(_ scan: FaceScan, from source: URL, blur: Set<String>, style: LookPreset, side: CGFloat = 1280) async throws -> [String] {
+        let covers = chosen(scan, blur: blur, style: style)
+        switch scan.kind {
+        case .photo:
+            return [jpeg(CoverRenderer.shared.render(try uprightPhoto(source), covers: covers, time: 0), side: side)].compactMap { $0 }
+        case .video:
+            let asset = AVURLAsset(url: source)
+            let duration = try await asset.load(.duration).seconds
+            let seen = covers.flatMap { moments($0) }.sorted()
+            let times = seen.isEmpty ? [0.25, 0.5, 0.75].map { $0 * duration } : [seen.first!, seen[seen.count / 2], seen.last!]
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: side, height: side)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            var out: [String] = []
+            for (i, t) in times.enumerated() where !times[..<i].contains(t) {
+                try Task.checkCancellation()
+                guard let frame = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
+                if let picture = jpeg(CoverRenderer.shared.render(CIImage(cgImage: frame), covers: covers, time: t), side: side) { out.append(picture) }
+            }
+            return out
+        }
+    }
+
+    /// `image` as a base64 JPEG at most `side` px on its long side; nil when it can't be drawn.
+    static func jpeg(_ image: CIImage, side: CGFloat) -> String? {
+        let scale = min(1, side / max(image.extent.width, image.extent.height))
+        let small = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let rect = CGRect(origin: .zero, size: small.extent.size).integral
+        guard let cg = CIContext().createCGImage(small.transformed(by: CGAffineTransform(translationX: -small.extent.minX, y: -small.extent.minY)), from: rect) else { return nil }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? (data as Data).base64EncodedString() : nil
     }
 
     /// A photo upright (EXIF orientation applied), its origin at zero.
