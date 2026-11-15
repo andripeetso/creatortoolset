@@ -20,6 +20,7 @@ export interface ProbeSummary {
   capturedAt?: number; // ms, from the container's creation_time
   timecode?: string; // start timecode "HH:MM:SS:FF" (";" before FF for drop frame), when the file carries one
   cover?: true; // the only picture is a cover (a song's album art): a still for the thumbnail, not video to describe
+  song?: true; // sound only or under a cover, tagged with an artist or an album: a released track, not someone talking
   /** ISO 3166-1 alpha-2 of where it was filmed, from the file's own location; "" when it has none or it is at sea. Never the coordinates */
   country?: string;
 }
@@ -64,8 +65,15 @@ export function parseProbe(json: { format?: Json; streams?: Json[]; stream_group
     ...(Number.isFinite(capturedAt) ? { capturedAt } : {}),
     ...(timecode ? { timecode } : {}),
     ...(v && isCover(v) ? { cover: true as const } : {}),
+    ...(a && (!v || isCover(v)) && Object.keys(json.format?.tags ?? {}).some((k) => /^(artist|album)$/i.test(k)) ? { song: true as const } : {}),
   };
 }
+
+// how a downloaded song or music video is named ("... (Official Music Video)", "(Lyrics)", "Visualizer", "feat. X")
+const SONG_TITLE = /\bofficial (music )?video\b|\bofficial audio\b|\blyric video\b|[([](official )?(audio|lyrics?)[)\]]|\bvisuali[sz]er\b|\b(feat|ft)\. /i;
+
+/** A song, by its file's tags or its name: music, so it gets no transcript, description or duplicate check (worker.ts). */
+export const looksLikeSong = (title: string, p: ProbeSummary) => !!p.song || SONG_TITLE.test(title);
 
 /** Probes a file with ffprobe, and where it was filmed. Rejects when ffprobe fails or the file is not media. */
 export async function probe(file: string): Promise<ProbeSummary> {

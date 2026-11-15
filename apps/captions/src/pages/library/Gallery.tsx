@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { AssetCard } from "@contracts/library";
 import { cn } from "@/lib/utils";
+import { cardColumns } from "./views";
 import { across, clock, frameAt, frameStyle, KIND_ICON, PhotoMasonry, type Drag } from "./ClipCards";
 
 /**
@@ -11,10 +12,14 @@ import { across, clock, frameAt, frameStyle, KIND_ICON, PhotoMasonry, type Drag 
 
 const wide = (a: AssetCard) => !!a.width && !!a.height && a.width > a.height * 1.1;
 
-export function GalleryGrid({ assets, tile }: { assets: readonly AssetCard[]; tile: (a: AssetCard, ownShape: boolean) => ReactNode }) {
+/** `size`: the folders view's card size (views.tsx); a tall clip here is about half a card. */
+export function GalleryGrid({ assets, size, tile }: { assets: readonly AssetCard[]; size?: number | null; tile: (a: AssetCard, ownShape: boolean) => ReactNode }) {
   if (assets.length && assets.every((a) => a.kind === "image")) return <PhotoMasonry assets={assets} tile={(a) => tile(a, true)} />;
   return (
-    <div className="grid grid-flow-row-dense grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]">
+    <div
+      className={cn("grid grid-flow-row-dense gap-2", size ? "" : "grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]")}
+      style={size ? cardColumns(Math.round(size * 0.45)) : undefined}
+    >
       {assets.map((a) => (
         <div key={a.id} className={cn("min-w-0", wide(a) && "col-span-2")}>
           {tile(a, false)}

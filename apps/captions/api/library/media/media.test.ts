@@ -5,8 +5,8 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { makeThumb } from "./thumb";
-import { browserPlayable, countryAt, probe, parseProbe } from "./probe";
-import { ffmpeg } from "./run";
+import { browserPlayable, countryAt, looksLikeSong, probe, parseProbe } from "./probe";
+import { ffmpeg, ffmpegSlot } from "./run";
 import { makeProxy, needsProxy } from "./proxy";
 import { makeWave } from "./wave";
 import { makeSprite, SPRITE_H, SPRITE_W } from "./sprite";
@@ -129,6 +129,30 @@ describe("ffmpeg", () => {
     const t = Date.now();
     await Promise.all([ffmpeg(half), ffmpeg(half)]);
     expect(Date.now() - t).toBeGreaterThanOrEqual(900);
+  });
+});
+
+describe("ffmpeg", () => {
+  it("a picture never waits for a long run that already started", async () => {
+    delete process.env.FFMPEG_CONCURRENCY;
+    let free!: () => void;
+    const long = ffmpegSlot(() => new Promise<void>((r) => (free = r))); // a 46-minute transcript holds the one slot
+    const picture = ffmpegSlot(async () => "drawn", true);
+    expect(await Promise.race([picture, new Promise((r) => setTimeout(() => r("waiting"), 300))])).toBe("drawn");
+    free();
+    await long;
+  });
+});
+
+describe("songs", () => {
+  const sound = (tags: Record<string, string>, streams: object[] = [{ codec_type: "audio", codec_name: "mp3" }]) => parseProbe({ format: { duration: "200", tags }, streams });
+  it("are known by an artist or album on a sound, or by a song's name", () => {
+    expect(looksLikeSong("track 1", sound({ ARTIST: "Northlight" }))).toBe(true);
+    expect(looksLikeSong("Somewhere I Belong (Official Music Video) [4K UPGRADE]", sound({}))).toBe(true);
+    expect(looksLikeSong("Song name (Lyrics)", sound({}))).toBe(true);
+    expect(looksLikeSong("voice memo", sound({ title: "New Recording" }))).toBe(false);
+    // a filmed video with an artist tag is not a song
+    expect(looksLikeSong("gameplay-1", sound({ artist: "me" }, [{ codec_type: "video", codec_name: "h264" }, { codec_type: "audio", codec_name: "aac" }]))).toBe(false);
   });
 });
 

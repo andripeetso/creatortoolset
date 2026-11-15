@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 import { Link } from "react-router";
 import type { LucideIcon } from "lucide-react";
 import { Picture } from "@/components/Picture";
@@ -19,10 +19,11 @@ const COLUMNS = {
 } as const;
 export type GridSize = keyof typeof COLUMNS;
 
-export function FolderGrid({ ref, size = "large", onMore, children }: { ref?: Ref<HTMLDivElement>; size?: GridSize; onMore?: () => void; children: ReactNode }) {
+/** `columns`: the person's own columns (the Media Library's card size), in place of the size's. */
+export function FolderGrid({ ref, size = "large", columns, onMore, children }: { ref?: Ref<HTMLDivElement>; size?: GridSize; columns?: CSSProperties; onMore?: () => void; children: ReactNode }) {
   return (
     <>
-      <div ref={ref} className={COLUMNS[size]}>
+      <div ref={ref} className={columns ? "grid gap-3" : COLUMNS[size]} style={columns}>
         {children}
       </div>
       {onMore && (
