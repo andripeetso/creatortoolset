@@ -70,6 +70,11 @@ export interface SearchQuery {
   sort?: LibrarySort;
   /** only clips filmed in this country (`?place=`, ISO 3166-1 alpha-2) */
   place?: string;
+  /** only clips with every one of these tags (`?tag=a,b`) */
+  tags?: string[];
+  /** only clips filmed from / before these times, ms (`?filmedFrom=&filmedTo=`); a clip with no filming time by when it was added. `from`/`to` stay when it was added */
+  filmedFrom?: number;
+  filmedTo?: number;
   cursor?: string;
   limit?: number; // limit ≤ 200
 }

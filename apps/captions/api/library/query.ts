@@ -64,7 +64,9 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
   return {
     ...(p.q?.trim() ? { q: p.q.trim().slice(0, 200) } : {}),
     ...(kind.length ? { kind } : {}),
-    ...(p.tag ? { tag: p.tag.slice(0, 80) } : {}),
+    ...(p.tag ? { tags: [...new Set(p.tag.split(",").map((t) => t.trim().slice(0, 80)).filter(Boolean))].slice(0, 20) } : {}),
+    ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
+    ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
@@ -110,6 +112,18 @@ export interface CardRow {
   finished: number;
 }
 
+/** When a clip was filmed (its probe's capturedAt), else when it was added. Through `a` only: search by meaning has no `v`. */
+const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM asset_versions fv WHERE fv.id = a.current_version_id), a.created_at)";
+
+/** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
+export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
+  return [
+    ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
+    ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
+    ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
+  ];
+}
+
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
 export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { sql: string; params: (string | number)[]; limit: number } {
   const where = ["a.library_id = ?", query.trashed ? "a.trashed_at IS NOT NULL" : "a.trashed_at IS NULL"];
@@ -153,6 +167,10 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
       WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
   }
   for (const f of facetClauses(query.facets ?? {})) {
+    where.push(f.sql);
+    params.push(...f.params);
+  }
+  for (const f of filterClauses(query)) {
     where.push(f.sql);
     params.push(...f.params);
   }

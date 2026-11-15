@@ -8,6 +8,7 @@ import { libraryDb } from "./db";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
+import { filterClauses } from "./query";
 import { viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
@@ -34,6 +35,7 @@ export function searchClauses(query: SearchQuery): Clause[] {
     ...(query.collectionId ? [{ sql: "a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)", params: [query.collectionId] }] : []),
     ...(query.kind?.length ? [{ sql: `a.kind IN (${query.kind.map(() => "?").join(",")})`, params: query.kind }] : []),
     ...facetClauses(query.facets ?? {}),
+    ...filterClauses(query),
   ];
 }
 

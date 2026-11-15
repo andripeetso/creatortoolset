@@ -98,6 +98,7 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
   if (q.source) p.set("source", q.source);
   setFacets(p, q.facets);
+  setFilters(p, q);
   return fetch(`/api/library/${libraryId}/assets?${p}`).then((r) => json<AssetPage>(r));
 }
 
@@ -150,16 +151,28 @@ export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =
 export const searchLibrary = async (
   libraryId: string,
   q: string,
-  narrow: { facets?: Record<string, string[]>; kind?: AssetKind; collectionId?: string; roll?: "a" | "b" } = {},
+  narrow: { facets?: Record<string, string[]>; kind?: AssetKind; collectionId?: string; roll?: "a" | "b" } & LibraryFilters = {},
 ): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean }> => {
   const p = new URLSearchParams({ q });
   if (narrow.kind) p.set("kind", narrow.kind);
   if (narrow.collectionId) p.set("collectionId", narrow.collectionId);
   if (narrow.roll) p.set("roll", narrow.roll);
   setFacets(p, narrow.facets);
+  setFilters(p, narrow);
   const r = await fetch(`/api/library/${libraryId}/search?${p}`);
   return { hits: await json<SearchHit[]>(r), meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready" };
 };
+
+/** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where. */
+export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place">;
+
+/** Those filters as query parameters (api/library/query.ts parseSearch reads them back). */
+function setFilters(p: URLSearchParams, f: LibraryFilters) {
+  if (f.tags?.length) p.set("tag", f.tags.join(","));
+  if (f.filmedFrom !== undefined) p.set("filmedFrom", String(f.filmedFrom));
+  if (f.filmedTo !== undefined) p.set("filmedTo", String(f.filmedTo));
+  if (f.place) p.set("place", f.place);
+}
 
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */
 function setFacets(p: URLSearchParams, facets: Record<string, string[]> | undefined) {

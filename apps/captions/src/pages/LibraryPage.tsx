@@ -41,6 +41,8 @@ import { UploadTray, type Upload as UploadItem } from "./library/Uploads";
 import { ClipView } from "./library/ClipView";
 import { folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
 import { LibrarySettings } from "./library/LibrarySettings";
+import { anyFilter, LibraryFilterRow, withSaved } from "./library/Filters";
+import type { LibraryFilters } from "@/lib/library";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage as a grid of 16:9 cards. An empty library
@@ -92,6 +94,7 @@ export default function LibraryPage() {
   const [kind, setKind] = useState<AssetKind | "all">("all");
   const [roll, setRoll] = useState<Roll | null>(null);
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
+  const [filters, setFilters] = useState<LibraryFilters>({}); // tags, when, where (./library/Filters.tsx)
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
   const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
@@ -145,9 +148,9 @@ export default function LibraryPage() {
 
   // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it. The top
   // level lists the clips in no folder; narrowed there (a kind, a roll, a facet), the whole library
-  const picked = kind !== "all" || !!roll || Object.values(facets).some((v) => v.length);
+  const picked = kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || anyFilter(filters);
   const folder = trash ? { trashed: true } : open ? { collectionId: open } : picked ? {} : { unfiled: true };
-  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined };
+  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined, ...filters };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
   const reload = () => void first.refresh().catch((e) => setError(message(e)));
@@ -174,7 +177,7 @@ export default function LibraryPage() {
   // ponytail: Name orders the pages loaded so far (the server pages newest first); a server-side order when a folder
   // holds more than a page or two
   const shown = sort === "name" && !searching ? [...items].sort((x, y) => byName({ name: x.title }, { name: y.title })) : items;
-  const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
+  const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source || anyFilter(filters);
   const shownFolders = trash || source ? [] : foldersAt(collections, open, term);
 
   // an empty library is one screen (what it is for, the folder to choose): nothing in it, no folder, nothing in its
@@ -216,11 +219,12 @@ export default function LibraryPage() {
       kind: kind === "all" ? saved?.kind?.[0] : kind,
       collectionId: smart ? undefined : (open ?? undefined),
       roll: roll ?? saved?.roll,
+      ...withSaved(filters, saved),
     })
       .then((r) => live && setFound(r))
       .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
     return () => void (live = false);
-  }, [libId, words, open, smart, facets, kind, roll, searching]);
+  }, [libId, words, open, smart, facets, kind, roll, searching, filters]);
 
   const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
@@ -342,7 +346,7 @@ export default function LibraryPage() {
       const c = await createCollection(libId, {
         name: term.slice(0, 80),
         kind: "smart",
-        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined },
+        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined, ...filters },
       });
       reloadFolders();
       setQ("");
@@ -512,6 +516,7 @@ export default function LibraryPage() {
                   ))}
                 </div>
               )}
+              {!source && !trash && <LibraryFilterRow libraryId={library.id} value={filters} onChange={setFilters} any={items.length > 0} />}
               {sources.length > 0 && (
                 <div role="group" aria-label="Sources" className="flex flex-wrap items-center gap-1.5">
                   <Button size="sm" variant={!source ? "default" : "outline"} aria-pressed={!source} onClick={() => setSource("")}>
