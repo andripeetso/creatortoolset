@@ -366,4 +366,7 @@ export const MIGRATIONS: string[] = [
   // 17: the speech model a transcript made on the person's own computer came from (provider 'computer'): the AI Editor
   // hears a clip again when its row picks another model (editor/analyze.ts)
   `ALTER TABLE transcripts ADD COLUMN model TEXT;`,
+  // 18: photos were placed from a video's location tag only, so each got country ""; placeUnplaced reads their EXIF once
+  `UPDATE asset_versions SET probe = json_remove(probe, '$.country')
+     WHERE json_extract(probe, '$.country') = '' AND asset_id IN (SELECT id FROM assets WHERE kind = 'image');`,
 ];

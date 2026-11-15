@@ -195,6 +195,14 @@ describe("a human description", () => {
     expect((await r.json()) as { tags: string[]; aiTags: string[] }).toMatchObject({ tags: ["best take"], aiTags: [] });
   });
 
+  it("an AI tag put back by an undo is the AI's again", async () => {
+    await call("local", "/api/library/lib_a/assets/ast-human-01", "PATCH", { tags: ["best take"] });
+    libraryDb().prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES ('ast-human-01', 'cartwheel', 'ai')").run();
+    await call("local", "/api/library/lib_a/assets/ast-human-01", "PATCH", { tags: ["best take"] }); // removed
+    const r = await call("local", "/api/library/lib_a/assets/ast-human-01", "PATCH", { tags: ["best take", "cartwheel"], aiTags: ["cartwheel"] });
+    expect((await r.json()) as { aiTags: string[] }).toMatchObject({ aiTags: ["cartwheel"] });
+  });
+
   it("only the owner edits; outsiders get 404", async () => {
     await seed("ast-local-01", "local", "x");
     expect((await call("stranger", "/api/library/lib_a/assets/ast-local-01", "PATCH", { description: "x" })).status).toBe(404);

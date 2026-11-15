@@ -449,7 +449,7 @@ function TagEditor({
     return () => void (alive.current = false);
   }, []);
   const shown = (x: AssetCard) => alive.current && onSaved(x);
-  const save = (tags: string[]) => updateAsset(libraryId, asset.id, { tags });
+  const save = (tags: string[], aiTags?: string[]) => updateAsset(libraryId, asset.id, { tags, aiTags });
   const list = open && all ? tagSuggestions(all, asset.tags, typed) : [];
   const busy = open && (typed !== "" || list.length > 0); // Escape is the box's while it has something to close
 
@@ -464,7 +464,8 @@ function TagEditor({
     save(asset.tags.filter((x) => x !== t)).then(
       (x) => {
         shown(x);
-        undoable("tag removed", () => getAsset(libraryId, asset.id).then((d) => (d.tags.includes(t) ? d : save([...d.tags, t]))).then(shown), 1);
+        const ai = asset.aiTags.includes(t);
+        undoable("tag removed", () => getAsset(libraryId, asset.id).then((d) => (d.tags.includes(t) ? d : save([...d.tags, t], ai ? [t] : undefined))).then(shown), 1);
       },
       (e) => onError(message(e)),
     );

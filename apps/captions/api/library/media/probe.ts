@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { open } from "node:fs/promises";
 import { blobs, libraryDb } from "../db";
 
 /**
@@ -33,11 +34,14 @@ const rate = (r: unknown) => {
   return Number.isFinite(fps) && fps >= 1 && fps <= 240 ? Math.round(fps * 1000) / 1000 : 0;
 };
 
-export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSummary {
+export function parseProbe(json: { format?: Json; streams?: Json[]; stream_groups?: Json[] }): ProbeSummary {
   const pictures = json.streams?.filter((s) => s.codec_type === "video") ?? [];
   const isCover = (s: Json) => s.disposition?.attached_pic === 1;
   const v = pictures.find((s) => !isCover(s)) ?? pictures[0];
   const a = json.streams?.find((s) => s.codec_type === "audio");
+  // an iPhone HEIC is a grid of 512 px tiles, each its own stream: the photo's size is the grid's
+  const grids = json.stream_groups?.filter((g) => g.type === "Tile Grid") ?? [];
+  const grid = (grids.find((g) => g.disposition?.default === 1) ?? grids[0])?.components?.[0];
   // Clockwise degrees to show the picture upright. ffmpeg 7 writes the display matrix as side data, where
   // rotation is the negative of that; older builds wrote a `rotate` tag already clockwise. Read both, copy neither.
   const matrix = v?.side_data_list?.find((d: Json) => d.rotation !== undefined)?.rotation;
@@ -49,8 +53,8 @@ export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSumm
   ) as string | undefined;
   return {
     duration: Number(json.format?.duration) || 0,
-    width: Number(v?.width) || 0,
-    height: Number(v?.height) || 0,
+    width: Number(grid?.width ?? v?.width) || 0,
+    height: Number(grid?.height ?? v?.height) || 0,
     fps: v ? rate(v.avg_frame_rate) || rate(v.r_frame_rate) : 0,
     rotation: ((Math.round(turn) % 360) + 360) % 360,
     format: json.format?.format_name ?? "",
@@ -65,11 +69,12 @@ export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSumm
 
 /** Probes a file with ffprobe, and where it was filmed. Rejects when ffprobe fails or the file is not media. */
 export async function probe(file: string): Promise<ProbeSummary> {
-  const json = await ffprobe(file, ["-show_format", "-show_streams"]);
-  return { ...parseProbe(json), country: await countryOf(json) };
+  // stream groups (a HEIC's tile grid) need ffprobe 7.1; an older one on PATH refuses the option and is asked without it
+  const json = await ffprobe(file, ["-show_format", "-show_streams", "-show_stream_groups"]).catch(() => ffprobe(file, ["-show_format", "-show_streams"]));
+  return { ...parseProbe(json), country: (await countryOf(json)) || (await photoCountry(file)) };
 }
 
-function ffprobe(file: string, args: string[]): Promise<{ format?: Json; streams?: Json[] }> {
+function ffprobe(file: string, args: string[]): Promise<{ format?: Json; streams?: Json[]; stream_groups?: Json[] }> {
   return new Promise((resolve, reject) => {
     const p = spawn("ffprobe", ["-v", "error", ...args, "-of", "json", file]);
     let out = "";
@@ -107,6 +112,55 @@ export async function countryOf(json: { format?: Json }): Promise<string> {
   const m = typeof tag === "string" ? ISO6709.exec(tag.trim()) : null;
   const [lat, lon] = m ? [Number(m[1]), Number(m[2])] : [NaN, NaN];
   return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? countryAt(lat, lon) : "";
+}
+
+/** How much of a photo's start is read for its EXIF: a JPEG's is at the top, an iPhone HEIC's ~95 KB in (after its thumbnail). */
+const EXIF_HEAD = 512 * 1024;
+
+/**
+ * The country a photo was taken in, from its EXIF GPS (JPEG, HEIC); "" when it has none. ffprobe shows no EXIF.
+ * ponytail: looks for the TIFF block in the file's first 512 KB instead of following HEIC's item locations; walk `iloc` if a camera puts it further in
+ */
+export async function photoCountry(file: string): Promise<string> {
+  const f = await open(file, "r").catch(() => null);
+  if (!f) return "";
+  const head = Buffer.alloc(EXIF_HEAD);
+  const { bytesRead } = await f.read(head, 0, EXIF_HEAD, 0).finally(() => f.close());
+  const b = head.subarray(0, bytesRead);
+  for (const sig of [Buffer.from("MM\0*"), Buffer.from("II*\0")]) {
+    for (let at = b.indexOf(sig); at >= 0; at = b.indexOf(sig, at + 1)) {
+      const at2 = exifGps(b, at);
+      if (at2) return countryAt(at2[0], at2[1]);
+    }
+  }
+  return "";
+}
+
+/** Latitude and longitude from the TIFF block at `t`, or null when it is not one or has no GPS. */
+export function exifGps(b: Buffer, t: number): [number, number] | null {
+  const le = b[t] === 0x49;
+  const u16 = (o: number) => (le ? b.readUInt16LE(t + o) : b.readUInt16BE(t + o));
+  const u32 = (o: number) => (le ? b.readUInt32LE(t + o) : b.readUInt32BE(t + o));
+  const fits = (o: number, n: number) => o >= 0 && t + o + n <= b.length;
+  const entries = (ifd: number) => {
+    if (!fits(ifd, 2)) return [];
+    return Array.from({ length: u16(ifd) }, (_, i) => ifd + 2 + i * 12).filter((e) => fits(e, 12)).map((e) => ({ tag: u16(e), value: e + 8 }));
+  };
+  if (!fits(0, 8)) return null;
+  const gps = entries(u32(4)).find((e) => e.tag === 0x8825);
+  if (!gps) return null;
+  const tags = new Map(entries(u32(gps.value)).map((e) => [e.tag, e.value]));
+  const angle = (tag: number) => {
+    const at = tags.get(tag);
+    const o = at === undefined ? -1 : u32(at);
+    if (!fits(o, 24)) return NaN;
+    const [d, m, s] = [0, 1, 2].map((i) => u32(o + i * 8) / u32(o + i * 8 + 4));
+    return d! + m! / 60 + s! / 3600;
+  };
+  const ref = (tag: number) => (tags.has(tag) ? String.fromCharCode(b[t + tags.get(tag)!]!) : "");
+  const lat = angle(2) * (ref(1) === "S" ? -1 : 1);
+  const lon = angle(4) * (ref(3) === "W" ? -1 : 1);
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
 }
 
 type Country = [code: string, box: [west: number, south: number, east: number, north: number], polygons: number[][][]];
@@ -148,7 +202,7 @@ export async function countryAt(lat: number, lon: number): Promise<string> {
 }
 
 /**
- * Clips probed before the country was kept get it once, from their location tag alone. Only files on this server's
+ * Clips probed before the country was kept get it once, from their location tag (a photo's EXIF) alone. Only files on this server's
  * own disk (a bucket's would be downloaded whole); a file that is gone is left for the next start.
  */
 export async function placeUnplaced(db = libraryDb()): Promise<number> {
@@ -169,7 +223,7 @@ export async function placeUnplaced(db = libraryDb()): Promise<number> {
         const file = await blobs.localCopy(r.source_key).catch(() => null);
         const json = file && (await ffprobe(file, ["-show_entries", `format_tags=${LOCATION_TAGS.join(",")}`]).catch(() => null));
         if (!json) continue;
-        db.prepare("UPDATE asset_versions SET probe = json_set(probe, '$.country', ?) WHERE id = ?").run(await countryOf(json), r.id);
+        db.prepare("UPDATE asset_versions SET probe = json_set(probe, '$.country', ?) WHERE id = ?").run((await countryOf(json)) || (await photoCountry(file)), r.id);
         touched.add(r.library_id);
         n++;
       }
