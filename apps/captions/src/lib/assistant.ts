@@ -94,6 +94,8 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ 
 }
 
 export const getAssistant = () => call<AssistantView>("");
+/** One chat by its id, open or not. */
+export const getChat = (id: string) => call<AssistantView>(`/chats/${encodeURIComponent(id)}`);
 export const sendTurn = (input: AssistantTurnInput) => call<AssistantView>("/turn", "POST", input);
 /** A message to one chat by its id, open or not (a queued message goes to the chat it was written in). */
 export const sendTurnTo = (chat: string, input: AssistantTurnInput) => call<AssistantView>(`/chats/${encodeURIComponent(chat)}/turn`, "POST", input);
