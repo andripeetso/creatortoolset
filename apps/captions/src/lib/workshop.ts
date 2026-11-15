@@ -256,6 +256,8 @@ export interface SessionRow extends Omit<SessionMeta, "drafts" | "sources"> {
   kinds?: PieceKind[];
   /** A share link is on. */
   shared?: boolean;
+  /** the team owner's, in a workspace given to this person: opens to read only */
+  readOnly?: boolean;
 }
 
 export interface SessionPatch {

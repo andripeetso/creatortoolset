@@ -5,6 +5,7 @@ import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -223,7 +224,7 @@ export function WorkspaceSection() {
             rows={[
               ...view.members
                 .filter((m) => m.role !== "owner")
-                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, scripts: !!m.scripts, save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
+                .map((m) => ({ key: m.username, label: m.name || m.username, off: m.off, scripts: !!m.scripts, workspaces: m.workspaces ?? [], save: (p: AccessPatch) => act(updateMember(m.username, p as MemberPatch)) })),
               ...view.invites.map((i) => ({
                 key: i.id,
                 label: (
@@ -233,9 +234,11 @@ export function WorkspaceSection() {
                 ),
                 off: i.off ?? [],
                 scripts: !!i.scripts,
+                workspaces: i.workspaces ?? [],
                 save: (p: AccessPatch) => act(updateInvite(i.id, p as InvitePatch)),
               })),
             ]}
+            brands={view.brands ?? []}
           />
         </Section>
       )}
@@ -257,7 +260,7 @@ export function WorkspaceSection() {
       })()}
 
       {accounts.dialogs}
-      <InviteDialog open={inviting} mail={Boolean(view.mail)} onOpenChange={setInviting} onCreated={() => void load()} />
+      <InviteDialog open={inviting} mail={Boolean(view.mail)} brands={view.brands ?? []} onOpenChange={setInviting} onCreated={() => void load()} />
       {aiFor && <AiDialog member={aiFor} onClose={() => setAiFor(null)} onSave={(m, patch) => act(updateMember(m.username, patch))} />}
     </>
   );
@@ -347,24 +350,24 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
   );
 }
 
-type AccessPatch = { off?: string[]; scripts?: boolean };
-interface AccessRow {
+type AccessPatch = { off?: string[]; scripts?: boolean; workspaces?: string[] };
+type Access = { off: string[]; scripts: boolean; workspaces: string[] };
+interface AccessRow extends Access {
   key: string;
   label: ReactNode;
-  off: string[];
-  scripts: boolean;
   save: (patch: AccessPatch) => Promise<unknown>;
 }
 
 /**
- * Who opens what: a row for each member and each pending invite, a tick per app and one for reading your scripts. A tick
+ * Who opens what: a row for each member and each pending invite, a tick per app, one for reading your scripts, and one
+ * per workspace of yours they work in (it shows in their workspace switcher, your things there read-only). A tick
  * shows at once; `draft` holds a row while its save is on its way, so a second tick builds on the first, and a failed
  * save falls back to what the server has.
  */
-function AccessGrid({ rows }: { rows: AccessRow[] }) {
-  const [draft, setDraft] = useState<Record<string, { off: string[]; scripts: boolean }>>({});
-  const now = (r: AccessRow) => draft[r.key] ?? { off: r.off, scripts: r.scripts };
-  const change = (r: AccessRow, next: { off: string[]; scripts: boolean }, patch: AccessPatch) => {
+function AccessGrid({ rows, brands }: { rows: AccessRow[]; brands: { id: string; name: string }[] }) {
+  const [draft, setDraft] = useState<Record<string, Access>>({});
+  const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, scripts: r.scripts, workspaces: r.workspaces };
+  const change = (r: AccessRow, next: Access, patch: AccessPatch) => {
     setDraft((d) => ({ ...d, [r.key]: next }));
     void r
       .save(patch)
@@ -384,6 +387,11 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
                 </th>
               ))}
               <th className="px-1 pb-2 text-center align-bottom font-normal">Your scripts</th>
+              {brands.map((b, i) => (
+                <th key={b.id} className={`px-1 pb-2 text-center align-bottom font-normal${i === 0 ? " border-l border-border/50 pl-2" : ""}`}>
+                  {b.name}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -400,6 +408,11 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
                     return <Tick key={t} on={on} title={`${TOOL_NAMES[t]} for ${typeof r.label === "string" ? r.label : "this invite"}`} onClick={() => change(r, { ...cur, off }, { off })} />;
                   })}
                   <Tick on={cur.scripts} title="Can read your scripts" onClick={() => change(r, { ...cur, scripts: !cur.scripts }, { scripts: !cur.scripts })} />
+                  {brands.map((b) => {
+                    const on = cur.workspaces.includes(b.id);
+                    const workspaces = on ? cur.workspaces.filter((x) => x !== b.id) : [...cur.workspaces, b.id];
+                    return <Tick key={b.id} on={on} title={`Works in ${b.name}`} onClick={() => change(r, { ...cur, workspaces }, { workspaces })} />;
+                  })}
                 </tr>
               );
             })}
@@ -414,9 +427,22 @@ function AccessGrid({ rows }: { rows: AccessRow[] }) {
  * Makes an invite link (one person, 7 days), emailed when an address is given and the server can send email. The link
  * is shown here once; the pending list only has Revoke.
  */
-function InviteDialog({ open, mail, onOpenChange, onCreated }: { open: boolean; mail: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
+function InviteDialog({
+  open,
+  mail,
+  brands,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  mail: boolean;
+  brands: { id: string; name: string }[];
+  onOpenChange: (o: boolean) => void;
+  onCreated: () => void;
+}) {
   const [link, setLink] = useState<string | null>(null);
   const [email, setEmail] = useState("");
+  const [given, setGiven] = useState<string[]>([]);
   const [sentTo, setSentTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -426,6 +452,7 @@ function InviteDialog({ open, mail, onOpenChange, onCreated }: { open: boolean; 
       setEmail("");
       setSentTo("");
       setCopied(false);
+      setGiven([]);
     }
     onOpenChange(o);
   };
@@ -433,7 +460,7 @@ function InviteDialog({ open, mail, onOpenChange, onCreated }: { open: boolean; 
     setBusy(true);
     try {
       const to = email.trim();
-      const { token } = await createInvite({ ai: "own", budgetUsd: 0, ...(to ? { email: to } : {}) });
+      const { token } = await createInvite({ ai: "own", budgetUsd: 0, workspaces: given, ...(to ? { email: to } : {}) });
       setSentTo(to);
       setLink(inviteUrl(token));
       onCreated();
@@ -472,6 +499,17 @@ function InviteDialog({ open, mail, onOpenChange, onCreated }: { open: boolean; 
             aria-label="Their email"
             className="h-8 text-sm"
           />
+        )}
+        {!link && brands.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">Workspaces they work in</p>
+            {brands.map((b) => (
+              <label key={b.id} className="flex items-center gap-2 text-sm">
+                <Checkbox checked={given.includes(b.id)} onCheckedChange={(on) => setGiven((g) => (on ? [...g, b.id] : g.filter((x) => x !== b.id)))} />
+                {b.name}
+              </label>
+            ))}
+          </div>
         )}
         {link && <code className="block truncate rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">{link}</code>}
         <DialogFooter>

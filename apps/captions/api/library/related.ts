@@ -4,7 +4,7 @@ import type { AssetCard } from "../../contracts/library";
 import { libraryDb, librarySetting } from "./db";
 import { cosine, floorOf } from "./embed";
 import { CARD, toCard, type CardRow } from "./query";
-import { viewerOf, visibleCards } from "./routes";
+import { readerOf, visibleCards } from "./routes";
 import { assetRef, canSee } from "./sources";
 
 /**
@@ -54,7 +54,7 @@ export function closestVersions(libraryId: string, versionId: string): { version
 // GET /api/library/:id/assets/:assetId/related → { related: AssetCard[] }: up to 8 clips closest in meaning
 relatedApp.get("/:id/assets/:assetId/related", async (c) => {
   const libraryId = c.req.param("id");
-  const viewer = viewerOf(c.get("user").username, libraryId);
+  const viewer = await readerOf(c.get("user").username, libraryId);
   const a = viewer
     ? (libraryDb().prepare("SELECT id, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(c.req.param("assetId"), libraryId) as
         | { id: string; current_version_id: string | null }

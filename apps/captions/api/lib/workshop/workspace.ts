@@ -5,6 +5,7 @@ import { env } from "../env";
 import type { SessionUser } from "../../users";
 import type { Project } from "./types";
 import { okId } from "./validate";
+import { sharedWith } from "../workspaces";
 
 /**
  * Account-level current project: the brand profile Analyzer and Workshop
@@ -107,6 +108,32 @@ export async function ownedProject(id: string, user: SessionUser): Promise<Proje
 }
 
 /**
+ * The team owner's workspaces this account was given (Settings → Team → Access; sharedWith, lib/workspaces.ts), read
+ * fresh each time, so taking one away holds at once. A deleted one drops out. They are the owner's: never edited here.
+ */
+export async function sharedProjects(username: string): Promise<Project[]> {
+  const s = sharedWith(username);
+  const out: Project[] = [];
+  for (const id of s?.ids ?? []) {
+    const p = okId(id) ? await readJson<Project>(projectPath(id)) : null;
+    if (p && p.owner === s!.owner) out.push(p);
+  }
+  return out;
+}
+
+/** A workspace this account may work in: its own, or one given to it. */
+async function openableProject(id: string, user: SessionUser): Promise<Project | null> {
+  return (await ownedProject(id, user)) ?? (await sharedProjects(user.username)).find((p) => p.id === id) ?? null;
+}
+
+/** The workspace this request works in, when it is one given to this account: whose it is. Null for one's own. */
+export async function sharedHere(user: SessionUser): Promise<{ owner: string; id: string } | null> {
+  const { currentProjectId, projects } = await getWorkspace(user);
+  const p = projects.find((x) => x.id === currentProjectId);
+  return p && p.owner !== user.username ? { owner: p.owner, id: p.id } : null;
+}
+
+/**
  * The workspace a chat's reply works in (assistant.ts, mcp.ts): while it is set, it is the current one for this call
  * and everything it calls, whatever the app has open. Never written down: the app's own pick stays as it was.
  */
@@ -121,9 +148,9 @@ export interface Workspace {
   projects: Project[];
 }
 
-/** Own projects only. Picks the newest as current when none is set. */
+/** Own projects, then the ones given to this account (sharedProjects). Picks the newest as current when none is set. */
 export async function getWorkspace(user: SessionUser): Promise<Workspace> {
-  const projects = await ownedProjects(user.username);
+  const projects = [...(await ownedProjects(user.username)), ...(await sharedProjects(user.username))];
   const marker = (await readUserMarker(user.username)) ?? {};
   const scoped = workspaceScope.getStore()?.id;
   let current = scoped && projects.some((p) => p.id === scoped) ? scoped : marker.currentProjectId;
@@ -145,7 +172,7 @@ export async function setCurrentProjectId(
     await writeUserMarker(user.username, rest);
     return getWorkspace(user);
   }
-  if (!(await ownedProject(projectId, user))) {
+  if (!(await openableProject(projectId, user))) {
     throw new Error("Not found");
   }
   await writeUserMarker(user.username, { ...marker, currentProjectId: projectId });
@@ -168,7 +195,7 @@ export async function resolveProjectId(
   user: SessionUser,
   requested?: string | null,
 ): Promise<string | undefined> {
-  if (requested && (await ownedProject(requested, user))) {
+  if (requested && (await openableProject(requested, user))) {
     movesTo(user, requested);
     return requested;
   }

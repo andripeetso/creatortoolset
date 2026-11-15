@@ -9,6 +9,8 @@ import type { AssetCard } from "./library";
 export interface LibraryViewer {
   username: string;
   role: "owner" | "member";
+  /** a member the team's owner gave the library's workspace (Settings → Team): sees all of it, to look at only */
+  given?: true;
 }
 
 /** The asset a policy is asked about: the source that holds it, its library, the asset and its current version. */

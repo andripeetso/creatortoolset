@@ -56,8 +56,10 @@ import {
   readUserMarker,
   resolveProjectId,
   setCurrentProjectId,
+  sharedHere,
   writeUserMarker,
 } from "./lib/workshop/workspace";
+import { inProjectOf, sharedTo } from "./lib/project-of";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -2363,10 +2365,18 @@ workshopApp.get("/sessions", async (c) => {
   // whether a share link is on; stopping one deletes it
   const shared = new Set(Object.values(await readShares()).map((s) => s.sessionId));
   const rows = [];
+  // a workspace the team's owner gave this person (Settings → Team): the owner's projects there too, to read (GET /team/sessions/:id)
+  const given = await sharedHere(user);
+  const theirs = given && (!projectId || projectId === given.id) ? await inProjectOf({ username: given.owner } as SessionUser, given.id) : null;
   for (const id of names) {
     const meta = await ownedSession(id, user);
     if (meta && inProject(meta, projectId)) {
       rows.push({ ...sessionRow(meta, meta.projectId ? projects.get(meta.projectId) : undefined), ...(await summaryParts(meta, user.username)), shared: shared.has(meta.id) });
+    } else if (!meta && theirs && given) {
+      const other = await readSession(id);
+      if (other && other.owner === given.owner && other.status !== "shelved" && theirs(other.projectId)) {
+        rows.push({ ...sessionRow(other), ...(await summaryParts(other, other.owner)), shared: false, readOnly: true });
+      }
     }
   }
   rows.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -2390,6 +2400,19 @@ workshopApp.get("/team/scripts", async (c) => {
   }
   rows.sort((a, b) => b.updatedAt - a.updatedAt);
   return c.json(rows);
+});
+
+/** One of the team owner's projects in a workspace given to this person (sharedTo): its pieces to read, as a share link shows them. */
+workshopApp.get("/team/sessions/:id", async (c) => {
+  const meta = await readSession(c.req.param("id"));
+  if (!meta || meta.status === "shelved" || !(await sharedTo(c.get("user"), meta.owner, meta.projectId))) return c.json({ error: "Not found" }, 404);
+  const ids = (await listDocs(meta.id)).filter((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim())).map((d) => d.id);
+  const pieces = await sharePieces(meta.id, ids);
+  return c.json(
+    { title: meta.title, status: meta.status ?? "draft", createdAt: meta.createdAt, updatedAt: Math.max(meta.updatedAt, ...pieces.map((p) => p.updatedAt)), deliveries: [], pieces },
+    200,
+    { "Cache-Control": "no-store" },
+  );
 });
 
 workshopApp.get("/team/scripts/:id/docs", async (c) => {
@@ -4129,17 +4152,11 @@ workshopApp.delete("/sessions/:id/shares/:token", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Public, no login (boot.ts PUBLIC_WORKSHOP): the shared pieces as they stand now, text and the picked slide layouts. */
-export const workshopShareApp = new Hono<{ Variables: AuthVars }>();
-
-workshopShareApp.get("/:token", async (c) => {
-  const share = (await readShares())[c.req.param("token")];
-  const meta = share ? await readSession(share.sessionId) : null;
-  if (!share || !meta) return c.json({ error: "Not found" }, 404);
+/** The pieces a share link (and a teammate's read, /team/sessions/:id) shows: text and the picked slide layouts. */
+async function sharePieces(sessionId: string, ids: string[]) {
   const pieces = [];
-  const ids = share.all ? (await listDocs(meta.id)).filter((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim())).map((d) => d.id) : share.docIds;
   for (const id of ids) {
-    const d = await readDoc(meta.id, id);
+    const d = await readDoc(sessionId, id);
     if (!d) continue; // deleted since
     pieces.push({
       id: d.id,
@@ -4154,6 +4171,18 @@ workshopShareApp.get("/:token", async (c) => {
       updatedAt: d.updatedAt,
     });
   }
+  return pieces;
+}
+
+/** Public, no login (boot.ts PUBLIC_WORKSHOP): the shared pieces as they stand now, text and the picked slide layouts. */
+export const workshopShareApp = new Hono<{ Variables: AuthVars }>();
+
+workshopShareApp.get("/:token", async (c) => {
+  const share = (await readShares())[c.req.param("token")];
+  const meta = share ? await readSession(share.sessionId) : null;
+  if (!share || !meta) return c.json({ error: "Not found" }, 404);
+  const ids = share.all ? (await listDocs(meta.id)).filter((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim())).map((d) => d.id) : share.docIds;
+  const pieces = await sharePieces(meta.id, ids);
   return c.json(
     {
       title: share.all ? meta.title || share.title : share.title,

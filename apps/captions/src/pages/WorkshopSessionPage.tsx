@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { createDesign, listDesigns } from "@/lib/designs";
 import { Eye, Loader2, X } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
+import { WorkshopShareView } from "@/pages/WorkshopSharePage";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { AuditButton } from "@/components/workshop/AuditButton";
 import { AuditModal } from "@/components/workshop/AuditModal";
@@ -1109,7 +1110,8 @@ export default function WorkshopSessionPage() {
       <div className="flex min-h-0 flex-1">
       {!chatMode && !desk.focus && <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />}
       {pageError ? (
-        <p className="p-6 text-sm text-red-300">{pageError}</p>
+        // not theirs: the team owner's project in a workspace given to them opens to read (WorkshopShareView `src`)
+        <TeamRead id={sessionId} fallback={<p className="p-6 text-sm text-red-300">{pageError}</p>} />
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {citing ? <CitePopover at={citing.at} comment={citing.quote.comment} onSave={saveCite} onCancel={() => setCiting(null)} /> : null}
@@ -1464,4 +1466,16 @@ export default function WorkshopSessionPage() {
       ) : null}
     </div>
   );
+}
+
+/** The team owner's project, to read, when this person was given its workspace; else `fallback`. */
+function TeamRead({ id, fallback }: { id: string; fallback: ReactNode }) {
+  const src = `/api/workshop/team/sessions/${encodeURIComponent(id)}`;
+  const [ok, setOk] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(src).then((r) => live && setOk(r.ok), () => live && setOk(false));
+    return () => void (live = false);
+  }, [src]);
+  return ok ? <WorkshopShareView token="" embedded src={src} /> : ok === false ? fallback : null;
 }

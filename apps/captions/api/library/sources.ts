@@ -16,9 +16,9 @@ import { grantedTo } from "./grants";
 /** The source of every library on the public storage (local, S3 and Bunny alike). */
 export const LIBRARY_SOURCE = "library";
 
-/** The built-in policy: the library's owner sees every asset; anyone else only an asset in a collection granted to them. */
+/** The built-in policy: the library's owner, and a member given its workspace, see every asset; anyone else only an asset in a collection granted to them. */
 const ownerOrGranted = (viewer: LibraryViewer, asset: LibraryAssetRef): boolean =>
-  viewer.role === "owner" || grantedTo(viewer.username, asset.assetId);
+  viewer.role === "owner" || viewer.given === true || grantedTo(viewer.username, asset.assetId);
 
 const sources = new Map<string, LibrarySource>([[LIBRARY_SOURCE, { id: LIBRARY_SOURCE, label: "Library" }]]);
 const policies = new Map<string, LibraryPolicy[]>([[LIBRARY_SOURCE, [{ sourceId: LIBRARY_SOURCE, canSee: ownerOrGranted }]]]);

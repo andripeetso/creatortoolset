@@ -277,8 +277,10 @@ export default function WorkshopSharePage() {
 
 /**
  * The page itself; `embedded` = inside the session's Share window: no full-height page or title bar, the open tab kept in state, not the URL.
+ * `src`: a teammate reading the team owner's project in a workspace given to them (GET /api/workshop/team/sessions/:id):
+ * the pieces only, without the link's comments and production.
  */
-export function WorkshopShareView({ token, embedded = false }: { token: string; embedded?: boolean }) {
+export function WorkshopShareView({ token, embedded = false, src }: { token: string; embedded?: boolean; src?: string }) {
   const [urlParams, setUrlParams] = useSearchParams();
   const [localPiece, setLocalPiece] = useState<string | null>(null);
   const params = embedded ? new URLSearchParams(localPiece ? { piece: localPiece } : {}) : urlParams;
@@ -289,11 +291,11 @@ export function WorkshopShareView({ token, embedded = false }: { token: string; 
   // in the window the window scrolls, so the sidebar doesn't
   const asideClass = `flex flex-col gap-6 ${embedded ? "" : "lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-y-auto"}`;
   const load = useCallback(() => {
-    fetch(`/api/workshop-share/${token}`)
+    fetch(src ?? `/api/workshop-share/${token}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then(setData)
       .catch(() => setError(true));
-  }, [token]);
+  }, [token, src]);
   useEffect(load, [load]);
 
   if (!data) {
@@ -393,11 +395,15 @@ export function WorkshopShareView({ token, embedded = false }: { token: string; 
             ))}
           </div>
           <aside className={asideClass}>
-            <ShareAnswers token={token} embedded={embedded} />
-            <section className={PANEL}>
-              <p className={`${PANEL_HEAD} ${PANEL_TITLE}`}>Production</p>
-              <div className="p-3"><Production token={token} data={data} onChange={(patch) => setData((d) => (d ? { ...d, ...patch } : d))} /></div>
-            </section>
+            {src ? null : (
+              <>
+                <ShareAnswers token={token} embedded={embedded} />
+                <section className={PANEL}>
+                  <p className={`${PANEL_HEAD} ${PANEL_TITLE}`}>Production</p>
+                  <div className="p-3"><Production token={token} data={data} onChange={(patch) => setData((d) => (d ? { ...d, ...patch } : d))} /></div>
+                </section>
+              </>
+            )}
             {pieces.map((p) => (
               <div key={p.id} className="flex flex-col gap-3">
                 {p.kind === "carousel" ? (

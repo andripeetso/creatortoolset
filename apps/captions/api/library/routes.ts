@@ -6,8 +6,10 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
+import { readerOf } from "./reader";
 import { ensureLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayWrite } from "./access";
 import { currentWorkspaceId } from "../lib/workspace-scope";
+import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS } from "./db";
 import { estimate, progress } from "./estimate";
@@ -609,9 +611,17 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
 // GET /api/library → the caller's libraries in the workspace this request works in (each workspace has its own)
 libraryApp.get("/", async (c) => {
   const user = c.get("user");
-  await ensureLibrary(user.username);
+  // in a workspace the team's owner gave this person, the owner's libraries there (librariesHere): none is made for them
+  const given = await sharedHere(user);
+  if (!given) await ensureLibrary(user.username);
   const rows = await librariesHere(user.username);
-  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind as LibrarySummary["storage"], settings: settingsOf(r.settings) }));
+  const libraries: LibrarySummary[] = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    storage: r.storage_kind as LibrarySummary["storage"],
+    settings: settingsOf(r.settings),
+    ...(given ? { readOnly: true as const } : {}),
+  }));
   return c.json({ libraries });
 });
 
@@ -704,6 +714,7 @@ export function viewerOf(username: string, libraryId: string): LibraryViewer | n
   const role = libraryRole(username, libraryId);
   return role ? { username, role } : null;
 }
+export { readerOf } from "./reader";
 
 /** The cards the viewer may see, in order. Every read path that lists cards filters through here. */
 export async function visibleCards(viewer: LibraryViewer | null, libraryId: string, cards: AssetCard[]): Promise<AssetCard[]> {
@@ -718,7 +729,7 @@ export async function visibleCards(viewer: LibraryViewer | null, libraryId: stri
 // GET /api/library/:id/sources → the plug-in sources this viewer may see (the Source picker; the built-in library is not listed)
 libraryApp.get("/:id/sources", async (c) => {
   const user = c.get("user");
-  const viewer = viewerOf(user.username, c.req.param("id"));
+  const viewer = await readerOf(user.username, c.req.param("id"));
   if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
   const sources = await sourcesVisibleTo(viewer);
   return c.json({ sources: sources.map((s) => ({ id: s.id, label: s.label, ...(s.main ? { main: true } : {}) })) });
@@ -727,7 +738,7 @@ libraryApp.get("/:id/sources", async (c) => {
 libraryApp.get("/:id/assets", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const viewer = viewerOf(user.username, libraryId);
+  const viewer = await readerOf(user.username, libraryId);
   if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
   // a plug-in source's cards (the Source picker): each card is an external ref, and each must pass its own policy
   const sourceId = c.req.query("source");
@@ -808,7 +819,7 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
     const ref = externalRefById(versionId);
     const source = ref ? sourceById(ref.source) : undefined;
     const home = (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(homeOf(username)) as { id: string } | undefined)?.id;
-    const viewer = home ? viewerOf(username, home) : null;
+    const viewer = home ? await readerOf(username, home) : null;
     if (!ref || !source?.stream || !home || !viewer || !(await canSee(viewer, externalAssetRef(ref, home)))) {
       return c.json({ error: "Not found", code: "not_found" }, 404);
     }
@@ -819,7 +830,7 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   const v = db()
     .prepare("SELECT a.library_id, a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
     .get(versionId) as { library_id: string; asset_id: string } | undefined;
-  const viewer = v ? viewerOf(username, v.library_id) : null;
+  const viewer = v ? await readerOf(username, v.library_id) : null;
   if (!v || !viewer || !(await canSee(viewer, assetRef(v.library_id, v.asset_id, versionId)))) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
@@ -842,7 +853,7 @@ libraryApp.get("/versions/:versionId/similar", async (c) => {
   if (!found) return c.json({ error: "Not fingerprinted yet", code: "not_found" }, 404);
   const matches = [];
   for (const m of found.matches) {
-    const viewer = viewerOf(username, m.libraryId);
+    const viewer = await readerOf(username, m.libraryId);
     if (viewer && (await canSee(viewer, assetRef(m.libraryId, m.assetId, m.versionId)))) matches.push(m);
   }
   return c.json({ ...found, matches });

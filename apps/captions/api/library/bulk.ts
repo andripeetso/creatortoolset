@@ -8,7 +8,7 @@ import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
-import { downloadName, viewerOf } from "./routes";
+import { downloadName, readerOf } from "./routes";
 import { assetRef, canSee } from "./sources";
 
 /**
@@ -39,7 +39,7 @@ export function uniqueName(name: string, taken: Set<string>): string {
 bulkApp.get("/:id/zip", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const viewer = viewerOf(user.username, libraryId);
+  const viewer = await readerOf(user.username, libraryId);
   if (!viewer) return notFound(c);
   const ids = [...new Set((c.req.query("ids") ?? "").split(",").filter(Boolean))].slice(0, MAX_IDS);
   const files: { path: string; name: string }[] = [];

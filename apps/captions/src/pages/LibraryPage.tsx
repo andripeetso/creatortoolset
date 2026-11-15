@@ -564,10 +564,10 @@ export default function LibraryPage() {
   const chooseFiles = () => picker.current?.click();
 
   return (
-    <div className="flex min-h-dvh flex-col" {...drop.props}>
+    <div className="flex min-h-dvh flex-col" {...(library?.readOnly ? {} : drop.props)}>
       {drop.dialog}
       <AppBar tool="Media Library" trail={library?.name}>
-        {library && !trash && (
+        {library && !trash && !library.readOnly && (
           <>
             {!open && !firstScreen && <TrashLink to="/library?trash=1" title="Trash" />}
             {!smart && <NewFolderButton onClick={() => void newFolder()} />}

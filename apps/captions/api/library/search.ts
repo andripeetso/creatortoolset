@@ -14,7 +14,7 @@ import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
 import { filterClauses } from "./query";
-import { viewerOf, visibleCards } from "./routes";
+import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 
@@ -134,7 +134,7 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
 searchApp.get("/:id/search", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const viewer = viewerOf(user.username, libraryId);
+  const viewer = await readerOf(user.username, libraryId);
   if (!viewer) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
@@ -153,9 +153,9 @@ searchApp.get("/:id/search", async (c) => {
 // GET /api/library/:id/tags → { tags: [{ tag, count }] }: every tag on a clip in the library (not in the trash), most used
 // first, for the tag filter and the clip window's suggestions.
 // ponytail: counted over the whole library, not per viewer's policies; a plug-in that hides clips hides the whole library
-searchApp.get("/:id/tags", (c) => {
+searchApp.get("/:id/tags", async (c) => {
   const libraryId = c.req.param("id");
-  if (!viewerOf(c.get("user").username, libraryId)) return notFound(c);
+  if (!(await readerOf(c.get("user").username, libraryId))) return notFound(c);
   const tags = db()
     .prepare(
       `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
@@ -167,9 +167,9 @@ searchApp.get("/:id/tags", (c) => {
 
 // GET /api/library/:id/places → { places: [{ place, count }] }: the countries clips were filmed in, most clips first, for
 // the Where filter. ponytail: the whole library, as /tags above
-searchApp.get("/:id/places", (c) => {
+searchApp.get("/:id/places", async (c) => {
   const libraryId = c.req.param("id");
-  if (!viewerOf(c.get("user").username, libraryId)) return notFound(c);
+  if (!(await readerOf(c.get("user").username, libraryId))) return notFound(c);
   const places = db()
     .prepare(
       `SELECT json_extract(v.probe, '$.country') AS place, COUNT(*) AS count FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
@@ -182,7 +182,7 @@ searchApp.get("/:id/places", (c) => {
 // GET /api/library/:id/assets/:assetId → AssetDetail (404 for a viewer the policies refuse)
 searchApp.get("/:id/assets/:assetId", async (c) => {
   const libraryId = c.req.param("id");
-  const viewer = viewerOf(c.get("user").username, libraryId);
+  const viewer = await readerOf(c.get("user").username, libraryId);
   if (!viewer) return notFound(c);
   const detail = assetDetail(libraryId, c.req.param("assetId"), c.get("user"));
   if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
@@ -268,7 +268,7 @@ const opening = new Map<string, Promise<string>>();
 searchApp.post("/:id/assets/:assetId/captions", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const viewer = viewerOf(user.username, libraryId);
+  const viewer = viewerOf(user.username, libraryId); // the owner's: a Caption Studio project reads the clip's file as its own
   if (!viewer) return notFound(c);
   const row = db()
     .prepare(
