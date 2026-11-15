@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { DEFAULT_FOLDERS, type Organize } from "../../contracts/library";
+import { DEFAULT_FOLDERS, SOUNDS, type Organize } from "../../contracts/library";
 import { libraryDb } from "./db";
 import { indexAsset } from "./query";
 
@@ -17,7 +17,7 @@ const id = () => `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 /** ponytail: a guess by length, no listening: under 20 s is a sound effect, longer is music */
 export const SHORT_SOUND_S = 20;
 /** The tag each sound folder's files carry (the names the assistant's songs and sound effects use too) */
-const SOUND_TAGS: Record<string, string> = { Music: "music", "Sound effects": "sound effect" };
+const SOUND_TAGS: Record<string, string> = Object.fromEntries(Object.values(SOUNDS).map((s) => [s.folder, s.tag]));
 
 export function organizeOf(libraryId: string, d = libraryDb()): Organize | undefined {
   const r = d.prepare("SELECT json_extract(settings, '$.organize') AS o FROM libraries WHERE id = ?").get(libraryId) as { o: Organize | null } | undefined;
@@ -107,6 +107,6 @@ export function fileInto(d: DatabaseSync, a: Asset, name: string): boolean {
 /** After the probe: a sound or a picture in a library the AI organizes goes to its folder (videos wait for their description). */
 export function organizeOnProbe(d: DatabaseSync, versionId: string, duration: number): void {
   const a = toFile(d, versionId);
-  if (a?.kind === "audio") fileInto(d, a, duration < SHORT_SOUND_S ? "Sound effects" : "Music");
+  if (a?.kind === "audio") fileInto(d, a, duration < SHORT_SOUND_S ? SOUNDS.effect.folder : SOUNDS.music.folder);
   else if (a?.kind === "image") fileInto(d, a, "Graphics");
 }

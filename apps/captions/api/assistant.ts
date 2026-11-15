@@ -20,7 +20,11 @@ import { TOOL_NAMES } from "../contracts/tools";
 import { allPartsIn, assistantFilesApp, finishUpload, onFileIn, removeFile, setWaitedFor, uploadOf, USE_NAMES } from "./assistant-files";
 import { needsAttention, type Attention } from "./lib/attention";
 import { currentProject, memoryBlock } from "./lib/memory";
-import { projectOf } from "./lib/project-of";
+import { inProjectOf, projectOf } from "./lib/project-of";
+import { readFile } from "node:fs/promises";
+import { deviceOf } from "./lib/devices";
+import { parseStorageFile, storageFilePath } from "./lib/storage";
+import { LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
@@ -83,7 +87,31 @@ ${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}`;
 /** Added for the dock's turns, where Claude also has the user's Mac (answerWithTools onAsk). */
 export const MAC_NOTE = `
 
-You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.`;
+You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.
+
+A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch: download it into your folder yourself with yt-dlp (\`yt-dlp -x --audio-format mp3 <link>\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it) and cut or convert it with ffmpeg. Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.
+
+Where this workspace keeps its files on the user's computers (Settings → Storage) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Storage (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.`;
+
+/**
+ * The dock's line on this workspace's folders (Settings → Storage, devices-storage.ts), a folder a line with the
+ * computer it is on; "" with none, which MAC_NOTE covers. It goes with the turn's memory (made before the turn, as
+ * streamMacClaude must queue the job at once). `workspace`: the chat's (one from before workspaces kept their
+ * own folders is the first brand's, project-of.ts).
+ */
+export async function foldersNote(username: string, workspace?: string): Promise<string> {
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
+  const inWs = await inProjectOf({ username } as SessionUser, workspace);
+  const mine = sourcesOf(st.folders.filter((f) => !inWs || inWs(f.workspace)));
+  const lib = st.folders.find((f) => f.role === "library" && (!inWs || inWs(f.workspace)));
+  const on = (f: StorageFolder) => (f.origin.host === THIS_COMPUTER ? "" : ` (on ${deviceOf(f.origin.host)?.name ?? "another computer"})`);
+  const lines = [
+    ...mine.filter((f) => f.role === "footage").map((f) => `- Footage: ${f.origin.path}${on(f)}`),
+    ...mine.filter((f) => f.role === "music").map((f) => `- Music: ${f.origin.path}${on(f)}`),
+    ...(lib ? [`- Finished videos: ${lib.origin.path}/${LIBRARY_SUBFOLDERS.finished}${on(lib)}`] : []),
+  ];
+  return lines.length ? `\n\nThis workspace's folders:\n${lines.join("\n")}` : "";
+}
 
 /** Added for a turn whose AI has no tools (not Claude Code or Codex, which get Creator Toolset's; the Mac's are Claude Code's only). */
 export const NO_TOOLS_NOTE = `
@@ -1421,7 +1449,7 @@ export async function askSend(user: SessionUser, turn: string, url: string, p: s
     ask: asked.id,
     files: [],
     pasted: [],
-    memory: await memoryBlock(user),
+    memory: (await memoryBlock(user)) + (await foldersNote(user.username, workspaceOfTurn(user.username, turn))),
     skills: skillLines(await dockSkills(user.username), "tool"),
     url,
     admin: user.role === "admin",
@@ -1633,7 +1661,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const was = target();
   const ws = was?.workspace ?? (await resolveProjectId(u, was?.messages.length ? undefined : input.workspace));
   const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
-  const memory = await inWs(() => memoryBlock(u));
+  const memory = (await inWs(() => memoryBlock(u))) + (await foldersNote(u.username, ws));
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
@@ -1811,7 +1839,7 @@ assistantApp.post("/chats/:id/limit", async (c) => {
   };
   if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
-  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: await memoryBlock(u), skills: skillLines(await dockSkills(u.username), "tool"), ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
+  const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", memory: (await memoryBlock(u)) + (await foldersNote(u.username, chatOf(load(u.username), c.req.param("id"))?.workspace)), skills: skillLines(await dockSkills(u.username), "tool"), ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
   const m = found();
   if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
   if (r) (load(u.username).resume ??= {})[m.id] = r;

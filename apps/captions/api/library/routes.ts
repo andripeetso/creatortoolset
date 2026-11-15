@@ -13,7 +13,7 @@ import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, 
 import { estimate, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
+import { SOUNDS, type AssetCard, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { ensureDefaultFolders } from "./organize";
@@ -175,6 +175,15 @@ export function recordVersion(
  * Without `libraryId`, the library of the first source the caller may use, else the first library of the workspace this
  * request works in. Null: no library the caller may use.
  */
+function soundFolder(d: DatabaseSync, lib: string, sound: Sound, by: string): string {
+  const name = SOUNDS[sound].folder;
+  const found = d.prepare("SELECT id FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name = ? ORDER BY created_at, id LIMIT 1").get(lib, name) as { id: string } | undefined;
+  if (found) return found.id;
+  const id = `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?)").run(id, lib, name, Date.now(), by);
+  return id;
+}
+
 export async function saveToLibrary(
   username: string,
   file: string,
@@ -182,6 +191,7 @@ export async function saveToLibrary(
   sources: string[],
   libraryId?: string,
   footage = false,
+  sound?: Sound,
 ): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
   const lib =
     libraryId ??
@@ -209,7 +219,10 @@ export async function saveToLibrary(
     const d = db();
     d.exec("BEGIN");
     try {
-      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username });
+      const collectionId = sound ? soundFolder(d, lib, sound, username) : undefined;
+      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId });
+      // before the probe runs (same commit): the tag is what keeps the worker's AI steps off it
+      if (sound) d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')").run(assetId, SOUNDS[sound].tag);
       if (!footage) fileRoll(d, assetId, "none"); // a finished file (an export, a Finals file) is never A-roll or B-roll
       for (const from of new Set(sources)) {
         const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as

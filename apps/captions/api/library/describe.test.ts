@@ -42,14 +42,15 @@ const call = (user: string, url: string, method = "GET", body?: unknown) =>
   app.request(url, { method, headers: { "x-user": user, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
 const clip = path.join(dir, "fixture.mp4");
+const withSound = path.join(dir, "fixture-sound.mp4");
 
 /** An asset with one ready video version; its source is the fixture clip unless `bytes` is given. */
-async function seed(id: string, by = "local", bytes?: string) {
+async function seed(id: string, by = "local", bytes?: string, from = clip) {
   const d = libraryDb();
   const v = `ver-${id}`;
   const file = path.join(dir, `src-${id}`);
   if (bytes) writeFileSync(file, bytes);
-  else copyFileSync(clip, file);
+  else copyFileSync(from, file);
   const key = `libraries/lib_a/v/${v}/source`;
   await blobs.put(key, file);
   d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_a', 'video', ?, ?, ?, 1)").run(id, `Clip ${id}`, v, by);
@@ -72,6 +73,8 @@ beforeAll(() => {
   // two seconds, made here: nothing large is committed
   execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=10",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
+  execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=10",
+    "-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", withSound]);
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'local', 'A', 'local', 0)").run();
 });
 
@@ -152,6 +155,25 @@ describe("describe job", () => {
     const f = d.prepare("SELECT inline FROM derivatives WHERE version_id = ? AND kind = 'fingerprint'").get(off) as { inline: string };
     expect(JSON.parse(f.inline).phash).toHaveLength(2); // one per second of the two-second clip
     expect(job(on, "describe")?.state).toBe("needs_key");
+  });
+
+  it("a file tagged as a song or a sound effect (use_file sound) gets no transcript, duplicate check or description", async () => {
+    const d = libraryDb();
+    const run = async (id: string, tag?: string) => {
+      const v = await seed(id, "local", undefined, withSound);
+      if (tag) d.prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')").run(id, tag);
+      d.prepare("UPDATE asset_versions SET probe = NULL WHERE id = ?").run(v);
+      enqueueJob(d, "lib_a", v, "probe", "local");
+      while (job(v, "probe")?.state === "queued") await tick();
+      return v;
+    };
+    const plain = await run("ast-sound-01");
+    expect(job(plain, "transcribe")).toBeDefined();
+    for (const [id, tag] of [["ast-sound-02", "music"], ["ast-sound-03", "sound effect"]] as const) {
+      const v = await run(id, tag);
+      expect([job(v, "transcribe"), job(v, "fingerprint"), job(v, "describe")]).toEqual([undefined, undefined, undefined]);
+      expect(job(v, "wave")).toBeDefined();
+    }
   });
 });
 

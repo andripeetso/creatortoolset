@@ -623,6 +623,29 @@ describe("a video dropped in the chat", () => {
     revokeJobTokens("turn-library");
     SORT_WAIT_S.added = 10;
   });
+
+  it.skipIf(pluggedLibrary)("use_file with sound files a song in the Music folder, tagged, with no transcript queued; a second goes in the same folder", async () => {
+    const { libraryDb } = await import("./library/db");
+    const cookie = await cookieOf("ana");
+    const token = mintJobToken("ana", "turn-sound");
+    type Added = { said: string; files: { version_id: string }[] };
+    const add = async (name: string, fill: number) =>
+      JSON.parse((await toolOf(token, "use_file", { file: (await upload(cookie, name, "audio/mpeg", Buffer.alloc(4096, fill))).id, to: "library", sound: "music" })).text) as Added;
+    const song = await add("Song.mp3", 7);
+    expect(song.said).toBe("1 file added to Music");
+    const d = libraryDb();
+    const v = song.files[0]!.version_id;
+    const asset = (d.prepare("SELECT asset_id FROM asset_versions WHERE id = ?").get(v) as { asset_id: string }).asset_id;
+    expect(d.prepare("SELECT tag, source FROM asset_tags WHERE asset_id = ?").all(asset)).toEqual([{ tag: "music", source: "user" }]);
+    const inFolder = d.prepare("SELECT c.id, c.name FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = ?");
+    const folder = inFolder.get(asset) as { id: string; name: string };
+    expect(folder.name).toBe("Music");
+    const other = await add("Song two.mp3", 8);
+    const asset2 = (d.prepare("SELECT asset_id FROM asset_versions WHERE id = ?").get(other.files[0]!.version_id) as { asset_id: string }).asset_id;
+    expect((inFolder.get(asset2) as { id: string }).id).toBe(folder.id);
+    // the worker's probe reads the tag and queues no transcript: library/describe.test.ts
+    revokeJobTokens("turn-sound");
+  });
 });
 
 describe("a file on this computer, by its path", () => {
