@@ -5,7 +5,7 @@ import { needsLine } from "../../contracts/tools";
 import { kindOf } from "../library/routes";
 import { libraryDb } from "../library/db";
 import { wholeDisk } from "../library/watch";
-import { deviceOf, isOnline, listDevices } from "./devices";
+import { deviceOf, isOnline, listDevices, quietLine, seenLately } from "./devices";
 import { wakeEditorPolls } from "./mac-claude";
 import type { DeviceJobSlot } from "./plugin";
 
@@ -154,14 +154,21 @@ interface Ask {
 const asks = new Map<number, Ask>();
 let lastId = 0;
 
-/** Why no Mac of `owner`'s can list a folder now (`want`: that one); null when one can. */
+/** The Mac of `owner`'s that would walk it (`want`: that one), the one heard from last. */
+const lastMac = (owner: string, want?: string) => (want ? deviceOf(want) : listDevices((d) => d.owner === owner).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0]);
+
+/**
+ * Why no Mac of `owner`'s can list a folder now (`want`: that one); null when one can. One heard from in the last
+ * 2 min (an update restarts the app) can: the ask waits for it to come back, up to FOLDER_LIST.waitMs.
+ */
 export function noMacFor(owner: string, want?: string): string | null {
   const mine = listDevices((d) => d.owner === owner && (!want || d.id === want));
   const on = mine.filter((d) => isOnline(d.id));
   if (on.some((d) => d.kinds?.includes(FOLDER_LIST_KIND))) return null;
   if (on.length) return needsLine([{ what: "The newest Creator Toolset Mac app", anyOf: [], form: "ai" }]);
-  const last = want ? deviceOf(want) : mine.sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
-  return last ? `${last.name} is unreachable: the Creator Toolset app on it is not running.` : needsLine([{ what: "A Mac with Creator Toolset on", anyOf: [], form: "ai" }]);
+  if (mine.some((d) => seenLately(d) && d.kinds?.includes(FOLDER_LIST_KIND))) return null;
+  const last = lastMac(owner, want);
+  return last ? `${quietLine(last)}.` : needsLine([{ what: "A Mac with Creator Toolset on", anyOf: [], form: "ai" }]);
 }
 
 /** `folder` (absolute, on that Mac) walked `depth` levels by a Mac of `owner`'s own. Rejects with a sentence a person can read. */
@@ -171,7 +178,10 @@ export function walkOnMac(owner: string, folder: string, depth: number, drive: b
   if ([...asks.values()].filter((a) => a.owner === owner).length >= 5) return Promise.reject(new Error("5 folders are being looked through already: wait for one of them."));
   return new Promise((resolve, reject) => {
     const id = ++lastId;
-    const timer = setTimeout(() => end(new Error(`The Mac did not answer in ${FOLDER_LIST.waitMs / 1000} seconds (it may be busy with another job): try again in a moment.`)), FOLDER_LIST.waitMs);
+    const timer = setTimeout(() => {
+      const mac = lastMac(owner, want);
+      end(new Error(mac && !isOnline(mac.id) ? `${quietLine(mac)}.` : `${mac?.name ?? "The Mac"} did not answer in ${FOLDER_LIST.waitMs / 1000} s.`));
+    }, FOLDER_LIST.waitMs);
     const end = (r: FolderWalk | Error) => {
       clearTimeout(timer);
       asks.delete(id);

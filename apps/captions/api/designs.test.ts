@@ -573,7 +573,7 @@ describe("designs: a picture split into layers", () => {
     const robinPic = (await call<{ id: string }>("POST", `/api/designs/${robins.id}/pictures`, { name: "slide", type: "image/png", data: png(108, 135).toString("base64") }, "robin")).body.id;
     const away = pairDevice("robin", "Robin's Mac Studio").device;
     const off = await call<{ error: string; code: string; device: unknown }>("POST", `/api/designs/${robins.id}/pictures/${robinPic}/split`, {}, "robin");
-    expect([off.status, off.body]).toEqual([400, { error: "Robin's Mac Studio is unreachable", code: "no_mac", device: { id: away.id, name: "Robin's Mac Studio" } }]);
+    expect([off.status, off.body]).toEqual([400, { error: "Robin's Mac Studio hasn't answered yet", code: "no_mac", device: { id: away.id, name: "Robin's Mac Studio" } }]);
     const mac = pairDevice("jordan", "Jordan's split Mac").device;
     // a Mac that cuts out but does not split has an app older than the split
     setDeviceKinds(mac.id, [CUTOUT_KIND]);
