@@ -154,6 +154,17 @@ final class Shell: NSObject, ObservableObject {
                 let allowed = Set((self.pickedFiles + (view?.droppedFiles ?? [])).map(\.path))
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
             }
+            // Show in Finder for a library clip (Reveal.swift): the server on this Mac adds its data folder and the
+            // library's footage folders to the folders this app already trusts
+            if isRevealAsk(ask) {
+                guard let r = revealAsk(ask) else { return done(["problem": Reveal.problem]) }
+                let local = self.runsHere ? self.server : nil
+                Task {
+                    let watched = local == nil ? [] : await self.client().watchedFolders(library: r.library)
+                    done(Reveal.answer(r.path, trusted: MediaFiles.granted + (local.map { [$0.dataDir.path] } ?? []) + watched))
+                }
+                return
+            }
             // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
             if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
             // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a

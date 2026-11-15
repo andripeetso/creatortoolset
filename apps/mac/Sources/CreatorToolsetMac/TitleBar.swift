@@ -305,6 +305,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // recording's files one after another instead. '3': it also serves ctlocal://media/ (an edit's originals from
         // the granted folders, MediaFiles.swift). src/lib/local-files.ts
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '3';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)
@@ -392,7 +394,7 @@ extension AppWebView {
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".
     fileprivate func thisMac(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
-              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask), let onThisMacAsk else {
+              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask), let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }
         if ask == "dropped" {
