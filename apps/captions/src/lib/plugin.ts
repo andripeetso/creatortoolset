@@ -28,7 +28,7 @@ export interface SettingsEntry {
   id: string;
   title: string;
   icon: LucideIcon;
-  /** The sidebar block it sits in ("AI", "Hardware", "Connections", "Plug-ins", "People"); none = the top block (a plug-in's: Plug-ins). */
+  /** The sidebar block it sits in ("AI", "Hardware", "Connections", "Tool settings", "People"); none = the top block (a plug-in's: Tool settings). */
   group?: string;
   adminOnly?: boolean;
   body?: ReactNode;
@@ -36,7 +36,7 @@ export interface SettingsEntry {
 
 /**
  * A Settings section a plug-in adds. `group` places it inside that sidebar block (after the block's last section); with
- * no group it goes in the Plug-ins block (PLUGINS_GROUP).
+ * no group it goes in the Tool settings block (PLUGINS_GROUP).
  * `adminTab: true` marks a server-wide page (admins only, hosted servers only; the name is from when it was a tab in
  * Admin): it sits in the Plug-ins block like any other. `tool` draws it on
  * that tool's page in Settings → Tools instead, under its title (see toolSectionsFor). `adminOnly` hides it from
@@ -345,7 +345,7 @@ export function itemActionsFor(me: Me | null, plugins: WebPlugin[], kind: ItemKi
  */
 /** The sidebar block for a plug-in's section with no group, last (owner, 2026-11-11: "a setting submenu for like
  *  plug-ins… this should be all grouped up"). */
-export const PLUGINS_GROUP = "Plug-ins";
+export const PLUGINS_GROUP = "Tool settings";
 
 export function settingsWithPlugins<T extends SettingsEntry>(
   builtin: ReadonlyArray<T>,

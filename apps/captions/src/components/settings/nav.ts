@@ -38,7 +38,7 @@ interface BuiltinEntry extends SettingsEntry {
  * mixed up and weird"): "You" (the same in every workspace), "AI", "Server" (what is kept on this server and who is on
  * it; an admin sees everyone's, a member their own). A workspace's own settings (its voice, accounts, knowledge) open
  * from the workspace switcher, not here. What is added to one tool is on that tool's page under Tools
- * (/settings/tools/<tile>); a plug-in's own section with no group goes in a "Plug-ins" block at the end
+ * (/settings/tools/<tile>); a plug-in's own section with no group goes in a "Tool settings" block at the end
  * (lib/plugin.ts PLUGINS_GROUP). There is no Admin page any more: its old addresses go to Team, Storage, API keys and
  * the plug-ins' own pages (AdminSection.tsx).
  */
