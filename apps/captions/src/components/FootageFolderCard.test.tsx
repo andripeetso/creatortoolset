@@ -13,7 +13,7 @@ import { FootageFolderCard } from "./FootageFolderCard";
 const pick = vi.fn<() => Promise<string | null | undefined>>();
 vi.mock("@/lib/thisMac", () => ({ chooseFolderOnMac: () => pick() }));
 
-type Watch = { allowed: boolean; folders: { path: string }[]; missing: number };
+type Watch = { allowed: boolean; folders: { path: string }[]; missing: number; copyTo?: string };
 let watch: Watch;
 let postReply: { status: number; body: unknown };
 let watchStatus: number;
@@ -155,12 +155,17 @@ describe("Where are your videos?", () => {
     expect(button("Choose a folder")).not.toBeUndefined();
   });
 
-  it("a big folder offers the AI organizing the library, and the answer is in before the folder is added", async () => {
+  it("a big folder asks in one dialog: copy or keep, what it takes, and the AI organizing it, answered before the folder is added", async () => {
+    watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;
     const order: string[] = [];
+    let posted: { copyTo?: string } = {};
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
-      if (init?.method === "POST") order.push(url);
-      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 40, bytes: 4e9, audio: 0, audioBytes: 0 }), { status: 200 });
+      if (init?.method === "POST") {
+        order.push(url);
+        posted = JSON.parse(init.body as string) as { copyTo?: string };
+      }
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 40, bytes: 4e9, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
       if (url.includes("/estimate")) return new Response(JSON.stringify({ clips: 40, minutes: 10, seconds: 600, steps: [] }), { status: 200 });
       return fetchWatch(url, init);
     });
@@ -172,13 +177,41 @@ describe("Where are your videos?", () => {
     act(() => root!.render(<MemoryRouter><FootageFolderCard libraryId="lib_1" page offer onOffer={onOffer} /></MemoryRouter>));
     await flush();
     await click("Choose a folder");
-    const ai = document.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Add 40 files from Trip?");
+    expect(dialog.textContent).toContain("of footage.");
+    const copy = dialog.querySelectorAll('input[type="radio"]')[0] as HTMLInputElement;
+    expect(copy.checked).toBe(true); // copying is the default where there is room
+    const ai = dialog.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
     expect(ai.getAttribute("aria-checked")).toBe("false"); // offered, not taken for them
     act(() => ai.click());
-    const add = [...document.querySelectorAll("button")].find((b) => b.textContent === "Add folder")!;
+    const add = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add folder")!;
     act(() => add.click());
     await flush();
     expect(order).toEqual(["offer true", "/api/library/watch/folder"]);
+    expect(posted.copyTo).toBe("~/Movies/Creator Toolset/Footage");
+  });
+
+  it("a small folder asks only where its files are kept: no time, no organize offer", async () => {
+    watch.copyTo = "~/Movies/Creator Toolset/Footage";
+    const fetchWatch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 3, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
+      return fetchWatch(url, init);
+    });
+    pick.mockResolvedValue("/Users/tiny/Movies/Trip");
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><FootageFolderCard libraryId="lib_1" page offer onOffer={async () => {}} /></MemoryRouter>));
+    await flush();
+    await click("Choose a folder");
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Add 3 files from Trip?");
+    expect(dialog.textContent).toContain("Keep them where they are");
+    expect(dialog.textContent).not.toContain("of footage.");
+    expect(dialog.querySelector('[role="switch"]')).toBeNull();
   });
 
   it("as the Library's first screen for someone who may not see the folders: upload", async () => {
