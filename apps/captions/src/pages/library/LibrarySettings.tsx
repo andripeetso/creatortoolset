@@ -5,7 +5,9 @@ import { NEEDS, type Collection, type LibraryEstimate, type LibrarySpace, type L
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Card, Row, Section, StatusDot } from "@/components/settings/ui";
+import { Card, Row, Section, SettingsSelect, StatusDot } from "@/components/settings/ui";
+import type { Organize } from "@contracts/library";
+import { ORGANIZE } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
 import { redoKinds } from "./Selection";
@@ -14,8 +16,9 @@ import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
  * The Media Library's settings, behind one button beside its search (the owner's: the footage folders and where the
- * files are kept are theirs only): the footage folders (on the person's own computer), storage with the space the
- * library's own made files take, and the two AI switches, each saying where it runs. The button carries an amber dot
+ * files are kept are theirs only): the footage folders (on the person's own computer), how the library is organized
+ * (./Organize.tsx), storage with the space the library's own made files take, and the two AI switches, each saying
+ * where it runs. The button carries an amber dot
  * while a folder or clip is not found.
  */
 
@@ -66,9 +69,10 @@ export function LibrarySettings({
           {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
           <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
             <SheetTitle className="text-base">Library settings</SheetTitle>
-            {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} />}
+            {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
+            {open && <OrganizeRow library={library} onChange={onChange} onError={onError} />}
             <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
-              {open && <SpaceRows library={library} onChange={onChange} onError={onError} />}
+              {(saved) => open && <SpaceRows library={library} cloud={!!saved?.proxies} onChange={onChange} onError={onError} />}
             </LibraryStorageSettings>
             {open && <AiSwitches library={library} onChange={onChange} onError={onError} />}
             {open && <RedoAll library={library} onError={onError} />}
@@ -129,16 +133,44 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
   );
 }
 
+/** How the library is organized (the first run's question, ./Organize.tsx); a library never asked shows My own folders. */
+function OrganizeRow({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+  const value = library.settings.organize ?? "own";
+  return (
+    <Section title="Folders">
+      <Card>
+        <Row
+          title="Organize"
+          description={ORGANIZE.find((o) => o.value === value)?.detail}
+          control={
+            <SettingsSelect
+              label="Organize"
+              value={value}
+              options={ORGANIZE}
+              onValueChange={(v) =>
+                void updateLibrary(library.id, { settings: { organize: v as Organize } })
+                  .then(onChange)
+                  .catch((e) => onError(message(e)))
+              }
+            />
+          }
+        />
+      </Card>
+    </Section>
+  );
+}
+
 const size = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : n > 0 ? "under 1 MB" : "nothing");
 
 /**
  * The library's own made files (api/library/space.ts): the proxies switch, what the proxies take with Clear, the cards'
- * pictures, and the downloaded speech and search models with Clear. The person's own files are never in it.
+ * pictures, and the downloaded speech and search models with Clear. The person's own files are never in it. `cloud`:
+ * the proxies are kept in the cloud, one for every video, so neither the switch nor Clear would do anything there.
  */
-function SpaceRows({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+function SpaceRows({ library, cloud, onChange, onError }: { library: LibrarySummary; cloud: boolean; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
-  useEffect(() => void read(), [library.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => void read(), [library.id, cloud]); // eslint-disable-line react-hooks/exhaustive-deps
   const clear = async (what: "proxies" | "models", bytes: number) => {
     const ok = await confirmDialog(
       what === "proxies"
@@ -155,17 +187,20 @@ function SpaceRows({ library, onChange, onError }: { library: LibrarySummary; on
       .catch((e) => onError(message(e)));
   return (
     <>
-      <Row
-        title="Make proxies"
-        description="For videos this window can't play as they are"
-        control={<Switch aria-label="Make proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
-      />
+      {!cloud && (
+        <Row
+          title="Make proxies"
+          description="For videos this window can't play as they are"
+          control={<Switch aria-label="Make proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
+        />
+      )}
       {space && (
         <Row
           title="Proxies"
           description={size(space.proxies.bytes)}
           control={
-            space.proxies.files > 0 && (
+            space.proxies.files > 0 &&
+            !cloud && (
               <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
                 Clear
               </Button>

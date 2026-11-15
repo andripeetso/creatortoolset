@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, symlink } from "node:fs/promises";
+import { constants, copyFile, link, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "../auth";
@@ -13,6 +13,9 @@ import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
 import { findUser } from "../users";
+import { isThisMachine } from "../lib/devices";
+import { libraryPath, parseStorageFile, storageFilePath } from "../lib/storage";
+import { LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER } from "../../contracts/storage";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
@@ -26,8 +29,9 @@ import { findUser } from "../users";
  * the open pages as it is taken, not when the whole pass ends, and the status says how many are still to come. While
  * a pass takes files the library's slower steps wait (worker.ts), so every clip is in, with its picture, before them.
  * `watch_seen` remembers each path's size and mtime, so an unchanged file is never imported twice, even after it is trashed.
- * `reference` leaves the file where it is (the blob key is a link to it, `source_path` names it); `copy` stores a
- * copy like an upload. A referenced file that disappears marks its version `missing`; nothing is deleted, and the
+ * `reference` leaves the file where it is (the blob key is a link to it, `source_path` names it); with `copyTo` each file
+ * is first copied into that folder on this disk (subfolders kept, never over another file) and the copy is read in place
+ * (copyInto); `copy` stores a copy like an upload (a library whose originals are in a bucket). A referenced file that disappears marks its version `missing`; nothing is deleted, and the
  * version comes back when the file does (an external drive plugged in again).
  */
 
@@ -86,7 +90,33 @@ async function checkFolder(libraryId: string, raw: unknown, by: string): Promise
   if (collectionId && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(collectionId, libraryId)) {
     return "That folder is not in this library";
   }
-  return { path: real, mode, ...(collectionId ? { collectionId } : {}), addedBy: by };
+  let copyTo: string | undefined;
+  if (typeof r.copyTo === "string" && r.copyTo.trim() && mode === "reference") {
+    const to = await copyTarget(real, r.copyTo, data);
+    if (typeof to !== "string") return to.error;
+    copyTo = to;
+  }
+  return { path: real, mode, ...(collectionId ? { collectionId } : {}), ...(copyTo ? { copyTo } : {}), addedBy: by };
+}
+
+/**
+ * The folder a chosen folder's files are copied into, made now and as its real path; they go in a folder of the chosen
+ * folder's own name there (copyInto). Refused: a copy into the folder itself or its own subfolders (it would copy itself forever), a folder already inside
+ * `to` (its files are there already: keep them where they are), or the app's own data.
+ */
+export async function copyTarget(source: string, to: string, data: string): Promise<string | { error: string }> {
+  const given = expandHome(to.trim());
+  if (!path.isAbsolute(given)) return { error: `Not a full path: ${to}` };
+  const made = await mkdir(given, { recursive: true }).then(
+    () => null,
+    (e: unknown) => ({ error: `Couldn't make the folder ${to}: ${e instanceof Error ? e.message : String(e)}` }),
+  );
+  if (made) return made;
+  const dest = await realpath(given);
+  if (inside(dest, source)) return { error: "The copy can't go inside the folder it copies" };
+  if (inside(source, dest)) return { error: "Those files are in that folder already: keep them where they are" };
+  if (inside(dest, data) || inside(data, dest)) return { error: `That folder holds the app's own data: ${to}` };
+  return dest;
 }
 
 function status(libraryId: string): WatchStatus {
@@ -108,20 +138,36 @@ function status(libraryId: string): WatchStatus {
   return { allowed: watchAllowed(), folders, missing };
 }
 
+const isDir = async (p: string) => !!(await stat(p).catch(() => null))?.isDirectory();
+// a copied folder is fine with its card out once its copies are in (a camera card is copied, then taken out)
 const withFound = async (s: WatchStatus): Promise<WatchStatus> => ({
   ...s,
-  folders: await Promise.all(s.folders.map(async (f) => ({ ...f, found: !!(await stat(f.path).catch(() => null))?.isDirectory() }))),
+  folders: await Promise.all(s.folders.map(async (f) => ({ ...f, found: (await isDir(f.path)) || (!!f.copyTo && (await isDir(path.join(f.copyTo, path.basename(f.path))))) }))),
 });
+
+/**
+ * Where a folder's files are copied by default: the Footage folder in the account's Library folder on this computer
+ * (Settings → Storage), else ~/Movies/Creator Toolset/Footage, setup's default. "~/" stays as it is, for showing.
+ */
+export async function defaultCopyTo(username: string): Promise<string> {
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
+  const here = sourcesOf(st.folders).find((f) => f.role === "footage" && f.id.endsWith(":footage") && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host)));
+  return here?.origin.path ?? `${libraryPath("~/Movies")}/${LIBRARY_SUBFOLDERS.footage}`;
+}
 
 // GET /api/library/:id/watch → WatchStatus. The owner only: paths on the server are theirs to see.
 watchApp.get("/:id/watch", async (c) => {
   const role = libraryRole(c.get("user").username, c.req.param("id"));
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  return c.json(await withFound(status(c.req.param("id"))));
+  const s = await withFound(status(c.req.param("id")));
+  // a copy goes in a folder on this computer: offered where the server reads it, to a library that keeps files here
+  const local = (db().prepare("SELECT storage_kind FROM libraries WHERE id = ?").get(c.req.param("id")) as { storage_kind: string }).storage_kind === "local";
+  return c.json(watchAllowed(c.get("user").username) && local ? { ...s, copyTo: await defaultCopyTo(c.get("user").username) } : s);
 });
 
-// GET /api/library/:id/watch/size?path → { files, bytes, audio, audioBytes }: the media files a folder holds (and how many are sound only), so the card can say what
+// GET /api/library/:id/watch/size?path&to → { files, bytes, audio, audioBytes, free? }: the media files a folder holds (and how many are sound only), so the card can say what
 // importing it takes before it is added (estimate.ts). The same checks as adding it: a server on the person's computer.
+// `to`: a folder its files would be copied into; `free` is the room there, less the disk reserve a copy keeps.
 watchApp.get("/:id/watch/size", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -141,8 +187,23 @@ watchApp.get("/:id/watch/size", async (c) => {
       audioBytes += size;
     }
   }
-  return c.json({ files: files.length, bytes, audio, audioBytes });
+  const to = c.req.query("to");
+  return c.json({ files: files.length, bytes, audio, audioBytes, ...(to ? { free: await roomAt(expandHome(to)) } : {}) });
 });
+
+/** The free space that may be filled at `dir` (or the nearest folder above it that exists), less the disk reserve. */
+async function roomAt(dir: string): Promise<number> {
+  for (let at = dir; ; at = path.dirname(at)) {
+    const free = await freeBytes(at).catch(() => null);
+    if (free !== null) return Math.max(0, free - diskReserve());
+    if (path.dirname(at) === at) return 0;
+  }
+}
+
+const diskReserve = () => {
+  const raw = process.env.LIBRARY_DISK_RESERVE_GB?.trim();
+  return (raw && Number.isFinite(Number(raw)) && Number(raw) >= 0 ? Number(raw) : 20) * GiB; // as routes.ts reads it
+};
 
 // PUT /api/library/:id/watch { folders: [{ path, mode, collectionId? }] } → WatchStatus. Replaces the list; refused on a hosted server.
 watchApp.put("/:id/watch", async (c) => {
@@ -156,7 +217,15 @@ watchApp.put("/:id/watch", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { folders?: unknown } | null;
   if (!Array.isArray(body?.folders) || body.folders.length > MAX_FOLDERS) return c.json({ error: `A list of up to ${MAX_FOLDERS} folders`, code: "invalid" }, 400);
   const folders: WatchFolder[] = [];
+  const stored = foldersOf(libraryId);
   for (const raw of body.folders) {
+    // a folder already on the list, unchanged, stays as it is: a copied camera card that was taken out is not refused
+    const r = (raw ?? {}) as Partial<WatchFolder>;
+    const same = stored.find((g) => g.path === r.path && g.mode === (r.mode ?? "reference") && g.copyTo === r.copyTo && g.collectionId === r.collectionId);
+    if (same) {
+      if (!folders.some((g) => g.path === same.path)) folders.push(same);
+      continue;
+    }
     const f = await checkFolder(libraryId, raw, user.username);
     if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
     if (!folders.some((g) => g.path === f.path)) folders.push(f);
@@ -172,11 +241,12 @@ watchApp.put("/:id/watch", async (c) => {
 watchApp.post("/watch/folder", async (c) => {
   const user = c.get("user");
   if (user.role === "visitor") return c.json({ error: "Not for guests", code: "forbidden" }, 403);
-  const body = (await c.req.json().catch(() => null)) as { path?: unknown; libraryId?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { path?: unknown; libraryId?: unknown; copyTo?: unknown } | null;
   const folder = typeof body?.path === "string" ? body.path.trim() : "";
   if (!folder) return c.json({ error: "Choose a folder", code: "invalid" }, 400);
   const libraryId = typeof body?.libraryId === "string" ? body.libraryId : undefined;
-  const refused = await addWatchFolder(user.username, folder, libraryId);
+  const copyTo = typeof body?.copyTo === "string" && body.copyTo.trim() ? body.copyTo : undefined;
+  const refused = await addWatchFolder(user.username, folder, libraryId, copyTo);
   if (refused) return c.json({ error: refused, code: "invalid" }, 400);
   return c.json({ ok: true });
 });
@@ -312,14 +382,14 @@ const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(o
  * Adds one folder to the account's own Library watch list, read in place. The Library and the AI Editor both read that
  * list, so setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or null when it is
  * in the list (already there counts as added). `libraryId` is the library the person is looking at (default: their own
- * in the workspace this request works in).
+ * in the workspace this request works in). `copyTo`: its files are copied into a folder there first (checkFolder).
  */
-export async function addWatchFolder(username: string, folderPath: string, libraryId?: string): Promise<string | null> {
+export async function addWatchFolder(username: string, folderPath: string, libraryId?: string, copyTo?: string): Promise<string | null> {
   if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
   const target = libraryId ?? (await ensureLibrary(username));
   if (!target) return "The Library is not made yet. Try again.";
   if (!libraryRole(username, target)) return "That library is not yours to add a folder to.";
-  const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference" }, username);
+  const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference", copyTo }, username);
   if (typeof f === "string") return f;
   const current = foldersOf(target);
   if (current.some((g) => g.path === f.path)) return null;
@@ -369,16 +439,21 @@ async function filesIn(root: string): Promise<string[]> {
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
 }
 
+/** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
+async function ingestCopy(libraryId: string, f: WatchFolder & { copyTo?: string }, file: string, size: number, priorVersion: string | null): Promise<string> {
+  const copy = await copyInto(f.path, f.copyTo!, file, size);
+  return ingest(libraryId, { ...f, copyTo: undefined }, copy, size, priorVersion);
+}
+
 /** One file into the library: a new asset, or version n+1 of the asset this path made before. Returns the version id. */
 async function ingest(libraryId: string, f: WatchFolder, file: string, size: number, priorVersion: string | null): Promise<string> {
+  if (f.mode === "reference" && f.copyTo) return ingestCopy(libraryId, f, file, size, priorVersion);
   await mkdir(stagingDir(), { recursive: true });
   const staged = path.join(stagingDir(), `watch-${randomUUID()}`);
   try {
     let sha256: string;
     if (f.mode === "copy") {
-      const raw = process.env.LIBRARY_DISK_RESERVE_GB?.trim();
-      const reserve = raw && Number.isFinite(Number(raw)) && Number(raw) >= 0 ? Number(raw) : 20; // as routes.ts reads it
-      if ((await freeBytes(stagingDir())) - size < reserve * GiB) throw new Error("Not enough free disk space to copy it");
+      if ((await freeBytes(stagingDir())) - size < diskReserve()) throw new Error("Not enough free disk space to copy it");
       await copyFile(file, staged);
       sha256 = await sha256File(staged);
     } else {
@@ -427,6 +502,46 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
     return versionId;
   } finally {
     await rm(staged, { force: true });
+  }
+}
+
+/**
+ * One file of a copied folder into its place: `<copyTo>/<root's own name>/<its path below root>`. Never over
+ * another file: a name in use gets " 2", " 3"... The copy keeps the original's dates. It is written under a hidden name
+ * (the scan skips those, and the Library's Footage folder may itself be watched) and gets its own name when whole. A file
+ * already there with the same size and date is this one, copied before a restart. Returns the copy's path.
+ */
+export async function copyInto(root: string, copyTo: string, file: string, size: number): Promise<string> {
+  const want = path.join(copyTo, path.basename(root), path.relative(root, file));
+  const { dir, name, ext } = path.parse(want);
+  const nth = (n: number) => (n === 1 ? want : path.join(dir, `${name} ${n}${ext}`));
+  const src = await stat(file);
+  await mkdir(dir, { recursive: true });
+  for (let n = 1; ; n++) {
+    const there = await stat(nth(n)).catch(() => null);
+    if (!there) break;
+    // dates come back a little off (a millisecond on Linux, two seconds on an exFAT card)
+    if (there.size === size && Math.abs(there.mtimeMs - src.mtimeMs) < 2000) return nth(n);
+  }
+  if ((await freeBytes(dir)) - size < diskReserve()) throw new Error("Not enough free disk space to copy it");
+  const tmp = path.join(dir, `.${name}${ext}.copying`);
+  try {
+    await copyFile(file, tmp, constants.COPYFILE_FICLONE); // a clone where the disk can (same APFS volume), else a copy
+    await utimes(tmp, src.atime, src.mtime);
+    for (let n = 1; ; n++) {
+      try {
+        await link(tmp, nth(n)); // fails on a name in use: nothing is overwritten
+        return nth(n);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EEXIST") continue;
+        // ponytail: a drive with no hard links (exFAT): a rename after a look, which a file landing in between would lose to
+        if (await stat(nth(n)).catch(() => null)) continue;
+        await rename(tmp, nth(n));
+        return nth(n);
+      }
+    }
+  } finally {
+    await rm(tmp, { force: true });
   }
 }
 

@@ -244,4 +244,64 @@ describe("library storage choice", () => {
     expect((await call("owner-a", "PUT", "/api/library/lib_b/watch", { folders: [{ path: folder, mode: "reference" }] })).status).toBe(200);
     expect((await call("owner-a", "PUT", "/api/library/lib_b/storage", own)).status).toBe(409);
   });
+
+  it("proxies only: a library holding files read in place sends every video's proxy, and nothing else, to the bucket", async () => {
+    const d = libraryDb();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_p', 'owner-a', 'P', 'local', 4)").run();
+    const probe = (width: number, height: number, format: string) =>
+      JSON.stringify({ duration: 10, width, height, fps: 25, rotation: 0, format, vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" });
+    const clip = async (v: string, p: string) => {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_p', 'video', ?, ?, 'owner-a', 1)").run(`a_${v}`, v, v);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES (?, ?, 1, ?, 9, ?, 'video/mp4', ?, 'ready', 'owner-a', 1)").run(v, `a_${v}`, `libraries/lib_p/v/${v}/source`, v, p);
+      const f = path.join(dir, `src-${v}`);
+      writeFileSync(f, "the camera original");
+      await blobs.put(`libraries/lib_p/v/${v}/source`, f);
+    };
+    await clip("v_4k", probe(3840, 2160, "mov,mp4,m4a"));
+    await clip("v_hd", probe(1920, 1080, "mov,mp4,m4a")); // plays as it is: no proxy today
+    await clip("v_wav", JSON.stringify({ duration: 10, width: 0, height: 0, fps: 0, rotation: 0, format: "wav", vcodec: "", pixFmt: "", acodec: "pcm_s16le" })); // a sound the window can't play
+    // a proxy made here before: it goes when the proxies move, and is made again in the bucket
+    const old = path.join(dir, "old-proxy");
+    writeFileSync(old, "old proxy");
+    await blobs.put("libraries/lib_p/v/v_4k/proxy.mp4", old);
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('v_4k', 'proxy', 'libraries/lib_p/v/v_4k/proxy.mp4', 9)").run();
+    const folder = path.join(dir, "Footage P");
+    mkdirSync(folder, { recursive: true });
+    expect((await call("owner-a", "PUT", "/api/library/lib_p/watch", { folders: [{ path: folder, mode: "reference" }] })).status).toBe(200);
+
+    // the originals can't move (files, folders read in place), the proxies can
+    expect((await call("owner-a", "PUT", "/api/library/lib_p/storage", own)).status).toBe(409);
+    const r = await call("owner-a", "PUT", "/api/library/lib_p/storage", { ...own, proxies: true });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ kind: "local", locked: true, proxies: { kind: "s3", mode: "own", bucket: "tiny-acrobatics", keysSet: true } });
+    expect(d.prepare("SELECT COUNT(*) AS n FROM derivatives WHERE version_id = 'v_4k' AND kind = 'proxy'").get()).toEqual({ n: 0 });
+    const queued = d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued' ORDER BY version_id").all();
+    expect(queued).toEqual([{ version_id: "v_4k" }, { version_id: "v_hd" }, { version_id: "v_wav" }]); // every video, and a sound that needs one
+    // the Make proxies switch off does not drop them
+    await call("owner-a", "PATCH", "/api/library/lib_p", { settings: { proxy: false } });
+    expect(d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued'").get()).toEqual({ n: 3 });
+
+    // the worker's proxies land in the bucket and are metered; the originals stay on this disk
+    for (const v of ["v_4k", "v_hd"]) {
+      const f = path.join(dir, `proxy-${v}`);
+      writeFileSync(f, "0123456789");
+      await blobs.put(`libraries/lib_p/v/${v}/proxy.mp4`, f);
+      d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'proxy', ?, 10)").run(v, `libraries/lib_p/v/${v}/proxy.mp4`);
+    }
+    expect(s3.objects.has("libraries/lib_p/v/v_4k/proxy.mp4")).toBe(true);
+    expect(s3.objects.has("libraries/lib_p/v/v_4k/source")).toBe(false);
+    expect((await blobs.locate("libraries/lib_p/v/v_4k/source", 60)).kind).toBe("path");
+    expect(stored("lib_p")).toBe(20);
+    // a clip that plays as it is plays from this disk; one that needs its proxy gets it from the bucket
+    expect((await call("owner-a", "GET", "/api/library/media/v_hd/play")).status).toBe(200);
+    expect((await call("owner-a", "GET", "/api/library/media/v_4k/play")).status).toBe(302);
+
+    // nothing in the cloud: the proxies leave the bucket, and come back here only where the window needs one
+    await call("owner-a", "PATCH", "/api/library/lib_p", { settings: { proxy: true } });
+    const back = await call("owner-a", "PUT", "/api/library/lib_p/storage", { kind: "local" });
+    expect(await back.json()).not.toHaveProperty("proxies");
+    expect(s3.objects.has("libraries/lib_p/v/v_4k/proxy.mp4")).toBe(false);
+    expect(stored("lib_p")).toBe(0);
+    expect(d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued' ORDER BY version_id").all()).toEqual([{ version_id: "v_4k" }, { version_id: "v_wav" }]);
+  });
 });

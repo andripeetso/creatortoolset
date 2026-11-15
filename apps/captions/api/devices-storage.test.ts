@@ -16,6 +16,7 @@ const { watchApp, scanWatchFolders, SETTLE_MS } = await import("./library/watch"
 const { storageApp } = await import("./devices-storage");
 const { createEdit } = await import("./editor/store");
 const { mediaPaths } = await import("./editor/media");
+const { inRequestWorkspace } = await import("./lib/workspace-scope");
 
 afterAll(() => {
   delete process.env.LIBRARY_WATCH_FOLDERS;
@@ -29,6 +30,7 @@ app.use(async (c, next) => {
   c.set("user", { username: USER, role: "admin" } as never);
   return next();
 });
+app.use(inRequestWorkspace);
 app.route("/api/library", watchApp);
 app.route("/api/devices/storage", storageApp);
 
@@ -182,5 +184,36 @@ describe("a folder added in Settings for the computer this server runs on", () =
     } finally {
       process.env.LIBRARY_WATCH_FOLDERS = "1";
     }
+  });
+});
+
+describe("each workspace", () => {
+  it("has its own folders: one added in a workspace is not in another's list nor in its chats' line; older ones are the first brand's", async () => {
+    const projects = path.join(process.env.DATA_DIR!, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    for (const [id, at] of [["ws-a", 1], ["ws-b", 2]] as const) writeFileSync(path.join(projects, `${id}.json`), JSON.stringify({ id, owner: USER, name: id, createdAt: at, updatedAt: at }));
+    const { foldersNote } = await import("./assistant");
+    type View = { folders: { id: string; role: string; origin: { path: string } }[] };
+    const list = async (ws: string) => ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": ws } })).json()) as View).folders;
+    const before = await list("ws-a");
+    expect(before.length).toBeGreaterThan(0); // the folders added above, before there were workspaces: the first brand's
+    expect(await list("ws-b")).toEqual([]);
+    expect(await foldersNote(USER, "ws-b")).toBe("");
+    const music = path.join(dir, "Songs");
+    mkdirSync(music, { recursive: true });
+    const added = await app.request("/api/devices/storage/folders", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" },
+      body: JSON.stringify({ role: "music", host: "this-computer", path: music }),
+    });
+    expect(added.status).toBe(200);
+    expect(((await added.json()) as View).folders.map((f) => f.origin.path)).toEqual([music]);
+    expect((await list("ws-a")).map((f) => f.id)).toEqual(before.map((f) => f.id));
+    expect(await foldersNote(USER, "ws-b")).toBe(`\n\nThis workspace's folders:\n- Music: ${music}`);
+    expect(await foldersNote(USER, "ws-a")).not.toContain(music);
+    // another workspace can't forget it
+    const id = (await list("ws-b"))[0]!.id;
+    expect((await app.request(`/api/devices/storage/folders/${id}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-a" } })).status).toBe(404);
+    expect((await app.request(`/api/devices/storage/folders/${id}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-b" } })).status).toBe(200);
   });
 });

@@ -23,7 +23,7 @@ import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
 import { editorTools, hasStyle } from "./mcp-tools/editor";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
-import type { AssetCard } from "../contracts/library";
+import { SOUNDS, type AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 import { cardFor, cardResource, cardResourceList, cardToolMeta, hasCard, mediaLinks } from "./mcp-cards";
 
@@ -332,8 +332,8 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project whose captions are made at once (the chat says when they are ready; captions_get reads them), library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
-    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str }, required: ["to"] },
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library footage: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project whose captions are made at once (the chat says when they are ready; captions_get reads them), library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). sound = music (a song) or effect (a sound effect), with to: library: filed in the library's Music or Sound effects folder, with no transcript and no AI description; path works for it too. name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str, sound: { type: "string", enum: Object.keys(SOUNDS) } }, required: ["to"] },
   },
   {
     name: "notes_get",
@@ -548,8 +548,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   const toLibrary = async (a: Args) => {
     const by = Date.now() + ANSWER_BY_S * 1000;
     // a file on this computer is read where it is, never copied: its folder goes in with media_import_folder
-    if (a.path) throw new ToolError("For a file on this computer, use media_import_folder with its folder (and since): it is read where it is.");
-    const ids = [...(Array.isArray(a.files) ? a.files.map(String) : []), ...(a.file ? [String(a.file)] : [])];
+    // a song or a sound effect (one the AI downloaded, say) is copied in: it belongs to no footage folder
+    if (a.path && !a.sound) throw new ToolError("For a file on this computer, use media_import_folder with its folder (and since): it is read where it is.");
+    const ids = [...(Array.isArray(a.files) ? a.files.map(String) : []), ...(a.file ? [String(a.file)] : []), ...(a.path ? [String((await json(`/api/assistant/files/path`, "POST", { path: a.path })).id)] : [])];
     if (!ids.length) throw new ToolError("Give the dropped files' ids.");
     const files: Args[] = [];
     for (const id of ids.slice(0, 50)) {
@@ -559,7 +560,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         continue;
       }
       try {
-        const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}) });
+        const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}), ...pick(a, ["sound"]) });
         files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note"]) });
       } catch (e) {
         files.push({ file: id, error: e instanceof Error ? e.message : String(e) });
@@ -571,8 +572,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     const why = new Set(files.map((f) => f.error));
     const none = `Nothing was added${why.size === 1 && files[0]?.error ? `: ${String(files[0].error)}` : ""}`;
     const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: none, left: 0 };
+    const folder = added.length && a.sound ? SOUNDS[a.sound as keyof typeof SOUNDS]?.folder : undefined;
     return {
-      said: sorted.said,
+      said: folder ? `${sorted.said} to ${folder}` : sorted.said,
       files: files.map(({ library: _, ...f }) => f),
       ...(lib ? { href: added.length === 1 ? added[0]!.href : `/library?library=${lib}` } : {}),
       ...(sorted.left ? { note: STILL_SORTING } : {}),

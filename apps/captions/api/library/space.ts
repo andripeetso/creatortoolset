@@ -39,6 +39,32 @@ function made(libraryId: string, kinds: string[]): { bytes: number; files: numbe
     .get(libraryId, ...kinds) as { bytes: number; files: number };
 }
 
+/**
+ * Deletes the library's proxies and forgets them, so each is made again when it is wanted. A clip being prepared keeps
+ * its proxy (a step may be reading it right now), unless `all`: the proxies move to another place, and one left behind
+ * would point where the routing no longer looks (db.ts storeOf).
+ */
+export async function clearProxies(libraryId: string, all = false): Promise<{ cleared: number; kept: number }> {
+  const db = libraryDb();
+  const rows = db
+    .prepare(
+      `SELECT d.version_id, d.storage_key, d.bytes, ${OPEN} AS busy FROM derivatives d JOIN asset_versions v ON v.id = d.version_id
+       JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND d.kind = 'proxy' AND d.storage_key IS NOT NULL`,
+    )
+    .all(libraryId) as { version_id: string; storage_key: string; bytes: number; busy: number }[];
+  const going = rows.filter((x) => all || !x.busy);
+  let cleared = 0;
+  for (const r of going) {
+    db.prepare("DELETE FROM derivatives WHERE version_id = ? AND kind = 'proxy'").run(r.version_id);
+    // its done job goes too, so the next one that is needed is a new step on the page, not "done" already
+    db.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('done', 'failed')").run(r.version_id);
+    await blobs.delete(r.storage_key).catch(() => {});
+    cleared += r.bytes;
+  }
+  libraryChanged(libraryId);
+  return { cleared, kept: rows.length - going.length };
+}
+
 /** The models are this computer's, not a library's: only on a server on the person's own computer. */
 const mayClearModels = () => deviceTranscribes();
 
@@ -59,33 +85,14 @@ spaceApp.post("/:id/space/clear", async (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(c.get("user").username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const what = ((await c.req.json().catch(() => null)) as { what?: unknown } | null)?.what;
-  const db = libraryDb();
-  if (what === "proxies") {
-    // a clip being prepared keeps its proxy: a step may be reading it right now
-    const rows = db
-      .prepare(
-        `SELECT d.version_id, d.storage_key, d.bytes, ${OPEN} AS busy FROM derivatives d JOIN asset_versions v ON v.id = d.version_id
-         JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND d.kind = 'proxy' AND d.storage_key IS NOT NULL`,
-      )
-      .all(libraryId) as { version_id: string; storage_key: string; bytes: number; busy: number }[];
-    let cleared = 0;
-    for (const r of rows.filter((x) => !x.busy)) {
-      db.prepare("DELETE FROM derivatives WHERE version_id = ? AND kind = 'proxy'").run(r.version_id);
-      // its done job goes too, so the next one that is needed is a new step on the page, not "done" already
-      db.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('done', 'failed')").run(r.version_id);
-      await blobs.delete(r.storage_key).catch(() => {});
-      cleared += r.bytes;
-    }
-    libraryChanged(libraryId);
-    return c.json({ cleared, kept: rows.length - rows.filter((x) => !x.busy).length });
-  }
+  if (what === "proxies") return c.json(await clearProxies(libraryId));
   if (what === "models") {
     if (!mayClearModels()) return c.json({ error: "Not on this server", code: "forbidden" }, 403);
     const cleared = await folderBytes(modelsDir());
     // a model that is open is left alone, whoever opened it (the library, Caption Studio, Video Notes, the AI Editor, a
     // search): deleting the folder while the model library writes a download into it ends the server
     // (device-transcribe.ts). Nothing is awaited between this check and the delete.
-    const open = speechModelInUse() || searchModelInUse() || db.prepare("SELECT 1 FROM jobs WHERE kind IN ('transcribe', 'embed') AND state = 'running'").get();
+    const open = speechModelInUse() || searchModelInUse() || libraryDb().prepare("SELECT 1 FROM jobs WHERE kind IN ('transcribe', 'embed') AND state = 'running'").get();
     if (open) return c.json({ error: "A model is in use right now: clear the models when that work is done", code: "conflict" }, 409);
     await rm(modelsDir(), { recursive: true, force: true });
     return c.json({ cleared, kept: 0 });

@@ -16,6 +16,7 @@ import { libraryDb } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
+import { SOUNDS, type Sound } from "../contracts/library";
 
 /**
  * Videos and recordings dropped in the assistant's chat (owner, 2026-11-07: "drop in a random screen recording…
@@ -272,10 +273,12 @@ export async function useFile(
   to: AssistantFileUse,
   name?: string,
   versionOf?: string,
+  sound?: Sound,
 ): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean }> {
   const meta = (await readFileMeta(user.username, id)) ?? (await arrival(user.username, id));
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${USE_NAMES[to]} isn't switched on for this account.`);
   if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
+  if (sound && to !== "library") throw new Error("A song or a sound effect goes to the Media Library.");
   const file = fileOf(user.username, id);
   const title = (name?.trim() || meta.name).slice(0, 120);
   if (to === "notes") {
@@ -288,7 +291,7 @@ export async function useFile(
     if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
     // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
     await ensureLibrary(user.username);
-    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, true);
+    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, !sound, sound);
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
@@ -321,11 +324,11 @@ export async function useFile(
 }
 
 assistantFilesApp.post("/:id/use", async (c) => {
-  const b = (await c.req.json().catch(() => null)) as { to?: unknown; name?: unknown; version_of?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { to?: unknown; name?: unknown; version_of?: unknown; sound?: unknown } | null;
   const to = b?.to as AssistantFileUse;
   if (!FILE_USES.includes(to)) return c.json({ error: `to is one of ${FILE_USES.join(", ")}` }, 400);
   try {
-    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined, typeof b?.version_of === "string" && b.version_of ? b.version_of : undefined));
+    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined, typeof b?.version_of === "string" && b.version_of ? b.version_of : undefined, b?.sound && Object.hasOwn(SOUNDS, String(b.sound)) ? (b.sound as Sound) : undefined));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
   }

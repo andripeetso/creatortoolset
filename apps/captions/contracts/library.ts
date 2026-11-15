@@ -109,7 +109,28 @@ export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+  /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
+  organize?: Organize;
+  /** a big folder came in and the AI organizing was offered (once, either answer) */
+  organizeOffered?: boolean;
 }
+
+/** Default folders: DEFAULT_FOLDERS made. AI organizes: the same, and each file that comes in is filed by the AI. Own: nothing made. */
+export type Organize = "default" | "ai" | "own";
+
+/**
+ * The folders "Default folders" and "AI organizes" make, in this order. A-roll and B-roll are smart folders over the roll
+ * the app sorts (api/library/roll.ts); the rest are plain top-level folders, found by name (Music and Sound effects are
+ * the names songs and sound effects are filed under).
+ */
+export const DEFAULT_FOLDERS: readonly { name: string; roll?: "a" | "b" }[] = [
+  { name: "A-roll", roll: "a" },
+  { name: "B-roll", roll: "b" },
+  { name: "Music" },
+  { name: "Sound effects" },
+  { name: "Graphics" },
+  { name: "Examples" },
+];
 
 /** GET /api/library/:id/space: what the library's own made files take (the person's own files are not in it). */
 export interface LibrarySpace {
@@ -219,11 +240,15 @@ export interface LibrarySummary {
  * left out to keep the ones already saved; they are never sent back. Bunny takes the account's API key once: the server
  * makes a storage zone and a token-signed pull zone with it and keeps only the zone's own keys, never the account key.
  */
+/**
+ * `proxies: true` on a bucket or Bunny: only the proxies go there, one for every video, and the originals stay on this
+ * disk ("Proxies only"); allowed while the library holds files. `{ kind: "local" }` then brings the proxies back here.
+ */
 export type LibraryStorageInput =
   | { kind: "local" }
-  | { kind: "s3"; mode: "server" }
-  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string }
-  | { kind: "bunny"; apiKey?: string; region?: BunnyRegion };
+  | { kind: "s3"; mode: "server"; proxies?: boolean }
+  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string; proxies?: boolean }
+  | { kind: "bunny"; apiKey?: string; region?: BunnyRegion; proxies?: boolean };
 
 /** Bunny Storage's main regions, as its API names them. */
 export const BUNNY_REGIONS = [
@@ -248,6 +273,8 @@ export interface LibraryStorage {
   locked: boolean; // the library holds files: where they live can't change (the keys can)
   storedBytes?: number; // bucket libraries: bytes in the bucket now
   days: { day: string; storedBytes: number }[]; // bucket libraries: the last 30 days with a change, newest first
+  /** kind "local" with "Proxies only": where the proxies are (storedBytes and days are then theirs) */
+  proxies?: { kind: "s3" | "bunny"; mode?: "server" | "own"; bucket?: string; zone?: string; endpoint?: string; region?: string; pathStyle?: boolean; keysSet: boolean };
 }
 
 export interface AssetPage {
@@ -311,6 +338,8 @@ export interface SharedView {
 export interface WatchFolder {
   path: string; // absolute, on the server's disk
   mode: "reference" | "copy"; // reference: the file stays where it is; copy: stored in the library like an upload
+  /** reference only: each file is first copied into a folder of this folder's name here (on this disk, subfolders kept), then read where the copy is */
+  copyTo?: string;
   collectionId?: string; // a manual folder the files go into
   addedBy: string; // the owner who added it; imports are theirs
 }
@@ -318,6 +347,8 @@ export interface WatchFolder {
 /** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */
 export interface WatchStatus {
   allowed: boolean;
+  /** where a folder's files are copied when the person keeps a copy (their Library folder's Footage on this computer); "~/" is the home folder */
+  copyTo?: string;
   /** `files`: the media files the last look at the folder found; `adding`: how many of them are still to be taken in. */
   folders: (WatchFolder & { found: boolean; imported: number; files: number; adding: number })[];
   missing: number; // versions whose original is gone from its folder
@@ -391,3 +422,8 @@ export function applyS3Preset<T extends { endpoint: string; region: string; path
   const p = S3_PRESETS.find((x) => x.id === id);
   return p ? { ...form, endpoint: p.endpoint || (p.endpointHint ? form.endpoint : ""), region: p.region, pathStyle: p.pathStyle } : form;
 }
+
+/** A song or a sound effect added as one (the assistant's use_file sound): its tag, which keeps the worker's AI steps
+ *  (transcript, description, search by meaning) off it, and the top-level folder it is filed in, made on first use. */
+export const SOUNDS = { music: { tag: "music", folder: "Music" }, effect: { tag: "sound effect", folder: "Sound effects" } } as const;
+export type Sound = keyof typeof SOUNDS;

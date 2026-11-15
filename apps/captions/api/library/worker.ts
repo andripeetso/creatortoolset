@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting } from "./db";
+import { blobs, libraryDb, librarySetting, proxiesInCloud } from "./db";
 import { describeSlot, describeVersion } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -16,7 +16,8 @@ import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
-import { makeProxy, needsProxy } from "./media/proxy";
+import { SOUNDS } from "../../contracts/library";
+import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
 import { makeSprite } from "./media/sprite";
 import { probe, type ProbeSummary } from "./media/probe";
 import { placeUnplaced } from "./media/probe";
@@ -24,6 +25,7 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortUnsorted } from "./roll";
+import { organizeOnProbe } from "./organize";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -292,25 +294,30 @@ async function run(job: JobRow): Promise<void> {
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, kind, key, bytes);
   };
   const base = `libraries/${v.library_id}/v/${v.id}`;
-  // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original
+  // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original; a proxy in the cloud of
+  // a clip that plays as it is would be a download of what is on this disk already
+  let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
   const lighter = async () => {
+    if (p && proxiesInCloud(v.library_id) && !needsProxy(p)) return src();
     const k = (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(v.id) as { storage_key: string | null } | undefined)?.storage_key;
     return k ? blobs.localCopy(k) : src();
   };
-  let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
 
   if (job.kind === "probe") {
     p = await probe(await src());
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
-    // a file from the account's music folders is music: a thumbnail and a waveform, no transcript, no description,
-    // no search by meaning (each would spend their AI or keys on a song nobody asked about)
-    const music = !!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine));
+    // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
+    // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
+    // or keys on a song nobody asked about)
+    const music =
+      (!!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine))) ||
+      !!db.prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map((s) => `'${s.tag}'`).join(", ")})`).get(v.id);
     // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
     // a photo is probed as a one-frame video but shows as itself: no proxy
-    if (v.kind !== "image" && needsProxy(p) && librarySetting(v.library_id, "proxy")) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id), on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // a photo is probed as a one-frame video: only a video asset gets a strip
@@ -319,6 +326,8 @@ async function run(job: JobRow): Promise<void> {
     if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
     // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
     if (!music && job.actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: job.actor });
+    // a library the AI organizes: a sound or a picture goes to its folder now (a video when it is described)
+    organizeOnProbe(db, v.id, p.duration);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {

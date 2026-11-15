@@ -19,12 +19,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function render(s: LibraryStorage) {
+async function render(s: LibraryStorage, onThisComputer = true) {
   vi.stubGlobal("fetch", async () => new Response(JSON.stringify(s), { status: 200 }));
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<LibraryStorageSettings libraryId="lib_1" onSaved={() => {}} onThisComputer />));
+  act(() => root!.render(<LibraryStorageSettings libraryId="lib_1" onSaved={() => {}} onThisComputer={onThisComputer} />));
   await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
   return host;
 }
@@ -32,10 +32,24 @@ async function render(s: LibraryStorage) {
 const local: LibraryStorage = { kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] };
 
 describe("library storage", () => {
-  it("a library holding files on this computer: one plain line, no dead choices", async () => {
-    const el = await render(local);
-    expect(el.textContent).toBe("StorageKept on this computer's disk");
+  it("a library holding files on a server: one plain line, no dead choices", async () => {
+    const el = await render(local, false);
+    expect(el.textContent).toBe("StorageKept on this server's disk");
     expect(el.querySelectorAll("input, button")).toHaveLength(0);
+  });
+
+  it("a library holding files on this computer: its proxies may still go to the cloud, its originals may not", async () => {
+    const el = await render(local);
+    const radio = (text: string) => [...el.querySelectorAll("label")].find((l) => l.textContent === text)!.querySelector("input")!;
+    expect(radio("Nothing").checked).toBe(true);
+    expect(radio("Proxies only").disabled).toBe(false);
+    expect(radio("Originals").disabled).toBe(true);
+  });
+
+  it("proxies in a bucket say where they are", async () => {
+    const el = await render({ ...local, proxies: { kind: "bunny", zone: "tiny-proxies", keysSet: true }, storedBytes: 2e9, days: [] });
+    expect(el.textContent).toContain("Proxies in Bunny Storage (tiny-proxies) · 2.0 GB");
+    expect(([...el.querySelectorAll("label")].find((l) => l.textContent === "Proxies only")!.querySelector("input") as HTMLInputElement).checked).toBe(true);
   });
 
   it("an empty library: the choice and Save", async () => {

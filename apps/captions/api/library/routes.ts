@@ -9,14 +9,15 @@ import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayWrite } from "./access";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { expandCollection } from "./collections";
-import { blobs, libraryDb, librarySetting, libraryStore, meter, SETTING_DEFAULTS } from "./db";
+import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS } from "./db";
 import { estimate, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
+import { SOUNDS, type AssetCard, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob, prepareFirst } from "./jobs";
-import { needsProxy } from "./media/proxy";
+import { ensureDefaultFolders } from "./organize";
+import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
 import { inReview } from "./trash";
@@ -90,11 +91,12 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
   "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/ogg": ".ogg", "audio/flac": ".flac", "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif" };
 
 /**
- * The library's read videos (or `versionId` alone) that need a proxy and have none, nor one on its way, while the
- * library makes proxies (its settings).
+ * The library's read videos (or `versionId` alone) that want a proxy (media/proxy.ts wantsProxy) and have none, nor one
+ * on its way.
  */
-function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
-  if (!librarySetting(libraryId, "proxy")) return [];
+export function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
+  const want = { cloud: proxiesInCloud(libraryId), on: librarySetting(libraryId, "proxy") };
+  if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
       `SELECT v.id, v.created_by, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id
@@ -103,7 +105,7 @@ function unproxied(libraryId: string, versionId?: string): { id: string; created
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed'))`,
     )
     .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string }[];
-  return rows.filter((r) => needsProxy(JSON.parse(r.probe) as ProbeSummary));
+  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want));
 }
 
 /** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */
@@ -173,6 +175,15 @@ export function recordVersion(
  * Without `libraryId`, the library of the first source the caller may use, else the first library of the workspace this
  * request works in. Null: no library the caller may use.
  */
+function soundFolder(d: DatabaseSync, lib: string, sound: Sound, by: string): string {
+  const name = SOUNDS[sound].folder;
+  const found = d.prepare("SELECT id FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name = ? ORDER BY created_at, id LIMIT 1").get(lib, name) as { id: string } | undefined;
+  if (found) return found.id;
+  const id = `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', ?, ?)").run(id, lib, name, Date.now(), by);
+  return id;
+}
+
 export async function saveToLibrary(
   username: string,
   file: string,
@@ -180,6 +191,7 @@ export async function saveToLibrary(
   sources: string[],
   libraryId?: string,
   footage = false,
+  sound?: Sound,
 ): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
   const lib =
     libraryId ??
@@ -207,7 +219,10 @@ export async function saveToLibrary(
     const d = db();
     d.exec("BEGIN");
     try {
-      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username });
+      const collectionId = sound ? soundFolder(d, lib, sound, username) : undefined;
+      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId });
+      // before the probe runs (same commit): the tag is what keeps the worker's AI steps off it
+      if (sound) d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')").run(assetId, SOUNDS[sound].tag);
       if (!footage) fileRoll(d, assetId, "none"); // a finished file (an export, a Finals file) is never A-roll or B-roll
       for (const from of new Set(sources)) {
         const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as
@@ -602,7 +617,13 @@ libraryApp.get("/", async (c) => {
 
 const settingsOf = (json: string): LibrarySettings => {
   const s = JSON.parse(json || "{}") as Partial<LibrarySettings>;
-  return { describe: s.describe ?? SETTING_DEFAULTS.describe, embed: s.embed ?? SETTING_DEFAULTS.embed, proxy: s.proxy ?? SETTING_DEFAULTS.proxy };
+  return {
+    describe: s.describe ?? SETTING_DEFAULTS.describe,
+    embed: s.embed ?? SETTING_DEFAULTS.embed,
+    proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
+    ...(s.organize ? { organize: s.organize } : {}),
+    ...(s.organizeOffered ? { organizeOffered: true } : {}),
+  };
 };
 
 // GET /api/library/:id/estimate?clips&bytes&audio&audioBytes&music → LibraryEstimate: what processing that many clips would take, for the caller
@@ -623,8 +644,10 @@ libraryApp.get("/:id/progress", async (c) => {
   return c.json(await progress(libraryId, user.username));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy? } } → LibrarySummary; the owner only. Proxies
-// off: the ones still queued are dropped; on: the clips that need one and have none get one
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, organize?, organizeOffered? } } → LibrarySummary;
+// the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
+// organize "default" or "ai" makes the default folders it is missing (organize.ts); "ai" turns the descriptions on, since
+// a video is filed by its description
 libraryApp.patch("/:id", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -639,9 +662,19 @@ libraryApp.patch("/:id", async (c) => {
     if (typeof on === "boolean") db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(String(on), libraryId);
   }
   const proxy = b?.settings?.proxy;
-  if (proxy === false) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
+  // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
+  if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
   if (proxy === true) for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
+  const organize = b?.settings?.organize;
+  if (organize === "default" || organize === "ai" || organize === "own") {
+    const set = (key: string, value: string) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(value, libraryId);
+    set("organize", JSON.stringify(organize));
+    if (organize === "ai") set("describe", "true");
+    if (organize !== "own") ensureDefaultFolders(db(), libraryId, user.username);
+    libraryChanged(libraryId); // the folders: other open pages read them again
+  }
+  if (b?.settings?.organizeOffered === true) db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.organizeOffered', json('true')) WHERE id = ?`).run(libraryId);
   const r = db().prepare("SELECT name, storage_kind, settings FROM libraries WHERE id = ?").get(libraryId) as {
     name: string;
     storage_kind: LibrarySummary["storage"];
@@ -720,10 +753,14 @@ libraryApp.get("/:id/assets", async (c) => {
   return c.json({ ...page, items: await visibleCards(viewer, libraryId, page.items) });
 });
 
-/** The blob a media URL serves: thumb, play (the proxy when there is one, else the source) or source. Null: no such kind. */
+/**
+ * The blob a media URL serves: thumb, play (the proxy when there is one, else the source), proxy (only the proxy: a
+ * card's link, api/mcp-cards.ts) or source. A clip that plays as it is plays from this disk, not from its proxy in the
+ * cloud. Null: no such kind.
+ */
 export function mediaFile(versionId: string, kind: string): { key?: string; type: string } | null {
-  const v = db().prepare("SELECT source_key, mime FROM asset_versions WHERE id = ?").get(versionId) as
-    | { source_key: string; mime: string | null }
+  const v = db().prepare("SELECT v.source_key, v.mime, v.probe, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
+    | { source_key: string; mime: string | null; probe: string | null; library_id: string }
     | undefined;
   if (!v) return null;
   const derived = (k: string) =>
@@ -732,9 +769,11 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
       | undefined)?.storage_key ?? undefined;
   const original = v.mime ?? "application/octet-stream";
   if (kind === "thumb") return { key: derived("thumb"), type: "image/jpeg" };
+  if (kind === "proxy") return { key: derived("proxy"), type: "video/mp4" };
   if (kind === "sprite") return { key: derived("sprite"), type: "image/jpeg" };
   if (kind === "play") {
-    const proxy = derived("proxy");
+    const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
+    const proxy = p && proxiesInCloud(v.library_id) && !needsProxy(p) ? undefined : derived("proxy");
     return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original };
   }
   if (kind === "source") return { key: v.source_key, type: original };

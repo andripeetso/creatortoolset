@@ -5,8 +5,8 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The Media Library page in a DOM, with a test plug-in that adds facets to it: the page reads them from webPlugins
-// (library-slots.ts), so the plug-in's facet groups must show once the library has loaded. Also: an empty library is one
-// screen, Finals is never shown here, A-roll / B-roll narrow the grid, a clip being prepared says so. The server calls
+// (library-slots.ts), so the plug-in's facet groups must show once the library has loaded. Also: an empty library is its
+// own page with the first-run question, Finals is never shown here, A-roll / B-roll narrow the grid, a clip being prepared says so. The server calls
 // are stubbed.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,13 +41,39 @@ const server = vi.hoisted(() => ({
   searched: [] as string[],
   /** clips in a folder: the top level's listing (unfiled) leaves them out */
   filed: new Set<string>(),
+  /** the library's settings as the server has them, and the changes the page sent */
+  settings: {} as Record<string, unknown>,
+  patched: [] as unknown[],
+  /** saves and uploads, in the order they were sent */
+  sent: [] as string[],
   trashed: [] as string[],
   uploaded: [] as string[],
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
-  listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false } }],
+  listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings } }],
+  // Default folders makes the six folders (api/library/organize.ts)
+  uploadFile: async (_: string, f: File) => {
+    server.sent.push(`upload ${f.name}`);
+    server.uploaded.push(f.name);
+    return { assetId: "new" };
+  },
+  updateLibrary: async (_: string, patch: { settings: Record<string, unknown> }) => {
+    server.patched.push(patch);
+    server.sent.push("save");
+    Object.assign(server.settings, patch.settings);
+    if (patch.settings.organize === "default" || patch.settings.organize === "ai")
+      server.folders = ["A-roll", "B-roll", "Music", "Sound effects", "Graphics", "Examples"].map((name, i) => ({
+        id: `col_${i}`,
+        name,
+        parentId: null,
+        kind: i < 2 ? "smart" : "manual",
+        count: 0,
+        createdBy: "admin",
+      }));
+    return { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings } };
+  },
   // the stand-in narrows by roll the way the server does (api/library/query.ts): the page asks, it does not filter
   listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b"; unfiled?: boolean }) => {
     server.asked.push(q);
@@ -74,7 +100,6 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   getAsset: async (_: string, id: string) => ({ jobs: [], ...(server.items as Card[]).find((x) => x.id === id) }),
   checkUpload: async () => ({ maybe: false }),
-  uploadFile: async (_: string, f: File) => (server.uploaded.push(f.name), { assetId: "new" }),
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
 }));
 
@@ -87,6 +112,9 @@ beforeEach(() => {
   server.folders = [];
   server.sources = [];
   server.watch = { allowed: true, folders: [], missing: 0 };
+  server.settings = {};
+  server.patched = [];
+  server.sent = [];
   server.asked = [];
   server.changed = [];
   server.searched = [];
@@ -161,25 +189,82 @@ describe("Media Library page with a plug-in facet", () => {
 const buttons = (host: HTMLElement) => [...host.querySelectorAll("button")].map((b) => b.textContent?.trim());
 
 describe("Media Library page", () => {
-  it("an empty library is one screen: what it is for and the folder to choose, upload as the second way, nothing else", async () => {
+  it("an empty library is its own page: it asks how to organize it, says what it is for, the folder to choose, upload as the second way", async () => {
     server.items = [];
     const host = await mount();
-    expect(host.textContent).toContain("Where are your videos?");
+    expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
+    expect(host.querySelector('[aria-label^="Library settings"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("raw materials");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload files"]));
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Default folders" + "A-roll, B-roll, Music, Sound effects, Graphics, Examples", "Choose a folder", "Upload"]));
+    expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
     expect(buttons(host)).not.toContain("Skip");
-    expect(host.querySelector('[role="searchbox"]')).toBeNull();
-    expect(host.querySelector('[aria-label="Kind"]')).toBeNull();
-    expect(host.querySelector('[aria-label^="Library settings"]')).toBeNull();
-    expect(host.querySelector('input[type="checkbox"], [role="switch"]')).toBeNull();
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
+  });
+
+  it("Default folders makes the folders and the page shows them, still on its first run until a clip comes in", async () => {
+    server.items = [];
+    const host = await mount();
+    const pick = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Default folders"))!;
+    await act(async () => {
+      pick.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(server.patched).toEqual([{ settings: { organize: "default" } }]);
+    expect(host.querySelector('[aria-label="Organize the library"]')).toBeNull(); // asked once
+    for (const name of ["A-roll", "B-roll", "Music", "Sound effects", "Graphics", "Examples"]) expect(host.textContent).toContain(name);
+    expect(buttons(host)).toContain("Choose a folder");
+  });
+
+  it("a library filled before it was asked (setup's folder) is still asked; one with folders of its own is not", async () => {
+    const host = await mount();
+    expect(host.querySelector('[aria-label="Organize the library"]')).not.toBeNull();
+    act(() => root!.unmount());
+    server.folders = [{ id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 1, createdBy: "admin" }];
+    const again = await mount();
+    expect(again.querySelector('[aria-label="Organize the library"]')).toBeNull();
+  });
+
+  it("a big drop offers the AI organizing the library, off until switched on, and the answer is saved before the files go in", async () => {
+    server.items = [];
+    const host = await mount();
+    const files = Array.from({ length: 20 }, (_, i) => new File(["x"], `tiny-${i}.mp4`, { type: "video/mp4" }));
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: { files, items: [], types: ["Files"] } });
+    await act(async () => {
+      host.firstElementChild!.dispatchEvent(drop);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const ai = document.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
+    expect(ai.getAttribute("aria-checked")).toBe("false");
+    act(() => ai.click());
+    const go = [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Upload") as HTMLButtonElement;
+    await act(async () => {
+      go.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(server.patched).toEqual([{ settings: { organize: "ai", organizeOffered: true } }]);
+    expect(server.sent[0]).toBe("save");
+    expect(server.sent).toContain("upload tiny-0.mp4");
+  });
+
+  it("a library whose organize is chosen is not asked again", async () => {
+    server.items = [];
+    server.settings = { organize: "own" };
+    const host = await mount();
+    expect(host.querySelector('[aria-label="Organize the library"]')).toBeNull();
+    expect(buttons(host)).toContain("Choose a folder");
   });
 
   it("a library whose only clips are in the trash is not the first screen: the Trash stays reachable", async () => {
     server.items = [];
     server.trash = [clip("gone")];
     const host = await mount();
-    expect(host.textContent).not.toContain("Where are your videos?");
+    expect(host.textContent).not.toContain("raw materials");
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull();
   });
 

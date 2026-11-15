@@ -40,6 +40,7 @@ const PER_WORKSPACE = new Set(["library", "workshop", "review", "instagram", "ed
 const ACROSS_WORKSPACES = new Set(["workshop/workspace", "instagram/accounts?all"]);
 const perWorkspace = (url: string) => {
   const topic = topicOf(url);
+  if (url === "/api/devices/storage") return true; // Settings → Storage: each workspace's own folders
   return !!topic && (PER_WORKSPACE.has(topic) || topic.startsWith("x/")) && !ACROSS_WORKSPACES.has(url);
 };
 /** A per-workspace tool's list: each workspace keeps its own copy (current-workspace.ts), so a switch never paints the last workspace's. */

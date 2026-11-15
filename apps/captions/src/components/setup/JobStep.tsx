@@ -35,7 +35,7 @@ function useFootage(on: boolean) {
 
 /**
  * "Where are your videos?": the Mac app's folder picker (a typed path in a browser on her computer), with what a big
- * folder takes said first. The folder goes on the library's watch list, read in place, as the Library's own card does.
+ * folder takes said first. The folder goes on the library's watch list, read in place or copied first, as the Library's own card does.
  */
 function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus; reload: () => Promise<void> }) {
   const [typing, setTyping] = useState(false);
@@ -43,8 +43,8 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const big = useBigFolder();
-  const add = async (folder: string) => {
-    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId: lib }) }).catch(() => null);
+  const add = async (folder: string, copyTo?: string) => {
+    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId: lib, copyTo }) }).catch(() => null);
     const body = (await r?.json().catch(() => ({}))) as { error?: string } | undefined;
     if (!r?.ok) return setError(body?.error ?? "Couldn't add that folder. Try again.");
     setTyping(false);
@@ -54,7 +54,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
     setBusy(true);
     setError(null);
     try {
-      await big.check(folder, () => add(folder));
+      await big.check(folder, (copyTo) => add(folder, copyTo), { libraryId: lib, offerCopy: true });
     } finally {
       setBusy(false);
     }
@@ -69,7 +69,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
     <NeedLine
       met={met}
       name="Where are your videos?"
-      line={met ? status.folders.map((f) => f.path).join(", ") : "Read where they are. Nothing is moved."}
+      line={met ? status.folders.map((f) => f.path).join(", ") : undefined}
       button={
         <Button size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => void choose()}>
           Choose a folder
