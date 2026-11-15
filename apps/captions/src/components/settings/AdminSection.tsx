@@ -19,12 +19,13 @@ const BUILT_IN: AdminTabItem[] = [
 
 /**
  * The Admin tabs for this person on this server: nothing for a non-admin; Server keys only on a hosted server (an
- * own-computer install has none); then the tabs a plug-in adds (adminTab), in plug-in order.
+ * own-computer install has none), where Access is Settings → Team's instead; then the tabs a plug-in adds (adminTab),
+ * in plug-in order.
  */
 export function adminTabList(me: { role: string } | null, hosted: boolean, plugins: Pick<PluginSettingsSection, "id" | "title">[]): AdminTabItem[] {
   if (me?.role !== "admin") return [];
   return [
-    ...BUILT_IN,
+    ...BUILT_IN.filter((t) => !(hosted && t.id === "access")),
     ...(hosted ? [{ id: "server-keys", label: "Server keys" }] : []),
     ...plugins.map((s) => ({ id: s.id, label: s.title })),
   ];
@@ -48,6 +49,8 @@ export function AdminSection({ sub }: { sub?: string }) {
   const hosted = useAuth((s) => s.hosted);
   const plugins = adminTabsFor(me, webPlugins);
   const tabs = adminTabList(me, hosted, plugins);
+  // on a hosted server Access lives in Team (owner, 2026-11-14: "it's not really an admin thing")
+  if (hosted && (sub === "access" || sub === "apps")) return <Navigate to="/settings/team" replace />;
   const moved = retiredTabTarget(sub, tabs.map((t) => t.id));
   if (moved) return <Navigate to={`/settings/admin/${moved}`} replace />;
   const active = tabs.find((t) => t.id === sub) ?? tabs[0];

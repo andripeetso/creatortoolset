@@ -10,8 +10,8 @@ describe("adminTabList (Settings → Admin tabs per install and role)", () => {
     expect(adminTabList(null, true, [footage])).toEqual([]);
   });
 
-  it("hosted admin: Accounts, Access, Projects, Server keys, then the plug-in tabs", () => {
-    expect(adminTabList(admin, true, [footage]).map((t) => t.id)).toEqual(["users", "access", "projects", "server-keys", "footage-access"]);
+  it("hosted admin: Accounts, Projects, Server keys, then the plug-in tabs (Access is in Team)", () => {
+    expect(adminTabList(admin, true, [footage]).map((t) => t.id)).toEqual(["users", "projects", "server-keys", "footage-access"]);
   });
 
   it("own-computer install: no Server keys tab, plug-in tabs still follow the built-in ones", () => {
@@ -28,6 +28,6 @@ describe("adminTabList (Settings → Admin tabs per install and role)", () => {
   });
 
   it("uses the names people read", () => {
-    expect(adminTabList(admin, true, []).map((t) => t.label)).toEqual(["Accounts", "Access", "Projects", "Server keys"]);
+    expect(adminTabList(admin, true, []).map((t) => t.label)).toEqual(["Accounts", "Projects", "Server keys"]);
   });
 });
