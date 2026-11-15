@@ -516,7 +516,7 @@ export default function LibraryPage() {
                   ))}
                 </div>
               )}
-              {!source && !trash && <LibraryFilterRow libraryId={library.id} value={filters} onChange={setFilters} any={items.length > 0} />}
+              {!source && !trash && <LibraryFilterRow libraryId={library.id} value={filters} onChange={setFilters} any={!emptyView} />}
               {sources.length > 0 && (
                 <div role="group" aria-label="Sources" className="flex flex-wrap items-center gap-1.5">
                   <Button size="sm" variant={!source ? "default" : "outline"} aria-pressed={!source} onClick={() => setSource("")}>

@@ -77,15 +77,19 @@ export function LibraryFilterRow({
   libraryId: string;
   value: LibraryFilters;
   onChange: (next: LibraryFilters) => void;
-  /** the library holds clips: When shows (Tags once a clip has one) */
+  /** the library holds clips (not only the ones on screen now): When shows, Tags and Where once a clip has one */
   any: boolean;
 }) {
   const tags = useCachedLoad(`/api/library/${libraryId}/tags`, () => listTags(libraryId));
   const places = useCachedLoad(`/api/library/${libraryId}/places`, () => listPlaces(libraryId));
   const picked = value.tags ?? [];
-  const set = (patch: Partial<LibraryFilters>) => onChange({ ...value, ...patch });
+  // an emptied pick is no pick: the page's query (and its cached page) stays the one without it
+  const set = (patch: Partial<LibraryFilters>) =>
+    onChange(Object.fromEntries(Object.entries({ ...value, ...patch }).filter(([, v]) => v !== undefined && !(Array.isArray(v) && !v.length))));
   const when = value.filmedFrom !== undefined || value.filmedTo !== undefined;
-  if (!any && !anyFilter(value)) return null;
+  // the buttons come all at once, so none moves when another's list arrives
+  const settled = (!!tags.data || !!tags.error) && (!!places.data || !!places.error);
+  if (!settled || (!any && !anyFilter(value))) return null;
   const toggleTag = (t: string) => set({ tags: picked.includes(t) ? picked.filter((x) => x !== t) : [...picked, t] });
 
   return (

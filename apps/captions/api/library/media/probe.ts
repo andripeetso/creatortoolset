@@ -154,27 +154,31 @@ export async function countryAt(lat: number, lon: number): Promise<string> {
 export async function placeUnplaced(db = libraryDb()): Promise<number> {
   let n = 0;
   let after = "";
+  const touched = new Set<string>();
   try {
     for (;;) {
       const rows = db
         .prepare(
-          `SELECT v.id, v.source_key FROM asset_versions v JOIN assets a ON a.current_version_id = v.id JOIN libraries l ON l.id = a.library_id
+          `SELECT v.id, v.source_key, a.library_id FROM asset_versions v JOIN assets a ON a.current_version_id = v.id JOIN libraries l ON l.id = a.library_id
            WHERE l.storage_kind = 'local' AND a.kind IN ('video', 'image') AND v.probe IS NOT NULL AND json_type(v.probe, '$.country') IS NULL
            AND v.id > ? ORDER BY v.id LIMIT 100`,
         )
-        .all(after) as { id: string; source_key: string }[];
-      if (!rows.length) return n;
+        .all(after) as { id: string; source_key: string; library_id: string }[];
+      if (!rows.length) break;
       for (const r of rows) {
         const file = await blobs.localCopy(r.source_key).catch(() => null);
         const json = file && (await ffprobe(file, ["-show_entries", `format_tags=${LOCATION_TAGS.join(",")}`]).catch(() => null));
         if (!json) continue;
         db.prepare("UPDATE asset_versions SET probe = json_set(probe, '$.country', ?) WHERE id = ?").run(await countryOf(json), r.id);
+        touched.add(r.library_id);
         n++;
       }
       after = rows[rows.length - 1]!.id;
     }
   } catch (e) {
     console.error("[library] place:", e);
-    return n;
   }
+  const { libraryChanged } = await import("../access"); // the open pages' Where list refetches
+  for (const id of touched) libraryChanged(id);
+  return n;
 }
