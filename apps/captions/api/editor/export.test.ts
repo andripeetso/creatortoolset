@@ -20,6 +20,7 @@ const { frameDuration, time, toFcpxml } = await import("./fcpxml");
 const { mediaPaths, namesOf } = await import("./media");
 const { toOtio } = await import("./otio");
 const { emptyTracks, sourceOf } = await import("./timeline");
+const { timelineSources } = await import("../../contracts/timeline-import");
 
 const golden = (name: string) => path.join(import.meta.dirname, "golden", name);
 /** Compares with the golden file; UPDATE_GOLDEN=1 writes it instead (read the diff before committing one). */
@@ -159,5 +160,38 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
     const zip = Buffer.from(await (await get("")).arrayBuffer());
     const text = zip.toString("latin1");
     for (const f of ["Bucket edit v1/Bucket edit v1.otio", "Bucket edit v1/Bucket edit v1.fcpxml", "Bucket edit v1/media/Download media.txt"]) expect(text).toContain(f);
+  });
+
+  it("proxies only: the timelines name the original on the user's computer with its own size, rate and timecode, and give that path back", async () => {
+    const original = "/Users/tiny/Footage/4K/Take C.mov"; // not on this server: the AI read its 720p proxy
+    libraryDb().exec(`
+      INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, created_at) VALUES
+        ('lib_px', 'mem-a', 'Proxies', 'local', '{"proxies":{"kind":"s3","mode":"server"}}', 0);
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_px', 'lib_px', 'video', 'Take C', 'mem-a', 0);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at)
+        VALUES ('ver_px', 'ast_px', 1, 'libraries/lib_px/v/ver_px/source', '${original}', 1, 'sha-px', 'video/quicktime', 'missing', 'mem-a', 0);
+      INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_px', 'proxy', 'libraries/lib_px/v/ver_px/proxy.mp4', 1);
+    `);
+    const e = (await createEdit("mem-a", { name: "Proxy edit", sources: ["ver_px"] }))!;
+    expect((await mediaPaths(e, ["ver_px"])).files).toEqual({ ver_px: original });
+
+    const tl = twoCuts();
+    const probe = { duration: 20, width: 3840, height: 2160, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" };
+    tl.sources = { ver_px: sourceOf("ver_px", "Take C", { ...probe, fps: 25, timecode: "10:00:00:00" }) };
+    tl.fps = 25;
+    for (const t of ["V1", "A1"] as const) tl.tracks[t].items = tl.tracks[t].items.map((i) => ({ ...i, src: "ver_px" }));
+    await saveDraft(e.id, "v1", { timeline: tl, notes: [] });
+    const login = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "mem-a", password: "password1" }) });
+    const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+    const get = (q: string) => app.request(`/api/editor/${e.id}/drafts/v1/export${q}`, { headers: { cookie } });
+
+    const fcpxml = await (await get("?format=fcpxml")).text();
+    expect(fcpxml).toContain('<format id="r2" frameDuration="1/25s" width="3840" height="2160"/>');
+    expect(fcpxml).toContain(`start="${time(10 * 3600 * 25, 25)}"`);
+    expect(fcpxml).toContain('src="file:///Users/tiny/Footage/4K/Take%20C.mov"');
+    const otio = await (await get("?format=otio")).text();
+    expect(otio).toContain(`"target_url": "${original}"`);
+    // what Review reads back from either file: the original's path, which "Find the original files" looks for by name
+    for (const [name, text] of [["Proxy edit.fcpxml", fcpxml], ["Proxy edit.otio", otio]]) expect(Object.values(timelineSources(name, text))).toEqual([original]);
   });
 });

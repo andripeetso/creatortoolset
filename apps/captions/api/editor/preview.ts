@@ -5,6 +5,7 @@ import { addVersion, fileTimelineView, readMeta, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
 import { blobs, libraryDb } from "../library/db";
+import { readable } from "./media";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
 import { Waiting } from "./analyze";
@@ -156,9 +157,11 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
 
 /**
  * Local files for a timeline's sources (a bucket library's are downloaded into the library's cache once). With `editId`
- * the edit's own clips (a card, TimelineSource.file) are in the answer too; without it they are left out.
+ * the edit's own clips (a card, TimelineSource.file) are in the answer too; without it they are left out. With `proxies`
+ * a source whose original is not on this server is its proxy (a render for Review); post-processing reads originals
+ * only, as its copies take the originals' place in the exports.
  */
-export async function localFiles(tl: Timeline, editId?: string): Promise<Record<string, string>> {
+export async function localFiles(tl: Timeline, editId?: string, proxies = false): Promise<Record<string, string>> {
   const q = libraryDb().prepare("SELECT source_key FROM asset_versions WHERE id = ?");
   const out: Record<string, string> = {};
   for (const id of Object.keys(tl.sources)) {
@@ -169,7 +172,7 @@ export async function localFiles(tl: Timeline, editId?: string): Promise<Record<
     }
     const row = q.get(id) as { source_key: string } | undefined;
     if (!row) throw new Error("Some footage is gone from the library");
-    out[id] = await blobs.localCopy(row.source_key);
+    out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
   }
   return out;
 }
@@ -182,7 +185,7 @@ export async function previewStep({ edit, variant, signal }: StepContext): Promi
   if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = path.join(editDir(edit.id), "previews", `${variant}.mp4`);
   await mkdir(path.dirname(out), { recursive: true });
-  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
+  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
   if (signal.aborted) return;
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
