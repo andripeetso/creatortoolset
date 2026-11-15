@@ -39,11 +39,11 @@ beforeEach(() => {
 describe("Face Blur's settings", () => {
   it("start from the defaults, keep each account's own, and refuse what isn't one", async () => {
     expect(await (await call("GET", "/settings")).json()).toEqual(DEFAULTS);
-    const mine = { mode: "some", who: "Everyone but me", look: "mosaic" };
+    const mine = { mode: "some", who: "Everyone but me", look: "mosaic", auto: false };
     expect((await call("PUT", "/settings", mine)).status).toBe(200);
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);
     expect(await (await as("ada")("GET", "/settings")).json()).toEqual(DEFAULTS);
-    for (const bad of [{ ...mine, mode: "most" }, { ...mine, look: "emoji" }, { ...mine, who: "x".repeat(LIMITS.who + 1) }, { ...mine, who: 3 }, null]) {
+    for (const bad of [{ ...mine, mode: "most" }, { ...mine, look: "emoji" }, { ...mine, who: "x".repeat(LIMITS.who + 1) }, { ...mine, who: 3 }, { ...mine, auto: "yes" }, null]) {
       expect((await call("PUT", "/settings", bad)).status).toBe(400);
     }
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);

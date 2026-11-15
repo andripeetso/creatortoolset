@@ -26,6 +26,8 @@ struct EditorJob: Equatable {
     var languages: [String] = []
     /// a recording someone waits on (the mic): heard at once by a model already loaded, or refused at once
     var soon = false
+    /// a plug-in's job (FaceBlurAutoJob.swift): what it needs to know, as words
+    var options: [String: String] = [:]
 }
 
 extension EditorJob {
@@ -34,7 +36,7 @@ extension EditorJob {
         guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let job = answer["job"] as? [String: Any],
               let id = job["id"] as? Int, id > 0, let kind = job["kind"] as? String else { return nil }
         self.init(id: id, kind: kind, model: job["model"] as? String, languages: job["languages"] as? [String] ?? [],
-                  soon: job["soon"] as? Bool ?? false)
+                  soon: job["soon"] as? Bool ?? false, options: job["options"] as? [String: String] ?? [:])
     }
 }
 

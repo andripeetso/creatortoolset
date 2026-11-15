@@ -52,6 +52,51 @@ final class DeviceAPI {
         return try send("POST", path, type: "multipart/form-data; boundary=\(boundary)", body: multipartBody(parts, boundary: boundary), tries: tries, timeout: timeout)
     }
 
+    /// A GET with the token whose body goes to `file` (a video too big to hold in memory). The status, or a network error.
+    func download(_ path: String, to file: URL, timeout: TimeInterval = 600) throws -> Int {
+        var request = URLRequest(url: URL(string: path, relativeTo: base) ?? base)
+        request.timeoutInterval = timeout
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("CreatorToolsetMac/\(appVersion)", forHTTPHeaderField: "User-Agent")
+        let done = DispatchSemaphore(value: 0)
+        let box = Box<(Int?, Error?)>()
+        URLSession.shared.downloadTask(with: request) { temp, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode
+            if let temp, status == 200 {
+                try? FileManager.default.removeItem(at: file)
+                do { try FileManager.default.moveItem(at: temp, to: file) } catch { box.value = (nil, error); done.signal(); return }
+            }
+            box.value = (status, error)
+            done.signal()
+        }.resume()
+        done.wait()
+        if let error = box.value?.1 { throw DeviceError.network(error.localizedDescription) }
+        let status = box.value?.0 ?? 0
+        if status == 401 { revoke() }
+        return status
+    }
+
+    /// A POST with the token whose body is `file`, streamed from disk (a covered video).
+    func uploadFile(_ path: String, file: URL, type: String, timeout: TimeInterval = 1800) throws -> DeviceReply {
+        var request = URLRequest(url: URL(string: path, relativeTo: base) ?? base)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(type, forHTTPHeaderField: "Content-Type")
+        request.setValue("CreatorToolsetMac/\(appVersion)", forHTTPHeaderField: "User-Agent")
+        let done = DispatchSemaphore(value: 0)
+        let box = Box<(Data?, Int?, Error?)>()
+        URLSession.shared.uploadTask(with: request, fromFile: file) { data, response, error in
+            box.value = (data, (response as? HTTPURLResponse)?.statusCode, error)
+            done.signal()
+        }.resume()
+        done.wait()
+        if let error = box.value?.2 { throw DeviceError.network(error.localizedDescription) }
+        let status = box.value?.1 ?? 0
+        if status == 401 { revoke() }
+        return DeviceReply(status: status, data: box.value?.0 ?? Data())
+    }
+
     private func send(_ method: String, _ path: String, type: String?, body: Data?, tries: Int, timeout: TimeInterval) throws -> DeviceReply {
         var last = "no answer"
         for attempt in 0..<max(tries, 1) {
@@ -312,7 +357,7 @@ final class RelayRunner {
 
     /// The kinds this Mac takes, under `lock`: a cut-out and a split on any Mac, cards on one that can shut a card's
     /// script in, a transcript with a speech model when it has the link to them.
-    private var takes: [String] { (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind] + (speech == nil ? [] : [transcribeKind]) }
+    private var takes: [String] { (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind] + (speech == nil ? [] : [transcribeKind]) }
 
     private func takeAnnounce() -> Bool {
         lock.lock()
@@ -410,12 +455,14 @@ final class RelayRunner {
                 (end, more) = SplitJob(api: api, id: step.id).run()
             } else if step.kind == transcribeKind, let speech {
                 (end, more) = TranscribeJob(api: api, step: step, speech: speech).run()
+            } else if step.kind == faceBlurAutoKind {
+                (end, more) = FaceBlurAutoJob(api: api, step: step, folder: work.appendingPathComponent("faceblur/\(step.id)")).run()
             } else {
                 if !shown { shown = true; publish { $0.drawing = true } }
                 (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                                       stopped: { [weak self] in self?.isStopped ?? true }).run()
             }
-            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == splitKind ? "split" : step.kind == transcribeKind ? "transcript" : "cards"): step \(step.id) failed: \(why)") }
+            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == splitKind ? "split" : step.kind == transcribeKind ? "transcript" : step.kind == faceBlurAutoKind ? "face blur" : "cards"): step \(step.id) failed: \(why)") }
             if case .cannot = end { cannot = true }
             // without that word from the site the next step is seen on a later poll (the one in flight listed no kind)
             next = more && !cannot && !isStopped ? claimStep() : nil

@@ -22,11 +22,30 @@ different plug-in: it blurs faces inside an edit with MediaPipe.
 `GET /api/x/blur-faces/settings` → `PUT` the same shape back:
 
 ```ts
-{ mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid" }
-// default { mode: "all", who: "Every child's face", look: "blur" }
+{ mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid"; auto: boolean }
+// default { mode: "all", who: "Every child's face", look: "blur", auto: false }
 ```
 
 `who` is used only in "some" mode. At most 500 characters.
+
+## New Media Library files (`auto`)
+
+With `auto` on, each photo and video that comes into the account's built-in Media Library is covered by a Mac of the
+account's own, with the same settings, and the covered copy is added to the same library (so the same workspace) as
+"<title> blurred", linked to the original (`derived_from`). The original is never changed, hidden or deleted.
+
+- **Trigger:** the core event `library.version.probed` (the library's worker, after a file is read; not for music).
+  Queued once per version, never for a file made from another (a covered copy, an export).
+- **Queue:** `<data dir>/plugins/blur-faces/auto.json`. A Mac claims a file with the device job `faceblur` (the plug-in
+  slot `deviceJobs`, PLUGINS.md); the claim carries `options: { mode, look, media }`. A Mac that goes quiet gives its file
+  back; after three times, or a Mac's own failure, the file is failed and says why.
+- **The Mac** (`FaceBlurAutoJob.swift`): `GET /api/devices/relay/job/faceblur/<id>` the original; in "some" mode `POST …/<id>`
+  `{ faces }` → `{ blur }` (the server asks the person's AI, as `/pick`; a failed AI fails the file and nothing is
+  written); no face covered → `POST …/<id>` `{ nothing: why }` and no copy; else `POST …/<id>/file` the MP4 or JPEG.
+- **Where it shows:** Settings → Face Blur → New Media Library files. The switch shows when a Mac of the account lists
+  `faceblur` (the Mac app from this version) and the Media Library is the built-in one (no plug-in's source is `main`),
+  or while it is on; otherwise one line says why. Files that could not be covered are listed there with why and Try
+  again; nothing is shown while all goes well. `GET /api/x/blur-faces/auto`, `POST /api/x/blur-faces/auto/retry`.
 
 ## Choosing faces (only "some" mode)
 
