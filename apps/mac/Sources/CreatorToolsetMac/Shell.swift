@@ -154,6 +154,17 @@ final class Shell: NSObject, ObservableObject {
                 let allowed = Set((self.pickedFiles + (view?.droppedFiles ?? [])).map(\.path))
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
             }
+            // Show in Finder for a library clip (Reveal.swift): the path comes from the window's server; one elsewhere
+            // only within the folders granted for original media
+            if isRevealAsk(ask) {
+                guard let r = revealAsk(ask) else { return done(["problem": Reveal.problem]) }
+                let here = self.runsHere && self.server != nil
+                Task {
+                    let path = await self.client().clipPath(library: r.library, asset: r.asset)
+                    done(Reveal.answer(path, trusted: here ? nil : MediaFiles.granted))
+                }
+                return
+            }
             // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
             if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
             // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a

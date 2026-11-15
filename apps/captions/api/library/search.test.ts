@@ -215,3 +215,41 @@ describe("Caption Studio from a clip: refused for a clip the caller can't see", 
     }
   });
 });
+
+const { sourcePathFor } = await import("./search");
+describe("the clip's path on this computer", () => {
+  const admin = { role: "admin" as const };
+  const platform = process.platform;
+  const onMac = (on: boolean) => Object.defineProperty(process, "platform", { value: on ? "darwin" : "linux" });
+
+  it("a clip read in place: its file, for the admin only", () => {
+    libraryDb().prepare("UPDATE asset_versions SET source_path = '/Volumes/Cam/C0001.MP4' WHERE id = 'ver-ast-roll-0001'").run();
+    try {
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin)).toBe("/Volumes/Cam/C0001.MP4");
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", { role: "user" })).toBeUndefined();
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", undefined)).toBeUndefined();
+      expect(sourcePathFor("lib_b", "ver-ast-roll-0001", admin)).toBeUndefined(); // another library's id
+    } finally {
+      libraryDb().prepare("UPDATE asset_versions SET source_path = NULL WHERE id = 'ver-ast-roll-0001'").run();
+    }
+  });
+
+  it("a clip kept on this server's disk: the stored file, only on the Mac app's own server on a Mac", () => {
+    try {
+      onMac(true);
+      vi.stubEnv("CT_LOCAL", "1");
+      const file = sourcePathFor("lib_a", "ver-ast-roll-0001", admin);
+      expect(file).toBe(path.join(dir, "library", "blobs", "libraries", "lib_a", "v", "ver-ast-roll-0001", "source"));
+      expect(readFileSync(file!, "utf-8")).toBe("tiny acrobatics clip");
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", { role: "user" })).toBeUndefined();
+      vi.stubEnv("CT_LOCAL", "");
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin)).toBeUndefined(); // a server somewhere else
+      vi.stubEnv("CT_LOCAL", "1");
+      onMac(false);
+      expect(sourcePathFor("lib_a", "ver-ast-roll-0001", admin)).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+      Object.defineProperty(process, "platform", { value: platform });
+    }
+  });
+});

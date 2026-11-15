@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import type { ShareRow } from "@contracts/library";
+import type { LibrarySummary, ShareRow } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { createShare } from "@/lib/library";
-import { daysLeft, knownLink, LINK_DAYS, linksOf, rememberLink } from "./clip";
+import { createShare, listLibraries } from "@/lib/library";
+import { useCachedLoad } from "@/lib/local-cache";
+import { clipHref, daysLeft, knownLink, LINK_DAYS, linksOf, rememberLink } from "./clip";
 
 /**
- * Share one clip. Opening it gives the link at once (this clip's newest one made on this device, else a new one:
- * watch only, 7 days, no password) with Copy. Under it, rows that change that same link in place (PATCH
+ * Share one clip. Opening it gives the clip's own link in the app at once, with Copy: it opens for the people who can
+ * open the library. "Anyone with the link" makes a public link (watch only, 7 days, no password) and the box then
+ * gives that one; turning it off stops it. While it is on, rows change that same link in place (PATCH
  * /api/library/shares/:id): Allow download, Password, Stops working in. Below, the clip's other links that still work,
  * each with Copy (when this device made it) and Stop.
  */
@@ -65,7 +67,11 @@ export function ClipShare({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [link, setLink] = useState<Link | null>(null);
+  const [link, setLink] = useState<Link | null>(null); // the public link this device knows; null: off
+  const [loaded, setLoaded] = useState(false);
+  const [turning, setTurning] = useState(false);
+  const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries).data;
+  const appUrl = `${location.origin}${clipHref(libraryId, assetId, libs?.[0]?.id === libraryId)}`;
   const [others, setOthers] = useState<ShareRow[]>([]);
   const [lock, setLock] = useState(false); // the password row is on (its field shows)
   const [password, setPassword] = useState("");
@@ -78,13 +84,14 @@ export function ClipShare({
     (async () => {
       const all = linksOf((await call<{ shares: ShareRow[] }>(`/api/library/${libraryId}/shares`)).shares, assetId, versionId);
       const known = all.find((s) => knownLink(s.id)); // newest first: the list is by expiry
-      const current = known ? { row: known, url: knownLink(known.id)! } : await newLink(libraryId, assetId);
+      const current = known ? { row: known, url: knownLink(known.id)! } : null;
       if (!live) return;
       setLink(current);
-      setLock(current.row.locked);
+      setLock(!!current?.row.locked);
       setPassword("");
       setFailed(null);
-      setOthers(all.filter((s) => s.id !== current.row.id));
+      setOthers(all.filter((s) => s.id !== current?.row.id));
+      setLoaded(true);
     })().catch((e) => live && setFailed(message(e)));
     return () => void (live = false);
   }, [open, libraryId, assetId, versionId]);
@@ -108,6 +115,22 @@ export function ClipShare({
       .then(() => setOthers((all) => all.filter((s) => s.id !== id)))
       .catch((e) => setFailed(message(e)));
 
+  // "Anyone with the link": on makes the public link, off stops it (a stopped link never works again)
+  const turn = (on: boolean) => {
+    setFailed(null);
+    setTurning(true);
+    const id = link?.row.id;
+    // a stop that failed leaves the switch on: the link still works
+    (on ? newLink(libraryId, assetId).then((l) => setLink(l)) : id ? call(`/api/library/shares/${id}`, "DELETE").then(() => setLink(null)) : Promise.resolve())
+      .then(() => {
+        setLock(false);
+        setPassword("");
+      })
+      .catch((e) => setFailed(message(e)))
+      .finally(() => setTurning(false));
+  };
+  const shown = link?.url ?? appUrl;
+
   const row = link?.row;
   const left = row ? daysLeft(row.expiresAt) : 7;
   const choices = (LINK_DAYS as readonly number[]).includes(left) ? LINK_DAYS : [...LINK_DAYS, left].sort((x, y) => x - y);
@@ -118,78 +141,80 @@ export function ClipShare({
         <DialogTitle className="truncate pr-6 text-base">Share “{title}”</DialogTitle>
 
         <div className="flex items-center gap-2">
-          <Input readOnly value={link?.url ?? ""} placeholder="Making the link…" aria-label="Share link address" onFocus={(e) => e.currentTarget.select()} className="h-9 text-xs" />
-          <Button size="sm" disabled={!link} onClick={() => link && copy(link.url)} className="w-24 shrink-0">
-            {copied === link?.url && link ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied === link?.url && link ? "Copied" : "Copy"}
+          <Input readOnly value={shown} aria-label="Link address" onFocus={(e) => e.currentTarget.select()} className="h-9 text-xs" />
+          <Button size="sm" disabled={turning} onClick={() => copy(shown)} className="w-24 shrink-0">
+            {copied === shown ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied === shown ? "Copied" : "Copy"}
           </Button>
         </div>
 
         <div className="flex flex-col divide-y divide-zinc-500/15 rounded-lg border border-zinc-500/20 text-sm">
           <label className="flex items-center justify-between gap-3 px-3 py-2.5">
-            Allow download
-            <Switch checked={row?.scope === "download"} disabled={!row} onCheckedChange={(on) => change({ scope: on ? "download" : "view" })} />
+            Anyone with the link
+            <Switch checked={!!link} disabled={!loaded || turning} onCheckedChange={turn} />
           </label>
-          <div className="flex flex-col gap-2 px-3 py-2.5">
-            <label className="flex items-center justify-between gap-3">
-              Password
-              <Switch
-                checked={lock}
-                disabled={!row}
-                onCheckedChange={(on) => {
-                  setLock(on);
-                  setPassword("");
-                  if (!on && row?.locked) change({ password: null });
-                }}
-              />
-            </label>
-            {lock && (
-              <form
-                className="flex items-center gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (password) change({ password });
-                  setPassword("");
-                }}
-              >
-                <Input
-                  type="password"
-                  autoFocus
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={row?.locked ? "Set · type to change it" : "Password"}
-                  aria-label="Link password"
-                  autoComplete="new-password"
-                  className="h-8"
-                />
-                <Button type="submit" size="sm" variant="outline" disabled={!password}>
-                  Set
-                </Button>
-              </form>
-            )}
-          </div>
-          <label className="flex items-center justify-between gap-3 px-3 py-2.5">
-            Stops working in
-            <select
-              value={left}
-              disabled={!row}
-              onChange={(e) => change({ expiresInDays: Number(e.target.value) })}
-              className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2"
-            >
-              {choices.map((d) => (
-                <option key={d} value={d}>
-                  {days(d)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {row && (
+            <>
+              <label className="flex items-center justify-between gap-3 px-3 py-2.5">
+                Allow download
+                <Switch checked={row?.scope === "download"} disabled={!row} onCheckedChange={(on) => change({ scope: on ? "download" : "view" })} />
+              </label>
+              <div className="flex flex-col gap-2 px-3 py-2.5">
+                <label className="flex items-center justify-between gap-3">
+                  Password
+                  <Switch
+                    checked={lock}
+                    disabled={!row}
+                    onCheckedChange={(on) => {
+                      setLock(on);
+                      setPassword("");
+                      if (!on && row?.locked) change({ password: null });
+                    }}
+                  />
+                </label>
+                {lock && (
+                  <form
+                    className="flex items-center gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (password) change({ password });
+                      setPassword("");
+                    }}
+                  >
+                    <Input
+                      type="password"
+                      autoFocus
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={row?.locked ? "Set · type to change it" : "Password"}
+                      aria-label="Link password"
+                      autoComplete="new-password"
+                      className="h-8"
+                    />
+                    <Button type="submit" size="sm" variant="outline" disabled={!password}>
+                      Set
+                    </Button>
+                  </form>
+                )}
+              </div>
+              <label className="flex items-center justify-between gap-3 px-3 py-2.5">
+                Stops working in
+                <select
+                  value={left}
+                  disabled={!row}
+                  onChange={(e) => change({ expiresInDays: Number(e.target.value) })}
+                  className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2"
+                >
+                  {choices.map((d) => (
+                    <option key={d} value={d}>
+                      {days(d)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
         </div>
-
-        {row && (
-          <Button size="sm" variant="ghost" className="-mt-2 h-7 w-fit px-2 text-xs text-zinc-500 hover:text-red-400" onClick={() => void stop(row.id).then(() => onOpenChange(false))}>
-            Stop this link
-          </Button>
-        )}
 
         {others.length > 0 && (
           <section aria-label="Other links" className="flex flex-col gap-1">

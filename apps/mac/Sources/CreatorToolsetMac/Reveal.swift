@@ -1,0 +1,62 @@
+import AppKit
+import Foundation
+
+// Show in Finder for a Media Library clip (the page's `reveal:{"library","asset"}` ask on the thisMac handler,
+// src/pages/library/clip.ts). The page names the clip, never a path: this app asks the window's server for the clip's
+// file (its sourcePath, which the server gives only to its admin) and shows it only when the path is absolute, has no
+// `.` or `..` parts and is an existing file. On the server on this Mac that path is the server's own word (clips kept
+// on its disk, read in place from a footage folder, or added in place from the picker or a drop). On a server elsewhere
+// the file must also lie inside a folder the user granted for original media (MediaFiles). Missing and refused get the
+// same answer.
+
+func isRevealAsk(_ ask: String) -> Bool { ask.hasPrefix("reveal:") }
+
+/// The library and clip ids in a reveal ask; nil when it is not one.
+func revealAsk(_ ask: String) -> (library: String, asset: String)? {
+    guard isRevealAsk(ask),
+          let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst("reveal:".count).utf8))) as? [String: Any],
+          let library = json["library"] as? String, let asset = json["asset"] as? String,
+          [library, asset].allSatisfy({ id in !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") } })
+    else { return nil }
+    return (library, asset)
+}
+
+enum Reveal {
+    static let problem = "That file isn't on this Mac."
+
+    /// The real path to show, or nil when it may not be shown. `trusted` nil: any existing file (the server on this Mac
+    /// named it); else only inside one of those folders.
+    static func check(_ path: String, trusted: [String]?) -> String? {
+        let parts = path.split(separator: "/")
+        guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains("."), let real = realPath(path) else { return nil }
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: real, isDirectory: &directory), !directory.boolValue else { return nil }
+        guard let trusted else { return real }
+        // compared in one Unicode form (a folder's name may be stored decomposed); "/" is never trusted as a whole
+        let p = real.precomposedStringWithCanonicalMapping
+        let inside = trusted.compactMap(realPath).filter { $0 != "/" }.map(\.precomposedStringWithCanonicalMapping)
+        return inside.contains { p.hasPrefix($0 + "/") } ? real : nil
+    }
+
+    /// Shows the file selected in Finder; the reply is { ok } or { problem }.
+    @MainActor static func answer(_ path: String?, trusted: [String]?) -> [String: Any] {
+        guard let path, let real = check(path, trusted: trusted) else { return ["problem": problem] }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: real)])
+        return ["ok": true]
+    }
+
+    private static func realPath(_ path: String) -> String? {
+        guard let r = realpath(path, nil) else { return nil }
+        defer { free(r) }
+        return String(cString: r)
+    }
+}
+
+private struct ClipFile: Decodable { let sourcePath: String? }
+
+extension Site {
+    /// The clip's file on the server's computer, as the server tells its admin (nil for anyone else, or none).
+    func clipPath(library: String, asset: String) async -> String? {
+        ((try? await get("/api/library/\(library)/assets/\(asset)")) as ClipFile?)?.sourcePath
+    }
+}

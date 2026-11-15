@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
-import type { AssetCard, AssetDetail, ShareRow } from "@contracts/library";
+import type { AssetCard, AssetDetail, ShareRow, TagCount } from "@contracts/library";
+import { thisMacBridge } from "@/lib/thisMac";
 
 /**
  * What the clip view decides from a clip and its detail (its facts, what its player says, its share links), and the
@@ -7,7 +8,7 @@ import type { AssetCard, AssetDetail, ShareRow } from "@contracts/library";
  */
 
 export const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+export const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
 /** The clip's facts as label and value: when it was filmed, its length, size, roll, and its version past the first. */
 export function factsOf(a: AssetCard): [string, string][] {
@@ -105,3 +106,33 @@ export function original(a: AssetCard, detail: AssetDetail | null) {
 /** The library's live links that open this clip (the list is the whole library's). */
 export const linksOf = (shares: ShareRow[], assetId: string, versionId: string) =>
   shares.filter((s) => (s.target.kind === "asset" && s.target.id === assetId) || (s.target.kind === "version" && s.target.id === versionId));
+
+/**
+ * A clip's own address in the app, for people who can open the library: `?clip=` and, when it is not the first library,
+ * `&library=`. The same as clipHref in folders.ts (the grid's); kept here too until the two are one.
+ */
+export function clipHref(libraryId: string, assetId: string, first = false): string {
+  return `/library?clip=${encodeURIComponent(assetId)}${first ? "" : `&library=${encodeURIComponent(libraryId)}`}`;
+}
+
+/** The library's tags that fit what is typed and the clip lacks: those starting with it first, then the most used; at most 8. */
+export function tagSuggestions(all: TagCount[], have: string[], typed: string): string[] {
+  const t = typed.trim().toLowerCase();
+  const on = new Set(have.map((h) => h.toLowerCase()));
+  return all
+    .filter((x) => !on.has(x.tag.toLowerCase()) && x.tag.toLowerCase().includes(t))
+    .sort((a, b) => Number(b.tag.toLowerCase().startsWith(t)) - Number(a.tag.toLowerCase().startsWith(t)) || b.count - a.count)
+    .slice(0, 8)
+    .map((x) => x.tag);
+}
+
+/** The Mac app shows a clip's file in Finder (<html data-mac-reveal>, apps/mac Reveal.swift). */
+export const canReveal = () => typeof document !== "undefined" && document.documentElement.dataset.macReveal === "1" && !!thisMacBridge();
+
+/** Shows the clip's file in Finder: null when it did, else what went wrong. The Mac app asks the server for the file itself. */
+export async function revealClip(libraryId: string, assetId: string): Promise<string | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return "Show in Finder works in the Mac app";
+  const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ library: libraryId, asset: assetId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+  return r.ok ? null : (r.problem ?? "That file isn't on this Mac.");
+}
