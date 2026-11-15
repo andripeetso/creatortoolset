@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, libraryDb, librarySetting } from "./db";
+import { blobs, libraryDb, librarySetting, proxiesInCloud } from "./db";
 import { describeSlot, describeVersion } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -16,7 +16,7 @@ import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
-import { makeProxy, needsProxy } from "./media/proxy";
+import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
@@ -249,12 +249,14 @@ async function run(job: JobRow): Promise<void> {
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, kind, key, bytes);
   };
   const base = `libraries/${v.library_id}/v/${v.id}`;
-  // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original
+  // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original; a proxy in the cloud of
+  // a clip that plays as it is would be a download of what is on this disk already
+  let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
   const lighter = async () => {
+    if (p && proxiesInCloud(v.library_id) && !needsProxy(p)) return src;
     const k = (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(v.id) as { storage_key: string | null } | undefined)?.storage_key;
     return k ? blobs.localCopy(k) : src;
   };
-  let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
 
   if (job.kind === "probe") {
     p = await probe(src);
@@ -266,7 +268,7 @@ async function run(job: JobRow): Promise<void> {
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
-    if (needsProxy(p) && librarySetting(v.library_id, "proxy")) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    if (wantsProxy(p, { cloud: proxiesInCloud(v.library_id), on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // after transcribe in the queue, so the description reads what is said

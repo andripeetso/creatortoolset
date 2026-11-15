@@ -12,6 +12,15 @@ export function needsProxy(p: ProbeSummary): boolean {
 }
 
 /**
+ * Whether a clip gets a proxy: every video (not a still, not a song) when the library keeps its proxies in the cloud so
+ * a server elsewhere and the AI can work from them; else only one the browser needs, while the library makes proxies.
+ */
+export function wantsProxy(p: ProbeSummary, opts: { cloud: boolean; on: boolean }): boolean {
+  if (opts.cloud) return !!p.vcodec && !p.cover && p.duration > 0;
+  return opts.on && needsProxy(p);
+}
+
+/**
  * H.264 720p, CRF 26, AAC 128k, faststart. The short side is capped at 720 and never upscaled.
  * ponytail: one ffmpeg at a time is the caller's rule (the queue, S4+), not this function's.
  */

@@ -4,9 +4,11 @@ import { ChevronDown } from "lucide-react";
 import { NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { getEstimate, getProgress, getWatch, type Drop, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
+import { chooseFolderOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,6 +25,8 @@ export interface FolderSize {
   bytes: number;
   audio: number;
   audioBytes: number;
+  /** asked with `to`: the room there for a copy */
+  free?: number;
 }
 
 export const dropOf = (s: FolderSize, music = false): Drop => ({ clips: s.files, bytes: s.bytes, audio: s.audio, audioBytes: s.audioBytes, music });
@@ -248,6 +252,8 @@ export function BigUploadDialog({
   go,
   onUpload,
   onClose,
+  estimate = true,
+  children,
 }: {
   libraryId: string;
   drop: Drop;
@@ -255,19 +261,27 @@ export function BigUploadDialog({
   go: string;
   onUpload: () => void;
   onClose: () => void;
+  /** false: a small folder, asked only where its files are kept (`children`) */
+  estimate?: boolean;
+  children?: ReactNode;
 }) {
   const [e, setE] = useState<LibraryEstimate | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const { clips, bytes, audio, audioBytes, music } = drop;
   useEffect(() => {
-    getEstimate(libraryId, { clips, bytes, audio, audioBytes, music }).then(setE, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
-  }, [libraryId, clips, bytes, audio, audioBytes, music]);
+    if (estimate) getEstimate(libraryId, { clips, bytes, audio, audioBytes, music }).then(setE, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
+  }, [libraryId, clips, bytes, audio, audioBytes, music, estimate]);
   const guess = e?.steps.some((s) => !s.measured && s.route !== "off" && s.route !== "none");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{e ? `${cap(aboutTime(e.minutes * 60))} of footage.` : (failed ?? "Working out what it takes…")}</DialogDescription>
+        {estimate ? (
+          <DialogDescription>{e ? `${cap(aboutTime(e.minutes * 60))} of footage.` : (failed ?? "Working out what it takes…")}</DialogDescription>
+        ) : (
+          <DialogDescription className="sr-only">{title}</DialogDescription>
+        )}
+        {children}
         {e && (
           <div className="flex flex-col gap-2 text-sm">
             <ul className="flex flex-col gap-1">
@@ -300,35 +314,119 @@ export function BigUploadDialog({
   );
 }
 
+const gbOf = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
+
 /**
- * A folder on this computer about to join the account's own Library, from a screen that has no library open (setup's
- * Folders step, Settings → Storage): `check(path, add)` adds a small folder at once, and for a big one (BIG_DROP files or
- * more) shows the same dialog first, where Add folder runs `add` and Cancel adds nothing. A folder the server can't
- * size (not on this computer, not a folder) goes to `add` as before, which says why. `dialog` is rendered by the caller.
+ * Where a chosen folder's files are kept: where they are (read in place), or copied into a folder on this computer
+ * (the Library's Footage, `to`), with Change. Copying is the choice when there is room for it. `onChange` gets the
+ * folder to copy into, or undefined to keep them where they are.
  */
-export function useBigFolder(): { check: (path: string, add: () => unknown, opts?: { music?: boolean }) => Promise<void>; dialog: ReactNode } {
-  const [asking, setAsking] = useState<{ libraryId: string; files: number; drop: Drop; add: () => unknown } | null>(null);
-  // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
-  const check = async (path: string, add: () => unknown, opts: { music?: boolean } = {}) => {
-    // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
-    const libraryId = (await listLibraries().catch(() => []))[0]?.id;
-    const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}`).catch(() => null) : null;
+export function KeepChoice({ libraryId, folder, bytes, to, free, onChange }: { libraryId: string; folder: string; bytes: number; to: string; free?: number; onChange: (copyTo: string | undefined) => void }) {
+  const [dest, setDest] = useState(to);
+  const [room, setRoom] = useState(free);
+  const [typing, setTyping] = useState(false);
+  const fits = room === undefined || room >= bytes;
+  const [copy, setCopy] = useState(fits);
+  useEffect(() => onChange(copy && fits ? dest : undefined), [copy, fits, dest]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the room in another folder (another drive)
+  const look = async (next: string) => {
+    setDest(next);
+    const r = await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(folder)}&to=${encodeURIComponent(next)}`).catch(() => null);
     const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    if (libraryId && size && size.files >= BIG_DROP) setAsking({ libraryId, files: size.files, drop: dropOf(size, opts.music), add });
-    else await add();
+    setRoom(size?.free);
+    if (size?.free === undefined || size.free >= bytes) setCopy(true);
+  };
+  const change = async () => {
+    const picked = await chooseFolderOnMac();
+    if (picked === undefined) setTyping(true); // a browser: the path is typed
+    else if (picked) await look(picked);
+  };
+  const radio = "mt-0.5 shrink-0";
+  return (
+    <fieldset className="flex min-w-0 flex-col gap-3 text-sm" aria-label="Where the files are kept">
+      <label className="flex items-start gap-2">
+        <input type="radio" name="keep" className={radio} checked={copy && fits} disabled={!fits} onChange={() => setCopy(true)} />
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span>Copy them to</span>
+          {typing ? (
+            <Input
+              autoFocus
+              defaultValue={dest}
+              aria-label="Folder to copy into"
+              className="h-8 font-mono text-xs"
+              onBlur={(e) => {
+                setTyping(false);
+                if (e.target.value.trim() && e.target.value.trim() !== dest) void look(e.target.value.trim());
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            />
+          ) : (
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate font-mono text-xs text-zinc-500" title={dest}>
+                {dest}
+              </span>
+              <Button type="button" size="sm" variant="outline" className="h-7 shrink-0" onClick={() => void change()}>
+                Change
+              </Button>
+            </span>
+          )}
+          {!fits && room !== undefined && <span className="text-xs text-zinc-500">Not enough space there: {gbOf(room)} free</span>}
+        </span>
+      </label>
+      <label className="flex items-start gap-2">
+        <input type="radio" name="keep" className={radio} checked={!(copy && fits)} onChange={() => setCopy(false)} />
+        <span className="flex flex-col gap-1">
+          <span>Keep them where they are</span>
+          <span className="text-xs text-zinc-500">Nothing is moved.</span>
+        </span>
+      </label>
+    </fieldset>
+  );
+}
+
+/**
+ * A folder on this computer about to join the account's own Library (or `libraryId`'s): `check(path, add)` adds a small
+ * folder at once, and for a big one (BIG_DROP files or more) shows the same dialog first, where Add folder runs `add`
+ * and Cancel adds nothing. `offerCopy`: the dialog always opens, and asks whether the files are copied into the
+ * Library's Footage folder or kept where they are (KeepChoice); `add` gets the folder to copy into. A folder the server
+ * can't size (not on this computer, not a folder) goes to `add` as before, which says why. `dialog` is rendered by the caller.
+ */
+export function useBigFolder(): {
+  check: (path: string, add: (copyTo?: string) => unknown, opts?: { music?: boolean; libraryId?: string; offerCopy?: boolean }) => Promise<void>;
+  dialog: ReactNode;
+} {
+  type Asking = { libraryId: string; path: string; files: number; drop: Drop; big: boolean; to?: string; free?: number; add: (copyTo?: string) => unknown };
+  const [asking, setAsking] = useState<Asking | null>(null);
+  const [copyTo, setCopyTo] = useState<string | undefined>();
+  // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
+  const check = async (path: string, add: (copyTo?: string) => unknown, opts: { music?: boolean; libraryId?: string; offerCopy?: boolean } = {}) => {
+    // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
+    const libraryId = opts.libraryId ?? (await listLibraries().catch(() => []))[0]?.id;
+    // a copy is offered where the server can make one on this computer (it says where: WatchStatus.copyTo)
+    const to = libraryId && opts.offerCopy && !opts.music ? (await getWatch(libraryId).catch(() => null))?.copyTo : undefined;
+    const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}${to ? `&to=${encodeURIComponent(to)}` : ""}`).catch(() => null) : null;
+    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
+    const big = !!size && size.files >= BIG_DROP;
+    if (libraryId && size && (big || to)) {
+      setCopyTo(undefined);
+      setAsking({ libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add });
+    } else await add();
   };
   const dialog = asking && (
     <BigUploadDialog
       libraryId={asking.libraryId}
       drop={asking.drop}
-      title={`Add ${asking.files.toLocaleString()} files from this folder?`}
+      estimate={asking.big}
+      title={`Add ${asking.files.toLocaleString()} ${asking.files === 1 ? "file" : "files"} from ${folderName(asking.path)}?`}
       go="Add folder"
       onClose={() => setAsking(null)}
       onUpload={() => {
-        void asking.add();
+        void asking.add(copyTo);
         setAsking(null);
       }}
-    />
+    >
+      {asking.to && <KeepChoice libraryId={asking.libraryId} folder={asking.path} bytes={asking.drop.bytes} to={asking.to} free={asking.free} onChange={setCopyTo} />}
+    </BigUploadDialog>
   );
   return { check, dialog };
 }

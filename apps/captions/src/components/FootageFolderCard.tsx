@@ -7,12 +7,12 @@ import { getWatch } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
-import { BIG_DROP, BigUploadDialog, dropOf, type FolderSize } from "@/components/LibraryProcessing";
+import { useBigFolder } from "@/components/LibraryProcessing";
 
 /**
  * "Where are your videos?": shown by the Media Library and the AI Editor while the account has no footage folder yet.
- * The folder the person picks goes on the Library's watch list (api/library/watch.ts), which imports it in place: nothing
- * is walked, copied or uploaded. Choose a folder opens the Mac app's own folder picker; in a browser on the person's
+ * The folder the person picks goes on the Library's watch list (api/library/watch.ts), read where it is or first copied
+ * into the Library's Footage folder on this computer, as they choose in the dialog that opens (useBigFolder offerCopy). Choose a folder opens the Mac app's own folder picker; in a browser on the person's
  * computer it asks for a path, which the server checks. On a hosted server the card offers upload instead.
  * Skip is remembered in this browser; the card goes for good once a folder exists. `page`: the Media Library's own first
  * screen (an empty library), centred, with what the library is for and upload as the second way; no Skip there.
@@ -46,7 +46,7 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
   const [typing, setTyping] = useState(false);
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
-  const [asking, setAsking] = useState<{ folder: string; size: FolderSize } | null>(null); // a big folder, waiting for its go
+  const big = useBigFolder(); // where its files are kept, and for a big folder what adding it takes
   const [error, setError] = useState<string | null>(null);
 
   // the first screen stays until the page has the folder (then the page itself moves on to the clips coming in)
@@ -56,14 +56,14 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
   if (!status && !(page && live.error)) return null;
   const folderless = !status?.allowed;
 
-  const add = async (folder: string) => {
+  const add = async (folder: string, copyTo?: string) => {
     setBusy(true);
     setError(null);
     try {
       const r = await fetch("/api/library/watch/folder", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: folder, libraryId }),
+        body: JSON.stringify({ path: folder, libraryId, copyTo }),
       });
       const body = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(body.error ?? `Couldn't add that folder (${r.status})`);
@@ -79,13 +79,8 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
     }
   };
 
-  // a big folder says first what importing it takes; a size the server can't read adds the folder as before
-  const check = async (folder: string) => {
-    const r = await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(folder)}`).catch(() => null);
-    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    if (size && size.files >= BIG_DROP) setAsking({ folder, size });
-    else await add(folder);
-  };
+  // where its files are kept, and for a big folder what importing it takes; a size the server can't read adds the folder as before
+  const check = (folder: string) => big.check(folder, (copyTo) => add(folder, copyTo), { libraryId, offerCopy: true });
 
   const choose = async () => {
     const picked = await chooseFolderOnMac();
@@ -93,19 +88,7 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
     else if (picked) await check(picked); // null: the person cancelled the Mac's panel
   };
 
-  const dialog = asking && (
-    <BigUploadDialog
-      libraryId={libraryId}
-      drop={dropOf(asking.size)}
-      title={`Add ${asking.size.files.toLocaleString()} clips from this folder?`}
-      go="Add folder"
-      onClose={() => setAsking(null)}
-      onUpload={() => {
-        void add(asking.folder);
-        setAsking(null);
-      }}
-    />
-  );
+  const dialog = big.dialog;
 
   const skip = () => {
     rememberSkip();
