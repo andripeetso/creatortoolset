@@ -5,12 +5,13 @@ import type { Sentence } from "../../contracts/editor";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
-import { blobs, libraryDb } from "../library/db";
+import { libraryDb } from "../library/db";
 import { enqueueJob, prepareFirst } from "../library/jobs";
 import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
 import { askVersionIn, editorKey, editorRoute, heardForEditor, versionRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { eyelineOf } from "./eyeline";
+import { readable } from "./media";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
 import type { StepContext } from "./worker";
@@ -235,11 +236,11 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
   const eyeline: Record<string, number> = {};
   for (const { row, probe, words } of ready) {
     if (signal.aborted) return;
-    await energyOf(row.id, () => blobs.localCopy(row.source_key), signal);
+    await energyOf(row.id, () => readable(row.id, row.source_key), signal);
     sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
     const turned = probe.rotation === 90 || probe.rotation === 270;
     const dims = { w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, duration: probe.duration };
-    const y = probe.vcodec ? await eyelineOf(row.id, () => blobs.localCopy(row.source_key), dims, signal) : null;
+    const y = probe.vcodec ? await eyelineOf(row.id, () => readable(row.id, row.source_key), dims, signal) : null;
     if (y !== null) eyeline[row.id] = y;
   }
   if (!sentences.length)

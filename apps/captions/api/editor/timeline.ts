@@ -1,13 +1,14 @@
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_EYELINE, TRACKS, type Item, type Line, type Sentence, type Timeline, type TimelineSource, type TrackId, type VersionPlan } from "../../contracts/editor";
-import { blobs, libraryDb } from "../library/db";
+import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import type { ProbeSummary } from "../library/media/probe";
 import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
+import { readable } from "./media";
 import { clearPasses, markPasses } from "./passes";
 import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
@@ -154,7 +155,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     if (!row || !probe || !w) throw new Error("Some footage changed since it was analyzed: run the edit again from analyze");
     sources[id] = sourceOf(id, row.title, probe);
     words[id] = w;
-    energy[id] = await energyOf(id, () => blobs.localCopy(row.source_key), signal);
+    energy[id] = await energyOf(id, () => readable(id, row.source_key), signal);
   }
   const { timeline, notes } = buildTimeline({
     name: `${edit.name} ${version.name}`,

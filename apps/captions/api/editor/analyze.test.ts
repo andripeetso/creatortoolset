@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ const { askVersionIn, saveTranscript } = await import("../library/transcribe");
 const { createEdit, readStep } = await import("./store");
 const { ENERGY_PER_SECOND, energyFile, readEnergy, sentencesOf } = await import("./analyze");
 const { tick } = await import("./worker");
+const { makeProxy } = await import("../library/media/proxy");
 const { deviceStatus, LISTENING, transcribeOnDevice } = await import("../lib/device-transcribe");
 
 const wav = path.join(dir, "tone.wav");
@@ -80,6 +81,18 @@ describe("AI Editor analyze", () => {
     expect(Math.abs(quietFrom - 1 * ENERGY_PER_SECOND)).toBeLessThanOrEqual(frame);
     expect(Math.abs(loudAgain - 2 * ENERGY_PER_SECOND)).toBeLessThanOrEqual(frame);
     expect(e[50]).toBeCloseTo(0.5 / Math.SQRT2, 2);
+  });
+
+  it("a proxy's sound has its silences where the original's are, to within a frame", async () => {
+    const proxy = path.join(dir, "tone-proxy.mp4");
+    await makeProxy(wav, proxy, true);
+    const e = await readEnergy(proxy);
+    const frame = ENERGY_PER_SECOND / 30;
+    expect(Math.abs(e.length - 3 * ENERGY_PER_SECOND)).toBeLessThanOrEqual(frame);
+    const quietFrom = e.findIndex((x) => x < 0.01);
+    const loudAgain = e.findIndex((x, i) => i > quietFrom && x > 0.01);
+    expect(Math.abs(quietFrom - 1 * ENERGY_PER_SECOND)).toBeLessThanOrEqual(frame);
+    expect(Math.abs(loudAgain - 2 * ENERGY_PER_SECOND)).toBeLessThanOrEqual(frame);
   });
 
   it("a source with no words queues the library's transcribe as the creator and waits; one still uploading just waits", async () => {
@@ -150,6 +163,26 @@ describe("AI Editor analyze", () => {
       { kind: "analyze", state: "done" },
       { kind: "script", state: "queued" },
     ]);
+    d.prepare("DELETE FROM edit_jobs").run();
+  });
+
+  it("a source whose original is not on this server is read from its proxy", async () => {
+    const d = libraryDb();
+    const p = { duration: 3, width: 0, height: 0, fps: 30, rotation: 0, format: "wav", vcodec: "", pixFmt: "", acodec: "pcm_s16le" };
+    await seed("ver_away", "On their computer", p);
+    await blobs.delete("libraries/lib_a/v/ver_away/source");
+    const proxy = path.join(dir, "away-proxy.wav");
+    copyFileSync(wav, proxy);
+    await blobs.put("libraries/lib_a/v/ver_away/proxy.mp4", proxy);
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_away', 'proxy', 'libraries/lib_a/v/ver_away/proxy.mp4', 1)").run();
+    saveTranscript(d, "ver_away", "deepgram", "en", [], [word("away", 0, 0.5)]);
+    const { id, job } = await analyze(["ver_away"], Date.now());
+    expect(job()).toMatchObject({ state: "done" });
+    expect(readStep(id, "analysis")!.sentences.map((s) => s.text)).toEqual(["away"]);
+    // the proxy's energy: the same tone, silent from 1 s to 2 s
+    const e = await readEnergy(wav);
+    const kept = readFileSync(energyFile("ver_away"));
+    expect(new Float32Array(kept.buffer, kept.byteOffset, kept.byteLength / 4)).toEqual(e);
     d.prepare("DELETE FROM edit_jobs").run();
   });
 

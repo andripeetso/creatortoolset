@@ -69,6 +69,24 @@ async function place(to: string, at: string): Promise<void> {
   await rename(tmp, at);
 }
 
+/**
+ * A source's file to read on this server: the original, else its proxy when the original is not here (a library whose
+ * originals stay on the user's computer and whose proxies are in the cloud, or a drive unplugged). A proxy has the
+ * original's duration and every step reads by time, so cuts stay where they are; size, frame rate and timecode come
+ * from the original's probe, and the exports still name the original (mediaPaths).
+ */
+export async function readable(versionId: string, sourceKey: string): Promise<string> {
+  try {
+    return await blobs.localCopy(sourceKey);
+  } catch (e) {
+    const proxy = libraryDb().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as
+      | { storage_key: string | null }
+      | undefined;
+    if (!proxy?.storage_key) throw e;
+    return blobs.localCopy(proxy.storage_key);
+  }
+}
+
 export interface MediaPaths {
   /** source key → the path the timeline names: absolute on this server's disk, media/<name> (relative to the timeline) from a bucket */
   files: Record<string, string>;
