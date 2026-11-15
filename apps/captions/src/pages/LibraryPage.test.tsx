@@ -44,14 +44,21 @@ const server = vi.hoisted(() => ({
   /** the library's settings as the server has them, and the changes the page sent */
   settings: {} as Record<string, unknown>,
   patched: [] as unknown[],
+  /** saves and uploads, in the order they were sent */
+  sent: [] as string[],
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, ...server.settings } }],
   // Default folders makes the six folders (api/library/organize.ts)
+  uploadFile: async (_: string, f: File) => {
+    server.sent.push(`upload ${f.name}`);
+    return {};
+  },
   updateLibrary: async (_: string, patch: { settings: Record<string, unknown> }) => {
     server.patched.push(patch);
+    server.sent.push("save");
     Object.assign(server.settings, patch.settings);
     if (patch.settings.organize === "default" || patch.settings.organize === "ai")
       server.folders = ["A-roll", "B-roll", "Music", "Sound effects", "Graphics", "Examples"].map((name, i) => ({
@@ -97,6 +104,7 @@ beforeEach(() => {
   server.watch = { allowed: true, folders: [], missing: 0 };
   server.settings = {};
   server.patched = [];
+  server.sent = [];
   server.asked = [];
   server.changed = [];
   server.searched = [];
@@ -166,8 +174,8 @@ describe("Media Library page", () => {
     expect(host.querySelector('[aria-label^="Library settings"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("raw materials");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Default folders" + "A-roll, B-roll, Music, Sound effects, Graphics, Examples", "Choose a folder", "Upload files"]));
-    expect(buttons(host).filter((b) => b === "Upload")).toEqual([]); // one button per job: Upload files
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Default folders" + "A-roll, B-roll, Music, Sound effects, Graphics, Examples", "Choose a folder", "Upload"]));
+    expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
     expect(buttons(host)).not.toContain("Skip");
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
   });
@@ -188,6 +196,40 @@ describe("Media Library page", () => {
     expect(buttons(host)).toContain("Choose a folder");
   });
 
+  it("a library filled before it was asked (setup's folder) is still asked; one with folders of its own is not", async () => {
+    const host = await mount();
+    expect(host.querySelector('[aria-label="Organize the library"]')).not.toBeNull();
+    act(() => root!.unmount());
+    server.folders = [{ id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 1, createdBy: "admin" }];
+    const again = await mount();
+    expect(again.querySelector('[aria-label="Organize the library"]')).toBeNull();
+  });
+
+  it("a big drop offers the AI organizing the library, off until switched on, and the answer is saved before the files go in", async () => {
+    server.items = [];
+    const host = await mount();
+    const files = Array.from({ length: 20 }, (_, i) => new File(["x"], `tiny-${i}.mp4`, { type: "video/mp4" }));
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: { files, items: [], types: ["Files"] } });
+    await act(async () => {
+      host.firstElementChild!.dispatchEvent(drop);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const ai = document.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
+    expect(ai.getAttribute("aria-checked")).toBe("false");
+    act(() => ai.click());
+    const go = [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Upload") as HTMLButtonElement;
+    await act(async () => {
+      go.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(server.patched).toEqual([{ settings: { organize: "ai", organizeOffered: true } }]);
+    expect(server.sent[0]).toBe("save");
+    expect(server.sent).toContain("upload tiny-0.mp4");
+  });
+
   it("a library whose organize is chosen is not asked again", async () => {
     server.items = [];
     server.settings = { organize: "own" };
@@ -201,7 +243,6 @@ describe("Media Library page", () => {
     server.trash = [clip("gone")];
     const host = await mount();
     expect(host.textContent).not.toContain("raw materials");
-    expect(host.querySelector('[aria-label="Organize the library"]')).toBeNull();
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull();
   });
 

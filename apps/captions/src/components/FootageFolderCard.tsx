@@ -11,12 +11,12 @@ import { BIG_DROP, BigUploadDialog, dropOf, type FolderSize } from "@/components
 
 /**
  * "Where are your videos?": shown by the Media Library and the AI Editor while the account has no footage folder yet.
- * The folder the person picks goes on the Library's watch list (api/library/watch.ts), which imports it in place: nothing
- * is walked, copied or uploaded. Choose a folder opens the Mac app's own folder picker; in a browser on the person's
+ * The folder the person picks goes on the Library's watch list (api/library/watch.ts). Its words promise neither that the
+ * files stay where they are nor that they are copied: a choice between the two may follow the pick. Choose a folder opens the Mac app's own folder picker; in a browser on the person's
  * computer it asks for a path, which the server checks. On a hosted server the card offers upload instead.
  * Skip is remembered in this browser; the card goes for good once a folder exists. `page`: in the Media Library's own
- * page while it holds nothing (below its folders), with what the library is for and upload as the second way; no
- * heading and no Skip there. `offer`: a big folder offers the AI organizing the library (`onOffer` with the answer).
+ * page while it holds nothing (below its folders), with what the library is for; no heading and no Skip there, and
+ * upload only where no folder can be read (the page's own Upload button is the other way). `offer`: a big folder offers the AI organizing the library (`onOffer` with the answer).
  */
 
 const SKIP_KEY = "ct-footage-folder-skipped";
@@ -165,8 +165,8 @@ export function FootageFolderCard({
         {heading}
         <p className="text-sm text-zinc-500">
           {page
-            ? "This is where you keep your raw materials: the clips you reuse across videos. You choose the folder they are in, and nothing is moved."
-            : "Creator Toolset reads the folder you pick, where it is. Nothing is moved."}
+            ? "This is where you keep your raw materials: the clips you reuse across videos. You choose the folder they are in."
+            : "Creator Toolset reads the folder you pick."}
         </p>
       </div>
       {typing && (
@@ -198,11 +198,6 @@ export function FootageFolderCard({
         {!(page && typing) && (
           <Button size={page ? "default" : "sm"} disabled={busy} onClick={() => void choose()}>
             Choose a folder
-          </Button>
-        )}
-        {page && onUpload && (
-          <Button variant="outline" size={page ? "default" : "sm"} disabled={busy} onClick={onUpload}>
-            Upload files
           </Button>
         )}
         {skipButton}

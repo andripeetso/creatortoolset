@@ -68,7 +68,7 @@ export function LibrarySettings({
           {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
           <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
             <SheetTitle className="text-base">Library settings</SheetTitle>
-            {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} />}
+            {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} onOrganized={onChange} />}
             {open && <OrganizeRow library={library} onChange={onChange} onError={onError} />}
             <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
               {open && <SpaceRows library={library} onChange={onChange} onError={onError} />}

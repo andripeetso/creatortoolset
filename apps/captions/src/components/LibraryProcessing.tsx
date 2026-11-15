@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { DEFAULT_FOLDERS, NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { DEFAULT_FOLDERS, NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibrarySummary, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import { getEstimate, getProgress, getWatch, type Drop, listLibraries } from "@/lib/library";
+import { getEstimate, getProgress, getWatch, type Drop, listLibraries, updateLibrary } from "@/lib/library";
+import { offerAnswer, offersOrganize } from "@/pages/library/Organize";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 
@@ -320,16 +321,22 @@ export function BigUploadDialog({
  * Folders step, Settings → Storage): `check(path, add)` adds a small folder at once, and for a big one (BIG_DROP files or
  * more) shows the same dialog first, where Add folder runs `add` and Cancel adds nothing. A folder the server can't
  * size (not on this computer, not a folder) goes to `add` as before, which says why. `dialog` is rendered by the caller.
+ * A library the AI does not organize yet is offered it there, once; `onOrganized` gets the library saved with the answer.
  */
-export function useBigFolder(): { check: (path: string, add: () => unknown, opts?: { music?: boolean }) => Promise<void>; dialog: ReactNode } {
-  const [asking, setAsking] = useState<{ libraryId: string; files: number; drop: Drop; add: () => unknown } | null>(null);
+export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
+  check: (path: string, add: () => unknown, opts?: { music?: boolean }) => Promise<void>;
+  dialog: ReactNode;
+} {
+  const [asking, setAsking] = useState<{ libraryId: string; files: number; drop: Drop; add: () => unknown; offer: boolean } | null>(null);
   // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
   const check = async (path: string, add: () => unknown, opts: { music?: boolean } = {}) => {
     // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
-    const libraryId = (await listLibraries().catch(() => []))[0]?.id;
+    const library = (await listLibraries().catch(() => []))[0];
+    const libraryId = library?.id;
     const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}`).catch(() => null) : null;
     const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    if (libraryId && size && size.files >= BIG_DROP) setAsking({ libraryId, files: size.files, drop: dropOf(size, opts.music), add });
+    // a music folder is music, not something to organize
+    if (libraryId && size && size.files >= BIG_DROP) setAsking({ libraryId, files: size.files, drop: dropOf(size, opts.music), add, offer: !opts.music && offersOrganize(library) });
     else await add();
   };
   const dialog = asking && (
@@ -338,10 +345,13 @@ export function useBigFolder(): { check: (path: string, add: () => unknown, opts
       drop={asking.drop}
       title={`Add ${asking.files.toLocaleString()} files from this folder?`}
       go="Add folder"
+      offer={asking.offer}
       onClose={() => setAsking(null)}
-      onUpload={() => {
-        void asking.add();
+      onUpload={async (ai) => {
         setAsking(null);
+        // before the folder: its files are filed as they come in; a failed save never stops the folder
+        if (asking.offer) await updateLibrary(asking.libraryId, offerAnswer(ai)).then(onOrganized, () => {});
+        void asking.add();
       }}
     />
   );

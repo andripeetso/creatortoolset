@@ -144,15 +144,15 @@ describe("Where are your videos?", () => {
     expect(onUpload).toHaveBeenCalledTimes(1);
   });
 
-  it("as the Library's first screen: no Skip, a Skip from before is ignored, upload is the second way", async () => {
+  it("in the Library's empty page: no heading, no Skip (a Skip from before is ignored), upload is the page's own button", async () => {
     localStorage.setItem("ct-footage-folder-skipped", "1");
-    const onUpload = vi.fn();
-    await render(onUpload, true);
+    await render(() => {}, true);
     expect(card()).not.toBeNull();
     expect(host!.textContent).toContain("raw materials");
+    expect(host!.textContent).not.toContain("Where are your videos?");
     expect(button("Skip")).toBeUndefined();
-    await click("Upload files");
-    expect(onUpload).toHaveBeenCalledTimes(1);
+    expect(button("Upload files")).toBeUndefined();
+    expect(button("Choose a folder")).not.toBeUndefined();
   });
 
   it("a big folder offers the AI organizing the library, and the answer is in before the folder is added", async () => {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Folder } from "lucide-react";
-import type { Collection, WatchFolder, WatchStatus } from "@contracts/library";
+import type { Collection, LibrarySummary, WatchFolder, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, ListRow, Section, Status } from "@/components/settings/ui";
@@ -29,7 +29,16 @@ async function call(libraryId: string, folders?: Change[]): Promise<WatchStatus>
 
 const select = "h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm";
 
-export function LibraryWatchFolders({ libraryId, folders: libraryFolders }: { libraryId: string; folders: Collection[] }) {
+export function LibraryWatchFolders({
+  libraryId,
+  folders: libraryFolders,
+  onOrganized,
+}: {
+  libraryId: string;
+  folders: Collection[];
+  /** a big folder's offer to organize the library was answered (useBigFolder) */
+  onOrganized?: (l: LibrarySummary) => void;
+}) {
   // the saved status, read again when the library changes (a footage folder's file came in, a referenced file went missing)
   const live = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => call(libraryId));
   const status = live.data;
@@ -39,7 +48,7 @@ export function LibraryWatchFolders({ libraryId, folders: libraryFolders }: { li
   const [path, setPath] = useState("");
   const [mode, setMode] = useState<WatchFolder["mode"]>("reference");
   const [into, setInto] = useState("");
-  const big = useBigFolder(); // a big folder says first what adding it takes, as from the first screen
+  const big = useBigFolder(onOrganized); // a big folder says first what adding it takes, as from the first screen
 
   const save = async (next: Change[]) => {
     try {

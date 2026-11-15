@@ -10,8 +10,7 @@ import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { byName, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar, MovingBar, dropOf, type FolderSize } from "@/components/LibraryProcessing";
-import { droppedFiles } from "@/components/assistant/draft";
+import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar, MovingBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { confirmDialog } from "@/lib/dialogs";
@@ -30,12 +29,11 @@ import {
   renameCollection,
   searchLibrary,
   setTrashed,
-  updateLibrary,
   uploadFile,
   audioOf,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
-import { droppedOnMac, pathOnMac } from "@/lib/thisMac";
+import { pathOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
@@ -43,13 +41,13 @@ import { AiBadge, ClipPanel } from "./library/ClipPanel";
 import { ClipView } from "./library/ClipView";
 import { folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
 import { LibrarySettings } from "./library/LibrarySettings";
-import { OrganizeChoice } from "./library/Organize";
+import { useLibraryDrop } from "./library/LibraryDrop";
+import { useOrganize } from "./library/Organize";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage as a grid of 16:9 cards. An empty library
- * shows this same page: on its first run it asks how to organize it (./library/Organize.tsx), and in place of the empty
- * grid's line says what the library is for with the folder to choose (FootageFolderCard), upload as the second way. A
- * drop anywhere on the page adds what was dropped (a folder on this computer is read where it is). Its
+ * is this same page, asking how to organize it (./library/Organize.tsx), with what it is for and the folder to choose
+ * (FootageFolderCard) in place of the grid; a drop anywhere on it adds files and folders (./library/LibraryDrop.tsx). Its
  * folders (the library's collections, ./library/folders.ts) are the app's folder cards and rows (components/browse/):
  * the top level shows the folders and the clips in none, `?f=` opens one, `?trash=1` the Trash. Above them: the trail
  * back up, the bar (search, sort, cards or list, the kind, the settings button), then one row to narrow (A-roll and
@@ -113,8 +111,6 @@ export default function LibraryPage() {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
   const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
-  const [askingFolder, setAskingFolder] = useState<{ folder: string; size: FolderSize } | null>(null); // a big folder dropped, waiting for its go
-  const [dropping, setDropping] = useState(false);
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
   const [found, setFound] = useState<{ hits: SearchHit[]; meaningGettingReady: boolean } | null>(null); // a search's answer
@@ -197,12 +193,11 @@ export default function LibraryPage() {
   const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
   const shownFolders = trash || source ? [] : foldersAt(collections, open, term);
 
-  // the first run (the question how to organize it, what it is for, the folder to choose, all in the page itself): no
-  // clip in it (none at the top level, none in a folder, none in its trash), no footage folder, no plug-in source, no
-  // upload on its way. Its folders may be there (the default ones). Until all of that is known the grid's frame stands.
+  // an empty library says what it is for and the folder to choose in place of the grid: no clip in it (its folders,
+  // the default ones say, hold none either), nothing in its trash, no footage folder, no plug-in source, no upload on
+  // its way. Until all of that is known the grid's frame stands.
   const foldersKnown = !!folderList.data || !!folderList.error;
-  const noClips = first.data?.items.length === 0 && collections.filter(holdsClips).every((c) => !c.count);
-  const emptyView = !open && !trash && !narrowed && noClips;
+  const emptyView = !open && !trash && !narrowed && first.data?.items.length === 0 && collections.every((c) => !holdsClips(c) || !c.count);
   const trashPeek = useCachedLoad<AssetPage>(emptyView && libId ? `/api/library/${libId}/assets?view=trash-peek` : null, () =>
     listAssets(libId!, { trashed: true, limit: 1 }),
   );
@@ -302,6 +297,16 @@ export default function LibraryPage() {
     })();
   };
 
+  const organize = useOrganize({
+    library,
+    owner: !!watch, // the settings are the owner's too
+    folders: folderList.data ? collections : null,
+    onSaved: (l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all),
+    setFolders: folderList.set,
+    onError: setError,
+  });
+  const drop = useLibraryDrop({ libraryId: libId, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onError: setError });
+
   const create = async () => {
     try {
       const lib = await createLibrary("Library");
@@ -310,47 +315,6 @@ export default function LibraryPage() {
     } catch (e) {
       setError(message(e));
     }
-  };
-
-  // the library saved with a new way to organize it: its folders read fresh (a refresh could join a read from before
-  // the default folders were made, and the page hears no notice of its own writes)
-  const organized = async (l: LibrarySummary) => {
-    setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
-    folderList.set(await listCollections(l.id));
-  };
-  // a big folder or drop into a library the AI does not organize yet offers it once (BigUploadDialog), either answer kept
-  const offer = !!watch && !!library && library.settings.organize !== "default" && library.settings.organize !== "ai" && !library.settings.organizeOffered;
-  const answerOffer = async (ai: boolean) => {
-    if (!offer || !libId) return;
-    await updateLibrary(libId, { settings: ai ? { organize: "ai", organizeOffered: true } : { organizeOffered: true } }).then(organized, (e) => setError(message(e)));
-  };
-
-  // a folder on this computer (dropped in the Mac app): read where it is, as Choose a folder does; a big one asks first
-  // ponytail: the same two calls as FootageFolderCard's add and check; one helper if a third caller comes
-  const addFolder = async (folder: string) => {
-    if (!libId) return;
-    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId: libId }) });
-    if (!r.ok) return setError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Couldn't add that folder (${r.status})`);
-    watchLoad.set(await getWatch(libId));
-  };
-  const folderIn = async (folder: string) => {
-    const r = await fetch(`/api/library/${libId}/watch/size?path=${encodeURIComponent(folder)}`).catch(() => null);
-    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    if (size && size.files >= BIG_DROP) setAskingFolder({ folder, size });
-    else await addFolder(folder);
-  };
-  // in the Mac app with its server on this computer a dropped folder comes as its path; anywhere else its files upload
-  const onDrop = (e: React.DragEvent) => {
-    setDropping(false);
-    if (!libId || !e.dataTransfer.files.length) return;
-    e.preventDefault();
-    droppedFiles(e.dataTransfer, watch?.allowed ? droppedOnMac : undefined).then(
-      (d) => {
-        for (const f of d.folders) void folderIn(f);
-        if (d.files.length) void addFiles(d.files);
-      },
-      (x) => setError(message(x)),
-    );
   };
 
   // a new folder goes in the open one
@@ -462,33 +426,18 @@ export default function LibraryPage() {
   const chooseFiles = () => picker.current?.click();
 
   return (
-    <div
-      className="relative flex min-h-dvh flex-col"
-      onDragOver={(e) => {
-        if (!libId || !e.dataTransfer.types.includes("Files")) return;
-        e.preventDefault();
-        setDropping(true);
-      }}
-      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
-      onDrop={onDrop}
-    >
-      {dropping && (
-        <div className="pointer-events-none fixed inset-2 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-violet-500/70 bg-violet-500/10 text-sm font-medium text-violet-400">
-          Drop videos, pictures, sounds or a folder
-        </div>
-      )}
+    <div className="flex min-h-dvh flex-col" {...drop.props}>
+      {drop.overlay}
+      {drop.dialog}
       <AppBar tool="Media Library" trail={library?.name}>
-        {/* on the first run Upload is the empty page's own second way, and there is no Trash yet */}
         {library && !trash && (
           <>
-            {!open && !firstScreen && !settling && <TrashLink to="/library?trash=1" title="Trash" />}
+            {!open && !firstScreen && <TrashLink to="/library?trash=1" title="Trash" />}
             {!smart && <NewFolderButton onClick={() => void newFolder()} />}
-            {!firstScreen && !settling && (
-              <Button size="sm" onClick={chooseFiles}>
-                <Upload className="h-4 w-4" />
-                Upload
-              </Button>
-            )}
+            <Button size="sm" onClick={chooseFiles}>
+              <Upload className="h-4 w-4" />
+              Upload
+            </Button>
           </>
         )}
       </AppBar>
@@ -498,27 +447,12 @@ export default function LibraryPage() {
           drop={{ clips: asking.length, bytes: asking.reduce((n, f) => n + f.size, 0), ...audioOf(asking) }}
           title={`${askingHere ? "Add" : "Upload"} ${asking.length.toLocaleString()} clips?`}
           go={askingHere ? "Add" : "Upload"}
-          offer={offer}
+          offer={organize.offer}
           onClose={() => setAsking(null)}
           onUpload={async (ai) => {
             setAsking(null);
-            await answerOffer(ai); // before the files: each is filed as it comes in
+            await organize.answerOffer(ai); // before the files: each is filed as it comes in
             start(asking, askingHere);
-          }}
-        />
-      )}
-      {askingFolder && libId && (
-        <BigUploadDialog
-          libraryId={libId}
-          drop={dropOf(askingFolder.size)}
-          title={`Add ${askingFolder.size.files.toLocaleString()} clips from this folder?`}
-          go="Add folder"
-          offer={offer}
-          onClose={() => setAskingFolder(null)}
-          onUpload={async (ai) => {
-            setAskingFolder(null);
-            await answerOffer(ai);
-            await addFolder(askingFolder.folder);
           }}
         />
       )}
@@ -602,7 +536,7 @@ export default function LibraryPage() {
                   library={library}
                   watch={watch}
                   folders={collections.filter(holdsClips)}
-                  onChange={(l) => void organized(l).catch((e) => setError(message(e)))}
+                  onChange={(l) => void organize.organized(l).catch((e) => setError(message(e)))}
                   onError={setError}
                 />
               )}
@@ -634,10 +568,7 @@ export default function LibraryPage() {
               {sources.length > 0 && <LibraryFacetBar facets={libraryFacets("library")} value={facets} onChange={setFacets} />}
             </div>
 
-            {/* the owner's first-run question (the settings are theirs too), until it is answered */}
-            {firstScreen && watch && !library.settings.organize && (
-              <OrganizeChoice library={library} onChosen={organized} onError={setError} />
-            )}
+            {!open && !trash && organize.choice}
 
             <LibraryProgressBar libraryId={library.id} />
 
@@ -715,9 +646,8 @@ export default function LibraryPage() {
                   ))}
                 </FolderGrid>
               )
-            ) : (
-              libraries !== null &&
-              !firstScreen && (
+            ) : firstScreen ? null : (
+              libraries !== null && (
                 <p className="py-16 text-center text-sm text-zinc-500">
                   {narrowed
                     ? "No matches."
@@ -734,7 +664,7 @@ export default function LibraryPage() {
               )
             )}
 
-            {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} offer={offer} onOffer={answerOffer} />}
+            {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} offer={organize.offer} onOffer={organize.answerOffer} />}
 
             {next && (
               <Button variant="outline" className="self-center" onClick={loadMore}>
