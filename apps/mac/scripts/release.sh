@@ -10,6 +10,8 @@
 #   SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=… apps/mac/scripts/release.sh 0.1.0
 #   NOTES=notes.md        release notes (default: the commit subjects since the last release)
 #   CT_RELEASE_DIR=…      where the build happens (default apps/mac/build/release)
+#   CRITICAL=1            a fix people must not skip (data loss, a broken link to the server): installed copies show
+#                         a card asking for the restart at once, instead of the corner's Restart to update
 # Needs gh (signed in, with push access), Xcode's command line tools, pnpm, and the Sparkle EdDSA key in this
 # Mac's login Keychain (Sparkle's generate_keys). Lose that key and installed copies can't be updated again.
 set -euo pipefail
@@ -72,7 +74,7 @@ cat > "$work/appcast.xml" <<XML
       <link>https://github.com/$repo/releases/tag/$tag</link>
       <sparkle:version>$build</sparkle:version>
       <sparkle:shortVersionString>$version</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>$([ "${CRITICAL:-}" = 1 ] && printf '\n      <sparkle:criticalUpdate/>')
       <enclosure url="https://github.com/$repo/releases/download/$tag/$(basename "$dmg")" type="application/octet-stream" $sig />
     </item>
   </channel>

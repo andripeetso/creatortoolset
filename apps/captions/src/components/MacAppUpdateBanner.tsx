@@ -1,5 +1,6 @@
 import { ArrowUpCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { restartMac, useMacUpdate } from "@/components/NewVersionPill";
 import { hasThisMac, tell, type ThisMacState } from "@/components/settings/ThisMacSection";
 
 /**
@@ -24,6 +25,7 @@ export function olderThan(a: string | undefined, b: string): boolean {
 /** Inside a Mac app older than MIN_MAC_APP: one strip saying to update it. A browser never shows it. */
 export function MacAppUpdateBanner() {
   const [old, setOld] = useState(false);
+  const held = useMacUpdate();
   useEffect(() => {
     if (!hasThisMac() || MIN_MAC_APP === "0.0.0") return;
     const handle = (e: Event) => setOld(olderThan((e as CustomEvent<ThisMacState>).detail?.version, MIN_MAC_APP));
@@ -42,8 +44,18 @@ export function MacAppUpdateBanner() {
       </span>
       <div className="min-w-0 leading-tight">
         <span className="block truncate text-xs font-semibold">Update Creator Toolset to keep everything working</span>
-        <span className="hidden text-[10px] opacity-70 sm:block">Creator Toolset menu → Check for Updates…</span>
+        {!held && <span className="hidden text-[10px] opacity-70 sm:block">Creator Toolset menu → Check for Updates…</span>}
       </div>
+      {held && (
+        <button
+          type="button"
+          disabled={held.waiting}
+          onClick={restartMac}
+          className="ml-auto h-7 shrink-0 rounded-md bg-amber-500 px-2.5 text-xs font-medium text-amber-950 hover:bg-amber-400 disabled:opacity-60"
+        >
+          {held.waiting ? "Updates when done" : "Restart to update"}
+        </button>
+      )}
     </div>
   );
 }
