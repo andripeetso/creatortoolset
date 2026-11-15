@@ -56,7 +56,8 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   // Default folders makes the six folders (api/library/organize.ts)
   uploadFile: async (_: string, f: File) => {
     server.sent.push(`upload ${f.name}`);
-    return {};
+    server.uploaded.push(f.name);
+    return { assetId: "new" };
   },
   updateLibrary: async (_: string, patch: { settings: Record<string, unknown> }) => {
     server.patched.push(patch);
@@ -99,7 +100,6 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   getAsset: async (_: string, id: string) => ({ jobs: [], ...(server.items as Card[]).find((x) => x.id === id) }),
   checkUpload: async () => ({ maybe: false }),
-  uploadFile: async (_: string, f: File) => (server.uploaded.push(f.name), { assetId: "new" }),
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
 }));
 
