@@ -1417,11 +1417,6 @@ function Header({
           Zoom & pointer
         </button>
       )}
-      {manage && version.source && (
-        <Link to={version.source.href} title={`Made in ${version.source.label}`} className="truncate text-xs text-violet-300 hover:text-violet-200">
-          {version.source.label}
-        </Link>
-      )}
       {/* an AI Editor version has its own timeline (the editor's), so no file is added here */}
       {/* not beside the chats (chat mode): there the video and its comments are what the page is for */}
       {manage && version.status === "ready" && !version.removed && !version.edit && !version.draft && (
