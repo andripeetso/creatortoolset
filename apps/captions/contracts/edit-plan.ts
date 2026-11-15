@@ -75,7 +75,22 @@ export type PlanEffect =
   | { type: "zoom"; at?: number; dur?: number; from?: number; to?: number }
   | { type: "flash"; at?: number; dur?: number; color?: string }
   | { type: "shake"; at?: number; dur?: number; amount?: number }
-  | { type: "glitch" | "rgb" | "blur" | "invert" | "strobe"; at?: number; dur?: number; amount?: number };
+  | { type: "glitch" | "rgb" | "blur" | "invert" | "strobe"; at?: number; dur?: number; amount?: number }
+  /** the whole shot played backwards */
+  | { type: "reverse" }
+  /** a slice of `dur` from `at` played `amount` times in a row */
+  | { type: "stutter"; at?: number; dur?: number; amount?: number }
+  /** the picture at `at` held for `dur` */
+  | { type: "freeze"; at?: number; dur?: number }
+  /** a blur out from the middle, as in a fast push in */
+  | { type: "zoomblur"; at?: number; dur?: number; amount?: number };
+
+/**
+ * How a shot sits in the frame: fill crops it to the frame (the default); fit shows the whole picture on black; blur
+ * shows it whole over a blurred copy of itself; letterbox is a widescreen band; inset is a smaller picture over the
+ * shot before it.
+ */
+export type PlanFrame = "fill" | "fit" | "blur" | "letterbox" | "inset";
 
 export interface PlanShot {
   /** where it starts on the timeline */
@@ -90,6 +105,12 @@ export interface PlanShot {
   fx?: PlanEffect[];
   /** how it comes in from the shot before */
   enter?: "cut" | "flash" | "whip" | "dissolve";
+  /** how it sits in the frame (fill when left out) */
+  frame?: PlanFrame;
+  /** an inset's share of the frame's width, 0.3-0.9 */
+  scale?: number;
+  /** 1-2 more pictures stacked in a column with this one (2-3 in all), each from `inS` of its source */
+  split?: Array<{ source: string; inS: number }>;
   /** the shot's own sound: off, under the lead, or as it is */
   sound?: "off" | "under" | "full";
   /** what made the AI pick it, in a few words (shown in Review) */
