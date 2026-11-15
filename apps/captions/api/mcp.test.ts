@@ -522,6 +522,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // the user's own posts and rewrites); workshop_edit_piece takes what an AI wrote from that material
     // 16935 -> 17374: the tools say workspace (a brand) and project (a video, the API's session), not project for both
     // 17374 -> 17872: editor_create cuts any footage into the kind of edit asked for, with plan (shots, not speech) and song
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(17872);
+    // 17872 -> 17928: review_set_approval takes rejected (a cut turned down, not one to fix), said in its description
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(17928);
   });
 });
