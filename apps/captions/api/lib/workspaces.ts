@@ -4,7 +4,9 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env";
 import { INVITE_DAYS, type AiRoute, type Invite, type InviteInput, type Member, type Workspace, type WorkspaceRole } from "../../contracts/workspaces";
-import { SIGNIN_NAME, findUser, listUsers } from "../users";
+import { SIGNIN_NAME, findUser, listUsers, setOff } from "../users";
+import { pluginDefaultOff } from "./plugin";
+import type { PluginGateId, Tool } from "../../contracts/tools";
 
 /**
  * Teams: workspaces, members, invites and each member's API spend (contracts/workspaces.ts).
@@ -224,6 +226,8 @@ export function createInvite(w: Workspace, by: { username: string; role: Workspa
     expiresAt: now + INVITE_DAYS * DAY,
     tokenHash: sha256(token),
     ...(input.email ? { email: input.email } : {}),
+    off: pluginDefaultOff(), // what a new account starts with (users.ts createUser)
+    scripts: false,
   };
   store().invites.push(invite);
   persist();
@@ -261,14 +265,25 @@ export function inviteByToken(token: string): { invite: Invite; workspace: Works
 
 const workspaceById = (id: string): Workspace | null => store().workspaces.find((w) => w.id === id) ?? null;
 
-/** Use an invite: the account joins with the invite's AI route. The link works once. */
+/** What an invited person gets once they join (the owner sets it on the pending invite; `off` is checked by the route). */
+export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; scripts?: boolean }): void {
+  const i = store().invites.find((x) => x.id === id && x.workspaceId === w.id);
+  if (!i) throw new Error("No such invite");
+  if (patch.off) i.off = patch.off;
+  if (patch.scripts !== undefined) i.scripts = patch.scripts;
+  persist();
+}
+
+/** Use an invite: the account joins with the invite's AI route, apps and scripts. The link works once. */
 export function acceptInvite(token: string, username: string): Workspace {
   const found = inviteByToken(token);
   if (!found) throw new Error("This invite link doesn't work any more");
   const { invite, workspace } = found;
   if (invite.expiresAt <= Date.now()) throw new Error("This invite link has expired: ask for a new one");
   if (!memberIn(workspace, username)) {
-    workspace.members.push({ username, role: "member", ai: invite.ai, budgetUsd: invite.budgetUsd, joinedAt: Date.now() });
+    workspace.members.push({ username, role: "member", ai: invite.ai, budgetUsd: invite.budgetUsd, joinedAt: Date.now(), ...(invite.scripts ? { scripts: true } : {}) });
+    const acct = findUser(username);
+    if (acct && invite.off && acct.role !== "admin") setOff(acct, invite.off);
   }
   store().invites = store().invites.filter((i) => i.id !== invite.id);
   persist();

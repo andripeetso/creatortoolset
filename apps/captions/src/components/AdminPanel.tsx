@@ -392,7 +392,7 @@ function ResetPassword({ user, onClose, call }: { user: AdminUser | null; onClos
 }
 
 /** One checkbox cell in the Access grid; the whole cell is the click target. */
-function Tick({ on, disabled, title, onClick }: { on: boolean; disabled?: boolean; title: string; onClick: () => void }) {
+export function Tick({ on, disabled, title, onClick }: { on: boolean; disabled?: boolean; title: string; onClick: () => void }) {
   return (
     <td>
       <button onClick={onClick} disabled={disabled} role="checkbox" aria-checked={on} aria-label={title} title={title} className="group flex w-full justify-center py-3 disabled:cursor-default">

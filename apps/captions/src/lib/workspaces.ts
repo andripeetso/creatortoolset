@@ -2,7 +2,7 @@
  * Client for the team (api/workspace.ts) and invite links (api/auth.ts /invite): Settings → Team and the
  * /join/<token> page. Hosted servers only. Shapes: contracts/workspaces.ts.
  */
-import type { Invite, InviteInfo, InviteInput, MemberPatch, WorkspaceView } from "@contracts/workspaces";
+import type { Invite, InviteInfo, InviteInput, InvitePatch, MemberPatch, WorkspaceView } from "@contracts/workspaces";
 
 async function json<T>(res: Response): Promise<T> {
   const j = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -18,6 +18,7 @@ export const renameWorkspace = (name: string) => send("/api/workspace", "PATCH",
 export const setSignInWith = (signInWith: ("google" | "apple" | "github")[]) =>
   send("/api/workspace", "PATCH", { signInWith }).then((r) => json<WorkspaceView>(r));
 export const createInvite = (input: InviteInput) => send("/api/workspace/invites", "POST", input).then((r) => json<{ invite: Invite; token: string }>(r));
+export const updateInvite = (id: string, patch: InvitePatch) => send(`/api/workspace/invites/${id}`, "PATCH", patch).then((r) => json<WorkspaceView>(r));
 export const revokeInvite = (id: string) => send(`/api/workspace/invites/${id}`, "DELETE").then((r) => json<{ ok: true }>(r));
 export const updateMember = (username: string, patch: MemberPatch) =>
   send(`/api/workspace/members/${encodeURIComponent(username)}`, "PATCH", patch).then((r) => json<WorkspaceView>(r));

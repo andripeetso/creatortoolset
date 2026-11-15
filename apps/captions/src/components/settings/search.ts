@@ -99,6 +99,7 @@ const STATIC_ROWS = [
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
   { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team"] },
+  { section: "team", id: "team-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow", "scripts", "invite"] },
   { section: "team", id: "team-invite", title: "Invite link", keywords: ["invite", "link", "join", "team", "revoke"] },
   { section: "team", id: "team-sign-in", title: "Sign-in", keywords: ["google", "apple", "password", "members", "team"] },
   // Admin (hosted)
