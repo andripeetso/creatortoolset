@@ -193,6 +193,32 @@ describe("Where are your videos?", () => {
     expect(posted.copyTo).toBe("~/Movies/Creator Toolset/Footage");
   });
 
+  it("on the AI Editor's page (no offer passed) a big folder still offers the AI organizing the library, saved on it", async () => {
+    watch.copyTo = "~/Movies/Creator Toolset/Footage";
+    const fetchWatch = globalThis.fetch;
+    const order: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" || init?.method === "POST") order.push(`${init.method} ${url} ${init.body}`);
+      if (url === "/api/library" && !init?.method)
+        return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: {} }] }), { status: 200 });
+      if (init?.method === "PATCH") return new Response(JSON.stringify({ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "ai" } }), { status: 200 });
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 40, bytes: 4e9, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
+      if (url.includes("/estimate")) return new Response(JSON.stringify({ clips: 40, minutes: 10, seconds: 600, steps: [] }), { status: 200 });
+      return fetchWatch(url, init);
+    });
+    pick.mockResolvedValue("/Users/tiny/Movies/Trip");
+    await render();
+    await click("Choose a folder");
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const ai = dialog.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
+    expect(ai).not.toBeNull();
+    act(() => ai.click());
+    act(() => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add folder")!.click());
+    await flush();
+    expect(order[0]).toContain('PATCH /api/library/lib_1 {"settings":{"organize":"ai","organizeOffered":true}}');
+    expect(order[1]).toContain("POST /api/library/watch/folder");
+  });
+
   it("a small folder asks only where its files are kept: no time, no organize offer", async () => {
     watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;

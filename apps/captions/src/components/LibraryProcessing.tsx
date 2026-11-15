@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
 import { DEFAULT_FOLDERS, NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibrarySummary, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
@@ -420,6 +420,8 @@ export interface OrganizeOffer {
  */
 export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   check: (path: string, add: (copyTo?: string) => unknown, opts?: { music?: boolean; libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer }) => Promise<void>;
+  /** runs `then` once no folder dialog is open (at once when none is) */
+  after: (then: () => void) => void;
   dialog: ReactNode;
 } {
   type Asking = { libraryId: string; path: string; files: number; drop: Drop; big: boolean; to?: string; free?: number; add: (copyTo?: string) => unknown; offer?: OrganizeOffer };
@@ -427,9 +429,14 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   const [queue, setQueue] = useState<Asking[]>([]);
   const asking = queue[0];
   const [copyTo, setCopyTo] = useState<string | undefined>();
+  // the dialogs asked and not yet answered, counted at once (the queue's state comes a render later), and what waits on them
+  const open = useRef(0);
+  const waiting = useRef<(() => void)[]>([]);
+  const after = (then: () => void) => (open.current ? waiting.current.push(then) : then());
   const next = () => {
     setCopyTo(undefined);
     setQueue((q) => q.slice(1));
+    if (open.current > 0 && --open.current === 0) waiting.current.splice(0).forEach((f) => f());
   };
   // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
   const check = async (path: string, add: (copyTo?: string) => unknown, opts: { music?: boolean; libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer } = {}) => {
@@ -445,6 +452,7 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
       // a big folder only, and a music folder is music, not something to organize
       const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (ai) => void (await updateLibrary(library.id, offerAnswer(ai)).then(onOrganized, () => {})) } : undefined;
       const organize = opts.organize ?? own;
+      open.current++;
       setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add, offer: big && !opts.music && organize?.offer ? organize : undefined }]);
     } else await add();
   };
@@ -468,5 +476,5 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
       {asking.to && <KeepChoice libraryId={asking.libraryId} folder={asking.path} bytes={asking.drop.bytes} to={asking.to} free={asking.free} onChange={setCopyTo} />}
     </BigUploadDialog>
   );
-  return { check, dialog };
+  return { check, after, dialog };
 }
