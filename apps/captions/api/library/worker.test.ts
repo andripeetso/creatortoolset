@@ -235,6 +235,25 @@ describe("strips of frames", () => {
     }
   });
 
+  it("a photo gets no proxy, though its probe reads as a video the browser can't play", async () => {
+    probed.value = { duration: 0.04, width: 3000, height: 4000, fps: 25, rotation: 0, format: "image2", vcodec: "mjpeg", pixFmt: "yuvj420p", acodec: "" };
+    try {
+      for (const [id, kind] of [["xv", "video"], ["xi", "image"]] as const) {
+        add(id, kind, { state: "processing" });
+        const f = path.join(dir, `${id}.bin`);
+        writeFileSync(f, id);
+        await blobs.put(`k/${id}`, f);
+        enqueueJob(d, "lib_a", id, "probe", "local");
+        expect(await tick(Date.now(), ["probe"])).toBe(true);
+      }
+      const kinds = (v: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? ORDER BY kind").all(v) as { kind: string }[]).map((r) => r.kind);
+      expect(kinds("xv")).toContain("proxy");
+      expect(kinds("xi")).not.toContain("proxy");
+    } finally {
+      probed.value = null;
+    }
+  });
+
   it("an older video gets one once, newest first, outside the queue; photos, music, trash and failed clips are left alone", async () => {
     const { backfillSprite } = await import("./worker");
     // only these have a duplicate check (the jobs are cleared before each test): the other tests' clips are not candidates

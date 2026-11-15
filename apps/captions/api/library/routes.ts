@@ -98,7 +98,7 @@ function unproxied(libraryId: string, versionId?: string): { id: string; created
   const rows = db()
     .prepare(
       `SELECT v.id, v.created_by, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing'
+       WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing' AND a.kind != 'image'
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy')
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed'))`,
     )

@@ -309,7 +309,8 @@ async function run(job: JobRow): Promise<void> {
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
-    if (needsProxy(p) && librarySetting(v.library_id, "proxy")) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    // a photo is probed as a one-frame video but shows as itself: no proxy
+    if (v.kind !== "image" && needsProxy(p) && librarySetting(v.library_id, "proxy")) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // a photo is probed as a one-frame video: only a video asset gets a strip
