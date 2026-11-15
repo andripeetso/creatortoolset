@@ -357,7 +357,7 @@ final class RelayRunner {
 
     /// The kinds this Mac takes, under `lock`: a cut-out and a split on any Mac, cards on one that can shut a card's
     /// script in, a transcript with a speech model when it has the link to them.
-    private var takes: [String] { (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind] + (speech == nil ? [] : [transcribeKind]) }
+    private var takes: [String] { (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind] + (speech == nil ? [] : [transcribeKind]) }
 
     private func takeAnnounce() -> Bool {
         lock.lock()
@@ -457,12 +457,14 @@ final class RelayRunner {
                 (end, more) = TranscribeJob(api: api, step: step, speech: speech).run()
             } else if step.kind == faceBlurAutoKind {
                 (end, more) = FaceBlurAutoJob(api: api, step: step, folder: work.appendingPathComponent("faceblur/\(step.id)")).run()
+            } else if step.kind == folderListKind {
+                (end, more) = FolderListJob(api: api, step: step).run()
             } else {
                 if !shown { shown = true; publish { $0.drawing = true } }
                 (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                                       stopped: { [weak self] in self?.isStopped ?? true }).run()
             }
-            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == splitKind ? "split" : step.kind == transcribeKind ? "transcript" : step.kind == faceBlurAutoKind ? "face blur" : "cards"): step \(step.id) failed: \(why)") }
+            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == splitKind ? "split" : step.kind == transcribeKind ? "transcript" : step.kind == faceBlurAutoKind ? "face blur" : step.kind == folderListKind ? "folder list" : "cards"): step \(step.id) failed: \(why)") }
             if case .cannot = end { cannot = true }
             // without that word from the site the next step is seen on a later poll (the one in flight listed no kind)
             next = more && !cannot && !isStopped ? claimStep() : nil

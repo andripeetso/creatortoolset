@@ -1,10 +1,11 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
-import { mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
+import { jobTurn, mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
 import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
@@ -22,7 +23,10 @@ import { needsAttention, type Attention } from "./lib/attention";
 import { currentProject, memoryBlock } from "./lib/memory";
 import { inProjectOf, projectOf } from "./lib/project-of";
 import { readFile } from "node:fs/promises";
-import { deviceOf } from "./lib/devices";
+import { deviceOf, isThisMachine } from "./lib/devices";
+import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac } from "./lib/folder-list";
+import { watchAllowed } from "./library/watch";
+import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { parseStorageFile, storageFilePath } from "./lib/storage";
 import { LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
@@ -92,7 +96,9 @@ You also run on the user's own Mac, in a folder of your own there (the current f
 
 A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch: download it into your folder yourself with yt-dlp (\`yt-dlp -x --audio-format mp3 <link>\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it) and cut or convert it with ffmpeg. Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.
 
-Where this workspace keeps its files on the user's computers (Settings → Storage) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Storage (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.`;
+Where this workspace keeps its files on the user's computers (Settings → Storage) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a download, a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Storage (navigate /settings/folders), where they set where its footage, music and finished videos are, and use ask_folder for the footage this once.
+
+Before saying a file is not there, or asking what it is called, look with folder_list (match: words from what they said, like song): it sees every subfolder.`;
 
 /**
  * The dock's line on this workspace's folders (Settings → Storage, devices-storage.ts), a folder a line with the
@@ -1526,6 +1532,17 @@ export function saidInChat(username: string, turn: string): Array<{ id: string; 
   return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
 }
 /**
+ * What the person gave the chat a reply is written in, for folder_list (POST /folder-list): the folders they
+ * dropped or chose there (and the folders of videos dropped by path), and the words they typed. null as saidInChat.
+ */
+function chatGave(username: string, turn: string): { folders: string[]; said: string[] } | null {
+  const said = saidInChat(username, turn);
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn && m.status === "thinking"));
+  if (!said || !list) return null;
+  const folders = list.flatMap((m) => (m.role === "user" ? [...(m.folders ?? []), ...(m.localFiles ?? []).map((f) => path.dirname(f))] : []));
+  return { folders, said: said.map((m) => m.text) };
+}
+/**
  * The long texts the person pasted into the box with the message a reply answers (each went beside the message as a
  * file, never in its text), while that reply is being written. A style's own words may be taken from one, word for
  * word (api/editor/own-words.ts), and nothing else may: a quote to remember is checked against saidInChat alone. The
@@ -1636,6 +1653,70 @@ assistantApp.use("*", async (c, next) => {
 assistantApp.get("/", (c) => {
   const u = c.get("user");
   return c.json(view(u.username, u.role === "admin"));
+});
+
+/** `p` is `parent` or inside it (both "/"-separated absolute paths). */
+const within = (p: string, parent: string) => p === parent || p.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
+/** `p` written in `text` as a whole path: followed by nothing, a space or a stop, never by more of a name ("/A" in "/A/B" or "/AB" is not). */
+const typedIn = (text: string, p: string) => {
+  for (let i = text.indexOf(p); i >= 0; i = text.indexOf(p, i + 1)) if (/^\/?([\s.,;:!?)"'`\]]|$)/.test(text.slice(i + p.length))) return true;
+  return false;
+};
+
+/**
+ * POST /folder-list { path, depth?, match? } → FolderListing: what is inside a folder on one of this person's computers,
+ * subfolders too (lib/folder-list.ts), for the assistant's folder_list. Only a folder the workspace keeps in Settings →
+ * Storage, one the person dropped, chose or typed in the chat the reply is written in, or one inside those: with none
+ * of that the AI does not go looking through drives (MAC_NOTE). The computer that holds it walks it: this one when the
+ * server runs there and may read its folders (watchAllowed), else a Mac of theirs (the Storage folder's own, or for a
+ * folder from the chat, any of theirs that is on).
+ */
+assistantApp.post("/folder-list", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const raw = typeof b?.path === "string" ? b.path.trim().slice(0, 1000) : "";
+  const depth = Math.min(FOLDER_LIST.depth, Math.max(1, Number.isInteger(b?.depth) ? (b!.depth as number) : FOLDER_LIST.depth));
+  const match = typeof b?.match === "string" ? b.match.slice(0, 200) : "";
+  const here = watchAllowed(u.username);
+  // "~/…" is the home folder of the computer that holds it: this one's when the server may read its folders, else the Mac's own
+  const full = (p: string) => (here && (p === "~" || p.startsWith("~/")) ? path.join(os.homedir(), p.slice(1)) : p).normalize("NFC").replace(/(.)\/+$/, "$1");
+  const asked = full(raw);
+  if (!/^(\/|~\/)/.test(asked) || asked.split("/").includes("..")) return c.json({ error: "Give the folder's full path on the computer it is on." }, 400);
+
+  const turn = jobTurn(c.req.header("authorization"));
+  const ws = turn ? workspaceOfTurn(u.username, turn) : undefined;
+  const inWs = ws ? await inProjectOf(u, ws) : await inCurrentWorkspace(u);
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, u.username), "utf-8").catch(() => "{}"));
+  const kept = st.folders.filter((f) => !inWs || inWs(f.workspace));
+  const gave = turn ? chatGave(u.username, turn) : null;
+  const own = kept.find((f) => within(asked, full(f.origin.path)));
+  // a path the person typed: it, or a folder it is in, written whole in their words
+  const named = asked.split("/").some((_, i, parts) => i > 1 && !!gave?.said.some((t) => typedIn(t.normalize("NFC"), parts.slice(0, i + 1).join("/"))));
+  if (!own && !gave?.folders.some((f) => within(asked, full(f))) && !named) {
+    return c.json(
+      {
+        error: kept.length
+          ? `That folder is not one of this workspace's (${kept.map((f) => f.origin.path).join(", ")}) and the user did not give it in this chat: ask them for it (ask_folder).`
+          : "This workspace has no folders in Settings → Storage yet, so drives are not searched: offer to open Settings → Storage (/settings/folders) to set where its footage and music are, or ask for the folder (ask_folder).",
+      },
+      400,
+    );
+  }
+  // a workspace's own Storage folder may be a drive's own top folder; nothing else may
+  const drive = !!own && full(own.origin.path) === asked;
+  const host = own?.origin.host;
+  try {
+    if (here && (!host || host === THIS_COMPUTER || isThisMachine(host))) {
+      const f = await folderHere(asked, drive);
+      if ("error" in f) return c.json({ error: f.error }, 400);
+      const walk = await walkFolder(f.real, depth);
+      return c.json(listing(f.real, walk, match, knownDurations(f.real, walk)));
+    }
+    if (host === THIS_COMPUTER) return c.json({ error: "That folder is on the computer this server runs on, which may not read it for this account." }, 400);
+    return c.json(listing(asked, await walkOnMac(u.username, asked, depth, drive, host), match));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
 });
 
 /** A message in the open chat (POST /turn), or with `chatId` in that chat, which stays where it is (POST /chats/:id/turn). */

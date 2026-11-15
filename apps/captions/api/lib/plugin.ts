@@ -9,7 +9,7 @@ import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { UploadRelayTus } from "../../contracts/storage";
-import { CARDS_DRAW_KIND, CUTOUT_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
+import { CARDS_DRAW_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
 import type { SessionUser } from "../users";
 import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, SLOT_TOOL, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
 
@@ -330,8 +330,8 @@ export interface UploadRelay {
 export interface DeviceJobSlot {
   // lowercase words and dashes; never a kind the app has (cutout, transcribe, an editor step's)
   kind: string;
-  // a job of this account waits for one of its devices
-  waits: (owner: string) => boolean;
+  // a job of this account waits for one of its devices (`device`: the one asking)
+  waits: (owner: string, device: string) => boolean;
   // the oldest waiting job of the device's account, now the device's; null when none
   claim: (device: { id: string; owner: string }) => DeviceJob | null;
   // the job's input file, or null when the device holds no such job
@@ -349,7 +349,7 @@ export const pluginDeviceJobs = (): DeviceJobSlot[] => loaded.flatMap((p) => p.d
 
 /** Refuses a device job kind that is not lowercase words, is one of the app's own, or that two plug-ins both declare. */
 function checkDeviceJobs(plugins: ServerPlugin[]): void {
-  const seen = new Set<string>([CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND]);
+  const seen = new Set<string>([CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND, FOLDER_LIST_KIND]);
   for (const plugin of plugins) {
     for (const j of plugin.deviceJobs ?? []) {
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(j.kind)) throw new Error(`plug-in ${plugin.id}: device job "${j.kind}" is not lowercase words and dashes`);

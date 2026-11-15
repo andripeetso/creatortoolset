@@ -36,7 +36,7 @@ const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json")
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
 const ADDED = ["upload_file", "workshop_project_update", "channel_posts", "editor_cut", "editor_style_save", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
 /** The tools only the app's own assistant gets since: an outside AI key is never given them, so its list does not move. */
-const DOCK_ADDED = ["chats_list", "chat_read"];
+const DOCK_ADDED = ["folder_list", "chats_list", "chat_read"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
 const OPENED = ["use_file"];
 const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
@@ -70,6 +70,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // and these for the app's own assistant alone
     expect(dock.filter((t) => DOCK_ADDED.includes(t.name)).map((t) => t.name)).toEqual(DOCK_ADDED);
     expect(outside.some((t) => DOCK_ADDED.includes(t.name))).toBe(false);
+    // folder_list looks through folders on the person's computer: an outside key can't call it either
+    const called = await (await app.request("/api/mcp", json({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "folder_list", arguments: { path: "/tmp" } } }, { authorization: fullKey }))).text();
+    expect(called).toContain("folder_list is for the assistant only.");
     // what every turn of every person now carries: say so in the commit when a number moves
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
@@ -95,7 +98,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // description, project, name, instructions, the sixteen colours and language); its draft_from adds 158 (instructions
     // drafted from what the user gave, as the project form's Write it for me does); its theirs adds 82 (instructions that
     // are the user's own words, where the account's writer would otherwise draft them)
-    expect(bytes(dock) - bytes(main(dock))).toBe(6773);
+    // folder_list adds 824, in the dock only (a folder on the person's computer looked through, subfolders too, before
+    // saying a file is not there; its 635-byte description, path, depth and match)
+    expect(bytes(dock) - bytes(main(dock))).toBe(7597);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
     expect(bytes(outside) - bytes(mainOutside(outside))).toBe(7533);
   });
