@@ -64,13 +64,13 @@ describe("the sidebar blocks", () => {
 
   it("a plug-in's own section with no group heads a Plug-ins block, last", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), [{ settings: [{ id: "tiny", title: "Tiny", body: null } as never] }]));
-    expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Server", "Plug-ins"]);
+    expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Server", "Tool settings"]);
     expect(blocks[3].items.map((s) => s.id)).toEqual(["tiny"]);
   });
 
   it("a plug-in section that names a tool is on that tool's page: no sidebar block, and its address goes there", () => {
     const plugins = [{ settings: [{ id: "tiny-picks", title: "Tiny picks", body: null, tool: "workshop" } as never] }];
-    expect(navBlocks(navListFor(at(true, true, true), plugins)).map((b) => b.heading)).not.toContain("Plug-ins");
+    expect(navBlocks(navListFor(at(true, true, true), plugins)).map((b) => b.heading)).not.toContain("Tool settings");
     expect(resolveSection("tiny-picks", at(true, true, true), plugins)).toEqual({ kind: "redirect", to: "/settings/tools/workshop" });
   });
 });

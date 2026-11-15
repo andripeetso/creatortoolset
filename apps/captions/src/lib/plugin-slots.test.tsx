@@ -73,8 +73,8 @@ describe("Settings sections", () => {
   it("puts a plug-in section with no group in the Plug-ins block, after the other blocks", () => {
     const sections = settingsWithPlugins(builtin, [tiny]);
     expect(sections.map((s) => s.id)).toEqual(["general", "providers", "keys", "tiny"]);
-    expect(sections.at(-1)?.group).toBe("Plug-ins");
-    const steps = [...builtin, { id: "editor", title: "AI Editor", icon: Hand, group: "Plug-ins" }];
+    expect(sections.at(-1)?.group).toBe("Tool settings");
+    const steps = [...builtin, { id: "editor", title: "AI Editor", icon: Hand, group: "Tool settings" }];
     expect(settingsWithPlugins(steps, [tiny]).map((s) => s.id)).toEqual(["general", "providers", "keys", "editor", "tiny"]);
   });
 

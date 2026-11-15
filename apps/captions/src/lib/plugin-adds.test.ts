@@ -35,13 +35,13 @@ describe("webPluginAdds", () => {
 
   it("leaves out admin tabs off a hosted server, gated tiles while the gate is off, and admin-only items for members", () => {
     const local = webPluginAdds(tiny, { me: admin, hosted: false }).map((a) => a.text);
-    expect(local).not.toContain("Settings → Plug-ins: Tiny admin");
-    expect(webPluginAdds(tiny, { me: admin, hosted: true })).toContainEqual({ text: "Settings → Plug-ins: Tiny admin", to: "/settings/tiny-admin" });
+    expect(local).not.toContain("Settings → Tool settings: Tiny admin");
+    expect(webPluginAdds(tiny, { me: admin, hosted: true })).toContainEqual({ text: "Settings → Tool settings: Tiny admin", to: "/settings/tiny-admin" });
     expect(webPluginAdds(tiny, { me: member(["tiny-gate"]), hosted: true }).map((a) => a.text)).not.toContain("Home: Tiny");
     const asMember = webPluginAdds(tiny, { me: member(), hosted: true }).map((a) => a.text);
     expect(asMember).toContain("Settings → AI: Tiny section");
     expect(asMember).not.toContain("Settings → Storage: Tiny drive");
-    expect(asMember).not.toContain("Settings → Plug-ins: Tiny admin");
+    expect(asMember).not.toContain("Settings → Tool settings: Tiny admin");
   });
 
   it("gives every Settings link a page this install and person can open", () => {
