@@ -124,13 +124,13 @@ export default function ScreenProjectPage() {
 
   const actions: EditorAction[] = [
     {
-      label: "Save video…",
-      title: "Makes the video with this look and saves it",
+      label: "Export",
+      primary: true,
+      title: "Makes the video with this look and saves it where you choose",
       run: async ({ blob, name }) => download(blob, `${name}.mp4`),
     },
     {
       label: "Upload to Review",
-      primary: true,
       title: "Makes the video with this look and uploads it to Review as a new video",
       run: async ({ blob, name }, progress) => {
         const asset = await uploadReviewFile(new File([blob], `${name}.mp4`, { type: "video/mp4" }), (pct) => progress("Uploading", pct));

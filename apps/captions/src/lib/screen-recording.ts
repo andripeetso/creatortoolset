@@ -20,7 +20,45 @@ export type ScreenEvents = {
   cursors?: [number, number, number, number][];
   /** [t, i]: from t on the pointer looked like cursors[i]. */
   cursorAt?: [number, number][];
+  /**
+   * What a window's recording has dead, in its pixels: macOS leaves the window's rounded corners black (`radius`), and
+   * a line at an edge where the size was rounded (`inset`: left, top, right, bottom). The editor reads it from a frame
+   * (deadEdges); drawFrame leaves it out, so the background shows there instead of black.
+   */
+  dead?: { inset: [number, number, number, number]; radius: number };
 };
+
+/**
+ * A window's dead corners and edge lines, read from one frame: `at(x, y)` is a pixel's brightness, 0–255. Null where
+ * all four corners are not black alike, a little way in (a display or an area recorded: nothing is dead there).
+ */
+export function deadEdges(at: (x: number, y: number) => number, w: number, h: number): ScreenEvents["dead"] | null {
+  const dark = (x: number, y: number) => at(x, y) <= 16;
+  // a line at an edge: up to 3 black pixels deep halfway along it (deeper is the picture's own black)
+  const line = (x: number, y: number, dx: number, dy: number) => {
+    let n = 0;
+    while (n < 4 && dark(x + dx * n, y + dy * n)) n++;
+    return n < 4 ? n : 0;
+  };
+  const mx = Math.floor(w / 2);
+  const my = Math.floor(h / 2);
+  const inset: [number, number, number, number] = [line(0, my, 1, 0), line(mx, 0, 0, 1), line(w - 1, my, -1, 0), line(mx, h - 1, 0, -1)];
+  const [l, t, r, b] = inset;
+  // how far each corner's black goes in along the diagonal
+  const most = Math.ceil(Math.min(w, h) * 0.02);
+  const depth = (x: number, y: number, dx: number, dy: number) => {
+    let d = 0;
+    while (d < most && dark(x + dx * d, y + dy * d)) d++;
+    return d;
+  };
+  const corners = [depth(l, t, 1, 1), depth(w - 1 - r, t, -1, 1), depth(l, h - 1 - b, 1, -1), depth(w - 1 - r, h - 1 - b, -1, -1)];
+  const lo = Math.min(...corners);
+  const hi = Math.max(...corners);
+  // ponytail: a display recorded with a pure black corner in all four could pass; the cap and the match make it rare
+  if (lo < 2 || hi >= most || hi - lo > 2) return null;
+  // a circle's corner reaches 1 - 1/√2 of its radius in along the diagonal; a pixel more covers its soft edge
+  return { inset, radius: Math.ceil(hi / (1 - Math.SQRT1_2)) + 1 };
+}
 
 /** The real pointer's look for drawFrame: the recording's cursors (`events.cursors`) as images, in their order; null while one loads. */
 export type CursorImages = (CanvasImageSource | null)[];
@@ -1086,7 +1124,7 @@ export function drawFrame(
     /** The part `src` of the recording's frame already drawn `w`×`h` at the top left of an image (the preview's graphics-card reader); null = draw `source`. */
     picture?: (src: Rect, w: number, h: number) => CanvasImageSource | null;
     /** The recording's own pointer: where buttons came up, its pixels per point, its cursors and their images. */
-    pointer?: { events: Pick<ScreenEvents, "releases" | "scale" | "cursors" | "cursorAt">; images?: CursorImages };
+    pointer?: { events: Pick<ScreenEvents, "releases" | "scale" | "cursors" | "cursorAt" | "dead">; images?: CursorImages };
   } = {},
 ) {
   const { width: outW, height: outH } = ctx.canvas;
@@ -1117,12 +1155,24 @@ export function drawFrame(
   const { box, src, window, corners } = layout(look, path, t, srcW, srcH, outW, outH, cam, clicks);
   const radius = look.radius * short * corners;
   const shadow = shadowOf(look);
+  // source pixels → output pixels
+  const k = box.w / src.w;
+  // a window's recording: its black corners and edge lines are left out, wherever they are in the view
+  const dead = opts.pointer?.events.dead;
+  // the shadow's shape is filled black under the window: as round as the dead corners where one is in view, or it shows there
+  const cornerSeen = (src.x <= 1 || src.x + src.w >= srcW - 1) && (src.y <= 1 || src.y + src.h >= srcH - 1);
+  const shadowRadius = Math.max(radius, dead && cornerSeen ? dead.radius * k : 0);
   // a window that covers the frame has its shadow outside it
   const covers = window.x <= 0 && window.y <= 0 && window.x + window.w >= outW && window.y + window.h >= outH;
-  if (shadow > 0 && look.padding > 0 && !covers) drawShadow(ctx, window, radius, short * 0.04, short * 0.012, shadow);
+  if (shadow > 0 && look.padding > 0 && !covers) drawShadow(ctx, window, shadowRadius, short * 0.04, short * 0.012, shadow);
   ctx.save();
   roundRect(ctx, window, radius);
   ctx.clip();
+  if (dead) {
+    const [l, t, r, b] = dead.inset;
+    roundRect(ctx, { x: box.x + (l - src.x) * k, y: box.y + (t - src.y) * k, w: (srcW - l - r) * k, h: (srcH - t - b) * k }, dead.radius * k);
+    ctx.clip();
+  }
   ctx.imageSmoothingQuality = opts.quality ?? "high";
   const pw = Math.max(1, Math.round(box.w));
   const ph = Math.max(1, Math.round(box.h));
@@ -1130,8 +1180,6 @@ export function drawFrame(
   if (ready) ctx.drawImage(ready, 0, 0, pw, ph, box.x, box.y, box.w, box.h);
   else ctx.drawImage(source, src.x, src.y, src.w, src.h, box.x, box.y, box.w, box.h);
 
-  // source pixels → output pixels
-  const k = box.w / src.w;
   const toOut = (x: number, y: number) => ({ x: box.x + (x * srcW - src.x) * k, y: box.y + (y * srcH - src.y) * k });
 
   if (look.clickRings) {

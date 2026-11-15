@@ -30,14 +30,29 @@ void main() {
   gl_Position = vec4(corner.x, -corner.y, 0.0, 1.0);
 }`;
 
-// a small negative bias keeps text crisp when the frame is shown smaller than it was recorded
+// Shown smaller than recorded, each pixel is the average of the frame's pixels it covers (an area filter, what a careful
+// scaler does), up to 8×8 samples. Mipmaps alone blend in a level half as sharp, which blurred the text of a Retina
+// recording exported at 1080p; they are used only past 8 frame pixels to one, where 8×8 samples would skip some.
 const FRAGMENT = `#version 300 es
 precision highp float;
 in vec2 at;
 uniform sampler2D frame;
+uniform vec2 texel; // one frame pixel
+uniform vec2 foot;  // what one output pixel covers
 out vec4 color;
 void main() {
-  color = vec4(texture(frame, at, -0.5).rgb, 1.0);
+  vec2 per = foot / texel;
+  float lod = max(0.0, log2(max(per.x, per.y) / 8.0));
+  vec2 n = clamp(ceil(per), 1.0, 8.0);
+  vec3 sum = vec3(0.0);
+  for (int j = 0; j < 8; j++) {
+    if (float(j) >= n.y) break;
+    for (int i = 0; i < 8; i++) {
+      if (float(i) >= n.x) break;
+      sum += textureLod(frame, at + ((vec2(float(i), float(j)) + 0.5) / n - 0.5) * foot, lod).rgb;
+    }
+  }
+  color = vec4(sum / (n.x * n.y), 1.0);
 }`;
 
 /** A reader, or null where WebGL 2 is not to be had. */
@@ -72,6 +87,8 @@ export function frameReader(): FrameReader | null {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   const part = gl.getUniformLocation(program, "part");
+  const texel = gl.getUniformLocation(program, "texel");
+  const foot = gl.getUniformLocation(program, "foot");
 
   let gone = false;
   let taken = false;
@@ -102,6 +119,8 @@ export function frameReader(): FrameReader | null {
       }
       gl.viewport(0, canvas.height - h, w, h);
       gl.uniform4f(part, src.x / frameW, src.y / frameH, src.w / frameW, src.h / frameH);
+      gl.uniform2f(texel, 1 / frameW, 1 / frameH);
+      gl.uniform2f(foot, src.w / w / frameW, src.h / h / frameH);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       return canvas;
     },

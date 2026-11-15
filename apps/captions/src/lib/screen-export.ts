@@ -16,6 +16,15 @@ import { frameReader } from "./frame-reader";
  * `alpha` (a look with no background) makes the file the Mac app turns into a see-through video instead: each frame
  * twice in one picture, its colours over black and its matte (`alphaPacking`). It is not a video to watch.
  */
+/**
+ * The video's bit rate (variable: a screen that stands still uses less), for a frame of this size: about 15 Mbit/s at
+ * 1080p, 60 at 4K. Small text at 60 frames a second needs it; at the 5 bits a pixel it had, a 1080p export came out
+ * at 6 Mbit/s and its text smeared. Export's dialog guesses the file size with it.
+ */
+export function exportBitrate(width: number, height: number): number {
+  return Math.max(12_000_000, width * height * 8);
+}
+
 export async function renderScreenVideo(opts: {
   url: string;
   cameraUrl?: string;
@@ -96,7 +105,7 @@ export async function renderScreenVideo(opts: {
         codec: "avc",
         // the packed picture is read once more by the app and thrown away: more bits, so its matte comes through clean
         quality: new Quality({
-          bitrate: packing ? packing.width * packing.height * 8 : Math.max(8_000_000, width * height * 5),
+          bitrate: packing ? packing.width * packing.height * 8 : exportBitrate(width, height),
           bitrateMode: "variable",
         }),
         frameRate: 60,

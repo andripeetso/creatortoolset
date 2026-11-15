@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cursorAt, drags, cameraCut, cameraPlace, splitLook, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { cursorAt, deadEdges, drags, cameraCut, cameraPlace, splitLook, faceFollower, zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, smoothPointer, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -464,6 +464,41 @@ describe("screen recording", () => {
     // the name says which, for the app: two of the cases above pack to the same 2160×2160
     expect(alphaFileName("Demo (transparent)", 1920, 1080)).toBe("Demo (transparent).stacked.ctalpha.mp4");
     expect(alphaFileName("Demo (transparent)", 1080, 1920)).toBe("Demo (transparent).beside.ctalpha.mp4");
+  });
+
+  it("finds a window's black corners and edge line, and nothing in a display", () => {
+    const w = 3664;
+    const h = 2262;
+    // a window as macOS records it: corners of radius 26 black, the last column black
+    const R = 26;
+    const window = (x: number, y: number) => {
+      if (x === w - 1) return 0;
+      const cx = Math.min(Math.max(x, R), w - 2 - R);
+      const cy = Math.min(Math.max(y, R), h - 1 - R);
+      return Math.hypot(x - cx, y - cy) > R ? 0 : 250;
+    };
+    const dead = deadEdges(window, w, h)!;
+    expect(dead.inset).toEqual([0, 0, 1, 0]);
+    expect(dead.radius).toBeGreaterThanOrEqual(R);
+    expect(dead.radius).toBeLessThanOrEqual(R + 4);
+    // a display: bright corners, or dark everywhere near them
+    expect(deadEdges(() => 250, w, h)).toBeNull();
+    expect(deadEdges(() => 0, w, h)).toBeNull();
+    // one dark corner alone (a dark app in it) is not a window's
+    expect(deadEdges((x, y) => (x < 10 && y < 10 ? 0 : 250), w, h)).toBeNull();
+  });
+
+  it("draws a window's dead corners see-through", () => {
+    const calls: unknown[][] = [];
+    const look: ScreenLook = { ...defaultLook(events, 30), zooms: [], padding: 0, radius: 0, shadow: false };
+    const dead = { inset: [0, 0, 1, 0] as [number, number, number, number], radius: 20 };
+    drawFrame(fakeContext(1000, 500, calls), {} as CanvasImageSource, 2000, 1000, 0, look, [], [], null, { pointer: { events: { dead } } });
+    // the window's own (square) clip, then the recording's live part, round (2000 → 1000: half size)
+    const rounds = calls.filter((c) => c[0] === "roundRect");
+    expect(rounds).toEqual([
+      ["roundRect", 0, 0, 1000, 500, 0],
+      ["roundRect", 0, 0, 999.5, 500, 10],
+    ]);
   });
 });
 
