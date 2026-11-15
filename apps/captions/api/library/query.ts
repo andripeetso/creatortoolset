@@ -67,6 +67,7 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.tag ? { tags: [...new Set(p.tag.split(",").map((t) => t.trim().slice(0, 80)).filter(Boolean))].slice(0, 20) } : {}),
     ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
     ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
+    ...(p.place && /^[A-Z]{2}$/.test(p.place) ? { place: p.place } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
@@ -115,12 +116,16 @@ export interface CardRow {
 /** When a clip was filmed (its probe's capturedAt), else when it was added. Through `a` only: search by meaning has no `v`. */
 const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM asset_versions fv WHERE fv.id = a.current_version_id), a.created_at)";
 
+/** Filmed in this country: the current version's probe (media/probe.ts countryOf). */
+const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions pv WHERE pv.id = a.current_version_id) = ?";
+
 /** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
 export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
   return [
     ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
     ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
     ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
+    ...(query.place ? [{ sql: PLACE, params: [query.place] }] : []),
   ];
 }
 
@@ -214,6 +219,7 @@ export function toCard(r: CardRow): AssetCard {
     ...(r.description ? { description: describedAs(r.description) } : {}),
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
+    ...(p.country ? { place: p.country } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
     ...(r.roll && !review ? { roll: r.roll } : {}),
     ...(r.finished || review ? { finished: true as const } : {}),

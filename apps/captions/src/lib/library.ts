@@ -109,6 +109,13 @@ export function listTags(libraryId: string): Promise<TagCount[]> {
     .then((d) => d.tags);
 }
 
+/** The countries the library's clips were filmed in (ISO 3166-1 alpha-2) with how many each, most first. */
+export function listPlaces(libraryId: string): Promise<{ place: string; count: number }[]> {
+  return fetch(`/api/library/${libraryId}/places`)
+    .then((r) => json<{ places: { place: string; count: number }[] }>(r))
+    .then((d) => d.places);
+}
+
 /** The plug-in sources this account may browse in the library (the built-in library is not one of them). */
 export function listSources(libraryId: string): Promise<{ id: string; label: string }[]> {
   return fetch(`/api/library/${libraryId}/sources`)

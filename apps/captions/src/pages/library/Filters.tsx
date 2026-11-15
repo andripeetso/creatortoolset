@@ -4,12 +4,13 @@ import type { SearchQuery } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { listTags, type LibraryFilters } from "@/lib/library";
+import { listPlaces, listTags, type LibraryFilters } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 
 /**
- * The library's own filters on the row under the bar: Tags (every one picked), When (filmed, else added). The buttons
+ * The library's own filters on the row under the bar: Tags (every one picked), When (filmed, else added), Where (the
+ * country, once a clip has one). The buttons
  * stay first and still; what is picked follows as chips that remove themselves, then one Clear. The page hands the
  * value to listAssets and searchLibrary, and keeps it in a saved search.
  */
@@ -56,6 +57,15 @@ function whenLabel(f: LibraryFilters): string {
   return f.filmedFrom !== undefined ? `From ${fmt.format(f.filmedFrom)}` : `Until ${fmt.format(last!)}`;
 }
 
+let regions: Intl.DisplayNames | null = null;
+const countryName = (code: string) => {
+  try {
+    return (regions ??= new Intl.DisplayNames(undefined, { type: "region" })).of(code) ?? code;
+  } catch {
+    return code;
+  }
+};
+
 const chip = "h-8 gap-1 px-2.5 text-[12px]";
 
 export function LibraryFilterRow({
@@ -71,6 +81,7 @@ export function LibraryFilterRow({
   any: boolean;
 }) {
   const tags = useCachedLoad(`/api/library/${libraryId}/tags`, () => listTags(libraryId));
+  const places = useCachedLoad(`/api/library/${libraryId}/places`, () => listPlaces(libraryId));
   const picked = value.tags ?? [];
   const set = (patch: Partial<LibraryFilters>) => onChange({ ...value, ...patch });
   const when = value.filmedFrom !== undefined || value.filmedTo !== undefined;
@@ -99,6 +110,23 @@ export function LibraryFilterRow({
       <FilterButton label="When">
         <WhenPicker value={value} onChange={(w) => set(w)} />
       </FilterButton>
+      {(!!places.data?.length || !!value.place) && (
+        <FilterButton label="Where">
+          <Command>
+            {(places.data?.length ?? 0) > 8 && <CommandInput placeholder="Search countries" />}
+            <CommandList className="max-h-64">
+              <CommandEmpty>No such country</CommandEmpty>
+              {(places.data ?? []).map((p) => (
+                <CommandItem key={p.place} value={countryName(p.place)} onSelect={() => set({ place: value.place === p.place ? undefined : p.place })}>
+                  <Check className={cn("size-3.5", value.place !== p.place && "opacity-0")} />
+                  <span className="flex-1 truncate">{countryName(p.place)}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{p.count}</span>
+                </CommandItem>
+              ))}
+            </CommandList>
+          </Command>
+        </FilterButton>
+      )}
       {picked.map((t) => (
         <Button key={t} size="sm" variant="secondary" className={chip} aria-label={`Remove ${t}`} onClick={() => toggleTag(t)}>
           {t}
@@ -108,6 +136,12 @@ export function LibraryFilterRow({
       {when && (
         <Button size="sm" variant="secondary" className={chip} aria-label="Remove when" onClick={() => set({ filmedFrom: undefined, filmedTo: undefined })}>
           {whenLabel(value)}
+          <X className="size-3" />
+        </Button>
+      )}
+      {value.place && (
+        <Button size="sm" variant="secondary" className={chip} aria-label={`Remove ${countryName(value.place)}`} onClick={() => set({ place: undefined })}>
+          {countryName(value.place)}
           <X className="size-3" />
         </Button>
       )}

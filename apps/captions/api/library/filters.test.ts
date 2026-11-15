@@ -23,9 +23,9 @@ function seed(): DatabaseSync {
     indexAsset(db, id);
   };
   // c1 filmed on day 1, added day 30; c2 has no filming time, added day 10; c3 filmed day 20, added day 40
-  asset("c1", 30 * DAY, { duration: 1, capturedAt: 1 * DAY }, ["beach", "sunset"]);
-  asset("c2", 10 * DAY, { duration: 1 }, ["beach"]);
-  asset("c3", 40 * DAY, { duration: 1, capturedAt: 20 * DAY }, ["sunset"]);
+  asset("c1", 30 * DAY, { duration: 1, capturedAt: 1 * DAY, country: "EE" }, ["beach", "sunset"]);
+  asset("c2", 10 * DAY, { duration: 1, country: "" }, ["beach"]);
+  asset("c3", 40 * DAY, { duration: 1, capturedAt: 20 * DAY, country: "PT" }, ["sunset"]);
   return db;
 }
 const ids = (db: DatabaseSync, p: Record<string, string>) => {
@@ -60,8 +60,18 @@ describe("library filters", () => {
     expect(rows.map((r) => r.id)).toEqual(["c3"]);
   });
 
+  it("where it was filmed: the country on the card, and the filter", () => {
+    const db = seed();
+    expect(ids(db, { place: "EE" })).toEqual(["c1"]);
+    expect(ids(db, { place: "ee" })).toEqual(["c3", "c1", "c2"]); // not a country code: no filter
+    const { sql, params, limit } = buildAssetQuery("lib_a", parseSearch({}));
+    const cards = pageOf(db.prepare(sql).all(...params) as unknown as CardRow[], limit).items;
+    expect(cards.map((c) => c.place)).toEqual(["PT", "EE", undefined]);
+  });
+
   it("keeps them in a saved search", () => {
-    const q = savedQuery({ q: "x", tags: ["beach", 3], filmedFrom: 5, filmedTo: "no" });
-    expect(q).toEqual({ q: "x", tags: ["beach"], filmedFrom: 5 });
+    const q = savedQuery({ q: "x", tags: ["beach", 3], filmedFrom: 5, filmedTo: "no", place: "EE" });
+    expect(q).toEqual({ q: "x", tags: ["beach"], filmedFrom: 5, place: "EE" });
+    expect(savedQuery({ place: "Estonia" })).toEqual({});
   });
 });

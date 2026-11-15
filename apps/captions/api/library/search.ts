@@ -142,6 +142,20 @@ searchApp.get("/:id/tags", (c) => {
   return c.json({ tags });
 });
 
+// GET /api/library/:id/places → { places: [{ place, count }] }: the countries clips were filmed in, most clips first, for
+// the Where filter. ponytail: the whole library, as /tags above
+searchApp.get("/:id/places", (c) => {
+  const libraryId = c.req.param("id");
+  if (!viewerOf(c.get("user").username, libraryId)) return notFound(c);
+  const places = db()
+    .prepare(
+      `SELECT json_extract(v.probe, '$.country') AS place, COUNT(*) AS count FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND place != '' GROUP BY place ORDER BY count DESC, place`,
+    )
+    .all(libraryId) as { place: string; count: number }[];
+  return c.json({ places });
+});
+
 // GET /api/library/:id/assets/:assetId → AssetDetail (404 for a viewer the policies refuse)
 searchApp.get("/:id/assets/:assetId", async (c) => {
   const libraryId = c.req.param("id");

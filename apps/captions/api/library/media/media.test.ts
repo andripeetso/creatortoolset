@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { makeThumb } from "./thumb";
-import { browserPlayable, probe, parseProbe } from "./probe";
+import { browserPlayable, countryAt, probe, parseProbe } from "./probe";
 import { ffmpeg } from "./run";
 import { makeProxy, needsProxy } from "./proxy";
 import { makeWave } from "./wave";
@@ -25,6 +25,7 @@ const hevcOk = /libx265|hevc_videotoolbox/.test(encoders);
 const h264 = path.join(dir, "h264.mp4");
 const hevc = path.join(dir, "hevc.mp4");
 const sine = path.join(dir, "sine.m4a");
+const tallinn = path.join(dir, "tallinn.mp4");
 
 beforeAll(() => {
   // GPS-style and creation-time tags, as a phone writes them
@@ -36,6 +37,7 @@ beforeAll(() => {
       "-c:v", "libx265", "-tag:v", "hvc1", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", hevc]);
   }
   ff(["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", sine]);
+  ff(["-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=10", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-metadata", "location=+59.4370+024.7536/", tallinn]);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -54,6 +56,28 @@ describe("probe", () => {
     const stored = JSON.stringify(await probe(h264));
     expect(stored).not.toMatch(/location|12\.3456|056\.7890/);
     expect((await probe(h264)).capturedAt).toBe(Date.parse("2024-01-02T03:04:05Z"));
+  });
+
+  it("keeps the country a clip was filmed in, never its coordinates", async () => {
+    const stored = JSON.stringify(await probe(tallinn));
+    expect(JSON.parse(stored).country).toBe("EE");
+    expect(stored).not.toMatch(/59\.43|24\.75|location/);
+    expect((await probe(h264)).country).toBe(""); // the other fixture is out at sea
+    expect((await probe(sine)).country).toBe("");
+  });
+
+  it("finds the country offline: inland, on a beach, in an enclave, either side of 180°, and none at sea", async () => {
+    const at = (lat: number, lon: number) => countryAt(lat, lon);
+    expect(await at(59.437, 24.7536)).toBe("EE"); // Tallinn
+    expect(await at(-29.31, 27.48)).toBe("LS"); // Maseru, inside South Africa's hole
+    expect(await at(-26.2, 28.04)).toBe("ZA");
+    expect(await at(-22.9711, -43.1822)).toBe("BR"); // a beach
+    expect(await at(34.0083, -118.4987)).toBe("US"); // a pier
+    expect(await at(43.695, 7.265)).toBe("FR");
+    expect(await at(43.9356, 12.4473)).toBe("SM"); // San Marino, inside Italy
+    expect(await at(-18.14, 178.44)).toBe("FJ");
+    expect(await at(66.16, -169.8)).toBe("RU"); // Russia west of 180°
+    expect(await at(30, -40)).toBe(""); // the Atlantic
   });
 
   it("reads the rotation as clockwise degrees: display matrix -90 is 90, the old rotate tag is taken as is", () => {

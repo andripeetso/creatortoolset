@@ -18,6 +18,7 @@ import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
 import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
+import { placeUnplaced } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
@@ -212,6 +213,7 @@ export function startLibraryWorker(): () => void {
   let stopped = false;
   const stopCatchUp = startEmbedCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
+  void placeUnplaced(); // clips from before the country was kept, from their location tag
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {
