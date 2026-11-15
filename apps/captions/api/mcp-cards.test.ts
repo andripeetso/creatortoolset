@@ -46,8 +46,9 @@ describe("cards for an AI app outside the dock", () => {
     const page = (await rpc("resources/read", { uri: CARD_URI })).result.contents[0];
     expect(page).toMatchObject({ uri: CARD_URI, mimeType: "text/html;profile=mcp-app", _meta: { ui: { csp: { resourceDomains: [ORIGIN] } } } });
     expect(page.text).toContain("ui/initialize");
-    // an older name an app still holds answers with today's page; anything else is not ours
-    expect((await rpc("resources/read", { uri: "ui://creator-toolset/card-old.html" })).result.contents[0].uri).toBe(CARD_URI);
+    // an older name an app still holds answers with today's page, under that name; anything else is not ours
+    const old = (await rpc("resources/read", { uri: "ui://creator-toolset/card-old.html" })).result.contents[0];
+    expect(old).toMatchObject({ uri: "ui://creator-toolset/card-old.html", text: page.text });
     expect((await rpc("resources/read", { uri: "ui://elsewhere/x" })).error?.code).toBe(-32002);
   });
 

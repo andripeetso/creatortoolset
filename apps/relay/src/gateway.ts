@@ -402,7 +402,7 @@ function offline(m: Rpc, cached: unknown): unknown {
  * address for every person: a card's pictures are fetched through /m, any other link opens through /open (below). A
  * card's video link is left out: video stays on the computer.
  */
-function throughHere(gw: GatewayDeps, out: unknown, computer: string, hostname: string) {
+function throughHere(gw: GatewayDeps, out: unknown, computer: string, hostname: string, asked: Rpc[]) {
   const its = `https://${hostname}/`;
   const media = `${its}api/card/media/`;
   const turn = (v: string) => (v.includes(its) ? v.replaceAll(media, `${self(gw)}/m/${computer}/`).replaceAll(its, `${self(gw)}/open/${computer}/`) : v);
@@ -413,11 +413,15 @@ function throughHere(gw: GatewayDeps, out: unknown, computer: string, hostname: 
     return v;
   };
   for (const one of Array.isArray(out) ? out : [out]) {
-    const o = one as { result?: Record<string, any> } | null;
+    const o = one as { id?: unknown; result?: Record<string, any> } | null;
     if (!o?.result || typeof o.result !== 'object') continue;
     o.result = walk(o.result, false) as Record<string, any>;
+    // The card's page is asked for by the name the AI app's store kept from the listing it scanned, which a computer
+    // on another version of the app no longer uses: the answer carries the name that was asked for.
+    const name = asked.find((m) => m.id === o.id && m.method === 'resources/read')?.params?.uri;
     // the card's page loads pictures from this address only
     for (const c of Array.isArray(o.result.contents) ? o.result.contents : []) {
+      if (typeof name === 'string' && c && typeof c === 'object') c.uri = name;
       if (c?._meta?.ui?.csp) c._meta.ui.csp.resourceDomains = [self(gw)];
       if (c?._meta?.['openai/widgetCSP']) c._meta['openai/widgetCSP'].resource_domains = [self(gw)];
     }
@@ -502,7 +506,7 @@ export async function forwardMcp(gw: GatewayDeps, req: Request): Promise<Respons
     return json(200, Array.isArray(msg) ? answers : answers[0]);
   }
   if (res!.status === 202) return new Response(null, { status: 202 });
-  throughHere(gw, out, g.computer, g.hostname);
+  throughHere(gw, out, g.computer, g.hostname, list);
   if (!Array.isArray(msg) && (msg as Rpc).method === 'tools/list' && (out as { result?: unknown })?.result) lists.set(g.id, (out as { result: unknown }).result);
   return json(res!.status, out);
 }
