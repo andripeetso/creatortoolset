@@ -200,7 +200,7 @@ describe("footage where nobody speaks reaches Review", () => {
     const song = path.join(dir, "song.wav");
     ff("-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=8", "-f", "lavfi", "-i", "anoisesrc=d=8:a=0.05", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", game);
     // a click on every beat at 120 bpm
-    ff("-f", "lavfi", "-i", "sine=f=880:d=10", "-af", "volume='if(lt(mod(t,0.5),0.04),1,0)':eval=frame", song);
+    ff("-f", "lavfi", "-i", "aevalsrc='0.8*sin(2*PI*880*t)*lt(mod(t,0.5),0.04)':s=44100:d=10", song);
     const d = libraryDb();
     d.exec(`
       INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0);
@@ -228,7 +228,7 @@ describe("footage where nobody speaks reaches Review", () => {
     let asked = "";
     vi.mocked(completeWithFallback).mockImplementation(async (_s, user, _sig, parse) => {
       asked = user;
-      return parse(JSON.stringify({ plans: [{ kind: "hard edit", lead: "song", shots: [{ src: "S1", in: 0, dur: 1, fx: [{ type: "flash", at: 0 }] }, { src: "S1", in: 3, dur: 1.5, speed: 2, fx: [{ type: "glitch", at: 0.2, dur: 0.3 }] }, { src: "S1", in: 6, dur: 1 }] }] }));
+      return parse(JSON.stringify({ plans: [{ kind: "hard edit", lead: "song", shots: [{ generate: { style: "plasma", palette: ["#ff0066", "#00ccff"] }, dur: 0.5 }, { src: "S1", in: 0, dur: 1, fx: [{ type: "flash", at: 0 }] }, { src: "S1", in: 3, dur: 1.5, speed: 2, fx: [{ type: "glitch", at: 0.2, dur: 0.3 }] }, { src: "S1", in: 6, dur: 1 }] }] }));
     });
     const e = (await createEdit("mem-a", { sources: ["ver_game", "ver_song"], brief: "A hard edit to the beat", targetS: 3 }))!;
     const d = libraryDb();
@@ -267,7 +267,10 @@ describe("footage where nobody speaks reaches Review", () => {
     for (const i of items.slice(1)) expect(beats.beats.map((x) => Math.round(x * 30))).toContain(i.rec);
     expect(end).toBeLessThanOrEqual(90);
     expect(end).toBeGreaterThan(90 - (60 / beats.bpm) * 30);
-    expect(items[1]!.speed).toBe(2);
+    expect(items.find((i) => i.speed)?.speed).toBe(2);
+    // a clip made from nothing, moving to the song under it, kept in the edit's own folder
+    const gen = tl.sources[items[0]!.src]!;
+    expect(gen).toMatchObject({ name: "Generated plasma", w: 320, h: 180, file: expect.stringMatching(/^gen\/[0-9a-f]{12}\.mp4$/) });
     expect(tl.tracks.A2.items).toEqual([{ src: "ver_song", in: 0, len: end, rec: 0 }]);
     const filed = readStep(e.id, "review")!.v1!;
     const v = (await readMeta(filed.assetId))!.versions[0]!;

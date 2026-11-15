@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { rename } from "node:fs/promises";
 import path from "node:path";
 import type { EditPlan, FootageIndex, GenSpec, IndexSource, PlanEffect, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
 import type { Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
@@ -21,7 +21,7 @@ import { clearPasses } from "./passes";
 import { macAway } from "./script";
 import { describeShots, indexSources, songBeats } from "./index";
 import { readable } from "./media";
-import { generateClip, styles } from "./standins";
+import { generateClip, styles } from "./generate";
 import { editDir, readEdit, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import { emptyTracks, sourceOf } from "./timeline";
@@ -183,8 +183,8 @@ export interface PlanInput {
   /** source id → what is said in it, with times (cut short) */
   words: Record<string, string>;
   song?: Song;
-  /** the generated clips' styles, when there are any */
-  gen: string[];
+  /** the generated clips' styles, each with a line saying what it looks like */
+  gen: Array<{ id: string; line: string }>;
   packText?: string;
 }
 
@@ -226,7 +226,10 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
     );
   } else parts.push("No song: the footage's own sound leads.");
   if (i.index.story) parts.push(`What happens across the footage, from the pictures:\n${i.index.story}`);
-  if (i.gen.length) parts.push(`A shot can also be a clip made from nothing: {"generate":{"style":"${i.gen.join('" or "')}","palette":["#rrggbb"]},"dur":2} in place of src and in.`);
+  if (i.gen.length)
+    parts.push(
+      `A shot can also be a clip made from nothing, moving to the sound under it: {"generate":{"style":"one of the styles","palette":["#rrggbb"],"seed":1},"dur":2} in place of src and in. Styles:\n${i.gen.map((g) => `- ${g.id}: ${g.line}`).join("\n")}`,
+    );
   return { system: i.packText ? `${SYSTEM}\n\n${i.packText}` : SYSTEM, user: parts.join("\n\n") };
 }
 
@@ -543,8 +546,9 @@ function fallbackShots(c: RepairContext, upTo: number): (Omit<PlanShot, "src" | 
 /* ---------------- the timeline ---------------- */
 
 /** A generated clip's source key and file (in the edit's folder), named by what it is made from so a re-run reuses it. */
-export function genFile(spec: GenSpec, size: { w: number; h: number; fps: number }): { key: string; file: string } {
-  const h = createHash("sha1").update(JSON.stringify([spec, size])).digest("hex").slice(0, 12);
+export function genFile(spec: GenSpec, size: { w: number; h: number; fps: number }, at: number): { key: string; file: string } {
+  // its place on the timeline too: with a song it moves to the part of the song it plays under
+  const h = createHash("sha1").update(JSON.stringify([spec, size, at])).digest("hex").slice(0, 12);
   return { key: `gen-${h}`, file: `gen/${h}.mp4` };
 }
 
@@ -569,7 +573,7 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
   const fr = (s: number) => Math.round(s * fps);
   let end = 0;
   plan.shots.forEach((s, k) => {
-    const key = "source" in s.src ? s.src.source : genFile(s.src.generate, { w: W, h: H, fps }).key;
+    const key = "source" in s.src ? s.src.source : genFile(s.src.generate, { w: W, h: H, fps }, s.at).key;
     const src = sources[key];
     if (!src) return;
     const rec = fr(s.at);
@@ -658,6 +662,7 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   if (signal.aborted) return;
   const size = frameOf(edit, index);
   const gen = styles();
+  const genIds = gen.map((g) => g.id);
   const setup = [await workspaceSetup(edit), styleBlock(edit.style)].filter(Boolean).join("\n\n");
   const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText });
@@ -675,7 +680,7 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   const shots: Record<string, { plan: EditPlan; notes: string[] }> = {};
   const plans = raws.slice(0, edit.versions).map((raw, k) => {
     const name = `v${k + 1}`;
-    shots[name] = repairPlan(raw, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen });
+    shots[name] = repairPlan(raw, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen: genIds });
     const p = shots[name]!.plan;
     return { name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] };
   });
@@ -699,15 +704,25 @@ export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: 
     sources[id] = sourceOf(id, row.title, JSON.parse(row.probe) as ProbeSummary);
   }
   const size = { w: plan.w, h: plan.h, fps: plan.fps };
+  // a generated clip moves to the song where it plays under it; with no song it makes up its own beat (generate.ts)
+  const lead = plan.lead.type === "song" ? plan.lead : null;
+  const songFile = lead && plan.shots.some((s) => "generate" in s.src) ? await readable(lead.source, (db.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(lead.source) as { source_key: string }).source_key) : null;
   for (const s of plan.shots) {
     if (!("generate" in s.src) || signal.aborted) continue;
-    const { key, file } = genFile(s.src.generate, size);
+    const { key, file } = genFile(s.src.generate, size, s.at);
     const abs = path.join(editDir(edit.id), file);
+    let fps = Math.round(plan.fps);
     if (!existsSync(abs)) {
-      await mkdir(path.dirname(abs), { recursive: true });
-      await generateClip(s.src.generate, abs, size);
+      // not inside an ffmpeg turn: generateClip takes its own, twice
+      const made = await generateClip(
+        { ...s.src.generate, params: { ...s.src.generate.params, w: plan.w, h: plan.h, fps: plan.fps }, ...(songFile ? { audio: songFile, audioStartS: lead!.startS + s.at } : {}) },
+        path.dirname(abs),
+        signal,
+      );
+      await rename(made.path, abs);
+      fps = made.fps;
     }
-    sources[key] = { versionId: key, name: `Generated ${s.src.generate.style}`, fps: plan.fps, tc: 0, dur: Math.round(s.src.generate.seconds * plan.fps), w: plan.w, h: plan.h, file };
+    sources[key] = { versionId: key, name: `Generated ${s.src.generate.style}`, fps, tc: 0, dur: Math.round(s.src.generate.seconds * fps), w: plan.w, h: plan.h, file };
   }
   if (signal.aborted) return;
   const timeline = planTimeline(plan, sources, `${edit.name} ${variant}`);
