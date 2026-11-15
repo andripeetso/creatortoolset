@@ -469,18 +469,27 @@ describe("screen recording", () => {
   it("finds a window's black corners and edge line, and nothing in a display", () => {
     const w = 3664;
     const h = 2262;
-    // a window as macOS records it: corners of radius 26 black, the last column black
-    const R = 26;
+    // a window as macOS records it: corners of radius 29 black with a soft (grey) edge, the last column black
+    const R = 29;
     const window = (x: number, y: number) => {
       if (x === w - 1) return 0;
-      const cx = Math.min(Math.max(x, R), w - 2 - R);
-      const cy = Math.min(Math.max(y, R), h - 1 - R);
-      return Math.hypot(x - cx, y - cy) > R ? 0 : 250;
+      const cx = Math.min(Math.max(x + 0.5, R), w - 1 - R);
+      const cy = Math.min(Math.max(y + 0.5, R), h - R);
+      return 250 * Math.min(1, Math.max(0, R + 0.5 - Math.hypot(x + 0.5 - cx, y + 0.5 - cy)));
     };
     const dead = deadEdges(window, w, h)!;
-    expect(dead.inset).toEqual([0, 0, 1, 0]);
-    expect(dead.radius).toBeGreaterThanOrEqual(R);
-    expect(dead.radius).toBeLessThanOrEqual(R + 4);
+    expect(dead.inset).toEqual([1, 1, 2, 1]);
+    expect(dead.radius).toBeLessThanOrEqual(R + 6);
+    // nothing dark is left inside what is drawn, the curve's grey pixels included (they made a dark line round each corner)
+    const [l, t, r, b] = dead.inset;
+    const drawn = (x: number, y: number) => {
+      const qx = Math.max(l + dead.radius - (x + 0.5), x + 0.5 - (w - r - dead.radius), 0);
+      const qy = Math.max(t + dead.radius - (y + 0.5), y + 0.5 - (h - b - dead.radius), 0);
+      const out = Math.max(Math.hypot(qx, qy) - dead.radius, l - (x + 0.5), x + 0.5 - (w - r), t - (y + 0.5), y + 0.5 - (h - b));
+      return out < 0.5;
+    };
+    for (const [ox, oy] of [[0, 0], [w - 45, 0], [0, h - 45], [w - 45, h - 45]])
+      for (let y = oy; y < oy + 45; y++) for (let x = ox; x < ox + 45; x++) if (drawn(x, y)) expect(window(x, y)).toBeGreaterThan(200);
     // a display: bright corners, or dark everywhere near them
     expect(deadEdges(() => 250, w, h)).toBeNull();
     expect(deadEdges(() => 0, w, h)).toBeNull();
@@ -495,10 +504,22 @@ describe("screen recording", () => {
     drawFrame(fakeContext(1000, 500, calls), {} as CanvasImageSource, 2000, 1000, 0, look, [], [], null, { pointer: { events: { dead } } });
     // the window's own (square) clip, then the recording's live part, round (2000 → 1000: half size)
     const rounds = calls.filter((c) => c[0] === "roundRect");
-    expect(rounds).toEqual([
+    expect(rounds.slice(0, 2)).toEqual([
       ["roundRect", 0, 0, 1000, 500, 0],
       ["roundRect", 0, 0, 999.5, 500, 10],
     ]);
+    // square corners: the dead corners take the colour just inside each, from the frame itself
+    const ctx = fakeContext(1000, 500, []);
+    const own: unknown[] = [];
+    ctx.drawImage = ((image: unknown) => void own.push(image)) as typeof ctx.drawImage;
+    drawFrame(ctx, {} as CanvasImageSource, 2000, 1000, 0, look, [], [], null, { pointer: { events: { dead } } });
+    expect(own.filter((image) => image === ctx.canvas)).toHaveLength(4);
+    // rounded on purpose: the background shows there, nothing is painted
+    const round = fakeContext(1000, 500, []);
+    const roundOwn: unknown[] = [];
+    round.drawImage = ((image: unknown) => void roundOwn.push(image)) as typeof round.drawImage;
+    drawFrame(round, {} as CanvasImageSource, 2000, 1000, 0, { ...look, radius: 0.02 }, [], [], null, { pointer: { events: { dead } } });
+    expect(roundOwn.filter((image) => image === round.canvas)).toHaveLength(0);
   });
 });
 

@@ -79,6 +79,9 @@ export function Inspector({
     ...(hasCamera ? [{ id: "camera" as const, label: "Camera", icon: Video }] : []),
   ];
   const shown = tabs.some((t) => t.id === tab) ? tab : "background";
+  // where the camera goes back to when it is shown again: where it was last, else where it was when the editor opened
+  const camBack = useRef<CameraLook["layout"]>(initial.camera?.layout && initial.camera.layout !== "hidden" ? initial.camera.layout : "bubble");
+  if (look.camera && look.camera.layout !== "hidden") camBack.current = look.camera.layout;
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-zinc-800">
@@ -106,14 +109,14 @@ export function Inspector({
           (hasCamera && look.camera?.layout === "split" ? (
             <p className="text-xs text-zinc-400">Split fills the frame edge to edge: no background, padding, corners or shadow show. Pick Beside on the Camera tab for those.</p>
           ) : (
-            <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} />
+            <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} sideCamera={hasCamera && look.camera?.layout === "side"} />
           ))}
         {shown === "pointer" && <PointerTab look={look} initial={initial} change={change} />}
         {shown === "zoom" && (
           <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
         {shown === "sound" && <SoundTab look={look} change={change} events={events} />}
-        {shown === "camera" && <CameraTab look={look} change={change} faces={faces} ratio={player.ratio() || 16 / 9} />}
+        {shown === "camera" && <CameraTab look={look} change={change} faces={faces} ratio={player.ratio() || 16 / 9} back={camBack.current} />}
       </div>
     </aside>
   );
@@ -121,62 +124,16 @@ export function Inspector({
 
 type TabProps = { look: ScreenLook; initial: ScreenLook; change: (patch: Partial<ScreenLook>) => void };
 
-function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClear: boolean }) {
+function BackgroundTab({ look, initial, change, canClear, sideCamera }: TabProps & { canClear: boolean; sideCamera: boolean }) {
   const [from, to] = backgroundStops(look);
   const kind = look.background === "none" ? "none" : look.background === "color" ? "color" : "gradient";
   const edgeToEdge = look.padding === 0 && look.radius === 0;
+  // edge to edge, the background shows only beside a window of another shape than the frame, or beside the camera
+  const backgroundSeen = !edgeToEdge || (look.shape !== "source" && !look.fill) || sideCamera;
   return (
     <>
-      {/* the frame's shape is chosen above the picture */}
-      {look.shape !== "source" && (
-        <Group>
-          <SwitchRow label="Fill the frame and follow the pointer" checked={look.fill} onChange={(fill) => change({ fill })} />
-        </Group>
-      )}
-
-      <Group title="Background">
-        <Segmented
-          label="Background kind"
-          value={kind}
-          options={[
-            { id: "gradient", label: "Gradient" },
-            { id: "color", label: "Color" },
-            ...(canClear ? [{ id: "none" as const, label: "None", title: "Nothing behind the window: Export makes a video with a transparent background" }] : []),
-          ]}
-          onChange={(k) =>
-            change(k === "none" ? { background: "none" } : k === "color" ? { background: "color", color: look.color ?? from } : { background: BACKGROUNDS[0].id })
-          }
-        />
-        {kind === "none" ? null : kind === "gradient" ? (
-          <>
-            <Swatches
-              label="Gradient"
-              value={look.background === "custom" ? null : look.background}
-              options={BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, fill: `linear-gradient(135deg, ${b.stops[0]}, ${b.stops[1]})` }))}
-              onChange={(background) => change({ background })}
-            />
-            <div className="flex gap-2">
-              <ColorField label="Gradient, first color" value={from} onChange={(c) => change({ background: "custom", stops: [c, to] })} />
-              <ColorField label="Gradient, second color" value={to} onChange={(c) => change({ background: "custom", stops: [from, c] })} />
-            </div>
-          </>
-        ) : (
-          <>
-            <Swatches
-              label="Color"
-              value={COLORS.includes(from.toLowerCase()) ? from.toLowerCase() : null}
-              options={COLORS.map((c) => ({ id: c, label: c, fill: c }))}
-              onChange={(color) => change({ background: "color", color })}
-            />
-            <div className="flex">
-              <ColorField label="Background color" value={from} onChange={(color) => change({ background: "color", color })} />
-            </div>
-          </>
-        )}
-      </Group>
-
       <Group>
-        {/* the recording alone: no padding, corners or shadow. Back on, they are as the editor opened with them (or as at first) */}
+        {/* the recording alone: no padding, corners or shadow. Back off, they are as the editor opened with them (or as at first) */}
         <SwitchRow
           label="Edge to edge"
           checked={edgeToEdge}
@@ -190,22 +147,80 @@ function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClea
             )
           }
         />
-        <SliderRow label="Padding" value={look.padding} min={0} max={0.15} step={0.005} format={pct} initial={initial.padding} onChange={(padding) => change({ padding })} />
-        <SliderRow label="Rounded corners" value={look.radius} min={0} max={0.06} step={0.002} format={(v) => `${Math.round(v * 1000)}`} initial={initial.radius} onChange={(radius) => change({ radius })} />
-        {/* the shadow falls on the padding: with none, there is nothing to see */}
-        {look.padding > 0 && (
-          <SliderRow
-            label="Shadow"
-            value={shadowOf(look)}
-            min={0}
-            max={1}
-            step={0.05}
-            format={pct}
-            initial={shadowOf(initial)}
-            onChange={(v) => change({ shadow: v > 0, shadowAmount: v })}
-          />
-        )}
+        <p className="text-xs text-zinc-400">
+          {edgeToEdge ? "Just the recording, square corners and all. Turn it off for a background around it." : "The recording on a background, with padding, rounded corners and a shadow."}
+        </p>
       </Group>
+
+      {/* the frame's shape is chosen above the picture */}
+      {look.shape !== "source" && (
+        <Group>
+          <SwitchRow label="Fill the frame and follow the pointer" checked={look.fill} onChange={(fill) => change({ fill })} />
+        </Group>
+      )}
+
+      {backgroundSeen && (
+        <Group title="Background">
+          <Segmented
+            label="Background kind"
+            value={kind}
+            options={[
+              { id: "gradient", label: "Gradient" },
+              { id: "color", label: "Color" },
+              ...(canClear ? [{ id: "none" as const, label: "None", title: "Nothing behind the window: Export makes a video with a transparent background" }] : []),
+            ]}
+            onChange={(k) =>
+              change(k === "none" ? { background: "none" } : k === "color" ? { background: "color", color: look.color ?? from } : { background: BACKGROUNDS[0].id })
+            }
+          />
+          {kind === "none" ? null : kind === "gradient" ? (
+            <>
+              <Swatches
+                label="Gradient"
+                value={look.background === "custom" ? null : look.background}
+                options={BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, fill: `linear-gradient(135deg, ${b.stops[0]}, ${b.stops[1]})` }))}
+                onChange={(background) => change({ background })}
+              />
+              <div className="flex gap-2">
+                <ColorField label="Gradient, first color" value={from} onChange={(c) => change({ background: "custom", stops: [c, to] })} />
+                <ColorField label="Gradient, second color" value={to} onChange={(c) => change({ background: "custom", stops: [from, c] })} />
+              </div>
+            </>
+          ) : (
+            <>
+              <Swatches
+                label="Color"
+                value={COLORS.includes(from.toLowerCase()) ? from.toLowerCase() : null}
+                options={COLORS.map((c) => ({ id: c, label: c, fill: c }))}
+                onChange={(color) => change({ background: "color", color })}
+              />
+              <div className="flex">
+                <ColorField label="Background color" value={from} onChange={(color) => change({ background: "color", color })} />
+              </div>
+            </>
+          )}
+        </Group>
+      )}
+
+      {!edgeToEdge && (
+        <Group>
+          <SliderRow label="Padding" value={look.padding} min={0} max={0.15} step={0.005} format={pct} initial={initial.padding} onChange={(padding) => change({ padding })} />
+          <SliderRow label="Rounded corners" value={look.radius} min={0} max={0.06} step={0.002} format={(v) => `${Math.round(v * 1000)}`} initial={initial.radius} onChange={(radius) => change({ radius })} />
+          {/* the shadow falls on the padding: with none, there is nothing to see */}
+          {look.padding > 0 && (
+            <SliderRow
+              label="Shadow"
+              value={shadowOf(look)}
+              min={0}
+              max={1}
+              step={0.05}
+              format={pct}
+              initial={shadowOf(initial)}
+              onChange={(v) => change({ shadow: v > 0, shadowAmount: v })}
+            />
+          )}
+        </Group>
+      )}
     </>
   );
 }
@@ -497,7 +512,6 @@ const LAYOUTS: { id: CameraLook["layout"]; label: string }[] = [
   { id: "side", label: "Beside" },
   { id: "split", label: "Split" },
   { id: "only", label: "Alone" },
-  { id: "hidden", label: "Hidden" },
 ];
 
 const CORNERS: { id: CameraLook["corner"]; label: string }[] = [
@@ -509,9 +523,26 @@ const CORNERS: { id: CameraLook["corner"]; label: string }[] = [
 
 export type FaceState = { found: boolean; tried: boolean; can: boolean; finding: number | null; find: () => void };
 
-function CameraTab({ look, change, faces, ratio }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void; faces: FaceState; ratio: number }) {
+function CameraTab({
+  look,
+  change,
+  faces,
+  ratio,
+  back,
+}: {
+  look: ScreenLook;
+  change: (patch: Partial<ScreenLook>) => void;
+  faces: FaceState;
+  ratio: number;
+  /** Where the camera goes when it is shown again. */
+  back: CameraLook["layout"];
+}) {
   const cam = look.camera ?? defaultCamera();
   const set = (patch: Partial<CameraLook>) => change({ camera: { ...cam, ...patch } });
+  // a split needs a frame of its own shape to share: from Auto (the recording's shape) it goes wide
+  const place = (layout: CameraLook["layout"]) =>
+    change(layout === "split" && look.shape === "source" ? { camera: { ...cam, layout }, shape: "16:9" } : { camera: { ...cam, layout } });
+  const on = cam.layout !== "hidden";
   // in a split: the camera's share that leaves the screen its whole picture (naturalSplit)
   const out = outputSize(look.shape === "source" ? "16:9" : look.shape, ratio * 1000, 1000, false);
   const natural = Math.round(naturalSplit(out.width, out.height, ratio) * 100) / 100;
@@ -520,13 +551,8 @@ function CameraTab({ look, change, faces, ratio }: { look: ScreenLook; change: (
   return (
     <>
       <Group>
-        <Segmented
-          label="Where the camera is"
-          value={cam.layout}
-          options={LAYOUTS}
-          // a split needs a frame of its own shape to share: from Auto (the recording's shape) it goes wide
-          onChange={(layout) => change(layout === "split" && look.shape === "source" ? { camera: { ...cam, layout }, shape: "16:9" } : { camera: { ...cam, layout } })}
-        />
+        <SwitchRow label="Show the camera" checked={on} onChange={(show) => place(show ? back : "hidden")} />
+        {on && <Segmented label="Where the camera is" value={cam.layout} options={LAYOUTS} onChange={place} />}
         {cam.layout === "split" && (
           <>
             <SliderRow

@@ -56,8 +56,10 @@ export function deadEdges(at: (x: number, y: number) => number, w: number, h: nu
   const hi = Math.max(...corners);
   // ponytail: a display recorded with a pure black corner in all four could pass; the cap and the match make it rare
   if (lo < 2 || hi >= most || hi - lo > 2) return null;
-  // a circle's corner reaches 1 - 1/√2 of its radius in along the diagonal; a pixel more covers its soft edge
-  return { inset, radius: Math.ceil(hi / (1 - Math.SQRT1_2)) + 1 };
+  // After the black comes one grey pixel, the curve's soft edge, and macOS draws a 1-pixel rim round the window that
+  // darkens toward the corners: both are dead too (left in, they drew a thin dark line round each corner). A circle's
+  // corner reaches 1 - 1/√2 of its radius in along the diagonal.
+  return { inset: inset.map((n) => n + 1) as typeof inset, radius: Math.ceil((hi + 1) / (1 - Math.SQRT1_2)) };
 }
 
 /** The real pointer's look for drawFrame: the recording's cursors (`events.cursors`) as images, in their order; null while one loads. */
@@ -921,6 +923,33 @@ const ARROW: [number, number][] = [
   [0, 0], [0, 0.82], [0.2, 0.63], [0.34, 0.95], [0.47, 0.9], [0.33, 0.58], [0.6, 0.58],
 ];
 
+/**
+ * Paints the window's dead corners and edge lines (inside the current clip, outside `live`, the rounded live part) in the
+ * colour just inside each corner, past its curve. The canvas is drawn on itself, one pixel stretched over that
+ * corner's quarter: no pixels are read back, which would stall every frame.
+ */
+function fillDead(ctx: CanvasRenderingContext2D, live: Rect, radius: number) {
+  const { width: W, height: H } = ctx.canvas;
+  const reach = radius * (1 - Math.SQRT1_2) + 2;
+  const midX = live.x + live.w / 2;
+  const midY = live.y + live.h / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  ctx.roundRect(live.x, live.y, live.w, live.h, radius);
+  ctx.clip("evenodd");
+  ctx.imageSmoothingEnabled = false;
+  for (const [right, bottom] of [[false, false], [true, false], [false, true], [true, true]]) {
+    const sx = Math.floor(right ? live.x + live.w - reach : live.x + reach);
+    const sy = Math.floor(bottom ? live.y + live.h - reach : live.y + reach);
+    if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue; // that corner is out of view
+    const x = right ? midX : 0;
+    const y = bottom ? midY : 0;
+    ctx.drawImage(ctx.canvas, sx, sy, 1, 1, x, y, right ? W - midX : midX, bottom ? H - midY : midY);
+  }
+  ctx.restore();
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, r: Rect, radius: number) {
   ctx.beginPath();
   ctx.roundRect(r.x, r.y, r.w, r.h, radius);
@@ -1168,9 +1197,18 @@ export function drawFrame(
   ctx.save();
   roundRect(ctx, window, radius);
   ctx.clip();
-  if (dead) {
-    const [l, t, r, b] = dead.inset;
-    roundRect(ctx, { x: box.x + (l - src.x) * k, y: box.y + (t - src.y) * k, w: (srcW - l - r) * k, h: (srcH - t - b) * k }, dead.radius * k);
+  const live = dead && {
+    x: box.x + (dead.inset[0] - src.x) * k,
+    y: box.y + (dead.inset[1] - src.y) * k,
+    w: (srcW - dead.inset[0] - dead.inset[2]) * k,
+    h: (srcH - dead.inset[1] - dead.inset[3]) * k,
+  };
+  // square corners asked for: the dead part is painted over in the window's own colour once the picture is down
+  // (fillDead); cut out instead, the background would show through at the cut's soft edge
+  const square = radius === 0;
+  if (live && !square) {
+    ctx.save();
+    roundRect(ctx, live, dead.radius * k);
     ctx.clip();
   }
   ctx.imageSmoothingQuality = opts.quality ?? "high";
@@ -1179,6 +1217,10 @@ export function drawFrame(
   const ready = opts.picture?.(src, pw, ph);
   if (ready) ctx.drawImage(ready, 0, 0, pw, ph, box.x, box.y, box.w, box.h);
   else ctx.drawImage(source, src.x, src.y, src.w, src.h, box.x, box.y, box.w, box.h);
+  if (live) {
+    if (square) fillDead(ctx, live, dead.radius * k);
+    else ctx.restore();
+  }
 
   const toOut = (x: number, y: number) => ({ x: box.x + (x * srcW - src.x) * k, y: box.y + (y * srcH - src.y) * k });
 
