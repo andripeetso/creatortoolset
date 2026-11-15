@@ -747,7 +747,7 @@ inviteApp.get("/invite/:token", (c) => {
   const me = signedInAccount(c.req.header("cookie"));
   const info: InviteInfo = {
     workspace: found.workspace.name,
-    invitedBy: found.invite.createdBy,
+    invitedBy: findUser(found.invite.createdBy)?.displayName || found.invite.createdBy,
     expired: found.invite.expiresAt <= Date.now(),
     signedInAs: me?.username ?? null,
     member: !!me && !!memberIn(found.workspace, me.username),
@@ -761,7 +761,7 @@ inviteApp.post("/invite/:token", async (c) => {
   let user: UserRecord | null = me ? findUser(me.username) : null;
   // the only await is the body: the invite is checked after it, and nothing awaits between that check and the join,
   // so a revoke or expiry can't land in between and leave a new account signed in that never joins
-  const b: { username?: unknown; password?: unknown } = user ? {} : await c.req.json<{ username?: unknown; password?: unknown }>().catch(() => ({}));
+  const b: { username?: unknown; password?: unknown; name?: unknown } = user ? {} : await c.req.json<{ username?: unknown; password?: unknown; name?: unknown }>().catch(() => ({}));
   const found = INVITE_TOKEN_RE.test(token) ? inviteByToken(token) : null;
   if (!found) return c.json({ error: "This invite link doesn't work any more" }, 404);
   if (found.invite.expiresAt <= Date.now()) return c.json({ error: "This invite link has expired: ask for a new one" }, 410);
@@ -772,6 +772,7 @@ inviteApp.post("/invite/:token", async (c) => {
       const problem = passwordProblem(password);
       if (problem) throw new Error(problem);
       user = createUser(username, password, { role: found.workspace.plan === "team" ? "team" : "user" });
+      if (typeof b.name === "string") setDisplayName(user, b.name); // what the team sees (Settings → Account changes it)
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }

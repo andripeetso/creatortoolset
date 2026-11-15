@@ -55,3 +55,14 @@ it("emails the invite link only when the server has Resend's keys, and keeps no 
   expect(((await failed.json()) as { error: string }).error).toContain("domain not verified");
   expect((await invites(cookie)).invites).toHaveLength(1);
 });
+
+it("the join page names the inviter by their name, and the new account keeps the name it was given", async () => {
+  const cookie = await login();
+  const { findUser, setDisplayName } = await import("./users");
+  setDisplayName(findUser(env.adminUsername)!, "Andri");
+  vi.stubGlobal("fetch", async () => Response.json({ id: "1" }));
+  const { token } = (await (await call("POST", "/api/workspace/invites", cookie, {})).json()) as { token: string };
+  expect(((await (await call("GET", `/api/auth/invite/${token}`)).json()) as { invitedBy: string }).invitedBy).toBe("Andri");
+  expect((await call("POST", `/api/auth/invite/${token}`, undefined, { name: " Ann Lee ", username: "ann", password: "ann-secret-123" })).status).toBe(200);
+  expect(findUser("ann")?.displayName).toBe("Ann Lee");
+});
