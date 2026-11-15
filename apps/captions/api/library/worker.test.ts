@@ -41,10 +41,53 @@ vi.mock("./media/probe", async (real) => {
   const m = await real<typeof import("./media/probe")>();
   return { ...m, probe: (f: string) => (probed.value ? Promise.resolve(probed.value) : m.probe(f)) };
 });
+// the files a transcript was made from, when a test asks (`heard.on`): then nothing is transcribed
+const heard = vi.hoisted(() => ({ on: false, files: [] as string[] }));
 vi.mock("./transcribe", async (real) => {
   const m = await real<typeof import("./transcribe")>();
   const { ModelNotReady } = await import("../lib/device-transcribe");
-  return { ...m, transcribeVersion: (...a: Parameters<typeof m.transcribeVersion>) => (stuck.model ? Promise.reject(new ModelNotReady("not downloaded")) : m.transcribeVersion(...a)) };
+  return {
+    ...m,
+    transcribeVersion: (...a: Parameters<typeof m.transcribeVersion>) =>
+      heard.on ? (heard.files.push(a[2]), Promise.resolve()) : stuck.model ? Promise.reject(new ModelNotReady("not downloaded")) : m.transcribeVersion(...a),
+  };
+});
+
+describe("a transcript of a clip whose original is not on this server", () => {
+  it("is made from its proxy's sound; a clip whose original is here keeps using the original", async () => {
+    const { tick: run } = await import("./worker");
+    const { blobs: store } = await import("./db");
+    const { readFileSync, writeFileSync: write } = await import("node:fs");
+    const put = async (key: string, text: string) => {
+      const f = path.join(dir, `${text}.bin`);
+      write(f, text);
+      await store.put(key, f);
+    };
+    for (const id of ["v_px", "v_or"]) {
+      d.prepare(`INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_a', 'video', ?, ?, 'local', 1)`).run(`a_${id}`, id, id);
+      d.prepare(
+        `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+         VALUES (?, ?, 1, ?, 1, ?, '{"duration":5,"vcodec":"h264","acodec":"aac"}', 'ready', 'local', 1)`,
+      ).run(id, `a_${id}`, `k/${id}`, id);
+      await put(`k/${id}-proxy.mp4`, `${id} proxy`);
+      d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'proxy', ?, 1)").run(id, `k/${id}-proxy.mp4`);
+    }
+    await put("k/v_or", "v_or original"); // v_px's original was never put here: it stays on the user's computer
+    heard.on = true;
+    try {
+      for (const id of ["v_px", "v_or"]) {
+        enqueueJob(d, "lib_a", id, "transcribe", "local");
+        expect(await run(Date.now(), LANES.find((l) => l.name === "transcripts")!.kinds)).toBe(true);
+      }
+      expect(heard.files.map((f) => readFileSync(f, "utf-8"))).toEqual(["v_px proxy", "v_or original"]);
+      expect(d.prepare("SELECT version_id, state FROM jobs WHERE kind = 'transcribe' ORDER BY version_id").all()).toEqual([
+        { version_id: "v_or", state: "done" },
+        { version_id: "v_px", state: "done" },
+      ]);
+    } finally {
+      heard.on = false;
+    }
+  });
 });
 
 describe("a transcript whose speech model did not download", () => {
