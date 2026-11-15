@@ -20,6 +20,7 @@ struct CreatorToolsetMacApp: App {
         let shell = Shell()
         _shell = StateObject(wrappedValue: shell)
         AppDelegate.shell = shell   // links arrive at the delegate, also while the window is closed
+        watchForUpdates(updater.updater)
     }
 
     var body: some Scene {
@@ -31,7 +32,7 @@ struct CreatorToolsetMacApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) {
-                Button("Check for Updates…") { updater.checkForUpdates(nil) }
+                UpdateMenuItem { updater.checkForUpdates(nil) }
             }
             // the one Settings: the server's own (This Mac is a section there, and in the Servers menu)
             CommandGroup(replacing: .appSettings) {
@@ -83,19 +84,66 @@ struct CreatorToolsetMacApp: App {
 
 /// Sparkle installs a downloaded update when the app quits, and this app lives in the menu bar and never quits, so
 /// updates waited forever (a build two days old while newer ones shipped). Instead: install and relaunch while the
-/// person is away (`updateMayInstall`), with no AI job on this Mac and no recording; or when they quit, as before.
-final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
+/// person is away (`updateMayInstall`), with no AI job on this Mac and no recording; when they press Restart to Update
+/// (the page's Update button, the menus: Updates.swift); or when they quit, as before.
+final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
     static let shared = UpdateWhenIdle()
     /// The quiet update found its idle moment itself: no question then.
     private var quiet = false
 
+    /// The downloaded update: its version, whether its release is marked critical (release.sh CRITICAL=1), since when
+    /// it waits, and whether Restart to Update was pressed and now waits for what's running (Update When Done).
+    struct Held: Equatable {
+        let version: String
+        let critical: Bool
+        let since: Date
+        var waiting = false
+    }
+    @MainActor @Published private(set) var held: Held?
+    /// Sparkle's install of the held update, run once: by the quiet moment or by a press.
+    @MainActor private var install: (() -> Void)?
+
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                  immediateInstallationBlock install: @escaping () -> Void) -> Bool {
+        MainActor.assumeIsolated {
+            self.install = install
+            held = Held(version: item.displayVersionString, critical: item.isCriticalUpdate, since: Date())
+        }
         whenIdle(every: 60, inBackground: true) { [weak self] in
-            self?.quiet = true
-            install()
+            MainActor.assumeIsolated {
+                guard let self, self.install != nil else { return }   // a press installed it already
+                self.quiet = true
+                self.installHeld()
+            }
         }
         return true
+    }
+
+    /// Restart to Update. Something running is asked about first (below), as for any install that is not the quiet one.
+    @MainActor func installNow() {
+        guard held != nil, install != nil else { return }
+        held?.waiting = true
+        installHeld()
+    }
+
+    @MainActor private func installHeld() {
+        guard let install else { return }
+        self.install = nil
+        install()
+    }
+
+    /// A held update's cycle only ends when its install failed or was called off: nothing is held any more, so the
+    /// buttons go back to Check for Updates… instead of waiting for an install that won't come.
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+        MainActor.assumeIsolated {
+            held = nil
+            install = nil
+        }
+    }
+
+    /// The relaunch opens the page the window was on, not Home.
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        MainActor.assumeIsolated { AppDelegate.shell?.rememberPageForRelaunch() }
     }
 
     /// Every install and relaunch passes here once. Something the relaunch would

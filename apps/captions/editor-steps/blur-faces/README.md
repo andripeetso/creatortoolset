@@ -5,9 +5,11 @@ children", "everyone but me"). The faces are found and covered on the person's o
 Apple builds into macOS and iOS (Vision). Nothing is uploaded. Only in "Only some faces" mode does the person's own AI
 see small pictures of the faces it chooses between, and it is told never to identify anyone.
 
-It is a download in Community (Other) and, once on, a tile on Home and a page at `/blur-faces`. The work runs:
+It is a download in Community (Explore and Other) on the Mac app's own server; a hosted server offers it by naming it
+in `CT_PLUGINS` (`…,blur-faces`). Once on, it is a tile on Home, a page at `/blur-faces` and a section in Settings
+(Settings → Face Blur: the same Faces, Which faces and Look as the page). The work runs:
 
-- **in the Mac app**: the page picks files on this Mac, the Mac app finds and covers the faces and writes the covered
+- **in the Mac app**, on any server the window shows: the page picks files on this Mac, the Mac app finds and covers the faces and writes the covered
   copy beside the original;
 - **in the iPhone app**: More → Face Blur shows on a server that has this plug-in; it picks from Photos and saves the
   covered copy to Photos.
@@ -49,6 +51,7 @@ On the `thisMac` handler (`src/lib/thisMac.ts`), string asks, each answered with
 | `faceblur:choose:<json>` `{ job, path, blur: string[], error?: string }` | `{ ok: true }`: writes (again) that item with those faces covered; with `error`, ends it as failed with that sentence and writes nothing |
 | `faceblur:cancel:<job>` | `{ ok: true }` |
 | `faceblur:show:<path>` | `{ ok: true }`: shows the file in Finder (a copy a job wrote, or a file picked or dropped here) |
+| `faceblur:pick` | `{ paths: string[] }`: Choose files in this app's own open panel, on whichever server the window shows (`[]` when cancelled). The picks join the files Face Blur may take. An older Mac app answers with a problem: the page then uses its file input, which gives paths only on this Mac's own server |
 
 ```ts
 type Item = {

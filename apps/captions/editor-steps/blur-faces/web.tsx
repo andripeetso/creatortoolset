@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { ScanFace } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { dropZoneClass } from "@/components/DropZone";
@@ -10,6 +11,7 @@ import {
   faceBlurChoose,
   faceBlurFaces,
   faceBlurHere,
+  faceBlurPick,
   faceBlurShow,
   faceBlurStart,
   faceBlurState,
@@ -31,6 +33,85 @@ async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> 
   return j as T;
 }
 
+/** The account's Face Blur settings, read once, and a save that puts the old ones back when it fails. */
+function useSettings() {
+  const [settings, setSettings] = useState<Settings | null>(null);
+  useEffect(() => {
+    call<Settings>(`${API}/settings`).then(setSettings, (e: Error) => saveFailed(e.message));
+  }, []);
+  const save = async (next: Settings) => {
+    const prev = settings;
+    setSettings(next);
+    try {
+      setSettings(await call<Settings>(`${API}/settings`, "PUT", next));
+    } catch (e) {
+      setSettings(prev);
+      saveFailed((e as Error).message);
+    }
+  };
+  return { settings, save };
+}
+
+/** Faces, Which faces and Look: on the page and in Settings → Face Blur. */
+function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
+  if (!settings) return null;
+  return (
+    <Card>
+      <Row
+        title="Faces"
+        control={
+          <SettingsSelect
+            label="Faces"
+            value={settings.mode}
+            onValueChange={(v) => void save({ ...settings, mode: v as Settings["mode"] })}
+            options={[
+              { value: "all", label: "Every face" },
+              { value: "some", label: "Only some faces" },
+            ]}
+          />
+        }
+      />
+      {settings.mode === "some" && (
+        <Row
+          title="Which faces"
+          description="Your AI looks at each face and picks the ones that match"
+          control={<TextField label="Which faces" value={settings.who} maxLength={500} onCommit={(who) => save({ ...settings, who })} />}
+        />
+      )}
+      <Row
+        title="Look"
+        control={
+          <SettingsSelect
+            label="Look"
+            value={settings.look}
+            onValueChange={(v) => void save({ ...settings, look: v as Settings["look"] })}
+            options={[
+              { value: "blur", label: "Blur" },
+              { value: "mosaic", label: "Mosaic" },
+              { value: "solid", label: "Solid" },
+            ]}
+          />
+        }
+      />
+    </Card>
+  );
+}
+
+function FaceBlurSettings() {
+  const s = useSettings();
+  return (
+    <div className="space-y-4">
+      <SettingsRows {...s} />
+      <p className="text-sm text-muted-foreground">
+        Faces in AI Editor edits are covered by the AI Editor's own Blur faces step:{" "}
+        <Link to="/settings/tools/editor" className="underline underline-offset-2">
+          Settings → Tools → AI Editor
+        </Link>
+      </p>
+    </div>
+  );
+}
+
 const STAGE: Record<FaceBlurItem["stage"], string> = {
   queued: "Waiting",
   scanning: "Finding faces",
@@ -44,7 +125,8 @@ type Job = { id: string; items: FaceBlurItem[]; settled: boolean };
 const finished = (i: FaceBlurItem, failed: Record<string, string>) => i.stage === "done" || i.stage === "failed" || !!failed[i.path];
 
 function FaceBlurPage() {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const shared = useSettings();
+  const { settings } = shared;
   const [here, setHere] = useState<"ok" | "old" | "none" | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   // a pick that failed, by file: the Mac wrote nothing, and the page says why
@@ -54,21 +136,7 @@ function FaceBlurPage() {
   const [pictures, setPictures] = useState<Record<string, Record<string, string>>>({});
   const [dragging, setDragging] = useState(false);
 
-  useEffect(() => {
-    call<Settings>(`${API}/settings`).then(setSettings, (e: Error) => saveFailed(e.message));
-    void faceBlurHere().then(setHere);
-  }, []);
-
-  const save = async (next: Settings) => {
-    const prev = settings;
-    setSettings(next);
-    try {
-      setSettings(await call<Settings>(`${API}/settings`, "PUT", next));
-    } catch (e) {
-      setSettings(prev);
-      saveFailed((e as Error).message);
-    }
-  };
+  useEffect(() => void faceBlurHere().then(setHere), []);
 
   // a file's face pictures, read once; in "Only some faces" (stage choosing) they go to the person's AI, and its
   // answer to the Mac
@@ -132,6 +200,14 @@ function FaceBlurPage() {
     }
   };
 
+  // the Mac app's own open panel (any server); a Mac app from before it could takes the file input's pick
+  const input = useRef<HTMLInputElement>(null);
+  const pickFiles = async () => {
+    const paths = await faceBlurPick();
+    if (paths === null) input.current?.click();
+    else await start(paths);
+  };
+
   const choose = async (files: FileList | null) => {
     const paths = await Promise.all([...(files ?? [])].map((f) => pathOnMac(f)));
     if (paths.some((p) => !p)) return saveFailed("Choose the files with Choose files, in the Mac app's own window.");
@@ -170,44 +246,7 @@ function FaceBlurPage() {
 
         {settings && (
           <Section title="What to cover">
-            <Card>
-              <Row
-                title="Faces"
-                control={
-                  <SettingsSelect
-                    label="Faces"
-                    value={settings.mode}
-                    onValueChange={(v) => void save({ ...settings, mode: v as Settings["mode"] })}
-                    options={[
-                      { value: "all", label: "Every face" },
-                      { value: "some", label: "Only some faces" },
-                    ]}
-                  />
-                }
-              />
-              {settings.mode === "some" && (
-                <Row
-                  title="Which faces"
-                  description="Your AI looks at each face and picks the ones that match"
-                  control={<TextField label="Which faces" value={settings.who} maxLength={500} onCommit={(who) => save({ ...settings, who })} />}
-                />
-              )}
-              <Row
-                title="Look"
-                control={
-                  <SettingsSelect
-                    label="Look"
-                    value={settings.look}
-                    onValueChange={(v) => void save({ ...settings, look: v as Settings["look"] })}
-                    options={[
-                      { value: "blur", label: "Blur" },
-                      { value: "mosaic", label: "Mosaic" },
-                      { value: "solid", label: "Solid" },
-                    ]}
-                  />
-                }
-              />
-            </Card>
+            <SettingsRows {...shared} />
           </Section>
         )}
 
@@ -217,12 +256,8 @@ function FaceBlurPage() {
           <div className={dropZoneClass(dragging, "gap-3 py-10")}>
             <p className="text-base font-semibold">Drop photos and videos here</p>
             <p className="text-sm text-muted-foreground">The covered copy is saved beside each one. Nothing is uploaded.</p>
-            <Button asChild>
-              <label className="cursor-pointer">
-                Choose files
-                <input type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => void choose(e.target.files)} />
-              </label>
-            </Button>
+            <Button onClick={() => void pickFiles()}>Choose files</Button>
+            <input ref={input} type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => void choose(e.target.files)} />
           </div>
         )}
 
@@ -310,5 +345,6 @@ export default defineWebPlugin({
   name: "Face Blur",
   about: "Covers every face, or only the ones you name, in your photos and videos, on your Mac and iPhone",
   routes: [{ path: "/blur-faces", element: <FaceBlurPage /> }],
+  settings: [{ id: "blur-faces", title: "Face Blur", icon: ScanFace, body: <FaceBlurSettings /> }],
   tiles: [{ stage: "Make", to: "/blur-faces", icon: ScanFace, name: "Face Blur", desc: "Cover faces in photos and videos before you share them", gate: "blur-faces" }],
 });

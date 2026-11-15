@@ -39,7 +39,8 @@ const itemCls = (on: boolean) =>
   );
 
 /**
- * Community: its own window over the page behind it, from the account menu, at /community/<section>: the shared catalog by
+ * Community: its own window over the page behind it, from the account menu, at /community/<section>: Explore (every plug-in, then
+ * the packs), the shared catalog by
  * the tool it adds to (/community/tool/<tile>: the team's plug-ins for that tool, then the packs that reach it, each
  * labelled with what kind of thing it is), Home layouts, the plug-ins that name no tool (Other), and what's installed
  * (the plug-ins this server is built with, then the packs). /community/pack/<id> is one pack. A tool's page in
@@ -77,6 +78,11 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
     );
   };
   const catalogWaiting = data.catalog === null;
+  const waitingCard = (
+    <Card>
+      {data.catalogError ? <ErrorRow title="The Community catalog did not load" detail={data.catalogError} retry={data.reload} /> : <LoadingRow />}
+    </Card>
+  );
   const body =
     section === "pack" ? (
       <PackDetailView id={sub ?? ""} installed={installed.find((p) => p.id === sub)} reload={data.reload} />
@@ -88,12 +94,14 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
       <InstalledView plugins={plugins} folderPlugins={data.folderPlugins} installed={data.installed} updates={data.updates} reload={data.reload} error={data.error} />
     ) : section === "tool" && !PACK_TOOLS.includes(sub as HomeTile) ? (
       <ToolPlugins steps={steps} tool={sub as HomeTile} q={q} />
-    ) : catalogWaiting ? (
-      <Card>
-        {data.catalogError ? <ErrorRow title="The Community catalog did not load" detail={data.catalogError} retry={data.reload} /> : <LoadingRow />}
-      </Card>
     ) : section === "explore" ? (
-      <ExploreView entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />
+      // every plug-in first (the team's, and the ones this server is built with), then the packs
+      <>
+        <ToolPlugins steps={steps} tool="all" q={q} />
+        {catalogWaiting ? waitingCard : <ExploreView entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />}
+      </>
+    ) : catalogWaiting ? (
+      waitingCard
     ) : section === "home" ? (
       <KindView kind="home" entries={data.catalog ?? []} installed={installed} updates={data.updates} q={q} reload={data.reload} />
     ) : (
@@ -152,7 +160,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
             </label>
             <nav aria-label="Community sections" className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
               <span className="hidden px-2.5 pb-1 text-xs font-medium text-sidebar-foreground/60 md:block">Discover</span>
-              {nav("explore", "Explore", Compass, data.catalog?.length)}
+              {nav("explore", "Explore", Compass, data.catalog ? data.catalog.length + stepsFor(steps.view, "all").length : undefined)}
               {tools.map((t) =>
                 nav(`tool/${t}`, HOME_TILE_NAMES[t], TILE_ICONS[t], data.catalog ? data.catalog.filter((e) => reachesTool(e.contains, t)).length + stepsFor(steps.view, t).length : undefined),
               )}
@@ -164,9 +172,10 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
               {nav("skills", "Skills", BookOpenText)}
             </nav>
           </div>
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-scroll">
+          {/* a div, not <main>: chat mode lays out and hides every <main> as the page beside the chats (SettingsPage) */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-scroll">
             <div className="mx-auto w-full max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
-          </main>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

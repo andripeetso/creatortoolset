@@ -301,7 +301,7 @@ private struct MoreMenu: View {
         if shell.runsHere {
             Button("Open server log") { shell.openServerLog() }
         }
-        Button("Check for Updates…") { checkForUpdates() }
+        UpdateMenuItem(check: checkForUpdates)
         Divider()
         Button("Quit Creator Toolset") { NSApp.terminate(nil) }
     }

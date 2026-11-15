@@ -28,10 +28,10 @@ const voice = { id: "editor-voice", title: "Voice", about: "Cleans and levels th
 const engine = { id: "tiny-enhance", title: "Tiny Enhance", about: "Cleans voices with your own Tiny account.", kind: "enhance", use: false, values: {}, folder: "tiny-enhance" };
 const cutout = { id: "tiny-cutout", title: "Tiny Cutout", about: "Cuts a picture out of its background.", kind: "assistant", use: false, values: {}, folder: "tiny-cutout", state: "add" };
 let posted: string[] = [];
-function Under({ tool, q }: { tool: HomeTile | null; q: string }) {
+function Under({ tool, q }: { tool: HomeTile | null | "all"; q: string }) {
   return <ToolPlugins steps={useSteps()} tool={tool} q={q} />;
 }
-async function render(steps: object[], q = "", tool: HomeTile | null = "editor") {
+async function render(steps: object[], q = "", tool: HomeTile | null | "all" = "editor") {
   posted = [];
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") posted.push(url);
@@ -108,6 +108,17 @@ describe("a tool's plug-ins", () => {
     again();
     await render(steps, "", "enhance");
     expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([["Tiny Enhance", "/settings/tiny-enhance", true]]);
+  });
+
+  it("Explore lists every row: the ones to download and the ones this server is built with (no folder), Installed with their Settings", async () => {
+    webPlugins.push({ id: "tiny-studio", settings: [{ id: "tiny-studio", title: "Tiny Studio", body: null }] } as never);
+    const built = { id: "tiny-studio", title: "Tiny Studio", about: "The studio's own.", kind: "", state: "loaded", use: false, values: {} };
+    await render([cutout, { ...engine, state: "add" }, built], "", "all");
+    expect(groups()[0].rows.map((r) => [r.title, r.link, r.installed])).toEqual([
+      ["Tiny Cutout", null, false],
+      ["Tiny Enhance", null, false],
+      ["Tiny Studio", "/settings/tiny-studio", true],
+    ]);
   });
 
   it("installed with no page half loaded: Installed, and no Settings link to a section that isn't there", async () => {

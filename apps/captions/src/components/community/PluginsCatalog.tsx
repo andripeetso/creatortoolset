@@ -34,10 +34,10 @@ export function useSteps() {
 }
 export type Steps = ReturnType<typeof useSteps>;
 
-/** The rows that add to one tool (null = the ones that name no Home tool), matching the search. */
-export function stepsFor(view: StepsView | null, tool: HomeTile | null, q = ""): StepRow[] {
+/** The rows that add to one tool (null = the ones that name no Home tool, "all" = every row), matching the search. */
+export function stepsFor(view: StepsView | null, tool: HomeTile | null | "all", q = ""): StepRow[] {
   const s = q.trim().toLowerCase();
-  return (view?.steps ?? []).filter((r) => toolOf(r) === tool && (!s || [r.title, r.about].some((v) => v.toLowerCase().includes(s))));
+  return (view?.steps ?? []).filter((r) => (tool === "all" || toolOf(r) === tool) && (!s || [r.title, r.about].some((v) => v.toLowerCase().includes(s))));
 }
 
 /**
@@ -45,7 +45,7 @@ export function stepsFor(view: StepsView | null, tool: HomeTile | null, q = ""):
  * step needs no Settings link, and, with `switches` (the Mac app's own server, where that Mac app runs the steps), shows
  * its switch for new edits and its options instead of Installed.
  */
-export function ToolPlugins({ steps, tool, q, inSettings = false, switches = false }: { steps: Steps; tool: HomeTile | null; q?: string; inSettings?: boolean; switches?: boolean }) {
+export function ToolPlugins({ steps, tool, q, inSettings = false, switches = false }: { steps: Steps; tool: HomeTile | null | "all"; q?: string; inSettings?: boolean; switches?: boolean }) {
   // best effort: a list that could not be read (a guest, the demo) leaves the section out, as for a tool with none
   if (steps.error) return null;
   if (!steps.view) return <Section title="Plug-ins"><Card><LoadingRow /></Card></Section>;

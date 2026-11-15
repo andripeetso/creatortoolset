@@ -3,6 +3,7 @@
 // once in the window is enough.
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 import UserNotifications
 import WebKit
 
@@ -62,6 +63,9 @@ final class Shell: NSObject, ObservableObject {
     private let serversKey = "servers"
     private let currentKey = "currentServer"
     private let aiKey = "aiOnThisMac"
+    /// The page the window was on when an update relaunched the app (rememberPageForRelaunch), opened again once.
+    private let pageBeforeUpdateKey = "pageBeforeUpdate"
+    private var updateWatch: AnyCancellable?
     private var runner: RelayRunner?
     private var runnerID = UUID()
     private let museLogin = MuseLogin()
@@ -118,6 +122,9 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMac = { [weak self] in self?.openWindowID?("this-mac") }
         view.onRecord = { [weak self] in self?.recorderCommand($0) }
         view.onSignIn = { [weak self] driver, home in self?.signIn(driver: driver, home: home) }
+        updateWatch = UpdateWhenIdle.shared.$held.sink { [weak view] held in
+            DispatchQueue.main.async { view?.macUpdate = held }
+        }
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
@@ -142,6 +149,7 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMacAsk = { [weak self, weak view] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
             // Face Blur's page (FaceBlurBridge.swift): the files it may take are the ones picked or dropped in this window
+            if faceBlurAsk(ask) == .pick { return self.faceBlurPick(in: view?.window, done) }
             if isFaceBlurAsk(ask) {
                 let allowed = Set((self.pickedFiles + (view?.droppedFiles ?? [])).map(\.path))
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
@@ -199,10 +207,13 @@ final class Shell: NSObject, ObservableObject {
         aiOn = UserDefaults.standard.bool(forKey: aiKey)
         pluginCount = PluginRecord.live.load().on.count
         markDevice()
+        let back = UserDefaults.standard.url(forKey: pageBeforeUpdateKey).flatMap { isSite($0, base) ? $0 : nil }
+        UserDefaults.standard.removeObject(forKey: pageBeforeUpdateKey)
         if runsHere {
+            pluginWatch.returnTo = back
             startServer()   // the page and the AI runner wait for it
         } else if current != nil {
-            open("/")
+            if let back { webView.load(URLRequest(url: back)) } else { open("/") }
             if aiOn { startAI() }
         }
         // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
@@ -479,6 +490,11 @@ final class Shell: NSObject, ObservableObject {
     var pairedHere: Bool { DeviceVault.deviceID(for: base.host ?? "") != nil }
 
     // MARK: window and site
+
+    /// Just before an update relaunches the app: the page it is on, for the next launch.
+    func rememberPageForRelaunch() {
+        if let url = webView.url, isSite(url, base) { UserDefaults.standard.set(url, forKey: pageBeforeUpdateKey) }
+    }
 
     func open(_ href: String) {
         guard hasServer, let url = URL(string: href, relativeTo: base)?.absoluteURL else { return }
@@ -1021,6 +1037,23 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url { NSWorkspace.shared.open(url) }
         return nil
+    }
+
+    /// Face Blur's Choose files (`faceblur:pick`): this app's own open panel, on whichever server the window shows. A file
+    /// input's pick is told to the page only on this Mac's own server ("files"); these paths go to the Face Blur page, for
+    /// its job on this Mac, and join the files Face Blur may take. { paths }, none when the panel is cancelled.
+    private func faceBlurPick(in window: NSWindow?, _ done: @escaping ([String: Any]) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image, .movie]
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .OK, let self else { return done(["paths": [String]()]) }
+            self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles)
+            done(["paths": panel.urls.map(\.path)])
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
 
     /// The page's file inputs and drop zones: the Mac's own open panel.
