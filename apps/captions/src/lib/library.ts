@@ -1,4 +1,5 @@
 import type {
+  TagCount,
   AssetKind,
   AssetCard,
   AssetDetail,
@@ -98,6 +99,13 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.source) p.set("source", q.source);
   setFacets(p, q.facets);
   return fetch(`/api/library/${libraryId}/assets?${p}`).then((r) => json<AssetPage>(r));
+}
+
+/** Every tag in the library with how many clips carry it, most used first. */
+export function listTags(libraryId: string): Promise<TagCount[]> {
+  return fetch(`/api/library/${libraryId}/tags`)
+    .then((r) => json<{ tags: TagCount[] }>(r))
+    .then((d) => d.tags);
 }
 
 /** The plug-in sources this account may browse in the library (the built-in library is not one of them). */

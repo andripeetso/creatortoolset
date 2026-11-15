@@ -125,6 +125,21 @@ searchApp.get("/:id/search", async (c) => {
   return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll))); // ponytail: narrowed after the top hits
 });
 
+// GET /api/library/:id/tags → { tags: [{ tag, count }] }: every tag on a clip in the library (not in the trash), most used
+// first, for the tag filter and the clip window's suggestions.
+// ponytail: counted over the whole library, not per viewer's policies; a plug-in that hides clips hides the whole library
+searchApp.get("/:id/tags", (c) => {
+  const libraryId = c.req.param("id");
+  if (!viewerOf(c.get("user").username, libraryId)) return notFound(c);
+  const tags = db()
+    .prepare(
+      `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT 500`,
+    )
+    .all(libraryId) as { tag: string; count: number }[];
+  return c.json({ tags });
+});
+
 // GET /api/library/:id/assets/:assetId → AssetDetail (404 for a viewer the policies refuse)
 searchApp.get("/:id/assets/:assetId", async (c) => {
   const libraryId = c.req.param("id");

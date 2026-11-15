@@ -34,6 +34,10 @@ export interface AssetCard {
   roll?: "a" | "b";
   /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
   finished?: true;
+  /** a strip of frames across the clip, side by side in one picture (videos, once made): hover scrub and the filmstrip */
+  spriteUrl?: string;
+  /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
+  place?: string;
 }
 
 export interface AssetDetail extends AssetCard {
@@ -62,8 +66,20 @@ export interface SearchQuery {
   trashed?: boolean; // the trash instead of the library
   /** only clips in none of the person's folders (the library's top level); Finals and saved searches don't count */
   unfiled?: boolean;
+  /** the order, sorted by the server (`?sort=`): newest added first when not given */
+  sort?: LibrarySort;
+  /** only clips filmed in this country (`?place=`, ISO 3166-1 alpha-2) */
+  place?: string;
   cursor?: string;
   limit?: number; // limit ≤ 200
+}
+
+export type LibrarySort = "new" | "old" | "name" | "longest" | "shortest" | "filmed";
+
+/** GET /api/library/:id/tags */
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 export interface SearchHit {
