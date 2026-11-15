@@ -28,6 +28,8 @@ struct WaveSynth {
     private var popAge: Float = 10, from: (freq: Float, amp: Float) = (220, 0), weeLoud: Float = 0, weeEnd: Float = 0
     /// Where in the wee it is (samples), and its two low-pass stages (it goes off into the distance).
     private var weeAt: Float = 0, far1: Float = 0, far2: Float = 0
+    /// The soft pop under the wee's start: how loud, and where its wave is.
+    private var popLoud: Float = 0, popPhase: Float = 0
 
     init(rate: Float) { self.rate = rate }
 
@@ -52,6 +54,8 @@ struct WaveSynth {
         weeAt = 0
         far1 = 0
         far2 = 0
+        popLoud = weeLoud
+        popPhase = 0
         h = 0
         popAge = 0
     }
@@ -90,6 +94,12 @@ struct WaveSynth {
                 out += amp * (sin(tone) + 0.12 * sin(2 * tone))
             }
         }
+        // a slight soft pop as it lets go (owner, 11-15): a round bubble chirping up a little, no click, gone in 0.1 s
+        var bubble: Float = 0
+        if popAge < 0.15 {
+            popPhase += 2 * Float.pi * 240 * (1 + 0.7 * (1 - exp(-popAge / 0.012))) * dt
+            bubble = 0.07 * popLoud * min(popAge / 0.003, 1) * exp(-popAge / 0.03) * sin(popPhase)
+        }
         var voice: Float = 0
         if popAge < weeEnd {
             // it goes off into the distance (owner, 11-15: "the wee should go to the distance more"): duller (3.5 kHz down
@@ -113,7 +123,7 @@ struct WaveSynth {
         if popAge < 10 { popAge += dt }
         // (the oooo peaks about as loud as the Mac's own "Pop"; the wee starts about as loud as the oooo ends: owner,
         // 11-15, 9 then 4 dB louder were "a bit too loud compared to the ooh", "still a bit loud")
-        return tanh(out * 1.2) * 0.4 + bridge + voice
+        return tanh(out * 1.2) * 0.4 + bridge + bubble + voice
     }
 }
 
