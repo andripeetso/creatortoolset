@@ -13,6 +13,13 @@ import { fitted } from "./framing";
  * to the timeline file in a zip (bare paths are what Resolve itself writes; a file:// URL is not needed).
  */
 
+/**
+ * The OTIO as the file's text. Times and effect values are written with a decimal point, as Resolve writes them:
+ * Resolve 21.2 refuses a whole file whose effect values are whole numbers ("1" where it writes "1.0"), its markers too.
+ */
+export const otioText = (o: object): string =>
+  JSON.stringify(o, null, 2).replace(/("(?:rate|value|Default Parameter Value|Parameter Value|maxValue|minValue)": -?\d+)(?=[,\n])/g, "$1.0");
+
 const rt = (value: number, rate: number) => ({ OTIO_SCHEMA: "RationalTime.1", rate, value });
 const range = (start: number, dur: number, rate: number) => ({ OTIO_SCHEMA: "TimeRange.1", duration: rt(dur, rate), start_time: rt(start, rate) });
 const param = (id: string, value: number, def: number, lo: number, hi: number) => ({

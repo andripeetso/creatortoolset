@@ -4,7 +4,7 @@
   "global_start_time": {
     "OTIO_SCHEMA": "RationalTime.1",
     "rate": 29.97,
-    "value": 108000
+    "value": 108000.0
   },
   "metadata": {
     "Resolve_OTIO": {
@@ -33,12 +33,12 @@
           "duration": {
             "OTIO_SCHEMA": "RationalTime.1",
             "rate": 29.97,
-            "value": 1
+            "value": 1.0
           },
           "start_time": {
             "OTIO_SCHEMA": "RationalTime.1",
             "rate": 29.97,
-            "value": 0
+            "value": 0.0
           }
         }
       },
@@ -57,12 +57,12 @@
           "duration": {
             "OTIO_SCHEMA": "RationalTime.1",
             "rate": 29.97,
-            "value": 1
+            "value": 1.0
           },
           "start_time": {
             "OTIO_SCHEMA": "RationalTime.1",
             "rate": 29.97,
-            "value": 45
+            "value": 45.0
           }
         }
       }
@@ -95,12 +95,12 @@
               "duration": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 45
+                "value": 45.0
               },
               "start_time": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 107904
+                "value": 107904.0
               }
             },
             "effects": [],
@@ -116,12 +116,12 @@
                   "duration": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 29.97,
-                    "value": 599
+                    "value": 599.0
                   },
                   "start_time": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 29.97,
-                    "value": 107892
+                    "value": 107892.0
                   }
                 },
                 "available_image_bounds": null,
@@ -143,12 +143,12 @@
               "duration": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 60
+                "value": 60.0
               },
               "start_time": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 150
+                "value": 150.0
               }
             },
             "effects": [
@@ -164,40 +164,40 @@
                     "Name": "Transform",
                     "Parameters": [
                       {
-                        "Default Parameter Value": 1,
+                        "Default Parameter Value": 1.0,
                         "Key Frames": {},
                         "Parameter ID": "transformationZoomX",
                         "Parameter Value": 1.15,
                         "Variant Type": "Double",
-                        "maxValue": 100,
-                        "minValue": 0
+                        "maxValue": 100.0,
+                        "minValue": 0.0
                       },
                       {
-                        "Default Parameter Value": 1,
+                        "Default Parameter Value": 1.0,
                         "Key Frames": {},
                         "Parameter ID": "transformationZoomY",
                         "Parameter Value": 1.15,
                         "Variant Type": "Double",
-                        "maxValue": 100,
-                        "minValue": 0
+                        "maxValue": 100.0,
+                        "minValue": 0.0
                       },
                       {
-                        "Default Parameter Value": 0,
+                        "Default Parameter Value": 0.0,
                         "Key Frames": {},
                         "Parameter ID": "transformationPan",
-                        "Parameter Value": 0,
+                        "Parameter Value": 0.0,
                         "Variant Type": "Double",
-                        "maxValue": 4,
-                        "minValue": -4
+                        "maxValue": 4.0,
+                        "minValue": -4.0
                       },
                       {
-                        "Default Parameter Value": 0,
+                        "Default Parameter Value": 0.0,
                         "Key Frames": {},
                         "Parameter ID": "transformationTilt",
                         "Parameter Value": -0.018000000000000002,
                         "Variant Type": "Double",
-                        "maxValue": 4,
-                        "minValue": -4
+                        "maxValue": 4.0,
+                        "minValue": -4.0
                       }
                     ],
                     "Type": 2
@@ -217,12 +217,12 @@
                   "duration": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 59.94,
-                    "value": 1199
+                    "value": 1199.0
                   },
                   "start_time": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 59.94,
-                    "value": 0
+                    "value": 0.0
                   }
                 },
                 "available_image_bounds": null,
@@ -287,12 +287,12 @@
               "duration": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 45
+                "value": 45.0
               },
               "start_time": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 107904
+                "value": 107904.0
               }
             },
             "effects": [],
@@ -308,12 +308,12 @@
                   "duration": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 29.97,
-                    "value": 599
+                    "value": 599.0
                   },
                   "start_time": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 29.97,
-                    "value": 107892
+                    "value": 107892.0
                   }
                 },
                 "available_image_bounds": null,
@@ -345,12 +345,12 @@
               "duration": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 60
+                "value": 60.0
               },
               "start_time": {
                 "OTIO_SCHEMA": "RationalTime.1",
                 "rate": 29.97,
-                "value": 150
+                "value": 150.0
               }
             },
             "effects": [],
@@ -366,12 +366,12 @@
                   "duration": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 59.94,
-                    "value": 1199
+                    "value": 1199.0
                   },
                   "start_time": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 59.94,
-                    "value": 0
+                    "value": 0.0
                   }
                 },
                 "available_image_bounds": null,

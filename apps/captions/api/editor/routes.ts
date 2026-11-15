@@ -9,7 +9,7 @@ import { toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
 import { notTyped } from "./own-words";
 import { LINK_TTL_S, mediaPaths } from "./media";
-import { toOtio } from "./otio";
+import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
 import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
@@ -365,7 +365,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip");
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
-  const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
+  const otio = async () => otioText(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)));
   const send = (body: string | Buffer, file: string, type: string) =>
     new Response(body, { headers: { "Content-Type": type, "Content-Disposition": `attachment; filename="${file}"`, "Cache-Control": "no-store" } });
   if (format === "otio") return send(await otio(), `${base}.otio`, "application/json");
