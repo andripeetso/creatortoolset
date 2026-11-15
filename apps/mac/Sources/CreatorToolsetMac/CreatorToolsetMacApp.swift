@@ -132,6 +132,15 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
         install()
     }
 
+    /// A held update's cycle only ends when its install failed or was called off: nothing is held any more, so the
+    /// buttons go back to Check for Updates… instead of waiting for an install that won't come.
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+        MainActor.assumeIsolated {
+            held = nil
+            install = nil
+        }
+    }
+
     /// The relaunch opens the page the window was on, not Home.
     func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
         MainActor.assumeIsolated { AppDelegate.shell?.rememberPageForRelaunch() }
