@@ -14,8 +14,9 @@ import { BIG_DROP, BigUploadDialog, dropOf, type FolderSize } from "@/components
  * The folder the person picks goes on the Library's watch list (api/library/watch.ts), which imports it in place: nothing
  * is walked, copied or uploaded. Choose a folder opens the Mac app's own folder picker; in a browser on the person's
  * computer it asks for a path, which the server checks. On a hosted server the card offers upload instead.
- * Skip is remembered in this browser; the card goes for good once a folder exists. `page`: the Media Library's own first
- * screen (an empty library), centred, with what the library is for and upload as the second way; no Skip there.
+ * Skip is remembered in this browser; the card goes for good once a folder exists. `page`: in the Media Library's own
+ * page while it holds nothing (below its folders), with what the library is for and upload as the second way; no
+ * heading and no Skip there. `offer`: a big folder offers the AI organizing the library (`onOffer` with the answer).
  */
 
 const SKIP_KEY = "ct-footage-folder-skipped";
@@ -36,7 +37,19 @@ const rememberSkip = () => {
   }
 };
 
-export function FootageFolderCard({ libraryId, onUpload, page = false }: { libraryId: string; onUpload?: () => void; page?: boolean }) {
+export function FootageFolderCard({
+  libraryId,
+  onUpload,
+  page = false,
+  offer = false,
+  onOffer,
+}: {
+  libraryId: string;
+  onUpload?: () => void;
+  page?: boolean;
+  offer?: boolean;
+  onOffer?: (ai: boolean) => Promise<void>;
+}) {
   const navigate = useNavigate();
   const [skipped, setSkipped] = useState(() => !page && skippedBefore());
   // the saved watch status (the same copy as the Library's watch folders), so the card is in place on the first frame
@@ -99,10 +112,12 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
       drop={dropOf(asking.size)}
       title={`Add ${asking.size.files.toLocaleString()} clips from this folder?`}
       go="Add folder"
+      offer={offer}
       onClose={() => setAsking(null)}
-      onUpload={() => {
-        void add(asking.folder);
+      onUpload={async (ai) => {
         setAsking(null);
+        if (offer) await onOffer?.(ai); // before the folder: its files are filed as they come in
+        void add(asking.folder);
       }}
     />
   );
@@ -113,9 +128,9 @@ export function FootageFolderCard({ libraryId, onUpload, page = false }: { libra
   };
 
   const box = page
-    ? "mx-auto flex w-full max-w-md flex-col items-center gap-5 py-16 text-center sm:py-24"
+    ? "mx-auto flex w-full max-w-md flex-col items-center gap-5 py-10 text-center sm:py-14"
     : "flex flex-col gap-3 rounded-xl border border-zinc-500/20 p-4";
-  const heading = <h2 className={page ? "text-xl font-semibold" : "text-sm font-medium"}>Where are your videos?</h2>;
+  const heading = !page && <h2 className="text-sm font-medium">Where are your videos?</h2>;
   const skipButton = !page && (
     <Button variant="ghost" size="sm" onClick={skip}>
       Skip

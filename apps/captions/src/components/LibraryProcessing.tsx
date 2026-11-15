@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { DEFAULT_FOLDERS, NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 import { getEstimate, getProgress, getWatch, type Drop, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -246,6 +247,7 @@ export function BigUploadDialog({
   drop,
   title,
   go,
+  offer = false,
   onUpload,
   onClose,
 }: {
@@ -253,10 +255,14 @@ export function BigUploadDialog({
   drop: Drop;
   title: string;
   go: string;
-  onUpload: () => void;
+  /** a big folder into a library the AI does not organize yet: it offers to (api/library/organize.ts), once */
+  offer?: boolean;
+  /** `ai`: the offer was taken */
+  onUpload: (ai: boolean) => void;
   onClose: () => void;
 }) {
   const [e, setE] = useState<LibraryEstimate | null>(null);
+  const [ai, setAi] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const { clips, bytes, audio, audioBytes, music } = drop;
   useEffect(() => {
@@ -289,11 +295,20 @@ export function BigUploadDialog({
             )}
           </div>
         )}
+        {offer && (
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-500/20 px-3 py-2.5">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm font-medium">AI organizes these</span>
+              <span className="text-xs text-zinc-500">{DEFAULT_FOLDERS.map((f) => f.name).join(", ")}</span>
+            </span>
+            <Switch aria-label="AI organizes these" checked={ai} onCheckedChange={setAi} />
+          </label>
+        )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={onUpload}>{go}</Button>
+          <Button onClick={() => onUpload(ai)}>{go}</Button>
         </div>
       </DialogContent>
     </Dialog>

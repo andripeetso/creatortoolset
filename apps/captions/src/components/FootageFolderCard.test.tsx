@@ -155,6 +155,32 @@ describe("Where are your videos?", () => {
     expect(onUpload).toHaveBeenCalledTimes(1);
   });
 
+  it("a big folder offers the AI organizing the library, and the answer is in before the folder is added", async () => {
+    const fetchWatch = globalThis.fetch;
+    const order: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") order.push(url);
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 40, bytes: 4e9, audio: 0, audioBytes: 0 }), { status: 200 });
+      if (url.includes("/estimate")) return new Response(JSON.stringify({ clips: 40, minutes: 10, seconds: 600, steps: [] }), { status: 200 });
+      return fetchWatch(url, init);
+    });
+    pick.mockResolvedValue("/Users/tiny/Movies/Trip");
+    const onOffer = vi.fn(async (ai: boolean) => void order.push(`offer ${ai}`));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><FootageFolderCard libraryId="lib_1" page offer onOffer={onOffer} /></MemoryRouter>));
+    await flush();
+    await click("Choose a folder");
+    const ai = document.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
+    expect(ai.getAttribute("aria-checked")).toBe("false"); // offered, not taken for them
+    act(() => ai.click());
+    const add = [...document.querySelectorAll("button")].find((b) => b.textContent === "Add folder")!;
+    act(() => add.click());
+    await flush();
+    expect(order).toEqual(["offer true", "/api/library/watch/folder"]);
+  });
+
   it("as the Library's first screen for someone who may not see the folders: upload", async () => {
     watchStatus = 404;
     await render(() => {}, true);

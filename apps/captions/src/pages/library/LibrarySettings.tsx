@@ -5,7 +5,9 @@ import { NEEDS, type Collection, type LibraryEstimate, type LibrarySpace, type L
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Card, Row, Section, StatusDot } from "@/components/settings/ui";
+import { Card, Row, Section, SettingsSelect, StatusDot } from "@/components/settings/ui";
+import type { Organize } from "@contracts/library";
+import { ORGANIZE } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { clearLibrarySpace, getEstimate, getLibrarySpace, updateLibrary } from "@/lib/library";
 import { LibraryStorageSettings } from "../LibraryStorage";
@@ -13,8 +15,9 @@ import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
  * The Media Library's settings, behind one button beside its search (the owner's: the footage folders and where the
- * files are kept are theirs only): the footage folders (on the person's own computer), storage with the space the
- * library's own made files take, and the two AI switches, each saying where it runs. The button carries an amber dot
+ * files are kept are theirs only): the footage folders (on the person's own computer), how the library is organized
+ * (./Organize.tsx), storage with the space the library's own made files take, and the two AI switches, each saying
+ * where it runs. The button carries an amber dot
  * while a folder or clip is not found.
  */
 
@@ -66,6 +69,7 @@ export function LibrarySettings({
           <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
             <SheetTitle className="text-base">Library settings</SheetTitle>
             {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} />}
+            {open && <OrganizeRow library={library} onChange={onChange} onError={onError} />}
             <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
               {open && <SpaceRows library={library} onChange={onChange} onError={onError} />}
             </LibraryStorageSettings>
@@ -122,6 +126,33 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
       <Card>
         {row("describe", "describe", "AI describes new videos")}
         {row("embed", "embed", "Search by meaning")}
+      </Card>
+    </Section>
+  );
+}
+
+/** How the library is organized (the first run's question, ./Organize.tsx); a library never asked shows My own folders. */
+function OrganizeRow({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+  const value = library.settings.organize ?? "own";
+  return (
+    <Section title="Folders">
+      <Card>
+        <Row
+          title="Organize"
+          description={ORGANIZE.find((o) => o.value === value)?.detail}
+          control={
+            <SettingsSelect
+              label="Organize"
+              value={value}
+              options={ORGANIZE}
+              onValueChange={(v) =>
+                void updateLibrary(library.id, { settings: { organize: v as Organize } })
+                  .then(onChange)
+                  .catch((e) => onError(message(e)))
+              }
+            />
+          }
+        />
       </Card>
     </Section>
   );
