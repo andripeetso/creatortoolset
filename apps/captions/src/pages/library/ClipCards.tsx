@@ -24,9 +24,9 @@ export function RowFrame() {
 }
 
 /** The grid's boxes before its list is known, the size of the cards: nothing moves when the list arrives. */
-export function TileFrame() {
+export function TileFrame({ columns }: { columns?: CSSProperties }) {
   return (
-    <ul aria-hidden="true" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+    <ul aria-hidden="true" className={columns ? "grid gap-3" : "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"} style={columns}>
       {Array.from({ length: 8 }, (_, i) => (
         <li key={i} className="flex flex-col gap-1.5">
           <div className="aspect-video w-full rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20" />

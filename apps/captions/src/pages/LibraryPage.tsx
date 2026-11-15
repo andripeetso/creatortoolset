@@ -61,7 +61,7 @@ import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll 
 import { LibrarySidebar, SidebarSheet, sidebarPicked, SORTS } from "./library/Sidebar";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, type Tab } from "./library/Tabs";
-import { LibraryViewSwitch, useLibraryView } from "./library/views";
+import { CardSizeSlider, cardColumns, LibraryViewSwitch, useCardSize, useLibraryView } from "./library/views";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage. An empty library is this same page,
@@ -109,6 +109,8 @@ export default function LibraryPage() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORT_IDS));
   const [view, setView] = useLibraryView();
+  const [cardSize, setCardSize] = useCardSize();
+  const columns = cardSize === null ? undefined : cardColumns(cardSize);
   const navigate = useNavigate();
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
   const [sourceList, setSources] = useState<{ id: string; label: string }[] | null>(null); // null: not read yet
@@ -825,6 +827,7 @@ export default function LibraryPage() {
                   </Button>
                 )}
                 {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
+                {view !== "list" && <CardSizeSlider size={cardSize} onChange={setCardSize} />}
                 <LibraryViewSwitch view={view} onChange={setView} />
                 {watch && (
                   <LibrarySettings
@@ -888,7 +891,7 @@ export default function LibraryPage() {
                 )}
 
                 {(searching ? !found : !first.data) || settling ? (
-                  view === "list" ? <RowFrame /> : <TileFrame />
+                  view === "list" ? <RowFrame /> : <TileFrame columns={columns} />
                 ) : shown.length > 0 || shownFolders.length > 0 ? (
                   view === "list" ? (
                     <div className="flex flex-col gap-1.5">
@@ -904,6 +907,7 @@ export default function LibraryPage() {
                   ) : view === "gallery" ? (
                     <GalleryGrid
                       assets={shown}
+                      size={cardSize}
                       tile={(a, ownShape) => (
                         <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
                           <GalleryTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} ownShape={ownShape} />
@@ -913,11 +917,11 @@ export default function LibraryPage() {
                   ) : kind === "image" ? (
                     // photos in their own proportions, folders above them
                     <div className="flex flex-col gap-3">
-                      {shownFolders.length > 0 && <FolderGrid size="small">{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />)}</FolderGrid>}
+                      {shownFolders.length > 0 && <FolderGrid size="small" columns={columns}>{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />)}</FolderGrid>}
                       <PhotoMasonry assets={shown} tile={tile} />
                     </div>
                   ) : (
-                    <FolderGrid size="small">
+                    <FolderGrid size="small" columns={columns}>
                       {shownFolders.map((c) => (
                         <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />
                       ))}

@@ -105,8 +105,9 @@ export function fileInto(d: DatabaseSync, a: Asset, name: string): boolean {
 }
 
 /** After the probe: a sound or a picture in a library the AI organizes goes to its folder (videos wait for their description). */
-export function organizeOnProbe(d: DatabaseSync, versionId: string, duration: number): void {
+export function organizeOnProbe(d: DatabaseSync, versionId: string, duration: number, song = false): void {
   const a = toFile(d, versionId);
-  if (a?.kind === "audio") fileInto(d, a, duration < SHORT_SOUND_S ? SOUNDS.effect.folder : SOUNDS.music.folder);
+  if (a && song) fileInto(d, a, SOUNDS.music.folder); // a music video too
+  else if (a?.kind === "audio") fileInto(d, a, duration < SHORT_SOUND_S ? SOUNDS.effect.folder : SOUNDS.music.folder);
   else if (a?.kind === "image") fileInto(d, a, "Graphics");
 }

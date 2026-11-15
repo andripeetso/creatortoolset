@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type CSSProperties } from "react";
 import { Folder, LayoutGrid, List } from "lucide-react";
 import { pageView } from "@/components/browse/views";
 
@@ -67,5 +67,60 @@ export function LibraryViewSwitch({ view, onChange }: { view: LibraryView; onCha
         );
       })}
     </div>
+  );
+}
+
+const SIZE_KEY = "library:card-size";
+const SIZE_EVENT = "library-card-size-change";
+// a card's least width in px: the slider's ends and where it starts (today's four across on a wide window)
+const SIZE = { min: 120, max: 480, start: 380 } as const;
+
+function storedSize(): number | null {
+  try {
+    const n = Number(localStorage.getItem(SIZE_KEY));
+    return n >= SIZE.min && n <= SIZE.max ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The cards' size, kept on this device; null until the slider is moved (the grids keep their own columns). */
+export function useCardSize(): [number | null, (n: number) => void] {
+  const size = useSyncExternalStore(
+    (cb) => {
+      window.addEventListener(SIZE_EVENT, cb);
+      return () => window.removeEventListener(SIZE_EVENT, cb);
+    },
+    storedSize,
+    () => null,
+  );
+  const set = (n: number) => {
+    try {
+      localStorage.setItem(SIZE_KEY, String(n));
+    } catch {
+      /* storage off: the size holds for this visit */
+    }
+    window.dispatchEvent(new Event(SIZE_EVENT));
+  };
+  return [size, set];
+}
+
+/** Columns as many as fit at `size` px each, never fewer than two. */
+export const cardColumns = (size: number): CSSProperties => ({ gridTemplateColumns: `repeat(auto-fill, minmax(min(${size}px, calc(50% - 6px)), 1fr))` });
+
+/** Smaller cards to the left, more of them in a row. */
+export function CardSizeSlider({ size, onChange }: { size: number | null; onChange: (n: number) => void }) {
+  return (
+    <input
+      type="range"
+      aria-label="Card size"
+      title="Card size"
+      min={SIZE.min}
+      max={SIZE.max}
+      step={10}
+      value={size ?? SIZE.start}
+      onChange={(e) => onChange(Number(e.target.value))}
+      className="h-8 w-24 cursor-pointer accent-zinc-400"
+    />
   );
 }
