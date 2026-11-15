@@ -22,6 +22,7 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortUnsorted } from "./roll";
+import { organizeOnProbe } from "./organize";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -273,6 +274,8 @@ async function run(job: JobRow): Promise<void> {
     if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
     // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
     if (!music && job.actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: job.actor });
+    // a library the AI organizes: a sound or a picture goes to its folder now (a video when it is described)
+    organizeOnProbe(db, v.id, p.duration);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {

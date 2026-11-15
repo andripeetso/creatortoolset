@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
 import type { FootageTarget } from "../../contracts/editor";
 import { librariesHere, libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
+import { smartFolder } from "../library/organize";
 import { pluginFootageTarget } from "../lib/plugin";
 
 /** The folder footage picked from this computer is filed in: the talking takes an edit is built on (A-roll). */
@@ -16,22 +16,7 @@ const A_ROLL_QUERY = JSON.stringify({ roll: "a" });
 export async function footageTargetFor(username: string): Promise<FootageTarget | null> {
   const plugin = await pluginFootageTarget(username);
   if (plugin) return plugin;
-  const d = libraryDb();
   const lib = (await librariesHere(username))[0]; // the workspace this request works in
   if (!lib || !libraryRole(username, lib.id)) return null;
-  const found = d
-    .prepare("SELECT id FROM collections WHERE library_id = ? AND kind = 'smart' AND query = ? ORDER BY created_at, id LIMIT 1")
-    .get(lib.id, A_ROLL_QUERY) as { id: string } | undefined;
-  if (found) return { libraryId: lib.id, collectionId: found.id };
-  // ponytail: two first-time requests at once can make two A-roll folders; add a unique index when that shows up
-  const id = `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES (?, ?, NULL, ?, 'smart', ?, ?, ?)").run(
-    id,
-    lib.id,
-    A_ROLL,
-    A_ROLL_QUERY,
-    Date.now(),
-    username,
-  );
-  return { libraryId: lib.id, collectionId: id };
+  return { libraryId: lib.id, collectionId: smartFolder(libraryDb(), lib.id, A_ROLL, A_ROLL_QUERY, username) };
 }

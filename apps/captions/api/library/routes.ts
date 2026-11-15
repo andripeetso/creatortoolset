@@ -16,6 +16,7 @@ import { notifyLibraryChanges } from "../lib/events";
 import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob, prepareFirst } from "./jobs";
+import { ensureDefaultFolders } from "./organize";
 import { needsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { spaceApp } from "./space";
@@ -587,7 +588,13 @@ libraryApp.get("/", async (c) => {
 
 const settingsOf = (json: string): LibrarySettings => {
   const s = JSON.parse(json || "{}") as Partial<LibrarySettings>;
-  return { describe: s.describe ?? SETTING_DEFAULTS.describe, embed: s.embed ?? SETTING_DEFAULTS.embed, proxy: s.proxy ?? SETTING_DEFAULTS.proxy };
+  return {
+    describe: s.describe ?? SETTING_DEFAULTS.describe,
+    embed: s.embed ?? SETTING_DEFAULTS.embed,
+    proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
+    ...(s.organize ? { organize: s.organize } : {}),
+    ...(s.organizeOffered ? { organizeOffered: true } : {}),
+  };
 };
 
 // GET /api/library/:id/estimate?clips&bytes&audio&audioBytes&music → LibraryEstimate: what processing that many clips would take, for the caller
@@ -608,8 +615,10 @@ libraryApp.get("/:id/progress", async (c) => {
   return c.json(await progress(libraryId, user.username));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy? } } → LibrarySummary; the owner only. Proxies
-// off: the ones still queued are dropped; on: the clips that need one and have none get one
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, organize?, organizeOffered? } } → LibrarySummary;
+// the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
+// organize "default" or "ai" makes the default folders it is missing (organize.ts); "ai" turns the descriptions on, since
+// a video is filed by its description
 libraryApp.patch("/:id", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -627,6 +636,15 @@ libraryApp.patch("/:id", async (c) => {
   if (proxy === false) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
   if (proxy === true) for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
+  const organize = b?.settings?.organize;
+  if (organize === "default" || organize === "ai" || organize === "own") {
+    const set = (key: string, value: string) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(value, libraryId);
+    set("organize", JSON.stringify(organize));
+    if (organize === "ai") set("describe", "true");
+    if (organize !== "own") ensureDefaultFolders(db(), libraryId, user.username);
+    libraryChanged(libraryId); // the folders: other open pages read them again
+  }
+  if (b?.settings?.organizeOffered === true) db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.organizeOffered', json('true')) WHERE id = ?`).run(libraryId);
   const r = db().prepare("SELECT name, storage_kind, settings FROM libraries WHERE id = ?").get(libraryId) as {
     name: string;
     storage_kind: LibrarySummary["storage"];

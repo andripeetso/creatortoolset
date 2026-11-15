@@ -13,6 +13,7 @@ import { indexAsset } from "./query";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
+import { fileInto, plainFolders, toFile } from "./organize";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a
@@ -32,6 +33,8 @@ export interface DescribeInput {
   title: string;
   transcript?: string;
   frames: number;
+  /** the library's plain folders, when the AI organizes it (organize.ts): the answer names the one the clip fits */
+  folders?: string[];
 }
 
 export interface Described {
@@ -39,6 +42,8 @@ export interface Described {
   tags: string[];
   /** "a": someone talks to the camera through most of it; "b": anything else. Absent when the answer had none */
   roll?: Roll;
+  /** the folder it fits, of the ones it was given (or none) */
+  folder?: string;
 }
 
 export function describePrompt(input: DescribeInput): { system: string; user: string } {
@@ -52,7 +57,12 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`,
       'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
-      'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b"}',
+      ...(input.folders?.length
+        ? [
+            `folder is the one of these folders the clip belongs in, or null when none fits: ${JSON.stringify(input.folders)}`,
+            'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b", "folder": "a folder name" or null}',
+          ]
+        : ['Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b"}']),
     ].join("\n\n"),
   };
 }
@@ -65,7 +75,8 @@ export function parseDescribe(text: string): Described {
   const tags = Array.isArray(o.tags)
     ? [...new Set(o.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean))].slice(0, MAX_TAGS)
     : [];
-  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}) };
+  const folder = typeof o.folder === "string" ? o.folder.trim() : "";
+  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}) };
 }
 
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */
@@ -137,9 +148,18 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       await ffmpegTo(file, ["-ss", String(t), "-i", src, "-frames:v", "1", "-vf", "scale=512:-2", "-q:v", "4"]);
     }
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
-    const { system, user } = describePrompt({ title, frames: images.length, ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}) });
+    // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
+    const filing = toFile(db, versionId);
+    const folders = filing ? plainFolders(db, filing.library_id) : [];
+    const { system, user } = describePrompt({
+      title,
+      frames: images.length,
+      ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
+      ...(folders.length ? { folders } : {}),
+    });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider);
+    if (filing && value.folder && folders.includes(value.folder)) fileInto(db, filing, value.folder);
   } finally {
     await Promise.all(files.map((f) => rm(f, { force: true })));
   }

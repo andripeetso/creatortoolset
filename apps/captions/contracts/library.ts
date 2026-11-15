@@ -84,7 +84,28 @@ export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+  /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
+  organize?: Organize;
+  /** a big folder came in and the AI organizing was offered (once, either answer) */
+  organizeOffered?: boolean;
 }
+
+/** Default folders: DEFAULT_FOLDERS made. AI organizes: the same, and each file that comes in is filed by the AI. Own: nothing made. */
+export type Organize = "default" | "ai" | "own";
+
+/**
+ * The folders "Default folders" and "AI organizes" make, in this order. A-roll and B-roll are smart folders over the roll
+ * the app sorts (api/library/roll.ts); the rest are plain top-level folders, found by name (Music and Sound effects are
+ * the names songs and sound effects are filed under).
+ */
+export const DEFAULT_FOLDERS: readonly { name: string; roll?: "a" | "b" }[] = [
+  { name: "A-roll", roll: "a" },
+  { name: "B-roll", roll: "b" },
+  { name: "Music" },
+  { name: "Sound effects" },
+  { name: "Graphics" },
+  { name: "Examples" },
+];
 
 /** GET /api/library/:id/space: what the library's own made files take (the person's own files are not in it). */
 export interface LibrarySpace {
