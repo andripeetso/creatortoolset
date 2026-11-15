@@ -24,6 +24,7 @@ import { currentProject, memoryBlock } from "./lib/memory";
 import { inProjectOf, projectOf } from "./lib/project-of";
 import { readFile } from "node:fs/promises";
 import { deviceOf, isThisMachine } from "./lib/devices";
+import { pluginStorageFolders } from "./lib/plugin";
 import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac } from "./lib/folder-list";
 import { watchAllowed } from "./library/watch";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
@@ -109,8 +110,9 @@ Before saying a file is not there, or asking what it is called, look with folder
 export async function foldersNote(username: string, workspace?: string): Promise<string> {
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
   const inWs = await inProjectOf({ username } as SessionUser, workspace);
-  const mine = sourcesOf(st.folders.filter((f) => !inWs || inWs(f.workspace)));
-  const lib = st.folders.find((f) => f.role === "library" && (!inWs || inWs(f.workspace)));
+  const all = [...st.folders.filter((f) => !inWs || inWs(f.workspace)), ...(await pluginStorageFolders(username))];
+  const mine = sourcesOf(all);
+  const lib = all.find((f) => f.role === "library");
   const on = (f: StorageFolder) => (f.origin.host === THIS_COMPUTER ? "" : ` (on ${deviceOf(f.origin.host)?.name ?? "another computer"})`);
   const lines = [
     ...mine.filter((f) => f.role === "footage").map((f) => `- Footage: ${f.origin.path}${on(f)}`),
@@ -1687,7 +1689,7 @@ assistantApp.post("/folder-list", async (c) => {
   const ws = turn ? workspaceOfTurn(u.username, turn) : undefined;
   const inWs = ws ? await inProjectOf(u, ws) : await inCurrentWorkspace(u);
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, u.username), "utf-8").catch(() => "{}"));
-  const kept = st.folders.filter((f) => !inWs || inWs(f.workspace));
+  const kept = [...st.folders.filter((f) => !inWs || inWs(f.workspace)), ...(await pluginStorageFolders(u.username))];
   const gave = turn ? chatGave(u.username, turn) : null;
   const own = kept.find((f) => within(asked, full(f.origin.path)));
   // a path the person typed: it, or a folder it is in, written whole in their words
@@ -1704,7 +1706,8 @@ assistantApp.post("/folder-list", async (c) => {
   }
   // a workspace's own Storage folder may be a drive's own top folder; nothing else may
   const drive = !!own && full(own.origin.path) === asked;
-  const host = own?.origin.host;
+  // a plug-in's folder may name its computer in its own words: then any Mac of theirs that is on walks it
+  const host = own && (own.origin.host === THIS_COMPUTER || isThisMachine(own.origin.host) || deviceOf(own.origin.host)) ? own.origin.host : undefined;
   try {
     if (here && (!host || host === THIS_COMPUTER || isThisMachine(host))) {
       const f = await folderHere(asked, drive);
