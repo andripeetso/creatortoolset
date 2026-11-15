@@ -7,10 +7,12 @@ import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
  * with each clip's own sound, a marker per line on the clip it falls in. Times are exact rationals: 1001-based for
  * 23.976, 29.97 and 59.94 fps.
  *
- * Checked in Resolve 21.2: each clip lands on its frame from 01:00:00:00 with its source in-point, at 25 and 50 fps,
- * and a file that is not at its path is found by name in a folder the import is told to search (with none, a scripted
- * import fails). Resolve leaves out the markers on clips. Not yet checked: adjust-transform position units (written
- * as percent of the frame height, + up) and whether a relative media-rep src (in a zip) relinks without asking.
+ * Checked in Resolve 21.2: each clip lands on its frame from 01:00:00:00 with its source in-point, at 25, 50, 29.97
+ * and 59.94 fps; a file that is not at its path is found by name in a folder the import is told to search (with none,
+ * a scripted import fails); adjust-transform comes in as Resolve's Zoom and Tilt (scale 1.2 and position "0 5" on a
+ * 1080 timeline = Zoom 1.2, Tilt 54 px up). Resolve keeps no marker from an FCPXML in any form (on a clip, a chapter
+ * marker, a to-do, version 1.9) and writes none into its own: the lines' markers reach Resolve in the OTIO (otio.ts).
+ * Not yet checked: whether a relative media-rep src (in a zip) relinks without asking.
  */
 
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);

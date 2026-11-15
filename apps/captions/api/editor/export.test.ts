@@ -18,7 +18,7 @@ const { blobs, libraryDb } = await import("../library/db");
 const { createEdit, editDir, saveDraft } = await import("./store");
 const { frameDuration, time, toFcpxml } = await import("./fcpxml");
 const { mediaPaths, namesOf } = await import("./media");
-const { toOtio } = await import("./otio");
+const { otioText, toOtio } = await import("./otio");
 const { emptyTracks, sourceOf } = await import("./timeline");
 const { timelineSources } = await import("../../contracts/timeline-import");
 
@@ -89,7 +89,15 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
   });
 
   it("OTIO of a two-cut timeline matches the golden file: source ranges with timecode, markers, links, transform", () => {
-    matchGolden("two-cuts.otio", `${JSON.stringify(toOtio(twoCuts(), files), null, 2)}\n`);
+    matchGolden("two-cuts.otio", `${otioText(toOtio(twoCuts(), files))}\n`);
+  });
+
+  it("OTIO text writes times and effect values with a decimal point, as Resolve 21.2 needs to import it at all", () => {
+    const text = otioText(toOtio(twoCuts(), files));
+    expect(text).not.toMatch(/"(rate|value|Default Parameter Value|Parameter Value|maxValue|minValue)": -?\d+[,\n]/);
+    expect(text).toMatch(/"maxValue": 100\.0/);
+    expect(JSON.parse(text)).toEqual(JSON.parse(JSON.stringify(toOtio(twoCuts(), files)))); // the same numbers
+    expect(text).toMatch(/"Link Group ID": \d+[,\n]/); // ids stay whole
   });
 
   it("FCPXML of a two-cut timeline matches the golden file", () => {
