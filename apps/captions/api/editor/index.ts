@@ -443,6 +443,8 @@ const N = 1024;
 const HOP = 256;
 /** envelope frames a second */
 const ENV_RATE = SR / HOP;
+/** The bins up to about 200 Hz (21.5 Hz each): where a kick drum's hit is. */
+const LOW_BINS = Math.round(200 / (SR / N));
 /** A beat or a hit is moved to the steepest rise in loudness within this far (s): the onset itself, to the millisecond */
 const SNAP_S = 0.035;
 /** loudness reads for that snap, each this long (s) */
@@ -516,10 +518,11 @@ function fft(re: Float64Array, im: Float64Array): void {
  * (every onset counts, soft or hard: tempo and onsets); `hard` on plain magnitudes (how hard a hit is; a steady bass
  * under it adds nothing).
  */
-export function onsetEnvelope(x: Float32Array): { env: Float32Array; hard: Float32Array } {
+export function onsetEnvelope(x: Float32Array): { env: Float32Array; hard: Float32Array; low: Float32Array } {
   const frames = Math.max(0, Math.floor((x.length - N) / HOP) + 1);
   const env = new Float32Array(frames);
   const hard = new Float32Array(frames);
+  const low = new Float32Array(frames);
   const win = Float64Array.from({ length: N }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N));
   const re = new Float64Array(N);
   const im = new Float64Array(N);
@@ -532,17 +535,20 @@ export function onsetEnvelope(x: Float32Array): { env: Float32Array; hard: Float
     const lin = new Float64Array(N / 2);
     let flux = 0;
     let rise = 0;
+    let kick = 0;
     for (let k = 1; k < N / 2; k++) {
       lin[k] = Math.hypot(re[k]!, im[k]!);
       mag[k] = Math.log1p(100 * lin[k]!);
       if (f) (flux += Math.max(0, mag[k]! - prev[k]!)), (rise += Math.max(0, lin[k]! - prevLin[k]!));
+      if (f && k <= LOW_BINS) kick += Math.max(0, mag[k]! - prev[k]!); // log rise: a hit from quiet counts, a steady bass barely
     }
     env[f] = flux;
     hard[f] = rise;
+    low[f] = kick;
     prev = mag;
     prevLin = lin;
   }
-  return { env, hard };
+  return { env, hard, low };
 }
 
 /** The envelope frame `f`'s time (s): its window's middle. */
@@ -640,18 +646,27 @@ export async function songBeats(file: string, startS: number, signal: AbortSigna
 
 /** songBeats on samples already decoded (SR, mono). */
 export function beatsOf(x: Float32Array, source: string, startS: number): SongBeats {
-  const { env, hard } = onsetEnvelope(x);
+  const { env, hard, low } = onsetEnvelope(x);
   const empty: SongBeats = { source, startS, bpm: 0, beats: [], downbeats: [], strong: [], sections: sectionsOf(x, startS) };
   if (env.length < 4 * ENV_RATE) return empty;
   const P = periodOf(env);
-  // the phase whose grid lands on the most onset energy
-  let phase = 0;
-  let best = -Infinity;
-  for (let p = 0; p < Math.ceil(P); p++) {
-    let s = 0;
-    for (let t = p; t < env.length; t += P) s += env[Math.round(t)] ?? 0;
-    if (s > best) [best, phase] = [s, p];
-  }
+  // the phase whose grid lands on the most kick (bass onsets): hi-hats between the beats are more onsets than the kick,
+  // so all onsets alike put the beats on the off-beat. The bass is trusted only when it pulses with the tempo (one
+  // phase well ahead of the rest); a steady bass, or none, goes by every onset.
+  const phaseScores = (e: Float32Array) =>
+    Array.from({ length: Math.ceil(P) }, (_, p) => {
+      let s = 0;
+      for (let t = p; t < e.length; t += P) {
+        let m = 0; // the grid point or a frame either side: a kick's rise can straddle two frames
+        for (let j = Math.max(0, Math.round(t) - 1); j <= Math.min(e.length - 1, Math.round(t) + 1); j++) m = Math.max(m, e[j]!);
+        s += m;
+      }
+      return s;
+    });
+  const top = (xs: number[]) => xs.reduce((b, v, i) => (v > xs[b]! ? i : b), 0);
+  const kickAt = phaseScores(low);
+  const kickMean = kickAt.reduce((a, b) => a + b, 0) / kickAt.length;
+  const phase = kickMean > 0 && kickAt[top(kickAt)]! > 2 * kickMean ? top(kickAt) : top(phaseScores(env));
   // follow the grid: each beat at the envelope's peak within a tenth of a period of where it was expected
   const tol = Math.max(1, Math.round(P * 0.1));
   const frames: number[] = [];
