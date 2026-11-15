@@ -14,6 +14,7 @@ delete process.env.APP_SECRET;
 const { assistantApp } = await import("./assistant");
 const { devicesApp } = await import("./devices");
 const { pairDevice } = await import("./lib/devices");
+const { mountPlugins } = await import("./lib/plugin");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => delete process.env.CT_MODE);
 
@@ -99,5 +100,27 @@ describe("folder_list on a hosted server", () => {
     const r = await list({ path: "/Volumes/Tiny/SHOOT/FOOTAGE" });
     expect(r.status).toBe(400);
     expect(((await r.json()) as { error: string }).error).toContain("Ana's Old Mac is unreachable");
+  });
+});
+
+describe("folder_list with a plug-in's own folders", () => {
+  it("counts a folder a plug-in keeps as the workspace's, and any Mac of theirs walks it when its computer is named in the plug-in's own words", async () => {
+    process.env.CT_MODE = "hosted";
+    keep([]);
+    mountPlugins(new Hono(), [{ id: "tiny-storage", routes: new Hono(), storageFolders: async (u: string) => (u === "ana" ? [{ id: "p1", role: "footage", name: "SHOOT", origin: { host: "tiny-mac.local", path: "/Volumes/Tiny/SHOOT" }, make: false, createdAt: 1, reach: {} }] : []) } as never]);
+    const mac = pairDevice("ana", "Ana's Studio Mac");
+    const as = { authorization: `Bearer ${mac.token}` };
+    const claim = async () => ((await (await post("/api/devices/relay/editor/claim", { kinds: ["folder-list"] }, as)).json()) as { job: DeviceJob | null }).job;
+    expect(await claim()).toBeNull();
+    const asked = list({ path: "/Volumes/Tiny/SHOOT", match: "song" });
+    let job: DeviceJob | null = null;
+    for (let i = 0; i < 50 && !job; i++) {
+      job = await claim();
+      if (!job) await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(job).toMatchObject({ kind: "folder-list", options: { path: "/Volumes/Tiny/SHOOT" } });
+    await post(`/api/devices/relay/job/folder-list/${job!.id}`, { entries: [{ path: "MUSIC", dir: true }, { path: "MUSIC/theme.m4a", size: 3 }], deeper: 0 }, as);
+    expect(((await (await asked).json()) as { entries: unknown[] }).entries).toEqual([{ path: "MUSIC/theme.m4a", type: "file", kind: "audio", size: 3 }]);
+    mountPlugins(new Hono(), []);
   });
 });
