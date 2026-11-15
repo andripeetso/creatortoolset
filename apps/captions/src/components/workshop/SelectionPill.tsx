@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Quote } from "lucide-react";
 
 /**
  * Cite: a small
@@ -58,6 +59,15 @@ export function citeAt(e: MouseEvent): { text: string; at: { x: number; y: numbe
 }
 
 export const PILL_BUTTON = "flex items-center gap-1 rounded-full px-2 py-0.5 hover:bg-muted disabled:opacity-40";
+
+/** The pill's Cite: the selected words go into the message box (both chats and the piece's fields). */
+export function CiteButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className={PILL_BUTTON} title="Cite in the message box: write about it there">
+      <Quote className="h-3.5 w-3.5" /> Cite
+    </button>
+  );
+}
 
 /**
  * After Cite: "Add an optional comment…" where you clicked, then Save puts the quote (and the comment)

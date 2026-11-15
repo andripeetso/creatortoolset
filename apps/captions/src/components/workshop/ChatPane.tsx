@@ -7,7 +7,7 @@ import { CONTEXT_FIELD_LABELS, PART_LABELS, PASTE_AS_FILE, PDF_MAX_BYTES, STAGE_
 import { AuditOpenRow } from "./AuditCard";
 import { CopyButton } from "./CopyButton";
 import { SourceResultCard } from "./SourceResultCard";
-import { PILL_BUTTON, SelectionPill, citeAt } from "./SelectionPill";
+import { CiteButton, SelectionPill, citeAt } from "./SelectionPill";
 import { WhatChanged } from "./WhatChanged";
 import { ModelChip } from "./ModelChip";
 import { Notice } from "./Notice";
@@ -411,18 +411,11 @@ export function ChatPane({
       >
         {cite && onQuote ? (
           <SelectionPill at={cite.at} onDismiss={() => setCite(null)}>
-            <button
-              type="button"
-              onClick={() => {
+            <CiteButton onClick={() => {
                 onQuote({ from: "reply", text: cite.text }, cite.at);
                 window.getSelection()?.removeAllRanges();
                 setCite(null);
-              }}
-              className={PILL_BUTTON}
-              title="Cite in the message box: write about it there"
-            >
-              <Quote className="h-3.5 w-3.5" /> Cite
-            </button>
+              }} />
           </SelectionPill>
         ) : null}
         {messages.length === 0 && (

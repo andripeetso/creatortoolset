@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GripVertical, Loader2, Lock, LockOpen, MessageCircleQuestion, Plus, Quote, Shuffle, X } from "lucide-react";
+import { GripVertical, Loader2, Lock, LockOpen, MessageCircleQuestion, Plus, Shuffle, X } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { CarouselVisualizeModal, type LayoutPass } from "./CarouselVisualizeModal";
@@ -11,7 +11,7 @@ import { joinParts, pictureToken, pictureUrl, rangesIn, splitPictures, withPictu
 import { foreignSpans } from "@/lib/mine";
 import { markdownToPlain, toggleMark } from "@/lib/inline-markdown";
 import { AskPanel, type AsideMessage } from "./SlideAside";
-import { PILL_BUTTON, SelectionPill } from "./SelectionPill";
+import { CiteButton, PILL_BUTTON, SelectionPill } from "./SelectionPill";
 import { addedSpans } from "./word-diff";
 import type { PieceQuote } from "@/lib/workshop";
 
@@ -697,17 +697,10 @@ function PieceEditor({
     const words = sel?.key === key ? text.slice(sel.start, sel.end).trim() : "";
     return onQuote && sel?.at && words ? (
       <SelectionPill at={sel.at} onDismiss={() => setSel(null)}>
-        <button
-          type="button"
-          onClick={() => {
+        <CiteButton onClick={() => {
             onQuote({ ...where, text: words }, sel.at);
             setSel(null);
-          }}
-          className={PILL_BUTTON}
-          title="Cite in the message box: write about it there"
-        >
-          <Quote className="h-3.5 w-3.5" /> Cite
-        </button>
+          }} />
       </SelectionPill>
     ) : null;
   };
@@ -950,9 +943,7 @@ function PieceEditor({
                   {hasSel(b) && sel?.at ? (
                     <SelectionPill at={sel.at} onDismiss={() => setSel(null)}>
                       {onQuote ? (
-                        <button type="button" onClick={() => cite(b, i)} className={PILL_BUTTON} title="Cite in the message box: write about it there">
-                          <Quote className="h-3.5 w-3.5" /> Cite
-                        </button>
+                        <CiteButton onClick={() => cite(b, i)} />
                       ) : null}
                       {onAsk ? (
                         <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-violet-300`} title="Ask about the selected words in a side chat. It only answers: nothing on the piece changes.">
