@@ -258,6 +258,14 @@ describe("buildTurnPrompt", () => {
     expect(resumed).not.toContain("closest to this piece");
   });
 
+  it("with no posts of the author's own, plain spoken examples stand in for them, on the Mac and on a key alike", () => {
+    for (const folder of [{ contextFiles: [] }, undefined]) {
+      expect(buildTurnPrompt({ ...base, folder, plainVoice: true }).user).toContain("How people sound when they talk to one person.");
+      expect(buildTurnPrompt({ ...base, folder }).user).not.toContain("How people sound");
+      expect(buildTurnPrompt({ ...base, folder, plainVoice: true, resumed: { newSources: [] } }).user).not.toContain("How people sound");
+    }
+  });
+
   it("on the Mac too, a long conversation keeps its last 40 messages and says where the rest is", () => {
     const long: ChatMessage[] = Array.from({ length: 45 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? "assistant" : "user", text: `MSG${i}.`, at: i, docId: "d1" }) as ChatMessage);
     const { user } = buildTurnPrompt({ ...base, history: long, folder: { contextFiles: [] } });

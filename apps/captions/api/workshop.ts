@@ -21,6 +21,7 @@ import { type Folder, frameworkFiles, libraryFiles, outsideWords, keptPer1k, own
 import { linkCandidates, matchPosted, postingsOf, postWords, postedFromUrl, setPostings, tfidf } from "./lib/workshop/posted";
 import { finished, keptByWeek, keptShare } from "./lib/workshop/kept";
 import { closestPairs, closestPosts } from "./lib/workshop/closest";
+import { PLAIN_VOICE } from "./lib/workshop/plain-voice";
 import { providerSettings, routeFor } from "./lib/providers";
 import { isOnline } from "./lib/devices";
 import type { AccountContext, Comment } from "./lib/instagram/types";
@@ -1294,6 +1295,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         captionVersion,
         captionExamples,
         rewrites: captionExamples ? rewrites : { descriptions: [], pieces: rewrites.pieces },
+        plainVoice: !own?.posts.length,
         closestPosts: nearPosts.map((p) => ({
           date: new Date(p.item.takenAt).toISOString().slice(0, 10),
           keptPer1k: keptPer1k(p.item),
@@ -3197,6 +3199,7 @@ workshopApp.post("/sessions/:id/docs/:docId/material", async (c) => {
       text: p.slides?.join("\n") || p.item.caption || "",
     })),
     their_rewrites: rewrites.join("\n\n") || null,
+    ...(own?.posts.length ? {} : { plain_voice: PLAIN_VOICE }),
     ...(frameworks.length ? { frameworks: frameworks.map((f) => ({ name: f.name, steps: f.steps, when: f.whenToUse })) } : {}),
     ...(captions?.examples.length ? { their_captions: captions.examples.map((e) => e.text) } : {}),
   });

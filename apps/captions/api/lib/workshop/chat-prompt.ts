@@ -3,6 +3,7 @@ import { carouselTypePrompt } from "../../../src/lib/carousel-visualize";
 import { renderAccountContext, renderAccountIndex, renderInstructions, renderLoadedKnowledge, renderProjectStable } from "./prompt";
 import { sourceFile } from "./folder";
 import { type EditPair, renderPairs } from "./edit-log";
+import { PLAIN_VOICE } from "./plain-voice";
 import type { AccountContext } from "../instagram/types";
 import { effectiveSavedFor } from "../instagram/research";
 import { askedOnlyForCaption } from "./chat-plans";
@@ -168,6 +169,8 @@ export interface TurnPromptInput {
   rewrites?: { descriptions: EditPair[]; pieces: EditPair[] };
   /** The author's own posts closest to this piece in words, most saved and shared first (closest.ts). */
   closestPosts?: Array<{ date: string; keptPer1k?: number; file?: string; text: string }>;
+  /** No posts of the author's own in this project: plain spoken examples stand in for them (plain-voice.ts). */
+  plainVoice?: boolean;
   /** Asked for the post description: the author's own posted captions, most saved first, and how long theirs run. */
   /** A turn for one Finals version (captionFor): every version of the piece with its facts (finals.ts); `current` is the one this turn writes. */
   captionVersion?: { current: string; versions: Array<{ key: string; label: string; facts: string }> };
@@ -438,6 +441,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
         .join("\n")}\n---`,
     );
   }
+  if (input.plainVoice && !resumed) blocks.push(PLAIN_VOICE);
   // the author's own setting for this message: how much of the piece it may change
   if (input.scope === "slight") blocks.push("Slight changes (the author's setting for this message): change only what this message points at, as little as it takes. Every other block, the caption and the hooks stay exactly as they are.");
   if (input.scope === "rewrite") blocks.push("Rewrite (the author's setting for this message): the whole piece is open, its opening and its order included.");

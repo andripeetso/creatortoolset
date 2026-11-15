@@ -328,6 +328,8 @@ describe("who writes a piece", () => {
     const material = asked.material as Row;
     expect(String(material.project)).toContain("For new dog owners. Classes at puppyschool.example.");
     expect(String(material.their_rewrites)).toContain("AI wrote:\nUnlock your dog's recall potential today.\n--- The author made it:\nCall them once, then go quiet and wait.");
+    // no Instagram on this project, so no posts of hers: how people talk stands in for them
+    expect(String(material.plain_voice)).toContain("How people sound when they talk to one person.");
     expect(String(asked.answer)).toContain("save them with workshop_edit_piece");
     // then its own words are saved
     await tool(key, "workshop_edit_piece", { session: s.id, piece: other.id, blocks: [{ text: "Call once. Then wait." }] });
