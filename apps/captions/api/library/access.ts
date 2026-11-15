@@ -4,6 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
+import { sharedHere, sharedProjects } from "../lib/workshop/workspace";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb } from "./db";
@@ -59,7 +60,27 @@ function librariesIn(username: string, keep: ((own?: string) => boolean) | null)
  * the account's for a person with no workspace, or a `projectId` that is not theirs ("" too).
  */
 export async function librariesHere(username: string, projectId?: string): Promise<LibraryRow[]> {
+  // a workspace the team's owner gave this person (Settings → Team): the owner's libraries there, to look at (givenLibrary)
+  const given = projectId === undefined ? await sharedHere({ username } as SessionUser) : null;
+  if (given) return librariesIn(given.owner, await inProjectOf({ username: given.owner } as SessionUser, given.id));
   return librariesIn(username, await scopeOf(username, projectId));
+}
+
+/**
+ * Whether the library is the team owner's, in a workspace the owner gave this account (Settings → Team → Access): it may
+ * look at it and download from it, never change it (libraryRole stays null, and every write asks libraryRole).
+ */
+export async function givenLibrary(username: string, libraryId: string): Promise<boolean> {
+  const account = findUser(username);
+  if (account && !mayUse(account, "media")) return false;
+  const row = libraryDb().prepare("SELECT workspace_id, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as
+    | { workspace_id: string; ws: string | null }
+    | undefined;
+  if (!row) return false;
+  for (const p of await sharedProjects(username)) {
+    if (homeOf(p.owner) === row.workspace_id && (await inProjectOf({ username: p.owner } as SessionUser, p.id))?.(row.ws ?? undefined)) return true;
+  }
+  return false;
 }
 
 /**

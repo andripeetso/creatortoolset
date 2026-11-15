@@ -18,6 +18,7 @@ import {
   type WorkshopProject,
 } from "@/lib/workshop";
 import { PROJECT_ACCOUNTS_KEY, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
+import { useMe } from "@/lib/auth";
 
 const secondary =
   "flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50";
@@ -32,6 +33,7 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const select = useWorkspace((s) => s.select);
   const projects = only ? all.filter((p) => p.id === currentProjectId) : all;
+  const me = useMe()?.username;
   const [editing, setEditing] = useState<string | "new" | null>(null);
   // the workspace just created: step 2, its accounts, in a window of its own (skippable)
   const [made, setMade] = useState<string | null>(null);
@@ -118,8 +120,9 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
               current={p.id === currentProjectId}
               busy={busy}
               onUse={() => void select(p.id)}
-              onEdit={() => setEditing(p.id)}
-              onDelete={only ? undefined : () => void run(() => deleteProject(p.id))}
+              // a workspace the team's owner gave this person (Settings → Team) is used, never changed
+              onEdit={me && p.owner !== me ? undefined : () => setEditing(p.id)}
+              onDelete={only || (me && p.owner !== me) ? undefined : () => void run(() => deleteProject(p.id))}
               badge={!only}
             />
           ),
@@ -174,7 +177,8 @@ function ProjectRow({
   current: boolean;
   busy: boolean;
   onUse: () => void;
-  onEdit: () => void;
+  /** Absent: no Edit (someone else's workspace, given to this person). */
+  onEdit?: () => void;
   /** Absent: no Delete (the Workshop's tab; the switcher's window deletes). */
   onDelete?: () => void;
   /** The Current badge, for the list of them all. */
@@ -213,9 +217,11 @@ function ProjectRow({
           Use
         </button>
       ) : null}
-      <button type="button" onClick={onEdit} className={secondary} disabled={busy}>
-        <Pencil className="h-3 w-3" /> Edit
-      </button>
+      {onEdit ? (
+        <button type="button" onClick={onEdit} className={secondary} disabled={busy}>
+          <Pencil className="h-3 w-3" /> Edit
+        </button>
+      ) : null}
       {onDelete ? (
         <ConfirmButton
           label="Delete"

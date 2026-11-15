@@ -149,7 +149,7 @@ const budget = (x: unknown): number => {
 };
 
 /** Change a member's AI route or budget. `by` is the role of whoever asks: only the owner changes anyone. */
-export function updateMember(w: Workspace, username: string, by: WorkspaceRole, patch: { ai?: unknown; budgetUsd?: unknown; scripts?: unknown }): Member {
+export function updateMember(w: Workspace, username: string, by: WorkspaceRole, patch: { ai?: unknown; budgetUsd?: unknown; scripts?: unknown; workspaces?: string[] }): Member {
   const m = memberIn(w, username);
   if (!m) throw new Error("Not a member");
   if (by !== "owner") throw new Error("Only the owner changes the team");
@@ -162,8 +162,20 @@ export function updateMember(w: Workspace, username: string, by: WorkspaceRole, 
     if (typeof patch.scripts !== "boolean") throw new Error("Scripts is on or off");
     m.scripts = patch.scripts;
   }
+  if (patch.workspaces) m.workspaces = patch.workspaces;
   persist();
   return m;
+}
+
+/**
+ * The owner's workspaces (brands) this account was given as a member: the owner, and the ids (checked against the owner's
+ * own when they are set, workspace.ts; a deleted one drops out where they are read). Null for an owner or a non-member.
+ */
+export function sharedWith(username: string): { owner: string; ids: string[] } | null {
+  const w = workspaceOf(username);
+  const m = w && memberIn(w, username);
+  const owner = w?.members.find((x) => x.role === "owner")?.username;
+  return m && m.role !== "owner" && owner && m.workspaces?.length ? { owner, ids: m.workspaces } : null;
 }
 
 /** The owner whose Workshop scripts this member may read (their grant is on), else null. Only that read is granted. */
@@ -228,6 +240,7 @@ export function createInvite(w: Workspace, by: { username: string; role: Workspa
     ...(input.email ? { email: input.email } : {}),
     off: pluginDefaultOff(), // what a new account starts with (users.ts createUser)
     scripts: false,
+    ...(input.workspaces?.length ? { workspaces: input.workspaces } : {}),
   };
   store().invites.push(invite);
   persist();
@@ -266,11 +279,12 @@ export function inviteByToken(token: string): { invite: Invite; workspace: Works
 const workspaceById = (id: string): Workspace | null => store().workspaces.find((w) => w.id === id) ?? null;
 
 /** What an invited person gets once they join (the owner sets it on the pending invite; `off` is checked by the route). */
-export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; scripts?: boolean }): void {
+export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; scripts?: boolean; workspaces?: string[] }): void {
   const i = store().invites.find((x) => x.id === id && x.workspaceId === w.id);
   if (!i) throw new Error("No such invite");
   if (patch.off) i.off = patch.off;
   if (patch.scripts !== undefined) i.scripts = patch.scripts;
+  if (patch.workspaces) i.workspaces = patch.workspaces;
   persist();
 }
 
@@ -281,7 +295,7 @@ export function acceptInvite(token: string, username: string): Workspace {
   const { invite, workspace } = found;
   if (invite.expiresAt <= Date.now()) throw new Error("This invite link has expired: ask for a new one");
   if (!memberIn(workspace, username)) {
-    workspace.members.push({ username, role: "member", ai: invite.ai, budgetUsd: invite.budgetUsd, joinedAt: Date.now(), ...(invite.scripts ? { scripts: true } : {}) });
+    workspace.members.push({ username, role: "member", ai: invite.ai, budgetUsd: invite.budgetUsd, joinedAt: Date.now(), ...(invite.scripts ? { scripts: true } : {}), ...(invite.workspaces?.length ? { workspaces: invite.workspaces } : {}) });
     const acct = findUser(username);
     if (acct && invite.off && acct.role !== "admin") setOff(acct, invite.off);
   }

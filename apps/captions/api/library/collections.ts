@@ -11,6 +11,7 @@ import { sendFile } from "../lib/send-file";
 import { storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
+import { readerOf } from "./reader";
 import { blobs, libraryDb } from "./db";
 import { ffmpegTo } from "./media/run";
 import { externalCanSee, externalRefById } from "./refs";
@@ -92,9 +93,9 @@ const toCollection = (r: Row, count?: number, covers?: string[]): Collection => 
 
 // GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId. A folder's
 // card shows up to four pictures of its clips (the media route checks each viewer, as it does for the grid)
-collectionApp.get("/:id/collections", (c) => {
+collectionApp.get("/:id/collections", async (c) => {
   const libraryId = c.req.param("id");
-  if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
+  if (!(await readerOf(c.get("user").username, libraryId))) return notFound(c);
   const rows = db()
     .prepare(
       `SELECT c.*, (SELECT COUNT(*) FROM collection_items i JOIN assets a ON a.id = i.asset_id
@@ -378,9 +379,8 @@ async function visibleItems(viewer: LibraryViewer, libraryId: string, p: Piece):
 // whose items the viewer may not see at all is left out, and so are the items they may not see.
 collectionApp.get("/:id/pieces", async (c) => {
   const libraryId = c.req.param("id");
-  const role = libraryRole(c.get("user").username, libraryId);
-  if (!role) return notFound(c);
-  const viewer: LibraryViewer = { username: c.get("user").username, role };
+  const viewer = await readerOf(c.get("user").username, libraryId);
+  if (!viewer) return notFound(c);
   const cid = c.req.query("collectionId") ?? null;
   const rows = db()
     .prepare("SELECT * FROM pieces WHERE library_id = ? AND (? IS NULL OR collection_id = ?) AND ((trashed_at IS NOT NULL) = ?) ORDER BY created_at, id")
@@ -590,11 +590,11 @@ collectionApp.delete("/:id/pieces/:pid/items/:iid/postings/:n", async (c) => {
 collectionApp.get("/:id/pieces/:pid", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const role = libraryRole(user.username, libraryId);
-  const row = role ? pieceIn(libraryId, c.req.param("pid")) : undefined;
-  if (!role || !row) return notFound(c);
+  const viewer = await readerOf(user.username, libraryId);
+  const row = viewer ? pieceIn(libraryId, c.req.param("pid")) : undefined;
+  if (!viewer || !row) return notFound(c);
   const all = pieceOf(row);
-  const seen = await visibleItems({ username: user.username, role }, libraryId, all);
+  const seen = await visibleItems(viewer, libraryId, all);
   if (!seen.items.length && all.items.length) return notFound(c);
   return c.json({ ...seen, writable: !!(await writablePiece(user.username, libraryId, row.id)) });
 });
@@ -622,11 +622,11 @@ const EXT_OF: Record<string, string> = {
 collectionApp.get("/:id/pieces/:pid/zip", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const role = libraryRole(user.username, libraryId);
-  const row = role ? pieceIn(libraryId, c.req.param("pid")) : undefined;
-  if (!role || !row) return notFound(c);
+  const viewer = await readerOf(user.username, libraryId);
+  const row = viewer ? pieceIn(libraryId, c.req.param("pid")) : undefined;
+  if (!viewer || !row) return notFound(c);
   const all = pieceOf(row);
-  const seen = await visibleItems({ username: user.username, role }, libraryId, all);
+  const seen = await visibleItems(viewer, libraryId, all);
   if (!seen.items.length && all.items.length) return notFound(c);
   try {
     const files: { path: string; name: string }[] = [];
@@ -711,13 +711,13 @@ collectionApp.delete("/:id/pieces/:pid/cover", async (c) => {
 collectionApp.get("/:id/pieces/:pid/cover", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  const role = libraryRole(user.username, libraryId);
-  const row = role ? pieceIn(libraryId, c.req.param("pid")) : undefined;
-  if (!role || !row?.cover_key || !row.cover_version_id) return notFound(c);
+  const viewer = await readerOf(user.username, libraryId);
+  const row = viewer ? pieceIn(libraryId, c.req.param("pid")) : undefined;
+  if (!viewer || !row?.cover_key || !row.cover_version_id) return notFound(c);
   const v = db()
     .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
     .get(row.cover_version_id) as { asset_id: string } | undefined;
-  if (!v || !(await canSee({ username: user.username, role }, assetRef(libraryId, v.asset_id, row.cover_version_id)))) return notFound(c);
+  if (!v || !(await canSee(viewer, assetRef(libraryId, v.asset_id, row.cover_version_id)))) return notFound(c);
   try {
     const at = await blobs.locate(row.cover_key, 900, { contentType: "image/jpeg" });
     return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, "image/jpeg");

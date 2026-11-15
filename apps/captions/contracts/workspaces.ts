@@ -36,6 +36,8 @@ export interface Member {
   budgetUsd: number;
   /** the owner lets this member read the owner's Workshop scripts (read-only); missing = no */
   scripts?: boolean;
+  /** the owner's workspaces (brands) this member works in: in the workspace switcher, and the owner's things there open read-only */
+  workspaces?: string[];
   joinedAt: number;
 }
 
@@ -65,13 +67,15 @@ export interface Invite {
   /** set before they join, given to the account when they do: apps and plug-in gates off, and reading the owner's scripts */
   off?: (Tool | PluginGateId)[];
   scripts?: boolean;
+  /** the owner's workspaces they get (Member.workspaces) */
+  workspaces?: string[];
 }
 
-export type InvitePatch = Partial<Pick<Invite, "off" | "scripts">>;
+export type InvitePatch = Partial<Pick<Invite, "off" | "scripts" | "workspaces">>;
 
-export type InviteInput = Pick<Invite, "ai" | "budgetUsd" | "email">;
+export type InviteInput = Pick<Invite, "ai" | "budgetUsd" | "email" | "workspaces">;
 /** `off`: apps and plug-in gates switched off for the member's account; a platform admin switches a plug-in's gates. */
-export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd" | "scripts">> & { off?: (Tool | PluginGateId)[] };
+export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd" | "scripts" | "workspaces">> & { off?: (Tool | PluginGateId)[] };
 
 export interface MemberView extends Member {
   /** the account's display name (Settings → Account), read from the account: unset when it has none */
@@ -94,6 +98,8 @@ export interface WorkspaceView {
   seats: number;
   /** the server can email invites (RESEND_API_KEY and MAIL_FROM set): the owner only */
   mail?: boolean;
+  /** the owner's own workspaces (brands), to give members: the owner only */
+  brands?: { id: string; name: string }[];
 }
 
 export interface InviteInfo {

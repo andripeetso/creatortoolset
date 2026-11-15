@@ -20,6 +20,14 @@ import {
 import { findUser, setOff, type SessionUser, type UserRecord } from "./users";
 import { EMAIL_RE, mailOn, sendMail } from "./lib/mail";
 import { originOf } from "./sign-in";
+import { ownedProjects } from "./lib/workshop/workspace";
+
+/** The ids in a request's `workspaces` that are the owner's own workspaces (brands); undefined when it asks none. */
+async function brandsFrom(asked: unknown, owner: string): Promise<string[] | undefined> {
+  if (!Array.isArray(asked)) return undefined;
+  const mine = new Set((await ownedProjects(owner)).map((p) => p.id));
+  return [...new Set(asked.filter((id): id is string => typeof id === "string" && mine.has(id)))];
+}
 
 /**
  * Settings → Team (contracts/workspaces.ts): the team, its members, invite links and each member's AI. The owner
@@ -38,7 +46,7 @@ export function memberView(m: Member, acct: Pick<UserRecord, "displayName" | "us
     : { username: m.username, name, role: m.role, ai: "own", budgetUsd: 0, joinedAt: m.joinedAt, spentUsd: 0, lastActiveAt: 0, off: [] };
 }
 
-function viewFor(u: SessionUser): WorkspaceView | null {
+async function viewFor(u: SessionUser): Promise<WorkspaceView | null> {
   const w = workspaceOf(u.username);
   const me = w && memberIn(w, u.username);
   if (!w || !me) return null;
@@ -53,7 +61,7 @@ function viewFor(u: SessionUser): WorkspaceView | null {
     members,
     invites: manager ? invitesOf(w) : [],
     seats: w.members.filter((m) => m.role !== "owner").length,
-    ...(manager ? { mail: mailOn() } : {}),
+    ...(manager ? { mail: mailOn(), brands: (await ownedProjects(u.username)).map((p) => ({ id: p.id, name: p.name })) } : {}),
   };
 }
 
@@ -73,7 +81,7 @@ const body = async (c: Context): Promise<Record<string, unknown>> => {
   return b && typeof b === "object" ? (b as Record<string, unknown>) : {};
 };
 
-workspaceApp.get("/", (c) => c.json(viewFor(c.get("user"))));
+workspaceApp.get("/", async (c) => c.json(await viewFor(c.get("user"))));
 
 workspaceApp.patch("/", async (c) => {
   const m = managed(c);
@@ -85,7 +93,7 @@ workspaceApp.patch("/", async (c) => {
   } catch (e) {
     return bad(c, e);
   }
-  return c.json(viewFor(m.u));
+  return c.json(await viewFor(m.u));
 });
 
 workspaceApp.post("/invites", async (c) => {
@@ -97,7 +105,7 @@ workspaceApp.post("/invites", async (c) => {
   if (email && !mailOn()) return c.json({ error: "Email isn't set up on this server: copy the link instead" }, 400);
   let made: ReturnType<typeof createInvite>;
   try {
-    made = createInvite(m.w, { username: m.u.username, role: m.me.role }, { ...b, email: email || undefined });
+    made = createInvite(m.w, { username: m.u.username, role: m.me.role }, { ...b, email: email || undefined, workspaces: await brandsFrom(b.workspaces, m.u.username) });
   } catch (e) {
     return bad(c, e);
   }
@@ -143,8 +151,9 @@ workspaceApp.patch("/invites/:id", async (c) => {
   updateInvite(m.w, invite.id, {
     ...(Array.isArray(b.off) ? { off: offFrom(b.off, invite.off ?? [], m.u.role === "admin") } : {}),
     ...(typeof b.scripts === "boolean" ? { scripts: b.scripts } : {}),
+    workspaces: await brandsFrom(b.workspaces, m.u.username),
   });
-  return c.json(viewFor(m.u));
+  return c.json(await viewFor(m.u));
 });
 
 workspaceApp.delete("/invites/:id", (c) => {
@@ -159,7 +168,7 @@ workspaceApp.patch("/members/:username", async (c) => {
   const name = c.req.param("username");
   const b = await body(c);
   try {
-    updateMember(m.w, name, m.me.role, { ai: b.ai, budgetUsd: b.budgetUsd, scripts: b.scripts });
+    updateMember(m.w, name, m.me.role, { ai: b.ai, budgetUsd: b.budgetUsd, scripts: b.scripts, workspaces: await brandsFrom(b.workspaces, m.u.username) });
     if (Array.isArray(b.off)) {
       const acct = findUser(name);
       if (!acct) throw new Error("No such account");
@@ -168,10 +177,10 @@ workspaceApp.patch("/members/:username", async (c) => {
   } catch (e) {
     return bad(c, e);
   }
-  return c.json(viewFor(m.u));
+  return c.json(await viewFor(m.u));
 });
 
-workspaceApp.delete("/members/:username", (c) => {
+workspaceApp.delete("/members/:username", async (c) => {
   const m = managed(c);
   if (m.error) return m.error;
   try {
@@ -179,5 +188,5 @@ workspaceApp.delete("/members/:username", (c) => {
   } catch (e) {
     return bad(c, e);
   }
-  return c.json(viewFor(m.u));
+  return c.json(await viewFor(m.u));
 });

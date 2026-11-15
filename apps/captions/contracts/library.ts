@@ -232,6 +232,8 @@ export interface LibrarySummary {
   name: string;
   storage: "local" | "s3" | "bunny";
   settings: LibrarySettings;
+  /** the team owner's, in a workspace given to this person (Settings → Team): to look at and download, never change */
+  readOnly?: true;
 }
 
 /**
