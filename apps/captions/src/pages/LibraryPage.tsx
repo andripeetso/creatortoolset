@@ -315,8 +315,8 @@ export default function LibraryPage() {
     if (!libId) return;
     try {
       const here = u.path ?? (await pathOnMac(u.file));
-      // a file that is in the library already never goes (one added where it is, the server checks as it takes it)
-      const dup = here ? null : await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+      // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks too)
+      const dup = await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
       if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
       const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here);
