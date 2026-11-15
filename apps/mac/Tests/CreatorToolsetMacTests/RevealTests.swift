@@ -32,15 +32,23 @@ final class RevealTests: XCTestCase {
         XCTAssertNil(Reveal.check(path("Footage/Day 1/A001.MOV"), trusted: []))
     }
 
+    func testTheServerOnThisMacNamesAnyExistingFile() {
+        XCTAssertNotNil(Reveal.check(path("secret.txt"), trusted: nil))
+        XCTAssertNil(Reveal.check(path("gone.MOV"), trusted: nil))
+        XCTAssertNil(Reveal.check(path("Footage"), trusted: nil))
+        XCTAssertNil(Reveal.check(path("Footage/../secret.txt"), trusted: nil))
+    }
+
     func testALinkOutOfATrustedFolderIsRefused() throws {
         try FileManager.default.createSymbolicLink(atPath: path("Footage/link.MOV"), withDestinationPath: path("secret.txt"))
         XCTAssertNil(Reveal.check(path("Footage/link.MOV"), trusted: [path("Footage")]))
     }
 
     func testReadsTheAsk() {
-        XCTAssertEqual(revealAsk(#"reveal:{"path":"/a/b.MOV","library":"lib_1"}"#)?.path, "/a/b.MOV")
-        XCTAssertNil(revealAsk(#"reveal:{"path":"/a/b.MOV","library":"../x"}"#))
-        XCTAssertNil(revealAsk(#"reveal:{"path":"/a/b.MOV"}"#))
+        XCTAssertEqual(revealAsk(#"reveal:{"library":"lib_1","asset":"b94200d6-3321"}"#)?.asset, "b94200d6-3321")
+        XCTAssertNil(revealAsk(#"reveal:{"library":"../x","asset":"a1"}"#))
+        XCTAssertNil(revealAsk(#"reveal:{"library":"lib_1","asset":"a/../b"}"#))
+        XCTAssertNil(revealAsk(#"reveal:{"library":"lib_1"}"#))
         XCTAssertNil(revealAsk("reveal:/a/b.MOV"))
     }
 }

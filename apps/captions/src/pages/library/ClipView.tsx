@@ -17,7 +17,7 @@ export function ClipView({ open, onClose, children }: { open: boolean; onClose: 
   if (view === "side")
     return (
       <Sheet open={open} onOpenChange={change}>
-        <SheetContent side="right" aria-describedby={undefined} onEscapeKeyDown={escape} onInteractOutside={outside} className="w-full overflow-y-scroll p-0 sm:max-w-xl">
+        <SheetContent side="right" aria-describedby={undefined} data-clip-view="" onEscapeKeyDown={escape} onInteractOutside={outside} className="w-full overflow-y-scroll p-0 sm:max-w-xl">
           {children}
         </SheetContent>
       </Sheet>
@@ -26,6 +26,7 @@ export function ClipView({ open, onClose, children }: { open: boolean; onClose: 
     <Dialog open={open} onOpenChange={change}>
       <DialogContent
         aria-describedby={undefined}
+        data-clip-view=""
         onEscapeKeyDown={escape}
         onInteractOutside={outside}
         className={

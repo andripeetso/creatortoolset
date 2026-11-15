@@ -71,7 +71,7 @@ export function ClipShare({
   const [loaded, setLoaded] = useState(false);
   const [turning, setTurning] = useState(false);
   const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries).data;
-  const appUrl = `${location.origin}${clipHref(libraryId, assetId, !libs || libs[0]?.id === libraryId)}`;
+  const appUrl = `${location.origin}${clipHref(libraryId, assetId, libs?.[0]?.id === libraryId)}`;
   const [others, setOthers] = useState<ShareRow[]>([]);
   const [lock, setLock] = useState(false); // the password row is on (its field shows)
   const [password, setPassword] = useState("");
@@ -120,7 +120,8 @@ export function ClipShare({
     setFailed(null);
     setTurning(true);
     const id = link?.row.id;
-    (on ? newLink(libraryId, assetId).then((l) => setLink(l)) : id ? stop(id).then(() => setLink(null)) : Promise.resolve())
+    // a stop that failed leaves the switch on: the link still works
+    (on ? newLink(libraryId, assetId).then((l) => setLink(l)) : id ? call(`/api/library/shares/${id}`, "DELETE").then(() => setLink(null)) : Promise.resolve())
       .then(() => {
         setLock(false);
         setPassword("");

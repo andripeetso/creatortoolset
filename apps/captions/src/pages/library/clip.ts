@@ -129,10 +129,10 @@ export function tagSuggestions(all: TagCount[], have: string[], typed: string): 
 /** The Mac app shows a clip's file in Finder (<html data-mac-reveal>, apps/mac Reveal.swift). */
 export const canReveal = () => typeof document !== "undefined" && document.documentElement.dataset.macReveal === "1" && !!thisMacBridge();
 
-/** Shows the clip's file in Finder: null when it did, else what went wrong. The Mac app checks the path itself. */
-export async function revealClip(libraryId: string, path: string): Promise<string | null> {
+/** Shows the clip's file in Finder: null when it did, else what went wrong. The Mac app asks the server for the file itself. */
+export async function revealClip(libraryId: string, assetId: string): Promise<string | null> {
   const bridge = thisMacBridge();
   if (!bridge) return "Show in Finder works in the Mac app";
-  const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ path, library: libraryId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+  const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ library: libraryId, asset: assetId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
   return r.ok ? null : (r.problem ?? "That file isn't on this Mac.");
 }

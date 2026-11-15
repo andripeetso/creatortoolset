@@ -166,7 +166,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
     });
-  const reveal = () => path && void revealClip(libraryId, path).then((problem) => problem && onError(problem));
+  const reveal = () => path && void revealClip(libraryId, a.id).then((problem) => problem && onError(problem));
   const open = (id: string) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}`);
 
   const title = <SheetTitle className={cn("min-w-0 flex-1 break-words text-base", win && "pr-8")}>{a.title}</SheetTitle>;
