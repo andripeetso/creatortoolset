@@ -444,7 +444,10 @@ function TagEditor({
   const [pick, setPick] = useState(-1);
   // an Undo after the clip closed or another opened must not put this one back on screen
   const alive = useRef(true);
-  useEffect(() => () => void (alive.current = false), []);
+  useEffect(() => {
+    alive.current = true;
+    return () => void (alive.current = false);
+  }, []);
   const shown = (x: AssetCard) => alive.current && onSaved(x);
   const save = (tags: string[]) => updateAsset(libraryId, asset.id, { tags });
   const list = open && all ? tagSuggestions(all, asset.tags, typed) : [];
