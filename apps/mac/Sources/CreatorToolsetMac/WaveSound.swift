@@ -71,7 +71,7 @@ struct WaveSynth {
             if tone > tau { tone -= tau }
             // and swells over 30 ms from the oooo's loudness to the wee's (a little under its opening, so it leads in)
             let r = min(popAge / 0.03, 1), swell = r * r * (3 - 2 * r)
-            let loud = 0.48 * from.amp + (0.24 * weeLoud - 0.48 * from.amp) * swell
+            let loud = 0.48 * from.amp + (0.135 * weeLoud - 0.48 * from.amp) * swell
             bridge = loud * sqrt(max(1 - into * into, 0)) * (sin(tone) + 0.12 * sin(2 * tone))
         } else {
             // while held: the oooo, a soft round tone rising as the screen is drawn in, wobbling a little as it goes wild
@@ -94,11 +94,12 @@ struct WaveSynth {
                 let cut = Float(wee.count) / weeRate
                 let f = weeEnd < cut ? min(max((popAge - 0.5 * weeEnd) / (0.5 * weeEnd), 0), 1) : 0
                 let fade = cos(f * Float.pi / 2)
-                voice = 0.3 * weeLoud * into * fade * fade * s
+                voice = 0.17 * weeLoud * into * fade * fade * s
             }
         }
         if popAge < 10 { popAge += dt }
-        // (the oooo peaks about as loud as the Mac's own "Pop"; the wee a little louder)
+        // (the oooo peaks about as loud as the Mac's own "Pop"; the wee only a little louder: owner, 11-15, 5 dB louder
+        // than now was "a bit too loud compared to the ooh")
         return tanh(out * 1.2) * 0.4 + bridge + voice
     }
 }
