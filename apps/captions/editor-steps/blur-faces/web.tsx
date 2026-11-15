@@ -78,6 +78,12 @@ function useMacVersion() {
   return v;
 }
 
+/** A file of the person's own (photo or video) the preview runs on, picked in the Mac app; kept while the app stays open. */
+let own: { path: string; name: string } | null = null;
+type Face = { id: string; picture: string; note: string };
+/** The AI's pick for one file and one "Which faces", so a slider never asks it again. */
+const picks = new Map<string, Promise<{ faces: Face[]; blur: string[] }>>();
+
 /** The example picture (a base64 JPEG), read once. */
 let example: Promise<string> | null = null;
 const examplePicture = () => (example ??= call<{ picture: string }>(`${API}/example`).then((r) => r.picture));
@@ -158,7 +164,7 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
       {/* the app's own two-pane classes (Settings → Providers): a plug-in folder can use only classes the app has */}
       <div className="lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]">
         <div className="p-3 lg:border-r lg:border-border/50">
-          <Preview style={style} />
+          <Preview settings={settings} style={style} />
         </div>
         <div className="min-w-0 [&>*+*]:border-t [&>*+*]:border-border/50">
           <Row
@@ -204,136 +210,126 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
   );
 }
 
-/** The example picture covered in `style`, by the Mac app; drawn again a moment after the style stops changing. */
-function Preview({ style }: { style: Style }) {
+/**
+ * The test: the example, or a photo or video of the person's own, covered by the Mac app with these settings, nothing saved.
+ * With "Only some faces" the AI picks from the faces it finds, once per file and instruction; a new style only draws again.
+ */
+function Preview({ settings, style }: { settings: Settings; style: Style }) {
   const mac = useMacVersion();
-  const [picture, setPicture] = useState<string | null>(null);
+  const [mine, setMine] = useState(own);
+  const [shown, setShown] = useState<{ frames: string[]; faces: (Face & { covered: boolean })[] } | null>(null);
+  const [moment, setMoment] = useState(0);
+  const [ratio, setRatio] = useState("760 / 534");
+  const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const seq = useRef(0);
-  const key = JSON.stringify(style);
+  const some = settings.mode === "some";
+  const key = JSON.stringify([style, some && settings.who, mine?.path]);
   useEffect(() => {
     if (!mac || mac < 2) return;
     const n = ++seq.current;
-    const t = setTimeout(() => {
-      examplePicture()
-        .then((example) => faceBlurTry({ picture: example }, style))
-        .then(
-          (r) => {
-            if (n !== seq.current) return;
-            setPicture(r.frames[0] ?? null);
-            setProblem(null);
-          },
-          (e: Error) => {
-            if (n === seq.current) setProblem(e.message);
-          },
-        );
+    const live = () => n === seq.current;
+    const t = setTimeout(async () => {
+      try {
+        const source = mine ? { path: mine.path } : { picture: await examplePicture() };
+        let blur: string[] | undefined;
+        let failed: string | null = null;
+        if (some) {
+          const at = `${mine?.path ?? "example"}\n${settings.who}`;
+          let pick = picks.get(at);
+          if (!pick) {
+            setBusy("Your AI is choosing the faces");
+            pick = (async () => {
+              const faces = (await faceBlurTry(source, style, { facesOnly: true })).faces;
+              return { faces, blur: faces.length ? (await call<{ blur: string[] }>(`${API}/pick`, "POST", { who: settings.who, faces })).blur : [] };
+            })();
+            picks.set(at, pick);
+          }
+          try {
+            blur = (await pick).blur;
+          } catch (e) {
+            picks.delete(at);
+            failed = (e as Error).message;
+            blur = [];
+          }
+        }
+        if (!live()) return;
+        setBusy(null);
+        const r = await faceBlurTry(source, style, blur ? { blur } : {});
+        if (!live()) return;
+        setShown({ frames: r.frames, faces: r.faces.map((f) => ({ ...f, covered: blur ? blur.includes(f.id) : true })) });
+        setProblem(failed);
+      } catch (e) {
+        if (!live()) return;
+        setBusy(null);
+        setProblem((e as Error).message);
+      }
     }, 200);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` is the style
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` is the style, the instruction and the file
   }, [key, mac]);
+  const choose = (next: typeof own) => {
+    own = next;
+    setMine(next);
+    setShown(null);
+    setMoment(0);
+    setProblem(null);
+  };
+  const pickFile = async () => {
+    const path = (await faceBlurPick())?.[0];
+    if (path) choose({ path, name: path.split("/").pop() ?? path });
+  };
   if (mac === undefined) return null;
   if (mac === null) return <p className="text-xs text-muted-foreground">The example is drawn by the Creator Toolset Mac app</p>;
   if (mac < 2) return <p className="text-xs text-muted-foreground">Update the Mac app to see the example: Creator Toolset → Check for Updates</p>;
+  const frame = shown?.frames[moment] ?? shown?.frames[0];
+  const covered = shown?.faces.filter((f) => f.covered).length ?? 0;
   return (
-    <div className="space-y-1.5">
-      <div className="relative overflow-hidden rounded-lg bg-muted" style={{ aspectRatio: "760 / 534" }}>
-        {picture && <img src={`data:image/jpeg;base64,${picture}`} alt="The example with its faces covered in this style" className="h-full w-full object-cover" />}
-      </div>
-      {problem && <p className="text-xs text-red-500">{problem}</p>}
-      <p className="text-[11px] text-muted-foreground">Tears of Steel (CC BY 3.0) Blender Foundation</p>
-    </div>
-  );
-}
-
-/** A test run: what the covered copy of the example or a picked file would look like, with these settings. Nothing is saved. */
-function TryIt({ settings }: { settings: Settings | null }) {
-  const mac = useMacVersion();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [result, setResult] = useState<{ frames: string[]; faces: { id: string; picture: string; note: string; covered: boolean }[]; picked: boolean; error?: string } | null>(null);
-  if (!settings || mac === undefined) return null;
-  if (!mac || mac < 2)
-    return (
-      <Card>
-        <Row title="Test run" description={mac === null ? "Test runs work in the Creator Toolset Mac app" : "Update the Mac app for test runs: Creator Toolset → Check for Updates"} />
-      </Card>
-    );
-  const run = async (source: { picture: string } | { path: string }) => {
-    const style = styleOf(settings);
-    setResult(null);
-    try {
-      setBusy("Finding faces");
-      if (settings.mode === "all") {
-        const r = await faceBlurTry(source, style);
-        return setResult({ frames: r.frames, faces: r.faces.map((f) => ({ ...f, covered: true })), picked: false });
-      }
-      const found = await faceBlurTry(source, style, { facesOnly: true });
-      const faces = found.faces;
-      let blur: string[] = [];
-      if (faces.length) {
-        setBusy("Your AI is choosing the faces");
-        try {
-          blur = (await call<{ blur: string[] }>(`${API}/pick`, "POST", { who: settings.who, faces })).blur;
-        } catch (e) {
-          return setResult({ frames: [], faces: faces.map((f) => ({ ...f, covered: false })), picked: true, error: (e as Error).message });
-        }
-      }
-      setBusy("Covering");
-      const r = await faceBlurTry(source, style, { blur });
-      setResult({ frames: r.frames, faces: faces.map((f) => ({ ...f, covered: blur.includes(f.id) })), picked: true });
-    } catch (e) {
-      setResult({ frames: [], faces: [], picked: false, error: (e as Error).message });
-    } finally {
-      setBusy(null);
-    }
-  };
-  const onFile = async () => {
-    const paths = await faceBlurPick();
-    if (paths?.[0]) await run({ path: paths[0] });
-  };
-  return (
-    <Card>
-      <Row
-        title="Test run"
-        description="Finds the faces and shows the covered copy with these settings. Nothing is saved"
-        status={busy ?? undefined}
-        control={
-          <>
-            <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void examplePicture().then((picture) => run({ picture }), (e: Error) => saveFailed(e.message))}>
-              Try the example
-            </Button>
-            <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void onFile()}>
-              Try a file
-            </Button>
-          </>
-        }
-      >
-        {result && (
-          <div className="space-y-3">
-            {result.error && <p className="text-xs text-red-500">{result.error}</p>}
-            {!result.error && !result.faces.length && <p className="text-xs text-muted-foreground">No face found</p>}
-            {result.frames.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {result.frames.map((f, i) => (
-                  <img key={i} src={`data:image/jpeg;base64,${f}`} alt="" className="h-36 max-w-full rounded-lg object-contain" />
-                ))}
-              </div>
-            )}
-            {result.faces.length > 0 && (
-              <div className="flex flex-wrap gap-3">
-                {result.faces.map((f) => (
-                  <div key={f.id} className="flex w-20 flex-col items-center gap-1 text-center" title={f.note}>
-                    <img src={`data:image/jpeg;base64,${f.picture}`} alt="" className="h-14 rounded-md object-cover" />
-                    <span className="text-[11px] leading-tight text-muted-foreground">
-                      {f.covered ? (result.picked ? "Covered, your AI's pick" : "Covered") : "Left as it is"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+    <div className="space-y-2">
+      <div className="relative overflow-hidden rounded-lg bg-muted" style={{ aspectRatio: ratio, maxHeight: "24rem" }}>
+        {frame && (
+          <img
+            src={`data:image/jpeg;base64,${frame}`}
+            alt={mine ? "Your file with its faces covered" : "The example with its faces covered"}
+            className="h-full w-full object-contain"
+            onLoad={(e) => setRatio(`${e.currentTarget.naturalWidth} / ${e.currentTarget.naturalHeight}`)}
+          />
         )}
-      </Row>
-    </Card>
+      </div>
+      {shown && shown.frames.length > 1 && (
+        <div className="flex gap-1.5">
+          {shown.frames.map((f, i) => (
+            <button key={i} type="button" aria-label={`Moment ${i + 1}`} onClick={() => setMoment(i)} className={`overflow-hidden rounded-md border ${i === moment ? "border-foreground" : "border-border"}`}>
+              <img src={`data:image/jpeg;base64,${f}`} alt="" className="h-10 object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+      {busy && <p className="text-xs text-muted-foreground">{busy}</p>}
+      {problem && <p className="text-xs text-red-500">{problem}</p>}
+      {shown && !busy && (
+        <p className="text-xs text-muted-foreground">
+          {shown.faces.length ? `${covered} of ${shown.faces.length} ${shown.faces.length === 1 ? "face" : "faces"} covered${some ? ", your AI's pick" : ""}` : "No face found"}
+        </p>
+      )}
+      {shown && shown.faces.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {shown.faces.map((f) => (
+            <div key={f.id} className="flex w-14 flex-col items-center gap-1 text-center" title={f.note}>
+              <img src={`data:image/jpeg;base64,${f.picture}`} alt="" className="h-10 rounded-md object-cover" />
+              <span className="text-[11px] leading-tight text-muted-foreground">{f.covered ? "Covered" : "Left"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-x-2">
+        {/* the example's credit is its licence: shown whole, never cut short */}
+        <p className={`text-[11px] text-muted-foreground ${mine ? "min-w-0 truncate" : ""}`}>{mine ? mine.name : "Tears of Steel (CC BY 3.0) Blender Foundation"}</p>
+        <Button size="sm" variant="ghost" onClick={() => void (mine ? choose(null) : pickFile())}>
+          {mine ? "Back to the example" : "Try your own file"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -382,7 +378,6 @@ function FaceBlurSettings() {
       <Section title="Style">
         <StyleCard {...s} />
       </Section>
-      <TryIt settings={s.settings} />
       <AutoRows {...s} />
       <p className="text-sm text-muted-foreground">
         Faces in AI Editor edits are covered by the AI Editor's own Blur faces step:{" "}

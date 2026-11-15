@@ -35,8 +35,10 @@ before a field existed never resets it.
 
 The style is the engine's (`FaceBlur/Cover.swift` `LookPreset`): the Mac app's jobs and test runs, the automatic covers
 (the device job's options carry it as text) and the iPhone app all draw with it. `GET /api/x/blur-faces/example` →
-`{ picture }`: the example picture (a base64 JPEG, a still from Tears of Steel, CC BY 3.0) Settings previews the style on
-and test runs try.
+`{ picture }`: the example picture (a base64 JPEG, a still from Tears of Steel, CC BY 3.0). The Style card's picture is the
+test: the example, or a photo or video the person picks in the Mac app (Try your own file), covered with the current settings
+and written nowhere. With "Only some faces" the person's AI picks from the faces found, once per file and Which faces
+(`/pick`); moving a slider only draws again.
 
 `who` is used only in "some" mode. At most 500 characters.
 
