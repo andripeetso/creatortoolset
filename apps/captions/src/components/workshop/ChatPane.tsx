@@ -7,7 +7,7 @@ import { CONTEXT_FIELD_LABELS, PART_LABELS, PASTE_AS_FILE, PDF_MAX_BYTES, STAGE_
 import { AuditOpenRow } from "./AuditCard";
 import { CopyButton } from "./CopyButton";
 import { SourceResultCard } from "./SourceResultCard";
-import { PILL_BUTTON, SelectionPill } from "./SelectionPill";
+import { PILL_BUTTON, SelectionPill, citeAt } from "./SelectionPill";
 import { WhatChanged } from "./WhatChanged";
 import { ModelChip } from "./ModelChip";
 import { Notice } from "./Notice";
@@ -140,14 +140,7 @@ export function ChatPane({
   const sending = useRef(false);
   // Cite on the AI's replies: select words, a pill where you let go
   const [cite, setCite] = useState<{ text: string; at: { x: number; y: number } } | null>(null);
-  const pickCite = (e: React.MouseEvent) => {
-    // a drag-select gets Cite, a double- or triple-click doesn't
-    if (e.detail > 1) return setCite(null);
-    const s = window.getSelection();
-    const text = s?.toString().trim() ?? "";
-    const from = s?.anchorNode?.parentElement?.closest("[data-cite]");
-    setCite(text && from && from === s?.focusNode?.parentElement?.closest("[data-cite]") ? { text, at: { x: e.clientX + 6, y: e.clientY + 10 } } : null);
-  };
+  const pickCite = (e: React.MouseEvent) => setCite(citeAt(e));
   // a new citation (from here or a slide) lands as a chip where the caret was, and you're in the box to write about it
   const placed = useRef(new Set<string>());
   useEffect(() => {

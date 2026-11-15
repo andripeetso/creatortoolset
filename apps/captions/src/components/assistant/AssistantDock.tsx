@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, Quote, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import type { Selection } from "@contracts/providers";
@@ -45,6 +45,7 @@ import { StartSuggestions, WorkPicker } from "./WorkPicker";
 import { useWorkspace } from "@/lib/workspace";
 import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
+import { PILL_BUTTON, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { LimitBanner } from "./LimitBanner";
@@ -132,7 +133,9 @@ export function AssistantDock() {
   const me = useMe();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
-  const { collapsed, set, quote, setQuote, images: handed, notice } = useAssistant();
+  const { collapsed, set, quote, setQuote, askAbout, images: handed, notice } = useAssistant();
+  // Cite on the replies: select words, a pill where you let go; they become the quote of your next message
+  const [cite, setCite] = useState<ReturnType<typeof citeAt>>(null);
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
@@ -891,7 +894,23 @@ export function AssistantDock() {
 
       {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing.
           In chat mode the messages and the box keep to a readable column in the middle */}
-      <div className={cn("relative min-h-0 flex-1 overflow-x-hidden pt-2 pb-3 text-sm [overflow-wrap:anywhere]", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
+      <div onMouseUp={(e) => setCite(citeAt(e))} className={cn("relative min-h-0 flex-1 overflow-x-hidden pt-2 pb-3 text-sm [overflow-wrap:anywhere]", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
+        {cite && (
+          <SelectionPill at={cite.at} onDismiss={() => setCite(null)}>
+            <button
+              type="button"
+              onClick={() => {
+                askAbout(cite.text);
+                window.getSelection()?.removeAllRanges();
+                setCite(null);
+              }}
+              className={PILL_BUTTON}
+              title="Cite in the message box: write about it there"
+            >
+              <Quote className="h-3.5 w-3.5" /> Cite
+            </button>
+          </SelectionPill>
+        )}
         {!view && <Dots />}
 
         {view?.provider === "none" && (
@@ -1274,7 +1293,9 @@ export function Message({
           </p>
         )
       ) : (
-        <ReplyText text={m.text} />
+        <div data-cite>
+          <ReplyText text={m.text} />
+        </div>
       )}
       {/* the questions waiting for a press come under the words, as the reply says ("the card below"): the words
           written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}

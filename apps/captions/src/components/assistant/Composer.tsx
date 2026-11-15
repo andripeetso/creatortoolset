@@ -72,9 +72,10 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, MAX_ROWS_PX)}px`;
   }, [text, voice.phase]);
 
+  // and a new quote (Cite, Ask assistant) puts you in the box to write about it
   useEffect(() => {
-    if (autoFocus) box.current?.focus();
-  }, [autoFocus]);
+    if (autoFocus || quote) box.current?.focus();
+  }, [autoFocus, quote]);
 
   const empty = draftEmpty(draft);
   const uploading = filesPending(draft);

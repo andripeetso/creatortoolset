@@ -4,8 +4,9 @@ import { useMe } from "@/lib/auth";
 import { useAssistant } from "@/lib/assistant";
 import { DOCK } from "@/lib/page-context";
 
-/** Places the selection can't be asked about from: the chat itself and form fields (a document editor is fine). */
-const NOT_HERE = `${DOCK},input,textarea,select`;
+/** Places the selection can't be asked about from: the chat itself, form fields, and text that has its own Cite (a
+ * Workshop reply; a document editor is fine). */
+const NOT_HERE = `${DOCK},input,textarea,select,[data-cite]`;
 /** Keeps the pill's middle this far from the window's sides (about half its width plus a gutter). */
 const EDGE = 76;
 

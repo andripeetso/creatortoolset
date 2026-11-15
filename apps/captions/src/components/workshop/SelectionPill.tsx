@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -42,6 +42,18 @@ export function SelectionPill({ at, onDismiss, children }: { at: { x: number; y:
     </div>,
     document.body,
   );
+}
+
+/**
+ * On mouseup: the words a drag-select took inside one `[data-cite]` block (an AI reply), and where the pill goes.
+ * A double- or triple-click gets none. The Workshop chat and the assistant's chat both use it.
+ */
+export function citeAt(e: MouseEvent): { text: string; at: { x: number; y: number } } | null {
+  if (e.detail > 1) return null;
+  const s = window.getSelection();
+  const text = s?.toString().trim() ?? "";
+  const from = s?.anchorNode?.parentElement?.closest("[data-cite]");
+  return text && from && from === s?.focusNode?.parentElement?.closest("[data-cite]") ? { text, at: { x: e.clientX + 6, y: e.clientY + 10 } } : null;
 }
 
 export const PILL_BUTTON = "flex items-center gap-1 rounded-full px-2 py-0.5 hover:bg-muted disabled:opacity-40";
