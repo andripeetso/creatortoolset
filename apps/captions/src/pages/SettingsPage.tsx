@@ -316,7 +316,9 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
             </div>
           </nav>
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* a div, not <main>: chat mode lays out and hides every <main> as the page beside the chats, and this dialog
+              covers the whole window (blank in only chats, owner 11-14) */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
               <DialogTitle className="min-w-0 flex-1 truncate text-sm font-normal">
                 <span className="text-muted-foreground">Settings</span>{" "}
@@ -354,7 +356,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                 <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
               </div>
             </PageActionContext.Provider>
-          </main>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

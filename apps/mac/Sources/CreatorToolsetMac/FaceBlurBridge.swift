@@ -18,6 +18,8 @@ enum FaceBlurAsk: Equatable {
     case choose(job: String, path: String, blur: [String], error: String? = nil)
     case cancel(job: String)
     case show(path: String)
+    /// Choose files: this app's own open panel, on any server (answered by the window, Shell.swift faceBlurPick)
+    case pick
 }
 
 func isFaceBlurAsk(_ ask: String) -> Bool { ask.hasPrefix("faceblur:") }
@@ -46,6 +48,7 @@ func faceBlurAsk(_ ask: String) -> FaceBlurAsk? {
     case "state": return rest.isEmpty ? nil : .state(job: rest)
     case "cancel": return rest.isEmpty ? nil : .cancel(job: rest)
     case "show": return rest.isEmpty ? nil : .show(path: rest)
+    case "pick": return rest.isEmpty ? .pick : nil
     default: return nil
     }
 }
@@ -96,6 +99,9 @@ final class FaceBlurJobs {
         switch ask {
         case .hello:
             return ["ok": true, "version": 1]
+        case .pick:
+            // the window answers it (an open panel needs one); this is only reached with no window
+            return ["paths": [String]()]
         case let .start(files, mode, look):
             if let problem = Self.refusal(files, allowed: allowed) { return ["problem": problem] }
             let job = Job(mode: mode, preset: LookPreset(look: look), files: files)

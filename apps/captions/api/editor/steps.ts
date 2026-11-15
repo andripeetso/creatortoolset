@@ -6,7 +6,7 @@ import type { EditStepChoice, StepInfo, StepRow, StepsView } from "../../contrac
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { folderPluginsEnabled, pluginsFolder } from "../lib/folder-plugins";
-import { loadedPluginIds, pluginEditorSteps } from "../lib/plugin";
+import { loadedPluginInfo, pluginEditorSteps } from "../lib/plugin";
 import { writeJsonAtomic } from "../library/media/run";
 
 /**
@@ -55,7 +55,7 @@ export function bundledPlugins(): { folder: string; pluginId: string; title: str
 
 /**
  * The loaded steps, then the plug-ins that come with the app (on the Mac app's own server): each one not loaded, and each
- * loaded one that adds no step. Settings → Tools → AI Editor shows the "on" rows, Community all of them, each under its tool.
+ * loaded one that adds no step; then, on every server, any other loaded plug-in that adds no step. Settings → Tools → AI Editor shows the "on" rows, Community all of them, each under its tool.
  */
 export function stepsView(user: string): StepsView {
   const saved = readSaved(user);
@@ -67,14 +67,20 @@ export function stepsView(user: string): StepsView {
     use: saved[info.id]?.use ?? true,
     values: valuesOf(info, saved[info.id]?.values),
   }));
+  const withSteps = new Set(loaded.map((s) => s.pluginId));
+  const plugins = loadedPluginInfo();
   if (canAdd) {
-    const withSteps = new Set(loaded.map((s) => s.pluginId));
-    const running = new Set(loadedPluginIds());
+    const running = new Set(plugins.map((p) => p.id));
     for (const b of bundledPlugins()) {
       if (withSteps.has(b.pluginId)) continue;
       const state = running.has(b.pluginId) ? "loaded" : existsSync(path.join(pluginsFolder(), b.folder)) ? "off" : "add";
       rows.push({ id: b.pluginId, title: b.title, about: b.about, kind: b.kind, state, folder: b.folder, use: false, values: {} });
     }
+  }
+  // every other loaded plug-in that adds no step, on any server (one a hosted server is built with, in CT_PLUGINS): Installed
+  for (const p of plugins) {
+    if (withSteps.has(p.id) || rows.some((r) => r.id === p.id)) continue;
+    rows.push({ id: p.id, title: p.name, about: p.about, kind: p.kind, state: "loaded", use: false, values: {} });
   }
   return { steps: rows, canAdd };
 }
