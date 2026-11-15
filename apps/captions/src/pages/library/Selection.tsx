@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { Check, Download, Folder, RefreshCw, RotateCcw, Tag, Trash2, X } from "lucide-react";
-import type { LibrarySummary } from "@contracts/library";
+import type { AssetCard, LibrarySummary } from "@contracts/library";
 import { isPickClick } from "@/components/browse/browse";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { promptDialog } from "@/lib/dialogs";
-import { getAsset } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { revealClip } from "./clip";
 
@@ -331,28 +330,13 @@ export function saveFile(href: string) {
 /** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
 export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
-/** clip id → whether its file is on a computer (its detail names the path): asked once a visit */
-const onComputer = new Map<string, boolean>();
-
 /**
  * Show in Finder, in the Mac app. On the server on this Mac every clip has its file here; on a server elsewhere only a
- * clip the server names a file for (one read where it lies) can be, inside a folder this Mac granted (apps/mac
- * Reveal.swift): an upload from a phone has none, so it is not offered there.
+ * clip read in place from a computer's folder can be (inside a folder this Mac granted, apps/mac Reveal.swift): an
+ * upload from a phone has none, so it is not offered there. Decided from the card, so the menu never changes once open.
  */
-export function RevealItem({ libraryId, assetId, onProblem }: { libraryId: string; assetId: string; onProblem: (p: string) => void }) {
-  const [ok, setOk] = useState(() => (servedHere() ? true : onComputer.get(assetId)));
-  useEffect(() => {
-    if (ok !== undefined) return;
-    let live = true;
-    getAsset(libraryId, assetId).then(
-      (d) => {
-        onComputer.set(assetId, !!d.sourcePath);
-        if (live) setOk(!!d.sourcePath);
-      },
-      () => live && setOk(false),
-    );
-    return () => void (live = false);
-  }, [ok, libraryId, assetId]);
-  if (!ok) return null;
+export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer">; onProblem: (p: string) => void }) {
+  const assetId = asset.id;
+  if (!servedHere() && !asset.onComputer) return null;
   return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }

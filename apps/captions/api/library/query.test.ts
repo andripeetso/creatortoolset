@@ -43,6 +43,15 @@ describe("library asset query", () => {
     expect(ids(page(seed(), "lib_a"))).toEqual(["a3", "a2", "a1"]);
   });
 
+  it("says which clips are read in place from a computer's folder (Show in Finder), and leaves finished work out", () => {
+    const db = seed();
+    db.prepare("UPDATE asset_versions SET source_path = '/Users/someone/Footage/beach.mov' WHERE id = 'v_a1'").run();
+    db.prepare("UPDATE assets SET filed_roll = 'none' WHERE id = 'a3'").run();
+    const cards = page(db, "lib_a").items as { id: string; onComputer?: true }[];
+    expect(cards.map((c) => [c.id, !!c.onComputer])).toEqual([["a2", false], ["a1", true]]);
+    expect(JSON.stringify(cards)).not.toContain("/Users/someone"); // never the path itself
+  });
+
   it("filters by kind", () => {
     expect(ids(page(seed(), "lib_a", { kind: "audio" }))).toEqual(["a3"]);
   });

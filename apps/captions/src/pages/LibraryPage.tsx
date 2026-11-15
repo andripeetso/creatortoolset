@@ -702,7 +702,7 @@ export default function LibraryPage() {
           restore: () => void trashMany(carried(a), false),
         }}
         extra={
-          canReveal() && libId ? <RevealItem libraryId={libId} assetId={a.id} onProblem={setError} /> : undefined
+          canReveal() && libId ? <RevealItem libraryId={libId} asset={a} onProblem={setError} /> : undefined
         }
       />
     );
