@@ -49,7 +49,9 @@ import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
 import {
   getWorkspace,
   inProject,
+  movesTo,
   onFor,
+  ownedProject,
   ownedProjects,
   readUserMarker,
   resolveProjectId,
@@ -2510,6 +2512,7 @@ workshopApp.post("/sessions", async (c) => {
     const sources = Array.isArray(body?.sourceIds) ? parseSources(body.sourceIds, now) : [];
     const known = new Set((await postsForUser(sources.map((s) => s.postId), user)).map((p) => p.id));
     const projectId = patch.projectId ?? (await resolveProjectId(user));
+    if (patch.projectId && (await ownedProject(patch.projectId, user))) movesTo(user, patch.projectId);
     const meta: SessionMeta = {
       id: randomUUID(),
       owner: user.username,

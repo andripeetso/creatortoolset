@@ -712,6 +712,10 @@ describe("a chat's workspace", () => {
     expect((await toolOf(token, "workshop_set_project", { project: other })).error).toBe(false);
     expect((await chats()).find((c) => c.id === id)?.workspace).toBe(other);
     expect(await current()).toBe(other);
+    // it makes a Workshop project in another workspace by naming it: the chat goes there too
+    expect((await toolOf(token, "workshop_new_session", { title: "Launch post", project: tiny })).error).toBe(false);
+    expect((await chats()).find((c) => c.id === id)?.workspace).toBe(tiny);
+    expect(await current()).toBe(tiny);
     revokeJobTokens(chat.messages.at(-1)!.id);
   });
 });
