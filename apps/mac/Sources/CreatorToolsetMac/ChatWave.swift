@@ -41,6 +41,9 @@ final class ChatWaveHost {
     /// none is).
     private var early: (picture: Picture, at: CFTimeInterval)?
     private var earlyWaiting: [(Picture?) -> Void]?
+    /// A switch is on its way, from the press until its wave is over: a picture taken meanwhile could be of either
+    /// screen, so none is taken or kept.
+    private var switching = false
 
     init(_ view: WKWebView) {
         self.view = view
@@ -82,7 +85,7 @@ final class ChatWaveHost {
     /// A picture of the screen as it is now, kept for a press in the next few seconds. Taken after the screen's next
     /// update, so with the button's look under the pointer.
     private func prepare() {
-        guard wave == nil, earlyWaiting == nil, let view, let renderer = WaveRenderer.shared else { return }
+        guard !switching, wave == nil, earlyWaiting == nil, let view, let renderer = WaveRenderer.shared else { return }
         // (taking one holds the page still for as long: not again while the last is fresh)
         if let e = early, CACurrentMediaTime() - e.at < 2 { return }
         waveLog.notice("ready: taking the picture early")
@@ -91,9 +94,12 @@ final class ChatWaveHost {
             renderer.picture(image?.cgImage(forProposedRect: nil, context: nil, hints: nil)) { [weak self] picture in
                 guard let self else { return }
                 let at = CACurrentMediaTime()
-                if let picture { self.early = (picture, at) }
                 let waiting = self.earlyWaiting ?? []
                 self.earlyWaiting = nil
+                // kept only for a press still to come: one a press took is of the screen before its switch, and a
+                // second quick press showed it, the new screen there before its wave (owner, 11-14: "sometimes when
+                // fast clicking the image changes before the shockwave does")
+                if let picture, waiting.isEmpty, !self.switching { self.early = (picture, at) }
                 waiting.forEach { $0(picture) }
                 // (a picture of a big window is large: not kept past its use)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.1) { [weak self] in
@@ -126,6 +132,7 @@ final class ChatWaveHost {
         let pressed = CACurrentMediaTime()
         wave?.finish()
         guard let view, let renderer = WaveRenderer.shared, let x = start["x"] as? Double, let y = start["y"] as? Double else { return reply(false, nil) }
+        switching = true
         let rgb = ((start["tint"] as? String) ?? "").split(separator: " ").compactMap { Float($0) }
         let tint = rgb.count == 3 ? SIMD3(rgb[0], rgb[1], rgb[2]) / 255 : SIMD3<Float>(0.49, 0.23, 0.93)
         let dark = start["dark"] as? Bool ?? false
@@ -141,11 +148,13 @@ final class ChatWaveHost {
             else {
                 waveLog.notice("no wave: no picture of the screen")
                 self?.sound.end()
+                self?.switching = false
                 return reply(false, nil)
             }
             self.wave = wave
             wave.onDone = { [weak self] in
                 self?.wave = nil
+                self?.switching = false
                 self?.drawn?(true, nil)
                 self?.drawn = nil
             }
@@ -153,14 +162,14 @@ final class ChatWaveHost {
             // flash for a frame (a switch to a light page is drawn that quickly). Should no frame come (its window hidden),
             // it changes anyway.
             var answered = false
-            let answer = {
+            let answer = { (shown: Bool) in
                 guard !answered else { return }
                 answered = true
-                waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early), made in \(Int((CACurrentMediaTime() - making) * 1000)) ms")
+                waveLog.notice("up at \(Int(wave.elapsed)) ms, picture taken early \(early), made in \(Int((CACurrentMediaTime() - making) * 1000)) ms, first frame on show \(shown)")
                 reply(true, nil)
             }
-            wave.onShown = answer
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: answer)
+            wave.onShown = { answer(true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { answer(false) }
         }
     }
 }
