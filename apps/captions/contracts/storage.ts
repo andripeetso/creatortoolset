@@ -51,6 +51,8 @@ export interface StorageFolder {
   reach: Record<string, { path: string; at: number }>;
   /** the origin computer could not mark it (no such folder, not writable…) */
   error?: string;
+  /** the workspace it belongs to (stamped when added; none = from before workspaces kept their own: the first brand) */
+  workspace?: string;
 }
 
 export interface StorageState {
