@@ -67,6 +67,8 @@ beforeAll(() => {
   clicks("click128.wav", 128, 30);
   // the same clicks over a steady 60 Hz bass as loud as the quiet clicks, and a little noise
   clicks("click128-bed.wav", 128, 30, "0.3*sin(2*PI*60*t)+0.02*(random(0)-0.5)");
+  // a kick on every beat at 120 bpm and a louder, busier hi-hat on every off-beat (noise bursts): the beats are the kicks
+  ff(["-f", "lavfi", "-i", "aevalsrc=if(lt(mod(t\\,0.5)\\,0.12)\\,0.8*sin(2*PI*55*t)*exp(-30*mod(t\\,0.5))\\,0)+if(between(mod(t\\,0.5)\\,0.25\\,0.29)\\,0.6*(random(0)-0.5)*exp(-80*(mod(t\\,0.5)-0.25))\\,0):s=22050:d=30", at("kick-hats.wav")]);
   // 12 s quiet then 12 s loud, a beat in both
   ff(["-f", "lavfi", "-i", "aevalsrc=if(lt(t\\,12)\\,0.03\\,0.6)*(0.5*sin(2*PI*220*t)+if(lt(mod(t\\,0.5)\\,0.02)\\,sin(2*PI*1500*t)\\,0)):s=22050:d=24", at("quiet-loud.wav")]);
 }, 120_000);
@@ -120,6 +122,12 @@ describe("song", () => {
       for (const d of s.downbeats) expect(Math.abs(nearest(accents, d) - d)).toBeLessThanOrEqual(0.02);
       console.log(`${file}: bpm ${s.bpm}, worst beat ${(worst * 1000).toFixed(1)} ms, ${s.beats.length} beats, ${s.strong.length} strong`);
     });
+
+  it("puts the beats on the kick, not on louder hi-hats between them", async () => {
+    const s = await songBeats(at("kick-hats.wav"), 0, signal);
+    expect(Math.abs(s.bpm - 120)).toBeLessThanOrEqual(1);
+    for (const t of s.beats) expect(Math.abs(t / 0.5 - Math.round(t / 0.5)) * 0.5).toBeLessThanOrEqual(0.03);
+  });
 
   it("keeps the song's own time from a later start", async () => {
     const s = await songBeats(at("click128.wav"), 1, signal);
