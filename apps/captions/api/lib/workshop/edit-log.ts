@@ -1,3 +1,4 @@
+import { even, foundIn } from "../../../contracts/memory";
 import type { Document } from "./types";
 
 /**
@@ -45,6 +46,53 @@ export function pairsOf(doc: Pick<Document, "id" | "kind" | "title" | "userEdits
       to: (e.to ?? "").trim(),
       at: e.at,
     }));
+}
+
+/** What the author sent with one chat message: what they typed, what they pasted, the lines of the piece they pointed at. */
+export interface ChatSaid {
+  text: string;
+  pasted: string[];
+  quotes: string[];
+}
+
+/** His standing note (2026-11-15): never "wanna" or "gonna" in what is written for him, even from his own dictation. */
+const spelledOut = (s: string) => s.replace(/\b(wanna|gonna)\b/gi, (w) => (/^w/i.test(w) ? (w[0] === "W" ? "Want to" : "want to") : w[0] === "G" ? "Going to" : "going to"));
+
+/**
+ * Lines the author gave their own version of in a chat message, kept as pairs like a rewrite on the page (owner,
+ * 2026-11-15: "will it actually remember this? because we don't do rules"). The writer names them (TurnPlan.theirs);
+ * one is kept only when its line is the AI's text in a piece of this session that the author quoted or pointed at, and
+ * their version stands word for word in what they typed or pasted. The writer's own wording is never the "after", and
+ * a complaint with no version of theirs keeps nothing.
+ */
+export function chatPairs(
+  proposed: Array<{ from: string; to: string }>,
+  said: ChatSaid,
+  pieces: Array<Pick<Document, "id" | "kind" | "title" | "blocks" | "hooks" | "caption">>,
+  at: number,
+): EditPair[] {
+  const own = [said.text, ...said.pasted].join("\n\n");
+  const out: EditPair[] = [];
+  for (const p of proposed) {
+    const pointed = foundIn(p.from, said.text) || said.quotes.some((q) => foundIn(q, p.from) || foundIn(p.from, q));
+    const to = foundIn(p.to, own);
+    if (!pointed || !to || to.split(" ").length < 3) continue;
+    for (const doc of pieces) {
+      const lines = [
+        ...doc.blocks.filter((b) => b.author === "ai").map((b) => ({ text: b.text, kind: kindOf(b.id, doc.kind) })),
+        ...(doc.hooks ?? []).filter((b) => b.author === "ai").map((b) => ({ text: b.text, kind: "hook" as const })),
+        ...(doc.caption?.author === "ai" ? [{ text: doc.caption.text, kind: "description" as const }] : []),
+      ];
+      const line = lines.find((l) => foundIn(p.from, l.text));
+      if (!line) continue;
+      const from = foundIn(p.from, line.text)!;
+      // their version must be theirs: not the piece's own words quoted back
+      if (even(from) === even(to) || lines.some((l) => foundIn(to, l.text))) break;
+      out.push({ key: `${doc.id}:chat:${from.slice(0, 60)}`, kind: line.kind, docKind: doc.kind, docTitle: doc.title, from, to: spelledOut(to), at });
+      break;
+    }
+  }
+  return out;
 }
 
 /** Rough count of characters that differ (prefix/suffix trimmed): enough to skip a typo fix. */

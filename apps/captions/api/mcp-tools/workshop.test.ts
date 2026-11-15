@@ -465,3 +465,37 @@ describe("the writer the assistant asked", { timeout: 30_000 }, () => {
     expect((await viewOf(cookie)).messages).toHaveLength(before);
   });
 });
+
+describe("a version of their own given in the Workshop's chat", () => {
+  type Stream = (system: string, user: string, signal: AbortSignal, parse: (t: string) => unknown) => Promise<unknown>;
+  const answer = (plan: Row) => writer.mockImplementationOnce((async (_s, _u, _sig, parse) => ({ result: parse(JSON.stringify(plan)), provider: "Claude (Mac)" })) as Stream as never);
+  const done = async (cookie: string, session: string, reply: string) => {
+    for (let i = 0; i < 500; i++) {
+      if ((await page<Row[]>(cookie, `/api/workshop/sessions/${session}/chat`)).find((m) => m.id === reply)?.status !== "thinking") return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+
+  it("is kept like a rewrite on the page and reaches the writer in the project's next piece; a complaint alone keeps nothing", async () => {
+    const cookie = await cookieOf("ana");
+    const project = String((await page(cookie, "/api/workshop/projects", "POST", { name: "Kite school" })).id);
+    const s = (await tool(key, "workshop_new_session", { title: "Windy days", project })).value!;
+    const piece = String((s.pieces as Row[])[0]!.id);
+    await tool(key, "workshop_edit_piece", { session: s.id, piece, blocks: [{ text: "Wind in, kite up. Zero stress." }, { text: "Fly it. Love it. Repeat." }], theirs: true });
+
+    // his line and his version of it: kept, "wanna" spelled out
+    answer({ reply: "Changed it.", edits: [], theirs: [{ from: "Wind in, kite up. Zero stress.", to: "you just wanna wait for a gust and then you let the kite go up" }] });
+    let sent = await page<{ reply: Row }>(cookie, `/api/workshop/sessions/${String(s.id)}/chat`, "POST", { docId: piece, text: '"Wind in, kite up. Zero stress." nobody talks like that, you just wanna wait for a gust and then you let the kite go up' });
+    await done(cookie, String(s.id), String(sent.reply.id));
+    // a complaint with nothing of his: the writer's own rewrite is not kept
+    answer({ reply: "Changed it.", edits: [], theirs: [{ from: "Fly it. Love it. Repeat.", to: "Once it's up you can stay out there all afternoon." }] });
+    sent = await page<{ reply: Row }>(cookie, `/api/workshop/sessions/${String(s.id)}/chat`, "POST", { docId: piece, text: '"Fly it. Love it. Repeat." i hate these slogans' });
+    await done(cookie, String(s.id), String(sent.reply.id));
+
+    const next = (await tool(key, "workshop_new_session", { title: "Gusts", project })).value!;
+    const asked = (await tool(key, "workshop_chat", { session: next.id, piece: (next.pieces as Row[])[0]!.id, message: "A reel about waiting for a gust before the kite goes up" })).value!;
+    const rewrites = String((asked.material as Row).their_rewrites);
+    expect(rewrites).toContain("AI wrote:\nWind in, kite up. Zero stress.\n--- The author made it:\nyou just want to wait for a gust and then you let the kite go up");
+    expect(rewrites).not.toContain("all afternoon");
+  });
+});

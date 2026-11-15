@@ -22,3 +22,15 @@ export const MEMORY_QUOTE_MAX = 300;
 export const tidy = (s: string): string => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
 /** How two wordings are compared: tidy(), in one case. */
 export const even = (s: string): string => tidy(s).toLowerCase();
+
+/**
+ * The quote as it stands in a text: the same words in the same order, whole words only, whatever the case, the
+ * spacing or the shape of the quote marks. Returns the text's own wording (one line), or null.
+ */
+export function foundIn(quote: string, text: string): string | null {
+  const words = tidy(quote).split(" ").filter(Boolean);
+  if (!words.length) return null;
+  const word = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/'/g, "['‘’]").replace(/"/g, '["“”]');
+  const m = new RegExp(`(?<![\\p{L}\\p{N}])${words.map(word).join("\\s+")}(?![\\p{L}\\p{N}])`, "iu").exec(text);
+  return m ? m[0].replace(/\s+/g, " ") : null;
+}

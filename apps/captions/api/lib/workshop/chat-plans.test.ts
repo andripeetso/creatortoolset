@@ -190,3 +190,9 @@ describe("editsForNewDocument", () => {
     ]);
   });
 });
+
+it("reads the lines the author gave their own version of, and nothing that isn't a pair", () => {
+  const plan = parseTurn(JSON.stringify({ reply: "Done.", edits: [], theirs: [{ from: "No tiers.", to: "it's completely free" }, { from: "half" }, "nope"] }));
+  expect(plan.theirs).toEqual([{ from: "No tiers.", to: "it's completely free" }]);
+  expect(parseTurn(JSON.stringify({ reply: "Done.", edits: [], theirs: null })).theirs).toBeUndefined();
+});

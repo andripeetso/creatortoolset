@@ -16,6 +16,8 @@ export interface TurnPlan {
   research?: { question: string; depth: "quick" | "deep" };
   /** The model wants the whole piece fact-checked — a proposal for the author. */
   audit?: "quick" | "deep";
+  /** Lines the author gave their own version of in this message, as the writer read them: checked and kept by chatPairs(). */
+  theirs?: Array<{ from: string; to: string }>;
 }
 
 const PARTS = new Set<string>(["slides", "transcript", "caption", "comments"]);
@@ -191,6 +193,7 @@ export function parseTurn(text: string): TurnPlan {
     research = { question: str(o.research, 500), depth: "quick" };
   }
   const audit: TurnPlan["audit"] = o.audit === "deep" ? "deep" : o.audit === "quick" || o.audit === true ? "quick" : undefined;
+  const theirs = (Array.isArray(o.theirs) ? o.theirs : []).flatMap((x) => (isRec(x) && str(x.from, 2000) && str(x.to, 4000) ? [{ from: str(x.from, 2000), to: str(x.to, 4000) }] : [])).slice(0, 10);
   if (!reply && !edits.length && !newDocument && !revertTo && !search && !needComments && !research && !audit) throw new Error("The model returned neither a reply nor edits");
   return {
     reply: reply || (edits.length ? "Done." : search ? "Let me look in the library." : needComments ? "Pulling that in." : research ? "Let me check that." : audit ? "Worth a fact-check." : ""),
@@ -201,5 +204,6 @@ export function parseTurn(text: string): TurnPlan {
     ...(search ? { search } : {}),
     ...(research ? { research } : {}),
     ...(audit ? { audit } : {}),
+    ...(theirs.length ? { theirs } : {}),
   };
 }

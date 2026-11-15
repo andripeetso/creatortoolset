@@ -51,7 +51,8 @@ const DOC_KIND_RULES: Record<DocKind, string> = {
 };
 
 const JSON_ENVELOPE = `Return exactly one JSON object and nothing else, keys in exactly this order (the author watches the reply and the edits arrive as you write them, so the reply comes first and newDocument / revertTo are written — as null when unused — before the edits):
-{"reply": string, "newDocument": {"kind": "reel"|"carousel"|"ad"|"free"|"youtube"|"newsletter"|"thread"|"article", "title": string} | null, "revertTo": "v3" | null, "edits": [op, ...], "fetch": [{"source": "S2", "parts": ["transcript","comments"]}] | null, "search": string | null, "research": {"question": string, "depth": "quick"|"deep"} | null, "audit": "quick"|"deep"|null}`;
+{"reply": string, "newDocument": {"kind": "reel"|"carousel"|"ad"|"free"|"youtube"|"newsletter"|"thread"|"article", "title": string} | null, "revertTo": "v3" | null, "edits": [op, ...], "fetch": [{"source": "S2", "parts": ["transcript","comments"]}] | null, "search": string | null, "research": {"question": string, "depth": "quick"|"deep"} | null, "audit": "quick"|"deep"|null, "theirs": [{"from": string, "to": string}] | null}
+theirs: a line of the piece the author gives their own version of in this message: from = the line as it stands, to = their version, word for word from their message.`;
 
 const TEXT_OPS = `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"insert_after","id":"b3","text":"…"} · {"op":"insert_before","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"}`;
 

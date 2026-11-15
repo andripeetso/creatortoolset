@@ -80,7 +80,7 @@ import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, renderDocument, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
 import { readThrough } from "./lib/workshop/readthrough";
-import { type EditPair, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
+import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
@@ -1156,6 +1156,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const captionOnly = askedOnlyForCaption(ask.text);
     const account = await ownAccountContextFor(user, projectAccount(project), { cadence: false });
     const askPasted = await readPasted(session.id, ask.pasted);
+    // the pieces as the author saw them when they wrote: a line they gave their own version of is kept from these
+    const piecesAsked = (await listDocs(session.id)).filter((d) => d.kind !== "notes");
     const askImages: Array<ImageRef & { data: string }> = [];
     for (const im of ask.images ?? []) {
       const data = await readFile(imagePath(session.id, im)).catch(() => null);
@@ -1503,6 +1505,13 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       });
     }
     await updateDoc(session.id, doc.id, (d) => markEditsSeen(d));
+    // a line of the piece they gave their own version of in this message is kept like a rewrite on the page (edit-log.ts)
+    if (plan.theirs?.length) {
+      const pointed = (ask.quotes ?? []).filter((q) => q.from !== "reply" && !q.postId);
+      // what they wrote next to a line they pointed at is theirs too
+      const said = { text: [ask.text, ...pointed.map((q) => q.comment ?? "")].join("\n\n"), pasted: askPasted.map((p) => p.text), quotes: pointed.map((q) => q.text) };
+      await keepPairs(session.owner, chatPairs(plan.theirs, said, piecesAsked, Date.now()), session.projectId);
+    }
     let hits: unknown[] | undefined;
     if (plan.search) {
       await progress({ stage: "searching" }, true);
@@ -2738,7 +2747,11 @@ function closestRewrites(near: string, log: EditPair[], projectId: string | unde
   return got.length >= n ? got : [...got, ...closestPairs(near, log.filter((p) => !here.includes(p)), n - got.length)];
 }
 async function keepRewrites(username: string, doc: Document, projectId?: string): Promise<void> {
-  const pairs = pairsOf(doc).map((p) => (projectId ? { ...p, projectId } : p));
+  await keepPairs(username, pairsOf(doc), projectId);
+}
+/** Pairs into the author's edit log, from a rewrite on the page or a version of theirs given in the chat (chatPairs). */
+async function keepPairs(username: string, found: EditPair[], projectId?: string): Promise<void> {
+  const pairs = found.map((p) => (projectId ? { ...p, projectId } : p));
   if (!pairs.length) return;
   await writeJsonAtomic(editLogPath(username), mergeLog(await readEditLog(username), pairs)).catch((e: unknown) => console.warn(`[workshop] edit log: ${errorMessage(e)}`));
 }

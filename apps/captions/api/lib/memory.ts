@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "./env";
 import { getWorkspace } from "./workshop/workspace";
 import type { SessionUser } from "../users";
-import { MEMORY_CAP, MEMORY_QUOTE_MAX, MEMORY_QUOTE_MIN, even, tidy, type MemoryFact } from "../../contracts/memory";
+import { MEMORY_CAP, MEMORY_QUOTE_MAX, MEMORY_QUOTE_MIN, even, foundIn, tidy, type MemoryFact } from "../../contracts/memory";
 
 /**
  * What the assistant keeps from one chat to the next: one file per account, $DATA_DIR/memory/<user>.json (0600).
@@ -72,17 +72,7 @@ function write(username: string, store: Store): void {
 const lineOf = (f: Pick<Kept, "text">) => `- ${f.text}`;
 const sizeOf = (facts: Array<Pick<Kept, "text">>) => facts.reduce((n, f) => n + lineOf(f).length + 1, 0);
 
-/**
- * The quote as it stands in a text: the same words in the same order, whole words only, whatever the case, the
- * spacing or the shape of the quote marks. Returns the text's own wording (one line), or null.
- */
-export function foundIn(quote: string, text: string): string | null {
-  const words = tidy(quote).split(" ").filter(Boolean);
-  if (!words.length) return null;
-  const word = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/'/g, "['‘’]").replace(/"/g, '["“”]');
-  const m = new RegExp(`(?<![\\p{L}\\p{N}])${words.map(word).join("\\s+")}(?![\\p{L}\\p{N}])`, "iu").exec(text);
-  return m ? m[0].replace(/\s+/g, " ") : null;
-}
+export { foundIn };
 
 export type KeepResult = { fact: Kept; added: boolean } | { error: string };
 
