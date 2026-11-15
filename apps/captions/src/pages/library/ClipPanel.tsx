@@ -326,7 +326,7 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   );
 
   // the clip's earlier files, each downloadable; only once there is more than one
-  const versions = detail && detail.versions.length > 1 && (
+  const versions = (detail?.versions?.length ?? 0) > 1 && detail && (
     <section aria-label="Versions" className="flex flex-col gap-1">
       <span className="text-xs text-zinc-500">Versions</span>
       <ul className="-mx-1 flex flex-col">
