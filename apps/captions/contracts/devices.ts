@@ -151,6 +151,8 @@ export interface DeviceJob {
   languages?: string[];
   /** a recording someone waits on (the mic): a computer hears it with a model it has loaded, or refuses it at once */
   soon?: boolean;
+  /** a plug-in's job (ServerPlugin.deviceJobs): what it needs to know, as words */
+  options?: Record<string, string>;
 }
 
 export interface DeviceClaim {

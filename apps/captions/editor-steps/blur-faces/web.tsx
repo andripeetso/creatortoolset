@@ -24,7 +24,9 @@ import { defineWebPlugin } from "../../src/lib/plugin";
 const API = "/api/x/blur-faces";
 
 /** plugin.ts Settings */
-type Settings = { mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid" };
+type Settings = { mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid"; auto: boolean };
+/** plugin.ts GET /auto */
+type Auto = { can: boolean; why?: string; failed: { versionId: string; title: string; error: string }[] };
 
 async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const r = await fetch(url, body === undefined ? { method } : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -97,11 +99,49 @@ function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
   );
 }
 
+/**
+ * "New Media Library files": its switch where a Mac of this account can cover them (or while it is on, so it can be
+ * switched off), else the line that says why not; and the files it could not cover, each with why and Try again.
+ */
+function AutoRows({ settings, save }: ReturnType<typeof useSettings>) {
+  const [auto, setAuto] = useState<Auto | null>(null);
+  const load = () => void call<Auto>(`${API}/auto`).then(setAuto, () => setAuto(null));
+  useEffect(load, []);
+  if (!settings || !auto) return null;
+  const retry = (versionId: string) => call(`${API}/auto/retry`, "POST", { versionId }).then(load, (e: Error) => saveFailed(e.message));
+  return (
+    <Card>
+      {auto.can || settings.auto ? (
+        <Row
+          title="New Media Library files"
+          description="Each photo and video that comes into your Media Library is covered by your Mac with these settings, and the covered copy is added beside it"
+          control={<Switch checked={settings.auto} onCheckedChange={(on) => void save({ ...settings, auto: on })} aria-label="New Media Library files" />}
+        />
+      ) : (
+        <Row title="New Media Library files" description={auto.why} />
+      )}
+      {auto.failed.map((f) => (
+        <Row
+          key={f.versionId}
+          title={f.title}
+          description={f.error}
+          control={
+            <Button size="sm" variant="outline" onClick={() => void retry(f.versionId)}>
+              Try again
+            </Button>
+          }
+        />
+      ))}
+    </Card>
+  );
+}
+
 function FaceBlurSettings() {
   const s = useSettings();
   return (
     <div className="space-y-4">
       <SettingsRows {...s} />
+      <AutoRows {...s} />
       <p className="text-sm text-muted-foreground">
         Faces in AI Editor edits are covered by the AI Editor's own Blur faces step:{" "}
         <Link to="/settings/tools/editor" className="underline underline-offset-2">

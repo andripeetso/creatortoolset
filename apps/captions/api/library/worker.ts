@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
+import { emitEvent } from "../lib/events";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { describeSlot, describeVersion } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
@@ -270,6 +271,8 @@ async function run(job: JobRow): Promise<void> {
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // after transcribe in the queue, so the description reads what is said
     if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
+    // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
+    if (!music && job.actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: job.actor });
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {

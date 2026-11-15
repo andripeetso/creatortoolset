@@ -15,6 +15,8 @@ export interface CoreEvents {
   "session.status": { id: string; owner: string; from: SessionStatus; to: SessionStatus };
   /** Something in a Media Library changed (a piece, an item, a collection, a file): open Finals and Library pages refetch. */
   "library.changed": Record<string, never>;
+  /** A file came into a built-in Media Library and was read (its probe is done): `owner` is who added it. Again when it is read again. */
+  "library.version.probed": { libraryId: string; versionId: string; owner: string };
 }
 
 export type EventName = keyof CoreEvents;

@@ -146,6 +146,8 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/review/uploads") ||
     c.req.path.startsWith("/api/uploads/relay") ||
     c.req.path.startsWith("/api/library/uploads/") ||
+    // a file a device made for a plug-in's job (devices.ts): the device token is checked before it is read
+    (c.req.method === "POST" && /^\/api\/devices\/relay\/job\/[^/]+\/\d+\/file$/.test(c.req.path)) ||
     (c.req.method === "POST" && /^\/api\/workshop-share\/[^/]+\/deliveries$/.test(c.req.path)) ||
     replacedLargeBody(c.req.path) ||
     // a plug-in route that takes a large upload (plugin.ts bodyLimitExempt); the route checks its own access first
