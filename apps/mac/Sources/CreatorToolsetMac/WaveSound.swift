@@ -1,8 +1,9 @@
 // What the chat-mode wave sounds like (ChatWave.swift), made here sample by sample (no sound files): light and round, as
 // on a phone, never a boom (owner, 11-14: "more like social media ... a bubble bop ... smoother sounds", not "like an
 // explosion"). While the button is held: a soft tone rising as the bubble grows, wobbling a little as it goes wild. When
-// it pops: a bubble's bop, a short round tone chirping up; a bigger, lower one the longer it was held, and after a long
-// hold two small ones after it. A click draws nothing in and makes no sound. It follows the wave's own switch
+// it pops: a bubble's bop, low and round (11-14: "make the release a bit more satisfying and lower pitch"): a tick, then
+// a warm tone chirping up a little and settling; bigger and lower the longer it was held, and after a long hold two
+// small ones after it. A click draws nothing in and makes no sound. It follows the wave's own switch
 // (Settings → Appearance → Chat mode) and the Mac's volume.
 import AVFoundation
 import os
@@ -20,7 +21,7 @@ struct WaveSynth {
     /// The bubbles of the pop: when each starts after the pop (s), its pitch (Hz), how loud, how quickly it dies away (s),
     /// and where its wave is.
     private var bubbles: [(at: Float, f: Float, loud: Float, dies: Float, phase: Float)] = []
-    private var popAge: Float = 10
+    private var popAge: Float = 10, popLoud: Float = 0, tick: Float = 0
 
     init(rate: Float) { self.rate = rate }
 
@@ -31,13 +32,15 @@ struct WaveSynth {
         guard loud > 0 else { return }
         // the deeper it was drawn in, the bigger the bubble: lower, a little longer
         let size = min(drawnIn / 2.6, 1.2)
-        let f = 560 - 160 * size, dies = 0.045 + 0.035 * size
+        let f = 330 - 100 * size, dies = 0.07 + 0.05 * size
         bubbles = [(0, f, loud, dies, 0)]
         if wild > 0 {
-            bubbles.append((0.075, f * 1.55, 0.5 * loud * wild, dies * 0.8, 0))
-            bubbles.append((0.14, f * 2.05, 0.32 * loud * wild, dies * 0.7, 0))
+            bubbles.append((0.08, f * 1.5, 0.45 * loud * wild, dies * 0.8, 0))
+            bubbles.append((0.15, f * 1.9, 0.28 * loud * wild, dies * 0.7, 0))
         }
+        popLoud = loud
         popAge = 0
+        tick = 0
     }
 
     mutating func next() -> Float {
@@ -57,15 +60,20 @@ struct WaveSynth {
             let wobble = 1 - 0.35 * w * (0.5 + 0.5 * sin(t * tau * 8))
             out += 0.22 * (0.2 * level + 0.8 * level * level) * wobble * (sin(tone) + 0.12 * sin(2 * tone))
         }
-        // the pop: each bubble a round tone chirping up, there at once and gone within a moment
+        // the pop: a tick, then each bubble a warm round tone chirping up a little and settling, gone within a moment
         if popAge < 1 {
             popAge += dt
+            tick += tau * 2400 * dt
+            if tick > tau { tick -= tau }
+            out += 0.18 * popLoud * min(popAge / 0.0005, 1) * exp(-popAge / 0.003) * sin(tick)
             for i in bubbles.indices {
                 let a = popAge - bubbles[i].at
                 guard a > 0 else { continue }
-                bubbles[i].phase += tau * bubbles[i].f * (1 + 1.3 * (1 - exp(-a / 0.02))) * dt
+                let glide = (1 + 0.6 * (1 - exp(-a / 0.012))) * (1 - 0.06 * (1 - exp(-a / 0.12)))
+                bubbles[i].phase += tau * bubbles[i].f * glide * dt
                 if bubbles[i].phase > tau { bubbles[i].phase -= tau }
-                out += 0.9 * bubbles[i].loud * min(a / 0.0015, 1) * exp(-a / bubbles[i].dies) * sin(bubbles[i].phase)
+                let body = sin(bubbles[i].phase) + 0.3 * sin(2 * bubbles[i].phase)
+                out += 0.85 * bubbles[i].loud * min(a / 0.0015, 1) * exp(-a / bubbles[i].dies) * body
             }
         }
         // (its pop peaks about as loud as the Mac's own "Pop")
