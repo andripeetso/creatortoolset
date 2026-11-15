@@ -42,6 +42,8 @@ import { acceptInvite, inviteByToken, memberIn, workspaceOf } from "./lib/worksp
 import { parseRelayKey } from "./connect/keys";
 import { consumeJti, connectState, tunnelHostname } from "./connect/state";
 import { TicketError, verifyTicket } from "./connect/ticket";
+import { originOf } from "./sign-in";
+import { inviteTarget } from "./lib/workshop/workspace";
 import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret, spendStep, stepFor, waitFor, wrongTry } from "./lib/sign-in-code";
 
 /**
@@ -740,13 +742,16 @@ authApp.patch("/account", async (c) => {
  */
 export const inviteApp = new Hono();
 
-inviteApp.get("/invite/:token", (c) => {
+inviteApp.get("/invite/:token", async (c) => {
   const token = c.req.param("token");
   const found = INVITE_TOKEN_RE.test(token) ? inviteByToken(token) : null;
   if (!found) return c.json({ error: "This invite link doesn't work any more" }, 404);
   const me = signedInAccount(c.req.header("cookie"));
+  const server = new URL(originOf(c)).host;
   const info: InviteInfo = {
     workspace: found.workspace.name,
+    target: await inviteTarget(found.invite.createdBy, found.invite.workspaces, server),
+    server,
     invitedBy: findUser(found.invite.createdBy)?.displayName || found.invite.createdBy,
     expired: found.invite.expiresAt <= Date.now(),
     signedInAs: me?.username ?? null,

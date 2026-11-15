@@ -1,7 +1,8 @@
+import { SettingsDialog } from "./kit-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { EDIT_SLOT_NAME, EDIT_SLOTS, type EditorDefaults, type EditSlot } from "@contracts/editor";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getEditorDefaults, setEditorDefault } from "@/lib/editor";
 import { Card, Row, SettingsSelect, saveFailed } from "./ui";
 
@@ -48,7 +49,7 @@ function EditorDefaultsDialog({ open, onOpenChange, initial, slots }: { open: bo
   }, []);
   const choosable = choosableSlots(data, slots);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <SettingsDialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
         <DialogTitle>Defaults for new edits</DialogTitle>
         <Card>
@@ -80,6 +81,6 @@ function EditorDefaultsDialog({ open, onOpenChange, initial, slots }: { open: bo
           })}
         </Card>
       </DialogContent>
-    </Dialog>
+    </SettingsDialog>
   );
 }

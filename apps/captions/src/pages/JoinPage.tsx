@@ -50,8 +50,8 @@ export function JoinPage({ token }: { token: string }) {
       <div className={`mb-6 flex items-center gap-3 ${info || error ? "" : "invisible"}`}>
         <ToolsetLogo className="h-11 w-11" />
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">{info ? `Join ${info.workspace}` : "Creator Toolset"}</h1>
-          <p className="min-h-5 text-sm text-zinc-500">{info && `${info.invitedBy} invited you to join`}</p>
+          <h1 className="text-xl font-semibold tracking-tight">{info ? `Join ${info.target ?? info.workspace}` : "Creator Toolset"}</h1>
+          <p className="min-h-5 text-sm text-zinc-500">{info && (!info.server || info.target === info.server ? `${info.invitedBy} invited you` : `${info.invitedBy} invited you · ${info.server}`)}</p>
         </div>
       </div>
       <div className="flex min-h-[240px] w-72 flex-col gap-2">

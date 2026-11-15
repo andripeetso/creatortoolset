@@ -29,7 +29,7 @@ const { saveTranscript } = await import("../library/transcribe");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { NO_SPEECH } = await import("./analyze");
-const { isPlanned, MIN_SHOT_S, parsePlans, planPrompt, planTimeline, repairPlan, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { APART_S, briefMaxS, isPlanned, lengthOf, MIN_SHOT_S, openerOf, parsePlans, planPrompt, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
 const { toOtio } = await import("./otio");
 const { toFcpxml } = await import("./fcpxml");
 const { qaOf } = await import("./qa");
@@ -207,6 +207,164 @@ describe("the plan: checked and repaired, never trusted", () => {
     expect(plan.shots[0]).toMatchObject({ src: { generate: { style: "plasma", seconds: 1 } }, dur: 1 });
     expect(plan.shots[0]!.speed).toBeUndefined();
     expect(plan.shots[0]!.ramp).toBeUndefined();
+  });
+});
+
+/** Eight long sources (3 min, a shot every 2 s, motion that rises and falls), a song at 160 bpm from 0. */
+const TITLES = ["Canyon run", "Night city", "Forest chase", "Season zero defense", "Harbor fight", "Desert boss", "Ice cave", "Sky bridge"];
+const longIndex = (): FootageIndex => ({
+  sources: TITLES.map((title, k) => ({
+    id: `ver_${k + 1}`,
+    title: `${title}.mp4`,
+    dur: 180,
+    fps: 30,
+    w: 1920,
+    h: 1080,
+    speech: false,
+    sound: true,
+    shots: Array.from({ length: 90 }, (_, j) => ({ a: j * 2, b: j * 2 + 2, motion: Math.round(Math.abs(Math.sin(j * 0.7 + k)) * 100) / 100, ...(k === 3 && j === 61 ? { desc: "the screen says HEALED and the buffs glow" } : {}) })),
+  })),
+  song: { ...beatsAt(160, 0, 120), strong: beatsAt(160, 0, 120).beats.filter((_, j) => j % 2 === 0) },
+});
+const longCtx = (over: Partial<Parameters<typeof repairPlan>[1]> = {}) => ({ ...ctx(), index: longIndex(), song: { id: "ver_song", dur: 120 }, ...over });
+/** Every pair of shown stretches of one source keeps APART_S: no moment twice. */
+function noRepeats(shots: ReturnType<typeof repairPlan>["plan"]["shots"]) {
+  const spans = shots.flatMap((s) => {
+    const span = sourceSpan(s.dur, s.speed, s.ramp);
+    return ["source" in s.src ? s.src : null, ...(s.split ?? [])].filter((x): x is { source: string; inS: number } => !!x).map((x) => [x.source, x.inS, x.inS + span] as const);
+  });
+  for (const [i, a] of spans.entries()) for (const b of spans.slice(i + 1)) if (a[0] === b[0]) expect(a[2] <= b[1] - APART_S + 1e-3 || b[2] <= a[1] - APART_S + 1e-3, `${a} and ${b}`).toBe(true);
+}
+
+describe("an edit as the brief asks: its length, no moment twice, its opener, its effects, its sizes", () => {
+  it("reads a length limit from the brief, and keeps a hard or social edit to 15-25 s with none", () => {
+    expect(briefMaxS("an overdone hard edit, max 25 s")).toBe(25);
+    expect(briefMaxS("This should be maximum 25 seconds")).toBe(25);
+    expect(briefMaxS("no longer than 1 minute please")).toBe(60);
+    expect(briefMaxS("a 20-second reel")).toBe(20);
+    expect(briefMaxS("cut the 25 best moments")).toBe(0);
+    expect(lengthOf("a hard edit", 0)).toEqual({ max: 25, min: 15, about: false });
+    expect(lengthOf("a calm recap", 0).max).toBe(0);
+    // target_s never past what the brief allows
+    expect(lengthOf("max 25 s", 30).max).toBe(25);
+  });
+
+  it("cuts a 40 s plan to 25 s on a downbeat, and never reuses a moment the AI repeated", () => {
+    const shots = Array.from({ length: 40 }, (_, k) => ({ src: `S${(k % 3) + 1}`, in: 30, dur: 1 }));
+    const { plan, notes } = repairPlan({ shots }, longCtx({ brief: "an overdone hard edit" }));
+    const len = plan.shots.reduce((n, s) => n + s.dur, 0);
+    expect(len).toBeLessThanOrEqual(25 + 1e-9);
+    expect(len).toBeGreaterThanOrEqual(15);
+    // 160 bpm: a bar is 1.5 s, so the end is a multiple of it
+    expect(Math.abs(len / 1.5 - Math.round(len / 1.5))).toBeLessThan(0.03);
+    noRepeats(plan.shots);
+    expect(notes.some((n) => n.includes("already in the edit"))).toBe(true);
+    // the brief's own limit wins over target_s
+    expect(repairPlan({ shots }, longCtx({ brief: "max 20 s", targetS: 30 })).plan.shots.reduce((n, s) => n + s.dur, 0)).toBeLessThanOrEqual(20 + 1e-9);
+  });
+
+  it("moves a repeat to footage not shown yet, in another source when its own is used up", () => {
+    const shots = [...Array.from({ length: 6 }, () => ({ src: "S2", in: 1, dur: 1.5 }))];
+    const tiny = longIndex();
+    tiny.sources[1]!.dur = 5;
+    const { plan } = repairPlan({ lead: "sources", shots }, longCtx({ index: tiny, song: undefined }));
+    noRepeats(plan.shots);
+    expect(plan.shots.length).toBe(6);
+    expect(new Set(plan.shots.map((s) => ("source" in s.src ? s.src.source : ""))).size).toBeGreaterThan(1);
+  });
+
+  it("opens on what the brief names: a source by tag or title, at the moment its words describe", () => {
+    const idx = longIndex();
+    expect(openerOf("start with S3", idx)?.source.id).toBe("ver_3");
+    const named = openerOf("start with this season zero defense footage when it says healed and show the buffs", idx);
+    expect(named?.source.id).toBe("ver_4");
+    expect(named?.shot?.a).toBe(122);
+    expect(openerOf("a hard edit", idx)).toBeNull();
+    const shots = Array.from({ length: 12 }, (_, k) => ({ src: `S${(k % 8) + 1}`, in: 10 + k * 5, dur: 1.5 }));
+    const { plan, notes } = repairPlan({ shots }, longCtx({ brief: "a hard edit, start with the season zero defense footage when it says healed" }));
+    expect(plan.shots[0]!.src).toEqual({ source: "ver_4", inS: 122 });
+    expect(notes).toContain("The edit opens on S4 at 122.0 s, as the brief asks");
+    // the prompt says it too
+    expect(planPrompt({ brief: "start with S3", versions: 1, targetS: 0, setup: "", index: idx, words: {}, gen: [] }).user).toContain("Open with: S3");
+  });
+
+  it("gives an overdone edit an effect on every shot, stacks on the strong beats, and three sizes or more", () => {
+    const shots = Array.from({ length: 16 }, (_, k) => ({ src: `S${(k % 8) + 1}`, in: 20 + k * 7, dur: 1.5 }));
+    const { plan } = repairPlan({ shots }, longCtx({ brief: "an overdone hard edit" }));
+    expect(plan.shots.every((s) => (s.fx?.length ?? 0) >= 1)).toBe(true);
+    // every shot starts on a beat here and every other beat is strong: some carry a stack of three
+    expect(plan.shots.some((s) => (s.fx?.length ?? 0) >= 3)).toBe(true);
+    expect(new Set(plan.shots.map((s) => (s.split ? "split" : (s.frame ?? "fill")))).size).toBeGreaterThanOrEqual(3);
+    // a calm brief is left as the AI wrote it
+    const calm = repairPlan({ shots }, longCtx({ brief: "a calm recap" })).plan;
+    expect(calm.shots.every((s) => !s.fx?.length && !s.frame)).toBe(true);
+  });
+
+  it("cleans the new effects and the frame fields: an inset never first, a split from sources that exist", () => {
+    const { plan } = repairPlan(
+      {
+        lead: "sources",
+        shots: [
+          { src: "S1", in: 0, dur: 2, frame: "inset", scale: 5, fx: [{ type: "stutter", at: 0.5, dur: 9, amount: 40 }, { type: "reverse" }, { type: "reverse" }] },
+          { src: "S2", in: 0, dur: 2, frame: "inset", scale: 0.1, fx: [{ type: "freeze", at: 1, dur: 0.01 }, { type: "zoomblur", amount: 7 }] },
+          { src: "S3", in: 0, dur: 2, frame: "letterbox", split: [{ src: "S4", in: 10 }, { src: "nope", in: 0 }, { src: "S5", in: 0 }] },
+          { src: "S4", in: 0, dur: 2, frame: "wobbly", ramp: [{ t: 0, speed: 1 }, { t: 1, speed: 2 }], fx: [{ type: "reverse" }] },
+        ],
+      },
+      longCtx({ song: undefined, index: { ...longIndex(), song: undefined } }),
+    );
+    const [a, b, c, d] = plan.shots;
+    expect(a!.frame).toBeUndefined();
+    expect(a!.fx).toEqual([{ type: "stutter", at: 0.5, dur: 0.188, amount: 8 }, { type: "reverse" }]);
+    expect(b).toMatchObject({ frame: "inset", scale: 0.3, fx: [{ type: "freeze", at: 1, dur: 0.1 }, { type: "zoomblur", at: 0, dur: 0.25, amount: 1 }] });
+    // a split takes the column: no frame of its own, and only the sources that exist
+    expect(c!.frame).toBeUndefined();
+    expect(c!.split?.map((p) => p.source)).toEqual(["ver_4"]);
+    // a reversed shot plays at one speed; a frame it doesn't know is fill
+    expect(d!.ramp).toBeUndefined();
+    expect(d!.frame).toBeUndefined();
+    noRepeats(plan.shots);
+  });
+
+  it("lays the sizes as the timeline's zoom (what an export carries) and the split's sources beside it", () => {
+    const plan = {
+      kind: "hard edit", w: 1080, h: 1920, fps: 30, lead: { type: "sources" as const },
+      shots: [
+        { at: 0, dur: 1, src: { source: "ver_1", inS: 0 } },
+        { at: 1, dur: 1, src: { source: "ver_2", inS: 0 }, frame: "fit" as const },
+        { at: 2, dur: 1, src: { source: "ver_3", inS: 0 }, frame: "inset" as const, scale: 0.5 },
+        { at: 3, dur: 1, src: { source: "ver_4", inS: 0 }, frame: "letterbox" as const },
+        { at: 4, dur: 1, src: { source: "ver_5", inS: 0 }, split: [{ source: "ver_6", inS: 2 }] },
+      ],
+    };
+    const src = (id: string) => ({ versionId: id, name: id, fps: 30, tc: 0, dur: 5400, w: 1920, h: 1080 });
+    const tl = planTimeline(plan, Object.fromEntries(["ver_1", "ver_2", "ver_3", "ver_4", "ver_5", "ver_6"].map((id) => [id, src(id)])), "Hard edit v1");
+    const [fill, fit, inset, lb, split] = tl.tracks.V1.items;
+    // wide footage in a tall frame: fitted 1080x607.5, covering takes 1920/607.5
+    expect(fill!.zoom).toBeCloseTo(3.16, 2);
+    expect(fit!.zoom).toBeUndefined();
+    expect(fit!.frame).toBe("fit");
+    expect(inset!.zoom).toBe(0.5);
+    // a 2.39:1 band across 1080 is 452 high: less than the fitted picture, so no zoom
+    expect(lb!.zoom).toBeUndefined();
+    expect(split!.split).toEqual([{ src: "ver_6", in: 60 }]);
+    expect(tl.sources.ver_6).toBeDefined();
+    expect(tl.markers.find((m) => m.name === "Shot 3")?.note).toContain("inset at 50 % of the width");
+  });
+
+  it("hands the AI each source's strongest moments spread over its whole length, not its first minutes", () => {
+    const s = longIndex().sources[0]!;
+    const pool = shotPool(s, 15);
+    expect(pool.length).toBe(15);
+    // spread: some in each third of the source, never two within its gap (4.5 s = 180 / 40)
+    for (const third of [0, 60, 120]) expect(pool.some((x) => x.a >= third && x.a < third + 60)).toBe(true);
+    for (const [i, x] of pool.entries()) for (const y of pool.slice(i + 1)) expect(Math.abs(x.a - y.a)).toBeGreaterThanOrEqual(4.5);
+    const user = planPrompt({ brief: "an overdone hard edit, max 25 s", versions: 1, targetS: 0, setup: "", index: longIndex(), words: {}, gen: [] }).user;
+    expect(user).toContain("15 of its 90 shots:");
+    expect(user).toContain("Length: at most 25 seconds");
+    expect(user).toContain("Effects: overdone.");
+    // the moment the brief's words describe is always in the pool
+    expect(planPrompt({ brief: "when it says healed", versions: 1, targetS: 0, setup: "", index: longIndex(), words: {}, gen: [] }).user).toContain("122.0-124.0 motion");
   });
 });
 

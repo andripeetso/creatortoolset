@@ -20,7 +20,7 @@ import {
 import { findUser, setOff, type SessionUser, type UserRecord } from "./users";
 import { EMAIL_RE, mailOn, sendMail } from "./lib/mail";
 import { originOf } from "./sign-in";
-import { ownedProjects } from "./lib/workshop/workspace";
+import { inviteTarget, ownedProjects } from "./lib/workshop/workspace";
 
 /** The ids in a request's `workspaces` that are the owner's own workspaces (brands); undefined when it asks none. */
 async function brandsFrom(asked: unknown, owner: string): Promise<string[] | undefined> {
@@ -112,16 +112,19 @@ workspaceApp.post("/invites", async (c) => {
   if (email) {
     const from = findUser(m.u.username)?.displayName || m.u.username;
     const link = `${originOf(c)}/join/${made.token}`;
+    const server = new URL(originOf(c)).host;
+    const what = await inviteTarget(m.u.username, made.invite.workspaces, server);
+    const where = what === server ? server : `${what} on ${server}`;
     try {
       await sendMail(
         email,
-        `${from} invited you to ${m.w.name} on Creator Toolset`,
-        `${from} invited you to join ${m.w.name} on Creator Toolset.\n\n` +
+        `${from} invited you to ${what} on Creator Toolset`,
+        `${from} invited you to work in ${where}.\n\n` +
           `Your invite (it works for ${INVITE_DAYS} days):\n${link}\n\n` +
           `New to Creator Toolset?\n` +
           `1. Download the app: https://creatortoolset.com/download\n` +
           `2. Open the invite link above and choose Open in the app, or paste the link into the app's Add server.\n` +
-          `The app then opens ${m.w.name} for you: there is nothing else to set up.\n\n` +
+          `The app then adds ${server} and opens ${what === server ? "it" : what} for you: there is nothing else to set up.\n\n` +
           `Rather use a browser? Open the invite link and join there.\n`,
       );
     } catch (e) {

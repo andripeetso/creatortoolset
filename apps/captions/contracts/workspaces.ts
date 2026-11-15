@@ -103,7 +103,12 @@ export interface WorkspaceView {
 }
 
 export interface InviteInfo {
+  /** the team's name */
   workspace: string;
+  /** what the invite is for: the owner's workspaces it gives, by name, else the server's host (`server`) */
+  target: string;
+  /** the server they join (its host) */
+  server: string;
   invitedBy: string;
   expired: boolean;
   /** the account already signed in on this browser, if any */

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import path from "node:path";
-import type { EditPlan, FootageIndex, GenSpec, IndexSource, PlanEffect, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
+import type { EditPlan, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
 import type { Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
@@ -46,7 +46,13 @@ const MAX_TEXTS = 30;
 export const UNDER_DB = -12;
 /** An effect this close to a beat lands on it (seconds). */
 const FX_SNAP_S = 0.12;
-const FX_TYPES = new Set(["punch", "zoom", "flash", "shake", "glitch", "rgb", "blur", "invert", "strobe"]);
+const FX_TYPES = new Set(["punch", "zoom", "flash", "shake", "glitch", "rgb", "blur", "invert", "strobe", "reverse", "stutter", "freeze", "zoomblur"]);
+/** The effects that land on a beat when one is close. */
+const HITS = new Set(["punch", "flash", "shake", "stutter", "freeze", "zoomblur"]);
+const FRAMES: readonly PlanFrame[] = ["fill", "fit", "blur", "letterbox", "inset"];
+export const INSET = { min: 0.3, max: 0.9, default: 0.6 };
+/** Two shots from one source are at least this far apart (seconds): closer reads as the same moment twice. */
+export const APART_S = 0.5;
 
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const num = (v: unknown): number | undefined =>
@@ -157,20 +163,140 @@ export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
   return pick && mine(pick.id) ? pick : null;
 }
 
+/* ---------------- what the brief asks ---------------- */
+
+/** A hard or social edit (a reel, a short, a montage to a song): SOCIAL_S long when no length is asked. */
+const SOCIAL = /\b(hard[ -]?edits?|reels?|shorts?|tiktoks?|social|montages?|amv|phonk|hype|overdone|edit to (?:a|the) (?:song|beat|music))\b/i;
+export const SOCIAL_S = { min: 15, max: 25 };
+/** A brief that wants effects everywhere: every shot gets one, the strong hits get stacks. */
+const OVERDONE = /\b(overdone|over[- ]the[- ]top|hard[ -]?edits?|lots of (?:effects|fx)|heavy (?:effects|fx)|more (?:visual )?effects|crazy|insane|maximal|chaotic)\b/i;
+export const overdone = (brief: string) => OVERDONE.test(brief);
+
+const UNIT = String.raw`(s|secs?|seconds?|mins?|minutes?)\b`;
+const LIMIT = [
+  // "max 25 s", "maximum 25 seconds", "no longer than 20 sec", "under 1 minute"
+  new RegExp(String.raw`(?:max(?:imum)?|at most|under|no (?:longer|more) than|up to|within|less than|shorter than)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*-?\s*${UNIT}`, "i"),
+  // "25 s max", "30 seconds tops"
+  new RegExp(String.raw`(\d+(?:\.\d+)?)\s*-?\s*${UNIT}\s*(?:max(?:imum)?|at most|tops)\b`, "i"),
+  // "a 20-second edit", "15 s reel"
+  new RegExp(String.raw`(\d+(?:\.\d+)?)\s*-?\s*${UNIT}\s+(?:long|edit|video|reel|cut|clip|short|montage)\b`, "i"),
+];
+
+/** The longest the brief allows, in seconds (0: it says none). */
+export function briefMaxS(brief: string): number {
+  for (const re of LIMIT) {
+    const m = re.exec(brief);
+    if (m) return Number(m[1]) * (m[2]!.toLowerCase().startsWith("m") ? 60 : 1);
+  }
+  return 0;
+}
+
+/**
+ * How long the edit may be: target_s (never past what the brief allows), else the brief's own limit, else SOCIAL_S for
+ * a hard or social edit. `max` 0: as long as the plan; `min` only says when it came out short.
+ */
+export function lengthOf(brief: string, targetS: number): { max: number; min: number; about: boolean } {
+  const said = briefMaxS(brief);
+  if (targetS > 0) return { max: said ? Math.min(said, targetS) : targetS, min: 0, about: !said || targetS <= said };
+  if (said) return { max: said, min: 0, about: false };
+  return SOCIAL.test(brief) ? { ...SOCIAL_S, about: false } : { max: 0, min: 0, about: false };
+}
+
+const STOP = new Set(["the", "and", "with", "from", "that", "this", "then", "when", "where", "footage", "clip", "clips", "video", "part", "moment", "shot", "shots", "show", "shows", "edit", "first", "start", "open", "some", "there", "it", "its", "says", "say", "like"]);
+/** The brief's words worth matching against titles and descriptions. */
+const wordsOf = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length >= 3 && !STOP.has(w));
+// ponytail: a word matches by its first five letters (healed ~ heal), no stemming; a language with long compounds misses
+const same = (a: string, b: string) => a === b || (a.length >= 4 && b.length >= 4 && a.slice(0, 5) === b.slice(0, 5)) || (a.length >= 4 && b.startsWith(a)) || (b.length >= 4 && a.startsWith(b));
+const hits = (words: string[], text?: string) => {
+  if (!text) return 0;
+  const t = wordsOf(text);
+  return words.filter((w) => t.some((x) => same(w, x))).length;
+};
+
+const OPEN = /\b(?:start(?:s|ing)?|open(?:s|ing)?|begin(?:s|ning)?|kick(?:s|ing)? off|lead(?:s|ing)?)\s+(?:it\s+|the (?:edit|video)\s+)?(?:with|on|from)\s+([^.;!?\n]+)/i;
+
+/**
+ * Where the brief says to open ("start with S3", "start with the season zero defense footage when it says healed"):
+ * the source by its tag or title, then the shot in it whose description matches the rest of the words. Else a shot
+ * anywhere whose description matches. Null: the brief names no opener.
+ */
+export function openerOf(brief: string, index: FootageIndex): { source: IndexSource; shot?: IndexShot } | null {
+  const m = OPEN.exec(brief);
+  if (!m) return null;
+  const said = m[1]!;
+  const pics = index.sources.filter(pictured);
+  const tag = /\b(?:S|[Ss]ource\s*#?|[Cc]lip\s*#?|[Vv]ideo\s*#?)(\d+)\b/.exec(said);
+  const words = wordsOf(said);
+  let source = tag ? index.sources[Number(tag[1]) - 1] : undefined;
+  if (!source || !pictured(source)) {
+    // the title whose words the brief uses most, by share of the title
+    let best = 0;
+    source = undefined;
+    for (const s of pics) {
+      const t = wordsOf(s.title.replace(/\.[a-z0-9]{2,4}$/i, ""));
+      const k = t.length ? hits(t, said) / t.length : 0;
+      if (k > best && k >= 0.5) [best, source] = [k, s];
+    }
+  }
+  const rank = (s: IndexSource) => s.shots.map((x) => ({ x, n: hits(words, x.desc) })).filter((h) => h.n > 0).sort((a, b) => b.n - a.n)[0];
+  if (source) return { source, ...(rank(source) ? { shot: rank(source)!.x } : {}) };
+  // no source named: the best described moment, with at least two of its words (one when only one is given)
+  const any = pics.flatMap((s) => (rank(s) ? [{ s, ...rank(s)! }] : [])).sort((a, b) => b.n - a.n)[0];
+  return any && any.n >= Math.min(2, words.length) ? { source: any.s, shot: any.x } : null;
+}
+
+/** Shots handed to the AI per source: enough in all for a long edit, never a source's every shot. */
+const POOL_MAX = 120;
+const POOL_PER_SOURCE = { min: 4, max: 16 };
+const POOL_GAP_S = 3;
+
+/** How much a shot is worth showing: its motion, and how much it differs from the shots beside it (a scene change). */
+function worth(shots: IndexShot[], k: number): number {
+  const m = shots[k]!.motion;
+  const near = [shots[k - 1], shots[k + 1]].filter((x): x is IndexShot => !!x);
+  return m + 0.5 * (near.length ? Math.max(...near.map((x) => Math.abs(x.motion - m))) : 0) + (shots[k]!.desc ? 0.1 : 0);
+}
+
+/**
+ * Up to `n` of a source's shots, spread over its whole length: the best of each stretch first, then the best left,
+ * never two closer than POOL_GAP_S (or a 40th of the source). A shot the brief's words describe counts more.
+ */
+export function shotPool(s: IndexSource, n: number, brief = ""): IndexShot[] {
+  if (s.shots.length <= n) return s.shots;
+  const words = wordsOf(brief);
+  const score = s.shots.map((x, k) => worth(s.shots, k) + hits(words, x.desc));
+  const gap = Math.max(POOL_GAP_S, s.dur / 40);
+  const picked: number[] = [];
+  const free = (k: number) => !picked.includes(k) && picked.every((j) => Math.abs(s.shots[j]!.a - s.shots[k]!.a) >= gap);
+  const byScore = s.shots.map((_, k) => k).sort((a, b) => score[b]! - score[a]!);
+  const parts = Math.max(1, Math.ceil(n / 2));
+  for (let p = 0; p < parts; p++) {
+    const k = byScore.find((j) => s.shots[j]!.a >= (p * s.dur) / parts && s.shots[j]!.a < ((p + 1) * s.dur) / parts && free(j));
+    if (k !== undefined) picked.push(k);
+  }
+  for (const k of byScore) if (picked.length < n && free(k)) picked.push(k);
+  return picked.sort((a, b) => a - b).map((k) => s.shots[k]!);
+}
+
+const poolSize = (index: FootageIndex) => clamp(Math.floor(POOL_MAX / Math.max(1, index.sources.filter(pictured).length)), POOL_PER_SOURCE.min, POOL_PER_SOURCE.max);
+
 /* ---------------- the prompt ---------------- */
 
 const SYSTEM = `You edit a video. You get what the person asked for (the brief), how their workspace works, an index of the footage and, when a song leads, its beats. You don't watch the footage: the index tells you each source's length, picture, sound, whether someone speaks, and its shots with how much moves in each and what is seen.
 
 Make exactly the kind of edit the brief asks for, whatever it is: a hard edit cut on the beat, a calm recap, a trailer, a music video, a montage. The brief decides the pace, the order, the effects and the texts; the workspace's setup decides the rest. Pick the moments that fit.
 
-Write the edit as shots played one after another from 0, with no gaps. Times are seconds. When a song leads, cut on its beats (given as seconds in the edit) and land the hits (punch, flash, shake) on its strong beats. An effect's time is inside its shot, from 0.
+Write the edit as shots played one after another from 0, with no gaps. Times are seconds. When a song leads, cut on its beats (given as seconds in the edit) and land the hits (punch, flash, shake, stutter, zoomblur) on its strong beats. An effect's time is inside its shot, from 0.
+
+Never use the same moment of a source twice: each shot is a different stretch of footage. Spread the shots over every source and over each source's whole length; the listed shots are the strongest moments, spread out for you. When the brief says what to open with, the first shot is that. Never make the edit longer than the length given.
 
 Answer with JSON only, in this shape:
-{"plans":[{"kind":"the brief's words for this kind of edit","variation":"what sets this version apart","lead":"song","shots":[{"src":"S1","in":12.5,"dur":1.0,"speed":1,"fx":[{"type":"punch","at":0,"amount":1.2}],"enter":"cut","sound":"off","why":"a few words"}],"texts":[{"at":0,"dur":1.5,"text":"words on screen","place":"middle"}]}]}
+{"plans":[{"kind":"the brief's words for this kind of edit","variation":"what sets this version apart","lead":"song","shots":[{"src":"S1","in":12.5,"dur":1.0,"speed":1,"fx":[{"type":"punch","at":0,"amount":1.2}],"enter":"cut","frame":"fill","sound":"off","why":"a few words"}],"texts":[{"at":0,"dur":1.5,"text":"words on screen","place":"middle"}]}]}
 
 - src: a source by its tag; in: where in it the shot starts (seconds); dur: how long the shot is in the edit.
 - speed: 1 as filmed (0.25 to 4); or ramp, the speed over the shot's own time: [{"t":0,"speed":1},{"t":0.4,"speed":0.3}].
-- fx: punch {at, amount 1.05-2}, zoom {at, dur, from, to: 1-3}, flash {at, dur, color "#rrggbb"}, shake {at, dur, amount 0-1}, glitch, rgb, blur, invert, strobe {at, dur, amount 0-1}. Leave out what a shot doesn't need.
+- fx: punch {at, amount 1.05-2}, zoom {at, dur, from, to: 1-3}, flash {at, dur, color "#rrggbb"}, shake {at, dur, amount 0-1}, glitch, rgb, blur, invert, strobe, zoomblur {at, dur, amount 0-1}, stutter {at, dur: the slice, amount: how many times it plays, 2-8}, freeze {at, dur}, reverse {} (the whole shot backwards). Several can stack on one shot. Leave out what a shot doesn't need.
+- frame: how the shot sits in the frame. fill (crops to the frame, the default), fit (the whole picture on black), blur (whole, over a blurred copy of itself), letterbox (a widescreen band), inset (a smaller picture over the shot before; scale = its share of the width, 0.3-0.9). split: [{"src":"S4","in":30}] stacks 1-2 more pictures in a column with this one. Not every shot has to fill the frame.
 - enter: cut, flash, whip or dissolve. sound: off, under (beneath the song) or full.
 - lead: "song" to cut to the song, "sources" to keep the footage's own sound.
 - texts only when the brief or the setup asks for words on screen.`;
@@ -205,10 +331,17 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   const parts = [`Brief:\n${i.brief.trim() || "(none: make a good edit of this footage)"}`];
   if (i.setup.trim()) parts.push(`The workspace's setup:\n${i.setup.trim()}`);
   parts.push(`Versions: ${i.versions}${i.versions > 1 ? " (each different, says how in its variation)" : ""}`);
-  if (i.targetS) parts.push(`Length: about ${i.targetS} seconds`);
+  const len = lengthOf(i.brief, i.targetS);
+  if (len.max) parts.push(len.about ? `Length: about ${len.max} seconds, never longer` : `Length: ${len.min ? `${len.min} to ` : "at most "}${len.max} seconds${len.min ? ", never longer, ending on a downbeat" : ""}`);
+  const open = openerOf(i.brief, i.index);
+  if (open) parts.push(`Open with: ${tagOf(i.index, open.source.id)}${open.shot ? ` at ${open.shot.a.toFixed(1)}-${open.shot.b.toFixed(1)}${open.shot.desc ? ` (${open.shot.desc})` : ""}` : ""}`);
+  if (overdone(i.brief)) parts.push("Effects: overdone. Every shot gets at least one effect, the shots on strong beats get stacks of two to four (punch + flash + shake, stutter + zoomblur…), and the sizes vary (fill, fit, blur, letterbox, inset, split).");
+  const n = poolSize(i.index);
   const src = i.index.sources.map((s) => {
     const head = `${tagOf(i.index, s.id)} ${JSON.stringify(s.title)}: ${s.dur.toFixed(1)} s, ${pictured(s) ? `${s.w}x${s.h} at ${Math.round(s.fps)} fps` : "sound only (no picture: not a shot)"}, ${s.sound === false ? "no sound" : "sound"}${s.speech ? ", someone speaks" : ""}`;
-    const shots = s.shots.slice(0, 60).map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
+    const pool = pictured(s) ? shotPool(s, n, i.brief) : [];
+    const shots = pool.map((x) => `  ${x.a.toFixed(1)}-${x.b.toFixed(1)} motion ${x.motion.toFixed(2)}${x.desc ? `: ${x.desc}` : ""}`);
+    if (pool.length < s.shots.length) shots.unshift(`  ${pool.length} of its ${s.shots.length} shots:`);
     const said = i.words[s.id] ? [`  said: ${i.words[s.id]}`] : [];
     return [head, ...shots, ...said].join("\n");
   });
@@ -216,7 +349,7 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   const b = i.index.song;
   if (i.song && b) {
     const left = i.song.dur - b.startS;
-    const to = Math.min(left, (i.targetS || left) + 5);
+    const to = Math.min(left, (len.max || left) + 5);
     parts.push(
       [
         `Song ${JSON.stringify(i.song.title)} leads, from ${b.startS.toFixed(1)} s of it: ${Math.round(b.bpm)} bpm, ${left.toFixed(1)} s left.`,
@@ -255,6 +388,8 @@ export interface RepairContext {
   /** the size is the edit's own (its style's): the AI's is not taken */
   fixedSize: boolean;
   gen: string[];
+  /** the person's words: the length, the opener and how overdone it is are read from them */
+  brief?: string;
 }
 
 /** The speed at `t` of a ramp (straight between its points, flat before the first and after the last). */
@@ -313,6 +448,13 @@ export function cleanFx(v: unknown, dur: number): PlanEffect[] {
     else if (type === "zoom") out.push({ type, at, dur: len(room, 0.05), from: r3(clamp(num(f.from) ?? 1, 1, 3)), to: r3(clamp(num(f.to) ?? 1.2, 1, 3)) });
     else if (type === "flash") out.push({ type, at, dur: len(Math.min(0.15, room)), ...(HEX.test(String(f.color)) ? { color: String(f.color) } : {}) });
     else if (type === "shake") out.push({ type, at, dur: len(Math.min(0.3, room), 0.05), amount: amount(0.5) });
+    else if (type === "reverse") {
+      if (!out.some((x) => x.type === "reverse")) out.push({ type });
+    } else if (type === "stutter") {
+      const times = Math.round(clamp(num(f.amount) ?? 3, 2, 8));
+      out.push({ type, at, dur: r3(clamp(num(f.dur) ?? 0.1, 0.04, Math.max(0.04, Math.min(0.5, room / times)))), amount: times });
+    } else if (type === "freeze") out.push({ type, at, dur: len(Math.min(0.4, room), 0.1) });
+    else if (type === "zoomblur") out.push({ type, at, dur: len(Math.min(0.25, room), 0.05), amount: amount(0.6) });
     else out.push({ type, at, dur: len(Math.min(0.3, room)), amount: amount(0.5) });
   }
   return out;
@@ -348,6 +490,38 @@ function srcOf(s: Record<string, unknown>, index: FootageIndex): Src | string {
   return { source, inS };
 }
 
+/**
+ * The in-point nearest `want` where `span` seconds of a source of `dur` keep APART_S from every stretch in `taken`, or
+ * undefined when none is left.
+ */
+export function freeIn(taken: Array<[number, number]>, span: number, want: number, dur: number): number | undefined {
+  const fits = (x: number) => x >= -1e-9 && x + span <= dur + 1e-6 && taken.every(([a, b]) => x + span <= a - APART_S + 1e-6 || x >= b + APART_S - 1e-6);
+  return [want, ...taken.flatMap(([a, b]) => [b + APART_S, a - APART_S - span]), 0, dur - span]
+    .filter(fits)
+    .sort((x, y) => Math.abs(x - want) - Math.abs(y - want))[0];
+}
+
+/** A moment not in the edit yet, `span` long: the best free one of the least used source. */
+function spare(index: FootageIndex, used: Map<string, Array<[number, number]>>, span: number): { source: IndexSource; inS: number } | undefined {
+  const pics = index.sources.filter(pictured).sort((a, b) => (used.get(a.id)?.length ?? 0) - (used.get(b.id)?.length ?? 0));
+  for (const s of pics)
+    for (const x of shotPool(s, poolSize(index))) {
+      const at = freeIn(used.get(s.id) ?? [], span, x.a, s.dur);
+      if (at !== undefined) return { source: s, inS: at };
+    }
+  return undefined;
+}
+
+const ROTATION = ["punch", "zoomblur", "rgb", "shake", "zoom", "glitch", "stutter"] as const;
+
+/** An overdone edit's shot: at least one effect, and a stack of hits on a strong beat inside it. */
+function denser(fx: PlanEffect[], k: number, dur: number, hit: number | undefined): PlanEffect[] {
+  const out = [...fx];
+  if (!out.length) out.push(...cleanFx([{ type: ROTATION[k % ROTATION.length], at: hit ?? 0 }], dur));
+  if (hit !== undefined) for (const type of ["punch", "flash", "shake"]) if (out.length < 3 && !out.some((f) => f.type === type)) out.push(...cleanFx([{ type, at: hit, dur: 0.15 }], dur));
+  return out;
+}
+
 /** Moves each cut onto the nearest beat between its neighbours (each shot at least MIN_SHOT_S); cuts with no beat between stay. */
 export function snapCuts(cuts: number[], end: number, beats: number[]): number[] {
   const out: number[] = [];
@@ -379,8 +553,9 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   const left = song ? song.dur - beat!.startS : Infinity;
   if (c.song && !song) notes.push("The AI kept the footage's own sound rather than the song");
 
-  // each shot on its own: a source that exists, a length, a speed, effects
-  type Draft = Omit<PlanShot, "src" | "at"> & { src: Src };
+  // each shot on its own: a source that exists, a length, a speed, effects, how it sits in the frame
+  type Pic = { source: IndexSource; inS: number };
+  type Draft = Omit<PlanShot, "src" | "at" | "split"> & { src: Src; split?: Pic[] };
   const shots: Draft[] = [];
   for (const s of (Array.isArray(raw.shots) ? raw.shots : []).filter(obj).sort((a, b) => (num(a.at) ?? 0) - (num(b.at) ?? 0))) {
     const src = srcOf(s, c.index);
@@ -396,13 +571,24 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     const why = str(s.why, 120);
     // a generated clip is made as long as its shot: it plays as made
     const made = "generate" in src;
+    const fx = cleanFx(s.fx, d);
+    // a reversed shot plays its stretch backwards at one speed
+    const ramp = made || fx.some((f) => f.type === "reverse") ? undefined : cleanRamp(s.ramp, d);
+    const split = made ? [] : (Array.isArray(s.split) ? s.split : []).filter(obj).slice(0, 2).flatMap((x) => {
+      const r = srcOf(x, c.index);
+      return typeof r === "string" || "generate" in r ? [] : [r];
+    });
+    const frame = made || split.length ? undefined : FRAMES.find((x) => x === s.frame);
     shots.push({
       src,
       dur: d,
       speed: made ? 1 : r3(clamp(num(s.speed) ?? 1, SPEED.min, SPEED.max)),
-      ...(!made && cleanRamp(s.ramp, d) ? { ramp: cleanRamp(s.ramp, d) } : {}),
-      fx: cleanFx(s.fx, d),
+      ...(ramp ? { ramp } : {}),
+      fx,
       ...(enter && enter !== "cut" ? { enter } : {}),
+      ...(frame && frame !== "fill" ? { frame } : {}),
+      ...(frame === "inset" ? { scale: r3(clamp(num(s.scale) ?? INSET.default, INSET.min, INSET.max)) } : {}),
+      ...(split.length ? { split } : {}),
       sound: "source" in src && src.source.sound === false ? "off" : sound,
       ...(why ? { why } : {}),
     });
@@ -412,18 +598,39 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     shots.push(...fallbackShots(c, song ? left : Infinity));
   }
 
+  // the opener the brief names goes first, at the moment it names
+  const open = c.brief ? openerOf(c.brief, c.index) : null;
+  if (open) {
+    const from = (d: Draft) => "source" in d.src && d.src.source.id === open.source.id;
+    const at = (d: Draft) => !open.shot || ("source" in d.src && d.src.inS >= open.shot.a - 1 && d.src.inS < open.shot.b);
+    let k = shots.findIndex((d) => from(d) && at(d));
+    if (k < 0) k = shots.findIndex(from);
+    if (k !== 0 || !at(shots[0]!)) {
+      const d: Draft = k >= 0 ? shots.splice(k, 1)[0]! : { src: { source: open.source, inS: 0 }, dur: shots[0]?.dur ?? 1, speed: 1, fx: [], sound: song ? "off" : "full", why: "the opener the brief asks for" };
+      const inS = open.shot?.a ?? (k >= 0 && "source" in d.src ? d.src.inS : (shotPool(open.source, 1)[0]?.a ?? 0));
+      d.src = { source: open.source, inS };
+      if (open.source.sound === false) d.sound = "off";
+      shots.unshift(d);
+      notes.push(`The edit opens on ${tagOf(c.index, open.source.id)} at ${inS.toFixed(1)} s, as the brief asks`);
+    }
+  }
+
   // the length: the brief's, else the plan's own; never past the song's end
   const total = shots.reduce((n, s) => n + s.dur, 0);
-  const asked = c.targetS > 0 ? c.targetS : total;
+  const len = lengthOf(c.brief ?? "", c.targetS);
+  const asked = len.max > 0 ? len.max : total;
   let end = Math.min(asked, left, total);
   const beats = beat ? beat.beats.map((b) => b - beat.startS).filter((b) => b > 0) : [];
   if (song) {
-    // the end on a beat, when one is close
+    // the end on a beat, when one is close; on a downbeat within a bar when the edit has a limit of its own
     const near = beats.reduce<number | undefined>((best, b) => (b <= Math.min(asked, left, total) + 1e-9 && (best === undefined || Math.abs(b - end) < Math.abs(best - end)) ? b : best), undefined);
-    if (near !== undefined && end - near < 60 / beat!.bpm) end = near;
+    const down = len.max && !len.about ? beat!.downbeats.map((b) => b - beat!.startS).filter((b) => b > MIN_SHOT_S && b <= end + 1e-9 && end - b < 240 / beat!.bpm && b >= len.min - 1e-9).pop() : undefined;
+    if (down !== undefined) end = down;
+    else if (near !== undefined && end - near < 60 / beat!.bpm) end = near;
   }
-  if (c.targetS > 0 && end < c.targetS - 0.5)
-    notes.push(`It is ${end.toFixed(1)} s, ${c.targetS} s were asked for: ${left <= total && left < asked ? "the song ends there" : "the plan had no more shots"}`);
+  if (len.about && end < len.max - 0.5)
+    notes.push(`It is ${end.toFixed(1)} s, ${len.max} s were asked for: ${left <= total && left < asked ? "the song ends there" : "the plan had no more shots"}`);
+  else if (len.min && end < len.min - 0.5) notes.push(`It is ${end.toFixed(1)} s, under the ${len.min}-${len.max} s such an edit runs: ${left < len.min ? "the song ends there" : "the plan had no more shots"}`);
 
   // cuts where the plan put them, moved onto beats when a song leads, then onto whole frames
   let at = 0;
@@ -440,6 +647,14 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
   const out: PlanShot[] = [];
   const lens: number[] = [];
   let slowed = 0;
+  // every stretch of a source the edit shows so far: no moment is shown twice
+  const used = new Map<string, Array<[number, number]>>();
+  const take = (id: string, a: number, span: number) => used.set(id, [...(used.get(id) ?? []), [a, a + span]]);
+  let moved = 0;
+  let gone = 0;
+  const dense = overdone(c.brief ?? "");
+  const strong = beat && song ? beat.strong.map((b) => b - beat.startS) : [];
+  let added = 0;
   for (let k = 0; k < n; k++) {
     const s = shots[k]!;
     const a = frames[k]! / fps;
@@ -448,8 +663,10 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     let ramp = s.ramp?.map((p) => ({ t: r3(Math.min(p.t, dur)), speed: p.speed })).filter((p, j, all) => j === 0 || p.t > all[j - 1]!.t);
     if (ramp && ramp.length < 2) ramp = undefined;
     let src: PlanShot["src"];
+    let sound = s.sound;
+    let split: PlanShot["split"];
     if ("source" in s.src) {
-      const { source } = s.src;
+      let { source } = s.src;
       let span = sourceSpan(dur, speed, ramp);
       if (span > source.dur) {
         // the source is shorter than the shot at its speed: slowed until it fits
@@ -459,7 +676,31 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         span = sourceSpan(dur, speed, ramp);
         slowed++;
       }
-      src = { source: source.id, inS: r3(clamp(s.src.inS, 0, Math.max(0, source.dur - span - 0.001))) };
+      let inS = clamp(s.src.inS, 0, Math.max(0, source.dur - span - 0.001));
+      const free = freeIn(used.get(source.id) ?? [], span, inS, source.dur);
+      if (free === undefined) {
+        // the source has no stretch this long left unshown: a moment from the least used one
+        const other = spare(c.index, used, span);
+        if (!other) {
+          gone++;
+          continue;
+        }
+        ({ source, inS } = other);
+        if (source.sound === false) sound = "off";
+        moved++;
+      } else if (Math.abs(free - inS) > 1e-6) {
+        inS = free;
+        moved++;
+      }
+      take(source.id, inS, span);
+      src = { source: source.id, inS: r3(inS) };
+      const pics = (s.split ?? []).flatMap((p) => {
+        const at = freeIn(used.get(p.source.id) ?? [], span, clamp(p.inS, 0, Math.max(0, p.source.dur - span - 0.001)), p.source.dur);
+        if (at === undefined) return [];
+        take(p.source.id, at, span);
+        return [{ source: p.source.id, inS: r3(at) }];
+      });
+      if (pics.length) split = pics;
     } else {
       const g = cleanGen(s.src.generate, r3(dur), c.gen);
       if (!g) {
@@ -478,6 +719,14 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
         return b === undefined ? f : { ...f, at: r3(b - a) };
       });
     }
+    if (dense) {
+      const hit = strong.find((b) => b >= a && b < a + dur - 0.05);
+      const more = denser(fx, k, dur, hit === undefined ? undefined : hit - a);
+      if (more.length > fx.length) added++;
+      fx = more;
+    }
+    // an inset sits over the shot before it: the first shot has none
+    const frame = split || (s.frame === "inset" && !out.length) ? undefined : s.frame;
     lens.push(frames[k + 1]! - frames[k]!);
     out.push({
       at: r3(a),
@@ -487,9 +736,29 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
       ...(ramp ? { ramp } : {}),
       ...(fx.length ? { fx } : {}),
       ...(s.enter ? { enter: s.enter } : {}),
-      sound: "generate" in src ? "off" : s.sound,
+      ...(frame ? { frame } : {}),
+      ...(frame === "inset" ? { scale: s.scale ?? INSET.default } : {}),
+      ...(split ? { split } : {}),
+      sound: "generate" in src ? "off" : sound,
       ...(s.why ? { why: s.why } : {}),
     });
+  }
+  if (moved) notes.push(`${moved} ${moved === 1 ? "shot showed a moment" : "shots showed moments"} already in the edit: moved to footage not shown yet`);
+  if (gone) notes.push(`${gone} ${gone === 1 ? "shot was" : "shots were"} left out: every moment long enough was already in the edit`);
+  if (added) notes.push(`Effects added to ${added} ${added === 1 ? "shot" : "shots"}: an overdone edit has one on every shot and stacks on the strong beats`);
+  if (dense && out.length >= 6) {
+    // an overdone edit varies its sizes: at least three
+    const modes = new Set(out.map((x) => (x.split ? "split" : (x.frame ?? "fill"))));
+    const want = (["blur", "letterbox", "fit"] as const).filter((m) => !modes.has(m));
+    let changed = 0;
+    for (let k = 2; k < out.length && modes.size < 3; k += 3) {
+      const x = out[k]!;
+      if (x.frame || x.split || "generate" in x.src) continue;
+      x.frame = want.shift()!;
+      modes.add(x.frame);
+      changed++;
+    }
+    if (changed) notes.push(`${changed} ${changed === 1 ? "shot is" : "shots are"} framed differently: an overdone edit uses at least three sizes`);
   }
   if (slowed) notes.push(`${slowed} ${slowed === 1 ? "shot was" : "shots were"} slowed down to fit ${slowed === 1 ? "its" : "their"} source`);
   // a shot that went leaves no gap: the ones after it move up, counted in whole frames
@@ -530,11 +799,11 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
 }
 
 /** The footage in turn, a shot every two beats (else 3 s), until `upTo`: an edit when the AI gave none. */
-function fallbackShots(c: RepairContext, upTo: number): (Omit<PlanShot, "src" | "at"> & { src: Src })[] {
+function fallbackShots(c: RepairContext, upTo: number): (Omit<PlanShot, "src" | "at" | "split"> & { src: Src })[] {
   const step = c.index.song?.bpm ? 120 / c.index.song.bpm : 3;
   const want = Math.min(upTo, c.targetS || 30);
   const pics = c.index.sources.filter(pictured);
-  const out: (Omit<PlanShot, "src" | "at"> & { src: Src })[] = [];
+  const out: (Omit<PlanShot, "src" | "at" | "split"> & { src: Src })[] = [];
   for (let k = 0; k * step < want && k < 400; k++) {
     if (!pics.length) {
       out.push({ src: { generate: { style: c.gen[0] ?? "" } }, dur: step, sound: "off" });
@@ -560,14 +829,30 @@ const describe = (s: PlanShot): string =>
   [
     s.why ?? "",
     s.ramp ? `ramp ${s.ramp.map((p) => p.speed).join("→")}` : s.speed && s.speed !== 1 ? `speed ${s.speed}` : "",
-    ...(s.fx ?? []).map((f) => `${f.type} at ${(f.at ?? 0).toFixed(2)} s`),
+    ...(s.fx ?? []).map((f) => ("at" in f ? `${f.type} at ${(f.at ?? 0).toFixed(2)} s` : f.type)),
     s.enter ? `enters with a ${s.enter}` : "",
+    s.frame ? `${s.frame}${s.frame === "inset" ? ` at ${Math.round((s.scale ?? INSET.default) * 100)} % of the width` : ""}` : "",
+    s.split?.length ? `split with ${s.split.map((p) => `${p.source} from ${p.inS.toFixed(1)} s`).join(" and ")}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
 
+/** The share of the frame's height a letterbox band takes (2.39:1 across the frame's width). */
+export const LETTERBOX = 2.39;
+
 /**
- * A plan as the draft's timeline: each shot on V1 (filling the frame, with its speed, effects and entry), its own sound
+ * The main picture's zoom over the source fitted into the frame (1): what an export can carry of how the shot sits.
+ * fill and split cover the frame, fit and blur show it whole, letterbox covers the band, an inset is `scale` of the width.
+ */
+export function frameZoom(s: Pick<PlanShot, "frame" | "scale" | "split">, f: { w: number; h: number }, W: number, H: number): number {
+  if (s.split?.length || !s.frame || s.frame === "fill") return Math.max(W / f.w, H / f.h);
+  if (s.frame === "letterbox") return Math.max(W / f.w, W / LETTERBOX / f.h);
+  if (s.frame === "inset") return Math.min(((s.scale ?? INSET.default) * W) / f.w, (0.9 * H) / f.h);
+  return 1;
+}
+
+/**
+ * A plan as the draft's timeline: each shot on V1 (sized as its frame says, with its speed, effects and entry), its own sound
  * on A1 when it plays it, the song on A2, a marker per shot (what it is and does, for an editor that can't draw the
  * effects) and per text. `sources` holds every source the plan names, the generated clips by genFile's key.
  */
@@ -585,7 +870,7 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
     if (len <= 0) return;
     tl.sources[key] = src;
     const f = fitted(src, W, H);
-    const zoom = src.w ? Math.max(W / f.w, H / f.h) : 1;
+    const zoom = src.w ? frameZoom(s, f, W, H) : 1;
     const inF = "source" in s.src ? Math.round(s.src.inS * src.fps) : 0;
     const link = `c${k + 1}`;
     const item: Item = {
@@ -594,12 +879,18 @@ export function planTimeline(plan: EditPlan, sources: Record<string, TimelineSou
       len,
       rec,
       link,
-      ...(zoom > 1.0005 ? { zoom: r3(zoom) } : {}),
+      ...(Math.abs(zoom - 1) > 0.0005 ? { zoom: r3(zoom) } : {}),
       ...(s.speed && s.speed !== 1 ? { speed: s.speed } : {}),
       ...(s.ramp ? { ramp: s.ramp } : {}),
       ...(s.fx?.length ? { fx: s.fx } : {}),
       ...(s.enter && s.enter !== "cut" ? { enter: s.enter } : {}),
+      ...(s.frame && s.frame !== "fill" ? { frame: s.frame } : {}),
     };
+    const split = (s.split ?? []).filter((p) => sources[p.source]);
+    if (split.length) {
+      for (const p of split) tl.sources[p.source] = sources[p.source]!;
+      item.split = split.map((p) => ({ src: p.source, in: Math.round(p.inS * sources[p.source]!.fps) }));
+    }
     tl.tracks.V1.items.push(item);
     if (s.sound && s.sound !== "off") tl.tracks.A1.items.push({ src: key, in: inF, len, rec, link, ...(s.sound === "under" ? { gainDb: UNDER_DB } : {}), ...(item.speed ? { speed: item.speed } : {}), ...(item.ramp ? { ramp: item.ramp } : {}) });
     tl.markers.push({ rec, name: `Shot ${k + 1}`, color: "BLUE", note: describe(s) });
@@ -684,7 +975,7 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   const shots: Record<string, { plan: EditPlan; notes: string[] }> = {};
   const plans = raws.slice(0, edit.versions).map((raw, k) => {
     const name = `v${k + 1}`;
-    shots[name] = repairPlan(raw, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen: genIds });
+    shots[name] = repairPlan(raw, { index, ...(song ? { song } : {}), targetS: edit.targetS, size, fixedSize: !!edit.size?.w, gen: genIds, brief: edit.brief });
     const p = shots[name]!.plan;
     return { name, title: p.variation || `${p.kind.charAt(0).toUpperCase()}${p.kind.slice(1)}`, lines: [] };
   });
@@ -700,7 +991,7 @@ export async function draftPlan(edit: EditMeta, variant: string, saved: { plan: 
   const { plan } = saved;
   const db = libraryDb();
   const sources: Record<string, TimelineSource> = {};
-  const ids = new Set(plan.shots.flatMap((s) => ("source" in s.src ? [s.src.source] : [])));
+  const ids = new Set(plan.shots.flatMap((s) => ["source" in s.src ? s.src.source : "", ...(s.split ?? []).map((p) => p.source)].filter(Boolean)));
   if (plan.lead.type === "song") ids.add(plan.lead.source);
   for (const id of ids) {
     const row = db.prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { title: string; probe: string | null } | undefined;

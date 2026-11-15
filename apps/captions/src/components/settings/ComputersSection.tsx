@@ -1,3 +1,4 @@
+import { SettingsDialog } from "./kit-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Laptop, Monitor, Plus } from "lucide-react";
@@ -9,7 +10,7 @@ import { devicesSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
@@ -307,7 +308,7 @@ export const linuxCommand = (url: string, code: string) => `curl -fsSL ${url}/he
 function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOpenChange: (o: boolean) => void; macApp: boolean }) {
   const navigate = useNavigate();
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <SettingsDialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Add a computer</DialogTitle>
@@ -350,7 +351,7 @@ function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOp
           </TabsContent>
         </Tabs>
       </DialogContent>
-    </Dialog>
+    </SettingsDialog>
   );
 }
 

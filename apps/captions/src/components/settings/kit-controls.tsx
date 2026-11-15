@@ -194,7 +194,7 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
     </DropdownMenuItem>
   );
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon-xs" aria-label={label} title={label}>
           <MoreHorizontal />
