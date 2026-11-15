@@ -81,8 +81,9 @@ function breaks(tl: Timeline, t: TrackId): string[] {
 
 /** Every check on `tl`; `others` are the edit's other versions, by name, for the shared-voice check. */
 export function qaOf(tl: Timeline, others: Record<string, Timeline> = {}): QaReport {
-  const notes = [...breaks(tl, "V1"), ...breaks(tl, "A1")];
-  for (const i of tl.tracks.V1.items) if (i.len < QA.minSpeakerFrames) notes.push(`V1: a ${i.len}-frame speaker shot at ${i.rec} (under ${QA.minSpeakerFrames})`);
+  // a planned edit (plan.ts) plays a shot's own sound only where it asks, and cuts as short as its brief wants
+  const notes = [...breaks(tl, "V1"), ...(tl.plan ? [] : breaks(tl, "A1"))];
+  for (const i of tl.plan ? [] : tl.tracks.V1.items) if (i.len < QA.minSpeakerFrames) notes.push(`V1: a ${i.len}-frame speaker shot at ${i.rec} (under ${QA.minSpeakerFrames})`);
   const minB = brollMinFrames(tl.fps);
   for (const i of tl.tracks.V2.items) if (i.len < minB) notes.push(`V2: a ${i.len}-frame B-roll shot at ${i.rec} (under ${minB} frames, ${QA.minBrollS} s)`);
   for (const t of ["V1", "V2"] as const) {

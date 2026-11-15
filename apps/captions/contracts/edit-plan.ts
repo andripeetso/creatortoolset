@@ -28,6 +28,8 @@ export interface IndexSource {
   h: number;
   /** someone speaks in it (its words are the edit's sentences, as before) */
   speech: boolean;
+  /** it has a sound stream at all; a shot of one without never plays its own sound */
+  sound?: boolean;
   shots: IndexShot[];
 }
 

@@ -12,6 +12,7 @@ import type { ProbeSummary } from "../library/media/probe";
 import { askVersionIn, editorKey, editorRoute, heardForEditor, versionRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { eyelineOf } from "./eyeline";
 import { readable } from "./media";
+import { allBroll, isMusic } from "./plan";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
 import type { StepContext } from "./worker";
@@ -20,7 +21,9 @@ import type { StepContext } from "./worker";
  * The AI Editor's analyze step: every source's words (the library's transcript, fillers and false starts kept) split
  * into sentences numbered across the footage in recording order, and each source's loudness at 100 reads a second,
  * cached by version for the cut, and its eye line where this computer finds one (eyeline.ts). A source with no words yet queues the library's `transcribe` as the edit's creator,
- * on their key, and the step waits.
+ * on their key, and the step waits. A song is never transcribed, and an edit that is planned anyway (asked for, or all
+ * its footage is B-roll: plan.ts) waits on no transcript: it takes the words there are. Footage where nobody speaks is
+ * not refused: the script step plans it.
  */
 
 /** The step waits on other work: the worker puts it back in the queue after `seconds`, the attempt not counted. */
@@ -29,6 +32,9 @@ export class Waiting extends Error {
     super("Waiting");
   }
 }
+
+/** Said when the footage has no words: it is planned from the brief (plan.ts), never refused. */
+export const NO_SPEECH = "No speech found in the footage: it is cut to the song or the brief";
 
 /** A pause this long (seconds) ends a sentence, as does a word ending in . ? or ! */
 export const SENTENCE_GAP_S = 0.7;
@@ -156,6 +162,7 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
         .get(id) as unknown as SourceRow,
   );
   const notes: string[] = [];
+  const planned = !!edit.plan || allBroll(edit);
   const ready: { row: SourceRow; probe: ProbeSummary; words: TimedWord[] }[] = [];
   let wait = false;
   let waitingOn: string | undefined;
@@ -166,8 +173,15 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
       wait = true; // the library probes it first, then queues its transcript
       continue;
     }
+    // a song is what the edit is cut to, not words (plan.ts)
+    if (row.id === edit.song || isMusic(row.id)) continue;
     if (!probe.acodec) {
       notes.push(`“${row.title}” has no sound: left out`);
+      continue;
+    }
+    if (planned) {
+      const words = wordsOf(db, row.id);
+      if (words?.length) ready.push({ row, probe, words });
       continue;
     }
     const languages = edit.languages?.length ? edit.languages : undefined;
@@ -236,14 +250,15 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
   const eyeline: Record<string, number> = {};
   for (const { row, probe, words } of ready) {
     if (signal.aborted) return;
-    await energyOf(row.id, () => readable(row.id, row.source_key), signal);
     sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
+    if (planned) continue; // the cut's loudness and eye line are for cutting around speech
+    await energyOf(row.id, () => readable(row.id, row.source_key), signal);
     const turned = probe.rotation === 90 || probe.rotation === 270;
     const dims = { w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, duration: probe.duration };
     const y = probe.vcodec ? await eyelineOf(row.id, () => readable(row.id, row.source_key), dims, signal) : null;
     if (y !== null) eyeline[row.id] = y;
   }
-  if (!sentences.length)
-    throw new Error(edit.languages?.length ? "No speech found in the footage" : "No speech found in the footage. Pick the language it is spoken in on the edit, then run it again.");
+  if (!sentences.length && !planned)
+    notes.push(edit.languages?.length ? NO_SPEECH : `${NO_SPEECH}. If someone does speak in it, pick the language on the edit and run it again`);
   await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}) });
 }

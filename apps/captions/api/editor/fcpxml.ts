@@ -1,6 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
+import { meanSpeed } from "./plan";
 
 /**
  * A draft as FCPXML 1.10 (Final Cut Pro's own exchange format): one asset per source, the speaker track as the spine
@@ -95,6 +96,13 @@ function assetClip(tl: Timeline, i: Item, s: TimelineSource, id: { asset: string
   // a clip's start and its markers are in its source's time
   const srcFrames = (rec: number) => s.tc + i.in + Math.round(((rec - i.rec) * s.fps) / tl.fps);
   const inner: string[] = [];
+  // a planned shot's speed (a ramp as its mean): from the clip's first frame, source time runs `speed` times as fast
+  // ponytail: written from the format's description, not yet checked in an editor
+  const speed = meanSpeed(i, tl.fps);
+  if (speed !== 1) {
+    const d = (i.len * s.fps) / tl.fps;
+    inner.push(`<timeMap>`, `  <timept time="0s" value="0s" interp="linear"/>`, `  <timept time="${time(Math.round(d), s.fps)}" value="${time(Math.round(d * speed), s.fps)}" interp="linear"/>`, `</timeMap>`);
+  }
   if ((i.zoom ?? 1) !== 1 || i.tilt) {
     const y = Math.round(((i.tilt ?? 0) / tl.height) * 100 * 1000) / 1000;
     inner.push(`<adjust-transform position="0 ${y}" scale="${i.zoom ?? 1} ${i.zoom ?? 1}"/>`);

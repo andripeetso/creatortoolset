@@ -203,5 +203,6 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
     sources: Object.fromEntries(Object.entries(tl.sources).filter(([k]) => used.has(k))),
     tracks,
     markers: tl.markers.map((m) => ({ ...m, rec: at(m.rec) })),
+    ...(tl.plan ? { plan: tl.plan } : {}),
   };
 }

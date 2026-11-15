@@ -10,6 +10,7 @@ import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
 import { readable } from "./media";
 import { clearPasses, markPasses } from "./passes";
+import { draftPlan } from "./plan";
 import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -139,6 +140,9 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
   }
   const version = plan.plans.find((p) => p.name === variant);
   if (!version) throw new Error(`The script has no version ${variant}`);
+  // a planned version (plan.ts) has shots, not lines
+  const shots = version.lines.length ? null : readStep(edit.id, "shots")?.[variant];
+  if (shots) return draftPlan(edit, variant, shots, signal);
   const analysis = readStep(edit.id, "analysis");
   if (!analysis) throw new Error("Analyze the footage first");
   const used = new Set(version.lines.map((l) => analysis.sentences.find((s) => s.n === l.take.first)?.src).filter((s): s is string => !!s));

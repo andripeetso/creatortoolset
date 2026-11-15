@@ -33,6 +33,7 @@
  */
 
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
+import type { PlanEffect, PlanText } from "./edit-plan";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -65,6 +66,14 @@ export interface EditBrief {
   /** the languages spoken in the footage (two-letter codes); they win over the person's Settings → AI → Voice
    *  languages when its takes are transcribed. Missing or empty = the person's. */
   languages?: string[];
+  /**
+   * Not cut around what is said: the AI plans the shots from the brief, to a song or the footage's own sound (a hard
+   * edit on the beat, a recap, a music video, gameplay), api/editor/plan.ts. Footage where nobody speaks is planned this
+   * way without it. Absent: cut around speech when someone speaks.
+   */
+  plan?: boolean;
+  /** the song to cut to: a library version id (a Music item). Absent: one among the sources, else the library's, else none */
+  song?: string | null;
 }
 
 /** A per-edit flag a plug-in declares (plug-in `editFlags`): a chip on the edit, saved with it. Shows nothing else. */
@@ -241,6 +250,13 @@ export interface Item {
   gainDb?: number;
   /** items that share it move together (a speaker shot and its voice) */
   link?: string;
+  /* A planned edit's shot (api/editor/plan.ts); absent on every other item. Times are seconds inside the item. */
+  /** 1 = as filmed */
+  speed?: number;
+  /** speed over the item's own time, from 0 to its length */
+  ramp?: Array<{ t: number; speed: number }>;
+  fx?: PlanEffect[];
+  enter?: "cut" | "flash" | "whip" | "dissolve";
 }
 
 export interface TimelineSource {
@@ -270,6 +286,8 @@ export interface Timeline {
   tracks: Record<TrackId, { name: string; items: Item[] }>;
   /** one per script line, at the line's first frame; colour is an OTIO marker colour (RED, BLUE, …) */
   markers: { rec: number; name: string; color: string; note: string }[];
+  /** a planned edit (api/editor/plan.ts): the kind it is, in the brief's words, and its texts (seconds on the timeline). Absent: cut around speech */
+  plan?: { kind: string; texts?: PlanText[] };
 }
 
 /** What the checks found on a draft; failures are notes, never a block. */

@@ -9,6 +9,7 @@ import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
 import { finishedBlock } from "./finished";
 import { momentMap, momentsPrompt, parseMoments, type RawMoment } from "./moments";
+import { isPlanned, planStep } from "./plan";
 import { readEdit, readStep, saveEdit, saveStep, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
@@ -166,7 +167,7 @@ export function allocate(lines: Line[], versions: Mapped["versions"]): { plans: 
 }
 
 /** The Mac kinds that mean nobody is there to answer (off, or the provider gone), not that the run failed. */
-function macAway(e: unknown): MacClaudeError | null {
+export function macAway(e: unknown): MacClaudeError | null {
   const m = e instanceof MacClaudeError ? e : e instanceof Error && e.cause instanceof MacClaudeError ? e.cause : null;
   return m && (m.kind === "unclaimed" || m.kind === "gone") ? m : null;
 }
@@ -183,6 +184,8 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
   if (!analysis) throw new Error("Analyze the footage first");
   const route = aiFor(whoFor(job.actor!), "editor", "AI Editor script");
   if (route.off) throw new NeedsKey(route.off);
+  // not cut around speech: asked for, or nobody speaks in the footage. The AI plans shots from the brief (plan.ts)
+  if (isPlanned(edit, analysis.sentences)) return planStep({ edit, job, variant: "", signal }, analysis.sentences);
   // short videos from a long recording: the AI finds the parts that stand alone, and each is a version of one line (moments.ts)
   if (edit.moments) {
     const asked = momentsPrompt({ sentences: analysis.sentences, titles: titlesOf(edit, analysis.sentences), brief: edit.brief, count: edit.moments, targetS: edit.targetS, styleText: styleBlock(edit.style) });
@@ -232,7 +235,8 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     throw e;
   }
   const mapped = takeMap(raw, analysis.sentences, edit.versions);
-  if (!mapped.lines.length) throw new Error(`The AI's answer had no usable lines (${mapped.notes.slice(0, 3).join("; ")})`);
+  // nothing in what is said makes a video: the edit is planned from the brief instead, never refused
+  if (!mapped.lines.length) return planStep({ edit, job, variant: "", signal }, analysis.sentences);
   const { plans, notes } = allocate(mapped.lines, mapped.versions);
   // the plan as the AI gave it, kept beside the one the person goes on to change: its lines and takes by number, none of its words
   await saveStep(edit.id, "first", { plans: plans.map((p) => ({ name: p.name, lines: p.lines })) });

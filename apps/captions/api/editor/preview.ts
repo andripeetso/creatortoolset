@@ -12,6 +12,7 @@ import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
+import { renderPlanPreview } from "./plan-render";
 import { editDir, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -97,6 +98,8 @@ export function piecesOf(shot: Item, cutaways: Item[]): Piece[] {
  * source key → a local file. `grade` (optional) colours his shots, not the cutaways (the Resolve grade is on V1 only).
  */
 export async function renderPreview(tl: Timeline, files: Record<string, string>, out: string, signal?: AbortSignal, grade?: Cdl): Promise<void> {
+  // a planned edit's shots have speeds, effects and texts, and a song under them (plan-render.ts)
+  if (tl.plan) return renderPlanPreview(tl, files, out, signal, grade);
   const [num, den] = frameDuration(tl.fps);
   const secs = (frames: number) => ((frames * num) / den).toFixed(6);
   const parts = `${out}.parts`;
