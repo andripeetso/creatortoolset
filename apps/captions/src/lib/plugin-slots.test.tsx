@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Hand, Star } from "lucide-react";
 import type { Me } from "./auth";
-import { accountItemsFor, adminTabsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, webPluginAdds, type WebPlugin } from "./plugin";
+import { accountItemsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, webPluginAdds, type WebPlugin } from "./plugin";
 import { shownTools, withPluginTiles } from "./tools";
 import hello from "../../plugin-examples/hello/web";
 
@@ -70,17 +70,15 @@ describe("Settings sections", () => {
     { id: "keys", title: "API keys", icon: Hand, adminOnly: true, group: "Server" },
   ];
 
-  it("puts a plug-in section with no group in the Plug-ins block: after the other blocks, before People", () => {
+  it("puts a plug-in section with no group in the Plug-ins block, after the other blocks", () => {
     const sections = settingsWithPlugins(builtin, [tiny]);
     expect(sections.map((s) => s.id)).toEqual(["general", "providers", "keys", "tiny"]);
     expect(sections.at(-1)?.group).toBe("Plug-ins");
-    const people = [...builtin, { id: "team", title: "Team", icon: Hand, group: "People" }];
-    expect(settingsWithPlugins(people, [tiny]).map((s) => s.id)).toEqual(["general", "providers", "keys", "tiny", "team"]);
-    const steps = [...builtin, { id: "editor", title: "AI Editor", icon: Hand, group: "Plug-ins" }, { id: "team", title: "Team", icon: Hand, group: "People" }];
-    expect(settingsWithPlugins(steps, [tiny]).map((s) => s.id)).toEqual(["general", "providers", "keys", "editor", "tiny", "team"]);
+    const steps = [...builtin, { id: "editor", title: "AI Editor", icon: Hand, group: "Plug-ins" }];
+    expect(settingsWithPlugins(steps, [tiny]).map((s) => s.id)).toEqual(["general", "providers", "keys", "editor", "tiny"]);
   });
 
-  it("places a plug-in section inside its group, and an adminTab stays out of the sidebar", () => {
+  it("places a plug-in section inside its group, and a server-wide one (adminTab) in Plug-ins", () => {
     const grouped = defineWebPlugin({
       id: "grouped",
       settings: [
@@ -88,9 +86,7 @@ describe("Settings sections", () => {
         { id: "footage", title: "Footage", icon: Hand, adminOnly: true, adminTab: true, body: null },
       ],
     });
-    expect(settingsWithPlugins(builtin, [grouped]).map((s) => s.id)).toEqual(["general", "providers", "ai-extra", "keys"]);
-    expect(adminTabsFor(admin(), [grouped]).map((s) => s.id)).toEqual(["footage"]);
-    expect(adminTabsFor(member(), [grouped])).toEqual([]);
+    expect(settingsWithPlugins(builtin, [grouped]).map((s) => s.id)).toEqual(["general", "providers", "ai-extra", "keys", "footage"]);
   });
 
   it("keeps the built-in order when no plug-in adds one", () => {

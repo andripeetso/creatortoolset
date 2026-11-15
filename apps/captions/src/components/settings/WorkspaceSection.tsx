@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateInvite, updateMember } from "@/lib/workspaces";
-import { Tick } from "@/components/AdminPanel";
+import { AskEveryone, Tick, useServerAccounts } from "@/components/AdminPanel";
+import type { RowMenuItem } from "./kit-controls";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
 import { useSignInApps } from "./AccountSection";
 import { lastActiveText, msg } from "./helpers";
@@ -38,7 +39,8 @@ export const signInId = (opts: ReturnType<typeof signInOptions>, saved: readonly
 
 /**
  * Settings → Team (hosted servers only). The owner renames the team, sets how it signs in, invites people and removes
- * them. A member sees the team and their own row. Access is one grid of everyone in the team and everyone invited: the
+ * them. A member sees the team and their own row. A platform admin also runs every account on the server here (each
+ * member's menu, Create account, Other accounts, Ask everyone for a sign-in code; api/admin.ts). Access is one grid of everyone in the team and everyone invited: the
  * apps each may open (the account's `off`) and whether they read the owner's scripts; an invite's row is what that
  * person gets once they join (api/workspace.ts PATCH /invites/:id).
  */
@@ -63,6 +65,8 @@ export function WorkspaceSection() {
 
   const refresh = saved.refresh;
   const load = useCallback(() => refresh().catch(() => {}), [refresh]);
+  // a platform admin also runs the server's accounts here (was Admin → Accounts): passwords, locks, admin or not, delete
+  const accounts = useServerAccounts(me?.role === "admin", () => void load());
 
   if (failed) {
     return (
@@ -149,18 +153,28 @@ export function WorkspaceSection() {
         </Card>
       </Section>
 
+      {me?.role === "admin" && <AskEveryone />}
+
       <Section
         id="team-members"
         title="Members"
         action={
-          <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
-            <Plus className="size-3" /> Invite
-          </Button>
+          <div className="flex gap-1">
+            {me?.role === "admin" && (
+              <Button size="xs" variant="ghost" onClick={accounts.create}>
+                <Plus className="size-3" /> Create account
+              </Button>
+            )}
+            <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
+              <Plus className="size-3" /> Invite
+            </Button>
+          </div>
         }
       >
         <Card>
           {view.members.map((m) => {
             const self = m.username === me?.username;
+            const acct = accounts.users?.find((u) => u.username === m.username);
             return (
               <ListRow
                 key={m.username}
@@ -171,8 +185,12 @@ export function WorkspaceSection() {
                     {self && <span className="ml-1.5 font-normal text-muted-foreground">(you)</span>}
                   </>
                 }
-                subtitle={memberLine(m, self, true)}
-                actions={m.role !== "owner" && !self ? <MemberMenu m={m} onAi={() => setAiFor(m)} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
+                subtitle={[memberLine(m, self, true), acct?.role === "admin" && m.role !== "owner" ? "Admin" : null, acct?.locked ? "Locked" : null].filter(Boolean).join(" · ")}
+                actions={
+                  m.role !== "owner" && !self ? (
+                    <MemberMenu m={m} account={acct ? accounts.menuItems(acct) : []} onAi={() => setAiFor(m)} onRemove={() => attempt(removeMember(m.username))} />
+                  ) : undefined
+                }
               />
             );
           })}
@@ -222,6 +240,23 @@ export function WorkspaceSection() {
         </Section>
       )}
 
+      {(() => {
+        // accounts on the server that are in no team: made by hand, or left one
+        const others = accounts.users?.filter((u) => !view.members.some((m) => m.username === u.username)) ?? [];
+        return (
+          others.length > 0 && (
+            <Section id="team-other-accounts" title="Other accounts">
+              <Card>
+                {others.map((u) => (
+                  <ListRow key={u.username} title={u.name || u.username} subtitle={accounts.lineOf(u)} actions={<RowMenu label={`More for ${u.username}`} items={accounts.menuItems(u)} />} />
+                ))}
+              </Card>
+            </Section>
+          )
+        );
+      })()}
+
+      {accounts.dialogs}
       <InviteDialog open={inviting} mail={Boolean(view.mail)} onOpenChange={setInviting} onCreated={() => void load()} />
       {aiFor && <AiDialog member={aiFor} onClose={() => setAiFor(null)} onSave={(m, patch) => act(updateMember(m.username, patch))} />}
     </>
@@ -251,18 +286,21 @@ export function budgetFrom(text: string): { ok: true; usd: number } | { ok: fals
   return { ok: true, usd: Math.round(n * 100) / 100 };
 }
 
-function MemberMenu({ m, onAi, onRemove }: { m: MemberView; onAi: () => void; onRemove: () => Promise<void> }) {
+/** A member's menu: AI, the account's own items for a platform admin (`account`), Remove from team, Delete account last. */
+function MemberMenu({ m, account, onAi, onRemove }: { m: MemberView; account: RowMenuItem[]; onAi: () => void; onRemove: () => Promise<void> }) {
   return (
     <RowMenu
       label={`More for ${m.username}`}
       items={[
         { label: "AI…", onSelect: onAi },
+        ...account.filter((i) => !i.destructive),
         {
           label: "Remove from team",
           destructive: true,
           confirm: { title: `Remove ${m.username} from the team?`, body: "Their account stays theirs.", ok: "Remove" },
           onSelect: onRemove,
         },
+        ...account.filter((i) => i.destructive),
       ]}
     />
   );

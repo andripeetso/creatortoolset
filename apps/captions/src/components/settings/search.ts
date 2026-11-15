@@ -20,7 +20,8 @@ export interface SearchRow {
   description?: string;
   keywords?: readonly string[];
   /** Only shown where sign-in is required (this install has accounts). Not offered by search elsewhere. */
-  needs?: "sign-in" | "mac" | "mac-recorder";
+  /** server-admin: an admin on a hosted server (the server's own accounts, projects and keys). */
+  needs?: "sign-in" | "mac" | "mac-recorder" | "server-admin";
 }
 
 /** The API key rows are one per service in contracts/service-keys.ts (MY_KEYS), so their ids come from it. */
@@ -98,16 +99,15 @@ const STATIC_ROWS = [
   { section: "servers", id: "sign-in-another", title: "Sign-in link for another computer", description: "Signs another computer into this server as you", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
-  { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team"] },
+  { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team", "account", "password", "reset", "create account", "admin"] },
   { section: "team", id: "team-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow", "scripts", "invite"] },
   { section: "team", id: "team-invite", title: "Invite link", keywords: ["invite", "link", "join", "team", "revoke"] },
   { section: "team", id: "team-sign-in", title: "Sign-in", keywords: ["google", "apple", "password", "members", "team"] },
   // Admin (hosted)
-  { section: "admin", id: "admin-accounts", title: "Accounts", keywords: ["account", "users", "password", "create", "apps"] },
-  { section: "admin", id: "admin-access", title: "Access", keywords: ["access", "tick", "apps", "tools", "grant", "allow"] },
-  { section: "admin", id: "admin-projects", title: "Projects", keywords: ["projects", "server", "newest"] },
-  { section: "admin", id: "admin-sign-in-code", title: "Ask everyone for a sign-in code", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "lock", "unlock"] },
-  { section: "admin", id: "server-keys", title: "Server keys", keywords: ["env", "server", "api key", "secret", "fallback"] },
+  { section: "team", id: "team-other-accounts", title: "Other accounts", keywords: ["account", "users", "password", "create", "admin", "delete"], needs: "server-admin" },
+  { section: "team", id: "admin-sign-in-code", title: "Ask everyone for a sign-in code", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "lock", "unlock"], needs: "server-admin" },
+  { section: "folders", id: "admin-projects", title: "Every project on the server", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
+  { section: "keys", id: "server-keys", title: "Keys for everyone on this server", keywords: ["env", "server", "api key", "secret", "fallback", "server keys"], needs: "server-admin" },
   // Account: the person's own profile and sign-in
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
@@ -150,11 +150,12 @@ export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
     keywords: [k.env.toLowerCase().replace(/_/g, " "), "api key", "key", "paste"],
   })),
   ...SERVICE_KEYS.map((k) => ({
-    section: "admin" as const,
+    section: "keys" as const,
     id: `server-key-${k.env}` as ServerKeyRowId,
     title: k.name,
     description: k.what,
     keywords: [k.env.toLowerCase().replace(/_/g, " "), "server key", "fallback", "env", "api key"],
+    needs: "server-admin" as const,
   })),
 ];
 
@@ -182,6 +183,8 @@ export function searchSettings(
   macApp = false,
   /** The Mac app has the Screen Recorder's settings (rows with needs "mac-recorder"). */
   macRecorder = false,
+  /** An admin on a hosted server (rows with needs "server-admin"). */
+  serverAdmin = false,
 ): SearchHit[] {
   const q = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (!q) return [];
@@ -189,7 +192,8 @@ export function searchSettings(
   const rows: Array<SearchRow & { sectionTitle: string }> = [];
   for (const r of index) {
     const sectionTitle = sections.get(r.section);
-    const shown = !r.needs || (r.needs === "mac" ? macApp : r.needs === "mac-recorder" ? macApp && macRecorder : signInRequired);
+    const shown =
+      !r.needs || (r.needs === "mac" ? macApp : r.needs === "mac-recorder" ? macApp && macRecorder : r.needs === "server-admin" ? serverAdmin : signInRequired);
     if (sectionTitle !== undefined && shown) rows.push({ ...r, sectionTitle });
   }
   // a section by its own title (plug-in sections have no rows in the index)
