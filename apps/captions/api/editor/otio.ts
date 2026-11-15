@@ -2,6 +2,7 @@ import path from "node:path";
 import { TRACKS, type Item, type Timeline, type TimelineSource } from "../../contracts/editor";
 import { type Cdl, cdlMeta } from "./grade";
 import { fitted } from "./framing";
+import { meanSpeed } from "./plan";
 
 /**
  * A draft as OpenTimelineIO JSON, written by hand (no package). Clips carry the metadata DaVinci Resolve reads on
@@ -58,6 +59,9 @@ function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: b
     meta.Channels = [0, 1].map((c) => ({ "Source Channel ID": c, "Source Track ID": 0 }));
     if (i.gainDb) effects.push(effect("Fairlight Clip Volume and Fades", 62, [param("volume", i.gainDb, 0, -100, 30)], "Volume"));
   }
+  // a planned shot's speed (a ramp as its mean: the cuts stay where they are; the ramp itself is in the shot's marker)
+  const speed = meanSpeed(i, tl.fps);
+  if (speed !== 1) effects.push({ OTIO_SCHEMA: "LinearTimeWarp.1", name: "", effect_name: "LinearTimeWarp", metadata: {}, time_scalar: speed });
   // the grade is metadata for Resolve to apply on node 1 (the same values SetCDL takes); the picture is not changed here
   if (video && grade) meta.CDL = cdlMeta(grade);
   if (i.link) {

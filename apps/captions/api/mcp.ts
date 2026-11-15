@@ -75,8 +75,15 @@ const FINALS_GUIDE = `Finals: the finished pieces the user keeps. A piece holds 
 sets the winner, orders its versions and writes a version's name or post description, finals_piece_trash moves one to
 the trash or back. A version's id is the one finals_pieces gives.`;
 
-/** The built-in AI Editor's recipes, said only where its tools are (voice_make, editor_create's moments): not on an install whose plug-in answers /api/editor. */
-const NOTHING_FILMED_GUIDE = `A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
+/** The built-in AI Editor's recipes, said only where its tools are (voice_make, editor_create's moments and plan): not on an install whose plug-in answers /api/editor. */
+const EDITOR_GUIDE = `Any kind of edit: the AI Editor cuts footage where nobody speaks (gameplay, B-roll, a trip, a performance) to a song
+or to the brief, and with plan=true it does the same with footage where people talk. Put what the user wants in brief, in
+their words (the kind of edit, its pace, effects, words on screen: "an overdone hard edit cut on the beat", "a calm
+recap"), and the length in target_s; the workspace's setup and the editing style are read with it. The song: the one
+they name, found with media_search kind audio (one not in the library yet goes in with use_file sound music first), as
+song; with none named, one among the sources, else the library's.
+
+A video with nothing filmed: voice_make speaks the script in one of the user's ElevenLabs voices and saves it
 as a take; editor_create with its version id as the only source, and the script, makes the video. A take with no
 picture gets its whole picture from B-roll: the edit's broll_folder, or every clip sorted B-roll when it names none.
 
@@ -244,10 +251,10 @@ export const TOOLS = [
   {
     name: "editor_create",
     description:
-      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+      "Make a new AI Editor edit and start it (analyze → script or plan → draft → B-roll → a preview of each version, filed in Review). It cuts any footage into the kind of edit asked for: around what is said when someone talks, else as shots to a song or the brief. sources = the footage, as version_id from media_search or media_import_folder (up to 50): talking takes, any other clips, a song. script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel, in the user's words (the kind of edit, pace, effects, words on screen). plan=true = planned as shots even though someone talks (a montage, a music edit); footage where nobody speaks is planned without it. song = the version_id of a song to cut to (media_search kind audio). broll_folder = a Media Library folder id (media_folders) to cut B-roll from. languages = the codes of what is spoken (et) when not their usual. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). moments = from a long recording (a podcast, a talk), cut up to that many stand-alone parts (1-20) as short videos of their own: target_s is then about how long each, brief what to look for. start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
     inputSchema: {
       type: "object",
-      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
+      properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, moments: { type: "integer" }, plan: { type: "boolean" }, song: str, broll_folder: str, languages: { type: "array", items: str }, start: { type: "boolean" } },
       required: ["sources"],
     },
   },
@@ -902,8 +909,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     },
     editor_create: async (a) => {
       const sources = Array.isArray(a.sources) ? a.sources.map(String) : [];
-      if (!sources.length) throw new ToolError("Give sources: the takes' version_id (media_search or media_import_folder).");
-      const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages", "moments"]) };
+      if (!sources.length) throw new ToolError("Give sources: the footage's version_id (media_search or media_import_folder).");
+      const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages", "moments", "plan", "song"]) };
       if (a.target_s != null) body.targetS = a.target_s;
       if (a.broll_folder) body.brollCollectionId = a.broll_folder;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
@@ -1476,7 +1483,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         capabilities: isJob(auth) ? { tools: {} } : { tools: {}, resources: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
         // a plug-in's paragraph stays last: it speaks for this install
-        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : NOTHING_FILMED_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
+        instructions: [INSTRUCTIONS, pluginReplaces("/api/editor") ? "" : EDITOR_GUIDE, mainSource() ? "" : FINALS_GUIDE, isJob(auth) ? "" : CARDS_GUIDE, WRITER_GUIDE, plugged.guide].filter(Boolean).join("\n\n"),
       });
     case "ping":
       return ok({});

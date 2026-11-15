@@ -186,12 +186,14 @@ describe("AI Editor analyze", () => {
     d.prepare("DELETE FROM edit_jobs").run();
   });
 
-  it("a take heard as silence is heard once more in the edit's own language; with none set, it says to pick one", async () => {
+  it("a take heard as silence is heard once more in the edit's own language; with none set, it goes on (planned, not refused) and says to pick one", async () => {
     const d = libraryDb();
     saveTranscript(d, "ver_early", "deepgram", "en", [], []);
     d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
     const plain = await analyze(["ver_early"], Date.now());
-    expect(plain.job()).toMatchObject({ error: expect.stringMatching(/Pick the language it is spoken in on the edit/) });
+    expect(plain.job()).toMatchObject({ state: "done" });
+    expect(readStep(plain.id, "analysis")).toMatchObject({ sentences: [], notes: [expect.stringMatching(/cut to the song or the brief\. If someone does speak in it, pick the language on the edit/)] });
+    d.prepare("DELETE FROM edit_jobs").run();
     const { job } = await analyze(["ver_early"], Date.now(), { languages: ["et"] });
     expect(askVersionIn.get("ver_early")).toEqual({ by: "mem-a", languages: ["et"] });
     expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });

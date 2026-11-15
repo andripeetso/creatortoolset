@@ -521,6 +521,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 16887 -> 16935: workshop_chat's answer is the writer's piece or the material to write it from (an AI writes from
     // the user's own posts and rewrites); workshop_edit_piece takes what an AI wrote from that material
     // 16935 -> 17374: the tools say workspace (a brand) and project (a video, the API's session), not project for both
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(17374);
+    // 17374 -> 17872: editor_create cuts any footage into the kind of edit asked for, with plan (shots, not speech) and song
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(17872);
   });
 });
