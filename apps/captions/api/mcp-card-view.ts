@@ -296,7 +296,7 @@ button.at{all:unset;cursor:pointer;flex:none;min-width:72px;font-size:12px;line-
   function review(card, result) {
     var out = [];
     var tone = card.approval === "approved" ? "ok" : card.approval === "changes" || card.approval === "rejected" ? "warn" : "";
-    var pill = card.approval === "approved" ? "Approved" : card.approval === "changes" || card.approval === "rejected" ? "Changes asked" : null;
+    var pill = card.approval === "approved" ? "Approved" : card.approval === "rejected" ? "Rejected" : card.approval === "changes" ? "Changes asked" : null;
     out.push(head(card.title || "Review", pill, tone));
     var video = null;
     if (card.play) { var p = player(card.play, card.poster, 480); video = p.video; out.push(p); }

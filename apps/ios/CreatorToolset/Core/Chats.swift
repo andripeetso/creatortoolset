@@ -34,7 +34,7 @@ struct ChatRow: Identifiable, Hashable {
 struct ReviewListItem: Decodable {
     var id: String
     var name: String
-    /// "none", "in_progress", "needs_review", "changes" or "approved".
+    /// "none", "in_progress", "needs_review", "changes", "rejected" or "approved".
     var status: String
     var versions: Int
     var newComments: Int
@@ -201,13 +201,13 @@ enum ChatList {
 
     /// A Review video's row: Review while it waits for the person, under Done once approved.
     static func row(_ video: ReviewListItem) -> ChatRow {
-        var words = [video.status == "changes" ? "Changes requested" : "V\(max(video.versions, 1))"]
+        var words = [video.status == "changes" ? "Changes requested" : video.status == "rejected" ? "Rejected" : "V\(max(video.versions, 1))"]
         if video.newComments > 0 { words.append("\(video.newComments) new comment\(video.newComments == 1 ? "" : "s")") }
         let waits = video.status == "needs_review"
         let when = date(ms: video.at)
         return ChatRow(id: path(.review(video.id, version: nil)), route: .review(video.id, version: nil), title: video.name,
                        detail: words.joined(separator: " · "), status: waits ? .review : .time(when), at: when,
-                       shelf: video.status == "approved" || (video.status == "none" && video.newComments == 0) ? .done : .active,
+                       shelf: video.status == "approved" || video.status == "rejected" || (video.status == "none" && video.newComments == 0) ? .done : .active,
                        keys: waits ? ["\(video.id):v\(video.versions)"] : [], picture: video.picture)
     }
 

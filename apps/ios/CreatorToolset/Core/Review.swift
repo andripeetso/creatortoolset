@@ -118,7 +118,7 @@ struct ReviewDetail: Decodable {
 
 /// The server's approval states and the website's words for them.
 enum ReviewStatus: String, CaseIterable, Identifiable {
-    case none, in_progress, needs_review, changes, approved
+    case none, in_progress, needs_review, changes, rejected, approved
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -126,6 +126,7 @@ enum ReviewStatus: String, CaseIterable, Identifiable {
         case .in_progress: "In progress"
         case .needs_review: "Needs review"
         case .changes: "Changes requested"
+        case .rejected: "Rejected"
         case .approved: "Approved"
         }
     }
@@ -134,7 +135,8 @@ enum ReviewStatus: String, CaseIterable, Identifiable {
         case .none: .gray
         case .in_progress: .blue
         case .needs_review: .yellow
-        case .changes: .red
+        case .changes: .orange
+        case .rejected: .red
         case .approved: .green
         }
     }

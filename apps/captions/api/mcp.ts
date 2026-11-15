@@ -222,8 +222,8 @@ export const TOOLS = [
   },
   {
     name: "review_set_approval",
-    description: "Set a Review video's approval: approved, changes (sent back to the editor), or in_progress / needs_review / none.",
-    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "approved"] } }, required: ["link", "status"] },
+    description: "Set a Review video's approval: approved, changes (sent back to the editor to fix), rejected (turned down: not this one), or in_progress / needs_review / none.",
+    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "rejected", "approved"] } }, required: ["link", "status"] },
   },
   {
     name: "review_share",

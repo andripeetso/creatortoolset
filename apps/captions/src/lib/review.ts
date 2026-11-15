@@ -5,15 +5,20 @@ import type { UploadRelayTus, UploadRelayView } from "@contracts/storage";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
-export type Approval = "none" | "in_progress" | "needs_review" | "changes" | "approved";
+export type Approval = "none" | "in_progress" | "needs_review" | "changes" | "rejected" | "approved";
 
 export const APPROVAL: Record<Approval, { label: string; dot: string }> = {
   none: { label: "No status", dot: "bg-zinc-500" },
   in_progress: { label: "In progress", dot: "bg-sky-400" },
   needs_review: { label: "Needs review", dot: "bg-amber-400" },
-  changes: { label: "Changes requested", dot: "bg-rose-500" },
+  changes: { label: "Changes requested", dot: "bg-orange-500" },
+  rejected: { label: "Rejected", dot: "bg-rose-500" },
   approved: { label: "Approved", dot: "bg-emerald-400" },
 };
+
+/** Needs review and its newest ready version not yet opened by its owner: it waits on them. */
+export const waitsOnYou = (a: ReviewAsset) =>
+  a.approval.status === "needs_review" && !(a.looked && a.looked >= (a.versions.filter((v) => v.status === "ready" && !v.removed).at(-1)?.n ?? 0));
 
 /** An AI Editor preview's sound in parts (the player's voice controls play them). */
 export type StemSet = { groups: { key: string; label: string; mix: number }[]; fx: string[]; voice: string; duration: number };
@@ -56,6 +61,8 @@ export interface ReviewAsset {
   id: string;
   name: string;
   approval: { status: Approval; by?: string; at?: number };
+  /** (managers) the newest ready version its owner has opened. */
+  looked?: number;
   versions: ReviewVersion[];
   download: boolean;
   owner?: string;

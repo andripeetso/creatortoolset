@@ -8,6 +8,7 @@ import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from 
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { editWaits, HomeActivity, useRunning, useTodoLists, type Chip } from "@/components/HomeActivity";
+import { waitsOnYou } from "@/lib/review";
 import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/HomeIntro";
 import { plural, ProductionCount, ProductionStop } from "@/components/HomeProduction";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
@@ -364,13 +365,13 @@ function NeedsSetup({ what }: { what: string }) {
 /**
  * What waits on you at a tool, by its route: only what needs you, never what the AI or someone else is working on.
  * Workshop: replies you haven't read. AI Editor: edits whose last step failed or needs a key. Review: videos marked
- * Needs review. From the Activity list's saved lists, live (HomeActivity.tsx useTodoLists).
+ * Needs review that you haven't opened. From the Activity list's saved lists, live (HomeActivity.tsx useTodoLists).
  */
 function useWaiting(me: Me | null): Record<string, number> {
   const { edits, assets } = useTodoLists(me);
   return {
     editor: edits.filter(editWaits).length,
-    review: assets.filter((a) => a.approval.status === "needs_review").length,
+    review: assets.filter(waitsOnYou).length,
   };
 }
 

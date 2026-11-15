@@ -298,7 +298,7 @@ describe("review", () => {
       expect((await app.request(`${s}/comments/${cm.id}`, { method: "DELETE", headers: other })).status).toBe(403);
       expect((await app.request(`${s}/approval`, json({ status: "approved", author: "Client" }, other))).status).toBe(200);
       const [listed] = await read(app.request("/"));
-      expect(listed).toMatchObject({ comments: 1, newComments: 1, approval: { status: "approved", by: "Client" } });
+      expect(listed).toMatchObject({ comments: 1, newComments: 1, approval: { status: "approved", by: "Client" }, looked: 1 }); // the owner opened v1 above
       expect(listed.share.enabled).toBe(true);
 
       // downloads stay off for reviewers until the owner allows them

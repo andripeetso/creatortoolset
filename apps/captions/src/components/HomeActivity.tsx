@@ -10,7 +10,7 @@ import type { ActivityRow } from "@contracts/activity";
 import { listEdits } from "@/lib/editor";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
-import { listReviewAssets, reviewApi, type ReviewAsset } from "@/lib/review";
+import { listReviewAssets, reviewApi, waitsOnYou, type ReviewAsset } from "@/lib/review";
 import { undoable } from "@/lib/undo";
 import { useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 
@@ -30,7 +30,7 @@ export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.l
  *  or needs a key. Pure, so the rows can be tested without a server. */
 export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[] {
   const review = assets
-    .filter((a) => a.approval.status === "needs_review")
+    .filter(waitsOnYou)
     .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name} is waiting for your review`, icon: "review", asset: a.id }));
   const edit = edits
     .filter(editWaits)

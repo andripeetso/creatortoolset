@@ -94,15 +94,16 @@ const PROJECT_LINK = "project:";
 const TRASH_DAYS = 30;
 const UPLOAD_DAYS = 7;
 
-export const APPROVALS = ["none", "in_progress", "needs_review", "changes", "approved"] as const;
+export const APPROVALS = ["none", "in_progress", "needs_review", "changes", "rejected", "approved"] as const;
 type Approval = (typeof APPROVALS)[number];
 /** The approval moves: filing → needs_review, a new round → in_progress, a failed or cancelled job → needs_review again. */
 export const APPROVAL_MOVES: Moves<Approval> = {
-  none: ["needs_review", "changes", "approved"],
-  in_progress: ["needs_review", "changes", "approved", "none"],
-  needs_review: ["in_progress", "changes", "approved", "none"],
-  changes: ["needs_review", "approved", "none"],
-  approved: ["needs_review", "changes", "none"],
+  none: ["needs_review", "changes", "rejected", "approved"],
+  in_progress: ["needs_review", "changes", "rejected", "approved", "none"],
+  needs_review: ["in_progress", "changes", "rejected", "approved", "none"],
+  changes: ["needs_review", "rejected", "approved", "none"],
+  rejected: ["needs_review", "in_progress", "changes", "approved", "none"],
+  approved: ["needs_review", "changes", "rejected", "none"],
 };
 /** What a reviewer on the share link may set. */
 const REVIEWER_APPROVALS: Approval[] = ["changes", "approved"];
@@ -172,6 +173,8 @@ interface Meta {
   done?: { finished: boolean; at: number };
   /** Owner last looked; later comments from others count as new. */
   seenAt?: number;
+  /** The newest ready version the owner has opened: a Needs review video they have looked at no longer waits on them. */
+  looked?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -945,7 +948,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
     })),
     download,
     ...(manage
-      ? { owner: m.owner, share: m.share ?? null, projectId: m.projectId ?? null, done: m.done ?? null }
+      ? { owner: m.owner, share: m.share ?? null, projectId: m.projectId ?? null, done: m.done ?? null, looked: m.looked ?? 0 }
       : {}),
     createdAt: m.createdAt,
   };
@@ -2197,6 +2200,17 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       await updateMeta(v.meta.id, (m) => {
         m.seenAt = newest;
       });
+    }
+    // the owner opened the newest version: it leaves Waiting on you on every device (a newer version brings it back)
+    const ready = v.meta.versions.filter((x) => x.status === "ready" && !x.removed).at(-1)?.n ?? 0;
+    if (owner && ready > (v.meta.looked ?? 0)) {
+      const m = await updateMeta(v.meta.id, (m) => {
+        m.looked = ready;
+      });
+      if (m) {
+        v.meta.looked = ready;
+        announce(m.owner, "review");
+      }
     }
     return c.json(
       {

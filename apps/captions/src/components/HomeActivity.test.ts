@@ -37,6 +37,15 @@ describe("todoRows", () => {
     expect(todoRows([], withStatus(cleared, ["a2"], "needs_review")).map((r) => r.asset)).toEqual(["a2"]);
   });
 
+  it("leaves out a video whose newest ready version its owner has opened, until a newer one comes in", () => {
+    const v = (n: number, status = "ready") => ({ n, status, removed: false }) as ReviewAsset["versions"][number];
+    const a = { ...asset("a1", "needs_review"), versions: [v(1), v(2)], looked: 2 };
+    expect(todoRows([], [a])).toEqual([]);
+    expect(todoRows([], [{ ...a, versions: [v(1), v(2), v(3, "processing")] }])).toEqual([]);
+    expect(todoRows([], [{ ...a, versions: [v(1), v(2), v(3)] }]).map((r) => r.asset)).toEqual(["a1"]);
+    expect(todoRows([], [{ ...a, approval: { status: "rejected" }, looked: 0 }])).toEqual([]);
+  });
+
   it("is empty when nothing waits on the account", () => {
     expect(todoRows([edit("e1", null)], [asset("a1", "none")])).toEqual([]);
   });
