@@ -11,6 +11,7 @@ import {
   removeMember,
   renameWorkspace,
   revokeInvite,
+  updateInvite,
   setSignInWith,
   spentThisMonth,
   updateMember,
@@ -123,6 +124,29 @@ workspaceApp.post("/invites", async (c) => {
   return c.json(made);
 });
 
+/** The apps a request's `off` asks for. A plug-in's default-off gates only a platform admin switches: anyone else's request leaves them as `had`. */
+function offFrom(asked: unknown[], had: (Tool | PluginGateId)[], admin: boolean): (Tool | PluginGateId)[] {
+  const want = asked.filter((t): t is Tool | PluginGateId => typeof t === "string" && (isTool(t) || isPluginGateId(t)));
+  const guarded = pluginDefaultOff();
+  // a retired app id (not in the request, not an app any more) keeps its entry too
+  const keep = (t: Tool | PluginGateId) => (isRetiredAppId(t) || (guarded.includes(t) && !admin) ? had.includes(t) : want.includes(t));
+  return [...new Set([...want, ...had])].filter(keep);
+}
+
+workspaceApp.patch("/invites/:id", async (c) => {
+  const m = managed(c);
+  if (m.error) return m.error;
+  const b = await body(c);
+  const invite = invitesOf(m.w).find((i) => i.id === c.req.param("id"));
+  if (!invite) return c.json({ error: "No such invite" }, 404);
+  if (b.scripts !== undefined && typeof b.scripts !== "boolean") return c.json({ error: "Scripts is on or off" }, 400);
+  updateInvite(m.w, invite.id, {
+    ...(Array.isArray(b.off) ? { off: offFrom(b.off, invite.off ?? [], m.u.role === "admin") } : {}),
+    ...(typeof b.scripts === "boolean" ? { scripts: b.scripts } : {}),
+  });
+  return c.json(viewFor(m.u));
+});
+
 workspaceApp.delete("/invites/:id", (c) => {
   const m = managed(c);
   if (m.error) return m.error;
@@ -139,13 +163,7 @@ workspaceApp.patch("/members/:username", async (c) => {
     if (Array.isArray(b.off)) {
       const acct = findUser(name);
       if (!acct) throw new Error("No such account");
-      // a plug-in's default-off gates are switched only by a platform admin; the owner's request leaves them as they are.
-      // A retired app id (not in the request, not an app any more) keeps its entry too.
-      const guarded: (Tool | PluginGateId)[] = pluginDefaultOff();
-      const asked = b.off.filter((t): t is Tool | PluginGateId => typeof t === "string" && (isTool(t) || isPluginGateId(t)));
-      const keep = (t: Tool | PluginGateId) =>
-        isRetiredAppId(t) || (guarded.includes(t) && m.u.role !== "admin") ? acct.off.includes(t) : asked.includes(t);
-      setOff(acct, [...asked, ...acct.off].filter(keep));
+      setOff(acct, offFrom(b.off, acct.off, m.u.role === "admin"));
     }
   } catch (e) {
     return bad(c, e);

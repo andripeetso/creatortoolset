@@ -1,14 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { makeThumb } from "./thumb";
-import { browserPlayable, probe, parseProbe } from "./probe";
+import { browserPlayable, countryAt, probe, parseProbe } from "./probe";
 import { ffmpeg } from "./run";
 import { makeProxy, needsProxy } from "./proxy";
 import { makeWave } from "./wave";
+import { makeSprite, SPRITE_H, SPRITE_W } from "./sprite";
+import { SPRITE_FRAMES } from "../../../contracts/library";
 
 // Fixtures are generated at run time, one second each, in scratch. Nothing large is committed.
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-media-"));
@@ -25,6 +27,7 @@ const hevcOk = /libx265|hevc_videotoolbox/.test(encoders);
 const h264 = path.join(dir, "h264.mp4");
 const hevc = path.join(dir, "hevc.mp4");
 const sine = path.join(dir, "sine.m4a");
+const tallinn = path.join(dir, "tallinn.mp4");
 
 beforeAll(() => {
   // GPS-style and creation-time tags, as a phone writes them
@@ -36,6 +39,7 @@ beforeAll(() => {
       "-c:v", "libx265", "-tag:v", "hvc1", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", hevc]);
   }
   ff(["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", sine]);
+  ff(["-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=10", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-metadata", "location=+59.4370+024.7536/", tallinn]);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -54,6 +58,28 @@ describe("probe", () => {
     const stored = JSON.stringify(await probe(h264));
     expect(stored).not.toMatch(/location|12\.3456|056\.7890/);
     expect((await probe(h264)).capturedAt).toBe(Date.parse("2024-01-02T03:04:05Z"));
+  });
+
+  it("keeps the country a clip was filmed in, never its coordinates", async () => {
+    const stored = JSON.stringify(await probe(tallinn));
+    expect(JSON.parse(stored).country).toBe("EE");
+    expect(stored).not.toMatch(/59\.43|24\.75|location/);
+    expect((await probe(h264)).country).toBe(""); // the other fixture is out at sea
+    expect((await probe(sine)).country).toBe("");
+  });
+
+  it("finds the country offline: inland, on a beach, in an enclave, either side of 180°, and none at sea", async () => {
+    const at = (lat: number, lon: number) => countryAt(lat, lon);
+    expect(await at(59.437, 24.7536)).toBe("EE"); // Tallinn
+    expect(await at(-29.31, 27.48)).toBe("LS"); // Maseru, inside South Africa's hole
+    expect(await at(-26.2, 28.04)).toBe("ZA");
+    expect(await at(-22.9711, -43.1822)).toBe("BR"); // a beach
+    expect(await at(34.0083, -118.4987)).toBe("US"); // a pier
+    expect(await at(43.695, 7.265)).toBe("FR");
+    expect(await at(43.9356, 12.4473)).toBe("SM"); // San Marino, inside Italy
+    expect(await at(-18.14, 178.44)).toBe("FJ");
+    expect(await at(66.16, -169.8)).toBe("RU"); // Russia west of 180°
+    expect(await at(30, -40)).toBe(""); // the Atlantic
   });
 
   it("reads the rotation as clockwise degrees: display matrix -90 is 90, the old rotate tag is taken as is", () => {
@@ -151,5 +177,50 @@ describe("wave", () => {
     const out = path.join(dir, "wave-none.json");
     await makeWave(h264, out, false);
     expect(JSON.parse(readFileSync(out, "utf8")).peaks).toEqual([]);
+  });
+});
+
+describe("sprite", () => {
+  // the mean grey of frame `i` of a strip, 0 to 255
+  const grey = (file: string, i: number) => {
+    const raw = execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-i", file, "-vf", `crop=${SPRITE_W}:${SPRITE_H}:${i * SPRITE_W}:0,scale=1:1:flags=area,format=gray`, "-f", "rawvideo", "-"]);
+    return raw[0]!;
+  };
+
+  it("lays the frames across the clip side by side, in time order, and leaves no parts behind", async () => {
+    // dark for the first second, light for the second: the strip's first half is dark, its second half light
+    const clip = path.join(dir, "dark-light.mp4");
+    ff(["-f", "lavfi", "-i", "color=c=black:s=320x180:r=25:d=2,geq=lum='if(lt(T,1),20,230)':cb=128:cr=128", "-c:v", "libx264", "-g", "50", "-pix_fmt", "yuv420p", clip]);
+    const out = path.join(dir, "sprite.jpg");
+    await makeSprite(clip, out, 2);
+    expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
+    expect(grey(out, 0)).toBeLessThan(60);
+    expect(grey(out, SPRITE_FRAMES / 2 - 1)).toBeLessThan(60);
+    expect(grey(out, SPRITE_FRAMES / 2)).toBeGreaterThan(180);
+    expect(grey(out, SPRITE_FRAMES - 1)).toBeGreaterThan(180);
+    expect(readFileSync(out).length).toBeLessThan(150_000);
+    expect(readdirSync(dir).filter((f) => /^sprite\.jpg\.|\.part\./.test(f))).toEqual([]);
+  });
+
+  it("cuts an upright 10-bit clip to the same frame shape", async () => {
+    const clip = path.join(dir, "upright10.mp4");
+    ff(["-f", "lavfi", "-i", "testsrc=duration=2:size=360x640:rate=25", "-c:v", "libx264", "-pix_fmt", "yuv420p10le", clip]);
+    const out = path.join(dir, "upright-sprite.jpg");
+    await makeSprite(clip, out, 2);
+    expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
+  });
+
+  it("a clip of a second, and one whose picture ends before its sound, still get every frame", async () => {
+    const clip = path.join(dir, "short-picture.mp4");
+    ff(["-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=30", "-f", "lavfi", "-i", "sine=duration=1.5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", clip]);
+    for (const [src, length] of [[h264, (await probe(h264)).duration], [clip, (await probe(clip)).duration]] as const) {
+      const out = path.join(dir, `short-${path.basename(src)}.jpg`);
+      await makeSprite(src, out, length);
+      expect(await probe(out)).toMatchObject({ width: SPRITE_W * SPRITE_FRAMES, height: SPRITE_H });
+    }
+  });
+
+  it("refuses a clip with no length", async () => {
+    await expect(makeSprite(h264, path.join(dir, "none.jpg"), 0)).rejects.toThrow(/length/);
   });
 });

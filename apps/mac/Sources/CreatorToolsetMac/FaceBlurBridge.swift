@@ -3,13 +3,15 @@
 // FaceBlur/. Only files the page got from this app (its open panel or a drop on the window) are taken, and the covered
 // copy goes beside the original. One item is worked on at a time, off the main thread; the page polls the state.
 import AppKit
+import CryptoKit
 import Foundation
 
 /// The asks from the page; any other `faceblur:` text is answered with a problem.
 enum FaceBlurAsk: Equatable {
     enum Mode: String { case all, some }
     case hello
-    case start(files: [String], mode: Mode, look: CoverLook)
+    /// `style`: the look and its adjustments (look, strength, softness, size, color; the ones missing keep their defaults)
+    case start(files: [String], mode: Mode, style: LookPreset)
     /// the items without their face pictures (polled twice a second)
     case state(job: String)
     /// one item's faces with their pictures, read once
@@ -20,6 +22,10 @@ enum FaceBlurAsk: Equatable {
     case show(path: String)
     /// Choose files: this app's own open panel, on any server (answered by the window, Shell.swift faceBlurPick)
     case pick
+    /// A preview or a test run, written nowhere: `picture` (a JPEG or PNG as base64, the example) or `path` (a file picked
+    /// here), covered in `style`. `blur`: the faces to cover (nil = all); `facesOnly`: just the faces, no pictures of the
+    /// result (the first half of an "Only some faces" run). Answered off the main thread (Shell.swift, FaceBlurTrial).
+    case trial(picture: String?, path: String?, style: LookPreset, blur: [String]?, facesOnly: Bool)
 }
 
 func isFaceBlurAsk(_ ask: String) -> Bool { ask.hasPrefix("faceblur:") }
@@ -34,10 +40,16 @@ func faceBlurAsk(_ ask: String) -> FaceBlurAsk? {
     switch verb {
     case "hello": return rest.isEmpty ? .hello : nil
     case "start":
-        guard let files = json?["files"] as? [String], !files.isEmpty,
-              let mode = (json?["mode"] as? String).flatMap(FaceBlurAsk.Mode.init(rawValue:)),
-              let look = (json?["look"] as? String).flatMap(CoverLook.init(rawValue:)) else { return nil }
-        return .start(files: files, mode: mode, look: look)
+        guard let json, let files = json["files"] as? [String], !files.isEmpty,
+              let mode = (json["mode"] as? String).flatMap(FaceBlurAsk.Mode.init(rawValue:)),
+              let look = (json["look"] as? String).flatMap(CoverLook.init(rawValue:)) else { return nil }
+        return .start(files: files, mode: mode, style: LookPreset(look: look, values: json))
+    case "try":
+        guard let json, let look = (json["look"] as? String).flatMap(CoverLook.init(rawValue:)) else { return nil }
+        let picture = json["picture"] as? String, path = json["path"] as? String
+        guard (picture == nil) != (path == nil) else { return nil }
+        return .trial(picture: picture, path: path, style: LookPreset(look: look, values: json), blur: json["blur"] as? [String],
+                      facesOnly: json["facesOnly"] as? Bool ?? false)
     case "choose":
         guard let job = json?["job"] as? String, let path = json?["path"] as? String, let blur = json?["blur"] as? [String] else { return nil }
         let error = (json?["error"] as? String).map { String($0.prefix(300)) }.flatMap { $0.isEmpty ? nil : $0 }
@@ -98,13 +110,14 @@ final class FaceBlurJobs {
         guard let ask = faceBlurAsk(text) else { return ["problem": "This Mac app doesn't know that Face Blur ask. Update the app."] }
         switch ask {
         case .hello:
-            return ["ok": true, "version": 1]
-        case .pick:
-            // the window answers it (an open panel needs one); this is only reached with no window
-            return ["paths": [String]()]
-        case let .start(files, mode, look):
+            // 2: styles (start's adjustments) and test runs (try)
+            return ["ok": true, "version": 2]
+        case .pick, .trial:
+            // the window answers these (an open panel; work off the main thread); this is only reached with no window
+            return ["problem": "This Mac app can't do that here. Update the app."]
+        case let .start(files, mode, style):
             if let problem = Self.refusal(files, allowed: allowed) { return ["problem": problem] }
-            let job = Job(mode: mode, preset: LookPreset(look: look), files: files)
+            let job = Job(mode: mode, preset: style, files: files)
             jobs.append(job)
             let finished = jobs.filter { j in j !== job && !busy(j) }
             if finished.count > Self.keep { jobs.removeAll { j in finished.prefix(finished.count - Self.keep).contains { $0 === j } } }
@@ -235,7 +248,7 @@ final class FaceBlurJobs {
                 job.items[i].stage = .writing
                 job.items[i].note = nil
                 let out = job.items[i].out.map(URL.init(fileURLWithPath:)) ?? CoverPipeline.outputURL(for: source, kind: scan.kind)
-                try await CoverPipeline.write(scan, from: source, blur: job.items[i].blur, to: out, progress: progress)
+                try await CoverPipeline.write(scan, from: source, blur: job.items[i].blur, style: job.preset, to: out, progress: progress)
                 job.items[i].out = out.path
                 job.items[i].progress = 1
                 job.items[i].stage = .done
@@ -250,5 +263,57 @@ final class FaceBlurJobs {
         } catch {
             fail(job, i, job.cancelled || error is CancellationError ? "Stopped." : error.localizedDescription)
         }
+    }
+}
+
+/// Face Blur's previews and test runs (`faceblur:try`): the faces found and the covered result as pictures, nothing written
+/// beside the original. The last file's scan is kept, so moving a slider only draws again.
+actor FaceBlurTrial {
+    static let shared = FaceBlurTrial()
+    /// a picture sent by the page (base64) is at most this
+    static let maxPicture = 20_000_000
+    private var last: (key: String, source: URL, scan: FaceScan)?
+    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("face-blur-trial", isDirectory: true)
+
+    func answer(_ ask: FaceBlurAsk, allowed: Set<String>) async -> [String: Any] {
+        guard case let .trial(picture, path, style, blur, facesOnly) = ask else { return ["problem": "Not a test run."] }
+        do {
+            let (key, source) = try place(picture: picture, path: path, allowed: allowed)
+            let scan: FaceScan
+            if let last, last.key == key {
+                scan = last.scan
+            } else {
+                scan = try await CoverPipeline.scan(source, preset: style) { _ in }
+                if let old = last?.source, old.path.hasPrefix(folder.path), old != source { try? FileManager.default.removeItem(at: old) }
+                last = (key, source, scan)
+            }
+            let faces = scan.faces.map { ["id": $0.id, "picture": $0.picture, "note": $0.note] }
+            if facesOnly { return ["kind": scan.kind.rawValue, "faces": faces, "frames": [String]()] }
+            let chosen = blur.map(Set.init) ?? Set(scan.faces.map(\.id))
+            let frames = try await CoverPipeline.frames(scan, from: source, blur: chosen, style: style)
+            return ["kind": scan.kind.rawValue, "faces": faces, "frames": frames]
+        } catch let refused as FaceBlurAutoRefused {
+            return ["problem": refused.why]
+        } catch {
+            return ["problem": (error as? MediaError)?.localizedDescription ?? "This Mac could not try it: \(error.localizedDescription)"]
+        }
+    }
+
+    /// The file a test run reads, and a key that is the same for the same file: a picture the page sent goes in this app's
+    /// temporary folder (by its digest); a path must be one the page got from this app.
+    private func place(picture: String?, path: String?, allowed: Set<String>) throws -> (String, URL) {
+        if let path {
+            if let problem = FaceBlurJobs.refusal([path], allowed: allowed) { throw FaceBlurAutoRefused(why: problem) }
+            let modified = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            return ("\(path)\n\(modified)", URL(fileURLWithPath: path))
+        }
+        guard let picture, picture.count <= Self.maxPicture / 3 * 4, let data = Data(base64Encoded: picture) else {
+            throw FaceBlurAutoRefused(why: "That picture can't be read.")
+        }
+        let key = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("trial-\(key.prefix(16)).jpg")
+        if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url) }
+        return (key, url)
     }
 }

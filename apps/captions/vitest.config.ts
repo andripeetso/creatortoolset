@@ -25,6 +25,7 @@ const ffmpegFiles = [
   "api/library/fingerprint.test.ts",
   "api/library/library-ui.e2e.test.ts",
   "api/library/media/media.test.ts",
+  "api/library/media/place.test.ts",
   "api/library/search.test.ts",
   "api/library/shares.test.ts",
   "api/library/similar.test.ts",

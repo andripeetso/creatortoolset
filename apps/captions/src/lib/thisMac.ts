@@ -266,13 +266,22 @@ async function faceBlurAsk(ask: string): Promise<Record<string, unknown>> {
 }
 /** "ok": this Mac app covers faces; "old": a Mac app from before it could (it answers with its state); "none": a browser. */
 export async function faceBlurHere(): Promise<"ok" | "old" | "none"> {
-  if (!thisMacBridge()) return "none";
-  const r = await faceBlurAsk("faceblur:hello").catch(() => null);
-  return r?.ok === true ? "ok" : "old";
+  const v = await faceBlurVersion();
+  return v === null ? "none" : v > 0 ? "ok" : "old";
 }
-/** Starts covering these files (paths on this Mac); the job's id, or throws with the Mac's reason. */
-export async function faceBlurStart(files: string[], mode: "all" | "some", look: string): Promise<string> {
-  const r = await faceBlurAsk(`faceblur:start:${JSON.stringify({ files, mode, look })}`);
+/** What this Mac app's Face Blur can do: 1 = cover files, 2 = also styles and test runs (faceBlurTry); 0 = none (an older
+ * app); null in a browser. */
+export async function faceBlurVersion(): Promise<number | null> {
+  if (!thisMacBridge()) return null;
+  const r = await faceBlurAsk("faceblur:hello").catch(() => null);
+  return r?.ok === true ? (typeof r.version === "number" ? r.version : 1) : 0;
+}
+/** The look and its adjustments (plug-in Settings: look, strength, softness, size, color). */
+export type FaceBlurStyle = { look: string; strength: number; softness: number; size: number; color: string };
+/** Starts covering these files (paths on this Mac); the job's id, or throws with the Mac's reason. A Mac app before
+ * styles (version 1) reads only the look. */
+export async function faceBlurStart(files: string[], mode: "all" | "some", style: FaceBlurStyle): Promise<string> {
+  const r = await faceBlurAsk(`faceblur:start:${JSON.stringify({ files, mode, ...style })}`);
   if (typeof r.job !== "string") throw new Error("The Mac app did not start. Try again.");
   return r.job;
 }
@@ -296,4 +305,19 @@ export const faceBlurShow = (path: string) => faceBlurAsk(`faceblur:show:${path}
 export async function faceBlurPick(): Promise<string[] | null> {
   const r = await faceBlurAsk("faceblur:pick").catch(() => null);
   return r && Array.isArray(r.paths) ? (r.paths as string[]) : null;
+}
+/** A preview or a test run on this Mac, written nowhere. */
+export type FaceBlurTrial = { kind: "photo" | "video"; faces: { id: string; picture: string; note: string }[]; frames: string[] };
+/**
+ * The covered result as pictures (base64 JPEGs: the photo, or three moments of a video) and the faces found, for `picture`
+ * (base64, the example) or `path` (a file picked in this app), in `style`. `blur`: the faces to cover (left out = all);
+ * `facesOnly`: just the faces. Throws with the Mac's reason. Needs faceBlurVersion() ≥ 2.
+ */
+export async function faceBlurTry(
+  source: { picture: string } | { path: string },
+  style: FaceBlurStyle,
+  opts: { blur?: string[]; facesOnly?: boolean } = {},
+): Promise<FaceBlurTrial> {
+  const r = await faceBlurAsk(`faceblur:try:${JSON.stringify({ ...source, ...style, ...opts })}`);
+  return { kind: r.kind === "video" ? "video" : "photo", faces: Array.isArray(r.faces) ? (r.faces as FaceBlurTrial["faces"]) : [], frames: Array.isArray(r.frames) ? (r.frames as string[]) : [] };
 }

@@ -9,7 +9,9 @@ import { droppedOnMac } from "@/lib/thisMac";
  * Files and folders dropped anywhere on the Media Library page. A folder in the Mac app, with the server on this
  * computer (`readsFolders`), comes as its path and opens the same one dialog as Choose a folder (copy or keep, and for a
  * big one what it takes and the offer to organize it); anywhere else a folder's videos, pictures and sounds upload like files dropped one by
- * one (`addFiles`, which asks first for a big drop). Returns the page root's handlers, the drop outline and the dialog.
+ * one (`addFiles`, which asks first for a big drop); a loose file dropped in the Mac app is added where it is. Returns
+ * the page root's handlers, whether files are held over it and the dialog. A drag of the type `ignore` (the page's own
+ * clips) is not a drop of files.
  */
 
 /** The files the library takes from a folder (the server's own kinds, api/library/routes.ts kindOf; watch.ts filesIn skips the rest too). */
@@ -17,6 +19,7 @@ export const MEDIA = /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg|opus|flac|
 
 export function useLibraryDrop({
   libraryId,
+  ignore,
   readsFolders,
   offer,
   answerOffer,
@@ -25,13 +28,14 @@ export function useLibraryDrop({
   onError,
 }: {
   libraryId: string | undefined;
+  ignore?: string;
   readsFolders: boolean;
   offer: boolean;
   answerOffer: (ai: boolean) => Promise<void>;
-  addFiles: (files: File[]) => unknown;
+  addFiles: (files: File[], paths?: Map<File, string>) => unknown;
   onWatch: (w: WatchStatus) => void;
   onError: (e: string) => void;
-}): { props: { onDragOver: (e: DragEvent) => void; onDragLeave: (e: DragEvent) => void; onDrop: (e: DragEvent) => void }; overlay: ReactNode; dialog: ReactNode } {
+}): { props: { onDragOver: (e: DragEvent) => void; onDragLeave: (e: DragEvent) => void; onDrop: (e: DragEvent) => void }; dropping: boolean; dialog: ReactNode } {
   const [dropping, setDropping] = useState(false);
   const big = useBigFolder();
 
@@ -46,7 +50,7 @@ export function useLibraryDrop({
 
   const props = {
     onDragOver: (e: DragEvent) => {
-      if (!libraryId || !e.dataTransfer.types.includes("Files")) return;
+      if (!libraryId || !e.dataTransfer.types.includes("Files") || (ignore && e.dataTransfer.types.includes(ignore))) return;
       e.preventDefault();
       e.stopPropagation(); // the page's drop, not the assistant's around it
       setDropping(true);
@@ -57,23 +61,18 @@ export function useLibraryDrop({
       if (!libraryId || !e.dataTransfer.files.length) return;
       e.preventDefault();
       e.stopPropagation();
+      // takes the drop's items now: they are gone after the event
       droppedFiles(e.dataTransfer, readsFolders ? droppedOnMac : undefined).then(
         (d) => {
           for (const f of d.folders) void folderIn(f);
           // a folder opened here: only what the library takes (a loose file dropped by itself goes in as it is)
           const files = d.folder ? d.files.filter((f) => !f.webkitRelativePath.includes("/") || MEDIA.test(f.name)) : d.files;
-          if (files.length) void addFiles(files);
+          if (files.length) void addFiles(files, d.paths.size ? d.paths : undefined);
         },
         (x: unknown) => onError(x instanceof Error ? x.message : String(x)),
       );
     },
   };
 
-  const overlay = dropping && (
-    <div className="pointer-events-none fixed inset-2 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-violet-500/70 bg-violet-500/10 text-sm font-medium text-violet-400">
-      Drop videos, pictures, sounds or a folder
-    </div>
-  );
-
-  return { props, overlay, dialog: big.dialog };
+  return { props, dropping, dialog: big.dialog };
 }

@@ -37,7 +37,8 @@ export interface SettingsEntry {
 /**
  * A Settings section a plug-in adds. `group` places it inside that sidebar block (after the block's last section); with
  * no group it goes in the Plug-ins block (PLUGINS_GROUP).
- * `adminTab: true` shows it as a tab in Admin instead, after the built-in tabs (see adminTabsFor). `tool` draws it on
+ * `adminTab: true` marks a server-wide page (admins only, hosted servers only; the name is from when it was a tab in
+ * Admin): it sits in the Plug-ins block like any other. `tool` draws it on
  * that tool's page in Settings → Tools instead, under its title (see toolSectionsFor). `adminOnly` hides it from
  * everyone else.
  */
@@ -338,19 +339,19 @@ export function itemActionsFor(me: Me | null, plugins: WebPlugin[], kind: ItemKi
 
 /**
  * The built-in Settings sections with each plug-in's sidebar sections placed in them: a section with a `group` goes after
- * the last section of that group; one without goes at the end of the top block (before the first headed group). Admin
- * tabs (adminTab) are not sidebar sections and are left out (see adminTabsFor). A plug-in section may not reuse a
- * built-in id (it would hide that section): throws.
+ * the last section of that group; one without goes in the Plug-ins block at the end. A server-wide one (adminTab) is a
+ * section there too, for admins on a hosted server (nav.ts). A plug-in section may not reuse a built-in id (it would
+ * hide that section): throws.
  */
-/** The sidebar block for a plug-in's section with no group, beside the AI Editor's steps: after Connections, before
- *  People (owner, 2026-11-11: "a setting submenu for like plug-ins… this should be all grouped up"). */
+/** The sidebar block for a plug-in's section with no group, last (owner, 2026-11-11: "a setting submenu for like
+ *  plug-ins… this should be all grouped up"). */
 export const PLUGINS_GROUP = "Plug-ins";
 
 export function settingsWithPlugins<T extends SettingsEntry>(
   builtin: ReadonlyArray<T>,
   plugins: ReadonlyArray<{ settings?: PluginSettingsSection[] }>,
 ): Array<T | PluginSettingsSection> {
-  const extra = plugins.flatMap((p) => p.settings ?? []).filter((s) => !s.adminTab && !s.tool);
+  const extra = plugins.flatMap((p) => p.settings ?? []).filter((s) => !s.tool);
   for (const s of extra) {
     if (builtin.some((b) => b.id === s.id)) throw new Error(`plug-in settings section "${s.id}" is already a built-in section`);
   }
@@ -358,15 +359,11 @@ export function settingsWithPlugins<T extends SettingsEntry>(
   for (const section of extra) {
     const s = section.group ? section : { ...section, group: PLUGINS_GROUP };
     const last = out.map((x) => x.group).lastIndexOf(s.group);
-    const people = out.findIndex((x) => x.group === "People");
-    out.splice(last >= 0 ? last + 1 : s.group === PLUGINS_GROUP && people >= 0 ? people : out.length, 0, s);
+    out.splice(last >= 0 ? last + 1 : out.length, 0, s);
   }
   return out;
 }
 
-/** The Admin tabs the plug-ins add (adminTab), in plug-in order, for this account: admins only. Admin shows them after its own. */
-export const adminTabsFor = (me: { role: string } | null, plugins: WebPlugin[]): PluginSettingsSection[] =>
-  plugins.flatMap((p) => p.settings ?? []).filter((s) => s.adminTab && me?.role === "admin");
 
 /** The site frame a plug-in claims for this address, or null (the app). */
 export function siteFrameFor(hostname: string, pathname: string, search: string, plugins: WebPlugin[]): { element: ReactNode } | null {
@@ -412,7 +409,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
   for (const s of p.settings ?? []) {
     if (s.adminOnly && !admin) continue;
     if (s.adminTab) {
-      if (admin && ctx.hosted) out.push({ text: `Settings → Admin → ${s.title}`, to: `/settings/admin/${s.id}` });
+      if (admin && ctx.hosted) out.push({ text: `Settings → ${PLUGINS_GROUP}: ${s.title}`, to: `/settings/${s.id}` });
     } else out.push({ text: s.group ? `Settings → ${s.group}: ${s.title}` : `Settings: ${s.title}`, to: `/settings/${s.id}` });
   }
   for (const d of p.devices ?? []) if (!d.adminOnly || admin) {

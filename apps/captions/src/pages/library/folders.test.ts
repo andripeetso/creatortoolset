@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Collection } from "@contracts/library";
-import { foldersAt, moveOptions, moveSteps, trailOf } from "./folders";
+import { clipHref, foldersAt, moveOptions, moveSteps, trailOf } from "./folders";
 
 const f = (id: string, name: string, parentId: string | null = null, kind: Collection["kind"] = "manual"): Collection => ({ id, name, parentId, kind, createdBy: "admin" });
 const all = [
@@ -48,5 +48,10 @@ describe("Media Library folders", () => {
     expect(names(trailOf(all, "rain", false))).toEqual(["Trip", "Beach", "Rain"]);
     expect(trailOf(all, null, false)).toEqual([]);
     expect(trailOf(all, null, true)).toEqual([{ id: "trash", name: "Trash" }]);
+  });
+
+  it("a clip's link names its library only when it is not the first", () => {
+    expect(clipHref(null, "a 1")).toBe("/library?clip=a%201");
+    expect(clipHref("lib_2", "a1")).toBe("/library?clip=a1&library=lib_2");
   });
 });

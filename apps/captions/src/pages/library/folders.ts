@@ -14,6 +14,13 @@ export const holdsClips = (c: Collection) => c.kind === "manual";
 export const folderTo = (id: string | null) => (id ? `/library?f=${encodeURIComponent(id)}` : "/library");
 
 /**
+ * The in-app link to one clip, for people who can open the library: `/library?clip=<assetId>`, and `&library=<libraryId>`
+ * for a library that is not the account's first (pass null or leave it out for the first). Opening it opens the clip.
+ */
+export const clipHref = (libraryId: string | null | undefined, assetId: string) =>
+  `/library?clip=${encodeURIComponent(assetId)}${libraryId ? `&library=${encodeURIComponent(libraryId)}` : ""}`;
+
+/**
  * The folders on screen in the folder `open` (null: the top): the ones in it, or while searching every one below it whose
  * name matches. Folders first, then saved searches, each A to Z. A folder whose parent is gone shows at the top.
  */

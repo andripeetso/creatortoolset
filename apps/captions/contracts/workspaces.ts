@@ -15,6 +15,7 @@ import type { PluginGateId, Tool } from "./tools";
  *   PATCH  /api/workspace                      { name } (owner) → WorkspaceView
  *   POST   /api/workspace/invites              InviteInput (owner) → { invite, token } (token shown once; with `email`
  *                                               the link is also emailed, api/lib/mail.ts)
+ *   PATCH  /api/workspace/invites/:id          InvitePatch (owner) → WorkspaceView: what the person gets once they join
  *   DELETE /api/workspace/invites/:id          (owner)
  *   PATCH  /api/workspace/members/:username    MemberPatch (owner) → WorkspaceView
  *   DELETE /api/workspace/members/:username    (owner; the owner can't be removed)
@@ -61,7 +62,12 @@ export interface Invite {
   expiresAt: number;
   /** where the link was emailed, when it was */
   email?: string;
+  /** set before they join, given to the account when they do: apps and plug-in gates off, and reading the owner's scripts */
+  off?: (Tool | PluginGateId)[];
+  scripts?: boolean;
 }
+
+export type InvitePatch = Partial<Pick<Invite, "off" | "scripts">>;
 
 export type InviteInput = Pick<Invite, "ai" | "budgetUsd" | "email">;
 /** `off`: apps and plug-in gates switched off for the member's account; a platform admin switches a plug-in's gates. */

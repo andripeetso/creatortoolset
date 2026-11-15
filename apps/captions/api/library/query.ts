@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AssetCard, AssetKind, AssetPage, SearchQuery } from "../../contracts/library";
+import type { AssetCard, AssetKind, AssetPage, LibrarySort, SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
@@ -13,6 +13,22 @@ import { facetClauses } from "./sources";
 export const DEFAULT_LIMIT = 60;
 export const MAX_LIMIT = 200;
 export const KINDS: AssetKind[] = ["video", "image", "audio", "doc"];
+
+/**
+ * Each order as one SQL key and its direction; the id breaks ties in the same direction, and the cursor carries the key
+ * and the id of a page's last row. The same expression orders and pages, so a page never skips or repeats a clip.
+ * A clip with no length (a picture, a document, one not read yet) is last both ways; Filmed falls back to when it was added.
+ * ponytail: Name is SQLite's NOCASE ("clip 10" before "clip 2"); a numeric-aware collation if people number their clips
+ */
+const LENGTH = "json_extract(v.probe, '$.duration')";
+export const SORTS: Record<LibrarySort, { key: string; desc: boolean; text?: true }> = {
+  new: { key: "a.created_at", desc: true },
+  old: { key: "a.created_at", desc: false },
+  name: { key: "a.title COLLATE NOCASE", desc: false, text: true },
+  longest: { key: `COALESCE(NULLIF(${LENGTH}, 0), -1)`, desc: true },
+  shortest: { key: `COALESCE(NULLIF(${LENGTH}, 0), 1e15)`, desc: false },
+  filmed: { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: true },
+};
 
 /** FTS5 query: each word quoted as a prefix match, words ANDed. Null when there are no words. */
 export function ftsQuery(q: string): string | null {
@@ -64,7 +80,10 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
   return {
     ...(p.q?.trim() ? { q: p.q.trim().slice(0, 200) } : {}),
     ...(kind.length ? { kind } : {}),
-    ...(p.tag ? { tag: p.tag.slice(0, 80) } : {}),
+    ...(p.tag ? { tags: [...new Set(p.tag.split(",").map((t) => t.trim().slice(0, 80)).filter(Boolean))].slice(0, 20) } : {}),
+    ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
+    ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
+    ...(p.place && /^[A-Z]{2}$/.test(p.place) ? { place: p.place } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
@@ -74,6 +93,7 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.roll === "a" || p.roll === "b" ? { roll: p.roll } : {}),
     ...(p.versions ? { versions: p.versions.split(",").filter(Boolean).slice(0, MAX_LIMIT) } : {}),
     ...(Object.keys(picked).length ? { facets: picked } : {}),
+    ...(p.sort && p.sort in SORTS ? { sort: p.sort as LibrarySort } : {}),
     limit: Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT))),
   };
 }
@@ -81,11 +101,12 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
 export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
+  EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
   ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished,
   (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
-    ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
+    ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy sprite fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
   CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
     AND j.kind IN ('probe', 'thumb', 'wave', 'proxy') LIMIT 1) END AS failed`;
 
@@ -101,6 +122,7 @@ export interface CardRow {
   state: AssetCard["state"];
   probe: string | null;
   has_thumb: number;
+  has_sprite?: number;
   tags: string | null;
   ai_tags: string | null;
   description: string | null;
@@ -108,6 +130,24 @@ export interface CardRow {
   failed?: string | null;
   roll: AssetCard["roll"] | null;
   finished: number;
+  /** the row's value in the listing's order (buildAssetQuery), for the next page's cursor */
+  sort_key?: string | number | null;
+}
+
+/** When a clip was filmed (its probe's capturedAt), else when it was added. Through `a` only: search by meaning has no `v`. */
+const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM asset_versions fv WHERE fv.id = a.current_version_id), a.created_at)";
+
+/** Filmed in this country: the current version's probe (media/probe.ts countryOf). */
+const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions pv WHERE pv.id = a.current_version_id) = ?";
+
+/** The library's own filters as SQL on `a`, for the list and for search (search.ts): every tag picked, when it was filmed. */
+export function filterClauses(query: SearchQuery): { sql: string; params: (string | number)[] }[] {
+  return [
+    ...(query.tags ?? []).map((t) => ({ sql: "a.id IN (SELECT asset_id FROM asset_tags WHERE tag = ?)", params: [t] })),
+    ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
+    ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
+    ...(query.place ? [{ sql: PLACE, params: [query.place] }] : []),
+  ];
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -156,24 +196,33 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     where.push(f.sql);
     params.push(...f.params);
   }
-  const at = query.cursor ? cursorOf(query.cursor) : null;
+  for (const f of filterClauses(query)) {
+    where.push(f.sql);
+    params.push(...f.params);
+  }
+  const order = SORTS[query.sort ?? "new"] ?? SORTS.new;
+  const at = query.cursor ? cursorOf(query.cursor, !!order.text) : null;
   if (at) {
-    where.push("(a.created_at < ? OR (a.created_at = ? AND a.id < ?))");
-    params.push(at.createdAt, at.createdAt, at.id);
+    const cmp = order.desc ? "<" : ">";
+    where.push(`((${order.key}) ${cmp} ? OR ((${order.key}) = ? AND a.id ${cmp} ?))`);
+    params.push(at.key, at.key, at.id);
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(query.limit ?? DEFAULT_LIMIT)));
   params.push(limit + 1);
-  const sql = `SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-    WHERE ${where.join(" AND ")} ORDER BY a.created_at DESC, a.id DESC LIMIT ?`;
+  const dir = order.desc ? "DESC" : "ASC";
+  const sql = `SELECT ${CARD}, ${order.key} AS sort_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+    WHERE ${where.join(" AND ")} ORDER BY ${order.key} ${dir}, a.id ${dir} LIMIT ?`;
   return { sql, params, limit };
 }
 
-/** Cursor = "<created_at>:<id>" of the last row on a page. Ids never contain a colon. */
-export const cursorFor = (r: { created_at: number; id: string }) => `${r.created_at}:${r.id}`;
-function cursorOf(c: string): { createdAt: number; id: string } | null {
-  const i = c.indexOf(":");
-  const createdAt = Number(c.slice(0, i));
-  return i > 0 && Number.isFinite(createdAt) ? { createdAt, id: c.slice(i + 1) } : null;
+/** Cursor = "<sort value>:<id>" of the last row on a page (the value is created_at when newest first). Ids never contain a
+ *  colon, so the last colon splits it: a name may have one. */
+export const cursorFor = (r: { created_at: number; id: string; sort_key?: string | number | null }) => `${r.sort_key ?? r.created_at}:${r.id}`;
+function cursorOf(c: string, text: boolean): { key: string | number; id: string } | null {
+  const i = c.lastIndexOf(":");
+  if (i < 0) return null;
+  const key = text ? c.slice(0, i) : Number(c.slice(0, i));
+  return text || (i > 0 && Number.isFinite(key)) ? { key, id: c.slice(i + 1) } : null;
 }
 
 /** A row as the browser sees it. The probe is read field by field: GPS and other tags never leave the server. */
@@ -191,11 +240,13 @@ export function toCard(r: CardRow): AssetCard {
     ...(p.duration ? { durationS: p.duration } : {}),
     ...(p.width ? { width: p.width, height: p.height } : {}),
     ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb` } : {}),
+    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
+    ...(p.country ? { place: p.country } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
     ...(r.roll && !review ? { roll: r.roll } : {}),
     ...(r.finished || review ? { finished: true as const } : {}),

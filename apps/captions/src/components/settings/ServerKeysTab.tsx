@@ -28,12 +28,12 @@ export function ServerKeysTab() {
   if (!hosted) return null;
   if (!keys)
     return (
-      <Section title="Fallback keys">
+      <Section title="Keys for everyone on this server">
         <Card>{error ? <ErrorRow title="Couldn't load the server keys" detail={error} retry={() => void load()} /> : <LoadingRow />}</Card>
       </Section>
     );
   return (
-    <Section id="server-keys" title="Fallback keys">
+    <Section id="server-keys" title="Keys for everyone on this server">
       <Card>
         {keys.map((k) => (
           <KeyRow

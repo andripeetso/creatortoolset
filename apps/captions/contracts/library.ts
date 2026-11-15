@@ -27,20 +27,28 @@ export interface AssetCard {
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
   /** while the clip is being prepared: the step it is on (running) or waits for next (LibraryProcessing.tsx ClipStage draws it) */
-  preparing?: { step: LibraryStage["kind"] | "probe" | "wave"; running: boolean };
+  preparing?: { step: LibraryStage["kind"] | "probe" | "wave" | "sprite"; running: boolean };
   /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
   failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
   /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
   roll?: "a" | "b";
   /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
   finished?: true;
+  /** a strip of frames across the clip, side by side in one picture (videos, once made): hover scrub and the filmstrip */
+  spriteUrl?: string;
+  /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
+  place?: string;
 }
+
+/** Frames in a clip's strip (`spriteUrl`), side by side; frame i shows the middle of the clip's i-th share (api/library/media/sprite.ts). */
+export const SPRITE_FRAMES = 20;
 
 export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];
   transcript?: { provider: string; segments: { start: number; end: number; text: string }[] };
   collections: { id: string; name: string }[];
-  sourcePath?: string; // reference-mode only, shown to owner/admin only
+  /** the file on this computer (read in place, or kept on the Mac app's own server on this Mac): the admin only (search.ts sourcePathFor) */
+  sourcePath?: string;
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
 }
@@ -62,8 +70,25 @@ export interface SearchQuery {
   trashed?: boolean; // the trash instead of the library
   /** only clips in none of the person's folders (the library's top level); Finals and saved searches don't count */
   unfiled?: boolean;
+  /** the order, sorted by the server (`?sort=`): newest added first when not given */
+  sort?: LibrarySort;
+  /** only clips filmed in this country (`?place=`, ISO 3166-1 alpha-2) */
+  place?: string;
+  /** only clips with every one of these tags (`?tag=a,b`) */
+  tags?: string[];
+  /** only clips filmed from / before these times, ms (`?filmedFrom=&filmedTo=`); a clip with no filming time by when it was added. `from`/`to` stay when it was added */
+  filmedFrom?: number;
+  filmedTo?: number;
   cursor?: string;
   limit?: number; // limit ≤ 200
+}
+
+export type LibrarySort = "new" | "old" | "name" | "longest" | "shortest" | "filmed";
+
+/** GET /api/library/:id/tags */
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 export interface SearchHit {

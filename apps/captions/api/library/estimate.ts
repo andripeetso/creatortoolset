@@ -22,6 +22,7 @@ const STEP_OF: Record<string, LibraryStep> = {
   thumb: "files",
   wave: "files",
   proxy: "files",
+  sprite: "files",
   fingerprint: "files",
   transcribe: "transcript",
   describe: "describe",

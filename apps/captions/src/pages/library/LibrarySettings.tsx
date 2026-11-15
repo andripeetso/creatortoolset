@@ -9,7 +9,8 @@ import { Card, Row, Section, SettingsSelect, StatusDot } from "@/components/sett
 import type { Organize } from "@contracts/library";
 import { ORGANIZE } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
-import { clearLibrarySpace, getEstimate, getLibrarySpace, updateLibrary } from "@/lib/library";
+import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrary } from "@/lib/library";
+import { redoKinds } from "./Selection";
 import { LibraryStorageSettings } from "../LibraryStorage";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
@@ -74,6 +75,7 @@ export function LibrarySettings({
               {(saved) => open && <SpaceRows library={library} cloud={!!saved?.proxies} onChange={onChange} onError={onError} />}
             </LibraryStorageSettings>
             {open && <AiSwitches library={library} onChange={onChange} onError={onError} />}
+            {open && <RedoAll library={library} onError={onError} />}
           </div>
         </SheetContent>
       </Sheet>
@@ -219,5 +221,53 @@ function SpaceRows({ library, cloud, onChange, onError }: { library: LibrarySumm
         />
       )}
     </>
+  );
+}
+
+/**
+ * Redo for every clip: descriptions, transcripts or search data made again for the whole library, on the person's own
+ * AI. A press asks once more in its own row, saying how many clips it is, before anything runs.
+ */
+function RedoAll({ library, onError }: { library: LibrarySummary; onError: (e: string) => void }) {
+  const [asking, setAsking] = useState<{ kind: string; clips: number } | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const ask = (kind: string) =>
+    redoMany(library.id, [kind], undefined, true).then(
+      (r) => (setDone(null), setAsking({ kind, clips: r.clips })),
+      (e: unknown) => onError(message(e)),
+    );
+  const run = (kind: string) =>
+    redoMany(library.id, [kind]).then(
+      () => (setAsking(null), setDone(kind)),
+      (e: unknown) => onError(message(e)),
+    );
+  return (
+    <Section title="Redo for every clip">
+      <Card>
+        {redoKinds(library.settings).map((r) => (
+          <Row
+            key={r.kind}
+            title={r.label}
+            description={asking?.kind === r.kind ? (asking.clips === 1 ? "For 1 clip" : `For ${asking.clips} clips`) : done === r.kind ? "On its way" : null}
+            control={
+              asking?.kind === r.kind ? (
+                <div className="flex gap-1.5">
+                  <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" disabled={!asking.clips} onClick={() => void run(r.kind)}>
+                    Redo all
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => void ask(r.kind)}>
+                  Redo
+                </Button>
+              )
+            }
+          />
+        ))}
+      </Card>
+    </Section>
   );
 }

@@ -18,7 +18,9 @@ import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
 import { SOUNDS } from "../../contracts/library";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
+import { makeSprite } from "./media/sprite";
 import { probe, type ProbeSummary } from "./media/probe";
+import { placeUnplaced } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
@@ -28,7 +30,8 @@ import { organizeOnProbe } from "./organize";
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
  * the work is someone else's computer (a transcription service, the person's AI). probe runs first and queues thumb,
- * wave and, when the browser cannot play the file, proxy. A version is `ready` once its probe and its derivatives (thumb
+ * wave, when the browser cannot play the file proxy, and for a video its strip of frames (sprite, from the proxy when
+ * there is one). A version is `ready` once its probe and its derivatives (thumb
  * for video, wave) exist. Derivatives are written to scratch, then moved into the blob store.
  *
  * The order is what a person sees (nextJob): every clip in, a picture for each, then the slow steps. A lane takes its
@@ -47,7 +50,7 @@ const LEASE_S = 300;
  * ponytail: fixed sizes; per-key rate limits (429s back off and retry) would say how far an API key can go
  */
 export const LANES = [
-  { name: "files", kinds: ["probe", "thumb", "wave", "proxy", "fingerprint"], size: 1 },
+  { name: "files", kinds: ["probe", "thumb", "wave", "proxy", "sprite", "fingerprint"], size: 1 },
   { name: "transcripts", kinds: ["transcribe"], size: 4 },
   { name: "ai", kinds: ["describe", "embed"], size: 6 },
 ] as const;
@@ -56,13 +59,14 @@ export const LANES = [
 export const PICTURES = ["probe", "thumb", "wave"];
 
 /** Extras: a failure leaves the version playable. Only the files it is shown with fail it. */
-const EXTRA = new Set(["transcribe", "describe", "fingerprint", "embed"]);
+const EXTRA = new Set(["transcribe", "describe", "fingerprint", "embed", "sprite"]);
 
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
 
 interface VersionRow {
   id: string;
   library_id: string;
+  kind: string;
   source_key: string;
   source_path: string | null;
   probe: string | null;
@@ -214,12 +218,14 @@ export function startLibraryWorker(): () => void {
   let stopped = false;
   const stopCatchUp = startEmbedCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
+  void placeUnplaced(); // clips from before the country was kept, from their location tag
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {
         let busy = false;
         try {
           busy = await tick(Date.now(), lane.kinds);
+          if (!busy && lane.name === "files") busy = await backfillSprite();
         } catch (e) {
           console.error("[library] worker:", e);
         }
@@ -233,20 +239,57 @@ export function startLibraryWorker(): () => void {
   };
 }
 
+/**
+ * A video from before strips of frames gets one, once, while the files lane has nothing else to do. It runs here, not
+ * through the queue: it never counts as preparing (the library's progress, a card's step), never goes before a new
+ * clip's work, and the open pages are not told (the strip shows on the next list). A failure is kept as a failed sprite
+ * job, so it is not tried again. Music is never checked for duplicates, so a video with that check is not music. A
+ * library in a bucket backfills only from its proxies: its originals would each be a download.
+ * ponytail: one clip per idle turn of the lane, newest first; a new upload's probe waits for one strip at most
+ */
+export async function backfillSprite(): Promise<boolean> {
+  const db = libraryDb();
+  const v = db
+    .prepare(
+      `SELECT v.id, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
+       WHERE a.kind = 'video' AND a.trashed_at IS NULL AND v.state = 'ready'
+         AND (l.storage_kind = 'local' OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
+         AND EXISTS (SELECT 1 FROM jobs f WHERE f.version_id = v.id AND f.kind = 'fingerprint')
+         AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite')
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite')
+       ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
+    )
+    .get() as { id: string; library_id: string } | undefined;
+  if (!v) return false;
+  const job: JobRow = { id: 0, library_id: v.library_id, version_id: v.id, kind: "sprite", state: "running", attempts: 1, run_after: 0, lease_until: null, actor: null, error: null };
+  try {
+    await run(job);
+  } catch (e) {
+    db.prepare("INSERT OR IGNORE INTO jobs (library_id, version_id, kind, state, attempts, error) VALUES (?, ?, 'sprite', 'failed', 1, ?)").run(
+      v.library_id,
+      v.id,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  return true;
+}
+
 async function run(job: JobRow): Promise<void> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id, v.source_key, v.source_path, v.probe FROM asset_versions v
+      `SELECT v.id, a.library_id, a.kind, v.source_key, v.source_path, v.probe FROM asset_versions v
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
   if (!v) throw new Error("The version is gone");
-  const src = await blobs.localCopy(v.source_key);
+  // the original, fetched only by a step that reads it (from a bucket it is a download; a step with a lighter copy reads that)
+  let original: Promise<string> | undefined;
+  const src = () => (original ??= blobs.localCopy(v.source_key));
   const dir = scratch();
   await mkdir(dir, { recursive: true });
   const out = (ext: string) => path.join(dir, `${job.kind}-${randomUUID()}.${ext}`);
-  const keep = async (kind: "thumb" | "wave" | "proxy", file: string, key: string) => {
+  const keep = async (kind: "thumb" | "wave" | "proxy" | "sprite", file: string, key: string) => {
     const { bytes } = await blobs.put(key, file);
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, kind, key, bytes);
   };
@@ -255,13 +298,13 @@ async function run(job: JobRow): Promise<void> {
   // a clip that plays as it is would be a download of what is on this disk already
   let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
   const lighter = async () => {
-    if (p && proxiesInCloud(v.library_id) && !needsProxy(p)) return src;
+    if (p && proxiesInCloud(v.library_id) && !needsProxy(p)) return src();
     const k = (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(v.id) as { storage_key: string | null } | undefined)?.storage_key;
-    return k ? blobs.localCopy(k) : src;
+    return k ? blobs.localCopy(k) : src();
   };
 
   if (job.kind === "probe") {
-    p = await probe(src);
+    p = await probe(await src());
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
     // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
     // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
@@ -273,9 +316,12 @@ async function run(job: JobRow): Promise<void> {
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
-    if (wantsProxy(p, { cloud: proxiesInCloud(v.library_id), on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    // a photo is probed as a one-frame video but shows as itself: no proxy
+    if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id), on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
+    // a photo is probed as a one-frame video: only a video asset gets a strip
+    if (video && !music && v.kind === "video") enqueueJob(db, v.library_id, v.id, "sprite", job.actor);
     // after transcribe in the queue, so the description reads what is said
     if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
     // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
@@ -286,20 +332,25 @@ async function run(job: JobRow): Promise<void> {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
     const file = out("jpg");
-    await makeThumb(src, file, p.duration, !!p.cover);
+    await makeThumb(await src(), file, p.duration, !!p.cover);
     await keep("thumb", file, `${base}/thumb.jpg`);
   } else if (job.kind === "wave") {
     const file = out("json");
-    await makeWave(src, file, !!p.acodec);
+    await makeWave(await src(), file, !!p.acodec);
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
     const file = out("mp4");
-    await makeProxy(src, file, !!p.cover || !p.vcodec);
+    await makeProxy(await src(), file, !!p.cover || !p.vcodec);
     await keep("proxy", file, `${base}/proxy.mp4`);
+  } else if (job.kind === "sprite") {
+    // after the proxies in the lane: a 4K original's frames come from its 720p copy
+    const file = out("jpg");
+    await makeSprite(await lighter(), file, p.duration);
+    await keep("sprite", file, `${base}/sprite.jpg`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
     // the sound from the original (cut from a 4K clip in 0.2 s at most, and the lighter copy's is re-encoded); the
     // frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
-    if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
+    if (job.kind === "transcribe") await transcribeVersion(db, v.id, await src(), job.actor, dir);
     else await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
     // new words to search by meaning: embed (again) when the library has semantic search on and the actor a route for it
     if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);

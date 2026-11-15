@@ -62,6 +62,10 @@ export function savedQuery(raw: unknown): SearchQuery {
     ...(from !== undefined ? { from } : {}),
     ...(to !== undefined ? { to } : {}),
     ...(r.roll === "a" || r.roll === "b" ? { roll: r.roll } : {}),
+    ...(Array.isArray(r.tags) ? { tags: r.tags.filter((t): t is string => typeof t === "string").map((t) => t.slice(0, 80)).slice(0, 20) } : {}),
+    ...(num(r.filmedFrom) !== undefined ? { filmedFrom: num(r.filmedFrom) } : {}),
+    ...(num(r.filmedTo) !== undefined ? { filmedTo: num(r.filmedTo) } : {}),
+    ...(typeof r.place === "string" && /^[A-Z]{2}$/.test(r.place) ? { place: r.place } : {}),
   };
 }
 

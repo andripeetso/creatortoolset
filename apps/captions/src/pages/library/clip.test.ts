@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AssetCard, AssetDetail, ShareRow } from "@contracts/library";
-import { copyReady, daysLeft, factsOf, linksOf, original, playerNote } from "./clip";
+import { clipHref, copyReady, daysLeft, factsOf, linksOf, original, playerNote, tagSuggestions } from "./clip";
 
 const card: AssetCard = { id: "a1", libraryId: "l1", kind: "video", title: "Tiny Acrobatics jump", versionId: "v1", versionN: 1, tags: [], aiTags: [], state: "ready" };
 const detail = (jobs: AssetDetail["jobs"], more: Partial<AssetDetail> = {}): AssetDetail => ({ ...card, versions: [], collections: [], jobs, ...more });
@@ -60,5 +60,25 @@ describe("the clip panel's facts and share links", () => {
     });
     const all = [row("s1", "asset", "a1"), row("s2", "asset", "a2"), row("s3", "version", "v1"), row("s4", "collection", "a1")];
     expect(linksOf(all, "a1", "v1").map((s) => s.id)).toEqual(["s1", "s3"]);
+  });
+});
+
+describe("the clip's tags and link", () => {
+  const all = [
+    { tag: "handstand", count: 2 },
+    { tag: "Stand-up", count: 9 },
+    { tag: "beach", count: 5 },
+    { tag: "headstand", count: 1 },
+  ];
+
+  it("suggests the library's tags that fit what is typed and the clip lacks, those starting with it first", () => {
+    expect(tagSuggestions(all, [], "")).toEqual(["Stand-up", "beach", "handstand", "headstand"]);
+    expect(tagSuggestions(all, ["HANDSTAND"], "stand")).toEqual(["Stand-up", "headstand"]);
+    expect(tagSuggestions(all, [], "nope")).toEqual([]);
+  });
+
+  it("links to the clip in the app, naming its library unless it is the first", () => {
+    expect(clipHref("lib 2", "a1")).toBe("/library?clip=a1&library=lib%202");
+    expect(clipHref(null, "a1")).toBe("/library?clip=a1");
   });
 });

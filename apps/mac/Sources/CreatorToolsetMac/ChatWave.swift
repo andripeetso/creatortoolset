@@ -58,6 +58,8 @@ final class ChatWaveHost {
             guard let view, let wave else { return reply(true, nil) }
             drawn = reply
             waveLog.notice("new screen drawn at \(Int(wave.elapsed)) ms")
+            // (a page from before holding still has its own entrances running: the wave waits for its picture)
+            if !oldPage { wave.pageDrawn() }
             // the page has finished its own entrances by now (chat-mode.ts macWash): what it shows is the new screen. A
             // page from before that is given until 420 ms after the press, as it was then (what fades in is there by then)
             let wait = oldPage ? max(0, 420 - wave.elapsed) / 1000 : 0
@@ -198,6 +200,7 @@ struct U {
     float4 f;   // how much of the wave is left on the window (1, then down to 0 as it ends), the height its light is for
                 // (px), how far behind the front's middle a point is let go by (front widths), how wild a long hold made it
                 // (0 to 1)
+    float4 g;   // whether the picture of the new screen is here (0, up to 1 over a few frames once it is)
 };
 
 static float grain(float2 p) { return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
@@ -269,6 +272,12 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float soft = (veil * min(pull, 2.6) * exp(-r / (0.8 * reach)) * letgo + 9.0 * pt * abs(h) * (amp / (30.0 * pt)) * (0.4 + 0.6 * flash)) * still;
     // the colours split where the picture bends most
     float sp = split * (abs(slope) * amp * 0.5 + 0.12 * sucked) * still;
+    // How much of this point the pictures make: all of it ahead of the front; behind it, before the picture of the new
+    // screen has come, the page itself shows (it is the new screen by then), lit by the wave: a click's wave goes as soon
+    // as the page has drawn the new screen, not once a picture of it is taken (owner, 11-14: "it still takes time for it
+    // to switch ... it doesn't work 100% super fast")
+    float ready = u.g.x;
+    float cover = mix(ahead, 1.0, ready);
     float3 col = float3(0.0);
     // (a slight blur needs fewer taps: the window can be 6K at 120 frames a second)
     int taps = soft < 0.75 ? 1 : (soft < 6.0 ? 8 : 16);
@@ -281,9 +290,9 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
         float2 qr = (q + ns * sp) / size, qg = q / size, qb = (q - ns * sp) / size;
         float3 A = float3(was.sample(sm, qr).r, was.sample(sm, qg).g, was.sample(sm, qb).b);
         float3 B = float3(now.sample(sm, qr).r, now.sample(sm, qg).g, now.sample(sm, qb).b);
-        col += mix(B, A, ahead);
+        col += ahead * A + (1.0 - ahead) * ready * B;
     }
-    col /= float(taps);
+    col = cover > 0.001 ? col / (float(taps) * cover) : float3(0.0);
 
     // The wave as a surface of glass, lit from the button's side: a highlight where it faces the light, a shade where
     // it turns away, a sheen at its edges in the project's colour turning warm; brightest as it leaves the button.
@@ -296,29 +305,50 @@ fragment float4 waveFragment(V in [[stage_in]], constant U &u [[buffer(0)]],
     float facing = dot(N, L) - L.z;
     float rim = pow(1.0 - N.z, 3.0);
     float3 sheen = mix(mix(tint, float3(1.0), 0.55), mix(tint, float3(1.0, 0.86, 0.72), 0.5), 0.5 + 0.5 * sin(ang * 3.0 + slope * 2.0 + time * 3.0));
+    // (the same light over the page itself where no picture is: `over`, laid over it with `overA` of cover)
+    float3 over = float3(0.0);
+    float overA = 0.0;
     if (dark) {
-        col += sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * (0.25 + 0.3 * wild) * flash;
+        float3 add = sheen * (spec * 1.4 + rim * 1.2) * flash + tint * max(h, 0.0) * (0.25 + 0.3 * wild) * flash;
+        col += add;
         col *= 1.0 + facing * 0.6 * flash;
+        over += add;
     } else {
         // the shade side in the project's colour, never grey
-        col *= mix(float3(1.0), mix(tint, float3(1.0), 0.6), clamp(-min(facing, 0.0) * 0.8 * flash, 0.0, 0.35));
-        col = mix(col, float3(1.0), clamp(spec * 1.2 * flash, 0.0, 1.0));
-        col = mix(col, sheen, clamp((rim * 1.2 + max(h, 0.0) * 0.18) * flash, 0.0, 0.45));
+        float shade = clamp(-min(facing, 0.0) * 0.8 * flash, 0.0, 0.35);
+        float glint = clamp(spec * 1.2 * flash, 0.0, 1.0);
+        float sheenAt = clamp((rim * 1.2 + max(h, 0.0) * 0.18) * flash, 0.0, 0.45);
+        col *= mix(float3(1.0), mix(tint, float3(1.0), 0.6), shade);
+        col = mix(col, float3(1.0), glint);
+        col = mix(col, sheen, sheenAt);
+        over = float3(glint);
+        overA = glint;
+        over = sheen * sheenAt + (1.0 - sheenAt) * over;
+        overA = sheenAt + (1.0 - sheenAt) * overA;
     }
     // the light at the button: a white core in a halo of the project's colour
     float core = exp(-(r * r) / (2116.0 * pt * pt));
     float halo = exp(-r / (110.0 * pt));
     if (dark) {
-        col = 1.0 - (1.0 - col) * (1.0 - clamp((float3(core * 0.9) + tint * halo * 0.6) * bloom, 0.0, 1.0));
+        float3 light = clamp((float3(core * 0.9) + tint * halo * 0.6) * bloom, 0.0, 1.0);
+        col = 1.0 - (1.0 - col) * (1.0 - light);
+        over += light;
     } else {
-        col = mix(col, mix(tint, float3(1.0), 0.35), clamp(halo * 0.45 * bloom, 0.0, 1.0));
-        col = mix(col, float3(1.0), clamp(core * 0.85 * bloom, 0.0, 1.0));
+        float3 haloColour = mix(tint, float3(1.0), 0.35);
+        float kh = clamp(halo * 0.45 * bloom, 0.0, 1.0), kc = clamp(core * 0.85 * bloom, 0.0, 1.0);
+        col = mix(col, haloColour, kh);
+        col = mix(col, float3(1.0), kc);
+        over = haloColour * kh + (1.0 - kh) * over;
+        overA = kh + (1.0 - kh) * overA;
+        over = float3(kc) + (1.0 - kc) * over;
+        overA = kc + (1.0 - kc) * overA;
     }
     // a fine grain in what is out of focus, like frosted glass
     col += (grain(p + time) - 0.5) * 0.05 * clamp(soft / (8.0 * pt), 0.0, 1.0);
     // the wave's last ridges fade into the page as it ends, so it is never taken away at once
     float alpha = smoothstep(-4.6, -3.9, x) * u.f.x;
-    return float4(clamp(col, 0.0, 1.0) * alpha, alpha);
+    float3 colour = clamp(col, 0.0, 1.0) * cover + over * (1.0 - cover);
+    return float4(colour * alpha, (cover + (1.0 - cover) * overA) * alpha);
 }
 """
 
@@ -343,6 +373,8 @@ struct WaveMoment {
     var back: Float = 1.5
     /// How wild a long hold has made it (0 to 1): see `WaveClock.wild`.
     var wild: Float = 0
+    /// Whether the picture of the new screen is here (0 to 1): before it is, the page itself shows behind the front.
+    var ready: Float = 1
     var done: Bool
 }
 
@@ -491,6 +523,7 @@ final class WaveRenderer {
             SIMD4(tint.x, tint.y, tint.z, dark ? 1 : 0),
             SIMD4(m.bloom, m.seconds, m.px, m.split),
             SIMD4(m.left, m.lit, m.back, m.wild),
+            SIMD4(m.ready, 0, 0, 0),
         ]
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride * u.count, index: 0)
@@ -529,6 +562,8 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
         var started: CFTimeInterval
         var now: MTLTexture?
         var newAt: Double?
+        /// When the page said it has drawn the new screen: the front can go then, the page itself showing behind it.
+        var drawnAt: Double?
         var size = CGSize.zero, scale: CGFloat = 2
         var over = false
     }
@@ -621,6 +656,11 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
     /// Milliseconds since the wave went up.
     var elapsed: Double { (CACurrentMediaTime() - shared.withLock { $0.started }) * 1000 }
 
+    /// The page has drawn the new screen (it is on show under the wave).
+    func pageDrawn() {
+        shared.withLock { $0.drawnAt = (CACurrentMediaTime() - $0.started) * 1000 }
+    }
+
     func setNew(_ texture: MTLTexture) {
         shared.withLock {
             $0.now = texture
@@ -673,12 +713,15 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
         }
         // the button let go (a click: at once), or held so long it pops by itself
         let held = hold ? min(goAt ?? WaveClock.longest, WaveClock.longest) : 0
-        if state.newAt == nil && ms > held + wait { return end() }
-        // the front leaves then, once there is a new screen to show behind it; until then the screen goes on falling in,
-        // never held
+        let shown = state.newAt ?? state.drawnAt
+        if shown == nil && ms > held + wait { return end() }
+        // the front leaves then, once there is a new screen to show behind it (the page itself, or a picture of it); until
+        // then the screen goes on falling in, never held
         let o = CGPoint(x: origin.x * state.scale, y: origin.y * state.scale)
-        var m = WaveClock.at(ms, held: held, release: state.newAt.map { max(held, $0) }, size: state.size, origin: o, scale: state.scale)
+        var m = WaveClock.at(ms, held: held, release: shown.map { max(held, $0) }, size: state.size, origin: o, scale: state.scale)
         if m.done { return end() }
+        // the picture of the new screen, once here, comes in over a few frames
+        m.ready = state.newAt.map { Float(min(max((ms - $0) / 120, 0), 1)) } ?? 0
         // the light at the button comes up over the first frames drawn, however late the first picture was
         m.bloom *= Float(1 - pow(1 - min((ms - (shownAt ?? 0)) / 80, 1), 3))
         if m.front < -1e5 {

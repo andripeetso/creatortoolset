@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
-import { AudioLines, Quote, FileText, Image as ImageIcon, Search, Upload, Video } from "lucide-react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
+import { toast } from "sonner";
+import { Quote, Search, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { BrowseBar, NewFolderButton, TrashLink } from "@/components/browse/Bar";
@@ -8,11 +9,10 @@ import { askFolderName, askRename } from "@/components/browse/browse";
 import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Folder";
 import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
-import { byName, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
+import { persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar, MovingBar } from "@/components/LibraryProcessing";
+import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { confirmDialog } from "@/lib/dialogs";
 import {
   createCollection,
@@ -31,18 +31,31 @@ import {
   setTrashed,
   uploadFile,
   audioOf,
+  libraryZipUrl,
+  listTags,
+  redoMany,
+  updateAsset,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { pathOnMac } from "@/lib/thisMac";
-import { cn } from "@/lib/utils";
+import { undoable } from "@/lib/undo";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
-import { libraryBadges, libraryFacets } from "@/lib/library-slots";
-import { AiBadge, ClipPanel } from "./library/ClipPanel";
+import { libraryFacets } from "@/lib/library-slots";
+import { ClipPanel } from "./library/ClipPanel";
+import { AssetRow, AssetTile, clock, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
+import { alreadyThere, UploadTray, type Upload as UploadItem } from "./library/Uploads";
 import { ClipView } from "./library/ClipView";
-import { folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
+import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
+import { ClipShare } from "./library/ClipShare";
+import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
+import { ClipMenu, ClipPick, PickBar, redoKinds, saveFile, usePicks } from "./library/Selection";
 import { LibrarySettings } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { useOrganize } from "./library/Organize";
+import { anyFilter, LibraryFilterRow, withSaved } from "./library/Filters";
+import { canReveal, revealClip } from "./library/clip";
+import { ContextMenuItem } from "@/components/ui/context-menu";
+import type { LibraryFilters } from "@/lib/library";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage as a grid of 16:9 cards. An empty library
@@ -65,7 +78,6 @@ const KINDS: { value: AssetKind | "all"; label: string }[] = [
   { value: "image", label: "Images" },
   { value: "doc", label: "Documents" },
 ];
-const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio: AudioLines, image: ImageIcon, doc: FileText };
 
 /** A-roll or B-roll, as the server sorted the clip (api/library/roll.ts); finished work and unsorted clips have none. */
 type Roll = "a" | "b";
@@ -76,24 +88,12 @@ const ROLLS: { value: Roll | null; label: string }[] = [
   { value: "b", label: "B-roll" },
 ];
 
-interface Upload {
-  key: number;
-  file: File;
-  sent: number;
-  /** the manual folder open when the file was dropped: it goes in there */
-  folderId?: string;
-  status: "waiting" | "uploading" | "added" | "duplicate" | "failed";
-  error?: string;
-  inPlace?: boolean; // added where it is on this Mac, not uploaded
-  final?: boolean; // refused for good (too large for this server): no Retry
-}
 
 /** what a clip carries when it is dragged onto a folder */
 const DRAG = "application/x-ct-media-item";
-const SORTS = ["new", "name"] as const;
+const SORTS = ["new", "old", "name", "longest", "shortest", "filmed"] as const;
 const SORT_KEY = "library:sort";
 
-const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export default function LibraryPage() {
@@ -108,8 +108,12 @@ export default function LibraryPage() {
   const [kind, setKind] = useState<AssetKind | "all">("all");
   const [roll, setRoll] = useState<Roll | null>(null);
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
-  const [uploads, setUploads] = useState<Upload[]>([]);
+  const [filters, setFilters] = useState<LibraryFilters>({}); // tags, when, where (./library/Filters.tsx)
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
+  const askingPaths = useRef<Map<File, string> | undefined>(undefined); // those files' places on this Mac (a Finder drop)
+  const [sharing, setSharing] = useState<AssetCard | null>(null); // the clip whose share box is open (right-click Share…)
+  const [tags, setTags] = useState<string[]>([]); // the library's tags, most used first (Add tag)
   const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
@@ -123,6 +127,8 @@ export default function LibraryPage() {
   const sources = sourceList ?? [];
   const picker = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
+  const loading = useRef<string | null>(null); // the cursor of the page on its way
+  const loc = useLocation();
   const keys = useRef(0);
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
@@ -146,13 +152,21 @@ export default function LibraryPage() {
   const watch = watchLoad.data;
   const adding = !!watch?.folders.some((f) => f.adding > 0);
 
+  // ?clip= is the clip open (?asset= in older links), ?library= the library when not the first: Back closes the clip,
+  // Forward opens it again, a link opens it. Read from the address itself on Back and Forward too: the router's copy can
+  // stay behind while the clip's window is open
+  const clipIn = (p: URLSearchParams) => p.get("clip") ?? p.get("asset");
+  const [clipId, setClipId] = useState(() => clipIn(linked));
+  useEffect(() => setClipId(clipIn(linked)), [linked]);
   useEffect(() => {
-    const lib = linked.get("library");
-    const asset = linked.get("asset");
-    if (lib) setLibraryId(lib);
-    if (lib && asset) getAsset(lib, asset).then((a) => openClip(a), (e) => setError(message(e)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linked]);
+    const onPop = () => setClipId(clipIn(new URLSearchParams(window.location.search)));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const linkedLib = linked.get("library");
+  useEffect(() => {
+    if (linkedLib) setLibraryId(linkedLib);
+  }, [linkedLib]);
 
   useEffect(() => {
     const t = setTimeout(() => setTerm(q.trim()), 250);
@@ -161,9 +175,9 @@ export default function LibraryPage() {
 
   // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it. The top
   // level lists the clips in no folder; narrowed there (a kind, a roll, a facet), the whole library
-  const picked = kind !== "all" || !!roll || Object.values(facets).some((v) => v.length);
+  const picked = kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || anyFilter(filters);
   const folder = trash ? { trashed: true } : open ? { collectionId: open } : picked ? {} : { unfiled: true };
-  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined };
+  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined, sort, ...filters };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
   const reload = () => void first.refresh().catch((e) => setError(message(e)));
@@ -187,10 +201,9 @@ export default function LibraryPage() {
     Promise.all((["a", "b"] as const).map((r) => listAssets(libId!, { roll: r, limit: 1 }))).then((pages) => pages.some((p) => p.items.length > 0)),
   );
   const hasRoll = rollOnScreen || (askRolls && !!rolled.data);
-  // ponytail: Name orders the pages loaded so far (the server pages newest first); a server-side order when a folder
-  // holds more than a page or two
-  const shown = sort === "name" && !searching ? [...items].sort((x, y) => byName({ name: x.title }, { name: y.title })) : items;
-  const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
+  // in the sort picked, by the server (api/library/query.ts) across every page; a search keeps its own order, best first
+  const shown = items;
+  const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source || anyFilter(filters);
   const shownFolders = trash || source ? [] : foldersAt(collections, open, term);
 
   // an empty library says what it is for and the folder to choose in place of the grid: no clip in it (its folders,
@@ -233,40 +246,88 @@ export default function LibraryPage() {
       kind: kind === "all" ? saved?.kind?.[0] : kind,
       collectionId: smart ? undefined : (open ?? undefined),
       roll: roll ?? saved?.roll,
+      ...withSaved(filters, saved),
     })
       .then((r) => live && setFound(r))
       .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
     return () => void (live = false);
-  }, [libId, words, open, smart, facets, kind, roll, searching]);
+  }, [libId, words, open, smart, facets, kind, roll, searching, filters]);
 
   const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
     if (a.id.startsWith("ext_")) return;
     setStartAt(at);
     setPreview(a);
+    const p = new URLSearchParams(linked);
+    p.delete("asset");
+    p.set("clip", a.id);
+    if (libId && libId !== libraries?.[0]?.id) p.set("library", libId);
+    else p.delete("library");
+    // a clip opened over another (the window's arrows) takes its place: Back still closes the window
+    navigate({ search: `?${p}` }, clipId ? { replace: true, state: pushedHere() ? { clip: true } : null } : { state: { clip: true } });
+    setClipId(a.id);
   };
+  /** this page put the open clip in the history (Back closes it), rather than a link opening it */
+  const pushedHere = () => {
+    const h = window.history.state as { usr?: { clip?: boolean } | null } | null; // the browser's entry; a test's router has none
+    return !!(h && "usr" in h ? h.usr : (loc.state as { clip?: boolean } | null))?.clip;
+  };
+  const closeClip = () => {
+    setPreview(null);
+    setClipId(null);
+    if (pushedHere()) return void navigate(-1);
+    const p = new URLSearchParams(linked);
+    p.delete("clip");
+    p.delete("asset");
+    navigate({ search: p.size ? `?${p}` : "" }, { replace: true });
+  };
+  useEffect(() => {
+    if (!clipId) return setPreview(null);
+    const lib = linkedLib ?? libId;
+    if (!lib || preview?.id === clipId) return;
+    const known = items.find((a) => a.id === clipId);
+    if (known) return setPreview(known);
+    let live = true;
+    getAsset(lib, clipId).then(
+      (a) => live && setPreview(a),
+      (e) => live && setError(message(e)),
+    );
+    return () => void (live = false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipId, linkedLib, libId]);
 
+  // the next page as the end of the list nears (useEndOfList), one at a time
   const loadMore = () => {
-    if (!libId || !next || !pageKey) return;
+    if (!libId || !next || !pageKey || loading.current === next) return;
     const mine = ++seq.current;
-    listAssets(libId, { ...query, cursor: next })
+    const cursor = next;
+    loading.current = cursor;
+    listAssets(libId, { ...query, cursor })
       .then((page) => {
         if (mine !== seq.current) return;
         setMore({ key: pageKey, items: [...(extra?.items ?? []), ...page.items], next: page.next });
       })
       .catch((e) => {
         if (mine === seq.current) setError(message(e));
+      })
+      .finally(() => {
+        if (loading.current === cursor) loading.current = null;
       });
   };
+  const endOfList = useEndOfList(loadMore, next);
 
-  const patch = (key: number, change: Partial<Upload>) =>
+  const patch = (key: number, change: Partial<UploadItem>) =>
     setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, ...change } : u)));
 
-  const send = async (u: Upload) => {
+  const send = async (u: UploadItem) => {
     if (!libId) return;
-    patch(u.key, { status: "uploading", sent: 0, error: undefined });
     try {
-      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId);
+      const here = u.path ?? (await pathOnMac(u.file));
+      // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks too)
+      const dup = await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+      if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
+      patch(u.key, { status: "uploading", sent: 0, error: undefined });
+      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here);
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
@@ -276,21 +337,22 @@ export default function LibraryPage() {
   };
 
   // a big upload says first what preparing it takes (time, and money on whose AI and keys)
-  const addFiles = async (files: FileList | File[] | null) => {
+  const addFiles = async (files: FileList | File[] | null, paths?: Map<File, string>) => {
     if (!files?.length) return;
     const all = Array.from(files); // before the picker is cleared
-    // picked in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
-    const here = !!(await pathOnMac(all[0]!));
+    // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
+    const here = paths ? paths.size === all.length : !!(await pathOnMac(all[0]!));
     if (all.length >= BIG_DROP) {
+      askingPaths.current = paths;
       setAskingHere(here);
       setAsking(all);
-    } else start(all, here);
+    } else start(all, here, paths);
   };
 
   // one file after another: the server's disk and the phone's data are both easier on that
-  const start = (files: File[], here = false) => {
+  const start = (files: File[], here = false, paths?: Map<File, string>) => {
     const folderId = into ?? undefined;
-    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: here }));
+    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: paths ? paths.has(file) : here, path: paths?.get(file) }));
     setUploads((prev) => [...prev, ...added]);
     void (async () => {
       for (const u of added) await send(u);
@@ -305,7 +367,7 @@ export default function LibraryPage() {
     setFolders: folderList.set,
     onError: setError,
   });
-  const drop = useLibraryDrop({ libraryId: libId, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onError: setError });
+  const drop = useLibraryDrop({ libraryId: libId, ignore: DRAG, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onError: setError });
 
   const create = async () => {
     try {
@@ -347,18 +409,32 @@ export default function LibraryPage() {
     );
   };
 
-  // clips dragged onto a folder or moved from their window: into that folder, out of the one open
-  const move = async (ids: string[], to: string | null) => {
+  /** The cards the page holds, changed where they are: the first page and the pages loaded after it. */
+  const changeCards = (fix: (all: AssetCard[]) => AssetCard[]) => {
+    first.set((p) => p && { ...p, items: fix(p.items) });
+    setMore((m) => m && { ...m, items: fix(m.items) });
+  };
+
+  // clips dragged onto a folder, moved from their window, the bar or their menu: into that folder, out of the one open
+  // (`from`); Undo moves them back
+  const move = async (ids: string[], to: string | null, from: string | null = into, undo = true) => {
     if (!libId) return;
-    const step = moveSteps(into, to);
+    const step = moveSteps(from, to);
     try {
       if (step.add) await changeFolderItems(libId, step.add, ids, true);
       if (step.remove) await changeFolderItems(libId, step.remove, ids, false);
     } catch (e) {
       setError(message(e));
+      undo = false;
     }
+    // gone from this view: the folder open, or the top level's clips in no folder (a page loaded later is not read again)
+    if (undo && from === into && (into || (!open && !trash && !picked))) changeCards((all) => all.filter((x) => !ids.includes(x.id)));
     reload();
     reloadFolders();
+    if (undo) {
+      picks.clear();
+      undoable("moved", () => move(ids, from, to, false), ids.length);
+    }
   };
 
   // the search on screen at the top level, kept as a saved search that runs it again (in a folder it would not be the same)
@@ -369,7 +445,7 @@ export default function LibraryPage() {
       const c = await createCollection(libId, {
         name: term.slice(0, 80),
         kind: "smart",
-        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined },
+        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined, ...filters },
       });
       reloadFolders();
       setQ("");
@@ -395,39 +471,100 @@ export default function LibraryPage() {
       : {
           draggable: true,
           onDragStart: (e: React.DragEvent) => {
-            e.dataTransfer.setData(DRAG, a.id);
+            e.dataTransfer.setData(DRAG, carried(a).map((x) => x.id).join(","));
             e.dataTransfer.effectAllowed = "move";
           },
         };
 
-  const moveAsset = async (a: AssetCard, trash: boolean) => {
-    if (!libId) return;
-    try {
-      await setTrashed(libId, a.id, trash);
-      setPreview(null);
-      reload();
-    } catch (e) {
-      setError(message(e));
-    }
-  };
+  // several clips picked (./library/Selection.tsx): in this view only; a plug-in source's items are not picked
+  const pickable = shown.filter((a) => !a.id.startsWith("ext_"));
+  const picks = usePicks(`${pageKey}|${words}`, pickable.map((a) => a.id));
+  const pickedCards = pickable.filter((a) => picks.picked.has(a.id));
+  /** what a clip's menu or drag acts on: every picked clip when it is one of them */
+  const carried = (a: AssetCard) => (picks.picked.has(a.id) && pickedCards.length > 1 ? pickedCards : [a]);
+  useSelectAll(() => picks.set(pickable.map((a) => a.id)));
+  // Escape: the clip's window closes itself first, then the picks go, then the search
+  useEscapeSteps([() => !!pickedCards.length && (picks.clear(), true), () => !!q && (setQ(""), true)]);
+  useEffect(() => {
+    if (libId) listTags(libId).then((t) => setTags(t.map((x) => x.tag)), () => setTags([]));
+  }, [libId]);
+  const plural = (n: number) => (n === 1 ? "1 clip" : `${n} clips`);
 
-  const label = (u: Upload) =>
-    u.status === "waiting"
-      ? "Waiting"
-      : u.status === "uploading"
-      ? u.inPlace ? "Adding" : `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
-      : u.status === "added"
-        ? "Added"
-        : u.status === "duplicate"
-          ? "Already in library"
-          : "Failed";
+  // into the trash or back out; Undo takes it back. A clip the server keeps (it is in Review, or not this person's) stays
+  const trashMany = async (cards: AssetCard[], toTrash = true) => {
+    if (!libId) return;
+    const lib = libId;
+    const done = (await Promise.all(cards.map((a) => setTrashed(lib, a.id, toTrash).then(() => a.id, () => null)))).filter((x): x is string => !!x);
+    if (done.length < cards.length) setError(`${plural(cards.length - done.length)} couldn't be ${toTrash ? "moved to the trash" : "restored"}`);
+    if (!done.length) return;
+    changeCards((all) => all.filter((x) => !done.includes(x.id)));
+    picks.clear();
+    if (preview && done.includes(preview.id)) closeClip();
+    reload();
+    undoable(toTrash ? "moved to the trash" : "restored", () => Promise.all(done.map((id) => setTrashed(lib, id, !toTrash))).then(reload), done.length);
+  };
+  const tagMany = async (cards: AssetCard[], tag: string) => {
+    if (!libId) return;
+    const lib = libId;
+    const these = cards.filter((a) => !a.tags.includes(tag));
+    const done = (await Promise.all(these.map((a) => updateAsset(lib, a.id, { tags: [...a.tags, tag] }).then(() => a, () => null)))).filter((a): a is AssetCard => !!a);
+    if (done.length < these.length) setError(`${plural(these.length - done.length)} couldn't be tagged`);
+    picks.clear();
+    if (!done.length) return;
+    const show = (back: boolean) =>
+      changeCards((all) => all.map((x) => ((was) => (was ? { ...x, tags: back ? was.tags : [...was.tags, tag] } : x))(done.find((d) => d.id === x.id))));
+    show(false);
+    listTags(lib).then((t) => setTags(t.map((x) => x.tag)), () => {});
+    undoable("tagged", () => Promise.all(done.map((a) => updateAsset(lib, a.id, { tags: a.tags }))).then(() => show(true)), done.length);
+  };
+  // one clip downloads as its original, several as one zip of theirs
+  const download = (cards: AssetCard[]) =>
+    libId && saveFile(cards.length === 1 ? `/api/library/media/${cards[0]!.versionId}/source` : libraryZipUrl(libId, cards.map((a) => a.id)));
+  const redo = (cards: AssetCard[], kind: string) => {
+    if (!libId || !library) return;
+    const label = redoKinds(library.settings).find((r) => r.kind === kind)?.label ?? kind;
+    redoMany(libId, [kind], cards.map((a) => a.id)).then(
+      (r) => toast(r.clips ? `${label} are made again for ${plural(r.clips)}` : `Nothing to redo`),
+      (e) => setError(message(e)),
+    );
+    picks.clear();
+  };
+  const copyLink = (a: AssetCard) =>
+    navigator.clipboard.writeText(new URL(clipHref(libId === libraries?.[0]?.id ? null : libId, a.id), window.location.origin).href).then(
+      () => toast("Link copied"),
+      (e) => setError(message(e)),
+    );
+  // a clip's right-click menu; a plug-in source's item has none
+  const menuFor = (a: AssetCard) =>
+    a.id.startsWith("ext_") ? undefined : (
+      <ClipMenu
+        inTrash={trash}
+        moveTo={moveOptions(collections, into)}
+        tags={tags}
+        on={{
+          open: () => openClip(a),
+          share: () => setSharing(a),
+          download: () => download(carried(a)),
+          copyLink: () => void copyLink(a),
+          move: (to) => void move(carried(a).map((x) => x.id), to),
+          tag: (t) => void tagMany(carried(a), t),
+          trash: () => void trashMany(carried(a)),
+          restore: () => void trashMany(carried(a), false),
+        }}
+        extra={
+          canReveal() && libId ? (
+            <ContextMenuItem onSelect={() => void revealClip(libId, a.id).then((problem) => problem && setError(problem))}>Show in Finder</ContextMenuItem>
+          ) : undefined
+        }
+      />
+    );
+  const pickOf = (a: AssetCard) => (a.id.startsWith("ext_") ? undefined : (range: boolean) => picks.pick(a.id, range));
 
   // the Upload button's handler: the top bar's button and the first screen's second way both call it
   const chooseFiles = () => picker.current?.click();
 
   return (
     <div className="flex min-h-dvh flex-col" {...drop.props}>
-      {drop.overlay}
       {drop.dialog}
       <AppBar tool="Media Library" trail={library?.name}>
         {library && !trash && (
@@ -452,7 +589,7 @@ export default function LibraryPage() {
           onUpload={async (ai) => {
             setAsking(null);
             await organize.answerOffer(ai); // before the files: each is filed as it comes in
-            start(asking, askingHere);
+            start(asking, askingHere, askingPaths.current);
           }}
         />
       )}
@@ -508,7 +645,11 @@ export default function LibraryPage() {
                 label: "Sort clips",
                 options: [
                   { id: "new", label: "Newest" },
+                  { id: "old", label: "Oldest" },
                   { id: "name", label: "Name" },
+                  { id: "longest", label: "Longest" },
+                  { id: "shortest", label: "Shortest" },
+                  { id: "filmed", label: "Date filmed" },
                 ],
               }}
               view={{ value: view, onChange: setView }}
@@ -552,6 +693,7 @@ export default function LibraryPage() {
                   ))}
                 </div>
               )}
+              {!source && !trash && <LibraryFilterRow libraryId={library.id} value={filters} onChange={setFilters} any={!emptyView} />}
               {sources.length > 0 && (
                 <div role="group" aria-label="Sources" className="flex flex-wrap items-center gap-1.5">
                   <Button size="sm" variant={!source ? "default" : "outline"} aria-pressed={!source} onClick={() => setSource("")}>
@@ -572,36 +714,7 @@ export default function LibraryPage() {
 
             <LibraryProgressBar libraryId={library.id} />
 
-            {uploads.length > 0 && (
-              <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">{uploads.every((u) => u.inPlace) ? "Adding" : "Uploads"}</span>
-                  <Button variant="ghost" size="sm" onClick={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting"))}>
-                    Clear finished
-                  </Button>
-                </div>
-                {uploads.map((u) => (
-                  <div key={u.key} className="flex flex-col gap-1 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="truncate">{u.file.name}</span>
-                      <span className="shrink-0 text-xs text-zinc-500">{label(u)}</span>
-                    </div>
-                    {/* a file added where it is has no bytes to count: its bar moves until it is in */}
-                    {u.status === "uploading" && (u.inPlace ? <MovingBar /> : <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />)}
-                    {u.status === "failed" && (
-                      <div className="flex items-center gap-2 text-xs text-red-400">
-                        <span className="min-w-0">{u.error}</span>
-                        {!u.final && (
-                        <Button variant="outline" size="sm" onClick={() => void send(u)}>
-                          Retry
-                        </Button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </section>
-            )}
+            <UploadTray uploads={uploads} onRetry={(u) => void send(u)} onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting"))} />
 
             {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Search by meaning is getting ready.</p>}
 
@@ -633,8 +746,23 @@ export default function LibraryPage() {
                     <FolderRow key={c.id} {...folderProps(c)} />
                   ))}
                   {shown.map((a) => (
-                    <AssetRow key={a.id} asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                    <ClipPick key={a.id} row picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
+                      <AssetRow asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                    </ClipPick>
                   ))}
+                </div>
+              ) : kind === "image" ? (
+                // photos in their own proportions, folders above them
+                <div className="flex flex-col gap-3">
+                  {shownFolders.length > 0 && <FolderGrid size="small">{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />)}</FolderGrid>}
+                  <PhotoMasonry
+                    assets={shown}
+                    tile={(a) => (
+                      <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
+                        <AssetTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} ownShape />
+                      </ClipPick>
+                    )}
+                  />
                 </div>
               ) : (
                 <FolderGrid size="small">
@@ -642,7 +770,9 @@ export default function LibraryPage() {
                     <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />
                   ))}
                   {shown.map((a) => (
-                    <AssetTile key={a.id} asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                    <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
+                      <AssetTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                    </ClipPick>
                   ))}
                 </FolderGrid>
               )
@@ -666,11 +796,14 @@ export default function LibraryPage() {
 
             {firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} offer={organize.offer} onOffer={organize.answerOffer} />}
 
-            {next && (
-              <Button variant="outline" className="self-center" onClick={loadMore}>
-                Load more
-              </Button>
-            )}
+            {next &&
+              (watchesEnd() ? (
+                <div ref={endOfList} aria-hidden className="h-px" />
+              ) : (
+                <Button variant="outline" className="self-center" onClick={loadMore}>
+                  Load more
+                </Button>
+              ))}
           </>
         )}
 
@@ -679,7 +812,34 @@ export default function LibraryPage() {
         )}
       </main>
 
-      <ClipView open={preview !== null} onClose={() => setPreview(null)}>
+      {library && pickedCards.length > 0 && (
+        <PickBar
+          count={pickedCards.length}
+          inTrash={trash}
+          moveTo={moveOptions(collections, into)}
+          tags={tags}
+          redo={redoKinds(library.settings)}
+          on={{
+            download: () => download(pickedCards),
+            move: (to) => void move(pickedCards.map((a) => a.id), to),
+            tag: (t) => void tagMany(pickedCards, t),
+            trash: () => void trashMany(pickedCards),
+            restore: () => void trashMany(pickedCards, false),
+            redo: (k) => redo(pickedCards, k),
+            clear: picks.clear,
+          }}
+        />
+      )}
+      {sharing && libId && (
+        <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
+      )}
+      {drop.dropping && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center border-4 border-dashed border-violet-500/70 bg-violet-950/30">
+          <p className="rounded-xl bg-zinc-950/90 px-5 py-3 text-base font-medium text-zinc-100">Drop to add to {into && openFolder ? openFolder.name : "the library"}</p>
+        </div>
+      )}
+
+      <ClipView open={preview !== null} onClose={closeClip}>
           {preview && libId && (
             <ClipPanel
               libraryId={libId}
@@ -687,126 +847,18 @@ export default function LibraryPage() {
               startAt={startAt}
               inTrash={trash}
               moveTo={moveOptions(collections, into)}
-              onTrash={(t) => void moveAsset(preview, t)}
+              onTrash={(t) => void trashMany([preview], t)}
               onPrev={((i) => (i > 0 ? () => openClip(shown[i - 1]!) : undefined))(shown.findIndex((x) => x.id === preview.id))}
               onNext={((i) => (i >= 0 && i < shown.length - 1 ? () => openClip(shown[i + 1]!) : undefined))(shown.findIndex((x) => x.id === preview.id))}
               onMove={(id) => move([preview.id], id)}
               onSaved={(a) => {
                 setPreview(a);
-                const fix = (all: AssetCard[]) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x));
-                first.set((p) => p && { ...p, items: fix(p.items) });
-                setMore((m) => m && { ...m, items: fix(m.items) });
+                changeCards((all) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x)));
               }}
               onError={setError}
             />
           )}
       </ClipView>
     </div>
-  );
-}
-
-/** The list view's rows before its list is known, their height: nothing moves when the list arrives. */
-function RowFrame() {
-  return (
-    <div aria-hidden="true" className="flex flex-col gap-1.5">
-      {Array.from({ length: 6 }, (_, i) => (
-        <div key={i} className="h-[58px] rounded-lg border border-zinc-800 bg-zinc-900/50" />
-      ))}
-    </div>
-  );
-}
-
-/** The grid's boxes before its list is known, the size of the cards: nothing moves when the list arrives. */
-function TileFrame() {
-  return (
-    <ul aria-hidden="true" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {Array.from({ length: 8 }, (_, i) => (
-        <li key={i} className="flex flex-col gap-1.5">
-          <div className="aspect-video w-full rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20" />
-          <div className="h-5" />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * One clip. Its picture shows the moment there is one; before that a clip being prepared says so, quietly and moving
- * (never amber: amber is for what needs the person). A failed clip says why; a missing one (its drive unplugged) says so.
- */
-type Drag = { draggable: boolean; onDragStart: (e: React.DragEvent) => void };
-
-function AssetTile({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen: () => void; drag?: Drag }) {
-  const Icon = KIND_ICON[a.kind];
-  const preparing = a.state === "processing" && !a.thumbUrl;
-  return (
-    <button type="button" onClick={onOpen} data-state={a.state} {...drag} className="group flex w-full min-w-0 flex-col gap-1.5 text-left">
-      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20 transition group-hover:ring-zinc-400/60">
-        {a.thumbUrl ? (
-          <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} />
-        ) : (
-          <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1.5 text-zinc-600", preparing && "motion-safe:animate-pulse")}>
-            <Icon className="h-7 w-7" />
-            {/* the clip's own step when the server says it ("Getting its picture"), else the plain word */}
-            {preparing && (a.preparing ? <ClipStage card={a} /> : <span className="text-xs text-zinc-400">Preparing</span>)}
-          </div>
-        )}
-        {a.durationS !== undefined && (
-          <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white">
-            {clock(a.durationS)}
-          </span>
-        )}
-        {(a.state === "missing" || (a.state === "failed" && !a.failed)) && (
-          // on the picture's own dark label in both themes: white words, the colour in the dot (red failed, amber needs the person)
-          <span className="absolute left-1.5 top-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
-            <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", a.state === "failed" ? "bg-red-500" : "bg-amber-500")} />
-            {/* a failed clip whose step is known says which one under its name (ClipStage) */}
-            <span className="truncate">{a.state === "failed" ? "Couldn't read this file" : "File not found"}</span>
-          </span>
-        )}
-      </div>
-      <span className="truncate text-sm font-medium">{a.title}</span>
-      {/* the step running on this clip now, or what failed; nothing for a clip that is ready or waits its turn */}
-      {(a.thumbUrl || a.state === "failed") && <ClipStage card={a} />}
-      {libraryBadges(a).map((b) => (
-        <span key={b.label} className="w-fit rounded bg-zinc-500/20 px-1 py-px text-[10px] font-medium text-zinc-400">
-          {b.label}
-        </span>
-      ))}
-      {a.description && (
-        <span className="line-clamp-2 text-xs text-zinc-500">
-          {a.description.source === "ai" && <AiBadge />}
-          {a.description.text}
-        </span>
-      )}
-    </button>
-  );
-}
-
-/** One clip in the list view: its picture, name, the step running on it and its length, as a folder's row. */
-function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen: () => void; drag?: Drag }) {
-  const Icon = KIND_ICON[a.kind];
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      data-state={a.state}
-      {...drag}
-      className="flex w-full items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-left transition-colors hover:border-violet-500/50"
-    >
-      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950 text-zinc-600">
-        {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
-      </div>
-      <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
-      {a.state === "missing" ? (
-        <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
-          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          File not found
-        </span>
-      ) : (
-        <ClipStage card={a} className="shrink-0" />
-      )}
-      {a.durationS !== undefined && <span className="shrink-0 font-mono text-[11px] text-zinc-500">{clock(a.durationS)}</span>}
-    </button>
   );
 }

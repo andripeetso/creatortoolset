@@ -74,7 +74,7 @@ spaceApp.get("/:id/space", async (c) => {
   if (!libraryRole(c.get("user").username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const space: LibrarySpace = {
     proxies: made(libraryId, ["proxy"]),
-    pictures: made(libraryId, ["thumb", "wave"]),
+    pictures: made(libraryId, ["thumb", "wave", "sprite"]),
     models: mayClearModels() ? { bytes: await folderBytes(modelsDir()) } : null,
   };
   return c.json(space);

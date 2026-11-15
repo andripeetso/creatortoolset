@@ -19,12 +19,24 @@ different plug-in: it blurs faces inside an edit with MediaPipe.
 
 ## Settings (per account)
 
-`GET /api/x/blur-faces/settings` → `PUT` the same shape back:
+`GET /api/x/blur-faces/settings` → `PUT` the same shape back. A PUT changes only the fields it sends, so an app from
+before a field existed never resets it.
 
 ```ts
-{ mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid"; auto: boolean }
-// default { mode: "all", who: "Every child's face", look: "blur", auto: false }
+{ mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid";
+  strength: number;  // 0…1: the blur, or the mosaic's squares
+  softness: number;  // 0…1: how far the edge fades out (Solid's starts at 0, the others at 0.45)
+  size: number;      // 0.8…2: the cover against the face it covers (smaller would leave the face showing)
+  color: string;     // "#rrggbb", Solid's
+  auto: boolean }
+// default { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, softness: 0.45, size: 1,
+//           color: "#343434", auto: false }
 ```
+
+The style is the engine's (`FaceBlur/Cover.swift` `LookPreset`): the Mac app's jobs and test runs, the automatic covers
+(the device job's options carry it as text) and the iPhone app all draw with it. `GET /api/x/blur-faces/example` →
+`{ picture }`: the example picture (a base64 JPEG, a still from Tears of Steel, CC BY 3.0) Settings previews the style on
+and test runs try.
 
 `who` is used only in "some" mode. At most 500 characters.
 
@@ -63,13 +75,14 @@ On the `thisMac` handler (`src/lib/thisMac.ts`), string asks, each answered with
 
 | Ask | Answer |
 |---|---|
-| `faceblur:hello` | `{ ok: true, version: 1 }`. An older Mac app answers anything else: the page says to update the app |
-| `faceblur:start:<json>` `{ files: string[], mode, look }` (paths on this Mac) | `{ job: string }` or `{ problem }` |
+| `faceblur:hello` | `{ ok: true, version: 2 }` (1: no styles or test runs). An older Mac app answers anything else: the page says to update the app |
+| `faceblur:start:<json>` `{ files: string[], mode, look, strength?, softness?, size?, color? }` (paths on this Mac) | `{ job: string }` or `{ problem }` |
 | `faceblur:state:<job>` | `{ done: boolean, items: Item[] }`, the faces without their pictures (polled twice a second) |
 | `faceblur:faces:<json>` `{ job, path }` | `{ faces: Face[] }` with their pictures, read once per file |
 | `faceblur:choose:<json>` `{ job, path, blur: string[], error?: string }` | `{ ok: true }`: writes (again) that item with those faces covered; with `error`, ends it as failed with that sentence and writes nothing |
 | `faceblur:cancel:<job>` | `{ ok: true }` |
 | `faceblur:show:<path>` | `{ ok: true }`: shows the file in Finder (a copy a job wrote, or a file picked or dropped here) |
+| `faceblur:try:<json>` `{ picture: base64 } or { path }, look, strength?, softness?, size?, color?, blur?: string[], facesOnly?: boolean` | `{ kind, faces: [{ id, picture, note }], frames: string[] }`: a preview or a test run, written nowhere. `frames`: the covered photo, or three moments of a video (where the covered faces show), base64 JPEGs at most 1280 px; `blur` left out covers every face; `facesOnly` gives no frames (the first half of an "Only some faces" run). The last file's scan is kept, so a new style only draws again. `path` must be a file picked or dropped here |
 | `faceblur:pick` | `{ paths: string[] }`: Choose files in this app's own open panel, on whichever server the window shows (`[]` when cancelled). The picks join the files Face Blur may take. An older Mac app answers with a problem: the page then uses its file input, which gives paths only on this Mac's own server |
 
 ```ts

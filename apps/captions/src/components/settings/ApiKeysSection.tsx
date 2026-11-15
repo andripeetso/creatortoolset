@@ -7,6 +7,7 @@ import { Card, ErrorRow, LoadingRow, Section } from "./ui";
 import { KeyRow } from "./KeyRow";
 import { LocalModelRow } from "./LocalModelRow";
 import { saveMyKey, useMyKeys } from "./MyKeysSection";
+import { ServerKeysTab } from "./ServerKeysTab";
 import type { ApiKeyRowId } from "./search";
 
 const GROUPS: Array<{ id: MyKeyGroup; title: string }> = [
@@ -66,6 +67,8 @@ export function ApiKeysSection() {
   // no AI of its own yet: the Anthropic key is what the tools use. Until the setup is known, it stays hidden.
   const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
   const localModel = useAuth((s) => !s.hosted && s.me?.role === "admin");
+  // the server's own keys, for everyone on it (was Admin → Server keys): admins on a hosted server (ServerKeysTab checks hosted)
+  const serverKeys = useAuth((s) => s.me?.role === "admin");
   const reload = () => refresh().catch(() => {});
 
   if (!keys)
@@ -106,6 +109,7 @@ export function ApiKeysSection() {
           </Card>
         </Section>
       ))}
+      {serverKeys && <ServerKeysTab />}
     </>
   );
 }
