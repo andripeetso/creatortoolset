@@ -2,26 +2,33 @@ import { useEffect, useState, type ReactNode } from "react";
 import { applyS3Preset, BUNNY_REGIONS, S3_PRESETS, type BunnyRegion, type LibraryStorage, type LibraryStorageInput, type S3PresetId } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, Row, Section } from "@/components/settings/ui";
+import { Card, Section } from "@/components/settings/ui";
 import { confirmDialog } from "@/lib/dialogs";
 import { getLibraryStorage, setLibraryStorage } from "@/lib/library";
 
 /**
- * Where a library keeps its files, for its owner, in the library's settings (api/library/usage.ts): this server's disk,
+ * Where a library keeps its files, for its owner, in the library's settings (api/library/usage.ts): the server's disk,
  * the server's bucket, the library's own S3-compatible bucket (made when it doesn't exist yet), or Bunny Storage, set up
- * whole from one account key (the server makes the zones). A bucket library shows what it holds. Saved keys are
- * never shown again. `onThisComputer`: the server runs on the person's own computer, so its disk is called that. A library
- * that holds files keeps where they are: then it says where in one line, with no choice to make (an own bucket's keys
- * and region can still change). `children`: more rows of the same card (the space its made files take), given what is saved.
+ * whole from one account key (the server makes the zones). Saved keys are never shown again. `onThisComputer`: the
+ * server runs on the person's own computer, so its disk is called this Mac (or this computer). A library that holds
+ * files keeps where they are: then there is no choice to make (an own bucket's keys and region can still change).
+ * `children`: the card's rows that say where the files are (LibrarySettings SpaceRows), first, given what is saved.
  *
- * On this computer the first choice is what goes to the cloud: nothing, proxies only (one for every video, the originals
- * stay here: allowed while the library holds files), or the originals; then which bucket.
+ * On this computer the first choice is the cloud copy: none, the proxies (one for every video, the originals stay here:
+ * allowed while the library holds files), or the video files; then which bucket.
  */
 
 type Choice = "local" | "server" | "own" | "bunny";
 type Cloud = "none" | "proxies" | "originals";
 
 const gb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${(n / 1e6).toFixed(n < 10e6 ? 1 : 0)} MB`);
+
+/** What the person's own computer is called: this Mac in the Mac app or a Mac's browser, else this computer. */
+export const thisComputer = () => (typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent) ? "this Mac" : "this computer");
+
+/** A bucket by name, as the rows say it: "Bunny Storage (zone)", "the server's bucket", or the own bucket's name. */
+export const storeName = (p: Pick<LibraryStorage, "kind" | "zone" | "mode" | "bucket">) =>
+  p.kind === "bunny" ? `Bunny Storage (${p.zone})` : p.mode === "server" ? "the server's bucket" : (p.bucket ?? "the bucket");
 
 export function LibraryStorageSettings({
   libraryId,
@@ -69,7 +76,7 @@ export function LibraryStorageSettings({
           ? { kind: "s3", mode: "server", ...proxies }
           : { kind: "s3", mode: "own", ...form, accessKey: form.accessKey || undefined, secretKey: form.secretKey || undefined, ...proxies };
     if (s?.proxies && input.kind === "local") {
-      const ok = await confirmDialog({ title: "Remove the proxies from the cloud?", body: "Each is made again on this computer when a clip needs one. Your own footage is not touched.", ok: "Remove" });
+      const ok = await confirmDialog({ title: "Remove the proxies from the cloud?", body: `Each is generated again on ${thisComputer()} when a clip needs one. Your own footage is not touched.`, ok: "Remove" });
       if (!ok) return;
     }
     setBusy(true);
@@ -85,17 +92,8 @@ export function LibraryStorageSettings({
     }
   };
 
-  const disk = onThisComputer ? "This computer's disk" : "This server's disk";
-  // a bucket says what it holds; this disk is the chosen option below, said once, or the one line when it can't change
-  const store = (p: Pick<LibraryStorage, "kind" | "zone" | "mode" | "bucket">) =>
-    p.kind === "bunny" ? `Bunny Storage (${p.zone})` : p.mode === "server" ? "the server's bucket" : p.bucket;
-  const where = s?.proxies
-    ? `Proxies in ${store(s.proxies)} · ${gb(s.storedBytes ?? 0)}`
-    : s?.kind === "bunny"
-      ? `Kept in Bunny Storage (${s.zone}) · ${gb(s.storedBytes ?? 0)}`
-      : s?.kind === "s3"
-        ? `Kept in ${s.mode === "server" ? "the server's bucket" : s.bucket} · ${gb(s.storedBytes ?? 0)}`
-        : s?.locked ? `Kept on ${onThisComputer ? "this computer's" : "this server's"} disk` : "";
+  // where the files are is said by the rows (children); here only the choice
+  const disk = onThisComputer ? (thisComputer() === "this Mac" ? "This Mac" : "This computer") : "The server";
   // what can still change: everything, an own bucket's keys and region, what goes to the cloud while the originals are
   // here, or nothing
   const keepsHere = onThisComputer && s?.kind === "local";
@@ -148,17 +146,16 @@ export function LibraryStorageSettings({
   return (
     <Section title="Storage">
       <Card>
-        {where && !changeable && <Row title={where} />}
+        {typeof children === "function" ? children(s) : children}
         {/* nothing until it is known what can change, so no choice shows and then goes */}
         {changeable && (
         <div className="flex flex-col gap-3 px-3 py-3 text-sm sm:px-4">
-          {where && <p className="font-medium">{where}</p>}
           {onThisComputer && (keepsHere || !s?.locked) && (
             <div className="flex flex-wrap gap-x-5 gap-y-1">
-              <span className="text-zinc-500">Cloud</span>
-              {cloudOption("none", "Nothing")}
-              {cloudOption("proxies", "Proxies only")}
-              {cloudOption("originals", "Originals")}
+              <span className="text-zinc-500">Cloud copy</span>
+              {cloudOption("none", "No copy")}
+              {cloudOption("proxies", "Proxies")}
+              {cloudOption("originals", "Video files")}
             </div>
           )}
           {!fixed && (!onThisComputer || cloud !== "none") && (
@@ -266,7 +263,6 @@ export function LibraryStorageSettings({
         </div>
         )}
         {!changeable && error && <p className="px-3 py-3 text-sm text-red-400 sm:px-4">{error}</p>}
-        {typeof children === "function" ? children(s) : children}
       </Card>
     </Section>
   );

@@ -35,6 +35,7 @@ interface Row {
   title: string;
   source_key: string;
   source_path: string | null;
+  mac_path: string | null;
   mime: string | null;
   storage_kind: "local" | "s3" | "bunny";
 }
@@ -79,6 +80,9 @@ export async function readable(versionId: string, sourceKey: string): Promise<st
   try {
     return await blobs.localCopy(sourceKey);
   } catch (e) {
+    // indexed on a Mac (library/on-mac.ts): neither the file nor a proxy is here
+    const mac = libraryDb().prepare("SELECT mac_path FROM asset_versions WHERE id = ?").get(versionId) as { mac_path: string | null } | undefined;
+    if (mac?.mac_path) throw new Error(`${mac.mac_path} is on a Mac and was not uploaded, so this server can't read it. Turn on Upload video files to the server in the Media Library's settings and add it again`);
     const proxy = libraryDb().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as
       | { storage_key: string | null }
       | undefined;
@@ -103,7 +107,7 @@ export interface MediaPaths {
  */
 export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Record<string, TimelineSource>, zip = false): Promise<MediaPaths> {
   const q = libraryDb().prepare(
-    `SELECT v.id, a.title, v.source_key, v.source_path, v.mime, l.storage_kind FROM asset_versions v
+    `SELECT v.id, a.title, v.source_key, v.source_path, v.mac_path, v.mime, l.storage_kind FROM asset_versions v
      JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`,
   );
   // the edit's footage first, in the order picked, so its names never change; then the clips only the cut names
@@ -122,6 +126,11 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
   for (const r of rows.filter((x) => keys.includes(x.id))) {
     const name = names[r.id]!;
     // a bucket or Bunny zone that signs links: the worker downloads the file itself
+    // a file indexed on a Mac: the timeline names it where it is there, for the editor on that Mac
+    if (r.mac_path) {
+      out.files[r.id] = r.mac_path;
+      continue;
+    }
     const at = r.storage_kind === "local" ? null : await blobs.locate(r.source_key, LINK_TTL_S, { download: name });
     if (at?.kind === "url") {
       out.files[r.id] = `media/${name}`;

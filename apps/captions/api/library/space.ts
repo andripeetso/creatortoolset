@@ -40,6 +40,21 @@ function made(libraryId: string, kinds: string[]): { bytes: number; files: numbe
 }
 
 /**
+ * Where the library's videos are, one row each (its current version, trashed ones left out): indexed on a Mac
+ * (on-mac.ts), read in place from a folder on this server's computer, or stored by this server (its disk or bucket).
+ */
+function videosOf(libraryId: string): LibrarySpace["videos"] {
+  const r = libraryDb()
+    .prepare(
+      `SELECT COALESCE(SUM(v.mac_path IS NOT NULL), 0) AS on_mac, COALESCE(SUM(v.mac_path IS NULL AND v.source_path IS NOT NULL), 0) AS in_place,
+         COALESCE(SUM(v.mac_path IS NULL AND v.source_path IS NULL), 0) AS stored, COALESCE(SUM(CASE WHEN v.mac_path IS NULL AND v.source_path IS NULL THEN v.bytes END), 0) AS bytes
+       FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL`,
+    )
+    .get(libraryId) as { on_mac: number; in_place: number; stored: number; bytes: number };
+  return { onMac: r.on_mac, inPlace: r.in_place, stored: { files: r.stored, bytes: r.bytes } };
+}
+
+/**
  * Deletes the library's proxies and forgets them, so each is made again when it is wanted. A clip being prepared keeps
  * its proxy (a step may be reading it right now), unless `all`: the proxies move to another place, and one left behind
  * would point where the routing no longer looks (db.ts storeOf).
@@ -73,6 +88,7 @@ spaceApp.get("/:id/space", async (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(c.get("user").username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const space: LibrarySpace = {
+    videos: videosOf(libraryId),
     proxies: made(libraryId, ["proxy"]),
     pictures: made(libraryId, ["thumb", "wave", "sprite"]),
     models: mayClearModels() ? { bytes: await folderBytes(modelsDir()) } : null,

@@ -3,6 +3,7 @@ import type { AssetCard, AssetKind, AssetPage, LibrarySort, SearchQuery } from "
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
+import { deviceOf } from "../lib/devices";
 
 /**
  * Asset listing for the library (tasks/media-library-plan.md, sections 6 and 8): one SQL statement from a
@@ -105,7 +106,7 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
-  ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished, v.source_path IS NOT NULL AS in_place,
+  ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished, v.source_path IS NOT NULL OR v.mac_path IS NOT NULL AS in_place, v.mac_path AS mac_path, v.mac_device AS mac_device,
   (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
     ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy sprite fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
   CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
@@ -132,6 +133,8 @@ export interface CardRow {
   roll: AssetCard["roll"] | null;
   finished: number;
   in_place: number;
+  mac_path?: string | null;
+  mac_device?: string | null;
   /** the row's value in the listing's order (buildAssetQuery), for the next page's cursor */
   sort_key?: string | number | null;
 }
@@ -230,6 +233,13 @@ function cursorOf(c: string, text: boolean): { key: string | number; id: string 
   return text || (i > 0 && Number.isFinite(key)) ? { key, id: c.slice(i + 1) } : null;
 }
 
+/** Where a Mac-held file is, for its card: the drive's name for one under /Volumes, else the Mac's name. */
+export function macPlace(macPath: string, device: string | null): string {
+  const m = /^\/Volumes\/([^/]+)\//.exec(macPath);
+  if (m) return m[1]!;
+  return (device && deviceOf(device)?.name) || "Mac";
+}
+
 /** A row as the browser sees it. The probe is read field by field: GPS and other tags never leave the server. */
 export function toCard(r: CardRow): AssetCard {
   const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
@@ -256,6 +266,7 @@ export function toCard(r: CardRow): AssetCard {
     ...(r.roll && !review ? { roll: r.roll } : {}),
     ...(r.finished || review ? { finished: true as const } : {}),
     ...(r.in_place ? { onComputer: true as const } : {}),
+    ...(r.mac_path ? { onMac: macPlace(r.mac_path, r.mac_device ?? null) } : {}),
     ...(review ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
     ...(r.preparing ? { preparing: { step: r.preparing.split("\x1f")[0] as NonNullable<AssetCard["preparing"]>["step"], running: r.preparing.endsWith("running") } } : {}),
     ...(r.failed ? { failed: { step: r.failed.split("\x1f")[0] as NonNullable<AssetCard["failed"]>["step"], error: r.failed.split("\x1f")[1] ?? "" } } : {}),

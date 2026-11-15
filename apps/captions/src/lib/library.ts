@@ -23,6 +23,7 @@ import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { pathOnMac } from "@/lib/thisMac";
+import { indexOnMac } from "@/lib/onMac";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -287,49 +288,73 @@ export async function uploadFile(
   collectionId?: string,
   /** where the file is on this Mac, when the page knows it already (a Finder drop) */
   knownPath?: string,
+  /**
+   * `signal`: Cancel; the upload stops, what reached the server is deleted, and it never resumes by itself.
+   * `onMac`: the Mac app with a server elsewhere and uploading off: the file is indexed where it is (lib/onMac.ts) and
+   * no byte of it is sent; with no known path it is refused, never uploaded.
+   */
+  opts: { signal?: AbortSignal; onMac?: boolean } = {},
 ): Promise<UploadResult> {
+  const { signal, onMac } = opts;
   const where = knownPath ?? (await pathOnMac(file));
   if (where) {
     onProgress(0, true);
     const kept = await addInPlace(libraryId, where, file.size, collectionId);
     if (kept) return kept;
+    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal);
     onProgress(0, false);
   }
+  if (onMac) throw new NotUploaded("Not added: where it is on this Mac is unknown. Drop it from Finder");
+  signal?.throwIfAborted();
   const init = await fetch(`/api/library/${libraryId}/uploads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ filename: file.name, size: file.size, collectionId }),
+    signal,
   }).then((r) => json<{ id: string; offset: number; chunkSize: number; direct?: { partSize: number; urls: string[] } }>(r));
   const url = `/api/library/uploads/${init.id}`;
-  if (init.direct) {
-    // a bucket library: the parts go straight to the bucket, then the server joins them from their ETags
-    const parts = await putDirect(file, init.direct, onProgress);
-    return json<UploadResult>(
-      await fetch(`${url}/finish`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ parts }) }),
-    );
-  }
-  let offset = init.offset;
-  let failures = 0;
-  while (offset < file.size) {
-    try {
-      const r = await fetch(url, {
-        method: "PATCH",
-        headers: { "upload-offset": String(offset) },
-        body: file.slice(offset, Math.min(file.size, offset + init.chunkSize)),
-      });
-      if (r.status === 409) offset = ((await r.json()) as { offset: number }).offset;
-      else if (r.ok) offset = Number(r.headers.get("upload-offset"));
-      else throw new Error(`Upload failed (${r.status})`);
-      failures = 0;
-    } catch (e) {
-      if (++failures > 5) throw e;
-      await pause(1000 * failures);
-      const held = (await fetch(url, { method: "HEAD" })).headers.get("upload-offset");
-      if (held !== null) offset = Number(held);
+  // cancelled: the server drops what it has (DELETE), so nothing picks it up again
+  const drop = () => void fetch(url, { method: "DELETE" }).catch(() => {});
+  signal?.addEventListener("abort", drop, { once: true });
+  try {
+    if (init.direct) {
+      // a bucket library: the parts go straight to the bucket, then the server joins them from their ETags
+      const parts = await putDirect(file, init.direct, onProgress, signal);
+      return json<UploadResult>(
+        await fetch(`${url}/finish`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ parts }), signal }),
+      );
     }
-    onProgress(offset);
+    let offset = init.offset;
+    let failures = 0;
+    while (offset < file.size) {
+      try {
+        const r = await fetch(url, {
+          method: "PATCH",
+          headers: { "upload-offset": String(offset) },
+          body: file.slice(offset, Math.min(file.size, offset + init.chunkSize)),
+          signal,
+        });
+        if (r.status === 409) offset = ((await r.json()) as { offset: number }).offset;
+        else if (r.ok) offset = Number(r.headers.get("upload-offset"));
+        else throw new Error(`Upload failed (${r.status})`);
+        failures = 0;
+      } catch (e) {
+        if (signal?.aborted || ++failures > 5) throw e;
+        await pause(1000 * failures);
+        const held = (await fetch(url, { method: "HEAD", signal })).headers.get("upload-offset");
+        if (held !== null) offset = Number(held);
+      }
+      onProgress(offset);
+    }
+    return json<UploadResult>(await fetch(`${url}/finish`, { method: "POST", signal }));
+  } finally {
+    signal?.removeEventListener("abort", drop);
   }
-  return json<UploadResult>(await fetch(`${url}/finish`, { method: "POST" }));
+}
+
+/** A file the Mac app would have had to upload while uploading is off: it is not added. */
+export class NotUploaded extends Error {
+  readonly code = "not_uploaded";
 }
 
 /*

@@ -36,6 +36,8 @@ export interface AssetCard {
   finished?: true;
   /** its file is read in place from a folder on a computer (never copied in): Show in Finder can find it there */
   onComputer?: true;
+  /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
+  onMac?: string;
   /** a strip of frames across the clip, side by side in one picture (videos, once made): hover scrub and the filmstrip */
   spriteUrl?: string;
   /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
@@ -111,6 +113,8 @@ export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+  /** a file added in the Mac app, for a server not on that Mac, uploads; off (the default): it is indexed where it is on the Mac */
+  upload: boolean;
   /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
   organize?: Organize;
   /** a big folder came in and the AI organizing was offered (once, either answer) */
@@ -136,6 +140,8 @@ export const DEFAULT_FOLDERS: readonly { name: string; roll?: "a" | "b" }[] = [
 
 /** GET /api/library/:id/space: what the library's own made files take (the person's own files are not in it). */
 export interface LibrarySpace {
+  /** the library's videos by where their files are: on a Mac (indexed there), read in place on this server's computer, stored by this server */
+  videos: { onMac: number; inPlace: number; stored: { bytes: number; files: number } };
   proxies: { bytes: number; files: number };
   /** the cards' pictures and sound pictures: made at once again, so they are said, not cleared */
   pictures: { bytes: number; files: number };

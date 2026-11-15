@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
+import { dropMacFrames } from "./on-mac";
 
 /**
  * The library's trash purge (tasks/media-library-plan.md, section 5): an asset trashed longer than LIBRARY_TRASH_DAYS
@@ -97,7 +98,9 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   }
   // ponytail: files outlive their rows if the process dies here (orphans, no harm), and empty v/<id>/ folders stay;
   // a sweep of unreferenced keys if the disk ever needs it
-  for (const k of keys) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
+  // a file indexed on a Mac (on-mac.ts) has no blob here: "mac:<id>" names nothing to delete, and its stills go
+  for (const k of keys) if (!k.startsWith("mac:")) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
+  for (const k of keys) if (k.startsWith("mac:")) await dropMacFrames(k.slice(4));
 }
 
 /** Runs the purge now and every hour. */

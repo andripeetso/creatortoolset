@@ -84,10 +84,11 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
 export function sourcePathFor(libraryId: string, versionId: string, user: Pick<SessionUser, "role"> | undefined): string | undefined {
   if (user?.role !== "admin") return undefined;
   const v = db()
-    .prepare("SELECT v.source_key, v.source_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
-    .get(versionId, libraryId) as { source_key: string; source_path: string | null; storage_kind: string } | undefined;
+    .prepare("SELECT v.source_key, v.source_path, v.mac_path, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.library_id = ?")
+    .get(versionId, libraryId) as { source_key: string; source_path: string | null; mac_path: string | null; storage_kind: string } | undefined;
   if (!v) return undefined;
-  if (v.source_path) return v.source_path;
+  // a file indexed on a Mac: its path there (Show in Finder finds it on that Mac)
+  if (v.source_path || v.mac_path) return v.source_path ?? v.mac_path!;
   if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return undefined;
   const file = path.join(env.dataDir, "library", "blobs", ...keyParts(v.source_key)); // the local store's layout (storage/local.ts)
   return existsSync(file) ? file : undefined;

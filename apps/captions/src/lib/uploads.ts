@@ -27,9 +27,13 @@ export function xhrSend(
   headers: Record<string, string>,
   body: Blob,
   onProgress: (loaded: number) => void,
+  /** cancels for good: rejects with the signal's reason, never retried */
+  signal?: AbortSignal,
 ): Promise<XMLHttpRequest> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
     const xhr = new XMLHttpRequest();
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.open(method, url);
     xhr.responseType = "json";
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
@@ -55,7 +59,7 @@ export function xhrSend(
     };
     xhr.onabort = () => {
       window.clearTimeout(stallTimer);
-      reject(new Error("Part upload stalled — retrying"));
+      reject(signal?.aborted ? signal.reason : new Error("Part upload stalled — retrying"));
     };
     xhr.send(body);
   });
@@ -91,6 +95,7 @@ export async function putDirect(
   file: Blob,
   direct: { partSize: number; urls: string[] },
   onProgress: (sent: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ number: number; etag: string }[]> {
   const sent = new Map<number, number>();
   const etags: { number: number; etag: string }[] = [];
@@ -107,7 +112,7 @@ export async function putDirect(
           const xhr = await xhrSend("PUT", direct.urls[n - 1]!, {}, chunk, (loaded) => {
             sent.set(n, loaded);
             report();
-          });
+          }, signal);
           const etag = xhr.getResponseHeader("ETag");
           if (!etag) throw new Error("The bucket did not return an ETag: its CORS setting must expose ETag");
           etags.push({ number: n, etag });
@@ -116,6 +121,7 @@ export async function putDirect(
           lastError = null;
           break;
         } catch (error) {
+          if (signal?.aborted) throw error;
           lastError = error;
           sent.delete(n);
           report();

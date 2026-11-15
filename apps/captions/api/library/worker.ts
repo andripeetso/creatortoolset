@@ -26,6 +26,7 @@ import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortUnsorted } from "./roll";
 import { organizeOnProbe } from "./organize";
+import { dropMacFrames, macFrames } from "./on-mac";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -70,6 +71,7 @@ interface VersionRow {
   source_key: string;
   source_path: string | null;
   probe: string | null;
+  mac_path: string | null;
 }
 
 /** Seconds a describe should wait before it tries again, or 0 when its error is a real failure. */
@@ -278,11 +280,24 @@ async function run(job: JobRow): Promise<void> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id, a.kind, v.source_key, v.source_path, v.probe FROM asset_versions v
+      `SELECT v.id, a.library_id, a.kind, v.source_key, v.source_path, v.probe, v.mac_path FROM asset_versions v
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
   if (!v) throw new Error("The version is gone");
+  // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
+  // sent run here (the description from its stills, search by meaning from words)
+  if (v.mac_path) {
+    if (job.kind === "embed") return embedVersion(db, v.id, job.actor);
+    if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
+    const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
+    const frames = await macFrames(v.id);
+    if (!frames.length) throw new Error("The stills from the Mac are gone: add the file again from the Mac app");
+    await describeVersion(db, v.id, "", p?.duration ?? 0, job.actor, scratch(), frames);
+    await dropMacFrames(v.id);
+    if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+    return;
+  }
   // the original, fetched only by a step that reads it (from a bucket it is a download; a step with a lighter copy reads that)
   let original: Promise<string> | undefined;
   const src = () => (original ??= blobs.localCopy(v.source_key));

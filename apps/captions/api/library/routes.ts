@@ -30,6 +30,7 @@ import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
+import { indexOnMac, parseOnMac } from "./on-mac";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -279,16 +280,18 @@ async function sweepStale(): Promise<void> {
   const stale = db()
     .prepare("SELECT id, library_id, staging_path, direct_upload_id FROM uploads WHERE state = 'open' AND expires_at < ?")
     .all(Date.now()) as { id: string; library_id: string; staging_path: string; direct_upload_id: string | null }[];
-  for (const r of stale) {
-    if (busy.has(r.id)) continue;
-    if (r.direct_upload_id) {
-      // a bucket that is no longer set up must not stop every new upload: its parts are left for the bucket to expire
-      try {
-        await libraryStore(r.library_id).direct?.abort(sourceKeyOf(r.library_id, r.id), r.direct_upload_id);
-      } catch {}
-    } else await rm(r.staging_path, { force: true });
-    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(r.id);
-  }
+  for (const r of stale) if (!busy.has(r.id)) await dropUpload(r);
+}
+
+/** An open upload given up: its staged bytes or its bucket parts go, and it can't be resumed. */
+async function dropUpload(r: { id: string; library_id: string; staging_path: string; direct_upload_id: string | null }): Promise<void> {
+  if (r.direct_upload_id) {
+    // a bucket that is no longer set up must not stop every new upload: its parts are left for the bucket to expire
+    try {
+      await libraryStore(r.library_id).direct?.abort(sourceKeyOf(r.library_id, r.id), r.direct_upload_id);
+    } catch {}
+  } else await rm(r.staging_path, { force: true });
+  db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(r.id);
 }
 
 /** The bucket key of a library's file for one version (the same key the local store uses). */
@@ -509,6 +512,25 @@ libraryApp.post("/:id/in-place", async (c) => {
   return c.json({ duplicateOf: v.id });
 });
 
+/**
+ * POST /api/library/:id/on-mac OnMacIndex → { assetId, versionId } | { duplicateOf }. A file on the caller's Mac, for a
+ * server that is not on it (the Mac app's drop): indexed where it is, with what the Mac made; its bytes never come here
+ * (on-mac.ts). Any member may add, as with an upload; a manual folder or the A-roll folder may take it.
+ */
+libraryApp.post("/:id/on-mac", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const x = parseOnMac(await c.req.json().catch(() => null));
+  if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
+  if (x.collectionId) {
+    const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(x.collectionId, libraryId) as { kind: string } | undefined;
+    if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+  }
+  return c.json(await indexOnMac(libraryId, user.username, x));
+});
+
 // HEAD /api/library/uploads/:uploadId → Upload-Offset: what is on disk. Hono sends HEAD through GET, so this is a GET
 // route (the body is empty for HEAD).
 libraryApp.get("/uploads/:uploadId", async (c) => {
@@ -517,6 +539,15 @@ libraryApp.get("/uploads/:uploadId", async (c) => {
   if (!row || received === -1) return c.body(null, 404);
   c.header("Upload-Offset", String(received));
   return c.body(null, 200);
+});
+
+// DELETE /api/library/uploads/:uploadId → 204: a cancelled upload; what reached the server goes now, not in STAGE_DAYS
+libraryApp.delete("/uploads/:uploadId", async (c) => {
+  const row = ownUpload(c);
+  if (!row || row.state !== "open") return c.json({ error: "Not found", code: "not_found" }, 404);
+  // a chunk still being written ends with the connection the page closed; the file goes either way
+  await dropUpload(row);
+  return c.body(null, 204);
 });
 
 // PATCH /api/library/uploads/:uploadId, Upload-Offset: n, body from n → 204 Upload-Offset | 409 { offset }
@@ -631,6 +662,7 @@ const settingsOf = (json: string): LibrarySettings => {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
+    upload: s.upload ?? SETTING_DEFAULTS.upload,
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
   };
@@ -654,7 +686,7 @@ libraryApp.get("/:id/progress", async (c) => {
   return c.json(await progress(libraryId, user.username));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" or "ai" makes the default folders it is missing (organize.ts); "ai" turns the descriptions on, since
 // a video is filed by its description
@@ -667,7 +699,7 @@ libraryApp.patch("/:id", async (c) => {
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 80) : "";
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
-  for (const key of ["describe", "embed", "proxy"] as const) {
+  for (const key of ["describe", "embed", "proxy", "upload"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(String(on), libraryId);
   }
