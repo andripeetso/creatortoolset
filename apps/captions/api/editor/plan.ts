@@ -953,12 +953,13 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   // the song is what is heard, not footage to cut
   if (song) index.sources = index.sources.filter((s) => s.id !== song.id || pictured(s));
   // what is seen in each shot and across the footage, from the person's own AI looking at contact sheets (asked once per footage)
-  index = await describeShots(index, { actor: job.actor!, story: true }, signal);
+  const workspace = await workspaceSetup(edit);
+  index = await describeShots(index, { actor: job.actor!, story: true, workspace }, signal);
   if (signal.aborted) return;
   const size = frameOf(edit, index);
   const gen = styles();
   const genIds = gen.map((g) => g.id);
-  const setup = [await workspaceSetup(edit), styleBlock(edit.style)].filter(Boolean).join("\n\n");
+  const setup = [workspace, styleBlock(edit.style)].filter(Boolean).join("\n\n");
   const packText = [await packInstructions(job.actor!, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const { system, user } = planPrompt({ brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText });
   let raws: Record<string, unknown>[];

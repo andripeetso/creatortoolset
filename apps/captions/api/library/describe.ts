@@ -6,7 +6,11 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS } from "../lib/mac-claude";
 import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
-import { findUser } from "../users";
+import { findUser, listUsers, LOCAL_USER, type SessionUser } from "../users";
+import { projectOf } from "../lib/project-of";
+import { ownedProjects } from "../lib/workshop/workspace";
+import { renderInstructions } from "../lib/workshop/prompt";
+import { homeOf } from "./access";
 import { transcriptExcerpt } from "./attach";
 import { ffmpegTo } from "./media/run";
 import { indexAsset } from "./query";
@@ -33,6 +37,8 @@ export interface DescribeInput {
   title: string;
   transcript?: string;
   frames: number;
+  /** the workspace the clip is in (its instructions: what the brand, product or game is), so the AI can name what it sees */
+  workspace?: string;
   /** the library's plain folders, when the AI organizes it (organize.ts): the answer names the one the clip fits */
   folders?: string[];
 }
@@ -53,6 +59,9 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       "the setting, what happens, objects, shot type and mood. Never say who anyone is: no names, no guessed ages, no " +
       'identities; "a person" or "people" is enough. Answer with JSON only.',
     user: [
+      ...(input.workspace
+        ? [`The workspace this clip belongs to. Use it to name what is seen (the product, the game, its places and features) when the frames show it; never add what they don't show:\n${input.workspace}`]
+        : []),
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
@@ -77,6 +86,29 @@ export function parseDescribe(text: string): Described {
     : [];
   const folder = typeof o.folder === "string" ? o.folder.trim() : "";
   return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}) };
+}
+
+/** Most of a workspace's instructions a description carries: it rides every clip's call. */
+export const WORKSPACE_MAX = 4000;
+
+/**
+ * The instructions of the workspace a version's library is in (Settings: name, audience, voice, CTA, instructions), cut
+ * to WORKSPACE_MAX, or "" when the library's owner has no workspace. A library from before workspaces is the first brand's.
+ */
+export async function workspaceOf(db: DatabaseSync, versionId: string): Promise<string> {
+  const row = db
+    .prepare(
+      "SELECT l.workspace_id AS home, json_extract(l.settings, '$.projectId') AS ws FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?",
+    )
+    .get(versionId) as { home: string; ws: string | null } | undefined;
+  if (!row) return "";
+  const owner = [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === row.home) ?? row.home;
+  const of = await projectOf({ username: owner } as SessionUser);
+  if (!of) return "";
+  const id = of(row.ws ?? undefined);
+  const p = (await ownedProjects(owner)).find((x) => x.id === id);
+  // ponytail: a cut, not a pick; knowledge files are left out (they would ride every clip), load the matching ones if he asks
+  return p ? renderInstructions(p).slice(0, WORKSPACE_MAX) : "";
 }
 
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */
@@ -153,8 +185,10 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
     const filing = toFile(db, versionId);
     const folders = filing ? plainFolders(db, filing.library_id) : [];
+    const workspace = await workspaceOf(db, versionId);
     const { system, user } = describePrompt({
       title,
+      ...(workspace ? { workspace } : {}),
       frames: images.length,
       ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
       ...(folders.length ? { folders } : {}),

@@ -327,13 +327,16 @@ export function parseLooked(text: string): Looked {
 
 const RULE = 'Never say who anyone is: no names, no guessed ages, no identities; "a person" or "people" is enough.';
 
-export function lookPrompt(lines: string[], story: boolean): { system: string; user: string } {
+export function lookPrompt(lines: string[], story: boolean, workspace = ""): { system: string; user: string } {
   return {
     system:
       "You look at contact sheets of footage for a video editor, so it can pick shots without watching them. For each numbered " +
       "shot say in a few words what is seen: the subject, the action, the setting and the kind of shot (wide, close, screen, text). " +
       `${RULE} Answer with JSON only.`,
     user: [
+      ...(workspace
+        ? [`The workspace the footage is for. Use it to name what is seen (the product, the game, its places and features) when the pictures show it; never add what they don't show:\n${workspace}`]
+        : []),
       ...lines,
       story
         ? 'Answer as {"shots": {"1": "a few words", "2": "…"}, "story": "what happens across all of the footage, in order, told from the pictures alone, in a few sentences"}'
@@ -348,7 +351,7 @@ export function lookPrompt(lines: string[], story: boolean): { system: string; u
  * one-shot source the library has described already takes the library's words with no call. What was said is kept
  * with the source's cached index, so a second edit of the same footage asks nothing.
  */
-export async function describeShots(index: FootageIndex, ai: { actor: string; story?: boolean }, signal: AbortSignal): Promise<FootageIndex> {
+export async function describeShots(index: FootageIndex, ai: { actor: string; story?: boolean; workspace?: string }, signal: AbortSignal): Promise<FootageIndex> {
   const who = whoFor(ai.actor);
   const route = aiFor(who, "editor", LABEL);
   if (route.off) throw new NeedsKey(route.off);
@@ -405,7 +408,7 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
         const before = sources.flatMap((s) => s.shots.filter((x) => x.desc).map((x) => `${s.title} ${clock(x.a)}: ${x.desc}`));
         if (before.length) lines.push(`Already described elsewhere in the footage:\n${before.slice(0, 300).join("\n")}`);
       }
-      const { system, user } = lookPrompt(lines, last && !!ai.story);
+      const { system, user } = lookPrompt(lines, last && !!ai.story, ai.workspace);
       const { value } = await completeVisionWithFallback(system, user, images, signal, parseLooked, who, { label: LABEL, job: "editor" });
       for (const sh of batch)
         for (const t of sh.tiles) {
