@@ -214,48 +214,24 @@ describe("Media Library page with a plug-in facet", () => {
 const buttons = (host: HTMLElement) => [...host.querySelectorAll("button")].map((b) => b.textContent?.trim());
 
 describe("Media Library page", () => {
-  it("an empty library is its own page: it asks how to organize it, says what it is for, the folder to choose, upload as the second way", async () => {
+  it("an empty library is its own page: it says what it is for, the folder to choose, upload as the second way", async () => {
     server.items = [];
     const host = await mount();
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
     expect(host.querySelector('[aria-label^="Library settings"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("raw materials");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Default folders" + "A-roll, B-roll, Music, Sound effects, Graphics, Examples", "Choose a folder", "Upload"]));
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
+    expect(host.textContent).not.toContain("Make the usual folders"); // asked in the first upload's dialog, not on the page
     expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
     expect(buttons(host)).not.toContain("Skip");
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
   });
 
-  it("Default folders makes the folders and the page shows them, still on its first run until a clip comes in", async () => {
+  it("the first upload asks how the library sorts files, the usual folders until another is picked, saved before the files go in", async () => {
     server.items = [];
     const host = await mount();
-    const pick = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Default folders"))!;
-    await act(async () => {
-      pick.click();
-    });
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-    expect(server.patched).toEqual([{ settings: { organize: "default" } }]);
-    expect(host.querySelector('[aria-label="Organize the library"]')).toBeNull(); // asked once
-    for (const name of ["A-roll", "B-roll", "Music", "Sound effects", "Graphics", "Examples"]) expect(host.textContent).toContain(name);
-    expect(buttons(host)).toContain("Choose a folder");
-  });
-
-  it("a library filled before it was asked (setup's folder) is still asked; one with folders of its own is not", async () => {
-    const host = await mount();
-    expect(host.querySelector('[aria-label="Organize the library"]')).not.toBeNull();
-    act(() => root!.unmount());
-    server.folders = [{ id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 1, createdBy: "admin" }];
-    const again = await mount();
-    expect(again.querySelector('[aria-label="Organize the library"]')).toBeNull();
-  });
-
-  it("a big drop offers the AI organizing the library, off until switched on, and the answer is saved before the files go in", async () => {
-    server.items = [];
-    const host = await mount();
-    const files = Array.from({ length: 20 }, (_, i) => new File(["x"], `tiny-${i}.mp4`, { type: "video/mp4" }));
+    const files = [new File(["x"], "tiny-0.mp4", { type: "video/mp4" })];
     const drop = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(drop, "dataTransfer", { value: { files, items: [], types: ["Files"] } });
     await act(async () => {
@@ -264,9 +240,9 @@ describe("Media Library page", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
-    const ai = document.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
-    expect(ai.getAttribute("aria-checked")).toBe("false");
-    act(() => ai.click());
+    const sort = document.querySelectorAll<HTMLInputElement>('[role="dialog"] input[name="organize"]');
+    expect(sort[0]!.checked).toBe(true);
+    act(() => sort[1]!.click());
     const go = [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Upload") as HTMLButtonElement;
     await act(async () => {
       go.click();
@@ -275,14 +251,21 @@ describe("Media Library page", () => {
     expect(server.patched).toEqual([{ settings: { organize: "ai", organizeOffered: true } }]);
     expect(server.sent[0]).toBe("save");
     expect(server.sent).toContain("upload tiny-0.mp4");
+    for (const name of ["A-roll", "B-roll", "Music", "Sound effects", "Graphics", "Examples"]) expect(host.textContent).toContain(name);
   });
 
   it("a library whose organize is chosen is not asked again", async () => {
     server.items = [];
     server.settings = { organize: "own" };
     const host = await mount();
-    expect(host.querySelector('[aria-label="Organize the library"]')).toBeNull();
-    expect(buttons(host)).toContain("Choose a folder");
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: { files: [new File(["x"], "tiny-0.mp4", { type: "video/mp4" })], items: [], types: ["Files"] } });
+    await act(async () => {
+      host.firstElementChild!.dispatchEvent(drop);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull(); // a small upload goes straight in
+    expect(server.sent).toContain("upload tiny-0.mp4");
   });
 
   it("a library whose only clips are in the trash is not the first screen: the Trash stays reachable", async () => {
@@ -327,7 +310,7 @@ describe("Media Library page", () => {
     expect(sheet()).toContain("Footage folders");
     expect(sheet()).toContain("Storage");
     expect(sheet()).toContain("Search by meaning");
-    expect(sheet()).toContain("Runs on your connected AI");
+    expect(sheet()).toContain("Uses your connected AI");
     expect(sheet()).not.toContain("OpenAI key");
     act(() => root?.unmount());
     document.body.innerHTML = "";
@@ -544,6 +527,7 @@ describe("Media Library picks, menu, keys, link and drop", () => {
   });
 
   it("files dropped on the page are added", async () => {
+    server.settings = { organize: "own" }; // asked already: no dialog first
     const host = await mount();
     const file = new File(["x"], "Tiny drop.mp4", { type: "video/mp4" });
     const e = new Event("drop", { bubbles: true, cancelable: true });

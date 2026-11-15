@@ -65,8 +65,8 @@ import { LibraryViewSwitch, useLibraryView } from "./library/views";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage. An empty library is this same page,
- * asking how to organize it (./library/Organize.tsx), with what it is for and the folder to choose (FootageFolderCard) in
- * place of the grid; a drop anywhere on it adds files and folders (./library/LibraryDrop.tsx).
+ * with what it is for and the folder to choose (FootageFolderCard) in place of the grid (the first upload's dialog asks
+ * how to sort the files, ./library/Organize.tsx); a drop anywhere on it adds files and folders (./library/LibraryDrop.tsx).
  * Left: the sidebar (./library/Sidebar.tsx: sort, when, where, tags, kinds, a plug-in's own filters; a sheet on a
  * narrow window). Above the grid: the page's own row (search, the view, settings, Trash, New folder, Upload), then the
  * tabs (./library/Tabs.tsx: All, A-roll, B-roll, Photos, the top-level folders), each a place to drop clips on. Three
@@ -335,7 +335,8 @@ export default function LibraryPage() {
     const all = Array.from(files); // before the picker is cleared
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
     const here = paths ? paths.size === all.length : !!(await pathOnMac(all[0]!));
-    if (all.length >= BIG_DROP) {
+    // the first upload also asks how the library sorts files
+    if (all.length >= BIG_DROP || organize.offer) {
       askingPaths.current = paths;
       setAskingHere(here);
       setAsking(all);
@@ -355,7 +356,6 @@ export default function LibraryPage() {
   const organize = useOrganize({
     library,
     owner: !!watch, // the settings are the owner's too
-    folders: folderList.data ? collections : null,
     onSaved: (l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all),
     setFolders: folderList.set,
     onError: setError,
@@ -756,9 +756,9 @@ export default function LibraryPage() {
           go={askingHere ? "Add" : "Upload"}
           offer={organize.offer}
           onClose={() => setAsking(null)}
-          onUpload={async (ai) => {
+          onUpload={async (o) => {
             setAsking(null);
-            await organize.answerOffer(ai); // before the files: each is filed as it comes in
+            if (o) await organize.answerOffer(o); // before the files: each is filed as it comes in
             start(asking, askingHere, askingPaths.current);
           }}
         />
@@ -859,8 +859,6 @@ export default function LibraryPage() {
                 }
               >
                 {tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} />}
-
-                {!open && !trash && organize.choice}
 
                 <LibraryProgressBar libraryId={library.id} />
 

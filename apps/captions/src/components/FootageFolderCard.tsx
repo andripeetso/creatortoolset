@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import type { WatchStatus } from "@contracts/library";
+import type { Organize, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getWatch } from "@/lib/library";
@@ -49,7 +49,7 @@ export function FootageFolderCard({
   onUpload?: () => void;
   page?: boolean;
   offer?: boolean;
-  onOffer?: (ai: boolean) => Promise<void>;
+  onOffer?: (o: Organize) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const [skipped, setSkipped] = useState(() => !page && skippedBefore());

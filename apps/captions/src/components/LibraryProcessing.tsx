@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { DEFAULT_FOLDERS, NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibrarySummary, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibrarySummary, type Organize, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
 import { getEstimate, getProgress, getWatch, type Drop, listLibraries, updateLibrary } from "@/lib/library";
-import { offerAnswer, offersOrganize } from "@/pages/library/Organize";
+import { OrganizePicker, offerAnswer, offersOrganize } from "@/pages/library/Organize";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
@@ -263,17 +262,17 @@ export function BigUploadDialog({
   drop: Drop;
   title: string;
   go: string;
-  /** a big folder into a library the AI does not organize yet: it offers to (api/library/organize.ts), once */
+  /** the first upload or folder into a library never asked how it sorts files: it asks (api/library/organize.ts), once */
   offer?: boolean;
-  /** `ai`: the offer was taken */
-  onUpload: (ai: boolean) => void;
+  /** `organize`: the answer, when it was asked */
+  onUpload: (organize?: Organize) => void;
   onClose: () => void;
   /** false: a small folder, asked only where its files are kept (`children`) */
   estimate?: boolean;
   children?: ReactNode;
 }) {
   const [e, setE] = useState<LibraryEstimate | null>(null);
-  const [ai, setAi] = useState(false);
+  const [organize, setOrganize] = useState<Organize>("default");
   const [failed, setFailed] = useState<string | null>(null);
   const { clips, bytes, audio, audioBytes, music } = drop;
   useEffect(() => {
@@ -311,20 +310,12 @@ export function BigUploadDialog({
             )}
           </div>
         )}
-        {offer && (
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-500/20 px-3 py-2.5">
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-sm font-medium">AI organizes these</span>
-              <span className="text-xs text-zinc-500">{DEFAULT_FOLDERS.map((f) => f.name).join(", ")}</span>
-            </span>
-            <Switch aria-label="AI organizes these" checked={ai} onCheckedChange={setAi} />
-          </label>
-        )}
+        {offer && <OrganizePicker value={organize} onChange={setOrganize} />}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => onUpload(ai)}>{go}</Button>
+          <Button onClick={() => onUpload(offer ? organize : undefined)}>{go}</Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -406,7 +397,7 @@ export function KeepChoice({ libraryId, folder, bytes, to, free, onChange }: { l
 /** The page's own organize offer (pages/library/Organize.tsx useOrganize): whether it shows, and the answer's save. */
 export interface OrganizeOffer {
   offer: boolean;
-  answer: (ai: boolean) => Promise<void>;
+  answer: (organize: Organize) => Promise<void>;
 }
 
 /**
@@ -448,12 +439,13 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
     const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}${to ? `&to=${encodeURIComponent(to)}` : ""}`).catch(() => null) : null;
     const size = r?.ok ? ((await r.json()) as FolderSize) : null;
     const big = !!size && size.files >= BIG_DROP;
-    if (libraryId && size && (big || to)) {
-      // a big folder only, and a music folder is music, not something to organize
-      const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (ai) => void (await updateLibrary(library.id, offerAnswer(ai)).then(onOrganized, () => {})) } : undefined;
-      const organize = opts.organize ?? own;
+    // a music folder is music, not something to sort
+    const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (o) => void (await updateLibrary(library.id, offerAnswer(o)).then(onOrganized, () => {})) } : undefined;
+    const organize = opts.music ? undefined : (opts.organize ?? own);
+    const offer = organize?.offer ? organize : undefined;
+    if (libraryId && size && (big || to || offer)) {
       open.current++;
-      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add, offer: big && !opts.music && organize?.offer ? organize : undefined }]);
+      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size, opts.music), big, to, free: size.free, add, offer }]);
     } else await add();
   };
   const dialog = asking && (
@@ -466,10 +458,10 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
       go="Add folder"
       offer={!!asking.offer}
       onClose={next}
-      onUpload={async (ai) => {
+      onUpload={async (o) => {
         next();
         // before the folder: its files are filed as they come in; a failed save never stops the folder
-        if (asking.offer) await asking.offer.answer(ai).catch(() => {});
+        if (asking.offer && o) await asking.offer.answer(o).catch(() => {});
         void asking.add(copyTo);
       }}
     >
