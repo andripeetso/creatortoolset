@@ -717,6 +717,7 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
       | undefined)?.storage_key ?? undefined;
   const original = v.mime ?? "application/octet-stream";
   if (kind === "thumb") return { key: derived("thumb"), type: "image/jpeg" };
+  if (kind === "sprite") return { key: derived("sprite"), type: "image/jpeg" };
   if (kind === "play") {
     const proxy = derived("proxy");
     return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original };
@@ -739,7 +740,7 @@ export async function serveBlob(c: Context, key: string, type: string, download?
   }
 }
 
-// GET /api/library/media/:versionId/:kind: thumb | play (the proxy when there is one, else the source) | source
+// GET /api/library/media/:versionId/:kind: thumb | sprite | play (the proxy when there is one, else the source) | source
 libraryApp.get("/media/:versionId/:kind", (c) => libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")));
 
 /**

@@ -204,6 +204,7 @@ const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = 
   thumb: "Getting its picture",
   wave: "Getting its picture",
   proxy: "Making a proxy",
+  sprite: "Getting its frames",
   fingerprint: "Checking for duplicates",
   transcribe: "Transcribing",
   describe: "Describing",

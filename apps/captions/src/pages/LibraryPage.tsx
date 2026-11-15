@@ -36,7 +36,7 @@ import { pathOnMac } from "@/lib/thisMac";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
-import { AssetRow, AssetTile, clock, RowFrame, TileFrame } from "./library/ClipCards";
+import { AssetRow, AssetTile, clock, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
 import { UploadTray, type Upload as UploadItem } from "./library/Uploads";
 import { ClipView } from "./library/ClipView";
 import { folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
@@ -569,6 +569,12 @@ export default function LibraryPage() {
                   {shown.map((a) => (
                     <AssetRow key={a.id} asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
                   ))}
+                </div>
+              ) : kind === "image" ? (
+                // photos in their own proportions, folders above them
+                <div className="flex flex-col gap-3">
+                  {shownFolders.length > 0 && <FolderGrid size="small">{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />)}</FolderGrid>}
+                  <PhotoMasonry assets={shown} tile={(a) => <AssetTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} ownShape />} />
                 </div>
               ) : (
                 <FolderGrid size="small">
