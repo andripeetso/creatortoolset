@@ -508,6 +508,9 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
    What has not arrived yet is hidden, and things come in one after another by --i. Every move ends on the page's own
    look, so when the attribute goes (the end, Skip) Home is exactly as it always is. The top bar stays away while it
    plays and comes back softly. Never started under reduced motion (lib/setup.ts introPlays). */
+/* Home never scrolls sideways: a row with more tools than its room is cut at the page's edge, not given a bar at the
+   window's bottom (tailwind.config.js hub says when the boxes go into one row) */
+.home-hub { overflow-x: clip; }
 /* nothing the welcome moves or enlarges may make the page scroll (a scrollbar would show in the picture) */
 .home-hub[data-intro] { overflow: clip; }
 .home-hub[data-intro] .intro-body { pointer-events: none; transition: opacity 400ms ease, filter 400ms ease; }

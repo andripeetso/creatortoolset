@@ -315,7 +315,7 @@ export default function ToolsetHome() {
         </div>
 
 
-        {/* one row whatever the number: the tools spread across the width from 900 px of room, wrapping below */}
+        {/* one row whatever the number: the tools spread across the width from 1040 px of room, wrapping below */}
         {extraTiles.length > 0 && (
         <section className="intro-extras">
           <h2 className="intro-extras-head flex items-center gap-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
