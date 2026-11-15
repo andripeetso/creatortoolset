@@ -113,13 +113,35 @@ export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
   proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
-  /** a file added in the Mac app, for a server not on that Mac, uploads; off (the default): it is indexed where it is on the Mac */
-  upload: boolean;
+  /**
+   * What a file added from a computer the server is not on sends to the server: "none" (the default) indexes it where it
+   * is; "proxies" sends it, keeps only its proxy and forgets the original there; "all" keeps the video file and its proxy.
+   * A stored `true` / `false` (before 2026-11-15) reads as "all" / "none".
+   */
+  upload: LibraryUpload;
+  /** how files come in, asked on the first add (absent: not asked yet): used where they are, or copied into `copyTo` */
+  importMode?: ImportMode;
+  /** the folder copies go into (a path on the person's computer); absent: the Mac's default (~/Movies/Creator Toolset/<library>) */
+  copyTo?: string;
+  /** folders files came from and how each was taken: a later add from inside one is not asked again, a new place is */
+  places?: ImportPlace[];
   /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
   organize?: Organize;
   /** a big folder came in and the AI organizing was offered (once, either answer) */
   organizeOffered?: boolean;
 }
+
+export type LibraryUpload = "none" | "proxies" | "all";
+export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "proxies", "all"];
+/** in-place: the files stay where they are and are read there; copy: copied into the library's folder first, then read there */
+export type ImportMode = "in-place" | "copy";
+export interface ImportPlace {
+  path: string; // absolute, on the computer the files are on
+  mode: ImportMode;
+}
+/** The place `path` is in (the deepest one), or undefined: a new place, so the add asks again. */
+export const placeOf = (places: readonly ImportPlace[] | undefined, path: string): ImportPlace | undefined =>
+  (places ?? []).filter((p) => path === p.path || path.startsWith(p.path.endsWith("/") ? p.path : `${p.path}/`)).sort((a, b) => b.path.length - a.path.length)[0];
 
 /** Default folders: DEFAULT_FOLDERS made. AI organizes: the same, and each file that comes in is filed by the AI. Own: nothing made. */
 export type Organize = "default" | "ai" | "own";

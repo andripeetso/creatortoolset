@@ -224,7 +224,7 @@ function SpaceRows({ library, saved, onThisComputer, onChange, onError }: { libr
     updateLibrary(library.id, { settings: { proxy: on } })
       .then(onChange)
       .catch((e) => onError(message(e)));
-  const onMac = uploadSwitchApplies(onThisComputer) ? { upload: library.settings.upload } : null;
+  const onMac = uploadSwitchApplies(onThisComputer) ? { upload: library.settings.upload !== "none" } : null;
   return (
     <>
       {space && <Row title="Video files" description={videoPlace(space.videos, { saved, onThisComputer, onMac })} />}

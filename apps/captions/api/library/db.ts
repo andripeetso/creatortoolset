@@ -7,6 +7,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
+import { LIBRARY_UPLOADS, type LibraryUpload } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -196,8 +197,12 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  * Both start on: describing runs on the uploader's own AI (or parks until they connect one), and a big upload says
  * first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts).
  */
-// upload: a file added from the Mac app, for a server not on that Mac, uploads; off: it is indexed where it is (on-mac.ts)
-export const SETTING_DEFAULTS = { describe: true, embed: true, proxy: true, upload: false } as const;
+export const SETTING_DEFAULTS = { describe: true, embed: true, proxy: true } as const;
+
+/** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
+export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
+export const libraryUpload = (libraryId: string): LibraryUpload =>
+  uploadOf((libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
 
 export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFAULTS): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;

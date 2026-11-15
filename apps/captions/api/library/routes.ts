@@ -11,11 +11,11 @@ import { ensureLibrary, homeOf, librariesHere, libraryChanged, libraryRole, mayW
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS } from "./db";
+import { blobs, libraryDb, librarySetting, libraryStore, meter, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { SOUNDS, type AssetCard, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
+import { SOUNDS, type AssetCard, type ImportPlace, type LibrarySettings, type LibrarySummary, type Sound } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { ensureDefaultFolders } from "./organize";
@@ -662,7 +662,10 @@ const settingsOf = (json: string): LibrarySettings => {
     describe: s.describe ?? SETTING_DEFAULTS.describe,
     embed: s.embed ?? SETTING_DEFAULTS.embed,
     proxy: s.proxy ?? SETTING_DEFAULTS.proxy,
-    upload: s.upload ?? SETTING_DEFAULTS.upload,
+    upload: uploadOf(s.upload),
+    ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
+    ...(typeof s.copyTo === "string" && s.copyTo ? { copyTo: s.copyTo } : {}),
+    ...(Array.isArray(s.places) && s.places.length ? { places: s.places } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     ...(s.organizeOffered ? { organizeOffered: true } : {}),
   };
@@ -686,7 +689,7 @@ libraryApp.get("/:id/progress", async (c) => {
   return c.json(await progress(libraryId, user.username));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, organize?, organizeOffered? } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy?, upload?, importMode?, copyTo?, places?, organize?, organizeOffered? } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one and have none get one.
 // organize "default" or "ai" makes the default folders it is missing (organize.ts); "ai" turns the descriptions on, since
 // a video is filed by its description
@@ -699,9 +702,21 @@ libraryApp.patch("/:id", async (c) => {
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 80) : "";
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
-  for (const key of ["describe", "embed", "proxy", "upload"] as const) {
+  const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
+  for (const key of ["describe", "embed", "proxy"] as const) {
     const on = b?.settings?.[key];
-    if (typeof on === "boolean") db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(String(on), libraryId);
+    if (typeof on === "boolean") put(key, on);
+  }
+  const s = b?.settings ?? {};
+  if (s.upload !== undefined) put("upload", uploadOf(s.upload));
+  if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
+  if (typeof s.copyTo === "string" && s.copyTo.startsWith("/") && s.copyTo.length < 1024) put("copyTo", s.copyTo);
+  if (Array.isArray(s.places)) {
+    const places: ImportPlace[] = s.places
+      .filter((p): p is ImportPlace => !!p && typeof (p as ImportPlace).path === "string" && (p as ImportPlace).path.startsWith("/") && ((p as ImportPlace).mode === "in-place" || (p as ImportPlace).mode === "copy"))
+      .slice(0, 200)
+      .map((p) => ({ path: p.path.slice(0, 1024), mode: p.mode }));
+    put("places", places);
   }
   const proxy = b?.settings?.proxy;
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
@@ -737,7 +752,7 @@ libraryApp.post("/", async (c) => {
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
     .run(id, homeOf(user.username), name, JSON.stringify(ws ? { projectId: ws } : {}), Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS } };
+  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS, upload: "none" } };
   return c.json(created, 201);
 });
 

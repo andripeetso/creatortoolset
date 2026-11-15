@@ -24,10 +24,10 @@ export function UploadSwitch({ library, description, onChange, onError }: { libr
       control={
         <Switch
           aria-label={UPLOAD_LABEL}
-          checked={library.settings.upload}
+          checked={library.settings.upload !== "none"}
           disabled={!!library.readOnly}
           onCheckedChange={(on) =>
-            void updateLibrary(library.id, { settings: { upload: on } })
+            void updateLibrary(library.id, { settings: { upload: on ? "all" : "none" } })
               .then(onChange)
               .catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)))
           }

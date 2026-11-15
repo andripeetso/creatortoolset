@@ -316,7 +316,7 @@ export default function LibraryPage() {
 
   // the Mac app with the server elsewhere: files are indexed where they are, never uploaded, unless the library's
   // upload switch is on (Library settings and Settings → Storage, UploadSwitch)
-  const onMac = !!thisMacBridge() && !watch?.allowed && !library?.settings.upload;
+  const onMac = !!thisMacBridge() && !watch?.allowed && (library?.settings.upload ?? "none") === "none";
   const send = async (u: UploadItem) => {
     if (!libId || cancelled.current.has(u.key)) return;
     const ctl = new AbortController();
