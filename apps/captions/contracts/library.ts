@@ -34,6 +34,8 @@ export interface AssetCard {
   roll?: "a" | "b";
   /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
   finished?: true;
+  /** its file is read in place from a folder on a computer (never copied in): Show in Finder can find it there */
+  onComputer?: true;
   /** a strip of frames across the clip, side by side in one picture (videos, once made): hover scrub and the filmstrip */
   spriteUrl?: string;
   /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */

@@ -84,6 +84,44 @@ describe("folders and collections", () => {
     expect(ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets")))).toContain("e1");
   });
 
+  it("a clip dropped on the A-roll folder is filed A-roll; taken back out it is filed as nothing and sorted again; a photo is never filed", async () => {
+    const d = libraryDb();
+    seed("r1", "Roll one", "owner-a");
+    seed("ph1", "Photo one", "owner-a");
+    d.prepare("UPDATE assets SET kind = 'image' WHERE id = 'ph1'").run();
+    // a video with sound and no words heard: the sort calls it B-roll (roll.ts)
+    d.prepare(`UPDATE asset_versions SET probe = '{"duration":30,"vcodec":"h264","acodec":"aac"}' WHERE id = 'r1-v1'`).run();
+    const roll = () => d.prepare("SELECT roll, filed_roll FROM assets WHERE id = 'r1'").get();
+    const a = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "A-roll", kind: "smart", query: { roll: "a" } }));
+    expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["r1", "ph1"] }))).toEqual({ added: 1 });
+    expect(roll()).toEqual({ roll: "a", filed_roll: "a" });
+    expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ a: 1, image: 1 });
+    expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["ph1"] }))).toEqual({ added: 0 });
+    expect(await data(call("owner-a", "DELETE", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["r1"] }))).toEqual({ removed: 1 });
+    expect(roll()).toEqual({ roll: "b", filed_roll: null });
+    expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ a: 0, b: 1 });
+    expect((await call("stranger", "GET", "/api/library/lib_a/counts")).status).toBe(404);
+  });
+
+  it("a folder deleted moments ago comes back as it was: its id, clips, folders and grants; once only, and never for a stranger", async () => {
+    const d = libraryDb();
+    const box = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Undo box" }));
+    const inner = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Inner", parentId: box.id }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${box.id}/items`, { assetIds: ["e1", "e2"] });
+    d.prepare("INSERT INTO library_grants (collection_id, username, granted_by, created_at) VALUES (?, 'friend', 'owner-a', 1)").run(box.id);
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${box.id}`);
+    expect((await call("stranger", "POST", `/api/library/lib_a/collections/${box.id}/restore`)).status).toBe(404);
+    const back = await data(call("owner-a", "POST", `/api/library/lib_a/collections/${box.id}/restore`));
+    expect(back).toMatchObject({ id: box.id, name: "Undo box", parentId: null });
+    expect(ids(await data(call("owner-a", "GET", `/api/library/lib_a/assets?collectionId=${box.id}`)))).toEqual(["e1", "e2"]);
+    const listed = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections;
+    expect(listed.find((c: any) => c.id === inner.id).parentId).toBe(box.id);
+    expect(d.prepare("SELECT username FROM library_grants WHERE collection_id = ?").all(box.id)).toEqual([{ username: "friend" }]);
+    expect((await call("owner-a", "POST", `/api/library/lib_a/collections/${box.id}/restore`)).status).toBe(404);
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${inner.id}`);
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${box.id}`);
+  });
+
   it("a smart collection runs its saved query, and filters on the request narrow it", async () => {
     const smart = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Alpha", kind: "smart", query: { q: "alpha", limit: 5, trashed: true } }));
     expect(smart.query).toEqual({ q: "alpha" }); // paging and trash are not saved

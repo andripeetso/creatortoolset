@@ -17,7 +17,7 @@ import { ffmpegTo } from "./media/run";
 import { externalCanSee, externalRefById } from "./refs";
 import { FINISHED, KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
-import { fileRoll, rollFolder } from "./roll";
+import { fileRoll, rollFolder, sortRoll } from "./roll";
 
 /**
  * Folders and collections (tasks/media-library-plan.md, sections 2, 7 and 9). One table: a folder is a collection with
@@ -162,7 +162,8 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
   return c.json(toCollection({ ...row, name, parent_id: parent }));
 });
 
-// DELETE /api/library/:id/collections/:cid → gone, its items kept in the library, its folders move up one level
+// DELETE /api/library/:id/collections/:cid → gone, its items kept in the library, its folders move up one level. What it
+// was is kept a little while for POST .../restore (the page's Undo).
 collectionApp.delete("/:id/collections/:cid", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -172,10 +173,20 @@ collectionApp.delete("/:id/collections/:cid", (c) => {
   const d = db();
   d.exec("BEGIN");
   try {
+    const kept: Deleted = {
+      row: d.prepare("SELECT * FROM collections WHERE id = ?").get(row.id) as Record<string, string | number | null>,
+      items: d.prepare("SELECT * FROM collection_items WHERE collection_id = ?").all(row.id) as Record<string, string | number | null>[],
+      grants: d.prepare("SELECT * FROM library_grants WHERE collection_id = ?").all(row.id) as Record<string, string | number | null>[],
+      children: (d.prepare("SELECT id FROM collections WHERE parent_id = ?").all(row.id) as { id: string }[]).map((r) => r.id),
+      pieces: (d.prepare("SELECT id FROM pieces WHERE collection_id = ?").all(row.id) as { id: string }[]).map((r) => r.id),
+      at: Date.now(),
+    };
     d.prepare("UPDATE collections SET parent_id = ? WHERE parent_id = ?").run(row.parent_id, row.id);
     d.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(row.id);
     d.prepare("DELETE FROM collections WHERE id = ?").run(row.id);
     d.exec("COMMIT");
+    for (const [id, k] of deleted) if (Date.now() - k.at > RESTORE_MS) deleted.delete(id);
+    deleted.set(row.id, kept);
   } catch (e) {
     d.exec("ROLLBACK");
     throw e;
@@ -183,7 +194,69 @@ collectionApp.delete("/:id/collections/:cid", (c) => {
   return c.json({ ok: true });
 });
 
-// POST / DELETE /api/library/:id/collections/:cid/items { assetIds } → add or remove (manual collections only)
+/** A folder deleted moments ago, as it was: put back by POST .../restore. */
+interface Deleted {
+  row: Record<string, string | number | null>;
+  items: Record<string, string | number | null>[];
+  grants: Record<string, string | number | null>[];
+  children: string[];
+  pieces: string[];
+  at: number;
+}
+// ponytail: in memory, so a restart forgets them; the Undo that reads it lasts seconds
+const deleted = new Map<string, Deleted>();
+const RESTORE_MS = 10 * 60_000;
+
+const insertRow = (d: ReturnType<typeof db>, table: string, r: Record<string, string | number | null>) => {
+  const cols = Object.keys(r);
+  d.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...Object.values(r));
+};
+
+// POST /api/library/:id/collections/:cid/restore → the folder deleted moments ago back as it was: its id (links and
+// shares to it work again), its clips still in the library, its folders that have not moved since, its grants
+collectionApp.post("/:id/collections/:cid/restore", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const kept = deleted.get(c.req.param("cid"));
+  if (!libraryRole(user.username, libraryId) || !kept || kept.row.library_id !== libraryId || Date.now() - kept.at > RESTORE_MS) return notFound(c);
+  const d = db();
+  // a parent deleted since then: it comes back at the top
+  const parent = kept.row.parent_id && rowIn(libraryId, String(kept.row.parent_id)) ? kept.row.parent_id : null;
+  d.exec("BEGIN");
+  try {
+    insertRow(d, "collections", { ...kept.row, parent_id: parent });
+    const live = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ?");
+    for (const i of kept.items) if (live.get(i.asset_id, libraryId)) insertRow(d, "collection_items", i);
+    for (const g of kept.grants) insertRow(d, "library_grants", g);
+    const back = d.prepare("UPDATE collections SET parent_id = ? WHERE id = ? AND library_id = ? AND parent_id IS ?");
+    for (const id of kept.children) back.run(kept.row.id, id, libraryId, parent);
+    const piece = d.prepare("UPDATE pieces SET collection_id = ? WHERE id = ? AND collection_id IS NULL");
+    for (const id of kept.pieces) piece.run(kept.row.id, id);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+  deleted.delete(String(kept.row.id));
+  return c.json(toCollection(rowIn(libraryId, String(kept.row.id))!));
+});
+
+// GET /api/library/:id/counts → { a, b, image }: the clips sorted A-roll and B-roll and the photos, for the tabs.
+// ponytail: counted over the whole library, as /tags is, not per viewer's policies
+collectionApp.get("/:id/counts", (c) => {
+  const libraryId = c.req.param("id");
+  if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
+  const r = db()
+    .prepare(
+      `SELECT SUM(a.roll = 'a') AS a, SUM(a.roll = 'b') AS b, SUM(a.kind = 'image' AND NOT ${FINISHED}) AS image
+       FROM assets a WHERE a.library_id = ? AND a.trashed_at IS NULL`,
+    )
+    .get(libraryId) as { a: number | null; b: number | null; image: number | null };
+  return c.json({ a: r.a ?? 0, b: r.b ?? 0, image: r.image ?? 0 });
+});
+
+// POST / DELETE /api/library/:id/collections/:cid/items { assetIds } → add or remove (manual collections; on an A-roll or
+// B-roll folder: filed as that roll, or filed as nothing again)
 collectionApp.post("/:id/collections/:cid/items", (c) => changeItems(c, true));
 collectionApp.delete("/:id/collections/:cid/items", (c) => changeItems(c, false));
 
@@ -193,7 +266,7 @@ async function changeItems(c: Ctx, add: boolean) {
   if (!libraryRole(user.username, libraryId)) return notFound(c);
   const row = rowIn(libraryId, c.req.param("cid") ?? "");
   if (!row) return notFound(c);
-  const roll = add ? rollFolder(db(), libraryId, row.id) : null;
+  const roll = rollFolder(db(), libraryId, row.id);
   if (row.kind !== "manual" && !roll) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   const body = (await c.req.json().catch(() => null)) as { assetIds?: unknown } | null;
   const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string").slice(0, 500) : [];
@@ -205,8 +278,27 @@ async function changeItems(c: Ctx, add: boolean) {
     // the A-roll folder lists the clips sorted or filed as A-roll: a clip put in it is filed so (roll.ts)
     const video = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND kind = 'video'");
     const filed = ids.filter((id) => video.get(id, libraryId));
-    for (const id of filed) fileRoll(d, id, roll);
-    return c.json({ added: filed.length });
+    if (!add) {
+      // taken back out (the page's Undo): filed as nothing, and the sort decides again from what the clip has
+      const current = d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ? AND filed_roll = ?");
+      let removed = 0;
+      for (const id of filed) {
+        const was = current.get(id, roll) as { v: string } | undefined;
+        if (!was) continue;
+        d.prepare("UPDATE assets SET filed_roll = NULL, roll = NULL WHERE id = ?").run(id);
+        sortRoll(d, was.v);
+        removed++;
+      }
+      return c.json({ removed });
+    }
+    // finished work, Review's videos and what is not a video are skipped (fileRoll): only the ones filed are counted
+    const now = d.prepare("SELECT 1 FROM assets WHERE id = ? AND filed_roll = ?");
+    let added = 0;
+    for (const id of filed) {
+      fileRoll(d, id, roll);
+      if (now.get(id, roll)) added++;
+    }
+    return c.json({ added });
   }
   if (!add) {
     const del = d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?");

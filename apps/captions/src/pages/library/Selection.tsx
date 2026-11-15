@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { Check, Download, Folder, RefreshCw, RotateCcw, Tag, Trash2, X } from "lucide-react";
-import type { LibrarySummary } from "@contracts/library";
+import type { AssetCard, LibrarySummary } from "@contracts/library";
 import { isPickClick } from "@/components/browse/browse";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { promptDialog } from "@/lib/dialogs";
 import { cn } from "@/lib/utils";
+import { revealClip } from "./clip";
 
 /**
  * Picking several clips in the Media Library (LibraryPage.tsx), as Review picks videos: a plain click still opens a clip,
@@ -155,7 +156,31 @@ export interface ClipMoves {
 }
 
 /** One clip's right-click menu. `extra` goes after Copy link (Show in Finder, where the Mac app can). */
-export function ClipMenu({ inTrash, moveTo, tags, on, extra }: { inTrash: boolean; moveTo: MoveTarget[]; tags: string[]; on: ClipMoves; extra?: ReactNode }) {
+export function ClipMenu({
+  inTrash,
+  readOnly,
+  moveTo,
+  tags,
+  on,
+  extra,
+}: {
+  inTrash: boolean;
+  /** someone else's library to look at: open, download, copy the link */
+  readOnly?: boolean;
+  moveTo: MoveTarget[];
+  tags: string[];
+  on: ClipMoves;
+  extra?: ReactNode;
+}) {
+  if (readOnly)
+    return (
+      <>
+        <ContextMenuItem onSelect={on.open}>Open</ContextMenuItem>
+        <ContextMenuItem onSelect={on.download}>Download</ContextMenuItem>
+        <ContextMenuItem onSelect={on.copyLink}>Copy link</ContextMenuItem>
+        {extra}
+      </>
+    );
   if (inTrash)
     return (
       <>
@@ -300,4 +325,18 @@ export function saveFile(href: string) {
   document.body.append(a);
   a.click();
   a.remove();
+}
+
+/** On the server on this Mac (the Mac app's own): its clips' files are on this Mac. */
+export const servedHere = () => typeof location !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+
+/**
+ * Show in Finder, in the Mac app. On the server on this Mac every clip has its file here; on a server elsewhere only a
+ * clip read in place from a computer's folder can be (inside a folder this Mac granted, apps/mac Reveal.swift): an
+ * upload from a phone has none, so it is not offered there. Decided from the card, so the menu never changes once open.
+ */
+export function RevealItem({ libraryId, asset, onProblem }: { libraryId: string; asset: Pick<AssetCard, "id" | "onComputer">; onProblem: (p: string) => void }) {
+  const assetId = asset.id;
+  if (!servedHere() && !asset.onComputer) return null;
+  return <ContextMenuItem onSelect={() => void revealClip(libraryId, assetId).then((problem) => problem && onProblem(problem))}>Show in Finder</ContextMenuItem>;
 }

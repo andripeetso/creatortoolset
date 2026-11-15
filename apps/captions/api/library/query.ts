@@ -105,7 +105,7 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
-  ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished,
+  ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished, v.source_path IS NOT NULL AS in_place,
   (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
     ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy sprite fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
   CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
@@ -131,6 +131,7 @@ export interface CardRow {
   failed?: string | null;
   roll: AssetCard["roll"] | null;
   finished: number;
+  in_place: number;
   /** the row's value in the listing's order (buildAssetQuery), for the next page's cursor */
   sort_key?: string | number | null;
 }
@@ -254,6 +255,7 @@ export function toCard(r: CardRow): AssetCard {
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
     ...(r.roll && !review ? { roll: r.roll } : {}),
     ...(r.finished || review ? { finished: true as const } : {}),
+    ...(r.in_place ? { onComputer: true as const } : {}),
     ...(review ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
     ...(r.preparing ? { preparing: { step: r.preparing.split("\x1f")[0] as NonNullable<AssetCard["preparing"]>["step"], running: r.preparing.endsWith("running") } } : {}),
     ...(r.failed ? { failed: { step: r.failed.split("\x1f")[0] as NonNullable<AssetCard["failed"]>["step"], error: r.failed.split("\x1f")[1] ?? "" } } : {}),
