@@ -14,11 +14,11 @@ const ids = styles().map((s) => s.id);
 process.env.FFMPEG_CONCURRENCY = "6";
 
 /** Every frame of a clip as RGB bytes. */
-function frames(file: string): Buffer[] {
+function frames(file: string, w = W, h = H): Buffer[] {
   const raw = execFileSync(ffmpegCommand(), ["-v", "error", "-i", file, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], {
     maxBuffer: 1 << 28,
   });
-  const size = W * H * 3;
+  const size = w * h * 3;
   return Array.from({ length: raw.length / size }, (_, i) => raw.subarray(i * size, (i + 1) * size));
 }
 
@@ -84,6 +84,17 @@ describe("generated clips", () => {
     );
   }, 120_000);
 
+  it("every style draws a landscape frame too", async () => {
+    await Promise.all(
+      ids.map(async (style) => {
+        const r = await generateClip({ style, seconds: 0.5, seed: 5, params: { w: H, h: W } }, dir);
+        const fs = frames(r.path, H, W);
+        expect(fs.length, style).toBe(15);
+        expect(spread(fs[10]!), style).toBeGreaterThan(8);
+      }),
+    );
+  }, 120_000);
+
   it("the same seed gives the same frames, another seed others", async () => {
     await Promise.all(
       ids.map(async (style) => {
@@ -114,6 +125,19 @@ describe("generated clips", () => {
         const fs = await clip({ style, seconds: 2, seed: 4, audio: loudQuiet });
         const avg = (a: number, b: number) => fs.slice(a, b).reduce((s, f) => s + mean(f), 0) / (b - a);
         expect(avg(10, 28), style).toBeGreaterThan(avg(42, 60) * 1.1);
+      }),
+    );
+  }, 120_000);
+
+  it("audioStartS picks where in the sound the clip starts", async () => {
+    await Promise.all(
+      ids.map(async (style) => {
+        const [fromLoud, fromQuiet] = await Promise.all([
+          clip({ style, seconds: 0.8, seed: 4, audio: loudQuiet, audioStartS: 0.1 }),
+          clip({ style, seconds: 0.8, seed: 4, audio: loudQuiet, audioStartS: 1.1 }),
+        ]);
+        const avg = (fs: Buffer[]) => fs.slice(8).reduce((s, f) => s + mean(f), 0) / (fs.length - 8);
+        expect(avg(fromLoud), style).toBeGreaterThan(avg(fromQuiet) * 1.1);
       }),
     );
   }, 120_000);

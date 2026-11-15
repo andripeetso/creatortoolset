@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { stat, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { GenSpec } from "../../contracts/edit-plan";
 import { ffmpegCommand } from "../ffmpeg-runtime";
@@ -91,8 +91,6 @@ const pick = <T>(c: Ctx, xs: readonly T[]): T => xs[Math.floor(c.rnd() * xs.leng
 
 // Interesting places to zoom into, where the edge keeps detail deep down.
 const DEEP: Array<[number, number]> = [
-  [-0.743643887037151, 0.13182590420533],
-  [-0.743643887037151, -0.13182590420533],
   [-0.7453, 0.1127],
   [-0.77568377, 0.13646737],
   [0.001643721971153, -0.822467633298876],
@@ -130,8 +128,8 @@ const STYLES: Style[] = [
       // spectrum bars bent round the centre (polar remap; the maps are drawn once and repeated), bass at the top
       const bars = 36;
       const sh = 256;
-      const r0 = 0.2 * c.w;
-      const r1 = 0.47 * c.w;
+      const r0 = 0.2 * Math.min(c.w, c.h);
+      const r1 = 0.47 * Math.min(c.w, c.h);
       const still = (fmt: string, e: string) =>
         `nullsrc=s=${c.w}x${c.h}:d=1:r=1,format=${fmt},geq=lum='${e}',loop=loop=-1:size=1,fps=${c.fps}`;
       const map = (e: string) => still("gray16le", e);
@@ -222,7 +220,7 @@ const STYLES: Style[] = [
   {
     id: "shapes",
     line: "Strobing geometric shapes: nested squares, hexagons or triangles turning against each other, flashing on hits",
-    words: ["shapes", "geometric", "geometry", "strobe", "strobing", "square", "squares", "triangle", "hexagon", "kaleidoscope", "festival", "rave", "techno", "club", "stage", "edm"],
+    words: ["shapes", "glitch", "geometric", "geometry", "strobe", "strobing", "square", "squares", "triangle", "hexagon", "kaleidoscope", "festival", "rave", "techno", "club", "stage", "edm"],
     palette: ["#050505", "#ff0054", "#ffbd00", "#ffffff"],
     pulse: true,
     graph: (c) => {
@@ -254,8 +252,9 @@ const STYLES: Style[] = [
     pulse: true,
     graph: (c) => {
       const [x, y] = pick(c, DEEP);
-      // starts close on the edge and halves the view every 1.5 s, down to what double precision still draws
-      const end = 0.02 * 2 ** -Math.min(c.seconds / 1.5, 32);
+      // starts close on the edge and halves the view every 1.5 s; a long clip dives slower, as past 13 halvings the
+      // edge turns black at this many iterations
+      const end = 0.02 * 2 ** -Math.min(c.seconds / 1.5, 13);
       const sw = even(c.w / 2);
       const sh = even(c.h / 2);
       return (
@@ -437,8 +436,8 @@ function run(args: string[], signal?: AbortSignal, onData?: (b: Buffer) => void)
 const SR = 11025;
 
 /**
- * The sound's level for each frame, as bytes for a 3×1 grey video: L how loud (smoothed, against the clip's own loud
- * parts), K how hard the low end just hit (decays fast), G the brightness a pulsing style takes from both.
+ * The sound's level for each frame, as bytes for a 3×1 grey video: L how loud (smoothed), K how hard the low end just
+ * hit (decays fast), G the brightness a pulsing style takes from both.
  */
 async function levels(input: string[], seconds: number, n: number, fps: number, signal?: AbortSignal): Promise<Buffer> {
   const rms = new Float32Array(n);
@@ -494,8 +493,10 @@ async function levels(input: string[], seconds: number, n: number, fps: number, 
     avg /= Math.max(1, Math.min(6, k));
     flux[k] = Math.max(0, low[k]! - avg);
   }
-  const rRef = ref(rms, 0.95);
-  const fRef = ref(flux, 0.97);
+  // against the clip's own loud parts, but never below a floor (about -26 dBFS): a shot from a quiet stretch of a
+  // song stays calm instead of pulsing as hard as the drop
+  const rRef = Math.max(ref(rms, 0.95), 0.05);
+  const fRef = Math.max(ref(flux, 0.97), 0.05);
   const release = 0.85 ** (30 / fps);
   const hitDecay = 0.65 ** (30 / fps);
   const out = Buffer.alloc(n * 3);
@@ -543,6 +544,7 @@ export async function generateClip(spec: GenSpec, outDir: string, signal?: Abort
 
   const out = path.join(outDir, `gen-${style.id}-${randomUUID().slice(0, 8)}.mp4`);
   const lvl = `${out}.lvl`;
+  await mkdir(outDir, { recursive: true });
   try {
     await writeFile(lvl, await levels(input, seconds, n, fps, signal));
     const tail = style.pulse
