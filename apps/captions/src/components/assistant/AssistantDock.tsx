@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, Quote, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import type { Selection } from "@contracts/providers";
@@ -38,14 +38,16 @@ import { AiPicker } from "./AiPicker";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
-import { duration, WorkCards, WorkingFor } from "./WorkCards";
+import { WorkCards, WorkingFor } from "./WorkCards";
 import { chatTitle, useChats } from "./ChatList";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
 import { StartSuggestions, WorkPicker } from "./WorkPicker";
 import { useWorkspace } from "@/lib/workspace";
 import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
-import { PILL_BUTTON, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
+import { Steps } from "@/components/chat/Steps";
+import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
+import { CopyButton } from "@/components/workshop/CopyButton";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { LimitBanner } from "./LimitBanner";
@@ -897,18 +899,11 @@ export function AssistantDock() {
       <div onMouseUp={(e) => setCite(citeAt(e))} className={cn("relative min-h-0 flex-1 overflow-x-hidden pt-2 pb-3 text-sm [overflow-wrap:anywhere]", chatMode ? "overflow-y-scroll overscroll-contain px-[max(1.5rem,calc((100%-46rem)/2))] pt-6" : place.mode === "dock" ? "overflow-y-scroll px-4" : "overflow-y-auto px-4")}>
         {cite && (
           <SelectionPill at={cite.at} onDismiss={() => setCite(null)}>
-            <button
-              type="button"
-              onClick={() => {
+            <CiteButton onClick={() => {
                 askAbout(cite.text);
                 window.getSelection()?.removeAllRanges();
                 setCite(null);
-              }}
-              className={PILL_BUTTON}
-              title="Cite in the message box: write about it there"
-            >
-              <Quote className="h-3.5 w-3.5" /> Cite
-            </button>
+              }} />
           </SelectionPill>
         )}
         {!view && <Dots />}
@@ -1235,7 +1230,7 @@ export function Message({
             Working for <WorkingFor since={m.started ?? m.at} />
           </p>
         )}
-        <Steps steps={steps} working={!m.wait && !(m.send && sending)} />
+        <Steps steps={steps.map((label) => ({ label }))} working={!m.wait && !(m.send && sending)} />
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
@@ -1282,7 +1277,7 @@ export function Message({
           Working for <WorkingFor since={m.started ?? m.at} />
         </p>
       )}
-      <Steps steps={steps} working={working && !!steps.length} took={m.took} />
+      <Steps steps={steps.map((label) => ({ label }))} working={working && !!steps.length} took={m.took} />
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       {/* a used-up plan is a wait, said in grey (the first one only in the bar over the message box: quiet); a real failure in red */}
@@ -1345,7 +1340,7 @@ function MessageMeta({ text, at, onBranch, className }: { text?: string; at?: nu
         className,
       )}
     >
-      {text && <CopyButton className={metaBtn} text={() => text} label="Copy" />}
+      {text && <CopyButton className={`${metaBtn} [&_svg]:size-3.5`} text={() => text} title="Copy" />}
       {onBranch && (
         <button type="button" className={metaBtn} onClick={onBranch} aria-label="New chat from here" title="New chat from here (this one stays as it is)">
           <GitFork />
@@ -1357,53 +1352,8 @@ function MessageMeta({ text, at, onBranch, className }: { text?: string; at?: nu
 }
 const metaBtn = "flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-muted hover:text-foreground";
 
-/** Copies text; a tick for a moment says it did. */
-function CopyButton({ text, label, className }: { text: () => string; label: string; className: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      className={className}
-      aria-label={label}
-      title={done ? "Copied" : label}
-      onClick={() =>
-        void navigator.clipboard.writeText(text()).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1200);
-        })
-      }
-    >
-      {done ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
-    </button>
-  );
-}
 
 
-/** What the AI did, folded into one row. While it works: the step it is on, a light running through it (the time is
-    the "Working for" line above). Once done: "Worked for 1m 12s" (or "N steps" for a reply from before that was kept), opening to the list. */
-function Steps({ steps, working = false, took }: { steps: string[]; working?: boolean; took?: number }) {
-  if (!steps.length) return null;
-  const last = steps[steps.length - 1];
-  const label = working ? `${last}…` : took !== undefined ? `Worked for ${duration(took)}` : steps.length === 1 ? last : `${steps.length} steps`;
-  const opens = steps.length > 1 || (!working && took !== undefined);
-  return (
-    <details className="group mt-1 mb-1.5 text-xs text-muted-foreground">
-      <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", opens && "cursor-pointer hover:text-foreground")}>
-        <span className={cn("truncate", working && "ct-shimmer")} role={working ? "status" : undefined}>
-          {label}
-        </span>
-        {opens && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
-      </summary>
-      {opens && (
-        <ul className="mt-1 ml-0.5 space-y-0.5 border-l border-border pl-2.5">
-          {steps.map((s, i) => (
-            <li key={i}>{s}</li>
-          ))}
-        </ul>
-      )}
-    </details>
-  );
-}
 function Dots() {
   return (
     <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Thinking">

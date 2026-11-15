@@ -3,13 +3,14 @@ import { CornerDownLeft, ExternalLink, Eye, FileText, Pencil, Globe, Loader2, Mi
 import { ReplyText } from "@/components/ReplyText";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type { InstagramPost } from "@/lib/instagram";
-import { CONTEXT_FIELD_LABELS, PART_LABELS, PASTE_AS_FILE, PDF_MAX_BYTES, STAGE_LABELS, TEXT_ATTACH_MAX, TURN_STOPPED, attachKind, fileBase64, imageUrl, inSlideOrder, shrinkImage, type PendingFile, type PendingImage, countUnits, docTabLabel, durationLabel, editSummary, pastedUrl, stepsSummary, turnDocChange, type ChangeScope, type ChatMessage, type ContextSnippet, type LoadedSource, type PieceQuote, type WorkshopDocument } from "@/lib/workshop";
+import { CONTEXT_FIELD_LABELS, PART_LABELS, PASTE_AS_FILE, PDF_MAX_BYTES, STAGE_LABELS, TEXT_ATTACH_MAX, TURN_STOPPED, attachKind, fileBase64, imageUrl, inSlideOrder, shrinkImage, type PendingFile, type PendingImage, countUnits, docTabLabel, durationLabel, editSummary, pastedUrl, turnDocChange, type ChangeScope, type ChatMessage, type ContextSnippet, type LoadedSource, type PieceQuote, type WorkshopDocument } from "@/lib/workshop";
 import { AuditOpenRow } from "./AuditCard";
 import { CopyButton } from "./CopyButton";
 import { SourceResultCard } from "./SourceResultCard";
-import { PILL_BUTTON, SelectionPill, citeAt } from "./SelectionPill";
+import { CiteButton, SelectionPill, citeAt } from "./SelectionPill";
 import { WhatChanged } from "./WhatChanged";
 import { ModelChip } from "./ModelChip";
+import { Steps, type Step } from "@/components/chat/Steps";
 import { Notice } from "./Notice";
 import { ChipComposer, numbered, readable, type ComposerHandle } from "./ChipComposer";
 import type { Selection } from "@contracts/providers";
@@ -24,6 +25,11 @@ import { cornerTaken } from "@/lib/dock-place";
  * The composer carries pinned context and what goes in from the sources.
  */
 /** How long the wait is, measured (Claude on the Mac, 2026-10-01: a draft ~35 s, quick research ~1 min, deep ~4 min). */
+/** A turn's steps for the shared list: each with how long it took (the one still running, so far). */
+const stepRows = (steps: NonNullable<ChatMessage["steps"]>, now: number): Step[] => steps.map((s, i) => ({ label: s.label, ms: (s.end ?? (i === steps.length - 1 ? now : s.at)) - s.at }));
+/** From the first step to the end of the last. */
+const tookOf = (steps: NonNullable<ChatMessage["steps"]>): number => steps.reduce((t, s) => Math.max(t, s.end ?? s.at), steps[0].at) - steps[0].at;
+
 function thinkingHint(m: ChatMessage): string {
   // a Mac answer is named for its CLI ("Claude (Mac)", "Codex (Mac)"); the follower's read is Fable for Claude
   const mac = !!m.provider?.endsWith("(Mac)");
@@ -411,18 +417,11 @@ export function ChatPane({
       >
         {cite && onQuote ? (
           <SelectionPill at={cite.at} onDismiss={() => setCite(null)}>
-            <button
-              type="button"
-              onClick={() => {
+            <CiteButton onClick={() => {
                 onQuote({ from: "reply", text: cite.text }, cite.at);
                 window.getSelection()?.removeAllRanges();
                 setCite(null);
-              }}
-              className={PILL_BUTTON}
-              title="Cite in the message box: write about it there"
-            >
-              <Quote className="h-3.5 w-3.5" /> Cite
-            </button>
+              }} />
           </SelectionPill>
         ) : null}
         {messages.length === 0 && (
@@ -520,7 +519,7 @@ export function ChatPane({
                         <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
                       </div>
                     ) : null}
-                    {m.steps?.length ? <StepList steps={m.steps} now={now} live /> : null}
+                    {m.steps?.length ? <Steps steps={stepRows(m.steps, now)} working /> : null}
                     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />
                       <span>{m.stage ? STAGE_LABELS[m.stage] : m.audit ? "Starting the audit" : "Starting"}</span>
@@ -559,7 +558,7 @@ export function ChatPane({
                         ))}
                       </ul>
                     ) : null}
-                    {m.steps?.length ? <StepList steps={m.steps} now={now} /> : null}
+                    {m.steps?.length ? <Steps steps={stepRows(m.steps, now)} took={tookOf(m.steps)} /> : null}
                     {m.fetched?.length ? (
                       <p className="mt-1.5 text-[11px] text-violet-200/80">
                         Pulled in: {m.fetched.map((f) => (f.parts.length ? `@${f.handle} ${f.parts.map((p) => PART_LABELS[p]).join(" + ")}` : f.handle)).join(" · ")}
@@ -1027,35 +1026,6 @@ function TurnMeta({
 }
 
 /** What a turn did, step by step with its own time: live while it works, one line (open for the list) when done. */
-function StepList({ steps, now, live = false }: { steps: NonNullable<ChatMessage["steps"]>; now: number; live?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const rows = (
-    <ul className="flex flex-col gap-0.5">
-      {steps.map((s, i) => {
-        const running = live && !s.end && i === steps.length - 1;
-        const web = /web/i.test(s.label);
-        return (
-          <li key={i} className={`flex items-baseline gap-1.5 text-[11px] ${web ? "text-violet-300" : "text-muted-foreground"}`}>
-            {running ? <Loader2 className="h-3 w-3 shrink-0 translate-y-0.5 animate-spin" /> : <span className="w-3 shrink-0 text-center">·</span>}
-            <span className="min-w-0 flex-1 truncate" title={s.label}>
-              {s.label}
-            </span>
-            <span className="shrink-0 tabular-nums text-muted-foreground/70">{durationLabel((s.end ?? (running ? now : s.at)) - s.at)}</span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-  if (live) return <div className="mb-1">{rows}</div>;
-  return (
-    <div className="mt-1.5">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="text-[11px] text-muted-foreground hover:text-foreground" aria-expanded={open}>
-        {open ? "▾" : "▸"} {stepsSummary(steps)}
-      </button>
-      {open ? <div className="mt-1">{rows}</div> : null}
-    </div>
-  );
-}
 
 /** What the AI checked on the web, with the pages it read. */
 function ResearchCard({ research }: { research: NonNullable<ChatMessage["research"]> }) {
