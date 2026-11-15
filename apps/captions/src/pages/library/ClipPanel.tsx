@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Captions, Clapperboard, Copy, Download, FileText, FolderOpen, Loader2, MessageSquare, Pencil, RotateCcw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Download, FileText, FolderOpen, Pencil, RotateCcw, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch, type TagCount } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { getAsset, listTags, openInCaptions, relatedAssets, rerunJobs, updateAsset, useLibraryChanges } from "@/lib/library";
+import { getAsset, listTags, relatedAssets, rerunJobs, updateAsset, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { canReveal, clock, day, factsOf, original, revealClip, tagSuggestions, useClipView } from "./clip";
@@ -52,7 +52,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
   const [reread, setReread] = useState(0);
   const [sharing, setSharing] = useState(false);
   const [now, setNow] = useState(-1);
-  const [opening, setOpening] = useState(false);
   const [same, setSame] = useState<SimilarMatch[]>([]);
   const [near, setNear] = useState<AssetCard[]>([]);
   const [copiedPath, setCopiedPath] = useState(false);
@@ -136,13 +135,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
     if (!v) return;
     v.currentTime = s;
     void v.play().catch(() => {});
-  };
-  const captions = () => {
-    setOpening(true);
-    openInCaptions(libraryId, a.id)
-      .then(({ projectId }) => navigate(`/captions?project=${projectId}`))
-      .catch((e) => onError(message(e)))
-      .finally(() => setOpening(false));
   };
   // New edit opens with this take picked: the other takes, the style and the rest are chosen there, and no edit is
   // made before Create and run (EditorPage reads the pick from the navigation's state)
@@ -237,12 +229,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
               </a>
             </Button>
           )}
-          {a.kind === "video" && (
-            <Button size="sm" variant="outline" disabled={opening} onClick={captions}>
-              {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <Captions className="h-4 w-4" />}
-              Open in Caption Studio
-            </Button>
-          )}
           {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
           {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
             <Button size="sm" variant="outline" onClick={newEdit}>
@@ -266,15 +252,6 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             </select>
           )}
         </>
-      )}
-      {a.review && (
-        // Review owns its versions and its trash (one in Review's trash opens there): the library's trash answers 409 for it
-        <Button size="sm" variant="outline" asChild>
-          <Link to={a.trashedAt ? "/review?trash=1" : `/review/${a.id}`}>
-            <MessageSquare className="h-4 w-4" />
-            Open in Review
-          </Link>
-        </Button>
       )}
       {win && <span className="ml-auto">{trash}</span>}
     </div>

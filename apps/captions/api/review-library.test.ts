@@ -73,9 +73,12 @@ describe("Review in the Media Library", () => {
     expect(library.length).toBeGreaterThan(0);
     expect(library.equals(review)).toBe(true);
     expect((await app.request(`/api/library/media/${versionId}/thumb`)).status).toBe(200);
-    // on the library's grid, and the local extras queued (no transcribe: that spends someone's key)
-    const page = await read(app.request(`/api/library/${row(asset.id)!.library_id}/assets`));
-    expect(page.items.map((a: { id: string }) => a.id)).toContain(asset.id);
+    // finished work, not footage: off the library's grid, but still read by its version (the AI Editor, Finals); the
+    // local extras are queued (no transcribe: that spends someone's key)
+    const lib = row(asset.id)!.library_id;
+    const ids = (page: { items: { id: string }[] }) => page.items.map((a) => a.id);
+    expect(ids(await read(app.request(`/api/library/${lib}/assets`)))).not.toContain(asset.id);
+    expect(ids(await read(app.request(`/api/library/${lib}/assets?versions=${versionId}`)))).toContain(asset.id);
     const jobs = (libraryDb().prepare("SELECT kind FROM jobs WHERE version_id = ?").all(versionId) as { kind: string }[]).map((j) => j.kind);
     expect(jobs.sort()).toEqual(["fingerprint", "wave"]);
   });
@@ -134,8 +137,9 @@ describe("Review in the Media Library", () => {
     expect(meta.versions[0]!.versionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(numbers(id)).toEqual({ [meta.versions[0]!.versionId!]: 1 });
     expect(row(id)).toMatchObject({ title: "Older video" });
-    // the library opens it in Review instead of offering its own trash (which answers 409)
-    const page = await read(app.request(`/api/library/${row(id)!.library_id}/assets`));
+    // the library opens it in Review instead of offering its own trash (which answers 409); read by its version, as it
+    // is finished work and off the library's own grid
+    const page = await read(app.request(`/api/library/${row(id)!.library_id}/assets?versions=${meta.versions[0]!.versionId}`));
     expect(page.items.find((a: { id: string }) => a.id === id)).toMatchObject({ review: true });
     // Review reads it as before
     const view = await read(app.request(`/assets/${id}`));

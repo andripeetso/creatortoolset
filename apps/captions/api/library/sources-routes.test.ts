@@ -72,10 +72,10 @@ beforeAll(() => {
 });
 
 describe("a member with a granted role, by default", () => {
-  it("lists nothing in the library, and the owner still lists both assets", async () => {
+  it("lists nothing in the library, and the owner lists the footage", async () => {
     expect((await json(call("member-b", "GET", "/api/library/lib_a/assets"))).items).toEqual([]);
     const owned = await json(call("owner-a", "GET", "/api/library/lib_a/assets"));
-    expect(owned.items.map((i: { id: string }) => i.id).sort()).toEqual(["finals-1", "plain-1"]);
+    expect(owned.items.map((i: { id: string }) => i.id).sort()).toEqual(["plain-1"]); // a Finals clip is not footage: off the list, read by id below
   });
 
   it("gets 404 on a Finals piece's asset, its media and its search hits", async () => {
@@ -120,7 +120,7 @@ describe("a plug-in facet", () => {
     expect(hits.map((h: { asset: { id: string } }) => h.asset.id)).toEqual(["plain-1"]);
     // an unknown facet key is ignored, so the list is the whole library again
     const unknown = await json(call("owner-a", "GET", "/api/library/lib_a/assets?f.nope=x"));
-    expect(unknown.items).toHaveLength(2);
+    expect(unknown.items).toHaveLength(1); // the Finals clip is never on the list (query.ts FINISHED)
     resetLibrarySlots();
   });
 });

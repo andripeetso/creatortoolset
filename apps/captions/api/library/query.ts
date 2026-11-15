@@ -41,8 +41,9 @@ const SHOWN = (version: string) =>
   `(SELECT source || char(31) || text FROM descriptions dd WHERE dd.version_id = ${version} ORDER BY dd.source = 'user' DESC LIMIT 1)`;
 
 /**
- * Finished work, which never has a roll (roll.ts): a file saved as finished (filed_roll 'none', an export) or an asset
- * with a version in a Finals piece. Review's videos are told by their files (inReview): toCard and roll.ts check those.
+ * Finished work, which never has a roll (roll.ts): a file saved as finished (filed_roll 'none': an export, a Review video,
+ * review.ts toLibrary) or an asset with a version in a Finals piece. The library's own pages are footage: the listing,
+ * search, tag and place counts and folder counts leave it out; Review and Finals show it, and reads by id still find it.
  */
 export const FINISHED = `(a.filed_roll IS 'none' OR EXISTS (SELECT 1 FROM piece_items fp JOIN asset_versions fv ON fv.id = fp.version_id WHERE fv.asset_id = a.id))`;
 
@@ -179,6 +180,9 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     where.push(`a.roll = ? AND NOT ${FINISHED}`);
     params.push(query.roll);
   }
+  // footage only (owner, 2026-11-15: "the conversions and finals I don't want to appear in the media library"),
+  // except a read of named versions (Review, Finals, the AI Editor)
+  if (!query.versions?.length) where.push(`NOT ${FINISHED}`);
   if (query.versions?.length) {
     where.push(`v.id IN (${query.versions.map(() => "?").join(",")})`);
     params.push(...query.versions);

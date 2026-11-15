@@ -683,9 +683,10 @@ export async function toLibrary(id: string): Promise<void> {
   d.exec("BEGIN");
   try {
     d.prepare(
-      `INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at)
-       VALUES (?, ?, 'video', ?, NULL, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET title = excluded.title, trashed_at = excluded.trashed_at`,
+      // a Review video is finished work (query.ts FINISHED): not footage, so the library's own pages leave it out
+      `INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at, filed_roll)
+       VALUES (?, ?, 'video', ?, NULL, ?, ?, ?, 'none')
+       ON CONFLICT (id) DO UPDATE SET title = excluded.title, trashed_at = excluded.trashed_at, filed_roll = 'none', roll = NULL`,
     ).run(id, libraryId, m.name, m.owner, m.createdAt, live ? null : (m.deletedAt ?? Date.now()));
     // out of the way first: a version's number changes with order, stack and unstack, and (asset, n) is unique
     d.prepare("UPDATE asset_versions SET n = -rowid WHERE asset_id = ?").run(id);
