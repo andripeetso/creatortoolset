@@ -17,7 +17,7 @@ import { useBigFolder } from "@/components/LibraryProcessing";
  * computer it asks for a path, which the server checks. On a hosted server the card offers upload instead.
  * Skip is remembered in this browser; the card goes for good once a folder exists. `page`: in the Media Library's own
  * page while it holds nothing (below its folders), with what the library is for; no heading and no Skip there, and
- * upload only where no folder can be read (the page's own Upload button is the other way). `offer`: a big folder offers the AI organizing the library (`onOffer` with the answer).
+ * upload only where no folder can be read (the page's own Upload button is the other way). `offer`: a big folder offers the AI organizing the library (`onOffer` with the answer); without `onOffer` the dialog asks the library itself, as on the AI Editor's page.
  */
 
 const SKIP_KEY = "ct-footage-folder-skipped";
@@ -94,7 +94,7 @@ export function FootageFolderCard({
   };
 
   // where its files are kept, and for a big folder what importing it takes; a size the server can't read adds the folder as before
-  const check = (folder: string) => big.check(folder, (copyTo) => add(folder, copyTo), { libraryId, offerCopy: true, organize: { offer, answer: onOffer ?? (async () => {}) } });
+  const check = (folder: string) => big.check(folder, (copyTo) => add(folder, copyTo), { libraryId, offerCopy: true, ...(onOffer ? { organize: { offer, answer: onOffer } } : {}) });
 
   const choose = async () => {
     const picked = await chooseFolderOnMac();

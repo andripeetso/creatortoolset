@@ -47,7 +47,7 @@ export function LibraryWatchFolders({
   const [failed, setError] = useState<string | null>(null);
   const error = failed ?? (status ? null : live.error || null);
   const [path, setPath] = useState("");
-  const [mode, setMode] = useState<WatchFolder["mode"] | "copyTo">("reference");
+  const [mode, setMode] = useState<WatchFolder["mode"]>("reference");
   const [into, setInto] = useState("");
   const big = useBigFolder(onOrganized); // a big folder says first what adding it takes, as from the first screen
 
@@ -61,10 +61,11 @@ export function LibraryWatchFolders({
     }
   };
   const current = (status?.folders ?? []).map(({ path, mode, collectionId, copyTo }) => ({ path, mode, collectionId, copyTo }));
+  // where the server can copy into a folder on this computer, the one dialog asks copy or keep, as everywhere else
   const add = () =>
-    big.check(path.trim(), () =>
-      save([...current, { path: path.trim(), collectionId: into || undefined, ...(mode === "copyTo" ? { mode: "reference", copyTo: status?.copyTo } : { mode }) }]),
-      { libraryId },
+    big.check(path.trim(), (copyTo) =>
+      save([...current, { path: path.trim(), collectionId: into || undefined, ...(copyTo ? { mode: "reference", copyTo } : { mode: status?.copyTo ? "reference" : mode }) }]),
+      { libraryId, offerCopy: true },
     );
   const choose = async () => {
     const picked = await chooseFolderOnMac();
@@ -113,10 +114,12 @@ export function LibraryWatchFolders({
               Choose…
             </Button>
           )}
-          <select aria-label="Mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className={select}>
-            <option value="reference">Leave files where they are</option>
-            {status?.copyTo ? <option value="copyTo">Copy to {folderName(status.copyTo)}</option> : <option value="copy">Copy into the library</option>}
-          </select>
+          {!status?.copyTo && (
+            <select aria-label="Mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className={select}>
+              <option value="reference">Leave files where they are</option>
+              <option value="copy">Copy into the library</option>
+            </select>
+          )}
           {libraryFolders.length > 0 && (
             <select aria-label="Into folder" value={into} onChange={(e) => setInto(e.target.value)} className={select}>
               <option value="">No folder</option>

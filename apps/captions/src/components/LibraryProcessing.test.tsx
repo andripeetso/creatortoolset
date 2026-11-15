@@ -127,4 +127,34 @@ describe("folders dropped together", () => {
     expect(added).toEqual(["/Volumes/Card/Trip", "/Volumes/Card/Beach"]);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
+
+  it("what waits on them (loose files dropped beside) comes once the last is answered, or closed; at once with none open", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
+      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 3, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
+      return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
+    });
+    const done: string[] = [];
+    let big!: ReturnType<typeof useBigFolder>;
+    function Host() {
+      big = useBigFolder();
+      return <>{big.dialog}</>;
+    }
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><Host /></MemoryRouter>));
+    big.after(() => void done.push("none open"));
+    expect(done).toEqual(["none open"]);
+    await act(async () => {
+      await Promise.all(["/Volumes/Card/Trip", "/Volumes/Card/Beach"].map((p) => big.check(p, () => void done.push(p), { libraryId: "lib_1", offerCopy: true })));
+    });
+    big.after(() => void done.push("loose files"));
+    act(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Add folder")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(done).toEqual(["none open", "/Volumes/Card/Trip"]); // one dialog still open: they wait
+    act(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(done).toEqual(["none open", "/Volumes/Card/Trip", "loose files"]);
+  });
 });

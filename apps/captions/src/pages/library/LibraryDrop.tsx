@@ -63,11 +63,12 @@ export function useLibraryDrop({
       e.stopPropagation();
       // takes the drop's items now: they are gone after the event
       droppedFiles(e.dataTransfer, readsFolders ? droppedOnMac : undefined).then(
-        (d) => {
-          for (const f of d.folders) void folderIn(f);
+        async (d) => {
+          await Promise.all(d.folders.map((f) => folderIn(f)));
           // a folder opened here: only what the library takes (a loose file dropped by itself goes in as it is)
           const files = d.folder ? d.files.filter((f) => !f.webkitRelativePath.includes("/") || MEDIA.test(f.name)) : d.files;
-          if (files.length) void addFiles(files, d.paths.size ? d.paths : undefined);
+          // loose files dropped beside folders come once the folders' dialogs are answered: one dialog at a time
+          if (files.length) big.after(() => void addFiles(files, d.paths.size ? d.paths : undefined));
         },
         (x: unknown) => onError(x instanceof Error ? x.message : String(x)),
       );
