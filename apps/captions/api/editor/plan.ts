@@ -87,17 +87,19 @@ export function speechShare(sentences: Pick<Sentence, "s" | "e">[], soundS: numb
   return sentences.reduce((n, s) => n + Math.max(0, s.e - s.s), 0) / soundS;
 }
 
-/** Whether this edit is planned rather than cut around speech: asked for, or nobody speaks in its footage. */
+/**
+ * Whether this edit is planned rather than cut around speech: asked for, all its footage is B-roll, or nobody speaks in
+ * it. Each source is judged on its own: one take where someone talks keeps a folder of takes and wordless clips cut
+ * around what is said.
+ */
 export function isPlanned(edit: EditMeta, sentences: Sentence[]): boolean {
-  if (edit.plan) return true;
+  if (edit.plan || allBroll(edit)) return true;
   const probe = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?");
-  let soundS = 0;
-  for (const id of edit.sources) {
-    if (id === edit.song || isMusic(id)) continue;
+  return !edit.sources.some((id) => {
+    if (id === edit.song || isMusic(id)) return false;
     const p = JSON.parse((probe.get(id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null;
-    if (p?.acodec) soundS += p.duration;
-  }
-  return speechShare(sentences, soundS) < SPEECH_SHARE;
+    return speechShare(sentences.filter((s) => s.src === id), p?.acodec ? p.duration : 0) >= SPEECH_SHARE;
+  });
 }
 
 /* ---------------- the song ---------------- */
@@ -392,11 +394,13 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     const sound = (["off", "under", "full"] as const).find((x) => x === s.sound) ?? (song ? "off" : "full");
     const enter = (["cut", "flash", "whip", "dissolve"] as const).find((x) => x === s.enter);
     const why = str(s.why, 120);
+    // a generated clip is made as long as its shot: it plays as made
+    const made = "generate" in src;
     shots.push({
       src,
       dur: d,
-      speed: r3(clamp(num(s.speed) ?? 1, SPEED.min, SPEED.max)),
-      ...(cleanRamp(s.ramp, d) ? { ramp: cleanRamp(s.ramp, d) } : {}),
+      speed: made ? 1 : r3(clamp(num(s.speed) ?? 1, SPEED.min, SPEED.max)),
+      ...(!made && cleanRamp(s.ramp, d) ? { ramp: cleanRamp(s.ramp, d) } : {}),
       fx: cleanFx(s.fx, d),
       ...(enter && enter !== "cut" ? { enter } : {}),
       sound: "source" in src && src.source.sound === false ? "off" : sound,

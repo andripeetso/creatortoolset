@@ -29,7 +29,9 @@ const { saveTranscript } = await import("../library/transcribe");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { NO_SPEECH } = await import("./analyze");
-const { MIN_SHOT_S, parsePlans, planPrompt, planTimeline, repairPlan, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { isPlanned, MIN_SHOT_S, parsePlans, planPrompt, planTimeline, repairPlan, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { toOtio } = await import("./otio");
+const { toFcpxml } = await import("./fcpxml");
 const { qaOf } = await import("./qa");
 const { createEdit, readDraft, readEdit, readStep } = await import("./store");
 const { tick } = await import("./worker");
@@ -190,6 +192,21 @@ describe("the plan: checked and repaired, never trusted", () => {
     ]);
     // the checks don't hold a planned cut to the speaker's rules: no voice gap, no shortest shot
     expect(qaOf(tl).notes).toEqual([]);
+    // the exports carry the cut, the speed and a marker per shot (the effects are in its note)
+    const files = { ver_game: "/media/run.mp4", ver_mute: "/media/silent.mp4", ver_song: "/media/song.wav" };
+    const otio = JSON.stringify(toOtio(tl, files));
+    expect(otio).toContain('"OTIO_SCHEMA":"LinearTimeWarp.1","name":"","effect_name":"LinearTimeWarp","metadata":{},"time_scalar":2');
+    expect(otio).toContain('"name":"Shot 1"');
+    const xml = toFcpxml(tl, files);
+    expect(xml).toContain('<timept time="1s" value="2s" interp="linear"/>');
+    expect(xml).toContain('value="Shot 1" note="speed 2 · shake at 0.00 s"');
+  });
+
+  it("plays a generated clip as it was made: no speed, no ramp", () => {
+    const { plan } = repairPlan({ shots: [{ generate: { style: "plasma" }, dur: 1, speed: 2, ramp: [{ t: 0, speed: 1 }, { t: 1, speed: 3 }] }] }, ctx({ gen: ["plasma"] }));
+    expect(plan.shots[0]).toMatchObject({ src: { generate: { style: "plasma", seconds: 1 } }, dur: 1 });
+    expect(plan.shots[0]!.speed).toBeUndefined();
+    expect(plan.shots[0]!.ramp).toBeUndefined();
   });
 });
 
@@ -222,6 +239,24 @@ describe("footage where nobody speaks reaches Review", () => {
     saveTranscript(d, "ver_game", "deepgram", "en", [], []);
   }, 60_000);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("judges speech per source: one take where someone talks keeps a folder of takes and long wordless clips cut around speech", () => {
+    const d = libraryDb();
+    const p = (s: number) => JSON.stringify({ duration: s, width: 320, height: 180, fps: 30, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" });
+    d.exec(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_take', 'lib_a', 'video', 'Take', 'mem-a', 0), ('ast_long', 'lib_a', 'video', 'Long clip', 'mem-a', 0)`);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES ('ver_take', 'ast_take', 1, 'k1', 1, 's1', ?, 'ready', 'mem-a', 0), ('ver_long', 'ast_long', 1, 'k2', 1, 's2', ?, 'ready', 'mem-a', 0)").run(p(30), p(900));
+    const said = [{ n: 1, src: "ver_take", text: "hello there", s: 0, e: 20, w0: 0, w1: 1 }];
+    const edit = (over: object = {}) => ({ sources: ["ver_take", "ver_long", "ver_game"], ...over }) as unknown as Parameters<typeof isPlanned>[0];
+    expect(isPlanned(edit(), said)).toBe(false);
+    expect(isPlanned(edit(), [])).toBe(true);
+    expect(isPlanned(edit({ plan: true }), said)).toBe(true);
+    // a few words made up over a long wordless clip are nobody speaking
+    expect(isPlanned(edit({ sources: ["ver_long"] }), [{ ...said[0]!, src: "ver_long", e: 30 }])).toBe(true);
+    // everything B-roll as the library sorted it: planned, whatever words it has
+    d.exec("UPDATE assets SET roll = 'b' WHERE id IN ('ast_take', 'ast_long')");
+    expect(isPlanned(edit({ sources: ["ver_take", "ver_long"] }), said)).toBe(true);
+    d.exec("UPDATE assets SET roll = NULL WHERE id IN ('ast_take', 'ast_long')");
+  });
 
   it("is analyzed with no refusal, planned to the song among its sources, drawn and filed in Review", async () => {
     vi.mocked(aiFor).mockReturnValue({ only: ["mac"] });

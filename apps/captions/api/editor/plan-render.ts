@@ -20,6 +20,9 @@ const RAMP_STEP_S = 0.1;
 /** The face text is drawn in when the plan names none of a design system's (Anton ships in public/fonts). */
 const TEXT_FONT = "Anton-Regular.ttf";
 
+/** The end of every shot's filter: converted to and marked as HD colour. */
+export const TAIL = "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709";
+
 /** One stretch of steady speed of a shot: from `off` seconds into the shot, `frames` long. */
 export interface Stretch {
   off: number;
@@ -121,7 +124,9 @@ export function stretchFilter(tl: Timeline, item: Item, s: Stretch, at: number, 
       `drawtext=fontfile='${filterEscape(o.font)}':textfile='${filterEscape(x.file)}':fontsize=${size}:fontcolor=white:borderw=${Math.max(2, Math.round(PH / 240))}:bordercolor=black:x=(w-tw)/2:y=${y}:enable='between(t+${n4(at)},${n4(x.at)},${n4(x.at + x.dur)})'`,
     );
   }
-  out.push("format=yuv420p");
+  // every shot ends in one colour space, so the joined preview never changes it between shots (a player or a later
+  // filter would start over at each change)
+  out.push(TAIL);
   return out.join(",");
 }
 

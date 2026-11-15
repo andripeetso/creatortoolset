@@ -12,7 +12,7 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-plan-render-"));
 process.env.DATA_DIR = dir;
 
-const { atempo, renderPlanPreview, stretchesOf, stretchFilter } = await import("./plan-render");
+const { atempo, renderPlanPreview, stretchesOf, stretchFilter, TAIL } = await import("./plan-render");
 const { renderPreview } = await import("./preview");
 const { emptyTracks } = await import("./timeline");
 
@@ -39,13 +39,13 @@ const BASE = "setpts=(PTS-STARTPTS)/1,scale=320:180,crop=320:180:0:0,pad=320:180
 
 describe("a planned shot's filter graph, per effect", () => {
   it("frames the shot as the timeline does, at its speed, with nothing else when it has no effect", () => {
-    expect(graph([])).toBe(`${BASE},format=yuv420p`);
+    expect(graph([])).toBe(`${BASE},${TAIL}`);
     expect(graph([], { speed: 2 })).toMatch(/^setpts=\(PTS-STARTPTS\)\/2,scale=320:180,/);
   });
 
   it("draws punch, zoom and shake as one scale over time and a crop, in the shot's own time", () => {
     expect(graph([{ type: "punch", at: 0.5, amount: 1.4 }])).toBe(
-      `${BASE},scale=w='trunc(320*(if(between(t+0,0.5,0.8),1.4-0.4*((t+0)-0.5)/0.3,1))/2)*2':h='trunc(180*(if(between(t+0,0.5,0.8),1.4-0.4*((t+0)-0.5)/0.3,1))/2)*2':eval=frame,crop=320:180:x='(iw-ow)/2':y='(ih-oh)/2',format=yuv420p`,
+      `${BASE},scale=w='trunc(320*(if(between(t+0,0.5,0.8),1.4-0.4*((t+0)-0.5)/0.3,1))/2)*2':h='trunc(180*(if(between(t+0,0.5,0.8),1.4-0.4*((t+0)-0.5)/0.3,1))/2)*2':eval=frame,crop=320:180:x='(iw-ow)/2':y='(ih-oh)/2',${TAIL}`,
     );
     // a later stretch of the shot counts from its own place in it
     expect(graph([{ type: "zoom", at: 0, dur: 1, from: 1, to: 2 }], {}, 0.4)).toContain("if(lt((t+0.4),0),1,if(lt((t+0.4),1),1+1*((t+0.4)-0)/1,2))");
