@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ExternalLink, Eye, FileText, Globe, Loader2, Mic, Paperclip, Plus, Quote, RotateCcw, Send, ShieldCheck, Square, Telescope, X } from "lucide-react";
+import { ExternalLink, Eye, FileText, Globe, Loader2, Mic, Paperclip, Plus, Quote, RotateCcw, ShieldCheck, Telescope, X } from "lucide-react";
 import { ReplyText } from "@/components/ReplyText";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type { InstagramPost } from "@/lib/instagram";
@@ -13,6 +13,8 @@ import { AiPicker } from "@/components/assistant/AiPicker";
 import { ChatPicture } from "@/components/chat/ChatPicture";
 import { useFollowEnd } from "@/components/chat/useFollowEnd";
 import { QueuedRow } from "@/components/chat/QueuedRow";
+import { ICON_BTN, MicButton, SendButton, VoiceDone, VoiceError, VoiceStatus, boxClass, useChatVoice } from "@/components/chat/MessageBox";
+import { cn } from "@/lib/utils";
 import { Steps, type Step } from "@/components/chat/Steps";
 import { Notice } from "./Notice";
 import { ChipComposer, numbered, readable, type ComposerHandle } from "./ChipComposer";
@@ -381,7 +383,13 @@ export function ChatPane({
     }
   };
   // Undo puts the question back in the box when the box is empty, so the wording can be changed and sent again.
+  const aiChip = onAiChange ? <AiPicker ai={ai} onChange={onAiChange} /> : null;
   const composerBusy = text.trim() !== "" || pasted.length > 0 || images.length > 0 || pendingFiles.length > 0;
+  // talking instead of typing: the words go at the end of the box, for you to check before sending
+  const v = useChatVoice((said) => {
+    setText((t) => (t.trim() ? `${t.trimEnd()} ${said}` : said));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  });
   const undo = (m: ChatMessage) => {
     onRevert(m);
     const at = messages.indexOf(m);
@@ -703,8 +711,10 @@ export function ChatPane({
             ))}
           </ul>
         )}
+        <VoiceError v={v} />
         <div
-          className="flex cursor-text items-end gap-2 rounded-2xl border border-border bg-background px-2 py-2"
+          className={cn(boxClass(v.recording), "cursor-text pl-1.5")}
+          onKeyDown={(e) => v.recording && e.key === "Escape" && v.voice.cancel()}
           onMouseDown={(e) => {
             // The box is bigger than the text field: a click on its padding puts you in it too.
             if (e.target !== e.currentTarget) return;
@@ -712,7 +722,7 @@ export function ChatPane({
             inputRef.current?.focus();
           }}
         >
-          <ChipComposer
+          {v.recording || v.writing ? <VoiceStatus v={v} /> : <ChipComposer
             ref={inputRef}
             value={text}
             onChange={setText}
@@ -738,26 +748,16 @@ export function ChatPane({
             onEditQuote={(id, at) => onEditQuote?.(id, at)}
             onRemoveQuote={(id) => onUnquote?.(id)}
             onAddQuote={(q) => onQuote?.(q)}
-          />
-          <button type="button" onClick={() => pickRef.current?.click()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground" title="Attach files: pictures, text files, PDFs. Or drop or paste them here." aria-label="Attach files">
+          />}
+          {v.recording ? <VoiceDone v={v} /> : <>
+          <button type="button" onClick={() => pickRef.current?.click()} className={cn(ICON_BTN, "text-muted-foreground hover:bg-muted hover:text-foreground")} title="Attach files: pictures, text files, PDFs. Or drop or paste them here." aria-label="Attach files">
             <Paperclip className="h-4 w-4" />
           </button>
+          <MicButton v={v} />
+          {aiChip}
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
-          {thinking && !composerBusy ? (
-            <button type="button" onClick={onStop} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white hover:bg-violet-500" title="Stop" aria-label="Stop">
-              <Square className="h-3.5 w-3.5 fill-current" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={(!text.trim() && !pasted.length && !images.length && !pendingFiles.length) || !activeDoc || !aiAvailable}
-              className={`flex h-9 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 ${thinking || queue.length ? "px-3 text-[12px]" : "w-9"}`}
-              title={thinking || queue.length ? "Queue: sends when the reply is done" : "Send"}
-            >
-              {thinking || queue.length ? "Queue" : <Send className="h-4 w-4" />}
-            </button>
-          )}
+          <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
+          </>}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <input
@@ -839,7 +839,6 @@ export function ChatPane({
               ))}
             </span>
           ) : null}
-          {onAiChange ? <AiPicker ai={ai} onChange={onAiChange} /> : null}
           {audit}
           {messages.some((m) => m.text.trim()) ? (
             <CopyButton text={() => chatText(messages)} title="Copy the whole chat as plain text" className={`${chipIdle} ml-auto py-1.5`} />

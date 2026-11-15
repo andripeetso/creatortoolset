@@ -25,9 +25,9 @@ export function Steps({ steps, working = false, took }: { steps: Step[]; working
       {opens && (
         <ul className="mt-1 ml-0.5 space-y-0.5 border-l border-border pl-2.5">
           {steps.map((s, i) => (
-            <li key={i} className="flex items-baseline gap-2">
-              <span className="min-w-0 flex-1">{s.label}</span>
-              {s.ms !== undefined && <span className="shrink-0 tabular-nums text-muted-foreground/70">{duration(s.ms)}</span>}
+            <li key={i}>
+              {s.label}
+              {s.ms !== undefined && <span className="ml-2 tabular-nums text-muted-foreground/70">{duration(s.ms)}</span>}
             </li>
           ))}
         </ul>
