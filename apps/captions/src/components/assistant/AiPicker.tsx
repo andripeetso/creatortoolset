@@ -33,16 +33,18 @@ export function AiPicker({ ai, fallback, onChange }: { ai?: Selection; fallback?
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex h-8 min-w-0 max-w-40 shrink items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-8 min-w-0 max-w-36 shrink items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label={`AI for this chat: ${label}${ai ? "" : " (default)"}`}
           title={ai ? `This chat's AI: ${nameOf(shown.instance)}, ${label}` : `Your default AI: ${nameOf(shown.instance)}, ${label}`}
         >
           <ProviderLogo driver={driverOf(shown.instance)} inherit className="size-3.5 opacity-80" />
-          <span className="truncate">{label}</span>
+          {!ai && <span className="shrink-0">Default</span>}
+          <span className={cn("truncate", !ai && "opacity-70")}>{label}</span>
         </button>
       </PopoverTrigger>
       {/* over the floating dock (z-[55]) */}
-      <PopoverContent side="top" align="end" className="z-[60] flex w-[26rem] max-w-[calc(100vw-2rem)] p-0">
+      {/* a press in it stays in it: the dock's click-away (it is portalled out of the dock) doesn't close the dock */}
+      <PopoverContent side="top" align="end" onPointerDown={(e) => e.stopPropagation()} className="z-[60] flex w-[26rem] max-w-[calc(100vw-2rem)] p-0">
         <Command className="min-w-0 flex-1 rounded-r-none">
           <CommandInput placeholder="Search models…" />
           <CommandList>

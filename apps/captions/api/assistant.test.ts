@@ -719,6 +719,10 @@ describe("a chat's own AI", () => {
     // the next message in the chat, sent without `ai`, stays on it
     expect((await turn({ text: "and again" })).status).toBe(202);
     expect(await answered()).toMatchObject({ driver: "codex", model: "gpt-x" });
+    // a new chat starts on the default; the earlier one, opened again, is still on its own
+    const codexChat = ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).id;
+    expect(((await (await app.request("/api/assistant", { method: "DELETE", headers: { cookie } })).json()) as View).ai).toBeUndefined();
+    expect(((await (await app.request(`/api/assistant/past/${codexChat}/open`, { method: "POST", headers: { cookie } })).json()) as View).ai).toMatchObject({ instance: "codex" });
     // an AI that isn't one of theirs is refused, and nothing is added to the chat
     const before = ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).messages.length;
     const bad = await turn({ text: "nope", ai: { instance: "someone-elses", model: "gpt-x", effort: "high" } });
@@ -730,7 +734,7 @@ describe("a chat's own AI", () => {
     expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).ai).toBeUndefined();
     expect((await turn({ text: "still there?" })).status).toBe(202);
     expect(await answered()).toMatchObject({ driver: "claude", model: "claude-opus-5-5" });
-    // null puts a chat back on the default; a new chat starts there
+    // null puts the chat back on the default
     await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [claude, codex], default: { instance: "claude", model: "claude-opus-5-5", effort: "medium" } }, "pia");
     expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View).ai).toMatchObject({ instance: "codex" });
     expect((await turn({ text: "back to default", ai: null })).status).toBe(202);

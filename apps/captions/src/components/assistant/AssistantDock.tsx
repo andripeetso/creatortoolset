@@ -375,7 +375,8 @@ export function AssistantDock() {
     const r = it.chat && view?.chats ? await sendTurnTo(it.chat, input) : await sendTurn(input);
     setBusy(false);
     // the server has the chat's AI now: its view says it from here on
-    if (r.ok && it.chat && it.ai !== undefined && picks[it.chat] === it.ai) setPicks(({ [it.chat!]: _, ...rest }) => rest);
+    const chat = it.chat;
+    if (r.ok && chat && it.ai !== undefined) setPicks((p) => (p[chat] !== it.ai ? p : Object.fromEntries(Object.entries(p).filter(([k]) => k !== chat))));
     if (r.ok) {
       if (r.data.id === openId.current) setView(r.data);
       else reloadChats();
