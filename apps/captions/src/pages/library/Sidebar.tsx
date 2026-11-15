@@ -117,9 +117,7 @@ export function LibrarySidebar(p: SidebarProps) {
       </Section>
 
       <Section title="When">
-        <div className="-mx-1">
-          <WhenPicker value={f} onChange={(w) => set(w)} />
-        </div>
+        <WhenPicker value={f} onChange={(w) => set(w)} />
       </Section>
 
       {(!!places.data?.length || !!f.place) && (

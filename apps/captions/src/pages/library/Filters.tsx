@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Check } from "lucide-react";
 import type { SearchQuery } from "@contracts/library";
 import type { LibraryFilters } from "@/lib/library";
 import { cn } from "@/lib/utils";
@@ -63,23 +62,28 @@ export function WhenPicker({ value, onChange }: { value: LibraryFilters; onChang
     if (none) (setFrom(""), setTo(""));
   }, [none]);
   return (
-    <div className="flex flex-col gap-1 p-1">
-      {presets().map((p) => {
-        const on = value.filmedTo === undefined && value.filmedFrom === p.from;
-        return (
-          <button
-            key={p.label}
-            type="button"
-            aria-pressed={on}
-            onClick={() => (setFrom(""), setTo(""), onChange({ filmedFrom: p.from, filmedTo: undefined }))}
-            className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
-          >
-            <Check className={cn("size-3.5", !on && "opacity-0")} />
-            {p.label}
-          </button>
-        );
-      })}
-      <div className="grid grid-cols-2 gap-1.5 border-t p-2">
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        {presets().map((p) => {
+          const on = value.filmedTo === undefined && value.filmedFrom === p.from;
+          return (
+            <button
+              key={p.label}
+              type="button"
+              aria-pressed={on}
+              // a second click on the one picked lets go of it
+              onClick={() => (setFrom(""), setTo(""), onChange({ filmedFrom: on ? undefined : p.from, filmedTo: undefined }))}
+              className={cn(
+                "flex h-7 items-center rounded-full border px-2.5 text-[12px] transition-colors",
+                on ? "border-violet-500 bg-violet-500/15 text-zinc-100" : "border-zinc-500/30 text-zinc-400 hover:border-zinc-400/60 hover:text-zinc-200",
+              )}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           From
           <input
