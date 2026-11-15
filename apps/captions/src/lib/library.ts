@@ -95,6 +95,7 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.unfiled) p.set("unfiled", "1");
   if (q.roll) p.set("roll", q.roll);
   if (q.cursor) p.set("cursor", q.cursor);
+  if (q.sort) p.set("sort", q.sort);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
   if (q.source) p.set("source", q.source);
   setFacets(p, q.facets);
@@ -172,6 +173,17 @@ export const getAsset = (libraryId: string, assetId: string) => send<AssetDetail
 export const rerunJobs = (libraryId: string, assetId: string, kinds: string[]) =>
   send<unknown>(`/api/library/${libraryId}/assets/${assetId}/jobs`, "POST", { kinds });
 
+/** The same on many clips (every clip without `assetIds`), as the caller (api/library/bulk.ts); `count`: only how many. */
+export const redoMany = (libraryId: string, kinds: string[], assetIds?: string[], count?: boolean) =>
+  send<{ clips: number }>(`/api/library/${libraryId}/jobs`, "POST", { kinds, assetIds, count });
+
+/** Many clips' originals as one zip (api/library/bulk.ts). */
+export const libraryZipUrl = (libraryId: string, assetIds: string[]) => `/api/library/${libraryId}/zip?ids=${assetIds.map(encodeURIComponent).join(",")}`;
+
+/** Before an upload: whether a clip of this size is here (`maybe`), or with its sha256 which clip it is (api/library/routes.ts). */
+export const checkUpload = (libraryId: string, size: number, sha256?: string) =>
+  send<{ maybe?: boolean; duplicateOf?: string }>(`/api/library/${libraryId}/uploads/check`, "POST", { size, sha256 });
+
 /** A Caption Studio project on the clip; resolves once its editing proxy is ready. */
 export const openInCaptions = (libraryId: string, assetId: string) =>
   send<{ projectId: string }>(`/api/library/${libraryId}/assets/${assetId}/captions`, "POST");
@@ -247,8 +259,10 @@ export async function uploadFile(
   file: File,
   onProgress: (sent: number, inPlace?: boolean) => void,
   collectionId?: string,
+  /** where the file is on this Mac, when the page knows it already (a Finder drop) */
+  knownPath?: string,
 ): Promise<UploadResult> {
-  const where = await pathOnMac(file);
+  const where = knownPath ?? (await pathOnMac(file));
   if (where) {
     onProgress(0, true);
     const kept = await addInPlace(libraryId, where, file.size, collectionId);

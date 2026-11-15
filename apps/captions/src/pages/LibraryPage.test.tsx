@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The Media Library page in a DOM, with a test plug-in that adds facets to it: the page reads them from webPlugins
@@ -41,6 +41,8 @@ const server = vi.hoisted(() => ({
   searched: [] as string[],
   /** clips in a folder: the top level's listing (unfiled) leaves them out */
   filed: new Set<string>(),
+  trashed: [] as string[],
+  uploaded: [] as string[],
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -65,6 +67,14 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   getWatch: async () => server.watch,
   getProgress: async () => ({ done: 0, left: 0, clips: 0, seconds: 0, waiting: [] }),
   getLibraryStorage: async () => ({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] }),
+  listTags: async () => [{ tag: "beach", count: 2 }],
+  setTrashed: async (_: string, id: string) => {
+    server.trashed.push(id);
+    server.items = (server.items as Card[]).filter((x) => x.id !== id);
+  },
+  getAsset: async (_: string, id: string) => ({ jobs: [], ...(server.items as Card[]).find((x) => x.id === id) }),
+  checkUpload: async () => ({ maybe: false }),
+  uploadFile: async (_: string, f: File) => (server.uploaded.push(f.name), { assetId: "new" }),
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
 }));
 
@@ -81,12 +91,23 @@ beforeEach(() => {
   server.changed = [];
   server.searched = [];
   server.filed = new Set();
+  server.trashed = [];
+  server.uploaded = [];
+  localStorage.clear();
 });
 afterEach(() => {
   act(() => root?.unmount());
   document.body.innerHTML = "";
   root = null;
 });
+
+/** The address the page is at, for the tests to read. */
+function Where() {
+  const l = useLocation();
+  return <output data-testid="where">{l.search}</output>;
+}
+const where = () => document.querySelector('[data-testid="where"]')?.textContent ?? "";
+const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 
 /** Renders the page and waits for its first effects (the library load) to settle. */
 async function mount(at = "/library"): Promise<HTMLElement> {
@@ -97,6 +118,7 @@ async function mount(at = "/library"): Promise<HTMLElement> {
     root!.render(
       <MemoryRouter initialEntries={[at]}>
         <LibraryPage />
+        <Where />
       </MemoryRouter>,
     );
   });
@@ -316,5 +338,102 @@ describe("Media Library folders", () => {
     expect(link(host, "Trip")).toBeUndefined();
     expect(host.textContent).toContain("Tiny Acrobatics gone");
     expect(server.asked.at(-1)).toMatchObject({ trashed: true });
+  });
+});
+
+describe("Media Library picks, menu, keys, link and drop", () => {
+  const cards = (host: HTMLElement) => [...host.querySelector("main")!.querySelectorAll<HTMLElement>("[data-keep-picked]")];
+  const click = (el: Element, o: MouseEventInit = {}) => act(async () => void el.querySelector("button[data-state]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...o })));
+  const key = (k: string, o: KeyboardEventInit = {}, target: EventTarget = window) =>
+    act(async () => void target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...o })));
+  const bar = () => document.querySelector('[role="toolbar"][aria-label="Picked clips"]');
+  beforeEach(() => {
+    server.items = [clip("one"), clip("two"), clip("three")];
+  });
+
+  it("⌘-click picks a clip without opening it, Shift-click picks the run, and the bar says how many", async () => {
+    const host = await mount();
+    const [one, , three] = cards(host);
+    await click(one, { metaKey: true });
+    expect(where()).toBe("");
+    expect(one.dataset.picked).toBe("true");
+    await click(three, { shiftKey: true });
+    expect(cards(host).map((c) => !!c.dataset.picked)).toEqual([true, true, true]);
+    expect(bar()?.textContent).toContain("3 selected");
+    await click(one, { metaKey: true });
+    expect(bar()?.textContent).toContain("2 selected");
+  });
+
+  it("the bar's Trash moves every picked clip to the trash and takes them off the page", async () => {
+    const host = await mount();
+    const [one, two] = cards(host);
+    await click(one, { metaKey: true });
+    await click(two, { metaKey: true });
+    await act(async () => (bar()!.querySelector('[aria-label="Move to trash"]') as HTMLButtonElement).click());
+    await settle();
+    expect(server.trashed.sort()).toEqual(["one", "two"]);
+    expect(host.textContent).not.toContain("Tiny Acrobatics one");
+    expect(host.textContent).toContain("Tiny Acrobatics three");
+    expect(bar()).toBeNull();
+  });
+
+  it("⌘A picks every clip shown, but not while typing in the search", async () => {
+    const host = await mount();
+    await key("a", { metaKey: true }, host.querySelector('[role="searchbox"]')!);
+    expect(bar()).toBeNull();
+    await key("a", { metaKey: true });
+    expect(bar()?.textContent).toContain("3 selected");
+  });
+
+  it("Escape clears the picks first, then the search", async () => {
+    const host = await mount();
+    const search = host.querySelector<HTMLInputElement>('[role="searchbox"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "beach");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(cards(host)[0], { metaKey: true });
+    await key("Escape");
+    expect(bar()).toBeNull();
+    expect(search.value).toBe("beach");
+    await key("Escape");
+    expect(search.value).toBe("");
+  });
+
+  it("a plain click opens the clip and puts it in the address; the address opens it too", async () => {
+    const host = await mount();
+    await click(cards(host)[1]);
+    expect(where()).toBe("?clip=two");
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    await mount("/library?clip=three");
+    await settle();
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Tiny Acrobatics three");
+  });
+
+  it("right-click offers the clip's moves", async () => {
+    const host = await mount();
+    await act(async () => void cards(host)[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
+    const menu = document.querySelector('[role="menu"]')?.textContent ?? "";
+    for (const item of ["Open", "Share…", "Download", "Copy link", "Add tag", "Move to trash"]) expect(menu).toContain(item);
+  });
+
+  it("asks the server for the order picked, kept on this device", async () => {
+    localStorage.setItem("library:sort", "longest");
+    await mount();
+    expect(server.asked.at(-1)).toMatchObject({ sort: "longest" });
+  });
+
+  it("files dropped on the page are added", async () => {
+    const host = await mount();
+    const file = new File(["x"], "Tiny drop.mp4", { type: "video/mp4" });
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files: [file], items: [{ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) }] } });
+    await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await settle();
+    await settle();
+    expect(server.uploaded).toEqual(["Tiny drop.mp4"]);
+    expect(host.querySelector('[aria-label="Uploads"]')?.textContent).toContain("Tiny drop.mp4");
   });
 });
