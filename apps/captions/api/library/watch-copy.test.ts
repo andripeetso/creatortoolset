@@ -49,7 +49,7 @@ describe("copying a folder into the library folder", () => {
     expect(copy).toBe(path.join(footage, "Card 1", "Day 2", "Jump 2.mp4"));
     expect(readFileSync(taken, "utf-8")).toBe("another clip");
     expect(readFileSync(copy, "utf-8")).toBe("tiny acrobatics jump");
-    expect(Math.floor(statSync(copy).mtimeMs)).toBe(Math.floor(statSync(src).mtimeMs));
+    expect(Math.abs(statSync(copy).mtimeMs - statSync(src).mtimeMs)).toBeLessThan(2000);
     expect(readdirSync(path.dirname(copy)).filter((n) => n.startsWith("."))).toEqual([]); // no half copy left
     // the same file again (a restart before it was taken): the copy already there
     expect(await copyInto(card, footage, src, size)).toBe(copy);
@@ -83,5 +83,15 @@ describe("copying a folder into the library folder", () => {
     expect(status.folders[0]).toMatchObject({ found: true, copyTo: footage });
     expect(status.copyTo).toMatch(/Creator Toolset\/Footage$/); // the default for the next folder
     expect(existsSync(v.source_path)).toBe(true);
+    // the list saves again with the card out (another folder added beside it)
+    const more = path.join(dir, "More");
+    mkdirSync(more);
+    const saved = await app.request("/api/library/lib_c/watch", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ folders: [{ path: card, mode: "reference", copyTo: footage }, { path: more, mode: "reference" }] }),
+    });
+    expect(saved.status).toBe(200);
+    expect(((await saved.json()) as { folders: { path: string }[] }).folders.map((f) => f.path)).toEqual([card, more]);
   });
 });

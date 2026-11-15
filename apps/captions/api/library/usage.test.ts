@@ -259,6 +259,7 @@ describe("library storage choice", () => {
     };
     await clip("v_4k", probe(3840, 2160, "mov,mp4,m4a"));
     await clip("v_hd", probe(1920, 1080, "mov,mp4,m4a")); // plays as it is: no proxy today
+    await clip("v_wav", JSON.stringify({ duration: 10, width: 0, height: 0, fps: 0, rotation: 0, format: "wav", vcodec: "", pixFmt: "", acodec: "pcm_s16le" })); // a sound the window can't play
     // a proxy made here before: it goes when the proxies move, and is made again in the bucket
     const old = path.join(dir, "old-proxy");
     writeFileSync(old, "old proxy");
@@ -275,10 +276,10 @@ describe("library storage choice", () => {
     expect(await r.json()).toMatchObject({ kind: "local", locked: true, proxies: { kind: "s3", mode: "own", bucket: "tiny-acrobatics", keysSet: true } });
     expect(d.prepare("SELECT COUNT(*) AS n FROM derivatives WHERE version_id = 'v_4k' AND kind = 'proxy'").get()).toEqual({ n: 0 });
     const queued = d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued' ORDER BY version_id").all();
-    expect(queued).toEqual([{ version_id: "v_4k" }, { version_id: "v_hd" }]); // every video, not only the ones the window can't play
+    expect(queued).toEqual([{ version_id: "v_4k" }, { version_id: "v_hd" }, { version_id: "v_wav" }]); // every video, and a sound that needs one
     // the Make proxies switch off does not drop them
     await call("owner-a", "PATCH", "/api/library/lib_p", { settings: { proxy: false } });
-    expect(d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued'").get()).toEqual({ n: 2 });
+    expect(d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued'").get()).toEqual({ n: 3 });
 
     // the worker's proxies land in the bucket and are metered; the originals stay on this disk
     for (const v of ["v_4k", "v_hd"]) {
@@ -301,6 +302,6 @@ describe("library storage choice", () => {
     expect(await back.json()).not.toHaveProperty("proxies");
     expect(s3.objects.has("libraries/lib_p/v/v_4k/proxy.mp4")).toBe(false);
     expect(stored("lib_p")).toBe(0);
-    expect(d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued'").all()).toEqual([{ version_id: "v_4k" }]);
+    expect(d.prepare("SELECT version_id FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued' ORDER BY version_id").all()).toEqual([{ version_id: "v_4k" }, { version_id: "v_wav" }]);
   });
 });

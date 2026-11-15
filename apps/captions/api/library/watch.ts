@@ -217,7 +217,15 @@ watchApp.put("/:id/watch", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { folders?: unknown } | null;
   if (!Array.isArray(body?.folders) || body.folders.length > MAX_FOLDERS) return c.json({ error: `A list of up to ${MAX_FOLDERS} folders`, code: "invalid" }, 400);
   const folders: WatchFolder[] = [];
+  const stored = foldersOf(libraryId);
   for (const raw of body.folders) {
+    // a folder already on the list, unchanged, stays as it is: a copied camera card that was taken out is not refused
+    const r = (raw ?? {}) as Partial<WatchFolder>;
+    const same = stored.find((g) => g.path === r.path && g.mode === (r.mode ?? "reference") && g.copyTo === r.copyTo && g.collectionId === r.collectionId);
+    if (same) {
+      if (!folders.some((g) => g.path === same.path)) folders.push(same);
+      continue;
+    }
     const f = await checkFolder(libraryId, raw, user.username);
     if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
     if (!folders.some((g) => g.path === f.path)) folders.push(f);
@@ -431,13 +439,19 @@ async function filesIn(root: string): Promise<string[]> {
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
 }
 
+/** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
+async function ingestCopy(libraryId: string, f: WatchFolder & { copyTo?: string }, file: string, size: number, priorVersion: string | null): Promise<string> {
+  const copy = await copyInto(f.path, f.copyTo!, file, size);
+  return ingest(libraryId, { ...f, copyTo: undefined }, copy, size, priorVersion);
+}
+
 /** One file into the library: a new asset, or version n+1 of the asset this path made before. Returns the version id. */
 async function ingest(libraryId: string, f: WatchFolder, file: string, size: number, priorVersion: string | null): Promise<string> {
+  if (f.mode === "reference" && f.copyTo) return ingestCopy(libraryId, f, file, size, priorVersion);
   await mkdir(stagingDir(), { recursive: true });
   const staged = path.join(stagingDir(), `watch-${randomUUID()}`);
   try {
     let sha256: string;
-    if (f.mode === "reference" && f.copyTo) file = await copyInto(f.path, f.copyTo, file, size);
     if (f.mode === "copy") {
       if ((await freeBytes(stagingDir())) - size < diskReserve()) throw new Error("Not enough free disk space to copy it");
       await copyFile(file, staged);
@@ -506,7 +520,8 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
   for (let n = 1; ; n++) {
     const there = await stat(nth(n)).catch(() => null);
     if (!there) break;
-    if (there.size === size && Math.floor(there.mtimeMs) === Math.floor(src.mtimeMs)) return nth(n);
+    // dates come back a little off (a millisecond on Linux, two seconds on an exFAT card)
+    if (there.size === size && Math.abs(there.mtimeMs - src.mtimeMs) < 2000) return nth(n);
   }
   if ((await freeBytes(dir)) - size < diskReserve()) throw new Error("Not enough free disk space to copy it");
   const tmp = path.join(dir, `.${name}${ext}.copying`);

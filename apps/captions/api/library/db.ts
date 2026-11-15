@@ -110,7 +110,8 @@ function remoteStore(kind: "s3" | "bunny", config: StorageConfig & BunnyConfig):
     if (!place) throw new Error("This library's bucket is not set up");
     return s3For(place);
   }
-  const { kind: _, ...zone } = config as BunnyConfig & { kind?: string };
+  const zone = { ...config } as BunnyConfig & { kind?: string };
+  delete zone.kind;
   if (!zone.zone || !zone.accessKey) throw new Error("This library's bucket is not set up");
   const id = JSON.stringify(["bunny", zone]);
   let store = remotes.get(id);

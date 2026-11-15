@@ -327,7 +327,9 @@ export function KeepChoice({ libraryId, folder, bytes, to, free, onChange }: { l
   const [typing, setTyping] = useState(false);
   const fits = room === undefined || room >= bytes;
   const [copy, setCopy] = useState(fits);
-  useEffect(() => onChange(copy && fits ? dest : undefined), [copy, fits, dest]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    onChange(copy && fits ? dest : undefined);
+  }, [copy, fits, dest]); // eslint-disable-line react-hooks/exhaustive-deps
   // the room in another folder (another drive)
   const look = async (next: string) => {
     setDest(next);
