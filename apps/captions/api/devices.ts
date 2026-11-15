@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
-import { createReadStream } from "node:fs";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
@@ -18,6 +20,8 @@ import { clearTries, waitFor, wrongTry } from "./lib/sign-in-code";
 import { findUser } from "./users";
 import { resolveGranted } from "./lib/packs";
 import { storageApp } from "./devices-storage";
+import { pluginDeviceJobs } from "./lib/plugin";
+import { env } from "./lib/env";
 
 /**
  * The Macs that run AI jobs (lib/devices.ts). Routes (boot.ts mounts them at /api/devices):
@@ -31,6 +35,7 @@ import { storageApp } from "./devices-storage";
  *   POST /api/devices/relay/editor/job/:id/beat | /done | /fail  the device's step, same token
  *   GET /api/devices/relay/editor/job/:id/cards, POST …/cards/:cardId   a cards-draw step: what to draw, and each card drawn
  *   GET /api/devices/relay/cutout/:id, POST …/cutout/:id | …/cutout/:id/fail   a cut-out (lib/cutouts.ts): the picture, its PNG or why not
+ *   GET /api/devices/relay/job/:kind/:id, POST …/:id | …/:id/file | …/:id/fail   a plug-in's job (lib/plugin.ts DeviceJobSlot)
  *   GET /api/devices/relay/transcribe/:id, POST …/transcribe/:id | …/:id/fail   a transcript (lib/computer-transcribe.ts): the audio, the words or why not
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
  *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits: contracts/devices.ts)
@@ -66,11 +71,11 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
   if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
-  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimForDevice(d, k) } satisfies DeviceClaim);
+  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? claimForDevice(d, k) } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
   declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
-  const job = claimCutout(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k);
+  const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? claimForDevice(now, k);
   return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
 });
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
@@ -78,7 +83,8 @@ async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing
   // the Resolve bridge is switched on by a pack with Resolve items (the owner's Resolve plug-in or a downloaded one)
   const granted = kinds.includes(RESOLVE_KIND) && (await resolveGranted(d.owner));
-  const claimable = [...claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted), ...kinds.filter((k) => k === CUTOUT_KIND || k === SPLIT_KIND || k === TRANSCRIBE_KIND)];
+  const plugin = new Set(pluginDeviceJobs().map((j) => j.kind));
+  const claimable = [...claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted), ...kinds.filter((k) => k === CUTOUT_KIND || k === SPLIT_KIND || k === TRANSCRIBE_KIND || plugin.has(k))];
   setDeviceKinds(d.id, claimable);
   return balancedKinds(d, claimable);
 }
@@ -97,8 +103,16 @@ async function editorWaits(device: string, listed: unknown): Promise<boolean> {
  * or a transcript it would be handed (lib/computer-transcribe.ts); a computer whose wanted speech models changed is told too.
  */
 const waits = async (d: Device, kinds: string[]) =>
-  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) ||
+  waitsForDevice(d.owner, kinds) || cutoutWaits(d.owner, kinds) || pluginDeviceJobs().some((j) => kinds.includes(j.kind) && j.waits(d.owner)) ||
   (kinds.includes(TRANSCRIBE_KIND) && (modelsOutOfStep(d) || transcriptWaits(d, await readBalance(d.owner))));
+/** A plug-in's job of one of these kinds for this device (ServerPlugin.deviceJobs), now its own; null when none waits. */
+function claimPluginJob(d: { id: string; owner: string }, kinds: string[]): ReturnType<typeof claimCutout> {
+  for (const j of pluginDeviceJobs()) if (kinds.includes(j.kind)) {
+    const job = j.claim(d);
+    if (job) return job;
+  }
+  return null;
+}
 /** The answer to done and fail: `editor: true` when another step this device could claim waits, so it claims at once. */
 const ended = async (d: Device, ok: boolean) => ({ ok, ...(ok && (await waits(d, await balancedKinds(d, d.kinds ?? []))) ? { editor: true } : {}) });
 devicesApp.post("/relay/editor/job/:id/beat", (c) => {
@@ -155,6 +169,51 @@ devicesApp.post("/relay/cutout/:id/fail", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   return c.json(await ended(d, cutoutFailed(d.id, jobId(c), typeof b?.error === "string" && b.error ? b.error : "Your Mac could not cut the picture out.")));
+});
+
+// a plug-in's job (lib/plugin.ts DeviceJobSlot): its input, the device's answers, a file it made, or why it could not
+const slotOf = (c: Context) => pluginDeviceJobs().find((j) => j.kind === c.req.param("kind"));
+/** The most a file a device sends for a plug-in's job may weigh. */
+export const DEVICE_FILE_MAX = 8 * 1024 ** 3;
+devicesApp.get("/relay/job/:kind/:id", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const input = await slotOf(c)?.input(d.id, jobId(c));
+  return input ? new Response(Readable.toWeb(createReadStream(input.file)) as ReadableStream, { headers: { "content-type": input.type } }) : c.json({ error: "Not found" }, 404);
+});
+devicesApp.post("/relay/job/:kind/:id", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const slot = slotOf(c);
+  if (!slot) return c.json({ error: "Not found" }, 404);
+  const r = await slot.answer(d.id, jobId(c), await c.req.json().catch(() => null));
+  return "error" in r ? c.json({ error: r.error }, r.status as 400) : c.json({ ...(r.reply as object), ...(await ended(d, true)) });
+});
+devicesApp.post("/relay/job/:kind/:id/file", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const slot = slotOf(c);
+  if (!slot) return c.json({ error: "Not found" }, 404);
+  if (Number(c.req.header("content-length") ?? NaN) > DEVICE_FILE_MAX) return c.json({ error: "The file is too big." }, 413);
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: "Send the file." }, 400);
+  const dir = path.join(env.dataDir, "devices", "incoming");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, randomUUID());
+  try {
+    await pipeline(Readable.fromWeb(body as never), createWriteStream(file, { mode: 0o600 }));
+    const r = await slot.file(d.id, jobId(c), file, (c.req.query("name") ?? "").slice(0, 200));
+    return "error" in r ? c.json({ error: r.error }, r.status as 400) : c.json({ ...(r.reply as object), ...(await ended(d, true)) });
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+devicesApp.post("/relay/job/:kind/:id/fail", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const why = typeof b?.error === "string" && b.error ? b.error.slice(0, 500) : "Your Mac could not do it.";
+  return c.json(await ended(d, slotOf(c)?.fail(d.id, jobId(c), why) ?? false));
 });
 
 // a transcript (contracts/devices.ts TRANSCRIBE_KIND): the audio, and the words the computer heard or why it could not

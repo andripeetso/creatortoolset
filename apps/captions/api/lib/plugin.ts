@@ -9,6 +9,7 @@ import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { UploadRelayTus } from "../../contracts/storage";
+import { CARDS_DRAW_KIND, CUTOUT_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
 import type { SessionUser } from "../users";
 import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, SLOT_TOOL, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
 
@@ -94,6 +95,8 @@ export interface ServerPlugin {
   connectors?: { publicGrid?: PublicGridReader; readers?: SocialReader[] };
   // Upload relays for Review's big videos (api/review.ts): the server uses one when CT_UPLOAD_RELAY names it and it is available.
   uploadRelays?: UploadRelay[];
+  // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
+  deviceJobs?: DeviceJobSlot[];
   // Replaces a built-in tool: answers that tool's old root paths (the URLs a script or worker still posts to), mounted by
   // boot.ts ahead of the built-in router, so the plug-in answers first. `paths` must be in REPLACEABLE_PATHS, and no two
   // plug-ins may claim one. `largeBodies` are the request paths that may carry a body over 50 MB (read after the token check).
@@ -316,6 +319,44 @@ export interface UploadRelay {
   place: (vid: string, dest: string, bytes: number) => Promise<void>;
   // Deletes the relay's copy of an upload that will never be finished (the stale-upload sweep calls it).
   abandon: (vid: string) => Promise<void>;
+}
+
+/**
+ * Work a plug-in hands to the person's own Mac (the Mac app's Relay.swift claims it by `kind`, like a cut-out). The
+ * device routes, with its token: GET /api/devices/relay/job/<kind>/<id> (`input`), POST …/<id> JSON (`answer`), POST
+ * …/<id>/file?name=… a file streamed (`file`), POST …/<id>/fail { error } (`fail`). Each is told the device's id and
+ * answers only for a job that device holds.
+ */
+export interface DeviceJobSlot {
+  // lowercase words and dashes; never a kind the app has (cutout, transcribe, an editor step's)
+  kind: string;
+  // a job of this account waits for one of its devices
+  waits: (owner: string) => boolean;
+  // the oldest waiting job of the device's account, now the device's; null when none
+  claim: (device: { id: string; owner: string }) => DeviceJob | null;
+  // the job's input file, or null when the device holds no such job
+  input: (device: string, id: number) => Promise<{ file: string; type: string } | null>;
+  // a JSON answer: what to send back, or an error with its status
+  answer: (device: string, id: number, body: unknown) => Promise<{ reply: unknown } | { error: string; status: number }>;
+  // a file the device made, already on disk (`name` is the device's name for it); the slot moves or copies it
+  file: (device: string, id: number, path: string, name: string) => Promise<{ reply: unknown } | { error: string; status: number }>;
+  // the device could not do it; false when it holds no such job
+  fail: (device: string, id: number, why: string) => boolean;
+}
+
+/** Every loaded plug-in's device jobs, in load order. */
+export const pluginDeviceJobs = (): DeviceJobSlot[] => loaded.flatMap((p) => p.deviceJobs ?? []);
+
+/** Refuses a device job kind that is not lowercase words, is one of the app's own, or that two plug-ins both declare. */
+function checkDeviceJobs(plugins: ServerPlugin[]): void {
+  const seen = new Set<string>([CUTOUT_KIND, SPLIT_KIND, TRANSCRIBE_KIND, RESOLVE_KIND, CARDS_DRAW_KIND]);
+  for (const plugin of plugins) {
+    for (const j of plugin.deviceJobs ?? []) {
+      if (!/^[a-z][a-z0-9-]{0,39}$/.test(j.kind)) throw new Error(`plug-in ${plugin.id}: device job "${j.kind}" is not lowercase words and dashes`);
+      if (seen.has(j.kind)) throw new Error(`device job "${j.kind}" is declared twice or is built in`);
+      seen.add(j.kind);
+    }
+  }
 }
 
 /** The upload relays every loaded plug-in adds, in load order. */
@@ -636,6 +677,7 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
   checkEditFlags(plugins);
   checkProviders(plugins);
   checkUploadRelays(plugins);
+  checkDeviceJobs(plugins);
   checkPackItems(plugins);
   checkNeeds(plugins);
   loaded = plugins;
