@@ -15,6 +15,7 @@ import type { ProbeSummary } from "../library/media/probe";
 import { NeedsKey, segmentsOf, wordsOf } from "../library/transcribe";
 import { Waiting } from "./analyze";
 import { readable } from "./media";
+import { macAway } from "./script";
 
 /**
  * The footage index for an edit planned as shots (contracts/edit-plan.ts): what each source holds, from its picture
@@ -31,10 +32,13 @@ const INDEX_V = 1;
 const FW = 64;
 const FH = 36;
 const MAX_READ_FPS = 30;
-/** A frame-to-frame change (mean of |Δ|, 0..1) a cut must reach, and how far over its neighbourhood's median */
-const CUT_MIN = 0.06;
+/** A cut is read on the frame-to-frame change over the two frames' own contrast (their spread of grey, never under
+ * SPREAD_FLOOR), so a dark shot cuts as clearly as a bright one: the change must reach CUT_MIN and be CUT_OVER times
+ * its neighbourhood's median plus CUT_PLUS */
+const SPREAD_FLOOR = 0.02;
+const CUT_MIN = 0.25;
 const CUT_OVER = 3;
-const CUT_PLUS = 0.02;
+const CUT_PLUS = 0.08;
 /** Two cuts this close (s) are one: a flash frame is not a shot */
 const MIN_SHOT_S = 0.3;
 /** A take longer than LONG_S is split, no piece shorter than PIECE_S */
@@ -48,8 +52,10 @@ const STILL_PER_S = 0.15;
 export interface PictureRead {
   /** frames read a second */
   fps: number;
-  /** change from the frame before (index 0: 0) */
+  /** change from the frame before (mean |Δ| of grey 0..1; index 0: 0) */
   step: Float32Array;
+  /** the same over the two frames' contrast: what a cut is read on */
+  cut: Float32Array;
   /** change from LAG_S before (0 until then) */
   lag: Float32Array;
 }
@@ -69,6 +75,14 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
         );
         const ring: Buffer[] = []; // the last L+1 frames
         const step: number[] = [];
+        const cut: number[] = [];
+        let spreadBefore = 0;
+        const spread = (x: Buffer) => {
+          let s = 0;
+          let q = 0;
+          for (let i = 0; i < size; i++) (s += x[i]!), (q += x[i]! * x[i]!);
+          return Math.sqrt(Math.max(0, q / size - (s / size) ** 2)) / 255;
+        };
         const lag: number[] = [];
         const diff = (x: Buffer, y: Buffer) => {
           let s = 0;
@@ -83,7 +97,11 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
             const f = Buffer.from(buf.subarray(0, size));
             buf = buf.subarray(size);
             const prev = ring[ring.length - 1];
-            step.push(prev ? diff(f, prev) : 0);
+            const d = prev ? diff(f, prev) : 0;
+            const sp = spread(f);
+            step.push(d);
+            cut.push(prev ? d / Math.max(SPREAD_FLOOR, (sp + spreadBefore) / 2) : 0);
+            spreadBefore = sp;
             lag.push(ring.length > L ? diff(f, ring[ring.length - 1 - L]!) : 0);
             ring.push(f);
             if (ring.length > L + 1) ring.shift();
@@ -94,7 +112,7 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
         p.on("error", reject);
         p.on("close", (code) => {
           if (code !== 0) return reject(new Error(err.trim() || `ffmpeg exited ${code}`));
-          resolve({ fps: rate, step: Float32Array.from(step), lag: Float32Array.from(lag) });
+          resolve({ fps: rate, step: Float32Array.from(step), cut: Float32Array.from(cut), lag: Float32Array.from(lag) });
         });
       }),
   );
@@ -107,7 +125,7 @@ const median = (xs: number[]) => {
 };
 
 /** The frames where a new shot starts (hard cuts), from `read`. */
-export function cutsOf({ fps, step }: PictureRead): number[] {
+export function cutsOf({ fps, cut: step }: PictureRead): number[] {
   const W = Math.round(fps);
   const cuts: number[] = [];
   for (let i = 1; i < step.length; i++) {
@@ -167,23 +185,26 @@ export function shotsOf(read: PictureRead, dur: number): IndexShot[] {
   }));
 }
 
-/** One version's index as cached: everything but `speech`, which a transcript arriving later changes. */
+/**
+ * One version's index as cached: everything but `speech`, which a transcript arriving later changes. `looked`: the AI
+ * has looked at it (describeShots), so a shot it left without words is not asked about again.
+ */
 const indexFile = (versionId: string) => path.join(env.dataDir, "editor", "cache", `${versionId}.index.json`);
-type Cached = { v: number; src: Omit<IndexSource, "speech"> };
+type Cached = { v: number; src: Omit<IndexSource, "speech">; looked?: true };
 
-async function cached(versionId: string): Promise<Omit<IndexSource, "speech"> | null> {
+async function cached(versionId: string): Promise<Cached | null> {
   try {
     const c = JSON.parse(await readFile(indexFile(versionId), "utf8")) as Cached;
-    return c.v === INDEX_V ? c.src : null;
+    return c.v === INDEX_V ? c : null;
   } catch {
     return null;
   }
 }
 
-async function keep(src: Omit<IndexSource, "speech"> & { speech?: boolean }): Promise<void> {
+async function keep(src: Omit<IndexSource, "speech"> & { speech?: boolean }, looked = false): Promise<void> {
   const { speech: _, ...rest } = src;
   await mkdir(path.dirname(indexFile(src.id)), { recursive: true });
-  await writeJsonAtomic(indexFile(src.id), { v: INDEX_V, src: rest } satisfies Cached);
+  await writeJsonAtomic(indexFile(src.id), { v: INDEX_V, src: rest, ...(looked ? { looked: true as const } : {}) } satisfies Cached);
 }
 
 interface Row {
@@ -219,7 +240,7 @@ export async function indexSources(edit: { sources: string[] }, signal: AbortSig
     const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(id) as { state: string } | undefined;
     if (t?.state === "queued" || t?.state === "running") throw new Waiting();
     const speech = !!(wordsOf(db, id)?.length || segmentsOf(db, id).length);
-    let src = await cached(id);
+    let src = (await cached(id))?.src;
     if (!src) {
       const turned = probe.rotation === 90 || probe.rotation === 270;
       const picture = !!probe.vcodec && !probe.cover;
@@ -338,11 +359,11 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
   const sheets: Sheet[] = [];
   for (const [si, s] of sources.entries()) {
     const open = s.shots.map((x, i) => (x.desc ? -1 : i)).filter((i) => i >= 0);
-    if (!open.length) continue;
+    if (!open.length || (await cached(s.id))?.looked) continue;
     const known = libraryWords(s.id);
     if (s.shots.length === 1 && known) {
       s.shots[0]!.desc = known.slice(0, 200);
-      await keep(s);
+      await keep(s, true);
       continue;
     }
     // ponytail: a source past MAX_SHEETS sheets has every k-th open shot looked at; the rest stay without words
@@ -391,20 +412,26 @@ export async function describeShots(index: FootageIndex, ai: { actor: string; st
           const words = value.shots[String(t.n)];
           if (words) sources[sh.src]!.shots[t.shot]!.desc = words;
         }
-      for (const si of new Set(batch.map((b) => b.src))) await keep(sources[si]!);
+      // a source whose last sheet this was is looked at: what the AI left without words stays so
+      for (const si of new Set(batch.map((b) => b.src))) await keep(sources[si]!, !sheets.slice(c + SHEETS_PER_CALL).some((x) => x.src === si));
       if (value.story) story = value.story;
     }
+    // every shot was described before: the story is one question in words alone
+    if (ai.story && !story && !sheets.length) {
+      const lines = sources.flatMap((s) => s.shots.filter((x) => x.desc).map((x) => `${s.title} ${clock(x.a)}–${clock(x.b)}: ${x.desc}`));
+      if (lines.length) {
+        const system = `You read shot-by-shot notes of footage for a video editor and tell what happens across it, from the pictures alone. ${RULE} Answer with JSON only.`;
+        const user = `${lines.slice(0, 600).join("\n")}\n\nAnswer as {"story": "what happens across all of the footage, in order, in a few sentences"}`;
+        story = (await completeWithFallback(system, user, signal, parseLooked, { ...route, retries: 0 })).story;
+      }
+    }
+  } catch (e) {
+    // the person's Mac is off or its AI gone: the step waits for it, as the script step does
+    const away = macAway(e);
+    if (away) throw new NeedsKey(away.message);
+    throw e;
   } finally {
     await rm(scratch, { recursive: true, force: true });
-  }
-  // every shot was described before: the story is one question in words alone
-  if (ai.story && !story && !sheets.length) {
-    const lines = sources.flatMap((s) => s.shots.filter((x) => x.desc).map((x) => `${s.title} ${clock(x.a)}–${clock(x.b)}: ${x.desc}`));
-    if (lines.length) {
-      const system = `You read shot-by-shot notes of footage for a video editor and tell what happens across it, from the pictures alone. ${RULE} Answer with JSON only.`;
-      const user = `${lines.slice(0, 600).join("\n")}\n\nAnswer as {"story": "what happens across all of the footage, in order, in a few sentences"}`;
-      story = (await completeWithFallback(system, user, signal, parseLooked, { ...route, retries: 0 })).story;
-    }
   }
   return { ...index, sources, ...(story ? { story } : {}) };
 }
@@ -484,33 +511,48 @@ function fft(re: Float64Array, im: Float64Array): void {
   }
 }
 
-/** The onset envelope: how much louder each band got from one frame to the next (log magnitudes, rises only). */
-export function onsetEnvelope(x: Float32Array): Float32Array {
+/**
+ * The onset envelope: how much louder each band got from one frame to the next, rises only. `env` on log magnitudes
+ * (every onset counts, soft or hard: tempo and onsets); `hard` on plain magnitudes (how hard a hit is; a steady bass
+ * under it adds nothing).
+ */
+export function onsetEnvelope(x: Float32Array): { env: Float32Array; hard: Float32Array } {
   const frames = Math.max(0, Math.floor((x.length - N) / HOP) + 1);
   const env = new Float32Array(frames);
+  const hard = new Float32Array(frames);
   const win = Float64Array.from({ length: N }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N));
   const re = new Float64Array(N);
   const im = new Float64Array(N);
   let prev = new Float64Array(N / 2);
+  let prevLin = new Float64Array(N / 2);
   for (let f = 0; f < frames; f++) {
     for (let i = 0; i < N; i++) (re[i] = x[f * HOP + i]! * win[i]!), (im[i] = 0);
     fft(re, im);
     const mag = new Float64Array(N / 2);
+    const lin = new Float64Array(N / 2);
     let flux = 0;
+    let rise = 0;
     for (let k = 1; k < N / 2; k++) {
-      mag[k] = Math.log1p(100 * Math.hypot(re[k]!, im[k]!));
-      if (f) flux += Math.max(0, mag[k]! - prev[k]!);
+      lin[k] = Math.hypot(re[k]!, im[k]!);
+      mag[k] = Math.log1p(100 * lin[k]!);
+      if (f) (flux += Math.max(0, mag[k]! - prev[k]!)), (rise += Math.max(0, lin[k]! - prevLin[k]!));
     }
     env[f] = flux;
+    hard[f] = rise;
     prev = mag;
+    prevLin = lin;
   }
-  return env;
+  return { env, hard };
 }
 
 /** The envelope frame `f`'s time (s): its window's middle. */
 const frameTime = (f: number) => (f * HOP + N / 2) / SR;
 
-/** The time (s) of the steepest loudness rise within SNAP_S of `t`: where the hit starts. */
+/**
+ * The time (s) of the steepest loudness rise within SNAP_S of `t`: where the hit starts. Read on the change from one
+ * sample to the next, where a hit's attack is loud and a steady bass (whose 2 ms reads would swing with its own wave)
+ * is nearly silent.
+ */
 function snap(x: Float32Array, t: number): number {
   const L = Math.round(FINE_S * SR);
   const from = Math.max(0, Math.round((t - SNAP_S) * SR));
@@ -520,7 +562,7 @@ function snap(x: Float32Array, t: number): number {
   let before = from === 0 ? 0 : -1; // before the file's first sample is silence: a hit right at 0 is a rise
   for (let i = from; i <= to; i += L) {
     let s = 0;
-    for (let j = i; j < i + L; j++) s += x[j]! * x[j]!;
+    for (let j = Math.max(1, i); j < i + L; j++) s += (x[j]! - x[j - 1]!) ** 2;
     const rms = Math.sqrt(s / L);
     if (before >= 0 && rms - before > best) [best, at] = [rms - before, i / SR];
     before = rms;
@@ -528,13 +570,12 @@ function snap(x: Float32Array, t: number): number {
   return at;
 }
 
-/** Loudness (RMS) of the first 50 ms from `t`: how hard a hit is. */
-function hitStrength(x: Float32Array, t: number): number {
-  const a = Math.max(0, Math.round(t * SR));
-  const b = Math.min(x.length, a + Math.round(0.05 * SR));
-  let s = 0;
-  for (let i = a; i < b; i++) s += x[i]! * x[i]!;
-  return b > a ? Math.sqrt(s / (b - a)) : 0;
+/** How hard the hit at `t` (s) is: the plain rise around its frame. */
+function hitStrength(hard: Float32Array, t: number): number {
+  const f = Math.round((t * SR - N / 2) / HOP);
+  let m = 0;
+  for (let j = Math.max(0, f - 2); j <= Math.min(hard.length - 1, f + 2); j++) m = Math.max(m, hard[j]!);
+  return m;
 }
 
 /** Peaks of the envelope over its local mean: the onsets, as frames. */
@@ -599,7 +640,7 @@ export async function songBeats(file: string, startS: number, signal: AbortSigna
 
 /** songBeats on samples already decoded (SR, mono). */
 export function beatsOf(x: Float32Array, source: string, startS: number): SongBeats {
-  const env = onsetEnvelope(x);
+  const { env, hard } = onsetEnvelope(x);
   const empty: SongBeats = { source, startS, bpm: 0, beats: [], downbeats: [], strong: [], sections: sectionsOf(x, startS) };
   if (env.length < 4 * ENV_RATE) return empty;
   const P = periodOf(env);
@@ -634,7 +675,7 @@ export function beatsOf(x: Float32Array, source: string, startS: number): SongBe
   let den = 0;
   beatsT.forEach((t, i) => ((num += (i - mi) * (t - mt)), (den += (i - mi) ** 2)));
   const period = den ? num / den : P / ENV_RATE;
-  const strength = beatsT.map((t) => hitStrength(x, t));
+  const strength = beatsT.map((t) => hitStrength(hard, t));
   let bar = 0;
   let barBest = -Infinity;
   for (let k = 0; k < 4; k++) {
@@ -643,7 +684,7 @@ export function beatsOf(x: Float32Array, source: string, startS: number): SongBe
     if (s > barBest) [barBest, bar] = [s, k];
   }
   const onsets = peaksOf(env).map((f) => snap(x, frameTime(f)));
-  const hits = onsets.map((t) => hitStrength(x, t));
+  const hits = onsets.map((t) => hitStrength(hard, t));
   const strong = onsets.filter((t, i) => {
     const around = hits.filter((_, j) => Math.abs(onsets[j]! - t) <= STRONG_AROUND_S);
     return hits[i]! >= STRONG_OVER * median(around);

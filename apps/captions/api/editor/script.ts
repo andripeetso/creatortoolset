@@ -166,7 +166,7 @@ export function allocate(lines: Line[], versions: Mapped["versions"]): { plans: 
 }
 
 /** The Mac kinds that mean nobody is there to answer (off, or the provider gone), not that the run failed. */
-function macAway(e: unknown): MacClaudeError | null {
+export function macAway(e: unknown): MacClaudeError | null {
   const m = e instanceof MacClaudeError ? e : e instanceof Error && e.cause instanceof MacClaudeError ? e.cause : null;
   return m && (m.kind === "unclaimed" || m.kind === "gone") ? m : null;
 }

@@ -31,28 +31,33 @@ const at = (f: string) => path.join(dir, f);
 const signal = new AbortController().signal;
 
 /** Video parts back to back (each a lavfi source and its length), 25 fps, one H.264 file. */
-function clip(out: string, parts: [string, number][]) {
+function clip(out: string, parts: [string, number][], look = "") {
   const ins = parts.flatMap(([src, d]) => ["-t", String(d), "-f", "lavfi", "-i", `${src}=s=320x180:r=25`]);
-  const graph = parts.map((_, i) => `[${i}:v]setsar=1,format=yuv420p[v${i}]`).join(";") + ";" + parts.map((_, i) => `[v${i}]`).join("") + `concat=n=${parts.length}:v=1:a=0`;
+  const graph =
+    parts.map((_, i) => `[${i}:v]setsar=1,format=yuv420p[v${i}]`).join(";") + ";" + parts.map((_, i) => `[v${i}]`).join("") + `concat=n=${parts.length}:v=1:a=0${look}`;
   ff([...ins, "-filter_complex", graph, "-c:v", "libx264", "-preset", "veryfast", "-g", "250", at(out)]);
 }
 
 /** A click track: a short 1 kHz burst on every beat, every fourth one louder, as a WAV (no encoder delay). */
-function clicks(out: string, bpm: number, seconds: number) {
+function clicks(out: string, bpm: number, seconds: number, bed = "0") {
   const T = 60 / bpm;
-  const expr = `if(lt(mod(t\\,${T})\\,0.015)\\,if(lt(mod(t\\,${4 * T})\\,0.015)\\,0.9\\,0.3)*sin(2*PI*1000*t)*exp(-200*mod(t\\,${T}))\\,0)`;
+  const expr = `${bed}+if(lt(mod(t\\,${T})\\,0.015)\\,if(lt(mod(t\\,${4 * T})\\,0.015)\\,0.9\\,0.3)*sin(2*PI*1000*t)*exp(-200*mod(t\\,${T}))\\,0)`;
   ff(["-f", "lavfi", "-i", `aevalsrc=${expr}:s=22050:d=${seconds}`, at(out)]);
 }
 
 const nearest = (xs: number[], t: number) => xs.reduce((b, x) => (Math.abs(x - t) < Math.abs(b - t) ? x : b), Infinity);
 
+const CUTS: [string, number][] = [
+  ["testsrc2", 2],
+  ["mandelbrot", 1.5],
+  ["smptebars", 2],
+  ["testsrc2", 2],
+];
+
 beforeAll(() => {
-  clip("cuts.mp4", [
-    ["testsrc2", 2],
-    ["mandelbrot", 1.5],
-    ["smptebars", 2],
-    ["testsrc2", 2],
-  ]);
+  clip("cuts.mp4", CUTS);
+  // the same at a quarter of the light: night footage
+  clip("cuts-dark.mp4", CUTS, ",lutyuv=y=16+(val-16)/4:u=128+(val-128)/4:v=128+(val-128)/4");
   clip("still-moving.mp4", [
     ["smptebars", 3],
     ["testsrc2", 3],
@@ -60,6 +65,8 @@ beforeAll(() => {
   clip("still.mp4", [["smptebars", 3]]);
   clicks("click100.wav", 100, 30);
   clicks("click128.wav", 128, 30);
+  // the same clicks over a steady 60 Hz bass as loud as the quiet clicks, and a little noise
+  clicks("click128-bed.wav", 128, 30, "0.3*sin(2*PI*60*t)+0.02*(random(0)-0.5)");
   // 12 s quiet then 12 s loud, a beat in both
   ff(["-f", "lavfi", "-i", "aevalsrc=if(lt(t\\,12)\\,0.03\\,0.6)*(0.5*sin(2*PI*220*t)+if(lt(mod(t\\,0.5)\\,0.02)\\,sin(2*PI*1500*t)\\,0)):s=22050:d=24", at("quiet-loud.wav")]);
 }, 120_000);
@@ -67,8 +74,9 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("shots", () => {
-  it("finds every hard cut within 2 frames", async () => {
-    const shots = shotsOf(await readPicture(at("cuts.mp4"), 25, signal), 7.5);
+  for (const file of ["cuts.mp4", "cuts-dark.mp4"])
+  it(`finds every hard cut within 2 frames (${file})`, async () => {
+    const shots = shotsOf(await readPicture(at(file), 25, signal), 7.5);
     expect(shots.map((s) => s.a)).toHaveLength(4);
     const off = [0, 2, 3.5, 5.5].map((want, i) => Math.round(Math.abs(shots[i]!.a - want) * 25 * 100) / 100);
     console.log(`cuts off by ${off.join(", ")} frames`);
@@ -89,16 +97,16 @@ describe("shots", () => {
     const step = new Float32Array(n).fill(0.01);
     const lag = new Float32Array(n).fill(0.02);
     for (let i = 320; i < 340; i++) lag[i] = 0.2;
-    const shots = shotsOf({ fps: 25, step, lag }, 30);
+    const shots = shotsOf({ fps: 25, step, cut: step, lag }, 30);
     for (const s of shots) expect(s.b - s.a).toBeGreaterThanOrEqual(4 - 1e-9), expect(s.b - s.a).toBeLessThanOrEqual(8 + 1e-9);
     expect(shots.some((s) => Math.abs(s.a - 13) < 0.5)).toBe(true);
   });
 });
 
 describe("song", () => {
-  for (const bpm of [100, 128])
-    it(`reads a click track at ${bpm} bpm: tempo, beats, accents`, async () => {
-      const s = await songBeats(at(`click${bpm}.wav`), 0, signal);
+  for (const [bpm, file] of [[100, "click100.wav"], [128, "click128.wav"], [128, "click128-bed.wav"]] as const)
+    it(`reads ${file}: tempo, beats, accents`, async () => {
+      const s = await songBeats(at(file), 0, signal);
       const T = 60 / bpm;
       expect(Math.abs(s.bpm - bpm)).toBeLessThanOrEqual(1);
       const want = Array.from({ length: Math.floor(30 / T) }, (_, k) => k * T);
@@ -110,7 +118,7 @@ describe("song", () => {
       for (const a of accents.slice(1, -1)) expect(Math.abs(nearest(s.strong, a) - a)).toBeLessThanOrEqual(0.02);
       for (const t of s.strong) expect(Math.abs(nearest(accents, t) - t)).toBeLessThanOrEqual(0.02); // no quiet click is strong
       for (const d of s.downbeats) expect(Math.abs(nearest(accents, d) - d)).toBeLessThanOrEqual(0.02);
-      console.log(`click ${bpm}: bpm ${s.bpm}, worst beat ${(worst * 1000).toFixed(1)} ms, ${s.beats.length} beats, ${s.strong.length} strong`);
+      console.log(`${file}: bpm ${s.bpm}, worst beat ${(worst * 1000).toFixed(1)} ms, ${s.beats.length} beats, ${s.strong.length} strong`);
     });
 
   it("keeps the song's own time from a later start", async () => {
@@ -166,6 +174,29 @@ describe("index and descriptions", () => {
     const again = await describeShots(await indexSources({ sources: ["ver_cuts", "ver_still"] }, signal), { actor: "mem-a" }, signal);
     expect(calls).toHaveLength(1);
     expect(again.sources[0]!.shots[2]!.desc).toBe("shot 3");
+  });
+
+  it("asks about a source past the sheet cap once, and never again", async () => {
+    await seed("ver_long", "Tiny Acrobatics long take", "cuts.mp4", { ...probe, duration: 7.5 });
+    const shots = Array.from({ length: 200 }, (_, i) => ({ a: (i * 7.5) / 200, b: ((i + 1) * 7.5) / 200, motion: 0.5 }));
+    const index = { sources: [{ id: "ver_long", title: "Tiny Acrobatics long take", dur: 7.5, fps: 25, w: 320, h: 180, speech: false, shots }] };
+    const before = calls.length;
+    const looked = await describeShots(index, { actor: "mem-a" }, signal);
+    expect(calls.length - before).toBe(2); // 8 sheets of 16, 6 to a call
+    expect(looked.sources[0]!.shots.filter((x) => x.desc)).toHaveLength(128);
+    await describeShots(looked, { actor: "mem-a" }, signal);
+    expect(calls.length - before).toBe(2);
+  }, 120_000);
+
+  it("waits for a source the library has not read yet, or whose words are being made", async () => {
+    const { Waiting } = await import("./analyze");
+    const { enqueueJob } = await import("../library/jobs");
+    await seed("ver_unread", "Unread", "still.mp4", { ...probe, duration: 3 });
+    libraryDb().prepare("UPDATE asset_versions SET probe = NULL, state = 'processing' WHERE id = 'ver_unread'").run();
+    await expect(indexSources({ sources: ["ver_unread"] }, signal)).rejects.toBeInstanceOf(Waiting);
+    await seed("ver_hearing", "Hearing", "still.mp4", { ...probe, duration: 3 });
+    enqueueJob(libraryDb(), "lib_a", "ver_hearing", "transcribe", "mem-a", true);
+    await expect(indexSources({ sources: ["ver_hearing"] }, signal)).rejects.toBeInstanceOf(Waiting);
   });
 
   it("draws a contact sheet", async () => {
