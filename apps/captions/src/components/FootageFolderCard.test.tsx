@@ -155,7 +155,7 @@ describe("Where are your videos?", () => {
     expect(button("Choose a folder")).not.toBeUndefined();
   });
 
-  it("a big folder asks in one dialog: copy or keep, what it takes, and the AI organizing it, answered before the folder is added", async () => {
+  it("a big folder asks in one dialog: copy or keep, what it takes, and how the library sorts it, answered before the folder is added", async () => {
     watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;
     const order: string[] = [];
@@ -170,7 +170,7 @@ describe("Where are your videos?", () => {
       return fetchWatch(url, init);
     });
     pick.mockResolvedValue("/Users/tiny/Movies/Trip");
-    const onOffer = vi.fn(async (ai: boolean) => void order.push(`offer ${ai}`));
+    const onOffer = vi.fn(async (o: string) => void order.push(`offer ${o}`));
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -183,17 +183,17 @@ describe("Where are your videos?", () => {
     expect(dialog.textContent).toContain("of footage.");
     const copy = dialog.querySelectorAll('input[type="radio"]')[0] as HTMLInputElement;
     expect(copy.checked).toBe(true); // copying is the default where there is room
-    const ai = dialog.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
-    expect(ai.getAttribute("aria-checked")).toBe("false"); // offered, not taken for them
-    act(() => ai.click());
+    const sort = dialog.querySelectorAll<HTMLInputElement>('input[name="organize"]');
+    expect(sort[0]!.checked).toBe(true); // the usual folders, until another is picked
+    act(() => sort[1]!.click());
     const add = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add folder")!;
     act(() => add.click());
     await flush();
-    expect(order).toEqual(["offer true", "/api/library/watch/folder"]);
+    expect(order).toEqual(["offer ai", "/api/library/watch/folder"]);
     expect(posted.copyTo).toBe("~/Movies/Creator Toolset/Footage");
   });
 
-  it("on the AI Editor's page (no offer passed) a big folder still offers the AI organizing the library, saved on it", async () => {
+  it("on the AI Editor's page (no offer passed) a big folder still asks how the library sorts it, saved on it", async () => {
     watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;
     const order: string[] = [];
@@ -210,16 +210,14 @@ describe("Where are your videos?", () => {
     await render();
     await click("Choose a folder");
     const dialog = document.querySelector('[role="dialog"]')!;
-    const ai = dialog.querySelector('[role="switch"][aria-label="AI organizes these"]') as HTMLButtonElement;
-    expect(ai).not.toBeNull();
-    act(() => ai.click());
+    act(() => dialog.querySelectorAll<HTMLInputElement>('input[name="organize"]')[1]!.click());
     act(() => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add folder")!.click());
     await flush();
     expect(order[0]).toContain('PATCH /api/library/lib_1 {"settings":{"organize":"ai","organizeOffered":true}}');
     expect(order[1]).toContain("POST /api/library/watch/folder");
   });
 
-  it("a small folder asks only where its files are kept: no time, no organize offer", async () => {
+  it("a small folder asks where its files are kept and, the first time, how the library sorts them: no time", async () => {
     watch.copyTo = "~/Movies/Creator Toolset/Footage";
     const fetchWatch = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -237,7 +235,7 @@ describe("Where are your videos?", () => {
     expect(dialog.textContent).toContain("Add 3 files from Trip?");
     expect(dialog.textContent).toContain("Keep them where they are");
     expect(dialog.textContent).not.toContain("of footage.");
-    expect(dialog.querySelector('[role="switch"]')).toBeNull();
+    expect(dialog.querySelectorAll('input[name="organize"]')).toHaveLength(3);
   });
 
   it("as the Library's first screen for someone who may not see the folders: upload", async () => {

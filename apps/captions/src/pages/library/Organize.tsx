@@ -1,99 +1,76 @@
-import { useState, type ReactNode } from "react";
 import { DEFAULT_FOLDERS, type Collection, type LibrarySummary, type Organize } from "@contracts/library";
 import { listCollections, updateLibrary } from "@/lib/library";
 
 /**
- * How the Media Library is organized (api/library/organize.ts): asked in place on its first run, and kept in Library
- * settings. Each choice says what it makes; the meaning is in the names, not in a line under them.
+ * How the Media Library is sorted into folders (api/library/organize.ts): asked in the dialog of the first upload or
+ * folder (BigUploadDialog), and kept in Library settings. The folders are the library's own: files on disk never move.
  */
 
-/** The default folders' names, in their order: what Default folders makes. */
+/** The default folders' names, in their order: what the usual folders are. */
 export const FOLDER_NAMES = DEFAULT_FOLDERS.map((f) => f.name).join(", ");
 
 export const ORGANIZE: { value: Organize; label: string; detail: string }[] = [
-  { value: "default", label: "Default folders", detail: FOLDER_NAMES },
-  { value: "ai", label: "AI organizes", detail: "The same folders, and the AI files everything that comes in" },
-  { value: "own", label: "My own folders", detail: "No folders made" },
+  { value: "default", label: "Make the usual folders", detail: `${FOLDER_NAMES}. You sort files into them` },
+  { value: "ai", label: "AI sorts them into folders", detail: "The same folders, and the AI puts each new file in one. Only in the library: your files stay where they are" },
+  { value: "own", label: "No folders", detail: "Everything stays in one list until you make folders" },
 ];
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The first run's question, as three choices: the library is saved with the answer and its folders are read again (`onChosen`). */
-export function OrganizeChoice({ library, onChosen, onError }: { library: LibrarySummary; onChosen: (l: LibrarySummary) => Promise<void>; onError: (e: string) => void }) {
-  const [busy, setBusy] = useState(false);
-  const choose = async (organize: Organize) => {
-    setBusy(true);
-    try {
-      await onChosen(await updateLibrary(library.id, { settings: { organize } }));
-    } catch (e) {
-      onError(message(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+/** The three choices as radio cards, for the upload dialog. */
+export function OrganizePicker({ value, onChange }: { value: Organize; onChange: (o: Organize) => void }) {
   return (
-    <section aria-label="Organize the library" className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium">Organize the library</h2>
-      <div className="grid gap-2 sm:grid-cols-3">
-        {ORGANIZE.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            disabled={busy}
-            onClick={() => void choose(o.value)}
-            className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3 text-left transition-colors hover:border-violet-500/50 disabled:opacity-60"
-          >
+    <fieldset className="flex flex-col gap-1.5">
+      <legend className="mb-1.5 text-sm font-medium">How should the library sort these?</legend>
+      {ORGANIZE.map((o) => (
+        <label key={o.value} className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-zinc-500/20 px-3 py-2.5 has-[:checked]:border-violet-500/60">
+          <input type="radio" name="organize" className="mt-1 accent-violet-500" checked={value === o.value} onChange={() => onChange(o.value)} />
+          <span className="flex min-w-0 flex-col gap-0.5">
             <span className="text-sm font-medium">{o.label}</span>
             <span className="text-xs text-zinc-500">{o.detail}</span>
-          </button>
-        ))}
-      </div>
-    </section>
+          </span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
-/** An answer to the offer: the AI organizes from now on, or not, and it is not offered again (either way). */
-export const offerAnswer = (ai: boolean) => ({ settings: ai ? { organize: "ai" as const, organizeOffered: true } : { organizeOffered: true } });
+/** An answer to the question: saved, and not asked again (whatever it was). */
+export const offerAnswer = (organize: Organize) => ({ settings: { organize, organizeOffered: true } });
 
-/** Whether a big folder into `library` offers the AI organizing it: not when the AI or the default folders already do, nor a second time. */
-export const offersOrganize = (library: LibrarySummary | null | undefined) =>
-  !!library && library.settings.organize !== "default" && library.settings.organize !== "ai" && !library.settings.organizeOffered;
+/** Whether the next upload or folder into `library` asks how to sort it: only while it was never answered, here or in Library settings. */
+export const offersOrganize = (library: LibrarySummary | null | undefined) => !!library && !library.settings.organize && !library.settings.organizeOffered;
 
 /**
- * The Media Library page's organizing, for its owner. `choice`: the question, while it is unanswered and the library has
- * no plain folder of its own (one already organized by hand, or a new one from setup's folder that filled it, the same
- * way). `offer` / `answerOffer`: a big folder or drop offers the AI organizing it (BigUploadDialog), the answer saved
- * before the files come in. `organized`: the library saved, its folders read fresh (a refresh could join a read from
- * before the default folders were made, and the page hears no notice of its own writes).
+ * The Media Library page's organizing, for its owner. `offer` / `answerOffer`: the first upload or folder asks how the
+ * library sorts it (BigUploadDialog), the answer saved before the files come in. `organized`: the library saved, its
+ * folders read fresh (a refresh could join a read from before the default folders were made, and the page hears no
+ * notice of its own writes).
  */
 export function useOrganize({
   library,
   owner,
-  folders,
   onSaved,
   setFolders,
   onError,
 }: {
   library: LibrarySummary | null;
   owner: boolean;
-  /** null while not read yet: nothing is asked until it is */
-  folders: Collection[] | null;
   onSaved: (l: LibrarySummary) => void;
   setFolders: (c: Collection[]) => void;
   onError: (e: string) => void;
-}): { choice: ReactNode; offer: boolean; answerOffer: (ai: boolean) => Promise<void>; organized: (l: LibrarySummary) => Promise<void> } {
+}): { offer: boolean; answerOffer: (o: Organize) => Promise<void>; organized: (l: LibrarySummary) => Promise<void> } {
   const organized = async (l: LibrarySummary) => {
     onSaved(l);
     setFolders(await listCollections(l.id));
   };
   const offer = owner && offersOrganize(library);
-  const answerOffer = async (ai: boolean) => {
+  const answerOffer = async (o: Organize) => {
     if (!offer || !library) return;
     // a failed save never stops the files that wait on it
-    await updateLibrary(library.id, offerAnswer(ai))
+    await updateLibrary(library.id, offerAnswer(o))
       .then(organized)
       .catch((e) => onError(message(e)));
   };
-  const ask = owner && !!library && !library.settings.organize && !!folders && !folders.some((c) => c.kind === "manual" && c.parentId === null && c.name !== "Finals");
-  return { choice: ask && library ? <OrganizeChoice library={library} onChosen={organized} onError={onError} /> : null, offer, answerOffer, organized };
+  return { offer, answerOffer, organized };
 }

@@ -28,12 +28,18 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Where a step runs, in the words of the progress line (LibraryProcessing stepLine); "off" and "none" say nothing here. */
 const WHERE: Partial<Record<LibraryStepRoute, string>> = {
-  provider: "Runs on your connected AI",
-  api: "Runs on your Anthropic key",
-  budget: "Runs on your team's AI budget",
-  device: "Runs on this computer",
-  server: "Runs on this server",
-  openai: "Runs on your OpenAI key",
+  provider: "your connected AI",
+  api: "your Anthropic key",
+  budget: "your team's AI budget",
+  device: "this computer",
+  server: "this server",
+  openai: "your OpenAI key",
+};
+
+/** What each switch gives the person, before where it runs. */
+const WHAT: Record<"describe" | "embed", string> = {
+  describe: "So search finds what happens on screen, not only what is said",
+  embed: "A search for \"beach\" also finds \"sand and waves\"",
 };
 
 export function LibrarySettings({
@@ -115,38 +121,43 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
           </Link>
         </span>
       );
-    return WHERE[s.route] ?? null;
+    return WHERE[s.route] ? `Uses ${WHERE[s.route]}` : null;
   };
   const row = (key: "describe" | "embed", step: LibraryStep, title: string) => (
     <Row
       title={title}
-      // where search by meaning runs: the "meaning" worker's key-free route answers "device" here ("Runs on this computer")
-      description={library.settings[key] ? where(step) : null}
+      // where search by meaning runs: the "meaning" worker's key-free route answers "device" here ("Uses this computer")
+      description={
+        <span className="flex flex-col gap-0.5">
+          <span>{WHAT[key]}</span>
+          {library.settings[key] && where(step)}
+        </span>
+      }
       control={<Switch aria-label={title} checked={library.settings[key]} onCheckedChange={(on) => void flip(key, on)} />}
     />
   );
   return (
     <Section title="AI">
       <Card>
-        {row("describe", "describe", "AI describes new videos")}
-        {row("embed", "embed", "Search by meaning")}
+        {row("describe", "describe", "Write down what is in each video")}
+        {row("embed", "embed", "Search by meaning, not exact words")}
       </Card>
     </Section>
   );
 }
 
-/** How the library is organized (the first run's question, ./Organize.tsx); a library never asked shows My own folders. */
+/** How the library sorts files into folders (the first upload's question, ./Organize.tsx); a library never asked shows No folders. */
 function OrganizeRow({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const value = library.settings.organize ?? "own";
   return (
     <Section title="Folders">
       <Card>
         <Row
-          title="Organize"
+          title="Sorting"
           description={ORGANIZE.find((o) => o.value === value)?.detail}
           control={
             <SettingsSelect
-              label="Organize"
+              label="Sorting"
               value={value}
               options={ORGANIZE}
               onValueChange={(v) =>

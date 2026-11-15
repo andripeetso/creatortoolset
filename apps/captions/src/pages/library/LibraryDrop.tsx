@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import type { WatchStatus } from "@contracts/library";
+import type { Organize, WatchStatus } from "@contracts/library";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
@@ -33,7 +33,7 @@ export function useLibraryDrop({
   ignore?: string;
   readsFolders: boolean;
   offer: boolean;
-  answerOffer: (ai: boolean) => Promise<void>;
+  answerOffer: (o: Organize) => Promise<void>;
   addFiles: (files: File[], paths?: Map<File, string>) => unknown;
   onWatch: (w: WatchStatus) => void;
   onError: (e: string) => void;
