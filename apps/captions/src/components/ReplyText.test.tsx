@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { expect, it } from "vitest";
-import { ReplyText } from "./ReplyText";
+import { linkParts, ReplyText } from "./ReplyText";
 
 const text = "Open [Tiny tumbles](/editor/e1/V1A_D1) or read [the guide](https://example.com/guide).";
 
@@ -40,4 +40,14 @@ it("a code block wraps its long lines and has a Copy button", () => {
   const html = renderToStaticMarkup(<ReplyText text={"```\nYou write as Tiny Acrobatics, in first person.\n```"} />);
   expect(html).toMatch(/<pre class="[^"]*whitespace-pre-wrap[^"]*">/);
   expect(html).toContain('aria-label="Copy"');
+});
+
+it("finds the addresses in plain text, without the full stop or bracket after them", () => {
+  expect(linkParts("use this https://www.youtube.com/watch?v=zsCD5XCu6CM this song")).toEqual([
+    { text: "use this " },
+    { text: "https://www.youtube.com/watch?v=zsCD5XCu6CM", href: "https://www.youtube.com/watch?v=zsCD5XCu6CM" },
+    { text: " this song" },
+  ]);
+  expect(linkParts("(see https://example.com/a.)").map((p) => p.href).filter(Boolean)).toEqual(["https://example.com/a"]);
+  expect(linkParts("no link here")).toEqual([{ text: "no link here" }]);
 });

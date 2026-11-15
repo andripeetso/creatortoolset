@@ -48,7 +48,7 @@ export function LimitBanner({ chat, limit, snoozed }: { chat: string; limit: Non
   };
   const button = "shrink-0 rounded px-1 py-0.5 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:pointer-events-none disabled:opacity-50";
   return (
-    <div role="alert" className="-mb-4 rounded-t-2xl border border-b-0 border-amber-300/70 bg-amber-50 px-3 pt-1.5 pb-5 text-xs motion-safe:animate-in motion-safe:fade-in dark:border-amber-400/25 dark:bg-amber-400/10">
+    <div role="alert" className="mx-4 -mb-4 rounded-t-2xl border border-b-0 border-amber-300/70 bg-amber-50 px-3 pt-1.5 pb-5 text-xs motion-safe:animate-in motion-safe:fade-in dark:border-amber-400/25 dark:bg-amber-400/10">
       <div className="flex min-h-6 items-center gap-2">
         <Gauge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <span className="shrink-0 font-medium">Usage limit reached</span>

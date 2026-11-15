@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import { useInRouterContext, useNavigate } from "react-router";
 import remarkGfm from "remark-gfm";
 import { CopyButton } from "@/components/workshop/CopyButton";
+import { cn } from "@/lib/utils";
 
 /** A path of this app ("/review/…"), not another site's address. */
 const inApp = (href?: string) => !!href && /^\/(?!\/)/.test(href);
@@ -94,6 +95,39 @@ const REPLY: Components = {
   td: ({ children }) => <td className="border border-border px-2 py-1 align-top">{children}</td>,
   hr: () => <hr className="my-3 border-border" />,
 };
+
+/** An address in plain text, without the full stop or bracket that ends the sentence around it. */
+const URL_IN_TEXT = /https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)\]]/g;
+
+/** The parts of plain text: words, and addresses to show as links. */
+export function linkParts(text: string): Array<{ text: string; href?: string }> {
+  const out: Array<{ text: string; href?: string }> = [];
+  let at = 0;
+  for (const m of text.matchAll(URL_IN_TEXT)) {
+    if (m.index! > at) out.push({ text: text.slice(at, m.index) });
+    out.push({ text: m[0], href: m[0] });
+    at = m.index! + m[0].length;
+  }
+  if (at < text.length) out.push({ text: text.slice(at) });
+  return out;
+}
+
+/** Plain text (a person's own message, an error) with its addresses as links that open in a new tab. */
+export function LinkedText({ text, linkClass = "underline underline-offset-2" }: { text: string; linkClass?: string }) {
+  return (
+    <>
+      {linkParts(text).map((p, i) =>
+        p.href ? (
+          <a key={i} href={p.href} target="_blank" rel="noreferrer" className={cn("select-text break-all", linkClass)}>
+            {p.text}
+          </a>
+        ) : (
+          p.text
+        ),
+      )}
+    </>
+  );
+}
 
 export function ReplyText({ text }: { text: string }) {
   return (
