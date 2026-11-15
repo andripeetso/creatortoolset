@@ -10,10 +10,12 @@ import { useClipView } from "./clip";
 export function ClipView({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
   const view = useClipView();
   const change = (o: boolean) => !o && onClose();
+  // a box with something of its own to close (the tag box's suggestions, data-own-escape) takes Escape first
+  const escape = (e: KeyboardEvent) => e.target instanceof Element && e.target.closest("[data-own-escape]") && e.preventDefault();
   if (view === "side")
     return (
       <Sheet open={open} onOpenChange={change}>
-        <SheetContent side="right" aria-describedby={undefined} className="w-full overflow-y-scroll p-0 sm:max-w-xl">
+        <SheetContent side="right" aria-describedby={undefined} onEscapeKeyDown={escape} className="w-full overflow-y-scroll p-0 sm:max-w-xl">
           {children}
         </SheetContent>
       </Sheet>
@@ -22,6 +24,7 @@ export function ClipView({ open, onClose, children }: { open: boolean; onClose: 
     <Dialog open={open} onOpenChange={change}>
       <DialogContent
         aria-describedby={undefined}
+        onEscapeKeyDown={escape}
         className={
           "flex h-dvh w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:max-w-none " +
           "md:h-[min(900px,calc(100dvh-4rem))] md:w-[min(1280px,calc(100vw-4rem))] md:rounded-xl md:border " +
