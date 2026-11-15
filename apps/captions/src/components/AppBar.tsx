@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
-import { Check, ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, House } from "lucide-react";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
 import { ChatModeButton } from "@/components/assistant/ChatModeButton";
 import { PlanLimitPill } from "@/components/PlanLimitPill";
@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useMe } from "@/lib/auth";
-import { isPhoneHub } from "@/lib/mobile";
+import { isPhoneHub, toolsetHomePath } from "@/lib/mobile";
 import { toolLayout, useOpenTool } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 
@@ -94,8 +94,8 @@ export function AppBar({
   );
 }
 
-/** The tool's name opens every tool you may use, to jump straight to another; the one you're in takes you to its
- *  start. Signed out (a share page) it is just the name. */
+/** The tool's name opens Home and every tool you may use, to jump straight to another; the one you're in takes you
+ *  to its start. Signed out (a share page) it is just the name. */
 function ToolMenu({ tool, to, dim, onLeave }: {
   tool: ReactNode;
   to?: string;
@@ -120,9 +120,22 @@ function ToolMenu({ tool, to, dim, onLeave }: {
         <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
+        {/* chat mode has no wordmark beside the tool, so Home is here too */}
+        <DropdownMenuItem asChild>
+          <Link
+            to={toolsetHomePath()}
+            onClick={(e) => {
+              onLeave?.(e);
+              openTool(e, toolsetHomePath());
+            }}
+          >
+            <House className="h-4 w-4 text-violet-400" />
+            <span className="flex-1">Home</span>
+          </Link>
+        </DropdownMenuItem>
         {groups.map((g, i) => (
           <Fragment key={i}>
-            {i > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuSeparator />
             {g.map((t) => {
               const current = here(t.to);
               const dest = current && to ? to : phone && t.phoneTo ? t.phoneTo : t.to;
