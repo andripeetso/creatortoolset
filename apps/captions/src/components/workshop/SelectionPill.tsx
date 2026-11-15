@@ -35,7 +35,8 @@ export function SelectionPill({ at, onDismiss, children }: { at: { x: number; y:
     <div
       ref={ref}
       onPointerDown={(e) => e.preventDefault()} // keeps the selection
-      className="fixed z-50 flex items-center gap-0.5 rounded-full border border-border/60 bg-popover/90 p-0.5 text-[12px] text-foreground shadow-lg backdrop-blur"
+      // over the floating assistant (z-[55]) and page dialogs, as Ask assistant is
+      className="fixed z-[70] flex items-center gap-0.5 rounded-full border border-border/60 bg-popover/90 p-0.5 text-[12px] text-foreground shadow-lg backdrop-blur"
       style={{ left: at.x, top: at.y }}
     >
       {children}
