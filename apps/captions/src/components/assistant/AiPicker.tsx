@@ -38,7 +38,7 @@ export function AiPicker({ ai, fallback, onChange }: { ai?: Selection; fallback?
           title={ai ? `This chat's AI: ${nameOf(shown.instance)}, ${label}` : `Your default AI: ${nameOf(shown.instance)}, ${label}`}
         >
           <ProviderLogo driver={driverOf(shown.instance)} inherit className="size-3.5 opacity-80" />
-          {!ai && <span className="shrink-0">Default</span>}
+          {/* the default says so in its hover text and list, not on the button: it stays short */}
           <span className={cn("truncate", !ai && "opacity-70")}>{label}</span>
         </button>
       </PopoverTrigger>
