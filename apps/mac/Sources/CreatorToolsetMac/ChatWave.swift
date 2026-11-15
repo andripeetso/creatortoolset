@@ -728,7 +728,7 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
             sound?.hold(pull: m.pull, wild: m.wild)
         } else if !popped {
             popped = true
-            sound?.pop(drawnIn: WaveClock.pull(held, held: held), wild: WaveClock.wild(held))
+            sound?.pop(drawnIn: WaveClock.pull(held, held: held))
             waveLog.notice("pops at \(Int(ms)) ms, held \(Int(held)) ms, drawn in \(m.pull)")
         }
         guard let buffer = renderer.queue.makeCommandBuffer() else { return }

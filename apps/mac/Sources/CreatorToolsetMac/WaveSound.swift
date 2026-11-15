@@ -1,10 +1,10 @@
-// What the chat-mode wave sounds like (ChatWave.swift), made here sample by sample (no sound files): light and round, as
-// on a phone, never a boom (owner, 11-14: "more like social media ... a bubble bop ... smoother sounds", not "like an
-// explosion"). While the button is held: a soft tone rising as the bubble grows, wobbling a little as it goes wild. When
-// it pops: a bubble's bop, low and round (11-14: "make the release a bit more satisfying and lower pitch"): a tick, then
-// a warm tone chirping up a little and settling; bigger and lower the longer it was held, and after a long hold two
-// small ones after it. A click draws nothing in and makes no sound. It follows the wave's own switch
-// (Settings → Appearance → Chat mode) and the Mac's volume.
+// What the chat-mode wave sounds like (ChatWave.swift): light and silly, never a boom. While the button is held, a soft
+// round "oooo" made here sample by sample, rising as the screen is drawn in and wobbling a little as it goes wild (owner,
+// 11-15: "it sounds like it's literally me making the sound into the microphone"). When it pops, a soft "weee" that
+// slides down and fades out (wave-wee.wav: a voice made with a text-to-speech model from a written description, not a
+// recording of anyone): the oooo glides to the wee's first note and hands over to it within a tenth of a second, so the
+// two sound like one voice. The longer the hold, the louder and longer the wee. A click draws nothing in and makes no
+// sound. It follows the wave's own switch (Settings → Appearance → Chat mode) and the Mac's volume.
 import AVFoundation
 import os
 
@@ -15,32 +15,40 @@ struct WaveSynth {
     /// How deep the screen is drawn in while the button is held (WaveMoment.pull; 0 once let go), and how wild it is.
     var held: Float = 0
     var wild: Float = 0
+    /// The wee (samples at `weeRate`, already faded out at its end); empty: the pop makes no sound.
+    var wee: [Float] = []
+    var weeRate: Float = 24000
+    /// The wee's first note (Hz): where the oooo glides to as it hands over.
+    static let weeStarts: Float = 521
 
     /// The tone's loudness and pitch follow what is held (the pitch only upward: let go, the tone fades where it is).
     private var h: Float = 0, pitch: Float = 0, w: Float = 0, t: Float = 0, tone: Float = 0
-    /// The bubbles of the pop: when each starts after the pop (s), its pitch (Hz), how loud, how quickly it dies away (s),
-    /// and where its wave is.
-    private var bubbles: [(at: Float, f: Float, loud: Float, dies: Float, phase: Float)] = []
-    private var popAge: Float = 10, popLoud: Float = 0, tick: Float = 0
+    /// The tone's pitch and loudness on the last sample, where the handover to the wee starts from.
+    private var freq: Float = 220, amp: Float = 0
+    private var popAge: Float = 10, from: (freq: Float, amp: Float) = (220, 0), weeLoud: Float = 0, weeEnd: Float = 0
 
     init(rate: Float) { self.rate = rate }
 
+    /// The wee as the app carries it (Contents/Resources/wave-wee.wav), or nil.
+    static func loadWee(_ url: URL?) -> (samples: [Float], rate: Float)? {
+        guard let url, let file = try? AVAudioFile(forReading: url),
+              let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: buf)) != nil, let data = buf.floatChannelData else { return nil }
+        return (Array(UnsafeBufferPointer(start: data[0], count: Int(buf.frameLength))), Float(file.processingFormat.sampleRate))
+    }
+
     /// It pops: `drawnIn` is how deep the screen was drawn in when the button was let go (0 for a click: silent).
-    mutating func pop(drawnIn: Float, wild: Float) {
+    mutating func pop(drawnIn: Float) {
         let x = min(max((drawnIn - 0.05) / 0.75, 0), 1)
         let loud = x * x * (3 - 2 * x)
-        guard loud > 0 else { return }
-        // the deeper it was drawn in, the bigger the bubble: lower, a little longer
-        let size = min(drawnIn / 2.6, 1.2)
-        let f = 330 - 100 * size, dies = 0.07 + 0.05 * size
-        bubbles = [(0, f, loud, dies, 0)]
-        if wild > 0 {
-            bubbles.append((0.08, f * 1.5, 0.45 * loud * wild, dies * 0.8, 0))
-            bubbles.append((0.15, f * 1.9, 0.28 * loud * wild, dies * 0.7, 0))
-        }
-        popLoud = loud
+        guard loud > 0, !wee.isEmpty else { return }
+        // the deeper it was drawn in, the louder and longer the wee (the longest hold: all of it)
+        let size = min(drawnIn / 3.6, 1)
+        weeLoud = loud * (0.6 + 0.4 * size)
+        weeEnd = Float(wee.count) / weeRate * (0.5 + 0.5 * size)
+        from = (freq, amp)
+        h = 0
         popAge = 0
-        tick = 0
     }
 
     mutating func next() -> Float {
@@ -51,33 +59,47 @@ struct WaveSynth {
         if held > pitch { pitch += (held - pitch) * follow }
         if held == 0 && h < 0.001 { pitch = 0 }
         w += (wild - w) * follow
-        var out: Float = 0
-        // while held: a soft round tone rising as the bubble grows, wobbling a little as it goes wild
-        let level = min(h / 3.6, 1), rise = min(pitch / 3.6, 1)
-        if level > 0.0005 {
-            tone += tau * 220 * pow(2, 1.25 * rise) * (1 + (0.006 + 0.025 * w) * sin(t * tau * 5.5)) * dt
+        var out: Float = 0, bridge: Float = 0
+        let vibrato = 1 + (0.006 + 0.025 * w) * sin(t * tau * 5.5)
+        // handing over: the wee comes in from 40 to 100 ms after the pop as the oooo, gliding to its first note, goes
+        // (equal power, so the sum neither dips nor swells)
+        let into = popAge < 1 ? sin(Float.pi / 2 * min(max((popAge - 0.04) / 0.06, 0), 1)) : 1
+        if popAge < 0.1 {
+            let g = min(popAge / 0.04, 1), glide = g * g * (3 - 2 * g)
+            freq = from.freq + (Self.weeStarts - from.freq) * glide
+            tone += tau * freq * vibrato * dt
             if tone > tau { tone -= tau }
-            let wobble = 1 - 0.35 * w * (0.5 + 0.5 * sin(t * tau * 8))
-            out += 0.22 * (0.2 * level + 0.8 * level * level) * wobble * (sin(tone) + 0.12 * sin(2 * tone))
-        }
-        // the pop: a tick, then each bubble a warm round tone chirping up a little and settling, gone within a moment
-        if popAge < 1 {
-            popAge += dt
-            tick += tau * 2400 * dt
-            if tick > tau { tick -= tau }
-            out += 0.18 * popLoud * min(popAge / 0.0005, 1) * exp(-popAge / 0.003) * sin(tick)
-            for i in bubbles.indices {
-                let a = popAge - bubbles[i].at
-                guard a > 0 else { continue }
-                let glide = (1 + 0.6 * (1 - exp(-a / 0.012))) * (1 - 0.06 * (1 - exp(-a / 0.12)))
-                bubbles[i].phase += tau * bubbles[i].f * glide * dt
-                if bubbles[i].phase > tau { bubbles[i].phase -= tau }
-                let body = sin(bubbles[i].phase) + 0.3 * sin(2 * bubbles[i].phase)
-                out += 0.85 * bubbles[i].loud * min(a / 0.0015, 1) * exp(-a / bubbles[i].dies) * body
+            // and swells over 30 ms from the oooo's loudness to the wee's (a little under its opening, so it leads in)
+            let r = min(popAge / 0.03, 1), swell = r * r * (3 - 2 * r)
+            let loud = 0.48 * from.amp + (0.24 * weeLoud - 0.48 * from.amp) * swell
+            bridge = loud * sqrt(max(1 - into * into, 0)) * (sin(tone) + 0.12 * sin(2 * tone))
+        } else {
+            // while held: the oooo, a soft round tone rising as the screen is drawn in, wobbling a little as it goes wild
+            let level = min(h / 3.6, 1), rise = min(pitch / 3.6, 1)
+            amp = 0
+            if level > 0.0005 {
+                freq = 220 * pow(2, 1.25 * rise)
+                tone += tau * freq * vibrato * dt
+                if tone > tau { tone -= tau }
+                amp = 0.22 * (0.2 * level + 0.8 * level * level) * (1 - 0.35 * w * (0.5 + 0.5 * sin(t * tau * 8)))
+                out += amp * (sin(tone) + 0.12 * sin(2 * tone))
             }
         }
-        // (its pop peaks about as loud as the Mac's own "Pop")
-        return tanh(out * 1.2) * 0.4
+        var voice: Float = 0
+        if popAge < weeEnd {
+            let at = popAge * weeRate, i = Int(at)
+            if i + 1 < wee.count {
+                let s = wee[i] + (wee[i + 1] - wee[i]) * (at - Float(i))
+                // a shorter wee fades out over its second half
+                let cut = Float(wee.count) / weeRate
+                let f = weeEnd < cut ? min(max((popAge - 0.5 * weeEnd) / (0.5 * weeEnd), 0), 1) : 0
+                let fade = cos(f * Float.pi / 2)
+                voice = 0.3 * weeLoud * into * fade * fade * s
+            }
+        }
+        if popAge < 10 { popAge += dt }
+        // (the oooo peaks about as loud as the Mac's own "Pop"; the wee a little louder)
+        return tanh(out * 1.2) * 0.4 + bridge + voice
     }
 }
 
@@ -86,7 +108,7 @@ struct WaveSynth {
 final class WaveSound {
     private struct Told {
         var held: Float = 0, wild: Float = 0, at: CFTimeInterval = 0
-        var pop: (drawnIn: Float, wild: Float)?
+        var pop: Float?
     }
     private let told = OSAllocatedUnfairLock(initialState: Told())
     private let queue = DispatchQueue(label: "chat-wave-sound")
@@ -107,6 +129,10 @@ final class WaveSound {
                       let mono = AVAudioFormat(standardFormatWithSampleRate: output.sampleRate, channels: 1) else { return }
                 let rate = output.sampleRate
                 var synth = WaveSynth(rate: Float(rate))
+                if let wee = WaveSynth.loadWee(Bundle.main.url(forResource: "wave-wee", withExtension: "wav")) {
+                    synth.wee = wee.samples
+                    synth.weeRate = wee.rate
+                }
                 let node = AVAudioSourceNode(format: mono) { [told] _, _, frames, buffers in
                     if let now = told.withLockIfAvailable({ s -> Told in
                         let t = s
@@ -116,7 +142,7 @@ final class WaveSound {
                         // nothing heard from the wave for a moment (its window hidden): what is held lets go
                         synth.held = CACurrentMediaTime() - now.at < 0.15 ? now.held : 0
                         synth.wild = now.wild
-                        if let p = now.pop { synth.pop(drawnIn: p.drawnIn, wild: p.wild) }
+                        if let p = now.pop { synth.pop(drawnIn: p) }
                     }
                     guard let out = UnsafeMutableAudioBufferListPointer(buffers).first?.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
                     for i in 0 ..< Int(frames) { out[i] = synth.next() }
@@ -139,14 +165,14 @@ final class WaveSound {
         }
     }
 
-    func pop(drawnIn: Float, wild: Float) {
+    func pop(drawnIn: Float) {
         told.withLock {
             $0.held = 0
-            $0.pop = (drawnIn, wild)
+            $0.pop = drawnIn
         }
     }
 
-    /// The wave is over: what is still sounding (a long hold's boom) dies away, then the audio stops.
+    /// The wave is over: what is still sounding (the wee) dies away, then the audio stops.
     func end() {
         told.withLock { $0.held = 0 }
         let stop = DispatchWorkItem { [weak self] in self?.queue.async { self?.engine?.stop() } }
