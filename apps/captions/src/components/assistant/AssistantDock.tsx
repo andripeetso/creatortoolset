@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { ArrowUpRight, Check, ChevronDown, Copy, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
-import { ReplyText } from "@/components/ReplyText";
+import { LinkedText, ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
@@ -98,6 +98,17 @@ function suggestionsFor(path: string): string[] {
   if (path.startsWith("/editor")) return ["How are my edits doing?", "What changed in the last draft?"];
   if (path.startsWith("/instagram") || path.startsWith("/analyzer")) return ["How did my last five posts do?", "Refresh my Instagram numbers"];
   return ["Where did I leave off?", "What can I finish right away?", "Find my next content idea"];
+}
+
+/**
+ * A reply a usage limit stopped is said by the bar over the message box alone, unless the reply before it was stopped
+ * by the limit too: the person sent again into it, and then the chat says so as well.
+ */
+export function quietLimit(all: AssistantMessage[], i: number): boolean {
+  const m = all[i]!;
+  if (m.status !== "error" || !m.limit) return false;
+  const before = all.slice(0, Math.max(i - 1, 0)).reverse().find((x) => x.role === "assistant");
+  return !(before?.status === "error" && before.limit);
 }
 
 /** Make `id` the app's current workspace, when it is one of the person's and not already it. */
@@ -922,9 +933,13 @@ export function AssistantDock() {
           <div className="flex flex-col gap-3">
             {view.messages.map((m, i, all) => {
               const asked = all[i - 1];
+              // a reply a usage limit stopped is said by the bar over the message box, not in the chat; only when the
+              // person sends again into the limit is it said here too, in grey (owner, 11-14: "the inside the chat error
+              // makes it feel broken")
+              const quiet = quietLimit(all, i);
               // the last reply failed or was cut off (a restart, the Mac gone): send the question again
               const retry =
-                i === all.length - 1 && m.status === "error" && asked?.role === "user" && !thinking && !busy
+                !quiet && i === all.length - 1 && m.status === "error" && asked?.role === "user" && !thinking && !busy
                   ? () => void send({ text: asked.text, ...(asked.quote ? { quote: asked.quote } : {}) })
                   : undefined;
               // the newest reply's buttons (offer_choices) answer it in one press, until something else is said
@@ -937,7 +952,7 @@ export function AssistantDock() {
               const branch = m.role === "assistant" && m.status !== "thinking" ? () => void branchFrom(m.id) : undefined;
               // the message the server starts next, once the reply before it ends: Steer ends that reply now
               const steerNow = m.wait?.for === "reply" && all.find((x) => x.wait?.for === "reply") === m ? stop : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} onSteer={steerNow} />;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} onSteer={steerNow} quiet={quiet} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -1078,6 +1093,7 @@ export function Message({
   onCancelSend,
   onBranch,
   onSteer,
+  quiet,
 }: {
   m: AssistantMessage;
   onRetry?: () => void;
@@ -1091,6 +1107,8 @@ export function Message({
   onBranch?: () => void;
   /** A message queued behind the reply being written: that reply stops and this one starts. */
   onSteer?: () => void;
+  /** A reply a usage limit stopped, said only by the bar over the message box (it is not said twice in the chat). */
+  quiet?: boolean;
 }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
@@ -1142,7 +1160,7 @@ export function Message({
         )}
         {m.text.trim() && (
           <div className={cn("rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white", enter, "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right")}>
-            {m.text}
+            <LinkedText text={m.text} linkClass="underline decoration-white/50 underline-offset-2 hover:decoration-white" />
           </div>
         )}
         {big && <PictureOverlay src={big} onClose={() => setBig(null)} />}
@@ -1224,8 +1242,16 @@ export function Message({
       <Steps steps={steps} working={working && !!steps.length} took={m.took} />
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
-      {/* a used-up plan is a wait, said in amber; a real failure in red */}
-      {m.status === "error" ? <p className={m.limit || isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
+      {/* a used-up plan is a wait, said in grey (the first one only in the bar over the message box: quiet); a real failure in red */}
+      {m.status === "error" ? (
+        quiet ? null : (
+          <p className={m.limit || isLimitLine(m.text) ? "text-muted-foreground" : "text-destructive"}>
+            <LinkedText text={m.text} />
+          </p>
+        )
+      ) : (
+        <ReplyText text={m.text} />
+      )}
       {/* the questions waiting for a press come under the words, as the reply says ("the card below"): the words
           written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
       <ApprovalCards approvals={answered(m.approvals)} />

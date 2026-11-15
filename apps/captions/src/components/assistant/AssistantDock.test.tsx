@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { AssistantMessage, AssistantView } from "@contracts/assistant";
 import { Message, NoToolsNote } from "./AssistantDock";
 
@@ -32,4 +32,16 @@ it("folds the steps into one row: the current step while working, the count once
   const done = html({ id: "r", role: "assistant", text: "Done.", at: Date.now(), status: "done", steps } as AssistantMessage);
   expect(done).toContain("3 steps");
   expect(html({ id: "r", role: "assistant", text: "Done.", at: Date.now(), status: "done", steps, took: 72_400 } as AssistantMessage)).toContain("Worked for 1m 12s");
+});
+
+describe("a reply a usage limit stopped", () => {
+  it("is said only by the bar over the box, unless the person sent again into the limit", async () => {
+    const { quietLimit } = await import("./AssistantDock");
+    const u = (id: string) => ({ id, role: "user" as const, text: "go", at: 1 });
+    const limited = (id: string) => ({ id, role: "assistant" as const, text: "429", at: 2, status: "error" as const, limit: { until: 9 } });
+    const all = [u("1"), { id: "2", role: "assistant" as const, text: "ok", at: 2, status: "done" as const }, u("3"), limited("4"), u("5"), limited("6")];
+    expect(quietLimit(all, 3)).toBe(true);
+    expect(quietLimit(all, 5)).toBe(false);
+    expect(quietLimit(all, 1)).toBe(false);
+  });
 });
