@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, ChevronDown, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, CornerDownLeft, FileText, Film, Folder, GitFork, ImageOff, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import type { Selection } from "@contracts/providers";
@@ -38,13 +38,14 @@ import { AiPicker } from "./AiPicker";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, addVideo, cancelUpload, droppedByPath, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, uploadVideo, type Draft, type Upload } from "./draft";
 import { chooseFolderOnMac, droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
-import { duration, WorkCards, WorkingFor } from "./WorkCards";
+import { WorkCards, WorkingFor } from "./WorkCards";
 import { chatTitle, useChats } from "./ChatList";
 import { ChatEdge, ChatHeader, ChatsAside } from "./ChatModeChrome";
 import { StartSuggestions, WorkPicker } from "./WorkPicker";
 import { useWorkspace } from "@/lib/workspace";
 import { chatFilterNow, NewChatWorkspace } from "./Workspaces";
 import { useChatPage } from "./useChatPage";
+import { Steps } from "@/components/chat/Steps";
 import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { CopyButton } from "@/components/workshop/CopyButton";
 import { VideoCards } from "./VideoCard";
@@ -1229,7 +1230,7 @@ export function Message({
             Working for <WorkingFor since={m.started ?? m.at} />
           </p>
         )}
-        <Steps steps={steps} working={!m.wait && !(m.send && sending)} />
+        <Steps steps={steps.map((label) => ({ label }))} working={!m.wait && !(m.send && sending)} />
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
@@ -1276,7 +1277,7 @@ export function Message({
           Working for <WorkingFor since={m.started ?? m.at} />
         </p>
       )}
-      <Steps steps={steps} working={working && !!steps.length} took={m.took} />
+      <Steps steps={steps.map((label) => ({ label }))} working={working && !!steps.length} took={m.took} />
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       {/* a used-up plan is a wait, said in grey (the first one only in the bar over the message box: quiet); a real failure in red */}
@@ -1353,31 +1354,6 @@ const metaBtn = "flex size-6 shrink-0 items-center justify-center rounded-md hov
 
 
 
-/** What the AI did, folded into one row. While it works: the step it is on, a light running through it (the time is
-    the "Working for" line above). Once done: "Worked for 1m 12s" (or "N steps" for a reply from before that was kept), opening to the list. */
-function Steps({ steps, working = false, took }: { steps: string[]; working?: boolean; took?: number }) {
-  if (!steps.length) return null;
-  const last = steps[steps.length - 1];
-  const label = working ? `${last}…` : took !== undefined ? `Worked for ${duration(took)}` : steps.length === 1 ? last : `${steps.length} steps`;
-  const opens = steps.length > 1 || (!working && took !== undefined);
-  return (
-    <details className="group mt-1 mb-1.5 text-xs text-muted-foreground">
-      <summary className={cn("flex w-fit max-w-full list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden", opens && "cursor-pointer hover:text-foreground")}>
-        <span className={cn("truncate", working && "ct-shimmer")} role={working ? "status" : undefined}>
-          {label}
-        </span>
-        {opens && <ChevronDown className="size-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />}
-      </summary>
-      {opens && (
-        <ul className="mt-1 ml-0.5 space-y-0.5 border-l border-border pl-2.5">
-          {steps.map((s, i) => (
-            <li key={i}>{s}</li>
-          ))}
-        </ul>
-      )}
-    </details>
-  );
-}
 function Dots() {
   return (
     <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Thinking">

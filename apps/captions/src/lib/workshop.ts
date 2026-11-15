@@ -223,25 +223,6 @@ export const durationLabel = (ms: number) => {
   return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ""}`;
 };
 
-/** A finished turn in one line: "Read 7 files · searched the web 2× · 2 min 40 s". */
-export function stepsSummary(steps: Array<{ label: string; at: number; end?: number }>): string {
-  const reads = steps.filter((x) => /^Read /.test(x.label)).length;
-  const looks = steps.filter((x) => /^(Searched (?!the web)|Looked for )/.test(x.label)).length;
-  const web = steps.filter((x) => /^(Searched the web|Checking on the web|Deep research on the web)/.test(x.label)).length;
-  const pulled = steps.filter((x) => x.label.startsWith("Pulled from the sources")).length;
-  const first = steps[0]?.at ?? 0;
-  const last = steps.reduce((t, x) => Math.max(t, x.end ?? x.at), first);
-  return [
-    reads ? `read ${reads} file${reads === 1 ? "" : "s"}` : "",
-    looks ? `searched the folder ${looks}×` : "",
-    pulled ? "pulled sources" : "",
-    web ? `searched the web${web > 1 ? ` ${web}×` : ""}` : "",
-    durationLabel(last - first),
-  ]
-    .filter(Boolean)
-    .join(" · ")
-    .replace(/^./, (c) => c.toUpperCase());
-}
 
 /** "1.2M tokens" / "238.7k tokens". */
 export const tokensLabel = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${(n / 1000).toFixed(1)}k`);
