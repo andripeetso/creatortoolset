@@ -82,7 +82,7 @@ export const clearLibrarySpace = (libraryId: string, what: "proxies" | "models")
 export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput) => send<LibraryStorage>(`/api/library/${libraryId}/storage`, "PUT", input);
 
 /** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
-export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; description?: string }) =>
+export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; aiTags?: string[]; description?: string }) =>
   send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "PATCH", patch);
 
 export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string; source?: string }): Promise<AssetPage> {

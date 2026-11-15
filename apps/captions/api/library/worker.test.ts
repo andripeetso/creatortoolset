@@ -235,7 +235,7 @@ describe("strips of frames", () => {
     }
   });
 
-  it("a photo gets no proxy, though its probe reads as a video the browser can't play", async () => {
+  it("a photo gets no proxy or fingerprint, though its probe reads as a video the browser can't play", async () => {
     probed.value = { duration: 0.04, width: 3000, height: 4000, fps: 25, rotation: 0, format: "image2", vcodec: "mjpeg", pixFmt: "yuvj420p", acodec: "" };
     try {
       for (const [id, kind] of [["xv", "video"], ["xi", "image"]] as const) {
@@ -249,6 +249,8 @@ describe("strips of frames", () => {
       const kinds = (v: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? ORDER BY kind").all(v) as { kind: string }[]).map((r) => r.kind);
       expect(kinds("xv")).toContain("proxy");
       expect(kinds("xi")).not.toContain("proxy");
+      expect(kinds("xv")).toContain("fingerprint");
+      expect(kinds("xi")).not.toContain("fingerprint");
     } finally {
       probed.value = null;
     }

@@ -55,7 +55,7 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
     user: [
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
-      `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`,
+      input.frames > 1 ? `The ${input.frames} pictures are frames from the start to the end of the clip, in order.` : "The picture is the whole clip: a photo, or a clip too short for more.",
       'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
       ...(input.folders?.length
         ? [

@@ -319,7 +319,8 @@ async function run(job: JobRow): Promise<void> {
     // a photo is probed as a one-frame video but shows as itself: no proxy
     if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id), on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
-    if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
+    // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
+    if (video && !music && v.kind !== "image") enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // a photo is probed as a one-frame video: only a video asset gets a strip
     if (video && !music && v.kind === "video") enqueueJob(db, v.library_id, v.id, "sprite", job.actor);
     // after transcribe in the queue, so the description reads what is said

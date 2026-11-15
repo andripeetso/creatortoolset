@@ -226,11 +226,13 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
         | undefined)
     : undefined;
   if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return notFound(c);
-  const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; description?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; aiTags?: unknown; description?: unknown } | null;
   const title = typeof b?.title === "string" ? b.title.trim().slice(0, 160) : undefined;
   const tags = Array.isArray(b?.tags)
     ? [...new Set(b.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().slice(0, 80)).filter(Boolean))].slice(0, 50)
     : undefined;
+  // a tag the AI gave, put back by an undo, stays the AI's
+  const aiTags = new Set(Array.isArray(b?.aiTags) ? b.aiTags.filter((t): t is string => typeof t === "string") : []);
   const description = typeof b?.description === "string" ? b.description.trim().slice(0, 4000) : undefined;
   if (title === "" || (title === undefined && tags === undefined && description === undefined))
     return c.json({ error: "Send a title, tags or a description", code: "invalid" }, 400);
@@ -240,8 +242,8 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
     if (title) d.prepare("UPDATE assets SET title = ? WHERE id = ?").run(title, assetId);
     if (tags) {
       d.prepare(`DELETE FROM asset_tags WHERE asset_id = ? AND tag NOT IN (SELECT value FROM json_each(?))`).run(assetId, JSON.stringify(tags));
-      const add = d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')");
-      for (const t of tags) add.run(assetId, t);
+      const add = d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, ?)");
+      for (const t of tags) add.run(assetId, t, aiTags.has(t) ? "ai" : "user");
     }
     if (description) {
       d.prepare("INSERT OR REPLACE INTO descriptions (version_id, source, text, provider, created_at) VALUES (?, 'user', ?, NULL, ?)").run(

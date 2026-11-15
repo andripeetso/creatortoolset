@@ -90,6 +90,13 @@ describe("probe", () => {
     expect(parseProbe(video({})).rotation).toBe(0);
   });
 
+  it("an iPhone HEIC's size is its tile grid's, not one 512 px tile's", () => {
+    const tile = { codec_type: "video", codec_name: "hevc", width: 512, height: 512 };
+    const grid = (w: number, h: number, main: number) => ({ type: "Tile Grid", disposition: { default: main }, components: [{ width: w, height: h }] });
+    const photo = parseProbe({ format: { format_name: "mov,mp4" }, streams: [tile, tile], stream_groups: [grid(2016, 1512, 0), grid(4032, 3024, 1)] });
+    expect(photo).toMatchObject({ width: 4032, height: 3024 });
+  });
+
   it("a song's album art is a cover, not video; a real picture stream wins over a cover", () => {
     const art = { codec_type: "video", codec_name: "mjpeg", disposition: { attached_pic: 1 } };
     const song = parseProbe({ format: { format_name: "mp3" }, streams: [{ codec_type: "audio", codec_name: "mp3" }, art] });
