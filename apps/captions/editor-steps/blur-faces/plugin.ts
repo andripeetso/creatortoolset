@@ -15,12 +15,15 @@ import { blobs, libraryDb } from "../../api/library/db";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { saveToLibrary } from "../../api/library/routes";
 import { mainSource } from "../../api/library/sources";
+import { EXAMPLE_JPEG } from "./example";
 
 /**
  * Face Blur: every face, or the ones the person names, covered in photos and videos on their own Mac or iPhone (the apps'
  * FaceBlur engine, Apple's face detector). The server keeps each account's settings and, in "Only some faces" mode, asks
  * the person's own AI which faces match their words (README.md has the whole contract).
- *   GET/PUT /api/x/blur-faces/settings   { mode, who, look }
+ *   GET/PUT /api/x/blur-faces/settings   { mode, who, look, strength, softness, size, color, auto }; a PUT changes only
+ *                                        the fields it sends
+ *   GET     /api/x/blur-faces/example    { picture }: the example picture (base64 JPEG) the style is previewed on
  *   POST    /api/x/blur-faces/pick       { who, faces: [{ id, picture, note }] } → { blur: [ids] }; 409 + { error } when
  *                                        the AI can't answer, and then the device writes nothing
  *   GET     /api/x/blur-faces/auto       { can, why?, failed: [{ versionId, title, error }] }: whether new Media Library
@@ -30,11 +33,18 @@ import { mainSource } from "../../api/library/sources";
  * own (the device job `faceblur`, deviceJobs below) and the covered copy is added beside it; the original stays.
  */
 
-export type Settings = { mode: "all" | "some"; who: string; look: "blur" | "mosaic" | "solid"; auto: boolean };
-export const DEFAULTS: Settings = { mode: "all", who: "Every child's face", look: "blur", auto: false };
-export const LIMITS = { who: 500, faces: 40, picture: 200_000, note: 300 };
-const MODES = ["all", "some"];
-const LOOKS = ["blur", "mosaic", "solid"];
+export type Look = "blur" | "mosaic" | "solid";
+/**
+ * The style is the engine's (FaceBlur/Cover.swift LookPreset): strength 0…1 (the blur, or the mosaic's squares), softness
+ * 0…1 (how far the edge fades out), size 0.8…2 (the cover against the face), color (Solid's).
+ */
+export type Settings = { mode: "all" | "some"; who: string; look: Look; strength: number; softness: number; size: number; color: string; auto: boolean };
+export const DEFAULTS: Omit<Settings, "softness"> = { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, size: 1, color: "#343434", auto: false };
+/** the edge a look has when the person never set one: Solid's is hard, as before there was a choice */
+export const softnessOf = (look: Look) => (look === "solid" ? 0 : 0.45);
+export const LIMITS = { who: 500, faces: 40, picture: 200_000, note: 300, size: [0.8, 2] as const };
+const MODES: unknown[] = ["all", "some"];
+const LOOKS: unknown[] = ["blur", "mosaic", "solid"];
 const PER_CALL = 10; // faces (one picture each) per question to the AI
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -49,18 +59,32 @@ export function settingsOf(user: string): Settings {
   } catch {
     // none saved yet
   }
-  return { ...DEFAULTS, ...saved };
+  const merged = { ...DEFAULTS, ...saved };
+  return { ...merged, softness: saved.softness ?? softnessOf(merged.look) };
 }
 
-/** The settings a PUT sends, or what is wrong with them. */
-export function checkSettings(b: unknown): Settings | string {
+const within = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+
+/**
+ * What a PUT sends on top of `current`, or what is wrong with it. A field left out keeps its value, so an app from before a
+ * field existed never resets it.
+ */
+export function checkSettings(b: unknown, current: Settings = { ...DEFAULTS, softness: softnessOf(DEFAULTS.look) }): Settings | string {
   const s = b as Partial<Settings> | null;
-  if (!s || typeof s !== "object") return "Send mode, who and look.";
-  if (!MODES.includes(s.mode as string)) return "mode is all or some.";
-  if (!LOOKS.includes(s.look as string)) return "look is blur, mosaic or solid.";
-  if (typeof s.who !== "string" || s.who.length > LIMITS.who) return `Which faces: a text of at most ${LIMITS.who} characters.`;
+  if (!s || typeof s !== "object" || Array.isArray(s)) return "Send the settings as an object.";
+  if (s.mode !== undefined && !MODES.includes(s.mode)) return "mode is all or some.";
+  if (s.look !== undefined && !LOOKS.includes(s.look)) return "look is blur, mosaic or solid.";
+  if (s.who !== undefined && (typeof s.who !== "string" || s.who.length > LIMITS.who)) return `Which faces: a text of at most ${LIMITS.who} characters.`;
+  if (s.strength !== undefined && !within(s.strength, 0, 1)) return "strength is between 0 and 1.";
+  if (s.softness !== undefined && !within(s.softness, 0, 1)) return "softness is between 0 and 1.";
+  if (s.size !== undefined && !within(s.size, ...LIMITS.size)) return `size is between ${LIMITS.size[0]} and ${LIMITS.size[1]}.`;
+  if (s.color !== undefined && (typeof s.color !== "string" || !/^#[0-9a-f]{6}$/i.test(s.color))) return "color is #rrggbb.";
   if (s.auto !== undefined && typeof s.auto !== "boolean") return "auto is true or false.";
-  return { mode: s.mode!, who: s.who, look: s.look!, auto: s.auto ?? false };
+  const pick = <K extends keyof Settings>(k: K): Settings[K] => (s[k] ?? current[k]) as Settings[K];
+  return {
+    mode: pick("mode"), who: pick("who"), look: pick("look"), strength: pick("strength"), softness: pick("softness"),
+    size: pick("size"), color: pick("color").toLowerCase(), auto: pick("auto"),
+  };
 }
 
 type Face = { id: string; picture: string; note: string };
@@ -90,10 +114,13 @@ routes.use("*", requireGate("blur-faces"));
 
 routes.get("/settings", (c) => c.json(settingsOf(c.get("user").username)));
 
+routes.get("/example", (c) => c.json({ picture: EXAMPLE_JPEG }));
+
 routes.put("/settings", async (c) => {
-  const s = checkSettings(await c.req.json().catch(() => null));
+  const user = c.get("user").username;
+  const s = checkSettings(await c.req.json().catch(() => null), settingsOf(user));
   if (typeof s === "string") return c.json({ error: s }, 400);
-  const file = fileOf(c.get("user").username);
+  const file = fileOf(user);
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   await writeJsonAtomic(file, s);
   return c.json(s);
@@ -242,7 +269,8 @@ export const autoJobs = {
       Object.assign(j, { state: "running", device: device.id, since: Date.now() });
       saveJobs();
       const s = settingsOf(j.owner);
-      return { id: j.n, kind: AUTO_KIND, editId: "", variant: "", options: { mode: s.mode, look: s.look, media: j.kind === "video" ? "video" : "photo" } };
+      const style = { look: s.look, strength: String(s.strength), softness: String(s.softness), size: String(s.size), color: s.color };
+      return { id: j.n, kind: AUTO_KIND, editId: "", variant: "", options: { mode: s.mode, ...style, media: j.kind === "video" ? "video" : "photo" } };
     }
     return null;
   },

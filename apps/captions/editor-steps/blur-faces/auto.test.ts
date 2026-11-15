@@ -84,11 +84,15 @@ describe("what comes into the Media Library", () => {
 
 describe("a Mac's job", () => {
   it("hands out the file with the settings, and a file with no face ends with no copy", async () => {
-    await settings({ look: "mosaic" });
+    await settings({ look: "mosaic", strength: 0.9, size: 1.5 });
     const v = await added("mp4");
     queueVersion(event(v));
     const job = autoJobs.claim(mac)!;
-    expect(job).toMatchObject({ kind: "faceblur", options: { mode: "all", look: "mosaic", media: "video" } });
+    // the style goes along as text, as a device job's options are
+    expect(job).toMatchObject({
+      kind: "faceblur",
+      options: { mode: "all", look: "mosaic", strength: "0.9", softness: "0.45", size: "1.5", color: "#343434", media: "video" },
+    });
     expect(autoJobs.claim(mac)).toBeNull();
     expect((await autoJobs.input("mac-1", job.id))?.type).toBe("video/mp4");
     expect(await autoJobs.input("mac-2", job.id)).toBeNull(); // another Mac's

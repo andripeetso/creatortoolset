@@ -62,6 +62,10 @@ Social accounts (`apps/captions/src/components/settings/PlatformLogos.tsx`: Inst
 are single paths from Simple Icons (CC0 1.0), as published there. The marks themselves are trademarks of
 their owners and are shown only to name the product a row is about.
 
+Face Blur's example picture (`apps/captions/editor-steps/blur-faces/example.ts`, a still cropped from the film) is
+from *Tears of Steel*, (CC) Blender Foundation | [mango.blender.org](https://mango.blender.org), licensed
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Settings → Face Blur credits it under the picture.
+
 ## Optional runtimes you build yourself
 
 These are not in the repository or the Docker image. The setup scripts fetch them on your machine, and they

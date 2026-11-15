@@ -152,6 +152,10 @@ final class Shell: NSObject, ObservableObject {
             if faceBlurAsk(ask) == .pick { return self.faceBlurPick(in: view?.window, done) }
             if isFaceBlurAsk(ask) {
                 let allowed = Set((self.pickedFiles + (view?.droppedFiles ?? [])).map(\.path))
+                if let trial = faceBlurAsk(ask), case .trial = trial {
+                    Task { done(await FaceBlurTrial.shared.answer(trial, allowed: allowed)) }
+                    return
+                }
                 return done(FaceBlurJobs.shared.answer(ask, allowed: allowed))
             }
             // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
