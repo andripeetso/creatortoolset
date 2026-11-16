@@ -15,6 +15,10 @@ const app = (await import("../boot")).default;
 const { libraryDb, blobs } = await import("../library/db");
 const { indexAsset } = await import("../library/query");
 const { pairDevice } = await import("../lib/devices");
+const { LIBRARY_SOURCE, registerLibrarySlot } = await import("../library/sources");
+// a second policy on the built-in library, as a plug-in adds one: refuses the clips the test names
+const refuse = new Set<string>();
+registerLibrarySlot("test-gate", { policies: [{ sourceId: LIBRARY_SOURCE, canSee: (_v, a) => !refuse.has(a.versionId) }] });
 const { CLAIM_POLL } = await import("./routes");
 CLAIM_POLL.holdMs = 0;
 
@@ -112,6 +116,27 @@ describe("Settings → Storage: each computer's proxies", () => {
     expect((await rows("tiny")).find((r) => r.device?.id === mac.device.id)).toMatchObject({ bytes: 0 });
     expect((await claim(mac.token, { bytes: 10, versions: ["va"] })).empty).toBeUndefined();
     expect((await rows("tiny")).find((r) => r.device?.id === mac.device.id)).toMatchObject({ bytes: 10, items: 1 });
+  });
+});
+
+describe("a computer's cached proxies its owner may no longer have", () => {
+  it("are named on the claim to be deleted: refused by a library policy now, gone, or in the trash", async () => {
+    const drop = async (versions: string[], parts?: string[]) => (await claim(laptop.token, { bytes: 1, versions, ...(parts ? { parts } : {}) })).drop;
+    expect(await drop(["va", "vb"])).toBeUndefined(); // still theirs: nothing to delete
+    expect(await drop(["va", "vx", "vgone"], ["vb", "vnope"])).toEqual(["vx", "vgone", "vnope"]); // someone else's, and gone
+    libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast_vb'").run();
+    expect(await drop(["va"], ["vb"])).toEqual(["vb"]);
+    libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_vb'").run();
+    // a library policy that now refuses them the clip (a raw upload, say): deleted though it was kept offline
+    refuse.add("va");
+    try {
+      const told = await claim(laptop.token, { bytes: 1, versions: ["va", "vb"], offline: ["va", "vb"] });
+      expect(told.drop).toEqual(["va"]);
+      expect(told.offline!.map((f) => f.id)).not.toContain("va");
+    } finally {
+      refuse.clear();
+      await claim(laptop.token, { bytes: 40, versions: ["va"] }); // its report as the tests after it expect
+    }
   });
 });
 

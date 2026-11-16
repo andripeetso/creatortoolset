@@ -63,6 +63,8 @@ workApp.post("/claim", async (c) => {
         ...(strings(raw.versions, 20_000) ? { versions: raw.versions as string[] } : {}),
       }
     : undefined;
+  // its unfinished downloads: asked about with the versions, never counted as held
+  const parts = (cache && strings(raw?.parts, 1000)) || [];
   // a worker that runs library jobs says so: one that doesn't is never handed one
   const library = b?.library === true;
   // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
@@ -75,8 +77,8 @@ workApp.post("/claim", async (c) => {
     ...(empty ? { empty } : {}),
     ...(library ? { library: true as const } : {}),
   });
-  // Empty and the proxies kept offline go with every answer (api/work/offline.ts)
-  const answer = async (claim: WorkClaim) => c.json({ ...claim, ...(await claimExtras(d.id, cache?.offline)) } satisfies WorkClaim);
+  // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
+  const answer = async (claim: WorkClaim) => c.json({ ...claim, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
   if (v < WORK_MIN) return answer({ pkg: null, update: true });
   const end = Date.now() + CLAIM_POLL.holdMs;
   for (;;) {

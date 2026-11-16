@@ -85,7 +85,7 @@ export interface WorkClaimBody {
   /** plug-in steps installed on this computer */
   steps: string[];
   /** the proxy cache: bytes kept, its size limit, the versions kept offline, and every version whose proxy it holds */
-  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] };
+  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[] };
   /** this worker runs library jobs too (LibraryPackage): a computer that doesn't say so is never handed one */
   library?: true;
 }
@@ -103,6 +103,9 @@ export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?
   /** the proxies to keep (Available offline): never removed by the size limit, downloaded while nothing else runs.
    * Absent: an older server, keep the last list */
   offline?: WorkOffline[];
+  /** of the claim's cache.versions and cache.parts, the ones its account may no longer see, or that are gone or in the trash: the
+   * computer deletes each proxy and its unfinished download, kept offline or not */
+  drop?: string[];
 };
 
 /**

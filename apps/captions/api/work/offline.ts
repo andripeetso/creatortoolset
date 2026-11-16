@@ -81,18 +81,38 @@ export function emptyProxies(owner: string, device?: string): void {
 }
 
 /**
- * The claim's answer, read once per claim: Empty (then forgotten) and the offline list, sent when there is one or when
- * the computer still keeps one (`kept`, its claim's report), so it lets go of what was switched off.
+ * Of the versions `owner`'s computer caches, the ones it must delete: gone, in the trash, or no longer theirs to see (a
+ * library policy refused them since it downloaded, say). Asked again on every claim, as the media route would.
+ * ponytail: one policy check per cached version per claim; remember the answers per claim window if a cache grows huge
  */
-export async function claimExtras(deviceId: string, kept?: string[]): Promise<{ empty?: true; offline?: WorkOffline[] }> {
+export async function dropFor(owner: string, cached: string[]): Promise<string[]> {
+  if (!cached.length) return [];
+  const rows = db()
+    .prepare(
+      `SELECT v.id, a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.trashed_at IS NULL AND v.id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify(cached)) as { id: string; asset_id: string; library_id: string }[];
+  const keep = new Set<string>();
+  for (const r of rows) if (await mayRead(owner, r.library_id, r.asset_id, r.id)) keep.add(r.id);
+  return cached.filter((v) => !keep.has(v));
+}
+
+/**
+ * The claim's answer, read once per claim: Empty (then forgotten), the offline list, sent when there is one or when the
+ * computer still keeps one (`kept`, its claim's report), so it lets go of what was switched off, and the cached
+ * versions (`cached`) it must delete.
+ */
+export async function claimExtras(deviceId: string, kept?: string[], cached?: string[]): Promise<{ empty?: true; offline?: WorkOffline[]; drop?: string[] }> {
   const d = deviceOf(deviceId);
   if (!d) return {};
   const list = await offlineFor(d);
-  const offline = list.length || kept?.length ? { offline: list } : {};
-  if (!d.work?.empty) return offline;
+  const gone = await dropFor(d.owner, cached ?? []);
+  const extras = { ...(list.length || kept?.length ? { offline: list } : {}), ...(gone.length ? { drop: gone } : {}) };
+  if (!d.work?.empty) return extras;
   const { empty: _, ...work } = d.work;
   setDeviceWork(d.id, work);
-  return { empty: true, ...offline };
+  return { empty: true, ...extras };
 }
 
 export const offlineApp = new Hono<{ Variables: AuthVars }>();

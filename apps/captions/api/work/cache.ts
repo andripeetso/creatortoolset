@@ -99,15 +99,25 @@ export function emptyCache(keep = new Set(keptOffline())): void {
   }
 }
 
+/**
+ * The server's claim answer named these (WorkClaim.drop): its account may no longer see them, or they are gone. Each
+ * goes with its unfinished download, kept offline or not; the next claim's offline list no longer names it.
+ */
+export function dropProxies(ids: string[]): void {
+  for (const v of ids) if (safeName(v)) for (const f of [proxyPath(v), partPath(v)]) rmSync(f, { force: true });
+}
+
 /** What a claim reports of the cache (WorkClaimBody.cache). */
 export function cacheReport(): NonNullable<WorkClaimBody["cache"]> {
   const all = entries();
   const limit = cacheLimit();
   const offline = keptOffline();
+  const parts = all.flatMap((e) => (e.version ? [] : [path.basename(e.file).replace(/\.mp4\.part$/, "")]));
   return {
     bytes: all.reduce((n, e) => n + e.size, 0),
     ...(limit ? { limit } : {}),
     ...(offline.length ? { offline } : {}),
     versions: all.flatMap((e) => (e.version ? [e.version] : [])),
+    ...(parts.length ? { parts } : {}),
   };
 }

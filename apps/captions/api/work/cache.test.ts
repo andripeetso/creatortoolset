@@ -37,7 +37,7 @@ describe("the proxy cache", () => {
     expect(trimCache()).toEqual([]);
     setKeptOffline(["va"]);
     process.env.CT_PROXY_LIMIT = "1000";
-    expect(cacheReport()).toEqual({ bytes: 35, limit: 1000, offline: ["va"], versions: expect.arrayContaining(["va", "vb"]) });
+    expect(cacheReport()).toEqual({ bytes: 35, limit: 1000, offline: ["va"], versions: expect.arrayContaining(["va", "vb"]), parts: ["vc"] });
   });
 
   it("over the limit, the least recently used go first, never one kept offline", () => {
@@ -112,6 +112,22 @@ describe("the worker and its cache", () => {
     expect(bodies[0]!.cache).toMatchObject({ bytes: 5, versions: ["va"] });
     expect(bodies[2]!.cache).toMatchObject({ bytes: 0, versions: [] });
     expect(bodies[3]!.cache).toMatchObject({ bytes: 5, versions: ["va"] });
+  });
+
+  it("deletes each proxy the server says to drop, its unfinished download too, kept offline or not", async () => {
+    proxy("va", 5);
+    proxy("vb", 5);
+    writeFileSync(partPath("va"), Buffer.alloc(2));
+    writeFileSync(partPath("vc"), Buffer.alloc(2));
+    setKeptOffline(["va"]);
+    claims = [{ pkg: null, drop: ["va", "vc", "../vb"] }];
+    expect(await startComputerWorker(o)).toBe("update");
+    // the claim asked about every version it holds bytes of, the unfinished downloads apart
+    expect(bodies[0]!.cache).toMatchObject({ versions: expect.arrayContaining(["va", "vb"]), parts: expect.arrayContaining(["va", "vc"]) });
+    expect(cached()).toEqual(["vb"]);
+    expect([partPath("va"), partPath("vc")].filter(existsSync)).toEqual([]);
+    expect(bodies[1]!.cache).toMatchObject({ bytes: 5, versions: ["vb"] });
+    expect(bodies[1]!.cache).not.toHaveProperty("parts");
   });
 
   it("keeps the server's offline list, downloads a missing one while idle, and the limit never removes it", async () => {
