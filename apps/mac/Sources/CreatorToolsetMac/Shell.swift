@@ -37,6 +37,10 @@ final class Shell: NSObject, ObservableObject {
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
+    /// This Mac's worker for the server the window shows by its address (Worker.swift): started when the runner's poll
+    /// says a step waits, stopped with the runner.
+    let worker = Worker(folder: LocalServer.folder)
+    private var workerWatch: AnyCancellable?
     /// The files picked in the open panel for the page (rememberPicks, ThisMacBridge.swift): the page's "files" ask.
     private var pickedFiles: [URL] = []
     /// The servers added by address (Servers.swift) and the one the window shows: thisMacID, an added one's id, or nil
@@ -125,6 +129,9 @@ final class Shell: NSObject, ObservableObject {
         updateWatch = UpdateWhenIdle.shared.$held.sink { [weak view] held in
             DispatchQueue.main.async { view?.macUpdate = held }
         }
+        // the menu's "Working on" row follows the worker
+        workerWatch = worker.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        worker.onNeedsUpdate = { UpdateWhenIdle.shared.neededByServer() }
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
@@ -497,7 +504,9 @@ final class Shell: NSObject, ObservableObject {
     }
 
     var rows: (active: [ActivityRow], forYou: [ActivityRow]) {
-        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows, drawing: aiOn && ai.drawing)
+        var rows = activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows, drawing: aiOn && ai.drawing)
+        if let status = worker.status { rows.active.insert(workRow(status), at: 0) }
+        return rows
     }
 
     var aiLine: String {
@@ -625,6 +634,7 @@ final class Shell: NSObject, ObservableObject {
     /// A pill row's button (LaunchAgent.swift): start, stop or restart the agent, off the main thread; a failure shows in
     /// the panel's notice, and the rows load again.
     func runAgent(_ action: PluginAction) {
+        if action.run == workCancelVerb { return worker.cancel() }
         Task.detached {
             let problem = LaunchAgent.run(verb: action.run, label: action.label)
             await MainActor.run { [weak self] in
@@ -779,6 +789,15 @@ final class Shell: NSObject, ObservableObject {
                     guard let self, self.runnerID == id else { return }
                     self.revoked()
                 }
+            },
+            // from the runner's thread: whether a worker was started now (one runs already, or This Mac: no)
+            onWork: { [weak self] in
+                DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        guard let self, self.runnerID == id, !self.worker.isRunning else { return false }
+                        return self.worker.start(server: self.base, token: token, data: work.appendingPathComponent("work"), thisMac: self.runsHere)
+                    }
+                }
             })
         runner = relay
         runnerID = id
@@ -787,6 +806,7 @@ final class Shell: NSObject, ObservableObject {
 
     private func stopRunner() {
         runner?.stop()
+        worker.stop()
         runner = nil
         runnerID = UUID()
         // what the stopped runner still finishes is no longer told here, so its count and its row would stay for good
