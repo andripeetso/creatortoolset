@@ -77,7 +77,7 @@ final class CameraSession: @unchecked Sendable {
         }
     }
 
-    /// The 16:9 format `height` pixels tall (Settings → Tools → Screen Recorder: 720, 1080 or 2160) when the camera has
+    /// The 16:9 format `height` pixels tall (Settings → Screen Recorder: 720, 1080 or 2160) when the camera has
     /// it, else the largest one up to that size, that runs at 30 fps.
     static func preferredFormat(in formats: [AVCaptureDevice.Format], height: Int = 720) -> AVCaptureDevice.Format? {
         let candidates: [(format: AVCaptureDevice.Format, rank: (Int, Int))] = formats.compactMap { format in

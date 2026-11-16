@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { Search, X } from "lucide-react";
+import { ScreenShare, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogPortal, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PAGE_BODIES } from "@/components/settings/pages";
 import { AccountAvatar } from "@/components/settings/AccountSection";
-import { navBlocks, navListFor, resolveSection, sectionsFor, type NavContext, type SettingsPageId } from "@/components/settings/nav";
+import { navBlocks, navListFor, resolveSection, sectionsFor, withToolPages, type NavContext, type SettingsPageId } from "@/components/settings/nav";
 import { PageActionContext } from "@/components/settings/page-action";
 import { pluginOfSection, WithPluginWorkspaces } from "@/components/settings/PluginWorkspaces";
 import { webPlugins } from "@/plugins.gen";
 import { searchSettings, type SearchHit } from "@/components/settings/search";
 import { hasThisMac, useMacRecorder } from "@/components/settings/ThisMacSection";
+import { useToolPages } from "@/components/settings/ToolsSection";
+import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
 import { logout, useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -45,6 +47,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const required = useAuth((s) => s.required);
   const ctx: NavContext = { hosted, admin: me?.role === "admin", mac: hasThisMac() };
   const macRecorder = useMacRecorder() === true;
+  const toolPages = useToolPages();
 
   const [query, setQuery] = useState("");
   const [railOpen, setRailOpen] = useState(false); // below md: the 56px icon rail, or the nav opened over the page
@@ -108,9 +111,12 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   // a plug-in's own section: which workspaces it works in, at the top (PluginWorkspaces.tsx)
   const ownPlugin = current.body ? pluginOfSection(current.id) : undefined;
   const body = ownPlugin ? <WithPluginWorkspaces id={ownPlugin}>{current.body}</WithPluginWorkspaces> : (current.body ?? (Page ? <Page sub={sub} /> : null));
-  const title = current.id === "plugin" && sub ? (webPlugins.find((p) => p.id === sub)?.name ?? sub) : current.title;
+  // a tool's page (/settings/tools/<tile>) is its own sidebar entry, named after the tool
+  const tool = current.id === "tools" && sub && isHomeTile(sub) ? sub : undefined;
+  const here = tool ? `tools/${tool}` : current.id;
+  const title = tool ? HOME_TILE_NAMES[tool] : current.id === "plugin" && sub ? (webPlugins.find((p) => p.id === sub)?.name ?? sub) : current.title;
 
-  const navList = navListFor(ctx);
+  const navList = withToolPages(navListFor(ctx), toolPages.map((t) => ({ id: t, title: HOME_TILE_NAMES[t], icon: t === "record" ? ScreenShare : TOOL_ICONS[t] })));
   const needle = query.trim();
   const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac, macRecorder, ctx.hosted && ctx.admin) : [];
   const activeIdx = Math.min(active, Math.max(hits.length - 1, 0));
@@ -257,7 +263,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                     )}
                     {block.items.map((s) => {
                       const SectionIcon = s.icon;
-                      const on = s.id === current.id;
+                      const on = s.id === here;
                       return (
                         <Link
                           key={s.id}
@@ -332,19 +338,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                 <span aria-hidden className="text-muted-foreground/60">
                   ›
                 </span>{" "}
-                {current.id === "tools" && sub && isHomeTile(sub) ? (
-                  <>
-                    <Link to="/settings/tools" replace className="text-muted-foreground hover:text-foreground">
-                      {current.title}
-                    </Link>{" "}
-                    <span aria-hidden className="text-muted-foreground/60">
-                      ›
-                    </span>{" "}
-                    <span className="font-medium text-foreground">{HOME_TILE_NAMES[sub]}</span>
-                  </>
-                ) : (
-                  <span className="font-medium text-foreground">{title}</span>
-                )}
+                <span className="font-medium text-foreground">{title}</span>
               </DialogTitle>
               <div ref={setActionEl} className="flex shrink-0 items-center gap-2 empty:hidden" />
               <Tooltip>
