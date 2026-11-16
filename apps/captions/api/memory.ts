@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { jobTurn, type AuthVars } from "./auth";
 import { saidInChat } from "./assistant";
-import { currentProject, keep, listMemory, remove } from "./lib/memory";
+import { aiFor, completeWithFallback } from "./ai-complete";
+import { currentProject, factOf, keep, listMemory, remove, setRule } from "./lib/memory";
+import { MEMORY_QUOTE_MIN, MEMORY_RULE_MAX, tidy } from "../contracts/memory";
 
 /**
  * What the assistant keeps from one chat to the next (contracts/memory.ts; the store and its rules: lib/memory.ts).
@@ -9,6 +11,8 @@ import { currentProject, keep, listMemory, remove } from "./lib/memory";
  *   GET    /api/memory        the account's kept facts, newest first (Settings → Memory); ?here=1 = only the ones
  *                             a chat gets now: about the person, and the current project's
  *   POST   /api/memory        { quote, rule?, project? } keep what the person said: only from a reply the assistant is writing
+ *   PATCH  /api/memory/:id    { text } the rule in the person's own wording (Settings → Memory: Edit)
+ *   POST   /api/memory/:id/rewrite  the rule written again by their AI, not saved: Edit shows it first
  *   DELETE /api/memory/:id    remove one for good
  *
  * There is one way in, and it is checked here, not by the AI: the call must carry the token of a reply that is being
@@ -30,6 +34,42 @@ memoryApp.post("/", async (c) => {
   const out = keep(u.username, b.quote, said, project?.id, b.rule);
   if ("error" in out) return c.json({ error: out.error }, 409);
   return c.json({ id: out.fact.id, text: out.fact.text, ...(out.fact.said ? { said: out.fact.said } : {}), at: out.fact.at, ...(project && out.fact.project ? { project: { id: project.id, name: project.name } } : {}) }, out.added ? 201 : 200);
+});
+
+/** Edit and Rewrite are the person's, from Settings: a reply's token (or any token) never changes a rule. */
+const fromPage = (c: { req: { header: (n: string) => string | undefined } }) => !c.req.header("authorization");
+
+memoryApp.patch("/:id", async (c) => {
+  if (!fromPage(c)) return c.json({ error: "A rule is changed in Settings, Memory" }, 403);
+  const b = ((await c.req.json().catch(() => null)) ?? {}) as { text?: unknown };
+  const out = setRule(c.get("user").username, c.req.param("id"), b.text);
+  if (!out) return c.json({ error: "Not found" }, 404);
+  if ("error" in out) return c.json(out, 400);
+  return c.json({ id: out.id, text: out.text, said: out.said });
+});
+
+const REWRITE = `You turn one thing a person told their AI assistant to remember into a standing instruction for that assistant.
+Keep the meaning exactly, and every specific they named (words, examples, times, names). Drop filler, swearing, typos and talk to the AI ("remember", "I hate that").
+Write one plain sentence in the imperative, at most ${MEMORY_RULE_MAX} characters. Answer with that sentence alone.`;
+
+memoryApp.post("/:id/rewrite", async (c) => {
+  if (!fromPage(c)) return c.json({ error: "A rule is changed in Settings, Memory" }, 403);
+  const u = c.get("user");
+  const f = factOf(u.username, c.req.param("id"));
+  if (!f) return c.json({ error: "Not found" }, 404);
+  const ai = aiFor(u, "workshop", "Memory");
+  if (ai.off) return c.json({ error: ai.off }, 503);
+  const prompt = f.said ? `What they said: ${f.said}\nThe instruction so far: ${f.text}` : `What they said: ${f.text}`;
+  try {
+    const text = await completeWithFallback(REWRITE, prompt, undefined, (t) => {
+      const one = tidy(t).replace(/^["'](.*)["']$/, "$1");
+      if (one.length < MEMORY_QUOTE_MIN || one.length > MEMORY_RULE_MAX) throw new Error("The rewrite came back too long or empty");
+      return one;
+    }, ai);
+    return c.json({ text });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "The rewrite did not work" }, 502);
+  }
 });
 
 memoryApp.delete("/:id", (c) => (remove(c.get("user").username, c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404)));

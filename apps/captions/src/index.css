@@ -231,6 +231,15 @@ html[data-corner-taken]:has(button[data-assistant-dock]) .clears-bubble { paddin
    are the toast library's own offsets (it sets them inline, hence !important). */
 /* a notice's Undo works while a clip is open (its window turns off clicks outside itself; ClipView lets the notice's through) */
 html:has([data-clip-view]) [data-sonner-toast] { pointer-events: auto; }
+/* An open clip covers the page: the page behind it is darker and blurred, so its buttons, tags and scrollbars no longer
+   show through, and the assistant's bubble, which stands over every other dialog, steps aside until the clip closes.
+   Only the clip's own backdrop: a dialog opened over the clip (Share) keeps the usual one. */
+:is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"]):has(+ [data-clip-view]) {
+  background-color: rgb(0 0 0 / 0.7);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+html:has([data-clip-view]) button[data-assistant-dock] { display: none; }
 /* A toast never ends on a word alone on its last line: its lines are evened out. */
 [data-sonner-toast] :where([data-title], [data-description]) {
   text-wrap: balance;

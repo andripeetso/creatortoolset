@@ -287,6 +287,12 @@ describe("a description written under another workspace context", () => {
 });
 
 describe("a clip filmed on its side", () => {
+  it("a phone's own rotation tag gives the card the shape it is watched in", async () => {
+    const v = await seed("ast-rot-0001");
+    libraryDb().prepare(`UPDATE asset_versions SET probe = '{"duration":2,"vcodec":"h264","width":1206,"height":2622,"rotation":90}' WHERE id = ?`).run(v);
+    expect([card("ast-rot-0001").width, card("ast-rot-0001").height]).toEqual([2622, 1206]);
+  });
+
   it("the AI's turn and Rotate turn the card, its thumbnail and its strip, never the file", async () => {
     const v = await seed("ast-turn-001");
     libraryDb().prepare(`UPDATE asset_versions SET probe = '{"duration":2,"vcodec":"h264","width":160,"height":120}' WHERE id = ?`).run(v);
