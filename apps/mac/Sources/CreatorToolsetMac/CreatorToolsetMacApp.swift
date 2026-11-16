@@ -95,19 +95,30 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
     /// it waits, and whether Restart to Update was pressed and now waits for what's running (Update When Done).
     struct Held: Equatable {
         let version: String
-        let critical: Bool
+        var critical: Bool
         let since: Date
         var waiting = false
     }
     @MainActor @Published private(set) var held: Held?
     /// Sparkle's install of the held update, run once: by the quiet moment or by a press.
     @MainActor private var install: (() -> Void)?
+    /// watchForUpdates sets it; nil in a build without a feed.
+    @MainActor var updater: SPUUpdater?
+    /// A server this Mac works for needs a newer app (Worker.swift, exit 3): the update is offered as a critical one.
+    @MainActor private var needed = false
+
+    /// The server needs a newer app: a held update gets its card on the page at once (as a critical release does), and
+    /// with none held a check runs now; what it finds is held the same way.
+    @MainActor func neededByServer() {
+        needed = true
+        if held != nil { held?.critical = true } else { updater?.checkForUpdatesInBackground() }
+    }
 
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                  immediateInstallationBlock install: @escaping () -> Void) -> Bool {
         MainActor.assumeIsolated {
             self.install = install
-            held = Held(version: item.displayVersionString, critical: item.isCriticalUpdate, since: Date())
+            held = Held(version: item.displayVersionString, critical: item.isCriticalUpdate || needed, since: Date())
         }
         whenIdle(every: 60, inBackground: true) { [weak self] in
             MainActor.assumeIsolated {
