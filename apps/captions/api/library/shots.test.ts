@@ -183,6 +183,29 @@ describe("the look job", () => {
     expect(job(other)).toMatchObject({ state: "done", error: null });
   });
 
+  it("a limit that says when it opens holds the account's looks until then; one that gets through sooner lets the rest go at once", async () => {
+    const v = await seed("ast-limit-01");
+    const other = await seed("ast-limit-02");
+    const until = Date.now() + 2 * 24 * 3600_000;
+    vi.mocked(completeVisionWithFallback).mockRejectedValueOnce(Object.assign(new MacClaudeError("Your Claude plan's weekly limit is reached; it resets Nov 18, 5pm", "limit"), { limited: { until } }));
+    enqueueJob(libraryDb(), "lib_s", v, "look", "local");
+    enqueueJob(libraryDb(), "lib_s", other, "look", "local");
+    await tick(Date.now(), ["look"]);
+    // held for the two days, not asked again every 15 minutes
+    expect(job(v)!.run_after).toBeGreaterThan(until - 60_000);
+    expect(job(other)!.run_after).toBeGreaterThan(until - 60_000);
+    // the plan answers again before that (a new clip's look gets through): the held ones are work again now
+    vi.mocked(completeVisionWithFallback).mockImplementation(answerAll());
+    const fresh = await seed("ast-limit-03");
+    enqueueJob(libraryDb(), "lib_s", fresh, "look", "local");
+    await tick(Date.now(), ["look"]);
+    expect(job(fresh)?.state).toBe("done");
+    expect(job(v)).toMatchObject({ state: "queued", run_after: 0, error: null });
+    expect(job(other)).toMatchObject({ state: "queued", run_after: 0, error: null });
+    await runLooks();
+    expect([job(v)?.state, job(other)?.state]).toEqual(["done", "done"]);
+  });
+
   it("a file kept on a Mac waits for that Mac, never fails, and the progress line says so", async () => {
     const v = await seed("ast-look-05", { macPath: "/Volumes/Card/clip.mov" });
     enqueueJob(libraryDb(), "lib_s", v, "look", "local");

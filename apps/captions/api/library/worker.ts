@@ -92,7 +92,12 @@ interface VersionRow {
 /** Seconds a describe or a look should wait before it tries again, or 0 when its error is a real failure. */
 function waitFor(e: unknown): number {
   const under = e instanceof AiProviderError && e.cause ? e.cause : e;
-  if (under instanceof MacClaudeError && under.kind === "limit") return 15 * 60;
+  // the plan's limit: until it opens again when the limit says when (a weekly one is days away: asking every 15
+  // minutes starts the person's AI some 200 times for nothing), else in 15 minutes
+  if (under instanceof MacClaudeError && under.kind === "limit") {
+    const until = under.limited?.until;
+    return until && until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 15 * 60;
+  }
   if (under instanceof MacClaudeError && under.kind === "unclaimed") return 5 * 60;
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
@@ -146,9 +151,12 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
   return row?.id ?? null;
 }
 
-/** A description got through: the plan answers again, so the ones held for its limit are work again (estimate.ts progress). */
+/**
+ * A description got through: the plan answers again (its limit was raised, or another AI answers now), so the ones held
+ * for its limit are work again at once, not at the reset they were held for (estimate.ts progress).
+ */
 export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | null): void {
-  db.prepare("UPDATE jobs SET error = NULL WHERE kind IN ('describe', 'look') AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
+  db.prepare("UPDATE jobs SET error = NULL, run_after = 0 WHERE kind IN ('describe', 'look') AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
 }
 
 // this computer's transcripts and search entries run one at a time (lib/device-transcribe.ts, lib/device-embed.ts: the
