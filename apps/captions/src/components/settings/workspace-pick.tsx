@@ -40,11 +40,15 @@ export interface SettingsWorkspace {
   name: (id?: string | null) => string;
 }
 
-export function useSettingsWorkspace(mode: "list" | "one"): SettingsWorkspace {
+/** `only`: the workspaces this page can show (a plug-in's page: the ones it is on in); left out, all of them. */
+export function useSettingsWorkspace(mode: "list" | "one", only?: readonly string[]): SettingsWorkspace {
   const picked = usePick((s) => s.picked);
-  const workspaces = useWorkspace((s) => s.projects);
+  const every = useWorkspace((s) => s.projects);
   const here = useWorkspace((s) => s.currentProjectId);
+  const onlyKey = only ? only.join(" ") : null;
   return useMemo(() => {
+    const allowed = onlyKey === null ? null : new Set(onlyKey.split(" "));
+    const workspaces = allowed ? every.filter((p) => allowed.has(p.id)) : every;
     const many = workspaces.length > 1;
     const known = (id: string | null) => (id && workspaces.some((p) => p.id === id) ? id : null);
     const own = known(here) ?? workspaces[0]?.id ?? null;
@@ -60,7 +64,7 @@ export function useSettingsWorkspace(mode: "list" | "one"): SettingsWorkspace {
       cacheKey: all ? "*" : id && id !== here ? id : undefined,
       name: (w) => (w ? (workspaces.find((p) => p.id === w)?.name ?? "Another workspace") : "Every workspace"),
     };
-  }, [picked, workspaces, here, mode]);
+  }, [picked, every, here, mode, onlyKey]);
 }
 
 /** The fetch options for a request that works in one workspace, whatever the window is in (the X-CT-Workspace header). */
@@ -72,8 +76,8 @@ export function inWorkspace(id: string | null | undefined, init?: RequestInit): 
 }
 
 /** The selector, in the page header. Nothing to choose with fewer than two workspaces, so nothing is drawn. */
-export function WorkspacePick({ mode }: { mode: "list" | "one" }) {
-  const w = useSettingsWorkspace(mode);
+export function WorkspacePick({ mode, only }: { mode: "list" | "one"; only?: readonly string[] }) {
+  const w = useSettingsWorkspace(mode, only);
   if (!w.many) return null;
   return (
     <PageAction>
