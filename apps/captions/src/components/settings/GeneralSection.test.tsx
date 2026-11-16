@@ -58,9 +58,13 @@ describe("the dictation group", () => {
     for (const text of ["Talk", "Hold fn", "F16", ">Choose key</button>", "Transcribe a file", ">Open setup</button>", "Speech model", "Sound cues", ">Open</button>"]) {
       expect(html).toContain(text);
     }
-    // a model already on this Mac that this app did not download: neither Download nor Remove
-    expect(html).not.toContain(">Download</button>");
-    expect(html).not.toContain(">Remove</button>");
+    // every model is listed with what it is good at; the chosen one, on this Mac, is In use
+    expect(html).toContain("Most accurate · every language · 1.6 GB");
+    expect(html).toContain("In use");
+    // one already on this Mac that this app did not download has no menu to remove it; one not here can be downloaded
+    expect(html).not.toContain(": more");
+    expect(html).toContain('aria-label="Download Whisper Base (English)"');
+    expect(html).not.toContain(">Use</button>");
     expect(html).not.toContain("Needs");
   });
 
@@ -68,11 +72,22 @@ describe("the dictation group", () => {
     const base = (m: Partial<DictationState["models"][number]>) => dictation({ model: "whisper-base.en", models: [{ ...dictation().models[1], ...m }] });
     const missing = renderToStaticMarkup(<Dictation mac={state({ dictation: base({}) })} />);
     expect(missing).toContain(">Download</button>");
-    expect(missing).toContain("Not on this Mac");
+    expect(missing).toContain("Chosen, not on this Mac yet");
+    expect(missing).not.toContain("In use");
     const busy = renderToStaticMarkup(<Dictation mac={state({ dictation: base({ progress: 0.42 }) })} />);
     expect(busy).toContain("Downloading · 42%");
     expect(busy).not.toContain(">Download</button>");
-    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: base({ here: true, removable: true }) })} />)).toContain(">Remove</button>");
+    const own = renderToStaticMarkup(<Dictation mac={state({ dictation: base({ here: true, removable: true }) })} />);
+    expect(own).toContain("In use");
+    expect(own).toContain('aria-label="Whisper Base (English): more"');
+  });
+
+  it("offers Use for a model on this Mac that isn't the chosen one, and one download at a time", () => {
+    const [turbo, small] = dictation().models;
+    const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ model: "whisper-base.en", models: [turbo, { ...small, here: true }] }) })} />);
+    expect(html).toContain('aria-label="Use Whisper Large v3 Turbo"');
+    const busy = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ models: [{ ...turbo, here: false, progress: 0.1 }, small] }) })} />);
+    expect(busy).toMatch(/aria-label="Download Whisper Base \(English\)"[^>]*disabled/);
   });
 
   it("says which permission is missing, next to Set up", () => {
@@ -91,7 +106,7 @@ describe("the dictation group", () => {
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />)).not.toContain("Speech server");
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "http://tiny-acrobatics.example:7886/api/transcribe" }) })} />);
     expect(html).toContain("Speech server");
-    expect(html).toContain("Used when the speech server doesn&#x27;t answer.");
+    expect(html).toContain("Used when your server doesn&#x27;t answer.");
     expect(html).toContain('value="http://tiny-acrobatics.example:7886/api/transcribe"');
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "", engine: "server" }) })} />)).not.toContain("Speech server");
   });
