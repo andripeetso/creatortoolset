@@ -75,21 +75,21 @@ import { cn } from "@/lib/utils";
 
 /** Each screen: its title and the line under it (none on the two that need none). The first five are the path, with `own` after them for an own-AI answer; the rest open alone from a `?setup=` link. */
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
-  theme: { title: "Pick your look", hint: "" },
-  job: { title: "What do you want to do first?", hint: "" },
+  theme: { title: "Theme", hint: "" },
+  job: { title: "First task", hint: "" },
   agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT, Claude, Google, Grok or Meta plan you already have." },
-  make: { title: "What do you make?", hint: "Pick what fits. It turns on the right tools." },
-  connect: { title: "Connect your computers", hint: "Add your phone or another computer." },
+  make: { title: "Content types", hint: "Sets which tools are turned on." },
+  connect: { title: "Computers and phones", hint: "Add a phone or another computer." },
   folders: {
-    title: "Where are your videos?",
-    hint: "Pick the folders where you keep your footage and music. The AI Editor and Media Library find your clips there.",
+    title: "Folders",
+    hint: "The folders with footage and music, read by the AI Editor and the Media Library.",
   },
-  how: { title: "How do you work best?", hint: "Pick where you talk to your AI." },
-  own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your workspaces and projects, as you." },
+  how: { title: "Way of working", hint: "" },
+  own: { title: "AI apps", hint: "Installs Creator Toolset in the AI apps on this computer." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
-  account: { title: "Create your account", hint: "" },
+  account: { title: "Account", hint: "" },
   // titled with the other computer's name when there is one (SetupDialog)
-  helper: { title: "Help with heavy work", hint: "This computer takes drafts and renders when your other computer is busy." },
+  helper: { title: "Help with heavy work", hint: "This computer makes drafts and renders when the other computer is busy." },
 };
 
 const MAKE_ICONS: Record<Make, LucideIcon> = {
@@ -99,12 +99,12 @@ const MAKE_ICONS: Record<Make, LucideIcon> = {
 
 /** "Pick your look": the choices Settings → Appearance has, under setup's names. */
 const LOOK_CHOICES: Array<{ id: ThemeChoice; name: string }> = [
-  { id: "system", name: "Use system settings" },
+  { id: "system", name: "System" },
   { id: "light", name: "Light" },
   { id: "dark", name: "Dark" },
 ];
 
-const SAVED_NOTE = "Your setup is saved. You'll find the rest on Home.";
+const SAVED_NOTE = "Setup saved";
 /** "Connect your AI" is about this computer only. */
 const THIS_COMPUTER: ReadonlySet<string> = new Set([HERE]);
 const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110";
@@ -260,7 +260,7 @@ export function SetupDialog() {
       to(path[at + 1]!);
     } catch {
       // the last screen's save did not go through: it stays up and says so, instead of a Done that does nothing
-      saveFailed("That did not save. Try again.");
+      saveFailed("Could not save");
     } finally {
       setBusy(false);
     }
@@ -282,7 +282,7 @@ export function SetupDialog() {
     if (!notSure) setTicked([...mine]);
   };
   const pickJob = (j: Job) => void useWorkPrefs.getState().put({ job: j });
-  const closeLabel = side ? "Close" : "Not now";
+  const closeLabel = "Close";
   const { hint } = STEP[step];
   // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
   const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
@@ -332,7 +332,7 @@ export function SetupDialog() {
           )}
         >
           {step === "theme" && (
-            <div role="radiogroup" aria-label="Pick your look" className="grid gap-4 sm:grid-cols-3">
+            <div role="radiogroup" aria-label="Theme" className="grid gap-4 sm:grid-cols-3">
               {LOOK_CHOICES.map((o) => (
                 <PictureCard key={o.id} on={theme.choice === o.id} onClick={() => theme.setChoice(o.id)} art={<LookArt look={o.id} />} name={o.name} />
               ))}
@@ -343,14 +343,14 @@ export function SetupDialog() {
 
           {step === "make" && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-3" role="group" aria-label="What do you make?">
+              <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-3" role="group" aria-label="Content types">
                 {MAKES.map((m) => (
                   <Choice key={m} dense multi on={!notSure && makes.includes(m)} onClick={() => toggleMake(m)} icon={MAKE_ICONS[m]} name={MAKE_NAMES[m]} />
                 ))}
                 <Choice dense multi on={notSure} onClick={pickNotSure} icon={CircleHelp} name="Not sure yet" />
               </div>
               <details className="group rounded-xl border border-border/60 bg-card/40">
-                <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Your tools: {tools.length} on</summary>
+                <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Tools: {tools.length} on</summary>
                 <div className="px-4 pb-4">
                   <ToolsPicker tools={mine} value={tools} onChange={setTicked} />
                 </div>
@@ -363,7 +363,7 @@ export function SetupDialog() {
           {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
 
           {step === "helper" && (self && providers?.devices.some((d) => d.id === self) ? <HelperSetup device={self} /> : macApp ? <HelperPair /> : (
-            <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the computer that should help, or add it in Settings → Computers.</p>
+            <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the other computer, or add that computer in Settings → Computers.</p>
           ))}
 
           {step === "job" && (
@@ -385,7 +385,7 @@ export function SetupDialog() {
           {/* a side screen only has Done */}
           {!side ? (
             <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={close}>
-              Not now
+              Close
             </Button>
           ) : (
             <span />
@@ -405,7 +405,7 @@ export function SetupDialog() {
             )}
             {skips && (
               <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
-                Skip for now
+                Skip
               </Button>
             )}
             {!side && !skips && (

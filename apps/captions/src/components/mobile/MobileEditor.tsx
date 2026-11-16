@@ -101,7 +101,7 @@ export function MobileEditor({ onExport }: { onExport: () => void }) {
               <Check className="h-5 w-5" />
             )}
             <span className="text-[10px]">
-              {refining ? "Matching…" : rematch ? "Re-match" : "Cadence ✓"}
+              {refining ? "Matching…" : rematch ? "Re-match" : "Cadence"}
             </span>
           </button>
         )}

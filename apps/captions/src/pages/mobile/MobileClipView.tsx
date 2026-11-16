@@ -66,7 +66,7 @@ function fmtMmSs(t: number): string {
 }
 
 const STEPS = [
-  { id: "thumbnail", label: "Grabbing a thumbnail" },
+  { id: "thumbnail", label: "Making a thumbnail" },
   { id: "audio", label: "Extracting audio" },
   { id: "transcribe", label: "Transcribing speech" },
   { id: "title", label: "Titling and summarizing" },
@@ -641,7 +641,7 @@ export function MobileClipView({
 
   const remove = async () => {
     if (
-!(await confirmDialog({ title: `Delete “${session.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
+!(await confirmDialog({ title: `Delete “${session.name}”?`, body: "The recording, its transcript and its notes are deleted.", ok: "Delete", danger: true }))
     ) {
       return;
     }
@@ -652,7 +652,7 @@ export function MobileClipView({
 
   const pct = Math.round(Math.max(0, Math.min(1, session.progress)) * 100);
   const stepLabel =
-    STEPS.find((s) => s.id === session.step)?.label ?? "Processing this clip";
+    STEPS.find((s) => s.id === session.step)?.label ?? "Processing";
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
@@ -690,7 +690,7 @@ export function MobileClipView({
                 }
               }}
               maxLength={120}
-              aria-label="Clip name"
+              aria-label="Recording name"
               className="min-w-0 flex-1 rounded-md border border-violet-500 bg-background px-2 py-1 text-[15px] font-semibold text-foreground outline-none"
             />
           ) : (
@@ -766,7 +766,7 @@ export function MobileClipView({
             <div className={CHAPTER_ROW}>
               <span className="min-w-0 flex-1 truncate">{making.failed}</span>
               <button type="button" onClick={making.retry} className="shrink-0 font-medium text-foreground">
-                Try again
+                Retry
               </button>
             </div>
           ) : null}
@@ -783,7 +783,7 @@ export function MobileClipView({
                   onClick={() => void retry()}
                   className="shrink-0 font-medium text-red-800 dark:text-red-100"
                 >
-                  Try again
+                  Retry
                 </button>
               )}
             </div>
@@ -864,8 +864,7 @@ export function MobileClipView({
               })()
             ) : (
               <p className="text-sm text-muted-foreground">
-                Play the video — chapters and notes appear here when they are
-                ready.
+                No chapters or notes
               </p>
             )}
           </div>
@@ -920,7 +919,7 @@ export function MobileClipView({
                 className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-[15px] text-red-500 active:bg-accent"
               >
                 <Trash2 className="h-5 w-5" />
-                Delete clip
+                Delete recording
               </button>
             )}
             <button

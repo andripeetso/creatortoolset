@@ -35,10 +35,6 @@ export function MobileImport({
       </div>
       <div className="text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Add captions</h1>
-        <p className="mt-2 max-w-xs text-sm leading-6 text-zinc-400">
-          Pick a video. It&apos;s transcribed in the cloud, you fix and style
-          the captions, and export a ready-to-post MP4.
-        </p>
       </div>
 
       {scriptCheck && scriptOpen && (
@@ -56,7 +52,6 @@ export function MobileImport({
             onChange={(e) => setScript(e.target.value)}
             maxLength={MAX_SCRIPT_CHARS}
             rows={5}
-            placeholder="Paste the script you filmed from. AI uses it to fix mis-heard names and words."
             className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900/60 px-3.5 py-3 text-base leading-6 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
           />
         </div>
@@ -81,7 +76,7 @@ export function MobileImport({
           onClick={() => setScriptOpen(true)}
           className="flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border border-zinc-800 py-3 text-sm text-zinc-300 active:bg-zinc-900"
         >
-          <ScrollText className="h-4 w-4" /> Add the script first (optional)
+          <ScrollText className="h-4 w-4" /> Add script
         </button>
       )}
 

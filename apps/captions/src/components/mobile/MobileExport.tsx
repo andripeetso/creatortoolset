@@ -100,7 +100,7 @@ export function MobileExport() {
               Export video
             </h1>
             <p className="mt-2 max-w-xs text-sm leading-6 text-zinc-400">
-              MP4 · H.264 with captions burned in — ready to post.
+              MP4 · H.264 with captions burned in
             </p>
           </div>
 
@@ -109,10 +109,10 @@ export function MobileExport() {
               <p className="mb-1.5 flex items-center gap-1.5 text-xs text-zinc-500">
                 <CloudUpload className="h-3.5 w-3.5" />
                 {activeClip.uploadState === "processing"
-                  ? "Server is preparing the video…"
+                  ? "Preparing the video…"
                   : activeClip.uploadState === "error"
-                    ? "Upload failed — export needs the video on the server"
-                    : `Uploading video… ${activeClip.uploadPct}%`}
+                    ? "Upload failed: export needs the video on the server"
+                    : `Uploading video · ${activeClip.uploadPct}%`}
               </p>
               <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
                 <div
@@ -140,7 +140,7 @@ export function MobileExport() {
             disabled={busy || !uploadDone}
             className="w-full max-w-xs rounded-2xl bg-violet-600 py-4 text-base font-semibold text-white active:bg-violet-500 disabled:opacity-40"
           >
-            {busy ? "Starting…" : "Render video"}
+            {busy ? "Starting…" : "Export"}
           </button>
         </>
       )}
@@ -150,10 +150,10 @@ export function MobileExport() {
           <Loader2 className="h-10 w-10 animate-spin text-violet-400" />
           <div className="text-center">
             <p className="text-base font-medium text-zinc-100">
-              {job.status === "queued" ? "Waiting to render…" : job.note ?? "Rendering…"}
+              {job.status === "queued" ? "Queued" : job.note ?? "Exporting…"}
             </p>
             <p className="mt-1.5 text-sm text-zinc-500">
-              {Math.round(job.progress * 100)}% — keep the app open
+              {Math.round(job.progress * 100)}% · keep the app open
             </p>
           </div>
           <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-zinc-800">
@@ -171,7 +171,7 @@ export function MobileExport() {
             <Check className="h-8 w-8 text-emerald-400" />
           </div>
           <div className="text-center">
-            <p className="text-base font-medium text-zinc-100">Video ready</p>
+            <p className="text-base font-medium text-zinc-100">Exported</p>
             <p className="mt-1 text-sm text-zinc-500">
               {job.bytes ? fmtBytes(job.bytes) : ""} · MP4 · H.264
             </p>
@@ -181,13 +181,13 @@ export function MobileExport() {
               onClick={() => void share(job)}
               className="flex items-center justify-center gap-2 rounded-2xl bg-violet-600 py-4 text-base font-semibold text-white active:bg-violet-500"
             >
-              <Share2 className="h-5 w-5" /> Share / save video
+              <Share2 className="h-5 w-5" /> Share video
             </button>
             <button
               onClick={() => downloadExport(job)}
               className="flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 py-3.5 text-sm font-medium text-zinc-300 active:bg-zinc-800"
             >
-              <Download className="h-4 w-4" /> Download file
+              <Download className="h-4 w-4" /> Download
             </button>
           </div>
         </>
@@ -197,16 +197,16 @@ export function MobileExport() {
         <>
           <TriangleAlert className="h-10 w-10 text-red-400" />
           <div className="text-center">
-            <p className="text-base font-medium text-zinc-100">Render failed</p>
+            <p className="text-base font-medium text-zinc-100">Export failed</p>
             <p className="mt-1.5 max-w-xs text-sm leading-6 text-zinc-500">
-              {job.error || "Something went wrong"}
+              {job.error || "Could not export the video"}
             </p>
           </div>
           <button
             onClick={() => setJobId(null)}
             className="rounded-xl bg-violet-600 px-8 py-3 text-base font-semibold text-white active:bg-violet-500"
           >
-            Try again
+            Retry
           </button>
         </>
       )}

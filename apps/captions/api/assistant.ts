@@ -413,7 +413,7 @@ function parseTurn(raw: unknown): TurnInput {
 function readSelection(v: unknown): Selection {
   const x = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   if (typeof x.instance !== "string" || !x.instance || x.instance.length > 60 || typeof x.model !== "string" || (x.model !== "" && !MODEL_RE.test(x.model)) || !(EFFORTS as readonly unknown[]).includes(x.effort))
-    throw new Error("That AI isn't one of yours: pick another in the message box.");
+    throw new Error("That AI provider is not available: pick another in the message box.");
   return { instance: x.instance, model: x.model, effort: x.effort as Selection["effort"] };
 }
 
@@ -768,7 +768,7 @@ export function approvalSummary(ask: Pick<MacAsk, "tool" | "description" | "reas
   const said = ask.description.replace(/\s+/g, " ").trim();
   switch (ask.tool) {
     case "Bash":
-      return said ? `Run a command: ${said}` : "Run a command on your Mac";
+      return said ? `Run a command: ${said}` : "Run a command on the Mac";
     case "Write":
       return "Create or replace a file";
     case "Edit":
@@ -778,7 +778,7 @@ export function approvalSummary(ask: Pick<MacAsk, "tool" | "description" | "reas
     case "Read":
     case "Glob":
     case "Grep":
-      return "Look at files outside its own folder";
+      return "Read files outside the assistant's folder";
     case "WebFetch":
     case "WebSearch":
       return "Use the web";
@@ -802,7 +802,7 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
     list.push(a);
     save(username);
     tell(username, turn);
-    attend(username, turn, "asks", `Asks to ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`);
+    attend(username, turn, "asks", `Needs approval · ${a.summary}`);
   } else if (expireApprovals(m)) {
     save(username);
     tell(username, turn);
@@ -848,7 +848,7 @@ export async function askSecret(username: string, env: MyKeyEnv, why: string, tu
   load(username).pending = { env, why, at: Date.now(), ...(turn ? { turn } : {}) };
   save(username);
   tell(username, turn);
-  if (turn) attend(username, turn, "asks", `Asks for your ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
+  if (turn) attend(username, turn, "asks", `Needs the ${MY_KEYS.find((k) => k.env === env)?.name ?? env} key`);
 }
 
 /* ---- the turn ---- */
@@ -1226,7 +1226,7 @@ const runTurn = (username: string, replyId: string, route: Route, url: string, p
   });
 
 /** The server restarted under a reply and it could not go on (nothing was running on the Mac yet, or the Mac is gone too). */
-const RESTARTED = "The server restarted while this was being written. Send your message again.";
+const RESTARTED = "The server restarted during the reply. Send the message again.";
 
 /** A scheduled run whose reply went on after a restart has ended: api/automations.ts records it (this file can't import that one). */
 type RunEnded = (username: string, task: string, result: { status: "done" | "error"; text: string; chat?: string }) => void;
@@ -1285,7 +1285,7 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     const m = messageOf(username, replyId);
     // stopped: what it had written stays, marked as stopped
     if (stop.signal.aborted) Object.assign(m ?? {}, { status: "done", text: m?.text ? `${m.text}\n\n*Stopped.*` : "*Stopped.*" });
-    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed.", ...limitOf(username, e) });
+    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "Reply failed", ...limitOf(username, e) });
   } finally {
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
@@ -1344,7 +1344,7 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
     chat: chat.id,
     kind,
     title: chat.title ?? titleOf(chat.messages),
-    body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "The answer failed." : "Answered."),
+    body: (line.length > 140 ? `${line.slice(0, 139)}…` : line) || (kind === "failed" ? "Reply failed" : "New reply"),
     path: `/?chat=${chat.id}`,
     sentAt: chat.messages.slice(0, i).reverse().find((m) => m.role === "user")?.at ?? chat.messages[i]!.at,
   });
@@ -1366,10 +1366,10 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
     how === "stopped"
       ? "*Stopped.*"
       : how === "gone"
-        ? `${lost[0]} isn't in this window any more (the page was reloaded): drop it in the chat again.`
+        ? `${lost[0]} was not sent (the page was reloaded): drop it in the chat again.`
         : m.send
-          ? `${lost[0]} didn't arrive: drop it in the chat again.`
-          : `${lost.length > 1 ? `${lost.join(" and ")} didn't arrive` : `${lost[0] ?? "A video"} didn't arrive`}, so this message wasn't answered: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
+          ? `${lost[0]} was not uploaded: drop it in the chat again.`
+          : `${lost.length > 1 ? `${lost.join(" and ")} were not uploaded` : `${lost[0] ?? "A video"} was not uploaded`}, so this message got no reply: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
   Object.assign(m, { status: how === "lost" ? "error" : "done", text, wait: undefined });
   sayLater(username, m.id);
   save(username);
@@ -1519,7 +1519,7 @@ async function pumpOnce(username: string): Promise<void> {
         ? { for: "videos", videos: 1, text: `Sending "${m.send.name}" to ${m.send.to}` }
         : { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
     } else if (runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
-    else if (busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are answering` };
+    else if (busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are working` };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
@@ -1559,7 +1559,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   // the chat's own AI; one that can't run any more (removed, turned off) answers on the default instead of failing
   const route = (h.ai && routeOf(username, h.admin, h.ai)) || routeOf(username, h.admin);
   if (!route || !asked) {
-    Object.assign(reply, { status: "error", text: route ? "The message is gone." : "Connect your AI first." });
+    Object.assign(reply, { status: "error", text: route ? "Message not found" : "Needs an AI provider" });
     sayLater(username, reply.id);
     attend(username, reply.id, "failed", reply.text);
     return false;
@@ -1880,7 +1880,7 @@ assistantApp.post("/folder-list", async (c) => {
 async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const u = c.get("user");
   const target = () => (chatId === undefined ? (load(u.username) as Chat) : chatOf(load(u.username), chatId));
-  if (!target()) return c.json({ error: "That conversation is gone" }, 404);
+  if (!target()) return c.json({ error: "Chat not found" }, 404);
   let input: TurnInput;
   try {
     input = parseTurn(await c.req.json().catch(() => null));
@@ -1892,7 +1892,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   input.fileIds = [...new Set(input.fileIds)];
   for (const id of input.fileIds) {
     const f = await uploadOf(u.username, id);
-    if (!f) return c.json({ error: "A video isn't here any more: add it again" }, 400);
+    if (!f) return c.json({ error: "A video was not found: add it again" }, 400);
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
   // the chat's workspace: its own once it has one, while the account can still open it (workspaceNow); a chat from
@@ -1910,15 +1910,15 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   // the project is named once: by the question whether dropped footage belongs there, else by its own line
   const fit = fitOff ? FIT_OFF_SAID : !project ? undefined : footage && readWorkPrefs(u.username).askFit !== false ? fitLine(project.name) : projectLine(project);
   const conv = load(u.username);
-  if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for an answer: wait for the replies" }, 409);
+  if (everyChat(conv).flat().filter((m) => m.status === "thinking").length > MAX_WAITING) return c.json({ error: "Too many messages are waiting for a reply" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
-  if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
+  if (!route) return c.json({ error: "Needs an AI provider", code: "NO_PROVIDER" }, 409);
   // an AI picked in the message box: one of this account's own that the assistant can run on
-  if (input.ai && !routeOf(u.username, u.role === "admin", input.ai)) return c.json({ error: "That AI can't answer here: pick another in the message box." }, 400);
+  if (input.ai && !routeOf(u.username, u.role === "admin", input.ai)) return c.json({ error: "That AI provider cannot be used here: pick another in the message box." }, 400);
   // read after the last await: a New chat meanwhile swaps what the open chat is
   const chat = target();
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   if (input.ai !== undefined) chat.ai = input.ai ?? undefined;
   const now = Date.now();
   // whoever sends has seen the chat up to here: the reply to this is unread until they look again
@@ -2007,7 +2007,7 @@ assistantApp.get("/chats/search", (c) => {
 assistantApp.get("/chats/:id", (c) => {
   const u = c.get("user");
   const chat = chatOf(load(u.username), c.req.param("id"));
-  return chat ? c.json(view(u.username, u.role === "admin", chat)) : c.json({ error: "That conversation is gone" }, 404);
+  return chat ? c.json(view(u.username, u.role === "admin", chat)) : c.json({ error: "Chat not found" }, 404);
 });
 
 assistantApp.post("/chats/:id/turn", (c) => sendTurn(c, c.req.param("id")));
@@ -2019,7 +2019,7 @@ assistantApp.post("/chats/:id/settle", async (c) => {
   if (typeof b?.settled !== "boolean") return c.json({ error: "Say settled: true or false" }, 400);
   const conv = load(u.username);
   const chat = chatOf(conv, c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   chat.settled = b.settled ? (chat.messages.at(-1)?.at ?? Date.now()) : undefined;
   // done with it: it is no longer pinned nor put away till later
   if (b.settled) chat.pinned = chat.snooze = undefined;
@@ -2033,7 +2033,7 @@ async function changeChat(c: Context<{ Variables: AuthVars }>, change: (chat: Ch
   const u = c.get("user");
   const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
   const chat = chatOf(load(u.username), c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   const refused = change(chat, body);
   if (refused) return c.json({ error: refused }, 400);
   save(u.username);
@@ -2073,12 +2073,12 @@ assistantApp.post("/chats/:id/limit", async (c) => {
     const m = chatOf(load(u.username), c.req.param("id"))?.messages.at(-1);
     return m?.limit?.until ? m : null;
   };
-  if (!found()) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
+  if (!found()) return c.json({ error: "No reply in that chat is stopped by a usage limit" }, 404);
   // a reply taken up after a restart kept nothing for this: it is made from this request, as a message's own would be
   // (what the reply knows of its workspace is read when it carries on, turnKnows)
   const r: Resume | null = b.resume && !load(u.username).resume?.[found()!.id] ? { url: `${publicOrigin(c)}/api/mcp`, admin: u.role === "admin", ai: chatOf(load(u.username), c.req.param("id"))?.ai } : null;
   const m = found();
-  if (!m) return c.json({ error: "Nothing in that chat waits for a usage limit" }, 404);
+  if (!m) return c.json({ error: "No reply in that chat is stopped by a usage limit" }, 404);
   if (r) (load(u.username).resume ??= {})[m.id] = r;
   m.limit!.resume = b.resume ? true : undefined;
   save(u.username);
@@ -2100,7 +2100,7 @@ assistantApp.post("/chats/:id/title", (c) =>
 assistantApp.post("/chats/:id/unread", (c) =>
   changeChat(c, (chat) => {
     const m = [...chat.messages].reverse().find((x) => x.role === "assistant" && x.status !== "thinking");
-    if (!m) return "Nothing was answered in it yet";
+    if (!m) return "No replies in that chat";
     chat.seen = (m.started ?? m.at) + (m.took ?? 0) - 1;
   }),
 );
@@ -2110,7 +2110,7 @@ assistantApp.post("/chats/:id/seen", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   const chat = chatOf(conv, c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   chat.seen = Date.now();
   // one that came back from being put away has now been looked at: its "Woke" mark goes (every list is told)
   const woke = !!chat.snooze && !isSnoozed(conv, chat);
@@ -2131,9 +2131,9 @@ assistantApp.post("/chats/:id/branch", async (c) => {
   const b = (await c.req.json().catch(() => null)) as { from?: unknown } | null;
   const conv = load(u.username);
   const chat = chatOf(conv, c.req.param("id"));
-  if (!chat) return c.json({ error: "That conversation is gone" }, 404);
+  if (!chat) return c.json({ error: "Chat not found" }, 404);
   const end = chat.messages.findIndex((m) => m.id === b?.from);
-  if (end < 0) return c.json({ error: "That message is gone" }, 404);
+  if (end < 0) return c.json({ error: "Message not found" }, 404);
   const upTo = chat.messages.slice(0, end + 1);
   if (upTo.some((m) => m.status === "thinking")) return c.json({ error: "That reply is still being written" }, 400);
   const id = randomUUID();
@@ -2208,11 +2208,11 @@ assistantApp.post("/sends/:reply", async (c) => {
   const reply = c.req.param("reply");
   const h = conv.held?.[reply];
   const m = messageOf(u.username, reply);
-  if (!h?.send || !m?.send || m.send.id) return c.json({ error: "Nothing waits for that file" }, 404);
+  if (!h?.send || !m?.send || m.send.id) return c.json({ error: "No message is waiting for that file" }, 404);
   if (b?.gone === true) endHeld(u.username, m, "gone");
   else {
     const id = typeof b?.id === "string" ? b.id : "";
-    if (!(await uploadOf(u.username, id))) return c.json({ error: "No such upload" }, 400);
+    if (!(await uploadOf(u.username, id))) return c.json({ error: "Upload not found" }, 400);
     h.files = [id];
     m.send.id = id;
     save(u.username);
@@ -2244,7 +2244,7 @@ assistantApp.post("/past/:id/open", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
-  if (!found) return c.json({ error: "That conversation is gone" }, 404);
+  if (!found) return c.json({ error: "Chat not found" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   archive(u.username, conv);
   Object.assign(conv, { id: found.id, ...kept(found), messages: found.messages });
@@ -2257,7 +2257,7 @@ assistantApp.delete("/past/:id", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
-  if (!found) return c.json({ error: "That conversation is gone" }, 404);
+  if (!found) return c.json({ error: "Chat not found" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   dropImages(u.username, found.messages);
   // a reply being written there stops; one waiting there is dropped by pump, and the next in line carries on
@@ -2274,7 +2274,7 @@ assistantApp.post("/approvals/:id", async (c) => {
   if (typeof b?.allow !== "boolean") return c.json({ error: "Say allow: true or false" }, 400);
   const a = answerApproval(u.username, c.req.param("id"), b.allow);
   if (!a) return c.json({ error: "Not found" }, 404);
-  if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Too late: it waited 10 minutes and wasn't done" : "Already answered" }, 409);
+  if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Expired after 10 minutes" : "Already answered" }, 409);
   return c.json(view(u.username, u.role === "admin"));
 });
 
@@ -2293,7 +2293,7 @@ assistantApp.post("/confirms/:id", async (c) => {
   if (q.status !== "waiting" || answering.has(id)) return c.json({ error: "Already answered" }, 409);
   const call = conv.calls?.[id];
   if (!b.yes) q.status = "no";
-  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "It can't be done from here any more: ask again." });
+  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "Expired: ask again" });
   else {
     answering.add(id);
     try {

@@ -28,7 +28,7 @@ export const useComputers = () =>
     "/api/setup/computers",
     async () => {
       const v = await getComputers();
-      if (!v) throw new Error("Couldn't reach this computer");
+      if (!v) throw new Error("Could not reach this computer");
       return v;
     },
     { topic: ["setup", "devices"] },
