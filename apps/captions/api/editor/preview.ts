@@ -14,7 +14,7 @@ import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
 import { renderPlanPreview } from "./plan-render";
-import { editDir, type EditMeta, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
+import { editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveFiled, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -164,14 +164,21 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
   }
 }
 
+/** Said when a plug-in step would be handed a proxy: it rewrites footage, and its copies take the originals' place. */
+export const onlyProxy = (title: string) => `Post-processing can't run here: this server has only the proxy of ${title}, not the original`;
+
 /**
  * Local files for a timeline's sources (a bucket library's are downloaded into the library's cache once). With `editId`
  * the edit's own clips (a card, TimelineSource.file) are in the answer too; without it they are left out. With `proxies`
  * a source whose original is not on this server is its proxy (a render for Review); post-processing reads originals
- * only, as its copies take the originals' place in the exports.
+ * only, as its copies take the originals' place in the exports: a source whose original is gone (a library that keeps
+ * only proxies, worker.ts dropOriginal, where the source is the proxy) is refused (onlyProxy), never handed over as one.
  */
 export async function localFiles(tl: Timeline, editId?: string, proxies = false): Promise<Record<string, string>> {
-  const q = libraryDb().prepare("SELECT source_key FROM asset_versions WHERE id = ?");
+  const q = libraryDb().prepare(
+    `SELECT v.source_key, a.title, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+     LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
+  );
   const out: Record<string, string> = {};
   for (const id of Object.keys(tl.sources)) {
     const own = tl.sources[id]!.file;
@@ -179,8 +186,9 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       if (editId) out[id] = path.join(editDir(editId), own);
       continue;
     }
-    const row = q.get(id) as { source_key: string } | undefined;
+    const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
     if (!row) throw new Error("Some footage is gone from the library");
+    if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
     out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
   }
   return out;
@@ -193,28 +201,30 @@ export const previewFile = (editId: string, variant: string) => path.join(editDi
  * The preview step (one version): render, then into Review as the next version of the draft's Review video. A planned
  * cut the AI made waits for its look (critique.ts), which files it.
  */
-export async function previewStep({ edit, variant, signal }: StepContext): Promise<void> {
+export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   // a preview from an older run's copies would be filed in Review as this cut (faces unblurred, say)
   if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = previewFile(edit.id, variant);
   await mkdir(path.dirname(out), { recursive: true });
-  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
+  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id, true)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(ownerOf(edit), edit.bundle));
   if (signal.aborted || d.due) return;
-  await fileInReview(edit, variant, d.timeline, d.critique?.fails);
+  await fileInReview(edit, variant, d.timeline, d.critique?.fails, job.actor);
 }
 
 /**
  * The rendered preview into Review as the next version of the draft's Review video, with the timeline it was cut from.
- * `fails`: the shots its look found still don't hold up, named on that Review version.
+ * `fails`: the shots its look found still don't hold up, named on that Review version. It is filed in the Review of the
+ * edit's workspace (ownerOf), so its owner sees and comments on a teammate's edit as on their own; `by`: who asked for
+ * this version, kept on it.
  */
-export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = []): Promise<void> {
+export async function fileInReview(edit: EditMeta, variant: string, timeline: Timeline, fails: Critique["fails"] = [], by?: string | null): Promise<void> {
   const out = previewFile(edit.id, variant);
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
-  const v = { owner: edit.createdBy, name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(fails.length ? { fails } : {}) }, workspace: edit.projectId };
+  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId };
   const place = (dest: string) => rename(out, dest);
   const filed = readStep(edit.id, "review") ?? {};
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
@@ -228,7 +238,7 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
     return w ? [[id, w]] : [];
   }));
   await fileTimelineView(added.meta.id, added.n, `${variant}-${added.n}.view.json`, draftView(timeline, words));
-  await saveStep(edit.id, "review", { ...filed, [variant]: { assetId: added.meta.id, n: added.n } });
+  await saveStep(edit.id, "review", { ...filed, [variant]: { assetId: added.meta.id, n: added.n, ...(by ? { by } : {}) } });
 }
 
 /**

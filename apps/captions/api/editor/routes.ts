@@ -12,7 +12,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { addFeedback, newestDraft, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
+import { addFeedback, newestDraft, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft } from "./store";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
@@ -24,12 +24,16 @@ import { stopEdit } from "./worker";
 import { onEvent } from "../lib/events";
 import { readComments, readMeta } from "../review";
 import { inProjectOf, projectOf } from "../lib/project-of";
+import { sharedHere } from "../lib/workshop/workspace";
+import type { SessionUser } from "../users";
 import { resolveProjectId } from "../lib/workshop/workspace";
 
 /**
- * AI Editor routes (contracts/editor.ts), mounted at /api/editor behind the `editor` tool gate (boot.ts). An edit that
- * is not the caller's to see is 404, as one that does not exist. Run, Retry and changes are the creator's: every step
- * runs on their keys and AI, so nobody else starts one.
+ * AI Editor routes (contracts/editor.ts), mounted at /api/editor behind the `editor` tool gate (boot.ts). Edits are
+ * shared in their workspace (store.ts editRole): one the caller doesn't see is 404, as one that does not exist. Anyone
+ * with Read & write on the AI Editor there (boot.ts WRITE_GATES) runs, retries and makes the next version of any of
+ * them; each step they ask for runs as them (the job's actor), on their own keys and AI. Renaming and the trash are the
+ * maker's and the workspace owner's (store.ts mayRename).
  */
 
 export const editorApp = new Hono<{ Variables: AuthVars }>();
@@ -44,11 +48,21 @@ const body = async (c: C): Promise<Record<string, unknown>> => {
 /** A request an AI makes (one of its tools' own calls, or one with an AI key), not the person at their own screen. */
 const viaTool = (c: C) => !!innerCall.getStore() || !!c.req.header("authorization");
 
-/** The caller's own edit, or null (answer 404). */
-function load(c: C): { e: EditMeta } | null {
+/** The edit, when the caller sees it, with who they are to it; null (answer 404) otherwise. */
+async function load(c: C) {
+  const user = c.get("user").username;
   const e = readEdit(c.req.param("id") ?? "");
-  return e && editRole(c.get("user").username, e) ? { e } : null;
+  const role = await editRole(user, e);
+  return e && role ? { e, role, user } : null;
 }
+type Loaded = NonNullable<Awaited<ReturnType<typeof load>>>;
+
+/** The edit's view for the caller: `locked` when its name and the trash are not theirs. */
+const viewFor = (r: Loaded, e: EditMeta = r.e) => ({ ...viewOf(e), ...(mayRename(r.user, e, r.role) ? {} : { locked: true as const }) });
+const NOT_YOURS = { error: "Only the edit's maker or the workspace's owner renames it or moves it to the trash", code: "forbidden" } as const;
+
+/** Whose editor settings and styles the caller works with: the team owner's in a workspace given to them, else their own. */
+const settingsOf = async (c: C) => (await sharedHere(c.get("user")))?.owner ?? c.get("user").username;
 
 // an edit made from clips still uploading (a phone's New edit) starts once the last one is in
 onUploadDone.push((id, version) => void uploadFinished(id, version));
@@ -57,7 +71,7 @@ onUploadDone.push((id, version) => void uploadFinished(id, version));
 /** A Review video an edit made is set to Changes: the open comments of its newest version become the edit's notes, each once. */
 onEvent("review.changes", async ({ asset, owner }) => {
   for (const e of allEdits()) {
-    if (e.createdBy !== owner || e.trashedAt) continue;
+    if (ownerOf(e) !== owner || e.trashedAt) continue;
     const variant = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset)?.[0];
     if (!variant) continue;
     const newest = Math.max(0, ...((await readMeta(asset))?.versions ?? []).map((v) => v.n));
@@ -83,16 +97,26 @@ editorApp.post("/", async (c) => {
 });
 
 /**
- * The person's edits, newest first, each with the project it is in (lib/project-of.ts: an old one is the first
- * brand's); ?projectId= only those of that project of theirs.
+ * The edits the person sees (their own, and every one in a workspace given to them), newest first, each with the
+ * project it is in as its workspace's owner files it (lib/project-of.ts: an old one is the first brand's);
+ * ?projectId= only those of that project of theirs.
  */
 editorApp.get("/", async (c) => {
   const user = c.get("user").username;
-  const [inProject, of] = await Promise.all([inProjectOf(c.get("user"), c.req.query("projectId")), projectOf(c.get("user"))]);
-  const list = allEdits()
-    .filter((e) => !e.trashedAt && e.createdBy === user && (!inProject || inProject(e.projectId)))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-  return c.json(list.map((e) => ({ ...summaryOf(e), ...(of ? { projectId: of(e.projectId) } : {}) })));
+  const want = c.req.query("projectId");
+  const only = want && (await inProjectOf(c.get("user"), want)) ? want : undefined;
+  const ofs = new Map<string, ((own?: string) => string) | null>();
+  const out = [];
+  // ponytail: editRole reads the given workspaces once per edit; read them once per list if a team's list gets slow
+  for (const e of allEdits()) {
+    if (e.trashedAt || !(await editRole(user, e))) continue;
+    const owner = ownerOf(e);
+    if (!ofs.has(owner)) ofs.set(owner, await projectOf({ username: owner } as SessionUser));
+    const projectId = ofs.get(owner)?.(e.projectId);
+    if (only && projectId !== only) continue;
+    out.push({ ...summaryOf(e), ...(projectId ? { projectId } : {}) });
+  }
+  return c.json(out.sort((a, b) => b.updatedAt - a.updatedAt));
 });
 
 // where footage picked from this computer is filed (api/editor/ingest.ts); registered before /:id
@@ -102,7 +126,8 @@ editorApp.get("/footage-target", async (c) => {
 });
 
 // the defaults are registered before /:id, so "defaults" is never read as an edit id
-editorApp.get("/defaults", async (c) => c.json(await editorDefaults(c.get("user").username)));
+// in a workspace given to the person, the workspace's own (its owner's): what a new edit there is made with
+editorApp.get("/defaults", async (c) => c.json(await editorDefaults(await settingsOf(c))));
 
 /** One slot's default: an item id the person can choose from, or null for back to the pack's or the built-in one. */
 editorApp.put("/defaults/:slot", async (c) => {
@@ -116,8 +141,8 @@ editorApp.put("/defaults/:slot", async (c) => {
   return c.json(await editorDefaults(user));
 });
 
-// the person's editing styles (contracts/editor-styles.ts); registered before /:id, as the defaults are
-editorApp.get("/styles", (c) => c.json(stylesView(c.get("user").username)));
+// the person's editing styles (contracts/editor-styles.ts), the workspace's in one given to them; registered before /:id, as the defaults are
+editorApp.get("/styles", async (c) => c.json(stylesView(await settingsOf(c))));
 
 const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
 
@@ -145,7 +170,7 @@ editorApp.post("/styles", async (c) => {
   if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
   playbookBy(c, b, null);
   const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
-  if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
+  if (b.fromEdit !== undefined && !(await editRole(user, from ?? null))) return notFound(c);
   const made = createStyle(user, b, from ?? undefined, b.first === true);
   return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
 });
@@ -202,37 +227,38 @@ editorApp.route("/", cardsApp);
 
 /** Carry on, for an edit in passes: every drafted version's next pass is queued (and recorded as done); 409 while it is being made, or when no pass is left. */
 editorApp.post("/:id/pass", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
   const db = libraryDb();
   if (db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id)) return c.json({ error: "This edit is still being made", code: "conflict" }, 409);
   const queued = Object.fromEntries(draftNames(r.e.id).flatMap((n) => { const p = nextPass(r.e, n); return p ? [[n, p]] : []; }));
   if (!Object.keys(queued).length) return c.json({ error: "Nothing left to do", code: "conflict" }, 409);
   await markPasses(r.e.id, queued);
-  for (const [n, p] of Object.entries(queued)) enqueueJob(db, r.e.workspaceId, `${r.e.id}:${n}`, p, r.e.createdBy, true, "edit_jobs");
-  return c.json(viewOf(r.e));
+  for (const [n, p] of Object.entries(queued)) enqueueJob(db, r.e.workspaceId, `${r.e.id}:${n}`, p, r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
 });
 
-editorApp.get("/:id", (c) => {
-  const r = load(c);
-  return r ? c.json(viewOf(r.e)) : notFound(c);
+editorApp.get("/:id", async (c) => {
+  const r = await load(c);
+  return r ? c.json(viewFor(r)) : notFound(c);
 });
 
 editorApp.patch("/:id", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
   let patch;
   let styled: Partial<EditMeta> = {};
   const b = await body(c);
   try {
-    patch = cleanBrief(b, r.e.createdBy, r.e.workspaceId);
+    patch = await cleanBrief(b, r.user, r.e.workspaceId);
     // `style` puts an editing style's choices on the edit, under what this patch sets itself; null takes the style off
-    if (typeof b.style === "string") styled = await styleFields(r.e.createdBy, r.e.workspaceId, b.style, r.e);
+    if (typeof b.style === "string") styled = await styleFields(ownerOf(r.e), r.e.workspaceId, b.style, r.e);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
     if (e instanceof NoStyle) return c.json({ error: e.message, code: "not_found" }, 404);
     throw e;
   }
+  if (patch.name !== undefined && !mayRename(r.user, r.e, r.role)) return c.json(NOT_YOURS, 403);
   delete patch.framing; // set per source in a later step
   // a flag the patch leaves out keeps its state
   const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
@@ -245,11 +271,11 @@ editorApp.patch("/:id", async (c) => {
   if (byTool) e.byTool = byTool;
   else delete e.byTool;
   await saveEdit(e);
-  return c.json(viewOf(readEdit(e.id)!));
+  return c.json(viewFor(r, readEdit(e.id)!));
 });
 
 editorApp.post("/:id/run", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
   const b = await body(c);
   const from = b.from ?? "analyze";
@@ -259,8 +285,8 @@ editorApp.post("/:id/run", async (c) => {
     const { now: _, ...rest } = r.e;
     await saveEdit(b.now === true ? { ...rest, now: true } : rest);
   }
-  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:`, from as string, r.e.createdBy, true, "edit_jobs");
-  return c.json(viewOf(readEdit(r.e.id)!));
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:`, from as string, r.user, true, "edit_jobs");
+  return c.json(viewFor(r, readEdit(r.e.id)!));
 });
 
 /**
@@ -269,7 +295,7 @@ editorApp.post("/:id/run", async (c) => {
  * `queued` is false while the edit is being made: that run reads it.
  */
 editorApp.post("/:id/feedback", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
   const text = (await body(c)).text;
   if (typeof text !== "string" || !text.trim()) return c.json({ error: "text is what the person said about the cut", code: "invalid" }, 400);
@@ -277,43 +303,43 @@ editorApp.post("/:id/feedback", async (c) => {
   await addFeedback(r.e.id, [{ at: Date.now(), from: "chat", by: c.get("user").username, ...(variant ? { variant } : {}), text }]);
   const db = libraryDb();
   const busy = !!db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id);
-  if (!busy) enqueueJob(db, r.e.workspaceId, `${r.e.id}:`, readStep(r.e.id, "analysis") ? "script" : "analyze", r.e.createdBy, true, "edit_jobs");
-  return c.json({ ...viewOf(readEdit(r.e.id)!), queued: !busy });
+  if (!busy) enqueueJob(db, r.e.workspaceId, `${r.e.id}:`, readStep(r.e.id, "analysis") ? "script" : "analyze", r.user, true, "edit_jobs");
+  return c.json({ ...viewFor(r, readEdit(r.e.id)!), queued: !busy });
 });
 
-editorApp.post("/:id/jobs/:jobId/retry", (c) => {
-  const r = load(c);
+editorApp.post("/:id/jobs/:jobId/retry", async (c) => {
+  const r = await load(c);
   if (!r) return notFound(c);
   const job = libraryDb().prepare("SELECT version_id, kind FROM edit_jobs WHERE id = ? AND edit_id = ?").get(Number(c.req.param("jobId")), r.e.id) as
     | { version_id: string; kind: string }
     | undefined;
   if (!job) return notFound(c);
   // a failed or needs_key step starts again from zero; a queued, running or done one stays as it is
-  enqueueJob(libraryDb(), r.e.workspaceId, job.version_id, job.kind, r.e.createdBy, false, "edit_jobs");
-  return c.json(viewOf(r.e));
+  enqueueJob(libraryDb(), r.e.workspaceId, job.version_id, job.kind, r.user, false, "edit_jobs");
+  return c.json(viewFor(r));
 });
 
-editorApp.post("/:id/stop", (c) => {
-  const r = load(c);
+editorApp.post("/:id/stop", async (c) => {
+  const r = await load(c);
   if (!r) return notFound(c);
   stopEdit(r.e.id);
-  return c.json(viewOf(r.e));
+  return c.json(viewFor(r));
 });
 
 editorApp.put("/:id/eyeline/:versionId", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
   const v = c.req.param("versionId");
   const y = (await body(c)).y;
   if (!r.e.sources.includes(v)) return notFound(c);
   if (typeof y !== "number" || !Number.isFinite(y) || y < 0 || y > 1) return c.json({ error: "y is a fraction of the picture's height, 0 to 1", code: "invalid" }, 400);
   await saveEdit({ ...r.e, eyeline: { ...r.e.eyeline, [v]: y } });
-  return c.json(viewOf(readEdit(r.e.id)!));
+  return c.json(viewFor(r, readEdit(r.e.id)!));
 });
 
 /** What analyze found, so the page can play a take from its seconds. */
-editorApp.get("/:id/sentences", (c) => {
-  const r = load(c);
+editorApp.get("/:id/sentences", async (c) => {
+  const r = await load(c);
   return r ? c.json(readStep(r.e.id, "analysis")?.sentences ?? []) : notFound(c);
 });
 
@@ -322,7 +348,7 @@ editorApp.get("/:id/sentences", (c) => {
  * line has. Only those versions are drafted again, with no AI.
  */
 editorApp.put("/:id/lines", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
   const plan = readStep(r.e.id, "plan");
   if (!plan) return c.json({ error: "There is no script yet", code: "conflict" }, 409);
@@ -343,17 +369,17 @@ editorApp.put("/:id/lines", async (c) => {
   }
   await saveStep(r.e.id, "plan", { ...plan, plans: plan.plans.map((p) => next.get(p.name)!) });
   const names = new Set((sent as { name: string }[]).map((p) => p.name));
-  for (const n of names) enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${n}`, "draft", r.e.createdBy, true, "edit_jobs");
-  return c.json(viewOf(r.e));
+  for (const n of names) enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${n}`, "draft", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
 });
 
 /** Renders the draft's preview again and files it in Review as the next version (the chain does this after a draft). */
-editorApp.post("/:id/drafts/:name/review", (c) => {
-  const r = load(c);
+editorApp.post("/:id/drafts/:name/review", async (c) => {
+  const r = await load(c);
   const name = c.req.param("name");
   if (!r || !readDraft(r.e.id, name)) return notFound(c);
-  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "preview", r.e.createdBy, true, "edit_jobs");
-  return c.json(viewOf(r.e));
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "preview", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
 });
 
 /** Notes this route writes start with this, so the next hand cut replaces them. */
@@ -366,7 +392,7 @@ const HAND_NOTE = "Cut by hand in Review";
  * never covered), is rendered and is filed in Review as the next version.
  */
 editorApp.post("/:id/drafts/:name/cut", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
@@ -388,13 +414,13 @@ editorApp.post("/:id/drafts/:name/cut", async (c) => {
   }
   const notes = [...d.notes.filter((n) => !n.startsWith(HAND_NOTE)), `${HAND_NOTE}: ${edits.length} timeline edit${edits.length === 1 ? "" : "s"} on version ${at.n}`];
   await saveDraft(r.e.id, name, { timeline, notes });
-  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.e.createdBy, true, "edit_jobs");
-  return c.json(viewOf(r.e));
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
 });
 
 /** A version's draft with its checks, run against the edit's other drafts as they are now. */
-editorApp.get("/:id/drafts/:name", (c) => {
-  const r = load(c);
+editorApp.get("/:id/drafts/:name", async (c) => {
+  const r = await load(c);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
@@ -411,7 +437,7 @@ editorApp.get("/:id/drafts/:name", (c) => {
 
 /** The draft for the user's own editor: OTIO, FCPXML, or both in a zip (with download links when the footage is in a bucket). */
 editorApp.get("/:id/drafts/:name/export", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
@@ -420,12 +446,12 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   // (a card is the edit's own file, not footage: TimelineSource.file)
-  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources).filter((k) => !tl.sources[k]!.file)) !== r.e.workspaceId) return notFound(c);
+  if ((await editSources(r.user, Object.keys(tl.sources).filter((k) => !tl.sources[k]!.file))) !== r.e.workspaceId) return notFound(c);
   if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
   const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip");
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
-  const otio = async () => otioText(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)));
+  const otio = async () => otioText(toOtio(tl, m.files, await gradeOf(ownerOf(r.e), r.e.bundle)));
   const send = (body: string | Buffer, file: string, type: string) =>
     new Response(body, { headers: { "Content-Type": type, "Content-Disposition": `attachment; filename="${file}"`, "Cache-Control": "no-store" } });
   if (format === "otio") return send(await otio(), `${base}.otio`, "application/json");
@@ -448,8 +474,9 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
 });
 
 editorApp.delete("/:id", async (c) => {
-  const r = load(c);
+  const r = await load(c);
   if (!r) return notFound(c);
+  if (!mayRename(r.user, r.e, r.role)) return c.json(NOT_YOURS, 403);
   stopEdit(r.e.id);
   await saveEdit({ ...r.e, trashedAt: Date.now() });
   return c.json({ ok: true });

@@ -293,7 +293,7 @@ export async function backfillSprite(): Promise<boolean> {
   return true;
 }
 
-/** The steps that read a version's original (the rest read its proxy once there is one, run's lighter and orProxy). */
+/** The steps that read a version's original (the rest read its proxy once there is one, run's lighter). */
 const READS_ORIGINAL = ["probe", "thumb", "wave", "proxy", "transcribe"];
 
 /**
@@ -369,22 +369,19 @@ async function run(job: JobRow): Promise<void> {
   };
   const base = `libraries/${v.library_id}/v/${v.id}`;
   // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original; a proxy in the cloud of
-  // a clip that plays as it is would be a download of what is on this disk already
+  // a clip that plays as it is would be a download of what is on this disk already, so that reads the original, and its
+  // proxy only when the original is not on this server (kept on the user's computer, a drive unplugged)
   let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
   const proxyKey = () => (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(v.id) as { storage_key: string | null } | undefined)?.storage_key;
   const lighter = async () => {
-    if (p && proxiesInCloud(v.library_id) && !needsProxy(p)) return src();
     const k = proxyKey();
+    if (p && proxiesInCloud(v.library_id) && !needsProxy(p))
+      return src().catch((e: unknown) => {
+        if (!k) throw e;
+        return blobs.localCopy(k);
+      });
     return k ? blobs.localCopy(k) : src();
   };
-  // the original, else its proxy when the original is not on this server (a library whose originals stay on the user's
-  // computer with proxies in the cloud, a drive unplugged): the proxy's sound keeps the original's times
-  const orProxy = () =>
-    src().catch((e: unknown) => {
-      const k = proxyKey();
-      if (!k) throw e;
-      return blobs.localCopy(k);
-    });
 
   if (job.kind === "probe") {
     // a probe again (a rescan) keeps the clip's own turn: the file never says it
@@ -440,10 +437,10 @@ async function run(job: JobRow): Promise<void> {
     await makeSprite(await lighter(), file, p.duration, p.turn);
     await keep("sprite", file, `${base}/sprite.jpg`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
-    // the sound from the original (cut from a 4K clip in 0.2 s at most, and the lighter copy's is re-encoded; the proxy's
-    // only when the original is not here); the frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the
-    // original took 1 to 5.5 s
-    if (job.kind === "transcribe") await transcribeVersion(db, v.id, await orProxy(), job.actor, dir);
+    // the lighter copy, as every reader that only measures a clip (editor/media.ts measurable): the proxy keeps every
+    // sound track and ffmpeg picks the same one from it as from the original (proxy.ts), at the same times; the original
+    // when there is no proxy yet. The frames from it too: the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
+    if (job.kind === "transcribe") await transcribeVersion(db, v.id, await lighter(), job.actor, dir);
     else {
       const fresh = !described(v.id);
       await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);

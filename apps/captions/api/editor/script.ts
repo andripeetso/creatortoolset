@@ -10,7 +10,7 @@ import { skillText } from "../lib/skills";
 import { finishedBlock } from "./finished";
 import { momentMap, momentsPrompt, parseMoments, type RawMoment } from "./moments";
 import { isPlanned, notesPrompt, planStep, workspaceSetup } from "./plan";
-import { readEdit, readStep, saveEdit, saveStep, UNNAMED, type EditMeta } from "./store";
+import { ownerOf, readEdit, readStep, saveEdit, saveStep, UNNAMED, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
 
@@ -228,7 +228,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     targetS: edit.targetS,
     // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts), then the one skill
     // the style names (api/lib/skills.ts, cut there); no style adds nothing
-    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style, edit), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
+    packText: [workspace, await packInstructions(job.actor!, "editor.script", null, { ai: route }), styleBlock(edit.style, edit), edit.style?.skill ? await skillText(ownerOf(edit), [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n"),
     examples: finishedBlock(edit),
     ...(edit.feedback?.length ? { notes: edit.feedback } : {}),
   });

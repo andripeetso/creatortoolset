@@ -138,7 +138,7 @@ interface Version {
   /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. `fails`: as `draft`'s. */
   edit?: { project: string; draft: string; fails?: Critique["fails"] };
   /** The app's own AI Editor draft it was rendered from (api/editor): its timeline's hand edits can be cut into the next version. `fails`: the shots the look before Review found still don't hold up. */
-  draft?: { edit: string; name: string; fails?: Critique["fails"] };
+  draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] };
   /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
   source?: VersionSource;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
@@ -888,8 +888,15 @@ export async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewe
     return { meta, ...reviewer, download: meta.share.download };
   }
   const meta = await readMeta(c.req.param("id") ?? "");
-  if (!meta || (meta.owner !== user.username && user.role !== "admin")) return null;
-  return { meta, manage: true, download: true, user: user.username, guestKey };
+  if (!meta) return null;
+  if (meta.owner === user.username || user.role === "admin") return { meta, manage: true, download: true, user: user.username, guestKey };
+  // the preview of an AI Editor edit shared with this person (a teammate's, api/editor/store.ts editRole): to watch on the edit page
+  const edit = meta.versions.find((v) => v.draft)?.draft?.edit;
+  if (edit && realUser(user)) {
+    const { editRole, readEdit } = await import("./editor/store");
+    if (await editRole(user.username, readEdit(edit))) return { meta, manage: false, download: true, user: user.username, guestKey };
+  }
+  return null;
 }
 
 const linkTarget = async (token: string) =>
@@ -1068,7 +1075,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; fails?: Critique["fails"] }; source?: VersionSource },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {

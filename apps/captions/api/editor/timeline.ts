@@ -8,7 +8,7 @@ import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
-import { readable } from "./media";
+import { measurable } from "./media";
 import { clearPasses, markPasses } from "./passes";
 import { draftPlan } from "./plan";
 import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
@@ -159,7 +159,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     if (!row || !probe || !w) throw new Error("Some footage changed since it was analyzed: run the edit again from analyze");
     sources[id] = sourceOf(id, row.title, probe);
     words[id] = w;
-    energy[id] = await energyOf(id, () => readable(id, row.source_key), signal);
+    energy[id] = await energyOf(id, () => measurable(id, row.source_key), signal);
   }
   const { timeline, notes } = buildTimeline({
     name: `${edit.name} ${version.name}`,

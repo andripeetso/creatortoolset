@@ -130,6 +130,8 @@ export interface EditSummary {
   id: string;
   name: string;
   createdBy: string;
+  /** the maker's name and picture, where the edit's workspace has a team (Settings → Team); one person's own edits carry none */
+  maker?: { name: string; picture: string | null };
   createdAt: number;
   updatedAt: number;
   /** library version ids, in the order picked */
@@ -181,6 +183,10 @@ export interface VersionPlan {
 
 export interface Edit extends EditSummary, EditBrief {
   workspaceId: string;
+  /** where the workspace has a team: by version, the name of whoever asked for its newest cut */
+  askedBy?: Record<string, string>;
+  /** its name and the trash are its maker's and the workspace owner's, not the caller's */
+  locked?: true;
   /** the items the edit was made with, recorded when it was created: changing the default later does not change it */
   bundle: EditBundle;
   /** the editing style it was made with, as it was then; absent for an edit made with none */
@@ -224,6 +230,8 @@ export interface EditCards {
 export interface ReviewPreview {
   assetId: string;
   n: number;
+  /** who asked for this version (a teammate's next version is theirs); absent on one from before it was kept */
+  by?: string;
 }
 
 /** PUT lines: the versions that change, each with its whole line order and the take each line uses (by first/last). */

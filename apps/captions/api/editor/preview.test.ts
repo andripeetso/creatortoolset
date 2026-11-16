@@ -16,9 +16,9 @@ const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { emptyTracks } = await import("./timeline");
-const { createEdit, readDraft, readFiled, readStep, saveDraft } = await import("./store");
+const { createEdit, readDraft, readEdit, readFiled, readStep, saveDraft, saveEdit } = await import("./store");
 const { applyEdits } = await import("./edits");
-const { piecesOf, previewSize, renderPreview, shotFilter } = await import("./preview");
+const { piecesOf, previewSize, previewStep, renderPreview, shotFilter } = await import("./preview");
 const { tick } = await import("./worker");
 
 const fixture = path.join(dir, "Tiny Acrobatics take.mp4");
@@ -172,7 +172,7 @@ describe("AI Editor preview", () => {
 
     await run();
     const again = (await readMeta(filed.assetId))!;
-    expect(readStep(e.id, "review")!.v1).toEqual({ assetId: filed.assetId, n: 2 });
+    expect(readStep(e.id, "review")!.v1).toEqual({ assetId: filed.assetId, n: 2, by: "mem-a" });
     expect(again.versions.map((v) => v.n)).toEqual([1, 2]);
 
     // each version is marked as this draft's, has the draft's timeline under its player, and keeps the timeline it was rendered from
@@ -189,4 +189,16 @@ describe("AI Editor preview", () => {
     expect(Math.abs(third.duration - 0.5)).toBeLessThanOrEqual(1 / 30 + 0.03);
     expect(readDraft(e.id, "v1")!.timeline.tracks.V1.items).toHaveLength(1);
   }, 180_000);
+
+  it("a teammate's version is filed in the Review of the edit's workspace, marked with who asked for it", async () => {
+    const made = (await createEdit("mem-a", { name: "Team hook", sources: ["ver_a"] }))!;
+    await saveEdit({ ...made, createdBy: "mem-b" }); // a member's edit in mem-a's workspace
+    await saveDraft(made.id, "v1", { timeline: timeline(), notes: [] });
+    await previewStep({ edit: readEdit(made.id)!, job: { actor: "mem-c" } as never, variant: "v1", signal: new AbortController().signal });
+    const filed = readStep(made.id, "review")!.v1!;
+    expect(filed.by).toBe("mem-c");
+    const m = (await readMeta(filed.assetId))!;
+    expect(m.owner).toBe("mem-a");
+    expect(m.versions[0]!.draft).toMatchObject({ edit: made.id, name: "v1", by: "mem-c" });
+  }, 60_000);
 });

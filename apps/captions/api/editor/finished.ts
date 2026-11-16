@@ -18,7 +18,7 @@ import { env } from "../lib/env";
 import { onEvent } from "../lib/events";
 import { tfidf } from "../lib/workshop/posted";
 import { typedIn } from "./own-words";
-import { allEdits, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
+import { allEdits, ownerOf, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
 import { change, findStyle } from "./styles";
 
 /**
@@ -108,9 +108,11 @@ export function finishedRecord(e: EditMeta, variant: string, at = Date.now()): F
  */
 export function keepFinished(e: EditMeta, variant: string): void {
   const style = e.style?.id;
-  if (!style || !findStyle(e.createdBy, style) || readStep(e.id, "finished")?.removed) return;
+  // the style is the workspace's (store.ts ownerOf), also on an edit a teammate made
+  const owner = ownerOf(e);
+  if (!style || !findStyle(owner, style) || readStep(e.id, "finished")?.removed) return;
   const rec = finishedRecord(e, variant);
-  if (rec) write(e.createdBy, style, [rec, ...finishedOf(e.createdBy, style).filter((r) => r.editId !== e.id)].slice(0, FINISHED_MAX));
+  if (rec) write(owner, style, [rec, ...finishedOf(owner, style).filter((r) => r.editId !== e.id)].slice(0, FINISHED_MAX));
 }
 
 /**
@@ -163,10 +165,10 @@ export function keepLearned(e: EditMeta, variant: string): void {
     workspaceId: e.projectId ?? "",
     at: Date.now(),
     rounds: Math.max(0, (readStep(e.id, "review")?.[variant]?.n ?? 1) - 1),
-    notes: (e.feedback ?? []).filter((f) => f.by === e.createdBy).map((f) => f.text),
+    notes: (e.feedback ?? []).filter((f) => f.by === ownerOf(e)).map((f) => f.text),
     cut: cutOf(readDraft(e.id, variant)?.timeline),
   };
-  change(e.createdBy, (f) => {
+  change(ownerOf(e), (f) => {
     const s = f.editing.find((x) => x.id === id);
     if (!s) return "gone";
     if (s.unlearned?.includes(e.id)) return;
@@ -183,7 +185,7 @@ onEvent("review.finished", ({ asset, owner, by, key, words, turn }) => {
   const tool = key || !!innerCall.getStore();
   if (tool && !(turn && words && typedIn(owner, turn, words))) return;
   for (const e of allEdits()) {
-    if (e.createdBy !== owner || e.trashedAt) continue;
+    if (ownerOf(e) !== owner || e.trashedAt) continue;
     const variant = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset)?.[0];
     if (!variant) continue;
     if (!tool) keepFinished(e, variant);
@@ -242,8 +244,8 @@ export function closestFinished(brief: string, list: FinishedEdit[], n = FINISHE
  * What an edit adds to its script step's user message: the line above, then the closest finished edits of its own
  * style, of its maker's account, the edit itself left out. Nothing for an edit with no style or a style with none.
  */
-export function finishedBlock(edit: Pick<EditMeta, "id" | "createdBy" | "brief" | "style">): string {
+export function finishedBlock(edit: Pick<EditMeta, "id" | "createdBy" | "brief" | "style"> & { workspaceId?: string }): string {
   if (!edit.style) return "";
-  const list = closestFinished(edit.brief, finishedOf(edit.createdBy, edit.style.id).filter((r) => r.editId !== edit.id));
+  const list = closestFinished(edit.brief, finishedOf(ownerOf(edit), edit.style.id).filter((r) => r.editId !== edit.id));
   return list.length ? [FINISHED_INTRO, ...list.map((r, i) => finishedExample(r, i + 1))].join("\n\n") : "";
 }
