@@ -8,6 +8,8 @@ import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
 import { folderFor, hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryDb, libraryUpload } from "../library/db";
+import { needsProxy } from "../library/media/proxy";
+import type { ProbeSummary } from "../library/media/probe";
 import type { JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
 import { readDraft, readEdit } from "./store";
@@ -31,6 +33,22 @@ export interface FileRow {
   mac_device: string | null;
   proxy: string | null;
   library_id?: string;
+  /** the version's probe (JSON), when known: a file light enough to need no proxy is its own light copy */
+  probe?: string | null;
+}
+
+/**
+ * The server copy a computer may download to analyse or cut: the proxy, or the original itself when the original needs
+ * no proxy (a 1080p H.264 phone clip, a song: library/media/proxy.ts needsProxy), as it is then no heavier than one.
+ */
+export function lightKey(r: FileRow): string | null {
+  if (r.proxy) return r.proxy;
+  if (r.source_key.startsWith("mac:") || !r.probe) return null;
+  try {
+    return needsProxy(JSON.parse(r.probe) as ProbeSummary) ? null : r.source_key;
+  } catch {
+    return null;
+  }
 }
 
 /** How a computer gets at one file: its own path, or the server's proxy (never the original: PRD 4.2). */
@@ -45,7 +63,7 @@ export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here
   const there = at && ((from && hostPath(at, folders, host, from)) || hostPath(at, folders, host));
   if (there) return { path: there };
   // else the server's proxy; an original the server holds is never downloaded to analyse or cut
-  return r.proxy ? { copy: "proxy" } : null;
+  return lightKey(r) ? { copy: "proxy" } : null;
 }
 
 /** How well a computer gets at all of a step's files: 3 every one on it, 2 some as the server's proxy, 0 not all. */
@@ -61,7 +79,7 @@ export function editFiles(editId: string, more: string[] = []): FileRow[] {
   if (!ids.length) return [];
   return libraryDb()
     .prepare(
-      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, a.library_id,
+      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.probe, a.library_id,
          (SELECT storage_key FROM derivatives WHERE version_id = v.id AND kind = 'proxy') AS proxy
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (${ids.map(() => "?").join(", ")})`,
     )
@@ -109,7 +127,7 @@ export function heldCopy(device: string, jobId: number, versionId: string, origi
   const r = job && jobFiles(job).find((f) => f.id === versionId);
   if (!r) return null;
   if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && libraryUpload(r.library_id) === "all") return r.source_key;
-  return r.proxy;
+  return lightKey(r);
 }
 
 /** The account's computers, and whether each is online and free (holds no AI Editor step now). */

@@ -16,7 +16,7 @@ const { enqueueJob } = await import("../library/jobs");
 const { pairDevice, devicesSaved, setDeviceKinds } = await import("../lib/devices");
 const { registerDeviceKinds } = await import("./engine");
 const { blobs } = await import("../library/db");
-const { fileFor, rankOf, waitLine } = await import("./reach");
+const { fileFor, lightKey, rankOf, waitLine } = await import("./reach");
 
 const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
 const post = (token: string, url: string, body: unknown) =>
@@ -38,6 +38,14 @@ describe("how a computer gets at a file", () => {
     expect(fileFor({ ...onMac, proxy: "p" }, "pc", [], nobody)).toEqual({ copy: "proxy" });
     expect(fileFor({ ...onMac, source_key: "p", proxy: "p" }, "pc", [], nobody)).toEqual({ copy: "proxy" });   // upload "proxies": the original was dropped
     expect(fileFor({ ...onMac, source_key: "p", proxy: "p" }, "mac", [], nobody)).toEqual({ path: "/Users/tiny/Movies/a.mp4" });
+  });
+  it("a file light enough to need no proxy is its own light copy; a heavy one without a proxy is not reachable", () => {
+    const probe = (w: number, h: number, vcodec = "h264") => JSON.stringify({ duration: 9, width: w, height: h, fps: 30, rotation: 0, format: "mov,mp4", vcodec, pixFmt: "yuv420p", acodec: "aac" });
+    expect(fileFor(row({ probe: probe(1920, 1080) }), "pc", [], nobody)).toEqual({ copy: "proxy" });
+    expect(lightKey(row({ probe: probe(1920, 1080) }))).toBe("k");
+    expect(fileFor(row({ probe: probe(3840, 2160) }), "pc", [], nobody)).toBeNull();
+    expect(lightKey(row({ probe: probe(3840, 2160), proxy: "p" }))).toBe("p");
+    expect(lightKey(row({ source_key: "mac:v", probe: probe(1920, 1080) }))).toBeNull();
   });
   it("ranks a step by its worst file", () => {
     expect(rankOf([{ path: "/a" }, { copy: "proxy" }])).toBe(2);

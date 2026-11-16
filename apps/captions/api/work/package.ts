@@ -11,7 +11,7 @@ import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
-import { fileFor, foldersOf } from "../editor/reach";
+import { fileFor, foldersOf, lightKey } from "../editor/reach";
 import { editDir, editRole, ownerOf, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "../editor/store";
 
 /** The server's copy of a package handed out: what the result is merged against. */
@@ -115,19 +115,21 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
   const folders = foldersOf(device.owner);
   const post = job.kind === "post" && !!edit.steps?.length;
   const q = db.prepare(
-    `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.bytes, v.sha256, a.title,
+    `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.bytes, v.sha256, v.probe, a.title,
        d.storage_key AS proxy, d.bytes AS proxy_bytes
      FROM asset_versions v JOIN assets a ON a.id = v.asset_id
      LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
   );
   const files: WorkFile[] = readsOf(job.kind, edit, variant, ids).flatMap((id) => {
     const r = q.get(id) as
-      | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; sha256: string; title: string; proxy: string | null; proxy_bytes: number | null }
+      | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; sha256: string; probe: string | null; title: string; proxy: string | null; proxy_bytes: number | null }
       | undefined;
     if (!r) return [];
     const at = fileFor(r, device.id, folders, isThisMachine);
     // a proxies-only library's source is its proxy (library/worker.ts dropOriginal): that is the proxy, not an original
-    const proxy = r.proxy ? { bytes: r.proxy_bytes ?? 0 } : undefined;
+    // (or the original itself when it needs no proxy: reach.ts lightKey)
+    const light = lightKey(r);
+    const proxy = light ? { bytes: (light === r.proxy ? r.proxy_bytes : r.bytes) ?? 0 } : undefined;
     return [
       {
         id: r.id,
