@@ -363,7 +363,7 @@ const isAdminOwner = (owner: string) => findUser(owner)?.role === "admin";
 devicesApp.post("/", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
-  if (RESERVED.has(u.username)) return c.json({ error: "This account can't pair a Mac" }, 400);
+  if (RESERVED.has(u.username)) return c.json({ error: "This account cannot add a Mac" }, 400);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 60) : "";
   if (!name) return c.json({ error: "Name the Mac" }, 400);
@@ -377,7 +377,7 @@ devicesApp.post("/", async (c) => {
 devicesApp.post("/code", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
-  if (RESERVED.has(u.username)) return c.json({ error: "This account can't pair a computer" }, 400);
+  if (RESERVED.has(u.username)) return c.json({ error: "This account cannot add a computer" }, 400);
   c.header("Cache-Control", "no-store");
   // url: where another computer reaches this server (null: it listens on this computer only, as for a phone)
   return c.json({ ...mintPairCode(u.username), url: await phoneOrigin(c) });
@@ -405,7 +405,7 @@ devicesApp.patch("/:id", async (c) => {
   if (!manageable(u, id)) return c.json({ error: "Not found" }, 404);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 60) : "";
-  if (!name) return c.json({ error: "Name the Mac" }, 400);
+  if (!name) return c.json({ error: "A computer needs a name" }, 400);
   const renamed = renameDevice(id, name);
   return renamed ? c.json(online(renamed)) : c.json({ error: "Not found" }, 404);
 });
@@ -441,7 +441,7 @@ devicePairApp.post("/", async (c) => {
   const paired = pairWithCode(b.code, name, typeof b.version === "string" ? b.version.slice(0, 40) : undefined);
   if (!paired) {
     wrongTry(PAIR_TRIES, from);
-    return c.json({ error: "That code is used or expired. Get a new one in Settings → Computers." }, 400);
+    return c.json({ error: "That code is used or expired. Create a new one in Settings → Computers." }, 400);
   }
   clearTries(PAIR_TRIES, from);
   if (paired.replaced.length) await moveProviders(paired.device.owner, paired.replaced, paired.device.id);

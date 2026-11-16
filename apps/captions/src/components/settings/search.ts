@@ -82,7 +82,7 @@ const STATIC_ROWS = [
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
   { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
   { section: "devices", id: "add-phone", title: "Add phone", keywords: ["phone", "iphone", "qr", "pair", "camera", "scan", "code", "wifi", "same wi-fi"] },
-  { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
+  { section: "devices", id: "use-this-mac", title: "AI on this Mac", keywords: ["mac app", "this mac", "switch", "use this mac", "ai jobs"], needs: "mac" },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Usage
@@ -98,11 +98,11 @@ const STATIC_ROWS = [
   // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
   { section: "keys", id: "apify-key", title: "Apify", description: "Public accounts on TikTok, YouTube, X, Facebook and Instagram", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "facebook", "x", "follow", "handle", "api key"] },
   // Headless access: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you
-  { section: "own-ai", id: "connect-ai", title: "Use Creator Toolset from your AI", keywords: ["headless", "install", "claude code", "chatgpt", "claude.ai", "connect chatgpt", "codex", "mcp", "script", "connector", "ai access", "use from your ai", "terminal", "command"] },
+  { section: "own-ai", id: "connect-ai", title: "AI apps", keywords: ["headless", "install", "claude code", "chatgpt", "claude.ai", "connect chatgpt", "codex", "mcp", "script", "connector", "ai access", "use from your ai", "terminal", "command"] },
   { section: "own-ai", id: "access-keys", title: "Access keys", keywords: ["key", "api key", "mcp", "script", "review", "full access", "claude"] },
   // Servers (Mac app)
   { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address", "cloud", "own server", "self-host", "vps"] },
-  { section: "servers", id: "sign-in-another", title: "Sign-in link for another computer", description: "Signs another computer into this server as you", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
+  { section: "servers", id: "sign-in-another", title: "Sign-in link", description: "Signs another computer in to this server", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
   { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team", "account", "password", "reset", "create account", "admin"] },
@@ -119,9 +119,8 @@ const STATIC_ROWS = [
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
   { section: "account", id: "sign-in-code", title: "Sign-in code", description: "Ask for a code from an authenticator app when you sign in with your password", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "recovery codes", "otp"], needs: "sign-in" },
-  { section: "account", id: "photo", title: "Photo", description: "From your Google or GitHub sign-in", keywords: ["picture", "avatar", "image", "profile photo"] },
-  { section: "account", id: "sign-in-with", title: "Connected accounts", keywords: ["google", "apple", "github", "link", "unlink", "sign in", "connect"], needs: "sign-in" },
-  { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
+  { section: "account", id: "sign-in-with", title: "Sign-ins", keywords: ["google", "apple", "github", "link", "unlink", "sign in", "connect", "connected accounts", "disconnect"], needs: "sign-in" },
+  { section: "account", id: "sign-out", title: "This server", description: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
 ] as const satisfies readonly SearchRow[];
 
 /** The Home tools a person can switch: one row each in Appearance → Tools on Home. */

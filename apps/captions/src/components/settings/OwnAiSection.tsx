@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 import type { CliId, LocalAiRow, LocalAiView } from "@contracts/local-ai";
-import { Check, Copy, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AccessKeysSection, useAccessKeys } from "./AccessKeys";
 import { useLocalAi } from "./AiSetup";
 import { ProviderLogo } from "./ProviderLogos";
 import { installInMacAi, thisMacBridge } from "@/lib/thisMac";
-import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed, InUse } from "./ui";
+import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed, InUse } from "./ui";
+import { CopyBox } from "./copy-box";
 import { shortVersion } from "./ProvidersSection";
 import { fmtAgo, msg } from "./helpers";
 
-/** The AI apps this page writes a command for. "other" is any app or script that takes an MCP address and a key. */
+/** The AI apps this page writes a command for. "other" is any app or script that takes the server's address and a key. */
 export type AiApp = "claude" | "codex" | "other";
 
-export const APPS: Record<AiApp, { name: string; logo?: string; after: string }> = {
-  claude: { name: "Claude Code", logo: "claude", after: "Open a new Claude Code window." },
-  codex: { name: "Codex", logo: "codex", after: "Open a new Codex window. It needs Codex 0.40 or newer." },
-  other: { name: "Another app", after: "Add it as an MCP server in that app." },
+export const APPS: Record<AiApp, { name: string; logo?: string }> = {
+  claude: { name: "Claude Code", logo: "claude" },
+  codex: { name: "Codex", logo: "codex" },
+  other: { name: "Another app" },
 };
 
 /**
@@ -118,12 +119,13 @@ export function useOwnAi() {
 }
 
 /**
- * Settings → Headless access: the other way round from Providers. Providers is the AI the app uses; this page lets your own AI
- * app (Claude Code, Codex, a script) use the app, as you, each with a key of its own.
- * On the computer the server runs on, each AI app found is a row and its button does the work (Sign in, Update, Install);
- * Command shows the same install as a line to run yourself.
+ * Settings → Headless access: the other way round from Providers. Providers is the AI the app uses; this page lets an AI
+ * app (Claude Code, Codex, a script) use the app for this account, each with a key of its own.
+ * On the computer the server runs on, each AI app found is one row with one button, the next thing to do (Sign in,
+ * Update, Install).
  * On a server that is not this computer the rows and their Install are the same: the Mac app adds it to the AI app on
- * your Mac itself; in a browser, where nothing can run on your computer, the click shows the line to run in Terminal.
+ * this Mac; in a browser, where nothing can run on the computer, the click shows the line to run in Terminal.
+ * Under them, open: the keys of AI apps with no row here, and the access keys.
  */
 export function OwnAiSection() {
   const { keys, local, error, load, disconnect } = useOwnAi();
@@ -139,7 +141,7 @@ export function OwnAiSection() {
   // ChatGPT or Claude asking to connect: the Connect sign-in page sends the person here with ?allow=<app>
   const asking = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("allow");
   const web = aiAppsShown(useLinked(), WEB_APPS, asking);
-  // the apps with a row of their own above are not listed again under Installed in
+  // the apps with a row of their own above are not listed again under Other AI apps
   const rowed = [...(local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name)), ...web.map((a) => a.name)];
   const webRow = (a: (typeof WEB_APPS)[number]) => (
     <WebAppRow key={a.name} app={a} asking={a.name.toLowerCase() === asking?.toLowerCase()} aiKey={newest(keys ?? [], a.name)} onDone={load} />
@@ -148,12 +150,9 @@ export function OwnAiSection() {
 
   return (
     <>
-      <Section id="connect-ai" title={web.length ? "Use Creator Toolset from your AI" : "Use Creator Toolset from Claude Code or Codex"}>
-        <p className="px-0.5 text-sm text-muted-foreground">
-          Install it in your AI app once. From then on it can find your clips, start edits and work in your workspaces and projects, as you, without this window open.
-        </p>
+      <Section id="connect-ai" title="AI apps">
         {!local || !keys ? (
-          error ? <Card><ErrorRow title="Couldn't load your AI apps" detail={error} retry={load} /></Card> : <Card><LoadingRow /></Card>
+          error ? <Card><ErrorRow title="Could not load AI apps" detail={error} retry={load} /></Card> : <Card><LoadingRow /></Card>
         ) : local.local ? (
           <Card>
             {here.map((r) => (
@@ -174,7 +173,7 @@ export function OwnAiSection() {
       </Section>
 
       {keys && listed.length > 0 && (
-        <Section title="Installed in">
+        <Section title="Other AI apps">
           <Card>
             {listed.map((k) => (
               <ListRow key={k.id} icon={<AppIcon name={k.name} />} title={k.name} subtitle={usedText(k)} actions={<DisconnectMenu k={k} onDisconnect={disconnect} />} />
@@ -183,15 +182,13 @@ export function OwnAiSection() {
         </Section>
       )}
 
-      <Advanced summary="Keys for scripts">
-        <AccessKeysSection />
-      </Advanced>
+      <AccessKeysSection />
     </>
   );
 }
 
 const usedText = (k: AiKeyInfo) =>
-  [`Installed ${new Date(k.at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`, k.usedAt ? `last used ${fmtAgo(k.usedAt)}` : "not used yet"].join(" · ");
+  [`Installed ${new Date(k.at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`, k.usedAt ? `last used ${fmtAgo(k.usedAt)}` : "not used"].join(" · ");
 
 function DisconnectMenu({ k, onDisconnect }: { k: AiKeyInfo; onDisconnect: (id: string) => Promise<unknown> }) {
   return (
@@ -201,7 +198,7 @@ function DisconnectMenu({ k, onDisconnect }: { k: AiKeyInfo; onDisconnect: (id: 
         {
           label: "Remove",
           destructive: true,
-          confirm: { title: `Remove from ${k.name}?`, body: "Its key stops working. Install it again for a new one.", ok: "Remove" },
+          confirm: { title: `Remove from ${k.name}?`, body: "Its access key stops working.", ok: "Remove" },
           onSelect: () => onDisconnect(k.id),
         },
       ]}
@@ -225,8 +222,8 @@ const STEP_ROUTE = { signin: "/api/setup/ai/signin", update: "/api/setup/ai/upda
 const STEP_LABEL = { signin: ["Sign in", "Signing in…"], update: ["Update", "Updating…"], connect: ["Install", "Installing…"] } as const;
 
 /**
- * One AI app on this computer. Install does it here (the same `mcp add` a person would type, with a key that is never
- * shown). A Codex too old for it shows Update beside a greyed Install, so the order is plain.
+ * One AI app on this computer, with one button: the next thing to do. Install does it here (the same `mcp add` a person
+ * would type, with a key that is never shown); a Codex too old for it has Update first, an app not signed in Sign in.
  */
 export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAiRow & { id: CliId }; aiKey?: AiKeyInfo; onDone: () => void; onDisconnect: (id: string) => Promise<unknown> }) {
   const [busy, setBusy] = useState<"signin" | "update" | "connect" | null>(null);
@@ -252,14 +249,9 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
   const version = shortVersion(row.version);
   const subtitle =
     step === "connected" && aiKey ? usedText(aiKey)
-    : step === "update" ? `Version ${version ?? "?"} · update it first`
-    : step === "signin" ? "Sign in to it first"
+    : step === "update" ? `Version ${version ?? "?"} · needs an update`
+    : step === "signin" ? "Needs sign-in"
     : version ? `Version ${version}` : undefined;
-  const button = (s: Exclude<typeof step, "connected">, primary: boolean, disabled = false) => (
-    <Button size="sm" variant={primary ? "default" : "outline"} disabled={disabled || !!busy} onClick={() => void go(s)}>
-      {busy === s ? STEP_LABEL[s][1] : failed && step === s ? "Try again" : STEP_LABEL[s][0]}
-    </Button>
-  );
   return (
     <ListRow
       icon={<ProviderLogo driver={row.id} className="size-4" />}
@@ -272,18 +264,10 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
             <InUse>Installed</InUse>
             <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
           </>
-        ) : step === "update" ? (
-          <>
-            {button("update", true)}
-            {button("connect", false, true)}
-          </>
-        ) : step === "signin" ? (
-          <>
-            {button("signin", true)}
-            {button("connect", false, true)}
-          </>
-        ) : step === "connect" ? (
-          button("connect", true)
+        ) : step !== "connected" ? (
+          <Button size="sm" disabled={!!busy} onClick={() => void go(step)}>
+            {busy ? STEP_LABEL[busy][1] : failed ? "Retry" : STEP_LABEL[step][0]}
+          </Button>
         ) : null
       }
     />
@@ -324,8 +308,8 @@ function WebAppRow({ app, asking, aiKey, onDone }: { app: (typeof WEB_APPS)[numb
   const remove = () => setGrant(false).catch((e) => saveFailed(msg(e))).finally(onDone);
   const subtitle =
     state === "installed" && aiKey ? usedText(aiKey)
-    : asking && allowed ? "Allowed. It finishes by itself in your browser."
-    : asking ? `${app.name} asks to use Creator Toolset on this computer.`
+    : asking && allowed ? "Finish in the browser."
+    : asking ? `${app.name} requested access to Creator Toolset on this computer.`
     : state === "finish" ? `Finish in ${app.name}: add Creator Toolset there, then Allow.`
     : undefined;
   return (
@@ -342,7 +326,7 @@ function WebAppRow({ app, asking, aiKey, onDone }: { app: (typeof WEB_APPS)[numb
           </>
         ) : asking && allowed ? null : (
           <Button size="sm" disabled={busy} onClick={() => void install()}>
-            {busy ? (asking ? "Allowing…" : "Installing…") : failed ? "Try again" : asking ? "Allow" : "Install"}
+            {busy ? (asking ? "Allowing…" : "Installing…") : failed ? "Retry" : asking ? "Allow" : "Install"}
           </Button>
         )
       }
@@ -370,19 +354,19 @@ function OtherAppRow({ onMade }: { onMade: () => void }) {
     <div>
       <ListRow
         icon={<KeyRound />}
-        title="Another app or a script"
-        subtitle="Anything that takes an MCP server address and a key."
+        title={APPS.other.name}
+        subtitle="An app or a script that takes the server's address and an access key."
         actions={
           !shown && (
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void get()}>
-              {busy ? "Making it…" : "Get address and key"}
+              {busy ? "Creating…" : "Create key"}
             </Button>
           )
         }
       />
       {shown && (
         <div className="px-3 pb-3 sm:px-4">
-          <CommandBox text={shown} />
+          <CopyBox text={shown} />
         </div>
       )}
     </div>
@@ -396,9 +380,9 @@ function AppIcon({ name }: { name: string }) {
 }
 
 /** What a row says where Install can't be done and no line to run is shown: the Mac app does the install. */
-export const NEEDS_MAC_APP = "Open this in the Creator Toolset app on your Mac to install it.";
+export const NEEDS_MAC_APP = "Open this page in the Creator Toolset Mac app to install it.";
 /** A Mac app from before it could install: the fix is its update, never a line to run. */
-export const UPDATE_MAC_APP = "Update the Creator Toolset app to install from here.";
+export const UPDATE_MAC_APP = "Update the Creator Toolset Mac app to install from here.";
 
 /**
  * How Install ends, from the Mac app's answer (installInMacAi: true = done, a sentence = why not, undefined = it can't).
@@ -428,7 +412,7 @@ const marked = (app: string): string | null => {
 /**
  * One AI app on a server that is not this computer. Install makes the app a key of its own, then the Mac app adds the
  * server to that app on this Mac; a Mac app too old for that says to update it. Only in a plain browser, where nothing
- * can run on your computer, the same click shows the line to run in Terminal (the key is in it, shown this once); the
+ * can run on the computer, the same click shows the line to run in Terminal (the key is in it, shown this once); the
  * row says Installed once the app has used its key.
  */
 export function RemoteAppRow({ app, aiKey, onDone, onDisconnect, commands = true }: {
@@ -476,7 +460,7 @@ export function RemoteAppRow({ app, aiKey, onDone, onDisconnect, commands = true
       <ListRow
         icon={<ProviderLogo driver={app} className="size-4" />}
         title={APPS[app].name}
-        subtitle={installed && aiKey ? usedText(aiKey) : command ? "Run this in Terminal, then open a new window of it." : undefined}
+        subtitle={installed && aiKey ? usedText(aiKey) : command ? `Run this in Terminal, then open a new ${APPS[app].name} window.` : undefined}
         status={failed ? <Status tone="broken">{failed}</Status> : undefined}
         actions={
           installed && aiKey ? (
@@ -487,7 +471,7 @@ export function RemoteAppRow({ app, aiKey, onDone, onDisconnect, commands = true
           ) : (
             !command && (
               <Button size="sm" disabled={busy} onClick={() => void install()}>
-                {busy ? "Installing…" : failed ? "Try again" : "Install"}
+                {busy ? "Installing…" : failed ? "Retry" : "Install"}
               </Button>
             )
           )
@@ -495,36 +479,9 @@ export function RemoteAppRow({ app, aiKey, onDone, onDisconnect, commands = true
       />
       {command && !installed && (
         <div className="px-3 pb-3 sm:px-4">
-          <CommandBox text={command} />
+          <CopyBox text={command} />
         </div>
       )}
-    </div>
-  );
-}
-
-function CommandBox({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="overflow-hidden rounded-lg border border-border/60 bg-muted/40">
-      <pre className="whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-foreground">{text}</pre>
-      <div className="flex justify-end border-t border-border/50 px-2 py-1.5">
-        <Button
-          size="sm"
-          variant={copied ? "ghost" : "outline"}
-          onClick={() =>
-            void navigator.clipboard.writeText(text).then(
-              () => {
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1500);
-              },
-              () => saveFailed("Couldn't copy it. Select the text and copy it."),
-            )
-          }
-        >
-          {copied ? <Check /> : <Copy />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
     </div>
   );
 }

@@ -19,11 +19,11 @@ it("says what to do in a browser, where there is no Mac app", async () => {
   expect(await allowOtherDevices()).toContain("Creator Toolset Mac app");
 });
 
-it("says the app did not answer when the bridge fails", async () => {
+it("says the app could not be reached when the bridge fails", async () => {
   bridgeWith(async () => {
     throw new Error("gone");
   });
-  expect(await allowOtherDevices()).toContain("did not answer");
+  expect(await allowOtherDevices()).toContain("Could not reach the Creator Toolset Mac app");
 });
 
 const withBridge = (answer: unknown) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage: vi.fn(async () => answer) } } } });

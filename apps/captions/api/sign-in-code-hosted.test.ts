@@ -118,7 +118,7 @@ describe("an admin asks everyone for a sign-in code", () => {
   });
 
   it("no one switches their own off while the server asks for it", async () => {
-    expect(await (await call("POST", "/api/auth/code/off", admin, { code: codeNow(miaSecret) })).json()).toEqual({ error: "This server asks everyone for a sign-in code" });
+    expect(await (await call("POST", "/api/auth/code/off", admin, { code: codeNow(miaSecret) })).json()).toEqual({ error: "A sign-in code is required on this server" });
   });
 });
 

@@ -33,8 +33,8 @@ const noMac = (e: unknown): e is NoMac => e instanceof Error && (e as NoMac).cod
 /**
  * A call that needs a Mac of the person's own (a cut-out, a split). Inside the Mac app, when the server sees no Mac of
  * theirs, it is done on this Mac: `onHere` is told so first ("Ana's Mac Studio is unreachable. Doing it on this Mac.",
- * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, Use this Mac for my AI, which pairs
- * it with this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
+ * or this Mac is not connected to this server), this Mac is switched on for it (Settings → Computers, AI on this Mac, which adds
+ * it to this server) and the call is made again once the server sees it. `signal` stops the waiting. In a browser, or
  * for any other answer, the call's own error.
  */
 export async function onThisMac<T>(run: () => Promise<T>, opts: { onHere?: (why: string) => void; signal?: AbortSignal; wait?: number; tries?: number } = {}): Promise<T> {
@@ -146,7 +146,7 @@ export async function allowOtherDevices(): Promise<string | null> {
     const s = await bridge.postMessage("access");
     return s.problem ?? null;
   } catch {
-    return "The Creator Toolset Mac app did not answer. Try again.";
+    return "Could not reach the Creator Toolset Mac app. Try again.";
   }
 }
 
@@ -175,7 +175,7 @@ export async function connectThisMac(): Promise<string | null> {
     const s = await bridge.postMessage("connect");
     return s.linked ? null : `This Mac was not added: ${s.problem ?? "try again"}`;
   } catch {
-    return "The Creator Toolset Mac app did not answer. Try again.";
+    return "Could not reach the Creator Toolset Mac app. Try again.";
   }
 }
 
@@ -194,7 +194,7 @@ async function pluginAsk(ask: string): Promise<PluginReply | null> {
     const r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Partial<PluginReply>;
     return { ok: r.ok === true, problem: typeof r.problem === "string" ? r.problem : undefined };
   } catch {
-    return { ok: false, problem: "The Creator Toolset Mac app did not answer. Try again." };
+    return { ok: false, problem: "Could not reach the Creator Toolset Mac app. Try again." };
   }
 }
 /** Switch on (or take the new version of) the plug-in in this folder of the plug-ins folder. */
@@ -259,7 +259,7 @@ async function faceBlurAsk(ask: string): Promise<Record<string, unknown>> {
   try {
     r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Record<string, unknown>;
   } catch {
-    throw new Error("The Creator Toolset Mac app did not answer. Try again.");
+    throw new Error("Could not reach the Creator Toolset Mac app. Try again.");
   }
   if (typeof r.problem === "string") throw new Error(r.problem);
   return r;
@@ -337,7 +337,7 @@ async function importAsk<T>(ask: string): Promise<T> {
   try {
     r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Record<string, unknown>;
   } catch {
-    throw new Error("The Creator Toolset Mac app did not answer. Try again.");
+    throw new Error("Could not reach the Creator Toolset Mac app. Try again.");
   }
   if (typeof r.error === "string") throw new Error(r.error);
   return r as T;

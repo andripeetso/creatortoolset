@@ -33,8 +33,15 @@ const machineKey = (d: Listed): string => {
   return m?.host ? [m.host.toLowerCase(), m.cpu ?? "", m.cpus, m.memGb].join("|") : d.id;
 };
 
-/** What a record is, in a word: the team's AI worker (owner "workspace") or the Mac app's pairing. */
-export const kindOf = (d: Listed): string => (d.owner === "workspace" ? "AI Editor worker" : "Mac app");
+/**
+ * What a record is, beside its computer's name: the team's AI Editor (owner "workspace") or the Mac app. Nothing for a
+ * computer that is not a Mac (a Linux one has no Mac app).
+ */
+export const kindOf = (d: Listed): string | null => {
+  if (d.owner === "workspace") return "AI Editor";
+  const os = d.report?.machine?.os;
+  return !os || os === "mac" ? "Mac app" : null;
+};
 
 /** macOS numbers a second pairing of one Mac: "Sam's Mac Studio (6)" is "Sam's Mac Studio". */
 export const baseName = (name: string): string => name.replace(/\s\(\d+\)$/, "");

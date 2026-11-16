@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, InUse } from "./ui";
+import { CopyBox } from "./copy-box";
 import { tell, useThisMac } from "./ThisMacSection";
 
 /** The server built into the Mac app (Servers.swift `thisMacID`). */
@@ -17,7 +18,7 @@ const GUIDE = "https://creatortoolset.com/api/landing/github";
 export async function switchServer(v: { id: string; name: string }, open?: { name: string }) {
   const ok = await confirmDialog({
     title: `Switch to ${v.name}?`,
-    body: `This window opens ${v.name}. It has its own projects${open ? `, separate from ${open.name}` : ""}. Switch back here, or in the account menu.`,
+    body: `${v.name} opens in this window, with its own workspaces${open ? `, separate from ${open.name}` : ""}.`,
     ok: "Switch",
   });
   if (ok) tell(`select:${v.id}`);
@@ -71,12 +72,12 @@ export function ServersSection() {
         <Card>
           {!s || (late && silent) ? (
             late ? (
-              <ErrorRow title="The Mac app did not answer" retry={() => { setLate(false); tell("state"); }} />
+              <ErrorRow title="Could not reach the Mac app" retry={() => { setLate(false); tell("state"); }} />
             ) : (
               <LoadingRow />
             )
           ) : s.servers.length === 0 ? (
-            <EmptyRow title="No servers yet" />
+            <EmptyRow title="No servers" />
           ) : (
             s.servers.map((v) => (
               <ListRow
@@ -116,7 +117,7 @@ export function ServersSection() {
                           {
                             label: "Remove",
                             destructive: true,
-                            confirm: { title: `Remove ${v.name}?`, body: "It leaves this Mac's list. Its data stays on the server.", ok: "Remove" },
+                            confirm: { title: `Remove ${v.name}?`, body: "It is removed from this Mac's list of servers.", ok: "Remove" },
                             onSelect: () => tell(`remove:${v.id}`),
                           },
                         ]}
@@ -137,7 +138,7 @@ export function ServersSection() {
         )}
       </Section>
 
-      <Section title="Get a server">
+      <Section title="New server">
         <Card>
           <ListRow icon={<Cloud />} title="Creator Toolset Cloud" actions={<End><Status>Coming soon</Status></End>} />
           <ListRow
@@ -154,13 +155,13 @@ export function ServersSection() {
         </Card>
       </Section>
 
-      {open && open.id !== THIS_MAC && <SignInLink server={open.name} />}
+      {open && open.id !== THIS_MAC && <SignInLink />}
 
       <FormDialog
         open={adding}
         onOpenChange={setAdding}
         title="Add server"
-        description="Its address, or a sign-in link made on it."
+        description="Its address, or a sign-in link created on it."
         submitLabel="Add server"
         onSubmit={() => {
           const a = address.trim();
@@ -185,10 +186,10 @@ function End({ className, children }: { className?: string; children: ReactNode 
 }
 
 /**
- * A one-time link that signs another computer into the open server as you: paste it into Add server there. Shown for
+ * A one-time link that signs another computer in to the open server, as the same account: pasted into Add server there. Shown for
  * an added server only: This Mac's server has no https address, and Add server takes no other.
  */
-function SignInLink({ server }: { server: string }) {
+function SignInLink() {
   const [link, setLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -199,40 +200,34 @@ function SignInLink({ server }: { server: string }) {
       .then((r) => (r.ok ? (r.json() as Promise<{ path: string | null }>) : Promise.reject(new Error(String(r.status)))))
       // path null: a server with no sign-in, where the address alone opens it
       .then((j) => setLink(`${window.location.origin}${j.path ?? ""}`))
-      .catch(() => setError("Couldn't make a link. Sign in again and try."))
+      .catch(() => setError("Could not create a link. Sign in again and retry."))
       .finally(() => setBusy(false));
   };
 
   return (
-    <Section title={`Open ${server} on another computer`}>
+    <Section title="Another computer">
       <Card>
-        <ListRow
-          id="sign-in-another"
-          icon={<Link2 />}
-          title="Sign-in link"
-          subtitle="Paste it into Add server on the other computer. Works once, within 60 seconds."
-          actions={
-            <End>
-              <Button size="sm" variant="outline" disabled={busy} onClick={mint}>
-                Make a link
-              </Button>
-            </End>
-          }
-        />
-        {/* under the row, in its text column (the icon column is 20px + the 12px gap) */}
-        {(link || error) && (
-          <div className="flex items-center gap-2 py-2.5 pl-11 pr-3 sm:pl-12 sm:pr-4">
-            {link && (
-              <>
-                <code className="min-w-0 flex-1 truncate rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{link}</code>
-                <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(link)}>
-                  Copy
+        <div>
+          <ListRow
+            id="sign-in-another"
+            icon={<Link2 />}
+            title="Sign-in link"
+            subtitle="Works once, within 60 seconds, in Add server on the other computer."
+            status={error ? <Status tone="broken">{error}</Status> : undefined}
+            actions={
+              <End>
+                <Button size="sm" variant="outline" disabled={busy} onClick={mint}>
+                  Create link
                 </Button>
-              </>
-            )}
-            {error && <Status tone="broken">{error}</Status>}
-          </div>
-        )}
+              </End>
+            }
+          />
+          {link && (
+            <div className="px-3 pb-3 sm:px-4">
+              <CopyBox text={link} />
+            </div>
+          )}
+        </div>
       </Card>
     </Section>
   );

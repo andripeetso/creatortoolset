@@ -8,9 +8,9 @@ const linux = { kinds: ["transcribe", "helper-check"], report: { at: 0, drivers:
 const passed = { at: 1, ffmpeg: true, encode: 5, folders: [{ id: "a", name: "Footage", ok: true }, { id: "b", name: "Music", ok: true }] };
 
 describe("the Help screen", () => {
-  it("says what the computer takes and from where, only once the test went well", () => {
-    expect(readyLine(mac, passed)).toBe("Ready: this computer takes drafts and renders from Footage and Music");
-    expect(readyLine(linux, passed)).toBe("Ready: this computer takes transcripts");
+  it("says what the computer is used for and from where, only once the test went well", () => {
+    expect(readyLine(mac, passed)).toBe("Used for drafts and renders from Footage and Music.");
+    expect(readyLine(linux, passed)).toBe("Used for transcripts.");
     expect(readyLine(mac, { ...passed, folders: [{ id: "a", name: "Footage", ok: false, error: "x" }] })).toBeNull();
     expect(readyLine(mac, { ...passed, encode: undefined })).toBeNull();
     expect(andList(["A", "B", "C"])).toBe("A, B and C");

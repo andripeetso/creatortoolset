@@ -9,7 +9,7 @@ address.
 
 ## Install
 
-In Creator Toolset: Settings → Devices → Add a computer → Linux. It shows a one-time code (10 minutes, works once) and
+In Creator Toolset: Settings → Computers → Add computer → Linux. It shows a one-time code (10 minutes, works once) and
 this command, to run on the Linux computer as the user it should run under:
 
 ```sh

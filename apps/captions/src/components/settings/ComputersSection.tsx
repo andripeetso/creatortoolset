@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button";
 import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
+import { CopyBox } from "./copy-box";
 import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
@@ -36,10 +37,11 @@ export function phoneLine(url: string): { wifi: boolean; host: string } {
 }
 
 /**
- * Settings → Devices: the computers that run this account's AI, and the phones that use the app. One row per Mac (a Mac
- * that registered twice shows once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
- * plug-ins' "computers" cards sit under the list, without a heading (the AI Editor's folded Load balancing). `?add=1`
- * opens the add-computer dialog, `?phone=1` the add-phone dialog (other pages link there).
+ * Settings → Computers: the computers that run this account's AI, and the phones that use the app. One row per Mac (a Mac
+ * that registered twice is listed once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
+ * plug-ins' "computers" cards sit under the list, without a heading (the AI Editor's folded Load balancing). The ones
+ * offline a day or more with no AI on them are a section of their own, open. `?add=1` opens the add-computer dialog,
+ * `?phone=1` the add-phone dialog (other pages link there).
  */
 export function ComputersSection() {
   const me = useAuth((s) => s.me);
@@ -96,7 +98,7 @@ export function ComputersSection() {
       <>
         <Section id="computers" title="Computers" action={addButton}>
           <Card>
-            <ErrorRow title="Could not load your computers" detail={error} retry={load} />
+            <ErrorRow title="Could not load computers" detail={error} retry={load} />
           </Card>
         </Section>
         {phones}
@@ -125,20 +127,18 @@ export function ComputersSection() {
   const groups = groupComputers(computers, me.username, names, (id) => withAi.has(id));
   const listed = groups.filter((g) => !g.old);
   const old = groups.filter((g) => g.old);
-  // the Mac app's Mac when it is not on the list (not paired yet): its switch still pairs it
+  // the Mac app's Mac when it is not on the list yet: its switch adds it
   const unlisted = inMac && !groups.some((g) => g.mine);
 
   return (
     <>
       <Section id="computers" title="Computers" action={addButton}>
         <Card>
-          {listed.length === 0 && !unlisted && (
-            <EmptyRow title="No computers yet" description="Your AI runs on a Mac you sign in on, with the Creator Toolset Mac app." />
-          )}
+          {listed.length === 0 && !unlisted && <EmptyRow title="No computers" />}
           {listed.map((g) => (
             <ComputerRow key={g.primary.id} group={g} admin={me.role === "admin"} bridge={g.mine ? bridge : null} onChanged={load} />
           ))}
-          {unlisted && <ThisMacRow names={names} bridge={bridge} />}
+          {unlisted && <ThisMacSwitch bridge={bridge} />}
         </Card>
         {/* the plug-ins' cards sit under the list, with no heading of their own (the AI Editor's Load balancing) */}
         {devicesSectionsFor(me, webPlugins, "computers").map((s) => (
@@ -149,13 +149,13 @@ export function ComputersSection() {
       {phones}
 
       {old.length > 0 && (
-        <Card>
-          <Advanced summary={`Old pairings (${old.length})`}>
+        <Section title="Offline computers">
+          <Card>
             {old.map((g) => (
-              <OldPairingRow key={g.primary.id} group={g} onChanged={load} />
+              <OfflineRow key={g.primary.id} group={g} onChanged={load} />
             ))}
-          </Advanced>
-        </Card>
+          </Card>
+        </Section>
       )}
 
       <AddComputerDialog open={adding} onOpenChange={setAdding} macApp={inMac} computers={computers} />
@@ -185,8 +185,6 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
     <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
   ) : check && !readyLine(primary, check) ? (
     <Status tone="attention">{failedRead ? `Can't read ${failedRead.name}` : "Test failed"}</Status>
-  ) : mine && worker ? (
-    "running"
   ) : null;
   const subtitle = (
     <>
@@ -209,7 +207,7 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
     onChanged();
   };
   const remove = async () => {
-    // this Mac's own record goes through the app (it stops answering and removes itself); the others are removed here
+    // this Mac's own record goes through the app (it stops and removes itself); the others are removed here
     const self = mine ? thisMacDevice() : undefined;
     if (mine) tell("forget");
     for (const r of records) if (r.id !== self) await removeDevice(r.id);
@@ -233,7 +231,7 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
                 destructive: true,
                 confirm: {
                   title: `Remove ${primary.name}?`,
-                  body: mine ? "This Mac stops answering your AI. The AI set up on it is removed too." : "The AI set up on it is removed too.",
+                  body: "The AI providers on it are removed too.",
                   ok: "Remove",
                 },
                 onSelect: remove,
@@ -248,37 +246,26 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
   );
 }
 
-/** This Mac's own switch: it pairs this Mac with the account, and then the app's AI jobs run on it. */
+/**
+ * This Mac's own switch: it adds this Mac to the account, and then the app's AI jobs run on it. Under this Mac's row
+ * once it is on the list; before that the switch is its only row (a row that could only name this Mac has no action).
+ */
 function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
   return (
     <Row
       id="use-this-mac"
-      title="Use this Mac for my AI"
-      description="Pairs this Mac with your account, so the AI jobs your AI runs can run on it."
+      title="AI on this Mac"
+      description="AI jobs can run on this Mac."
       status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
       control={
-        <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Use this Mac for my AI" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
+        <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="AI on this Mac" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
       }
     />
   );
 }
 
-/**
- * This Mac before it is on the list (not paired yet): its name and its switch. A Mac app from before it told the page
- * its name (0.7.2 and older) gets the switch alone: a row that could only say "This Mac · This Mac" names nothing, and
- * on a Mac that also runs the AI Editor's worker it reads as a second computer.
- */
-function ThisMacRow({ names, bridge }: { names: ThisMacNames; bridge: ThisMacState | null }) {
-  return (
-    <>
-      {names.computer && <ListRow icon={<Laptop className="size-4" />} title={names.computer} subtitle="This Mac" />}
-      <ThisMacSwitch bridge={bridge} />
-    </>
-  );
-}
-
-/** An old pairing (offline a day or more, no AI on it): what it is and when it was last seen; Remove in its menu. */
-function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: () => void }) {
+/** A computer of this account that has been offline a day or more and has no AI on it: when it was last seen; Remove in its menu. */
+function OfflineRow({ group, onChanged }: { group: ComputerGroup; onChanged: () => void }) {
   const { primary, records } = group;
   const lastSeen = Math.max(0, ...records.map((r) => r.lastSeen ?? 0));
   const remove = async () => {
@@ -289,7 +276,7 @@ function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: 
     <ListRow
       icon={<Laptop className="size-4" />}
       title={primary.name}
-      subtitle={`Mac app · Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}
+      subtitle={lastSeen ? `Last seen ${fmtAgo(lastSeen)}` : undefined}
       actions={
         <RowMenu
           label={`${primary.name} actions`}
@@ -297,7 +284,7 @@ function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: 
             {
               label: "Remove",
               destructive: true,
-              confirm: { title: `Remove ${primary.name}?`, body: "The Mac can pair again later.", ok: "Remove" },
+              confirm: { title: `Remove ${primary.name}?`, ok: "Remove" },
               onSelect: remove,
             },
           ]}
@@ -308,8 +295,8 @@ function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: 
 }
 
 /**
- * Add computer: the Mac app is the way that works today. In the Mac app, "Other ways" folds "I already have a server" (its
- * Servers page; a browser cannot list servers). The close X takes no focus on open.
+ * Add computer: the Mac app is the way that works today. In the Mac app, the Existing server row opens Add server on
+ * its Servers page (a browser cannot list servers). The close X takes no focus on open.
  */
 /** The one command a Linux computer runs: the server hands out the helper (public/helper) and the computer swaps the code for its token. */
 export const linuxCommand = (url: string, code: string) => `curl -fsSL ${url}/helper/install.sh | sh -s -- ${url} ${code}`;
@@ -330,7 +317,7 @@ function HelperDialog({ device, name, onClose }: { device: string; name: string;
 
 function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: boolean; onOpenChange: (o: boolean) => void; macApp: boolean; computers: Listed[] }) {
   const navigate = useNavigate();
-  // the computers there when it opened: one that shows up after is the new one, and its Help screen follows here
+  // the computers there when it opened: one added after is the new one, and its Help screen follows here
   const known = useRef<Set<string> | null>(null);
   useEffect(() => {
     known.current = open ? new Set(computers.map((c) => c.id)) : null;
@@ -353,7 +340,7 @@ function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: bo
     <SettingsDialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
-          <DialogTitle>Add a computer</DialogTitle>
+          <DialogTitle>Add computer</DialogTitle>
         </DialogHeader>
         <Tabs defaultValue="mac">
           <TabsList>
@@ -362,16 +349,14 @@ function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: bo
           </TabsList>
           <TabsContent value="mac" className="space-y-3 pt-2">
             <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-              <li>Install the Creator Toolset Mac app on the Mac that runs your AI.</li>
+              <li>Install the Creator Toolset Mac app on the Mac.</li>
               <li>Open it and sign in with this account.</li>
-              <li>Turn on Use this Mac for my AI. The Mac then shows up here.</li>
+              <li>Turn on AI on this Mac.</li>
             </ol>
             {macApp && (
-              <Advanced summary="Other ways">
+              <Card>
                 <Row
-                  className="px-0 sm:px-0"
-                  title="I already have a server"
-                  description="Its Creator Toolset runs on its own. Join it from Servers."
+                  title="Existing server"
                   control={
                     <Button
                       size="sm"
@@ -381,20 +366,18 @@ function AddComputerDialog({ open, onOpenChange, macApp, computers }: { open: bo
                         navigate("/settings/servers?add=1");
                       }}
                     >
-                      Open Servers
+                      Add server
                     </Button>
                   }
                 />
-              </Advanced>
+              </Card>
             )}
           </TabsContent>
           <TabsContent value="linux" className="pt-2">
             <LinuxSteps />
           </TabsContent>
         </Tabs>
-        <p className="text-xs text-muted-foreground">
-          Once it shows up, its setup continues here: the shared drives it needs and a test run.
-        </p>
+        <p className="text-xs text-muted-foreground">Setup continues here once the computer is added.</p>
       </DialogContent>
     </SettingsDialog>
   );
@@ -422,26 +405,15 @@ function LinuxSteps() {
     return () => window.clearTimeout(t);
   }, [code, mint]);
 
-  if (code === undefined) return <Card><LoadingRow title="Making a code…" /></Card>;
-  if (code === null) return <Card><ErrorRow title="Couldn't make a code" detail="Check the connection, then try again." retry={mint} /></Card>;
-  if (!code.url) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Another computer can't reach this one yet. In the Creator Toolset Mac app, turn on Access from other devices, then come back here.
-      </p>
-    );
-  }
-  const command = linuxCommand(code.url, code.code);
+  if (code === undefined) return <Card><LoadingRow title="Creating a code…" /></Card>;
+  if (code === null) return <Card><ErrorRow title="Could not create a code" detail="Check the connection, then try again." retry={mint} /></Card>;
+  // "Access from other devices" is the switch's name in the Mac app
+  if (!code.url) return <Status tone="attention">Needs Access from other devices, in the Creator Toolset Mac app</Status>;
   return (
     <div className="space-y-3 text-sm">
-      <p>Run this on the Linux computer, as the user it should run under. It installs the helper and pairs it with your account; the computer then shows up here and can run speech models for your transcripts.</p>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{command}</code>
-        <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(command)}>
-          Copy
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">The code {code.code} works once, for 10 minutes; then a new one appears here.</p>
+      <p>Run this on the Linux computer, as the user it should run under.</p>
+      <CopyBox text={linuxCommand(code.url, code.code)} />
+      <p className="text-xs text-muted-foreground">The code {code.code} works once, for 10 minutes.</p>
     </div>
   );
 }
@@ -520,45 +492,42 @@ function AddPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const { code, now } = p;
   let body;
   if (code === undefined || (isCode(code) && code.expiresAt <= now)) {
-    body = <Card><LoadingRow title="Making a code…" /></Card>;
+    body = <Card><LoadingRow title="Creating a code…" /></Card>;
   } else if (code === null) {
-    body = <Card><ErrorRow title="Couldn't make a code" detail="Check the connection, then try again." retry={p.retry} /></Card>;
+    body = <Card><ErrorRow title="Could not create a code" detail="Check the connection, then try again." retry={p.retry} /></Card>;
   } else if (code === "signin") {
-    body = <Status tone="attention">Sign in first. The code appears here after that.</Status>;
+    body = <Status tone="attention">Needs sign-in</Status>;
   } else if (code === "local") {
+    // titled with the switch's own name in the Mac app, where a person in a plain browser has to find it
     body = (
       <Card>
-        <div className="space-y-2.5 px-3 py-3 sm:px-4">
-          <p className="text-sm font-medium">Your phone can't reach this computer yet.</p>
-          <p className="text-xs text-muted-foreground">
-            {p.canTurnOn
-              ? "Turn on Access from other devices. You choose this computer's password once."
-              : "In the Creator Toolset Mac app, turn on Access from other devices, then come back here."}
-          </p>
-          {p.canTurnOn && (
-            <Button type="button" size="sm" variant="outline" disabled={p.turningOn} onClick={p.turnOn}>
-              Access from other devices
-            </Button>
-          )}
-          {p.problem && <Status tone="broken">{p.problem}</Status>}
-        </div>
+        <Row
+          title="Access from other devices"
+          description={p.canTurnOn ? "A phone reaches this computer only while it is on." : "Turn it on in the Creator Toolset Mac app."}
+          status={p.problem ? <Status tone="broken">{p.problem}</Status> : undefined}
+          control={
+            p.canTurnOn && (
+              <Button type="button" size="sm" variant="outline" disabled={p.turningOn} onClick={p.turnOn}>
+                Turn on
+              </Button>
+            )
+          }
+        />
       </Card>
     );
   } else {
     const { wifi, host } = phoneLine(code.url);
     body = (
       <div className="flex flex-col items-center gap-3 text-center">
-        <img src={code.qr} alt="QR code: scan it with your phone's camera" className="size-52 rounded-lg bg-white p-2" />
-        <p className="text-sm">{wifi ? "On the same Wi-Fi as this computer, scan it in the iPhone app or with the phone's camera." : `Scan it in the iPhone app or with the phone's camera. It opens ${host}.`}</p>
-        {code.expiresAt !== Infinity && (
-          <p className="text-xs text-muted-foreground">Scanning signs the phone in as you. The code works once; when it runs out, a new one appears here.</p>
-        )}
+        <img src={code.qr} alt="QR code" className="size-52 rounded-lg bg-white p-2" />
+        <p className="text-sm">{wifi ? "On the same Wi-Fi as this computer, scan it in the iPhone app or with the phone's camera." : `Scan it in the iPhone app or with the phone's camera to open ${host}.`}</p>
+        {code.expiresAt !== Infinity && <p className="text-xs text-muted-foreground">The code works once and signs the phone in to this account.</p>}
       </div>
     );
   }
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} title="Add your phone" submitLabel="New code" cancelLabel="Done" onSubmit={p.retry}>
+    <FormDialog open={open} onOpenChange={onOpenChange} title="Add phone" submitLabel="New code" cancelLabel="Close" onSubmit={p.retry}>
       {body}
     </FormDialog>
   );

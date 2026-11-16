@@ -6,9 +6,9 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, UserRound } from "lucide-react";
+import { UserRound } from "lucide-react";
 import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
-import { SIGN_IN_BUTTON, linkedOf, useMacAccount } from "@/components/setup/AccountStep";
+import { linkedOf, useMacAccount } from "@/components/setup/AccountStep";
 import { SignInCodeRow } from "@/components/SignInCode";
 import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 
@@ -49,7 +49,7 @@ export function signInReturn(search: string): { tone: "success" | "error"; text:
   const linked = params.get("linked");
   const signin = params.get("signin");
   if (signin) return { tone: "error", text: signin };
-  if (linked && linked in PROVIDER_NAME) return { tone: "success", text: `${PROVIDER_NAME[linked as Provider]} is linked to your account.` };
+  if (linked && linked in PROVIDER_NAME) return { tone: "success", text: `${PROVIDER_NAME[linked as Provider]} sign-in added` };
   return null;
 }
 
@@ -78,7 +78,7 @@ export function useSignInApps(): Record<Provider, boolean> | null {
   return data ?? (error ? NO_SIGN_INS : null);
 }
 
-/** Settings → Account: the photo, name, sign-in name and password; the connected accounts (Google, Apple, GitHub); sign out. */
+/** Settings → Account: the name, sign-in name and password; the sign-ins (Google, Apple, GitHub); sign out of this server. */
 export function AccountSection() {
   const me = useAuth((s) => s.me);
   const required = useAuth((s) => s.required);
@@ -124,7 +124,7 @@ export function AccountSection() {
     return (
       <Section title="Profile">
         <Card>
-          <EmptyRow title="This computer has no account" />
+          <EmptyRow title="No account on this computer" />
         </Card>
       </Section>
     );
@@ -133,8 +133,6 @@ export function AccountSection() {
   if (!account || !providers) return <LoadingRow />;
 
   const linkable = PROVIDERS.filter((p) => providers[p]);
-  const shownName = account.name || account.username;
-  const photo = account.signins.find((s) => s.picture);
   const saved = (name: string) => {
     setAccount((a) => ({ ...a, name }));
     useAuth.getState().setAuth(required, { ...me, name: name || me.username });
@@ -144,9 +142,6 @@ export function AccountSection() {
     <>
       <Section title="Profile">
         <Card>
-          {photo?.picture && (
-            <Row id="photo" title="Photo" description={`From ${PROVIDER_NAME[photo.provider]}`} control={<AccountAvatar picture={photo.picture} initial={shownName.charAt(0)} className="size-10" />} />
-          )}
           <NameRow name={account.name} username={account.username} onSaved={saved} />
           {required && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => ({ ...a, login }))} />}
           {required && <PasswordRow />}
@@ -154,7 +149,7 @@ export function AccountSection() {
         </Card>
       </Section>
 
-      <ConnectedAccounts
+      <SignIns
         signins={account.signins.filter((x) => linkable.includes(x.provider))}
         open={linkable.filter((p) => !account.signins.some((x) => x.provider === p))}
         unlink={async (p) => {
@@ -167,7 +162,7 @@ export function AccountSection() {
       {required && (
         <Section title="Session">
           <Card>
-            <Row id="sign-out" title="This device" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
+            <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
           </Card>
         </Section>
       )}
@@ -178,14 +173,16 @@ export function AccountSection() {
 const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS as string[]).includes(p);
 
 /**
- * Connected accounts: each sign-in this account has, with the provider's mark, who it is there and its own menu, then
- * a Continue with … button (the provider's mark) for each one still open. On a server with sign-in set up they are the account's linked sign-ins
- * (Unlink; a Continue with … button links another). In the Mac app it is also the Creator Toolset account this Mac is signed in
- * to (Sign out; its button signs in, only for a sign-in the Mac app offers), with the sign-ins linked to that account
- * (Unlink) and a Continue with … button that links one more to it. Nothing connected and nothing to
- * connect means no section at all, so it is never a dead row.
+ * Sign-ins: each sign-in this account has, with the provider's mark, who it is there and its own menu, then a row with
+ * Add for each one still open. On a server with sign-in set up they are the account's own sign-ins (Disconnect; Add
+ * brings in another). The server lists a provider only where it runs sign-ins (GET /api/account/providers: none off a
+ * hosted server), and only a listed provider's sign-in has a row, so Disconnect is never offered where the server's
+ * route refuses it (api/auth.ts DELETE /identity/:provider). In the Mac app it is also the Creator Toolset account the
+ * Mac app is signed in to (Sign out of the Mac app; its button signs in, only for a sign-in the Mac app offers), with
+ * that account's other sign-ins (Disconnect) and Add for one more. Nothing there and nothing to add means no section
+ * at all, so it is never a dead row.
  */
-function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
+function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
   const mac = useMacAccount({ first: "offered" });
   const macIn = mac.account.state === "signedIn" ? mac.account : null;
   const macLinked = linkedOf(mac.account);
@@ -204,7 +201,7 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
     <span className="text-foreground">{p ? <ProviderMark provider={p} className="size-4" /> : <UserRound className="size-4" />}</span>
   );
   return (
-    <Section id="sign-in-with" title="Connected accounts">
+    <Section id="sign-in-with" title="Sign-ins">
       <Card>
         {signins.map((s) => (
           <ListRow
@@ -214,8 +211,8 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
             subtitle={[s.name, s.email].filter(Boolean).join(" · ") || undefined}
             actions={
               <RowMenu
-                label={`More for ${PROVIDER_NAME[s.provider]}`}
-                items={[{ label: "Unlink", destructive: true, confirm: { title: `Unlink ${PROVIDER_NAME[s.provider]} from your account?`, body: "You can link it again any time.", ok: "Unlink" }, onSelect: () => unlink(s.provider) }]}
+                label={`${PROVIDER_NAME[s.provider]} actions`}
+                items={[{ label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[s.provider]}?`, ok: "Disconnect" }, onSelect: () => unlink(s.provider) }]}
               />
             }
           />
@@ -225,7 +222,7 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
             icon={mark(isProvider(macIn.provider) ? macIn.provider : undefined)}
             title={isProvider(macIn.provider) ? PROVIDER_NAME[macIn.provider] : "Creator Toolset account"}
             subtitle={[macIn.name, macIn.email].filter(Boolean).join(" · ") || undefined}
-            actions={<RowMenu label="More for this account" items={[{ label: "Sign out", onSelect: async () => mac.signOut() }]} />}
+            actions={<RowMenu label="Creator Toolset account actions" items={[{ label: "Sign out of the Mac app", onSelect: async () => mac.signOut() }]} />}
           />
         )}
         {macIn &&
@@ -237,28 +234,37 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
               subtitle={l.email || undefined}
               actions={
                 <RowMenu
-                  label={`More for ${PROVIDER_NAME[l.provider]}`}
-                  items={[{ label: "Unlink", destructive: true, confirm: { title: `Unlink ${PROVIDER_NAME[l.provider]} from your account?`, body: "You can link it again any time.", ok: "Unlink" }, onSelect: () => mac.unlink(l.provider) }]}
+                  label={`${PROVIDER_NAME[l.provider]} actions`}
+                  items={[{ label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[l.provider]}?`, ok: "Disconnect" }, onSelect: () => mac.unlink(l.provider) }]}
                 />
               }
             />
           ))}
-        {(open.length > 0 || macOpen.length > 0) && (
-          <div className="flex flex-col gap-2 p-2 sm:flex-row">
-            {open.map((p) => (
-              <a key={`link-${p}`} href={`/api/account/login/${p}?for=link`} className={cn(SIGN_IN_BUTTON, "sm:flex-1")}>
-                <ProviderMark provider={p} className="size-4 shrink-0" />
-                <span>Continue with {PROVIDER_NAME[p]}</span>
-              </a>
-            ))}
-            {macOpen.map((p) => (
-              <button key={`mac-${p}`} type="button" disabled={!!mac.busy} onClick={() => (macIn ? mac.link(p) : mac.signIn(p))} className={cn(SIGN_IN_BUTTON, "sm:flex-1", mac.busy && mac.busy !== p && "opacity-50")}>
-                {mac.busy === p ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ProviderMark provider={p} className="size-4 shrink-0" />}
-                <span>{mac.busy === p ? "Signing in…" : `Continue with ${PROVIDER_NAME[p]}`}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        {open.map((p) => (
+          <ListRow
+            key={`link-${p}`}
+            icon={mark(p)}
+            title={PROVIDER_NAME[p]}
+            actions={
+              <Button size="sm" variant="outline" asChild>
+                <a href={`/api/account/login/${p}?for=link`} aria-label={`Add ${PROVIDER_NAME[p]}`}>Add</a>
+              </Button>
+            }
+          />
+        ))}
+        {macOpen.map((p) => (
+          <ListRow
+            key={`mac-${p}`}
+            icon={mark(p)}
+            title={PROVIDER_NAME[p]}
+            actions={
+              // signed in to the account already: this sign-in is added to it; else it signs the Mac app in
+              <Button size="sm" variant="outline" disabled={!!mac.busy} aria-label={`${macIn ? "Add" : "Sign in with"} ${PROVIDER_NAME[p]}`} onClick={() => (macIn ? mac.link(p) : mac.signIn(p))}>
+                {mac.busy === p ? "Signing in…" : macIn ? "Add" : "Sign in"}
+              </Button>
+            }
+          />
+        ))}
       </Card>
     </Section>
   );
@@ -314,7 +320,7 @@ function NameRow({ name, username, onSaved }: { name: string; username: string; 
           />
         }
       />
-      <FormDialog open={open} onOpenChange={setOpen} title="Name" submitLabel="Save name" busy={busy} error={error} onSubmit={save}>
+      <FormDialog open={open} onOpenChange={setOpen} title="Name" submitLabel="Save" busy={busy} error={error} onSubmit={save}>
         <Input aria-label="Name" value={value} maxLength={60} placeholder={username} onChange={(e) => setValue(e.target.value)} autoFocus />
       </FormDialog>
     </>
@@ -322,7 +328,7 @@ function NameRow({ name, username, onSaved }: { name: string; username: string; 
 }
 
 /**
- * The name typed at sign-in (PATCH /api/account-profile). A new one moves no files: the username stays the id. The
+ * The name typed at sign-in (PATCH /api/account-profile). The username stays the id. The
  * current password is asked, as the password change asks it; the server checks it and changes nothing when it is wrong.
  */
 function SignInNameRow({ login, onSaved }: { login: string; onSaved: (login: string) => void }) {
@@ -370,8 +376,7 @@ function SignInNameRow({ login, onSaved }: { login: string; onSaved: (login: str
         open={open}
         onOpenChange={setOpen}
         title="Sign-in name"
-        description="You sign in with this name from now on. Your files stay where they are."
-        submitLabel="Save sign-in name"
+        submitLabel="Save"
         submitDisabled={!value.trim() || !!problem || !password}
         busy={busy}
         error={error}
@@ -412,7 +417,7 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
       });
       const d = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw failure(r, d);
-      toast.success("Password changed. Other devices are signed out.");
+      toast.success("Password changed");
       setCurrent("");
       setNext("");
       onClose();
@@ -426,9 +431,9 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
     <FormDialog
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title="Change password"
-      description="Your other devices sign in again with the new one."
-      submitLabel="Change password"
+      title="Password"
+      description="Signs this account out everywhere else."
+      submitLabel="Save"
       busy={busy}
       error={error}
       onSubmit={submit}
