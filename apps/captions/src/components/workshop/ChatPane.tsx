@@ -755,15 +755,17 @@ export function ChatPane({
             onRemoveQuote={(id) => onUnquote?.(id)}
             onAddQuote={(q) => onQuote?.(q)}
           />}
-          <div className="flex items-center justify-end gap-1.5">
-          {v.recording ? <VoiceDone v={v} /> : <>
+          <div className="flex items-center gap-1.5">
+          {v.recording ? <span className="ml-auto flex items-center gap-1.5"><VoiceDone v={v} /></span> : <>
           <button type="button" onClick={() => pickRef.current?.click()} className={cn(ICON_BTN, "text-muted-foreground hover:bg-muted hover:text-foreground")} title="Attach pictures, text files or PDFs" aria-label="Attach files">
             <Paperclip className="h-4 w-4" />
           </button>
           <MicButton v={v} />
+          <span className="ml-auto flex min-w-0 items-center gap-1.5">
           {aiChip}
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
           <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
+          </span>
           </>}
           </div>
         </div>}

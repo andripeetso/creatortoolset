@@ -206,8 +206,15 @@ export function Composer({
       )}
 
       <div
-        className={boxClass(recording)}
+        // The field gets the whole width; its buttons sit on a row under it: attach on the left, the model and Send on the right.
+        className={cn(boxClass(recording), "cursor-text flex-col items-stretch gap-1 pl-1.5")}
         onKeyDown={(e) => recording && e.key === "Escape" && voice.cancel()}
+        onMouseDown={(e) => {
+          // a click on the box's padding or the button row's gaps puts you in the field
+          if ((e.target as HTMLElement).closest("button, textarea, [role=menu]")) return;
+          e.preventDefault();
+          box.current?.focus();
+        }}
       >
         {recording || writing ? (
           <VoiceStatus v={v} />
@@ -221,12 +228,15 @@ export function Composer({
             onPaste={(e) => onPaste(e.clipboardData) && e.preventDefault()}
             placeholder="Message"
             aria-label="Message the assistant"
-            className="max-h-40 min-h-8 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 outline-none placeholder:text-muted-foreground/70"
+            className="max-h-40 min-h-8 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 outline-none placeholder:text-muted-foreground/70"
           />
         )}
 
+        <div className="flex items-center gap-1.5">
         {recording ? (
-          <VoiceDone v={v} />
+          <span className="ml-auto flex items-center gap-1.5">
+            <VoiceDone v={v} />
+          </span>
         ) : (
           <>
             <input
@@ -283,10 +293,13 @@ export function Composer({
               </button>
             )}
             <MicButton v={v} />
-            {aiPicker}
-            <SendButton empty={empty} waiting={waiting} blocked={uploading ? "Uploading the video" : undefined} disabled={writing} onSend={send} onStop={onStop} />
+            <span className="ml-auto flex min-w-0 items-center gap-1.5">
+              {aiPicker}
+              <SendButton empty={empty} waiting={waiting} blocked={uploading ? "Uploading the video" : undefined} disabled={writing} onSend={send} onStop={onStop} />
+            </span>
           </>
         )}
+        </div>
       </div>
       {bigPicture && <PictureOverlay src={bigPicture} onClose={() => setBigPicture(null)} />}
     </div>
