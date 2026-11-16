@@ -11,13 +11,15 @@ import { deviceOf } from "../../api/lib/devices";
 import { instanceIn } from "../../api/lib/providers";
 import { announce } from "../../api/lib/sync";
 import { inJob } from "../../api/lib/workshop/job";
+import { currentWorkspaceId } from "../../api/lib/workspace-scope";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { bumpUsage, type SessionUser } from "../../api/users";
 import { addDraft, draftFrom, draftRequest, ownedSession, workshopAi, type DraftAnswer } from "../../api/workshop";
 
 // Compare: Generate draft's own request (draftRequest in api/workshop.ts) sent to two of the person's AIs at once, shown
 // as A and B in a random order with no AI named, until they pick one (it becomes the session's draft: addDraft) or
-// neither. Each account's compares and picks are one file under the plug-in's data folder.
+// neither. Each account's compares and picks are one file under the plug-in's data folder. A pick keeps the workspace it
+// was made in, so Settings can count one workspace's picks.
 
 /** The picks kept per account, newest first: the counts in Settings are theirs. */
 export const PICKS_MAX = 500;
@@ -50,6 +52,8 @@ interface Pick {
   instance: string;
   model: string;
   name: string;
+  /** the workspace it was made in; none on a pick from before picks kept one, or by a person with no workspace */
+  workspace?: string;
 }
 interface Store {
   compares: Compare[];
@@ -220,6 +224,7 @@ app.post("/sessions/:id/pick", async (c) => {
   const side = body?.side === "A" || body?.side === "B" ? body.side : body?.side === null ? null : undefined;
   if (side === undefined) return c.json({ error: "Pick A, B or neither" }, 400);
   const live = running.has(`${user.username}:${meta.id}`);
+  const workspace = await currentWorkspaceId(user);
   const out = await update(user.username, async (s) => {
     const cmp = s.compares.find((x) => x.sessionId === meta.id);
     if (!cmp) return { error: "Not found", status: 404 as const };
@@ -230,7 +235,7 @@ app.post("/sessions/:id/pick", async (c) => {
     if (chosen) {
       // as Generate draft's own save: the session's open pages hear of it
       await inJob([meta.owner, user.username], () => addDraft(meta, cmp.draft, chosen.out!, cmp.projectId), meta.id);
-      s.picks.unshift({ at: Date.now(), kind: cmp.draft.kind, instance: chosen.ai.instance, model: chosen.ai.model, name: chosen.name });
+      s.picks.unshift({ at: Date.now(), kind: cmp.draft.kind, instance: chosen.ai.instance, model: chosen.ai.model, name: chosen.name, ...(workspace ? { workspace } : {}) });
     }
     cmp.picked = side ?? "neither";
     // the picked draft is in the session now; the other is thrown away
@@ -240,10 +245,17 @@ app.post("/sessions/:id/pick", async (c) => {
   return "error" in out ? c.json({ error: out.error }, out.status) : c.json(out);
 });
 
-/** Settings: how many times each AI was picked, per kind of writing, over the picks kept. */
+/**
+ * Settings: how many times each AI was picked, per kind of writing, over the picks kept: the ones made in the workspace
+ * this request works in, or with ?all=1 (and for a person with no workspace) every pick. A pick from before picks kept
+ * their workspace counts only among all of them.
+ */
 app.get("/tally", async (c) => {
+  const user = c.get("user");
+  const workspace = c.req.query("all") === "1" ? undefined : await currentWorkspaceId(user);
   const rows = new Map<string, { name: string; model: string; counts: Partial<Record<DraftKind, number>> }>();
-  for (const p of [...(await read(c.get("user").username)).picks].reverse()) {
+  for (const p of [...(await read(user.username)).picks].reverse()) {
+    if (workspace && p.workspace !== workspace) continue;
     const key = `${p.instance}\n${p.model}`;
     const row = rows.get(key) ?? { name: p.name, model: p.model, counts: {} };
     row.name = p.name; // its newest name
@@ -256,7 +268,7 @@ app.get("/tally", async (c) => {
 export default definePlugin({
   id: "compare",
   name: "Compare",
-  about: "Two of your AIs write the same draft, names hidden until you pick one.",
+  about: "Two AI providers write the same draft, names hidden until one is picked.",
   kind: "workshop",
   gates: { ids: ["compare"], defaultOff: ["compare"] },
   routes: app,
