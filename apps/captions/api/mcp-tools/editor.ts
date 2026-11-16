@@ -154,7 +154,7 @@ export const editorTools: ToolModule = {
         note:
           e.queued === true
             ? `The next version is being ${spoken ? "cut with" : "made from the last one with"} these notes; the chat says when it is in Review, so end your reply rather than wait.`
-            : "Kept. The edit is being made now: that run reads it.",
+            : "Kept. The edit is being made now: these notes go into this run when its plan isn't written yet, else into the next version, made when this run is done. The chat says when it is in Review, so end your reply rather than wait.",
         link: linkOf(ctx, e),
       };
     },

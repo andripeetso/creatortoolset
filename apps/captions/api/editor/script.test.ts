@@ -110,6 +110,8 @@ describe("AI Editor script: the prompt", () => {
     const plain = scriptPrompt(input);
     expect(scriptPrompt({ ...input, packText: "" })).toEqual(plain);
     expect(scriptPrompt({ ...input, notes: [] })).toEqual(plain);
+    // the last version is read only with notes
+    expect(scriptPrompt({ ...input, last: [{ name: "v1", title: "Short", lines: [{ id: "L1", text: "We teach rolls", take: { first: 1, last: 1 } }] }] })).toEqual(plain);
     expect(scriptPrompt({ ...input, packText: "PACK-SCRIPT-ZQ" }).system).toBe(`${plain.system}\n\nPACK-SCRIPT-ZQ`);
   });
 });
@@ -154,6 +156,27 @@ describe("AI Editor script: the step", () => {
       'What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n- In chat about v1: "Too slow at the start.\\nOpen on the question."\n- In Review on v1 at 4.0 s: "Cut the \\"um\\" here"\n\nSources:',
     );
     await saveEdit({ ...readEdit(editId)!, feedback: [] });
+  });
+
+  it("with notes, starts from the last version: its lines with the takes they have, and what the notes don't speak to stays", async () => {
+    const ask = async (feedback: { at: number; from: "chat"; variant: string; text: string; by: string }[]) => {
+      await saveEdit({ ...readEdit(editId)!, feedback });
+      let user = "";
+      vi.mocked(aiFor).mockReturnValueOnce({ only: ["anthropic"], apiKey: "test", mac: { label: "AI Editor script" } });
+      vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, u, _c, parse) => ((user = u), parse(JSON.stringify(answer))));
+      expect(await runScript()).toEqual({ state: "done", error: null });
+      return user;
+    };
+    const user = await ask([{ at: 1, from: "chat", variant: "v1", text: "Open on the question.", by: "mem-a" }]);
+    // both versions as they are now, each line with the take it was cut from, after the sentences
+    expect(user).toContain(
+      'sentence 6\n\nThe last versions, line by line (each with the take it has, first..last):\nv1 "Short":\n  L1, take 1..1: We teach rolls\n  L2, take 2..3: Join the class\nv2 "Reversed":\n  L2, take 5..6: Join the class\n  L1, take 4..4: We teach rolls\n\nMake the next version from the last one and change what the notes speak to, nothing else: a line the notes don\'t speak to stays as it is',
+    );
+    expect(user.endsWith("write all of its lines new.")).toBe(true);
+    // no notes: every take is picked from the sentences alone, as a first script is
+    const first = await ask([]);
+    expect(first).not.toContain("The last version");
+    expect(first.endsWith("sentence 6")).toBe(true);
   });
 
   it("with no AI route parks as needs_key with aiFor's own message", async () => {

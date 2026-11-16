@@ -14,7 +14,7 @@ import { scriptThrew } from "./cards/device";
 import { editStopped, runEnded } from "./ended";
 import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
 import { passesDone } from "./passes";
-import { purgeEdits, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "./store";
+import { purgeEdits, queueVersion, readDraft, readEdit, saveStep, sourcesWorkspace, unreadNote, type EditMeta } from "./store";
 
 export type { StepContext } from "./engine";
 
@@ -58,10 +58,16 @@ export function releaseRunningSteps(now = Date.now()): void {
   for (const id of running.keys()) defer(libraryDb(), id, 0, now, T);
 }
 
-/** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
+/**
+ * Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue
+ * previews). When that leaves nothing of the edit queued or running, the run is over: a note from chat that no script
+ * or plan step read (sent while this run was being made) then makes the next version, as a note sent to an idle edit
+ * does (routes.ts). That version's script reads it, so it is asked for once.
+ */
 function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
   const due = job.kind === "preview" && !!readDraft(edit.id, variant)?.due;
   if (variant || job.kind !== "draft") for (const kind of nextFor(job.kind, edit, NEXT, passesDone(edit.id, variant), due)) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
+  if (unreadNote(edit.id) && !db.prepare(`SELECT 1 FROM ${T} WHERE edit_id = ? AND state IN ('queued', 'running')`).get(edit.id)) queueVersion(edit);
 }
 
 /** "<editId>:<variant>" split: the variant is "" for a whole-edit step. */
@@ -126,6 +132,9 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
   try {
     await step({ edit, job, variant, signal: ctl.signal });
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
+    // the notes this script or plan was written with are the ones the edit held when the step began: a note from chat
+    // sent since is unread, and makes the next version when the run ends (queueNext)
+    if (job.kind === "script") await saveStep(edit.id, "read", { at: Math.max(0, ...(edit.feedback ?? []).filter((n) => n.from === "chat").map((n) => n.at)) });
     finishJob(db, job.id, true, undefined, Date.now(), T);
     queueNext(db, job, edit, variant);
   } catch (e) {
