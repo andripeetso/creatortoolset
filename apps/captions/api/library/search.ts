@@ -3,7 +3,7 @@ import { turnVersion } from "./turn";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "../auth";
-import type { AssetDetail, PictureSignal, SearchHit, SearchQuery, StretchLines } from "../../contracts/library";
+import type { AssetDetail, SearchHit, SearchQuery, StretchLines } from "../../contracts/library";
 import { deviceEmbedStatus } from "../lib/device-embed";
 import { env, hostedMode } from "../lib/env";
 import type { SessionUser } from "../users";
@@ -18,8 +18,10 @@ import { filterClauses } from "./query";
 import { readerOf, viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
-import { ratedLine, shotsOf } from "./look";
-import { setUserLine, storeLines, storeStretches, stretchesOf, type StretchLine } from "./stretches";
+import { ratedLine } from "./look";
+import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
+// the studio plug-in reads it from here (it lived here before stretches.ts)
+export { parseSignal } from "./stretches";
 
 /**
  * Search, one asset in full, re-running jobs, and opening a clip in Caption Studio (tasks/media-library-plan.md,
@@ -318,21 +320,6 @@ async function writableVersion(c: Ctx): Promise<{ versionId: string; duration: n
   return { versionId, duration: Number((JSON.parse(v.probe ?? "null") as { duration?: number } | null)?.duration) || 0 };
 }
 
-/** Frames read a second, and the most frames a picture may send (six hours at 30 a second). */
-const MAX_SIGNAL_FRAMES = 6 * 3600 * 30;
-const nums = (x: unknown, n: number) => Array.isArray(x) && x.length === n && x.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
-
-/** A picture as numbers, checked (contracts PictureSignal): the same count of each, finite and not negative. */
-export function parseSignal(body: unknown): PictureSignal | string {
-  const b = (body ?? {}) as Record<string, unknown>;
-  const fps = Number(b.fps);
-  if (!Number.isFinite(fps) || fps < 1 || fps > 120) return "fps must be between 1 and 120";
-  const n = Array.isArray(b.step) ? b.step.length : -1;
-  if (n < 1 || n > MAX_SIGNAL_FRAMES) return `step must hold 1 to ${MAX_SIGNAL_FRAMES} frames`;
-  if (!nums(b.step, n) || !nums(b.cut, n) || !nums(b.lag, n)) return "step, cut and lag must be as long as each other, of numbers 0 or more";
-  return { fps, step: b.step as number[], cut: b.cut as number[], lag: b.lag as number[] };
-}
-
 // POST /api/library/:id/versions/:versionId/picture PictureSignal → { stretches: [{ seg, a, b, motion }] }: a video's
 // picture read on another computer (look.ts readPicture's numbers). The server finds the stretches the way it does for
 // a file it reads itself (shotsOf), stores them with no line yet (the AI's earlier rows go; the person's own lines
@@ -342,10 +329,7 @@ searchApp.post("/:id/versions/:versionId/picture", async (c) => {
   if (!v) return notFound(c);
   const x = parseSignal(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
-  const read = { fps: x.fps, step: Float32Array.from(x.step), cut: Float32Array.from(x.cut), lag: Float32Array.from(x.lag) };
-  const found = shotsOf(read, v.duration || x.step.length / x.fps);
-  storeStretches(db(), v.versionId, found);
-  return c.json({ stretches: found.map((s, seg) => ({ seg, a: s.a, b: s.b, motion: s.motion })) });
+  return c.json({ stretches: takeSignal(db(), v.versionId, v.duration, x) });
 });
 
 // POST /api/library/:id/versions/:versionId/stretches StretchLines → { saved }: the lines another computer's look wrote

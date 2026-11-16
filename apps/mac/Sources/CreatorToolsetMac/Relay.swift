@@ -357,7 +357,11 @@ final class RelayRunner {
 
     /// The kinds this Mac takes, under `lock`: a cut-out and a split on any Mac, cards on one that can shut a card's
     /// script in, a transcript with a speech model when it has the link to them.
-    private var takes: [String] { (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind, helperCheckKind] + (speech == nil ? [] : [transcribeKind]) }
+    /// Shot descriptions of this Mac's own files need the app's ffmpeg (a build with its server).
+    private var takes: [String] {
+        (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind, helperCheckKind] + (speech == nil ? [] : [transcribeKind])
+            + (HelperCheckJob.ffmpeg == nil ? [] : [libraryLookKind])
+    }
 
     private func takeAnnounce() -> Bool {
         lock.lock()
@@ -461,6 +465,9 @@ final class RelayRunner {
                 (end, more) = FolderListJob(api: api, step: step).run()
             } else if step.kind == helperCheckKind {
                 (end, more) = HelperCheckJob(api: api, step: step, report: { [api, home] in _ = try? api.call("POST", "/api/devices/relay/report", macReport(home: home), tries: 2) }).run()
+            } else if step.kind == libraryLookKind {
+                startLook(step)
+                (end, more) = (.done, false)
             } else {
                 if !shown { shown = true; publish { $0.drawing = true } }
                 (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
@@ -477,6 +484,18 @@ final class RelayRunner {
         if cannot { cannotDraw = true }
         lock.unlock()
         if shown { publish { $0.drawing = false } }
+    }
+
+    /// Shot descriptions of a file on this Mac (LibraryLookJob.swift) run on a thread of their own: reading a whole video
+    /// takes minutes, and the other steps (a folder listing the assistant waits on, a transcript) go on meanwhile. The
+    /// server hands this Mac one at a time and wakes its long poll for the next (mac-look.ts).
+    private func startLook(_ step: EditorJob) {
+        let thread = Thread { [self] in
+            let job = LibraryLookJob(api: api, step: step, folder: work.appendingPathComponent("looks"), stopped: { [weak self] in self?.isStopped ?? true })
+            if case .failed(let why) = job.run().end { AppLog.write("shot descriptions: step \(step.id) failed: \(why)") }
+        }
+        thread.qualityOfService = .utility
+        thread.start()
     }
 
     /// the Mac relay run(): one request, answered through the four routes.
