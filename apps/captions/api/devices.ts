@@ -9,7 +9,8 @@ import { LOAD_PREFERENCES, type Device } from "../contracts/providers";
 import { CUTOUT_KIND, FOLDER_LIST_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
-import { fitsFor, footageFor } from "./editor/reach";
+import { fitsFor, footageFor, heldCopy } from "./editor/reach";
+import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "./lib/balance";
@@ -141,6 +142,14 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const why = typeof b?.error === "string" && b.error ? b.error : "The device could not run this step";
   return c.json(await ended(d, failForDevice(d.id, jobId(c), why)));
+});
+// a step's file from the server's copy (contracts/devices.ts DeviceFootage `copy`): only to the device that holds the step,
+// and only what the server already keeps (nothing is uploaded for it)
+devicesApp.get("/relay/editor/job/:id/footage/:version", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const key = heldCopy(d.id, jobId(c), c.req.param("version"));
+  return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 // a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
 devicesApp.get("/relay/editor/job/:id/cards", (c) => {

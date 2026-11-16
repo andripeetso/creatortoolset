@@ -15,12 +15,13 @@ const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { pairDevice, devicesSaved, setDeviceKinds } = await import("../lib/devices");
 const { registerDeviceKinds } = await import("./engine");
+const { blobs } = await import("../library/db");
 const { fileFor, rankOf } = await import("./reach");
 
 const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
 const post = (token: string, url: string, body: unknown) =>
   app.request(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
-const claim = (token: string, kinds: string[]) => json<{ job: { kind: string; editId: string; footage?: unknown } | null }>(post(token, "/api/devices/relay/editor/claim", { kinds }));
+const claim = (token: string, kinds: string[]) => json<{ job: { id: number; kind: string; editId: string; footage?: unknown } | null }>(post(token, "/api/devices/relay/editor/claim", { kinds }));
 
 const row = (r: Partial<FileRow>): FileRow => ({ id: "v", source_key: "k", source_path: null, mac_path: null, mac_device: null, proxy: null, ...r });
 
@@ -110,5 +111,21 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     enqueueJob(libraryDb(), "maker", `${other}:v1`, "reach-render", "maker", false, "edit_jobs");
     // the laptop is busy with v3, so the PC takes it, reading the file where it is on its own disk
     expect((await claim(strong.token, ["reach-render"])).job).toMatchObject({ editId: other, footage: [{ id: "ver_r2", path: "/mnt/footage/Shoot 1/b.mp4" }] });
+  });
+  it("a computer that takes a step from the server's copy downloads it, and only the one holding the step can", async () => {
+    const key = "libraries/lib_r/ver_r1/source.mp4";
+    const file = path.join(dir, "take1.mp4");
+    writeFileSync(file, "take one");
+    await blobs.put(key, file);
+    libraryDb().exec(`UPDATE asset_versions SET source_key = '${key}' WHERE id = 'ver_r1'; UPDATE edit_jobs SET state = 'done', device = NULL WHERE device = '${strong.device.id}'`);
+    enqueueJob(libraryDb(), "maker", `${editId}:v4`, "reach-render", "maker", false, "edit_jobs");
+    const job = (await claim(strong.token, ["reach-render"])).job!;
+    expect(job.footage).toEqual([{ id: "ver_r1", copy: "original" }]);
+    const get = (token: string, version: string) => app.request(`/api/devices/relay/editor/job/${job.id}/footage/${version}`, { headers: { authorization: `Bearer ${token}` } });
+    const got = await get(strong.token, "ver_r1");
+    expect(got.status).toBe(200);
+    expect(await got.text()).toBe("take one");
+    expect((await get(weak.token, "ver_r1")).status).toBe(404);
+    expect((await get(strong.token, "ver_r2")).status).toBe(404);   // not this step's file
   });
 });

@@ -82,6 +82,14 @@ export async function footageFor(d: Pick<Device, "id" | "owner">, editId: string
   });
 }
 
+/** The key of the server copy of `versionId` that device `device` may fetch for step `jobId` it holds (the copy fileFor
+ *  named): the video file when the server has it, else its proxy. Null when the step or the file is not its own. */
+export function heldCopy(device: string, jobId: number, versionId: string): string | null {
+  const job = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(jobId, device) as Pick<JobRow, "version_id"> | undefined;
+  const r = job && editFiles(editOf(job)).find((f) => f.id === versionId);
+  return !r ? null : !r.source_key.startsWith("mac:") ? r.source_key : r.proxy;
+}
+
 /** The same window as isOnline (lib/devices.ts). */
 const ONLINE_MS = 40_000;
 
