@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { Music, Quote, Search, Trash2, Upload } from "lucide-react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { MoreHorizontal, Music, Quote, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
-import { BrowseBar, NewFolderButton, TrashLink } from "@/components/browse/Bar";
+import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { askFolderName, askRename } from "@/components/browse/browse";
 import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Folder";
 import { FolderGrid } from "@/components/browse/Grid";
@@ -13,6 +13,7 @@ import { persistSort, storedSort } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
@@ -52,7 +53,7 @@ import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trai
 import { ClipShare } from "./library/ClipShare";
 import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
 import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
-import { LibrarySettings } from "./library/LibrarySettings";
+import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { useImportQuestion, type ImportLook } from "./library/Import";
 import { useOrganize } from "./library/Organize";
@@ -65,14 +66,15 @@ import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll 
 import { LibrarySidebar, SidebarSheet, sidebarPicked, SORTS } from "./library/Sidebar";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, type Tab } from "./library/Tabs";
-import { CardSizeSlider, cardColumns, LibraryViewSwitch, useCardSize, useLibraryView } from "./library/views";
+import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./library/views";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage. An empty library is this same page,
  * with what it is for and the folder to choose (FootageFolderCard) in place of the grid (the first upload's dialog asks
  * how to sort the files, ./library/Organize.tsx); a drop anywhere on it adds files and folders (./library/LibraryDrop.tsx).
  * Left: the sidebar (./library/Sidebar.tsx: sort, when, where, tags, kinds, a plug-in's own filters; a sheet on a
- * narrow window). Above the grid: the page's own row (search, the view, settings, Trash, New folder, Upload), then the
+ * narrow window). Above the grid: the page's own row (left: search, View with the layout and card size, More with Library
+ * settings and the Trash; right: New folder and Upload), then the
  * tabs (./library/Tabs.tsx: All, A-roll, B-roll, Photos, the top-level folders), each a place to drop clips on. Three
  * views (./library/views.tsx): Folders (the folder cards, components/browse/, then the clips in none), Gallery (only the
  * clips, ./library/Gallery.tsx) and List. `?f=` opens a folder, `?trash=1` the Trash. Search looks in the whole library
@@ -114,6 +116,7 @@ export default function LibraryPage() {
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORT_IDS));
   const [view, setView] = useLibraryView();
   const [cardSize, setCardSize] = useCardSize();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const columns = cardSize === null ? undefined : cardColumns(cardSize);
   const navigate = useNavigate();
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
@@ -893,31 +896,64 @@ export default function LibraryPage() {
               {(trash || (open && (!tabbed || trail.length > 1))) && (
                 <FolderTrail state={{ open: trash ? "trash" : open, trail, to: folderTo }} top={library.name} />
               )}
-              <BrowseBar search={{ value: q, onChange: setQ, placeholder: "Search clips and what is said" }}>
-                {canSave && (
-                  <Button size="sm" variant="ghost" className="h-8" onClick={() => void saveSearch()}>
-                    <Search className="h-4 w-4" />
-                    Save this search as a folder
-                  </Button>
-                )}
-                {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
-                {view !== "list" && <CardSizeSlider size={cardSize} onChange={setCardSize} />}
-                <LibraryViewSwitch view={view} onChange={setView} />
-                {watch && (
-                  <LibrarySettings
-                    library={library}
-                    watch={watch}
-                    folders={collections.filter(holdsClips)}
-                    onChange={(l) => void organize.organized(l).catch((e) => setError(message(e)))}
-                    onError={setError}
-                  />
-                )}
-                {changing && (
+              <BrowseBar
+                search={{ value: q, onChange: setQ, placeholder: "Search clips and what is said" }}
+                tools={
                   <>
-                    {!firstScreen && <TrashLink to="/library?trash=1" title="Trash" />}
-                    {!smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
+                    {canSave && (
+                      <Button size="sm" variant="ghost" className="h-8" onClick={() => void saveSearch()}>
+                        <Search className="h-4 w-4" />
+                        Save this search as a folder
+                      </Button>
+                    )}
+                    {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
+                    <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
+                    {(watch || (changing && !firstScreen)) && (
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="relative h-8 w-8 p-0"
+                            title="More"
+                            aria-label={watch && needsAttention(watch) ? "More: a footage folder or clip is not found" : "More"}
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                            {watch && needsAttention(watch) && <span aria-hidden className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-background" />}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          {watch && (
+                            <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
+                              <Settings2 /> Library settings
+                              {needsAttention(watch) && <span aria-hidden className="ml-auto h-2 w-2 rounded-full bg-amber-500" />}
+                            </DropdownMenuItem>
+                          )}
+                          {changing && !firstScreen && (
+                            <DropdownMenuItem asChild>
+                              <Link to="/library?trash=1">
+                                <Trash2 /> Trash
+                              </Link>
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                    {watch && (
+                      <LibrarySettings
+                        open={settingsOpen}
+                        onOpenChange={setSettingsOpen}
+                        library={library}
+                        watch={watch}
+                        folders={collections.filter(holdsClips)}
+                        onChange={(l) => void organize.organized(l).catch((e) => setError(message(e)))}
+                        onError={setError}
+                      />
+                    )}
                   </>
-                )}
+                }
+              >
+                {changing && !smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
                 {mayAdd && (
                   <Button size="sm" className="h-8" onClick={chooseFiles}>
                     <Upload className="h-4 w-4" />

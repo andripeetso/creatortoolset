@@ -26,12 +26,15 @@ export function BrowseBar<K extends string, S extends string>({
   chips,
   sort,
   view,
+  tools,
   children,
 }: {
   search?: { value: string; onChange: (v: string) => void; placeholder: string; /** ⌘K / Ctrl-K focuses it (default on). */ hotkey?: boolean };
   chips?: { value: K; onChange: (k: K) => void; options: Chip<K>[] };
   sort?: { value: S; onChange: (s: S) => void; options: { id: S; label: string }[]; label: string };
   view?: { value: BrowseView; onChange: (v: BrowseView) => void };
+  /** Left, after the search: the tool's own controls for what is shown and how (filters, a view menu). */
+  tools?: React.ReactNode;
   /** Right side: the tool's own buttons (New session, what to do with the picked rows). */
   children?: React.ReactNode;
 }) {
@@ -68,6 +71,7 @@ export function BrowseBar<K extends string, S extends string>({
           </select>
         )}
         {view && <ViewSwitch view={view.value} onChange={view.onChange} />}
+        {tools}
       </div>
       {children}
     </div>
