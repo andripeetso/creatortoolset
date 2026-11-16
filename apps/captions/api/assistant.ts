@@ -1779,7 +1779,8 @@ export async function runInChat(
     chat = { id: randomUUID(), messages: [], title: o.task.name, task: o.task.id };
     keepPast(username, conv, [chat, ...(conv.past ?? [])]);
   }
-  if (o.workspace) chat.workspace = o.workspace;
+  // a new chat is the task's workspace's; one it continues stays where it is (a task never moves a chat)
+  if (o.workspace) chat.workspace ??= o.workspace;
   const now = Date.now();
   const asked: AssistantMessage = { id: randomUUID(), role: "user", text: o.prompt, at: now, task: o.task };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };

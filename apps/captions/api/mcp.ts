@@ -621,7 +621,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     workshop_projects: async () => {
       const w = await ws<{ currentProjectId: string | null; projects: Args[] }>("/workspace");
-      return { current: w.currentProjectId, projects: w.projects.map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes", "color", "languages"])) };
+      // the workspace this chat works in, whole; the others by name only (to switch to one when asked): another
+      // client's audience, voice and notes never come into this chat
+      return { current: w.currentProjectId, projects: w.projects.map((p) => pick(p, p.id === w.currentProjectId ? ["id", "name", "audience", "voice", "cta", "notes", "color", "languages"] : ["id", "name"])) };
     },
     workshop_sessions: async (a) => ({
       sessions: (await ws<Args[]>(`/sessions${a.project ? `?projectId=${encodeURIComponent(String(a.project))}` : ""}`)).map((r) =>
