@@ -97,6 +97,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     private var drag = DragPaths()
     /// The files of the drops the page asked about ("dropped"): Face Blur takes these (FaceBlurBridge.swift).
     private(set) var droppedFiles: [URL] = []
+    /// The files and folders of those drops: a Media Library copy reads only from under these (Import.swift).
+    private(set) var droppedPlaces: [URL] = []
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         drag.entered(droppedItems(sender.draggingPasteboard))
@@ -307,6 +309,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '3';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // the Media Library's copy, progress, cancel, scan and print asks ("import:", Import.swift): src/lib/thisMac.ts
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macImport = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)
@@ -394,12 +398,15 @@ extension AppWebView {
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".
     fileprivate func thisMac(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
-              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask), let onThisMacAsk else {
+              let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask) || isFaceBlurAsk(ask) || isRevealAsk(ask) || isImportAsk(ask),
+              let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }
         if ask == "dropped" {
             let items = drag.take()
             droppedFiles = rememberPicks(items.compactMap { $0["folder"] as? Bool == false ? ($0["path"] as? String).map(URL.init(fileURLWithPath:)) : nil }, in: droppedFiles)
+            droppedPlaces = rememberPicks(items.compactMap { ($0["path"] as? String).map(URL.init(fileURLWithPath:)) }, in: droppedPlaces)
+            MediaFiles.grantDropped(items)
             return replyHandler(["items": items], nil)
         }
         onThisMacAsk(ask) { replyHandler($0, nil) }
