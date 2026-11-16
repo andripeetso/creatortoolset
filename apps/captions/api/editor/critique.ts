@@ -181,7 +181,7 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
   const { due, ...looked } = d;
   const file = async (c: Critique | undefined) => {
     await markDraft(edit.id, variant, c ? { ...looked, critique: c } : looked);
-    await fileInReview(edit, variant, d.timeline, c?.fails);
+    await fileInReview(edit, variant, d.timeline, c?.fails, job.actor);
     then("file");
   };
   // a look or a fix that can't be made holds the cut back for its tries only (a limit or a missing AI waits, as any step);

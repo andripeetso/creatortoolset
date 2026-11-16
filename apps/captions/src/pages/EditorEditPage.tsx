@@ -11,7 +11,7 @@ import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, get
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy } from "@/lib/setup";
-import { StateBadge, thumb } from "./EditorPage";
+import { Maker, StateBadge, thumb } from "./EditorPage";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
 import { toast } from "sonner";
 import { STYLE_NAME_MAX } from "@contracts/editor-styles";
@@ -125,14 +125,21 @@ export default function EditorEditPage() {
             Run again
           </Button>
         )}
-        <Button size="sm" variant="ghost" aria-label="Move to the trash" onClick={() => void remove()}>
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        {!edit.locked && (
+          <Button size="sm" variant="ghost" aria-label="Move to the trash" onClick={() => void remove()}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
         </>}
       </AppBar>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-400">{error}</p>}
+        {edit.maker && (
+          <p className="flex items-center gap-1.5 text-sm text-zinc-500">
+            Made by <Maker maker={edit.maker} className="text-zinc-300" />
+          </p>
+        )}
 
         {editable && edit.flagDefs.length > 0 && (
           <section aria-label="Flags" className="flex flex-wrap items-center gap-2">
@@ -342,6 +349,7 @@ export default function EditorEditPage() {
                       <h3 className="truncate text-sm font-medium">{title}</h3>
                       {d && <span className="shrink-0 text-xs text-zinc-500">{(Math.max(0, ...d.timeline.tracks.V1.items.map((i) => i.rec + i.len)) / d.timeline.fps).toFixed(1)} s</span>}
                     </div>
+                    {edit.askedBy?.[n] && <p className="text-xs text-zinc-500">Asked for by {edit.askedBy[n]}</p>}
                     {pv ? (
                       <video src={`/api/review/assets/${pv.assetId}/v/${pv.n}/play`} controls preload="metadata" className="max-h-80 w-full rounded-lg bg-black" />
                     ) : (

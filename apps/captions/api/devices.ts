@@ -94,7 +94,7 @@ devicesApp.post("/relay/editor/claim", async (c) => {
 });
 /** An AI Editor step for the device, if one waits for it: a step that reads footage carries where its files are for it. */
 async function editorStep(d: Device, kinds: string[]) {
-  const job = claimForDevice(d, kinds, Date.now(), await fitsFor(d));
+  const job = await claimForDevice(d, kinds, Date.now(), await fitsFor(d));
   return job && usesFootage(job.kind) ? { ...job, footage: await footageFor(d, job.editId) } : job;
 }
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */

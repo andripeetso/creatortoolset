@@ -14,7 +14,7 @@ import { scriptThrew } from "./cards/device";
 import { editStopped, runEnded } from "./ended";
 import { claimableBy, claimStep, coreSteps, nextFor, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
 import { passesDone } from "./passes";
-import { purgeEdits, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "./store";
+import { editRole, ownerOf, purgeEdits, readDraft, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 export type { StepContext } from "./engine";
 
@@ -104,6 +104,9 @@ export async function tick(now = Date.now()): Promise<boolean> {
   }
 }
 
+/** The edit's footage is all still in its workspace, and `actor` (who asked for the step) still sees the edit there (store.ts editRole). */
+const stillReadable = async (actor: string, edit: EditMeta) => sourcesWorkspace(ownerOf(edit), edit.sources) === edit.workspaceId && !!(await editRole(actor, edit));
+
 async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<boolean> {
   const vid = job.version_id ?? "";
   const cut = vid.indexOf(":");
@@ -114,8 +117,8 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
     return true;
   }
   if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), true;
-  // read again at every step: footage trashed or a library left since the edit was made
-  if (sourcesWorkspace(job.actor, edit.sources) !== edit.workspaceId) return fail(db, job, "Some footage is gone or no longer yours to read"), true;
+  // read again at every step: footage trashed since the edit was made, or the asker no longer in its workspace
+  if (!(await stillReadable(job.actor, edit))) return fail(db, job, "Some footage is gone or no longer yours to read"), true;
   const step = STEPS[job.kind];
   if (!step) return fail(db, job, `No ${job.kind} step yet`), true;
 
@@ -155,7 +158,7 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
  * its own account made, and only while that account can still read the footage. A step whose edit is gone or no longer
  * readable fails here, as tick fails it. Null when there is nothing for this device. `fits`: the steps it may take (reach.ts fitsFor).
  */
-export function claimForDevice(device: { id: string; owner: string }, kinds: string[], now = Date.now(), fits?: (job: JobRow) => boolean): DeviceJob | null {
+export async function claimForDevice(device: { id: string; owner: string }, kinds: string[], now = Date.now(), fits?: (job: JobRow) => boolean): Promise<DeviceJob | null> {
   const db = libraryDb();
   releaseQuietDevices(db, isOnline);
   const job = claimStep(db, claimableBy(kinds), LEASE_S, now, T, { actor: device.owner, device: device.id }, fits);
@@ -164,7 +167,7 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), null;
-  if (sourcesWorkspace(job.actor ?? "", edit.sources) !== edit.workspaceId) return fail(db, job, "Some footage is gone or no longer yours to read"), null;
+  if (!(await stillReadable(job.actor ?? "", edit))) return fail(db, job, "Some footage is gone or no longer yours to read"), null;
   return { id: job.id, kind: job.kind, editId, variant };
 }
 

@@ -19,7 +19,7 @@ import { Waiting } from "../analyze";
 import { findAnimation, fitJpeg, pictureFile } from "../animation-styles";
 import type { StepContext } from "../engine";
 import { previewSize } from "../preview";
-import { readDraft, readStep, saveDraft } from "../store";
+import { ownerOf, readDraft, readStep, saveDraft } from "../store";
 import { sourceOf } from "../timeline";
 import { cardWindow, placeCards, type CardClip } from "./place";
 import { scriptThrew } from "./device";
@@ -206,7 +206,9 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     if (whole && !drawn.length) return end("your Mac sent no card");
   }
   if (!on) return end(NO_MAC);
-  const style = findAnimation(actor, st.style);
+  // the animation style is the workspace's (store.ts ownerOf); the AI calls below stay the asker's (actor)
+  const owner = ownerOf(edit);
+  const style = findAnimation(owner, st.style);
   if (!style) return end("its animation style is gone");
   // only a style the person made reaches an AI call (contracts/editor-styles.ts `from`)
   if (style.from) return end("a style from Community makes no cards");
@@ -228,7 +230,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     const frame: FrameInput = { brief: style.brief, width: st.width!, height: st.height!, fps: st.fps!, cards: st.cards! };
     if (st.draws === 0) {
       if (!(await spend())) return end();
-      const pictures = await stylePictures(actor, style, MAKE_PICTURES);
+      const pictures = await stylePictures(owner, style, MAKE_PICTURES);
       throw await ask(await answer(actor, makePrompt({ ...frame, made: pictures.made, inspirations: pictures.inspirations }), pictures.images, parseScript, signal));
     }
     if (st.threw) {
@@ -246,7 +248,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
     const sheet = st.looked || st.draws >= MAX_DRAWS ? null : await lookSheet(edit.id, variant, shown.map((c) => c.id), frame.width, frame.height).catch(() => null);
     if (sheet && (await spend())) {
       await save({ ...st, looked: true });
-      const pictures = await stylePictures(actor, style, LOOK_PICTURES);
+      const pictures = await stylePictures(owner, style, LOOK_PICTURES);
       const script = await readFile(scriptFile(edit.id, variant), "utf8");
       const fixed = await answer(actor, lookPrompt({ ...frame, cards: shown, script, columns: sheet.columns, pictures: pictures.images.length }), [sheet.image, ...pictures.images], parseLook, signal);
       if (fixed && fixed !== script) throw await ask(fixed);
