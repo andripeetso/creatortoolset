@@ -7,8 +7,8 @@ import { env } from "./lib/env";
 import type { SessionUser } from "./users";
 
 /**
- * Settings → Storage, "Kept on the server" (contracts/storage.ts KEPT_KINDS), mounted at /api/devices/storage/kept:
- *   GET  /              → KeptView: this account's files in the server's data folder, by kind (size and count)
+ * Settings → Storage, "Your files" (contracts/storage.ts KEPT_KINDS), mounted at /api/devices/storage/kept:
+ *   GET  /              → KeptView: this account's files in the server's data folder, in every workspace, by kind (size and count)
  *   POST /:kind/empty   → deletes this account's files of one EMPTIED kind: the trash, a chat's pictures and videos,
  *                         finished renders, the shot description sheets its Macs keep. Work (projects, Review videos,
  *                         posts…) is deleted in its own tool.
@@ -127,7 +127,8 @@ async function itemsOf(kind: KeptKind, u: Who, stores: Stores): Promise<Item[]> 
       return (await readdir(root).catch(() => [] as string[])).filter((f) => f.endsWith(".json")).map((f) => ({ id: f.slice(0, -5), paths: [path.join(root, f), path.join(root, f.slice(0, -5))] }));
     }
     case "library": {
-      // the libraries of the account's own workspace, kept on this server's disk (a bucket's bytes are added in measure)
+      // every library of the account, whatever workspace it is in (libraries.workspace_id is the account's id, homeOf; a
+      // library's workspace is its settings.projectId), kept on this server's disk (a bucket's bytes are added in measure)
       const { libraryDb } = await import("./library/db");
       const { homeOf } = await import("./library/access");
       const libs = libraryDb().prepare("SELECT id FROM libraries WHERE workspace_id = ?").all(homeOf(u.username)) as { id: string }[];

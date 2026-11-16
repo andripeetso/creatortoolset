@@ -94,6 +94,16 @@ it("the trash has its own rows, and a render going to Finals is not counted", as
   expect(await row(tiny, "exports")).toMatchObject({ items: 1 });
 });
 
+it("the Media Library row counts the account's libraries in every workspace, like the other rows", async () => {
+  const before = (await row(tiny, "library")).bytes;
+  // a second library of the same account, in another workspace (its settings.projectId), and another account's
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_t2', 'tiny', 'Library', 'local', ?, 1)").run(JSON.stringify({ projectId: "ws-other" }));
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_o', 'other', 'Library', 'local', 2)").run();
+  put("library/blobs/libraries/lib_t2/v/x/source", 4000);
+  put("library/blobs/libraries/lib_o/v/y/source", 9000);
+  expect((await row(tiny, "library")).bytes).toBe(before + 4000);
+});
+
 it("Empty deletes what the row counts and nothing else", async () => {
   for (const kind of ["chat-pictures", "chat-videos", "review-trash", "captions-trash", "exports"] as const) await emptyKept(kind, tiny);
   expect(has("assistant/images/tiny/a.png")).toBe(false);
