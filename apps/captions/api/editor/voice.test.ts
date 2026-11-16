@@ -122,12 +122,12 @@ describe.skipIf(rootReplaced)("AI Editor: a voice made from text", () => {
   it("says in words when ElevenLabs refuses the key, is out of credits, or is busy", async () => {
     speech = () => Response.json({ detail: { status: "missing_permissions", message: "The API key you used is missing the permission text_to_speech" } }, { status: 401 });
     expect((await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).body.error).toBe(
-      "ElevenLabs refused the key (The API key you used is missing the permission text_to_speech): check it in Settings → API keys. A key limited to some features needs Text to Speech and Voices.",
+      "ElevenLabs refused the key (The API key you used is missing the permission text_to_speech): check it in Settings → API keys (a limited key needs Text to Speech and Voices)",
     );
     speech = () => Response.json({ detail: { status: "quota_exceeded", message: "This request exceeds your quota." } }, { status: 401 });
-    expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 402, body: { error: "Your ElevenLabs account is out of credits: add credits at elevenlabs.io, then try again." } });
+    expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 402, body: { error: "The ElevenLabs account is out of credits: add credits at elevenlabs.io" } });
     speech = () => new Response("slow down", { status: 429 });
-    expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 502, body: { error: "ElevenLabs is busy: try again in a minute." } });
+    expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 502, body: { error: "ElevenLabs is busy: try again in a minute" } });
     expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM assets WHERE title = 'Voice: Hello'").get()).toEqual({ n: 0 });
   });
 
@@ -163,7 +163,7 @@ describe.skipIf(rootReplaced)("AI Editor: a voice made from text", () => {
     try {
       expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({
         status: 400,
-        body: { error: "On this server the Media Library is the Footage catalog, and a voice made here has no place in it yet." },
+        body: { error: "On this server the Media Library is the Footage catalog: a voice cannot be added to it" },
       });
       expect(calls).toEqual([]);
     } finally {

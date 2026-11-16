@@ -43,7 +43,7 @@ cardsApp.post("/:id/cards/:variant/:card/like", async (c) => {
   if (!r || !still) return c.json(notFound, 404);
   if (!r.st.liked.includes(card)) {
     const added = await addPicture(ownerOf(r.e), r.st.style, still, "made");
-    if (!added) return c.json({ error: "The animation style these cards were made in is gone", code: "not_found" }, 404);
+    if (!added) return c.json({ error: "The animation style of these cards was deleted", code: "not_found" }, 404);
     if (typeof added === "string") return c.json({ error: added, code: "invalid" }, 400);
     // read again: the step may have written since
     const now = readCards(id, variant) ?? r.st;

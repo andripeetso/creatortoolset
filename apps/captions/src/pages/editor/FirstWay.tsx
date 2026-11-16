@@ -21,7 +21,7 @@ import { brollFolders, sizeKey, sizeOfKey, SIZE_OPTIONS } from "./EditingStyles"
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const WAYS = [
   { id: "full", title: "Full edit", sub: "Cut, B-roll and post-processing" },
-  { id: "passes", title: "Edit in passes", sub: "The cut, then the B-roll: each waits for you in Review" },
+  { id: "passes", title: "Edit in passes", sub: "The cut, then the B-roll, each to Review before the next" },
   { id: "rough", title: "Rough cut only", sub: "The cut, nothing added" },
 ] as const;
 
@@ -76,10 +76,10 @@ export function FirstWay({ onDone }: { onDone: () => Promise<unknown> }) {
     <div className="flex flex-col gap-5 p-4 pt-12">
       <div>
         <SheetTitle className="text-base">How do you like to work?</SheetTitle>
-        <SheetDescription className="text-xs text-muted-foreground">You set this up once. Change it any time under Editing styles.</SheetDescription>
+        <SheetDescription className="text-xs text-muted-foreground">Saved as the first editing style.</SheetDescription>
       </div>
 
-      <div role="group" aria-label="How it should work" className="grid gap-2 sm:grid-cols-3">
+      <div role="group" aria-label="Way of working" className="grid gap-2 sm:grid-cols-3">
         {WAYS.map((w) => (
           <button
             key={w.id}

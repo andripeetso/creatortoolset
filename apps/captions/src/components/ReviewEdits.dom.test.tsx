@@ -613,7 +613,7 @@ describe("Face (the face refinement strength)", () => {
     });
     await act(async () => button("Use 80% for this edit")!.click());
     expect(face.save).toHaveBeenCalledWith(edit, 0.8);
-    expect(host.textContent).toContain("A new version with this strength is on its way");
+    expect(host.textContent).toContain("Making a new version with this strength");
     stage.remove();
   });
 });

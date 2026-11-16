@@ -207,7 +207,7 @@ describe.skipIf(rootReplaced)("Editing styles: an edit made with one", () => {
     expect(e.steps).toEqual(s.steps);
     const { pluginEditorSteps } = await import("../lib/plugin");
     const run = await runSteps(readEdit(e.id)!.steps!, pluginEditorSteps(), { edit: e, variant: "v1", timeline: { sources: {} } as never, base: {}, workRoot: path.join(dir, "post-work"), signal: new AbortController().signal });
-    expect(run.notes).toEqual(["Post-processing: voice-since-removed is not switched on in this app, so it was skipped"]);
+    expect(run.notes).toEqual(["Post-processing: voice-since-removed is not turned on, so it was skipped"]);
     // no steps at all in a style is a choice too; a style that says nothing about steps takes the ones in use (the plain edit above)
     const none = await made("maker", { name: "No steps", steps: [] });
     expect((await edit("maker", { style: none.id })).steps).toEqual([]);

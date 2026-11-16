@@ -13,7 +13,7 @@ async function send<T>(url: string, method = "GET", body?: unknown, workspace?: 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const out = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  if (!r.ok) throw new Error(out.error ?? "Could not reach the server");
   return out;
 }
 
@@ -69,7 +69,7 @@ export async function addStylePictures(id: string, files: File[], kind: StyleKin
   if (made) form.append("made", "1");
   const r = await fetch(`${stylesAt(kind)}/${id}/pictures`, { method: "POST", body: form });
   const out = (await r.json().catch(() => ({}))) as AnimationStyle & { error?: string };
-  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  if (!r.ok) throw new Error(out.error ?? "Could not reach the server");
   return out;
 }
 /** The edits finished in a style, newest first, and × on one (it never counts for a style again). */

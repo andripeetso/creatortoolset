@@ -38,7 +38,7 @@ describe("the post step's chain", () => {
   it("names a step the edit uses that this app no longer has, and plays the sources as they are", async () => {
     const out = await runSteps([{ id: "blur", values: {} }], [], input);
     expect(out.files).toEqual({});
-    expect(out.notes).toEqual([`${POST_NOTE}blur is not switched on in this app, so it was skipped`]);
+    expect(out.notes).toEqual([`${POST_NOTE}blur is not turned on, so it was skipped`]);
   });
 });
 
