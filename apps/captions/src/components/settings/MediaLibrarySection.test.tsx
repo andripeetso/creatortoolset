@@ -32,7 +32,7 @@ vi.mock("@/components/settings/kit-controls", async (orig) => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, look: true, embed: true, proxy: true, upload: "none" } };
+const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: { describe: true, look: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: 20 } };
 const watch = { allowed: false, folders: [], missing: 0 };
 const patches: unknown[] = [];
 /** each request with the workspace it named */
@@ -60,7 +60,8 @@ beforeEach(() => {
     if (url.endsWith("/collections")) return ok({ collections: [] });
     if (url.endsWith("/usage")) return ok({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] });
     if (url.endsWith("/space")) return ok({ videos: { onMac: 0, inPlace: 0, stored: { bytes: 0, files: 0 } }, proxies: { bytes: 0, files: 0 }, pictures: { bytes: 0, files: 0 }, models: null });
-    if (url.includes("/estimate")) return ok({ steps: [] });
+    if (url.includes("/estimate"))
+      return ok({ steps: [], lookSpent: 4.2, lookLevels: [{ level: "light", seconds: 300, usd: 0.9 }, { level: "standard", seconds: 720, usd: 2.64 }, { level: "detailed", seconds: 1440, usd: 5.28 }] });
     return ok({});
   });
 });
@@ -143,6 +144,28 @@ describe("the Media Library's settings", () => {
     await render(<LibrarySettings open onOpenChange={() => {}} library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
     for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
     expect(headings(document.body.textContent ?? "")).toEqual(WITHOUT_FOLDERS);
+  });
+
+  it("Shot detail lists each level with an hour's time and cost, and saves the level picked and the monthly budget", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("About 12 min and $2.64 an hour of footage");
+    expect(text).toContain("$4.20 this month");
+    // Light and Detailed have Use; Standard, the one in use, says so
+    const uses = [...host!.querySelectorAll("button")].filter((b) => b.textContent === "Use");
+    expect(uses).toHaveLength(2);
+    expect(text).toContain("In use");
+    await act(async () => uses[1]!.click());
+    const field = host!.querySelector('input[aria-label="Monthly budget"]') as HTMLInputElement;
+    expect(field.value).toBe("20");
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(field, "35");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(patches).toEqual([{ settings: { lookLevel: "detailed" } }, { settings: { lookBudget: 35 } }]);
   });
 
   it("the upload choice is saved on the library", async () => {

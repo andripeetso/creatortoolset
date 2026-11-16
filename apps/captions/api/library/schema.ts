@@ -463,4 +463,7 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE uploads ADD COLUMN made TEXT;
   `,
+  // 27: the level (contracts LOOK_LEVELS) a version's stretches were found at: stretches of another level than the
+  // library's are found again when its shots are described (shots.ts), never matched to that level's lines. NULL: standard
+  `ALTER TABLE asset_versions ADD COLUMN look_level TEXT;`,
 ];

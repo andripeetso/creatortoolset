@@ -141,7 +141,26 @@ export interface LibrarySettings {
   organize?: Organize;
   /** a big folder came in and the AI organizing was offered (once, either answer) */
   organizeOffered?: boolean;
+  /** how densely shots are described (LOOK_LEVELS); absent: "standard" */
+  lookLevel: LookLevel;
+  /** dollars a month (UTC) shot descriptions may cost in this library's workspace, by the usage tally; null: no cap */
+  lookBudget: number | null;
 }
+
+/**
+ * How densely the library describes shots: a long take is split into pieces of `piece` to `long` seconds, each piece
+ * one line (api/library/look.ts shotsOf). Cost and time follow the count of pieces, about 8 / `long` times Standard's.
+ * The level is part of the lines' stamp (api/library/shots.ts levelVersion), so lines of one level never pass as another's.
+ */
+export type LookLevel = "light" | "standard" | "detailed";
+export const LOOK_LEVELS: readonly { value: LookLevel; label: string; long: number; piece: number }[] = [
+  { value: "light", label: "Light", long: 24, piece: 12 },
+  { value: "standard", label: "Standard", long: 8, piece: 4 },
+  { value: "detailed", label: "Detailed", long: 4, piece: 2 },
+];
+export const lookLevelOf = (v: unknown): LookLevel => (LOOK_LEVELS.some((l) => l.value === v) ? (v as LookLevel) : "standard");
+/** A new library's monthly cap on shot descriptions, in dollars (API-equivalent on an AI provider). */
+export const LOOK_BUDGET_DEFAULT = 20;
 
 export type LibraryUpload = "none" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "proxies", "all"];
@@ -240,6 +259,10 @@ export interface LibraryEstimate {
   proxies?: boolean;
   /** describe on the person's own Anthropic key instead (it runs six at once; a connected AI runs two): when that is faster */
   withApiKey?: { seconds: number; usd: number };
+  /** shot descriptions of one hour of footage at each level (LOOK_LEVELS), on the look's route; absent when it has none */
+  lookLevels?: { level: LookLevel; seconds: number; usd: number }[];
+  /** what shot descriptions cost this month in this library's workspace, in dollars */
+  lookSpent?: number;
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */

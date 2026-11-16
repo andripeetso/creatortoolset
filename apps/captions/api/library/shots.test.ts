@@ -25,13 +25,15 @@ const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { searchApp, searchLibrary } = await import("./search");
 const { stretchesOf, setUserLine } = await import("./stretches");
-const { LOOK_LABEL, lookStamp, MAC_WAITS, queueLook, redoLook, sheetHashes } = await import("./shots");
+const { BUDGET_WAITS, LOOK_LABEL, lookFromSheets, lookStamp, MAC_WAITS, queueLook, redoLook, releaseBudget, sheetHashes, sweepLook } = await import("./shots");
+const { libraryWorkspaceId } = await import("./describe");
+const { storeStretches } = await import("./stretches");
 const { lookPrompt, RULE, samePicture, stretchSheet } = await import("./look");
 const { describePrompt } = await import("./describe");
 const { estimate, progress } = await import("./estimate");
 const { footageProfile } = await import("../lib/workshop/context");
 const { completeVisionWithFallback } = await import("../ai-vision");
-const { MacClaudeError } = await import("../lib/mac-claude");
+const { MacClaudeError, recordUsage } = await import("../lib/mac-claude");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -241,11 +243,97 @@ describe("which clips get a look", () => {
     while (await tick(Date.now(), ["describe"]));
     expect(job(fresh, "describe")?.state).toBe("done");
     expect(job(fresh)?.state).toBe("queued");
-    expect(job(old)).toBeUndefined(); // never a sweep of a library that was there before
+    expect(job(old)).toBeUndefined(); // describing again queues none: the look lane's sweep gives it one (sweepLook)
     const row = libraryDb().prepare("SELECT kind, stamp FROM descriptions WHERE version_id = ? AND source = 'ai'").get(fresh) as { kind: string; stamp: string };
     expect(row.kind).toBe("test pattern");
     expect(row.stamp).toMatch(/^[0-9a-f]{16}$/);
     libraryDb().prepare("DELETE FROM jobs WHERE version_id = ?").run(fresh);
+  });
+});
+
+describe("the background index", () => {
+  /** Runs the sweep until it queues nothing more. */
+  const sweepAll = () => {
+    let n = 0;
+    while (sweepLook(libraryDb())) n++;
+    return n;
+  };
+
+  it("a video with no look gets one; a talking take, one with a step still to run and one waiting for its Mac don't", async () => {
+    const d = libraryDb();
+    const missed = await seed("ast-sw-01");
+    const talking = await seed("ast-sw-02", { roll: "a" });
+    const busy = await seed("ast-sw-03");
+    enqueueJob(d, "lib_s", busy, "describe", "local", true);
+    const mac = await seed("ast-sw-04", { macPath: "/Volumes/Card/sw.mov" });
+    enqueueJob(d, "lib_s", mac, "look", "local");
+    await runLooks(); // the Mac's look parks, waiting for it
+    vi.mocked(completeVisionWithFallback).mockReset();
+    sweepAll();
+    expect(job(missed)).toMatchObject({ state: "queued" });
+    expect(job(talking)).toBeUndefined();
+    expect(job(busy)).toBeUndefined(); // its description queues its look itself
+    expect(job(mac)).toMatchObject({ state: "needs_key", error: MAC_WAITS });
+    expect(sweepLook(d)).toBe(false); // nothing left: the lane idles
+    // the earlier tests' clips the sweep queued too, and these: the next tests start from an empty queue
+    d.prepare("DELETE FROM jobs WHERE (kind = 'look' AND state = 'queued') OR version_id IN (?, ?)").run(busy, mac);
+  });
+
+  it("a spent monthly budget holds looks, saying so; raised, they run", async () => {
+    const d = libraryDb();
+    const v = await seed("ast-bud-01");
+    vi.mocked(completeVisionWithFallback).mockImplementation(answerAll());
+    await recordUsage(LOOK_LABEL, { tokens: 1000, costUsd: 21 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
+    enqueueJob(d, "lib_s", v, "look", "local");
+    await tick(Date.now(), ["look"]);
+    expect(job(v)).toMatchObject({ state: "queued", error: BUDGET_WAITS });
+    expect(job(v)!.run_after).toBeGreaterThan(Date.now());
+    expect(completeVisionWithFallback).not.toHaveBeenCalled();
+    expect((await progress("lib_s", "local")).waiting).toContainEqual(expect.objectContaining({ step: "look", count: 1, missing: BUDGET_WAITS, limit: true }));
+    expect((await estimate("lib_s", "local", { clips: 1, bytes: 1 })).lookSpent).toBeGreaterThanOrEqual(21);
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 50) WHERE id = 'lib_s'`).run();
+    releaseBudget(d, "lib_s");
+    await runLooks();
+    expect(job(v)?.state).toBe("done");
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
+  });
+
+  it("a file's calls run side by side, two at once on an AI provider", async () => {
+    const d = libraryDb();
+    const v = await seed("ast-par-01", { macPath: "/Volumes/Card/par.mov", duration: 3600 });
+    storeStretches(d, v, Array.from({ length: 200 }, (_, i) => ({ a: i * 18, b: i * 18 + 18, motion: 0.5 })));
+    const sheets = Array.from({ length: 13 }, (_, k) => ({ segs: Array.from({ length: 16 }, (_, i) => k * 16 + i).filter((x) => x < 200), jpeg: "/9j/" }));
+    let now = 0;
+    let most = 0;
+    const answer = answerAll();
+    vi.mocked(completeVisionWithFallback).mockImplementation(async (...a) => {
+      most = Math.max(most, ++now);
+      await new Promise((r) => setTimeout(r, 20));
+      now--;
+      return answer(...(a as unknown as Parameters<typeof answer>));
+    });
+    expect(await lookFromSheets(d, v, "local", sheets)).toBe(3); // 13 sheets, 6 a call
+    expect(most).toBe(2);
+    expect(stretchesOf(d, v).every((s) => s.text)).toBe(true);
+  });
+
+  it("the level is part of the stamp, and a look at another level finds its stretches again", async () => {
+    const d = libraryDb();
+    const v = await seed("ast-lvl-01", { from: take });
+    vi.mocked(completeVisionWithFallback).mockImplementation(answerAll());
+    enqueueJob(d, "lib_s", v, "look", "local");
+    await runLooks();
+    const standard = stretchesOf(d, v);
+    const stamp = await lookStamp(d, v);
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookLevel', 'detailed') WHERE id = 'lib_s'`).run();
+    expect(await lookStamp(d, v)).not.toBe(stamp);
+    expect(queueLook(d, v, "local", true)).toBe(true);
+    await runLooks();
+    const detailed = stretchesOf(d, v);
+    expect(detailed.length).toBeGreaterThan(standard.length);
+    expect(detailed.every((s) => s.text && s.stamp === detailed[0]!.stamp && s.stamp !== stamp)).toBe(true);
+    d.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.lookLevel') WHERE id = 'lib_s'`).run();
+    expect(await lookStamp(d, v)).toBe(stamp); // Standard keeps the stamp lines had before levels
   });
 });
 

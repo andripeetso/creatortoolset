@@ -144,6 +144,7 @@ extension Shell {
         open.message = "Choose the folder with your videos. Nothing is moved."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
+        MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
         return ["path": url.path]
     }
 

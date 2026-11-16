@@ -1103,8 +1103,12 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
         let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            // remembered first: the page asks where they are ("files") as soon as it has them
-            if response == .OK, let self { self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles) }
+            // remembered first: the page asks where they are ("files") as soon as it has them; and granted, so what the
+            // library indexes from them is read here later (MediaFiles.grantPicked)
+            if response == .OK, let self {
+                self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles)
+                MediaFiles.grantPicked(panel.urls)
+            }
             completionHandler(response == .OK ? panel.urls : nil)
         }
         if let window = webView.window {

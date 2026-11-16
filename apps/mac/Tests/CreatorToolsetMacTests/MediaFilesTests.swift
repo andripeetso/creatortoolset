@@ -94,6 +94,15 @@ final class MediaFilesTests: XCTestCase {
         XCTAssertTrue(isFile(MediaFiles.gate(file.path, granted: [composed])))
     }
 
+    func testPickGrantsTheFolder() throws {
+        // a picked folder is granted itself, a picked file its folder (the Media Library's Add from the open panel)
+        try FileManager.default.createDirectory(at: granted.appendingPathComponent("Day 1"), withIntermediateDirectories: true)
+        let clip = URL(fileURLWithPath: try write("Footage/Day 1/clip.mov"))
+        var got: [String] = []
+        MediaFiles.grantPicked([granted, clip]) { got.append($0) }
+        XCTAssertEqual(got, [granted.path, granted.appendingPathComponent("Day 1").path])
+    }
+
     func testNearestExisting() {
         XCTAssertEqual(MediaFiles.nearestExisting(granted.path + "/No such/deeper"), granted.path)
         XCTAssertEqual(MediaFiles.nearestExisting("/no/such/place"), "/")

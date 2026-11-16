@@ -107,6 +107,7 @@ export type MoveTarget = { id: string | null; name: string; depth: number };
 /** What can be made again on clips (api/library/bulk.ts); search data only while search by meaning is on (it reads nothing else). */
 export const redoKinds = (settings: LibrarySummary["settings"]) => [
   { kind: "describe", label: "Descriptions" },
+  ...(settings.look ? [{ kind: "look", label: "Shot descriptions" }] : []),
   { kind: "transcribe", label: "Transcripts" },
   ...(settings.embed ? [{ kind: "embed", label: "Search data" }] : []),
 ];
