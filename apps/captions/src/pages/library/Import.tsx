@@ -36,7 +36,7 @@ export const NEEDS_MAC = "Needs the latest Mac app";
 
 /** The place a file came from: the dropped folder it was read from, else the folder it is in. */
 export function placeOfFile(file: File, path: string): string {
-  const rel = file.webkitRelativePath.normalize("NFC");
+  const rel = (file.webkitRelativePath || "").normalize("NFC");
   if (rel.includes("/") && path.endsWith(rel)) return path.slice(0, path.length - rel.length) + rel.split("/")[0];
   return path.slice(0, path.lastIndexOf("/")) || "/";
 }

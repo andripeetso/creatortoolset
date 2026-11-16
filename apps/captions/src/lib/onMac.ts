@@ -81,14 +81,15 @@ export interface MacFile {
 /** What the server lists `file` by, read here. A file the app can't decode is indexed by its name and size only. */
 export async function readIndex(file: File | MacFile, signal?: AbortSignal): Promise<MacIndex> {
   const url = file instanceof File ? URL.createObjectURL(file) : file.url;
+  const type = file instanceof File ? file.type : "";
   try {
-    if (file.type.startsWith("image/") || /\.(jpe?g|png|heic|webp|gif|tiff?)$/i.test(file.name)) {
+    if (type.startsWith("image/") || /\.(jpe?g|png|heic|webp|gif|tiff?)$/i.test(file.name)) {
       const img = new Image();
       img.src = url;
       await img.decode();
       return { width: img.naturalWidth, height: img.naturalHeight, thumb: await toB64(draw(img, img.naturalWidth, img.naturalHeight, 480)), frames: [] };
     }
-    const audio = file.type.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i.test(file.name);
+    const audio = type.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i.test(file.name);
     const el = document.createElement(audio ? "audio" : "video") as HTMLVideoElement;
     el.muted = true;
     el.preload = "auto";
@@ -144,7 +145,7 @@ export async function readIndex(file: File | MacFile, signal?: AbortSignal): Pro
 }
 
 /** The Mac app's own id on this server, when it is paired, so the server knows which Mac holds the file. */
-const deviceHere = async () => ((await thisMacBridge()?.postMessage("state").catch(() => null))?.device ?? undefined);
+export const deviceHere = async () => ((await thisMacBridge()?.postMessage("state").catch(() => null))?.device ?? undefined);
 
 /** Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent. */
 export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string }> {

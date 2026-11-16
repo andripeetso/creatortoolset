@@ -181,7 +181,7 @@ describe("Where are your videos?", () => {
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Add 40 files from Trip?");
     expect(dialog.textContent).toContain("of footage.");
-    const copy = dialog.querySelectorAll('input[type="radio"]')[0] as HTMLInputElement;
+    const copy = dialog.querySelectorAll('input[name="import-mode"]')[1] as HTMLInputElement; // after Use them where they are
     expect(copy.checked).toBe(true); // copying is the default where there is room
     const sort = dialog.querySelectorAll<HTMLInputElement>('input[name="organize"]');
     expect(sort[0]!.checked).toBe(true); // the usual folders, until another is picked
@@ -233,7 +233,7 @@ describe("Where are your videos?", () => {
     await click("Choose a folder");
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Add 3 files from Trip?");
-    expect(dialog.textContent).toContain("Keep them where they are");
+    expect(dialog.textContent).toContain("Use them where they are");
     expect(dialog.textContent).not.toContain("of footage.");
     expect(dialog.querySelectorAll('input[name="organize"]')).toHaveLength(3);
   });
