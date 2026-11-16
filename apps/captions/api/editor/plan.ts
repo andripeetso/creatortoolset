@@ -9,8 +9,7 @@ import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
-import { footageProfile, renderContext, workspaceKnowledge } from "../lib/workshop/context";
-import { ownedProjects } from "../lib/workshop/workspace";
+import { footageProfile, workspaceContext, workspaceOf } from "../lib/workshop/context";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { samePicture } from "../library/look";
@@ -1145,9 +1144,7 @@ function wordsBySource(sentences: Sentence[]): Record<string, string> {
 
 /** The workspace the edit was made in: its instructions and what each context file is (lib/workshop/context.ts), in `max`. */
 export async function workspaceSetup(edit: Pick<EditMeta, "createdBy" | "projectId">, max: number): Promise<string> {
-  const projects = await ownedProjects(edit.createdBy);
-  const p = projects.find((x) => x.id === edit.projectId) ?? (projects.length === 1 ? projects[0] : undefined);
-  return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
+  return workspaceContext(await workspaceOf(edit.createdBy, edit.projectId), max);
 }
 
 /** The frame: the edit's working size, else the first source with a picture, at its rate. */

@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { KnowledgeSource } from "../../../contracts/knowledge";
 import { SOUNDS } from "../../../contracts/library";
-import { inProjectOf } from "../project-of";
+import { inProjectOf, projectOf } from "../project-of";
 import type { SessionUser } from "../../users";
 import { env } from "../env";
 import { renderInstructions } from "./prompt";
@@ -91,22 +91,40 @@ export function renderContext(p: Project, files: KnowledgeFile[], max: number): 
   return `${head.length <= cut ? head : `${head.slice(0, cut - MARK.length).trimEnd()}${MARK}`}${list}`;
 }
 
-/** The workspace's context for a one-shot call (above); "" when there is no such workspace. */
+/**
+ * The workspace's context for a one-shot call (above); "" when there is no such workspace. The files' own text is not
+ * read: a line a file needs only what it was filed as.
+ */
 export async function workspaceContext(projectId: string | undefined, max: number): Promise<string> {
   const p = await readWorkspace(projectId);
-  return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
+  if (!p) return "";
+  return renderContext(p, [...(p.knowledge ?? []), ...(await workspaceSources(p)).map((s) => asKnowledge(s, ""))], max);
 }
 
 /**
- * Which context a stored text was written under: a short hash of exactly what `workspaceContext(projectId, max)` gives
- * now, plus `salt` (the version of the prompt that wrote it). A library description or shot description keeps the stamp
- * it was written with; when the workspace's instructions or files change what that call reads, the stamp differs and
- * the text is written again the next time an edit or a search uses it (tasks/flywheel/PLAN.md, 6.1). A change past
+ * The workspace a thing `username` made is in, by the thing's own `projectId`: that one while they own it or it is
+ * given to them, else their first brand (project-of.ts), so a thing from before workspaces, or a member's thing in a
+ * workspace taken away since, reads the same workspace everywhere. Undefined for a person with no workspace.
+ */
+export async function workspaceOf(username: string, projectId?: string): Promise<string | undefined> {
+  return (await projectOf({ username } as SessionUser))?.(projectId);
+}
+
+/**
+ * The stamp of a text written under `context` (what workspaceContext gave the call that wrote it) by the prompt version
+ * `salt`: a short hash of both. A writer stamps with the text it sent, never with a second read.
+ */
+export const stampOf = (context: string, salt = ""): string => createHash("sha256").update(`${salt}\n${context}`).digest("hex").slice(0, 16);
+
+/**
+ * Which context a stored text would be written under now: the stamp (stampOf) of exactly what
+ * `workspaceContext(projectId, max)` gives. A library description or shot description keeps the stamp it was written
+ * with; when the workspace's instructions or files change what that call reads, the stamp differs and the text is
+ * written again when an edit uses the file or the person opens the clip (tasks/flywheel/PLAN.md, 6.1). A change past
  * what the call reads (beyond `max`) leaves the stamp alone.
  */
 export async function contextStamp(projectId: string | undefined, max: number, salt = ""): Promise<string> {
-  const text = await workspaceContext(projectId, max);
-  return createHash("sha256").update(`${salt}\n${text}`).digest("hex").slice(0, 16);
+  return stampOf(await workspaceContext(projectId, max), salt);
 }
 
 /** "1 h 41 min", "12 min", "40 s". */

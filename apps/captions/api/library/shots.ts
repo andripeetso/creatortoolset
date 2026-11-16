@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { aiFor } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
-import { contextStamp, workspaceContext } from "../lib/workshop/context";
+import { contextStamp, stampOf, workspaceContext } from "../lib/workshop/context";
 import { blobs, librarySetting } from "./db";
 import { WORKSPACE_MAX, whoFor, workspaceIdOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -180,7 +180,8 @@ async function writeLines(db: DatabaseSync, versionId: string, actor: string, ke
   if (route.off) throw new NeedsKey(route.off);
   const wsId = await workspaceIdOf(db, versionId);
   const workspace = wsId ? await workspaceContext(wsId, WORKSPACE_MAX) : "";
-  const stamp = await lookStamp(db, versionId);
+  // the stamp of the text these calls send (lookStamp's, read once)
+  const stamp = stampOf(workspace, LOOK_VERSION);
   const rows = new Map(
     (db.prepare("SELECT seg, a, b, text, stamp FROM stretches WHERE version_id = ? AND source = 'ai'").all(versionId) as { seg: number; a: number; b: number; text: string; stamp: string | null }[]).map(
       (r) => [r.seg, r],

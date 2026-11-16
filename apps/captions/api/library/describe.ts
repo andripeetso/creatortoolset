@@ -8,7 +8,7 @@ import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "../users";
 import { projectOf } from "../lib/project-of";
-import { contextStamp, workspaceContext } from "../lib/workshop/context";
+import { stampOf, workspaceContext } from "../lib/workshop/context";
 import { homeOf } from "./access";
 import { transcriptExcerpt } from "./attach";
 import { RULE } from "./look";
@@ -265,7 +265,8 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       tags: tagsOf(db, versionId),
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
-    saveDescribed(db, versionId, value, provider, await contextStamp(wsId, WORKSPACE_MAX, DESCRIBE_VERSION));
+    // the stamp of the text this call sent: the workspace may have changed while the AI answered
+    saveDescribed(db, versionId, value, provider, stampOf(workspace, DESCRIBE_VERSION));
     if (value.turn) await turnVersion(db, versionId, base + value.turn);
     // a new name only while the library may get one; fileInto makes the folder with its first file
     const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
