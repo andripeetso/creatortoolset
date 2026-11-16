@@ -97,8 +97,9 @@ export function WorkspacePick({ mode, only }: { mode: "list" | "one"; only?: rea
       <SettingsSelect
         label="Workspace"
         // always the last thing before Close, whatever else a page puts in the header and whichever drew first (Usage's
-        // period picker): the selector is in the same place on every page
-        className="order-last"
+        // period picker), and one width whatever the workspace is called: the selector is in the same place on every
+        // page, and a long name is cut short instead of pushing the title and Close out of the header
+        className="order-last max-w-52 sm:w-52 [&>span]:!block [&>span]:min-w-0 [&>span]:truncate"
         value={w.all ? ALL_WORKSPACES : (w.id ?? "")}
         onValueChange={(picked) => usePick.setState({ picked })}
         options={[...(mode === "list" ? [{ value: ALL_WORKSPACES, label: "All workspaces" }] : []), ...w.workspaces.map((p) => ({ value: p.id, label: p.name }))]}
