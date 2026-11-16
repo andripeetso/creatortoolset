@@ -221,7 +221,7 @@ export interface ReviewActionSlot {
 }
 
 /** The AI edit a Review version previews (ReviewVersion.edit); `fails`: the shots its maker's check found don't hold up. */
-export type ReviewEditRef = { project: string; draft: string; fails?: { n: number; why: string }[] };
+export type ReviewEditRef = { project: string; draft: string; fails?: { n: number; why: string; at?: number; dur?: number }[] };
 
 /**
  * What a plug-in adds to Review's timeline editor (components/ReviewEdits.tsx), which every install has on a version

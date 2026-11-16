@@ -115,6 +115,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   // a cut of the app's own AI Editor: its timeline edits can be made into the next version, and it is being asked for
   const own = manage ? version.draft : undefined;
   const [making, setMaking] = useState(false);
+  const [saidOpen, setSaidOpen] = useState(false);
   const ownEdit = useCachedLoad<Edit>(own ? `/api/editor/${own.edit}` : null, () => getEdit(own!.edit));
   const ownJobs = own ? (ownEdit.data?.jobs ?? []).filter((j) => j.variant === own.name) : [];
   const working = ownJobs.find((j) => j.state === "running") ?? ownJobs.find((j) => j.state === "queued");
@@ -387,6 +388,10 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   const w = view.width;
   const h = view.height;
   const shown = splitView(view, planEdits);
+  const said = own?.fails ?? edit?.fails ?? [];
+  const shotsSaid = said.filter((f) => f.n);
+  const here = shotsSaid.find((f) => f.at !== undefined && time >= f.at && time < f.at + (f.dur ?? 0));
+  const notes = shotsSaid.flatMap((f) => f.at === undefined ? [] : [{ rec: Math.round(f.at * fps), len: Math.round((f.dur ?? 0) * fps), text: `Shot ${f.n}: ${f.why}` }]);
 
   // the reframe window opens on the shot as it is now, or as a pending reframe left it
   // Face: paused on the shot (its middle, when the playhead is elsewhere); Color and Reframe close
@@ -476,11 +481,24 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
           Footage left out: {ownEdit.data.coverage.left.map((l) => `${l.title} (${l.why})`).join(", ")}
         </div>
       )}
-      {/* the shots the look before Review found still don't hold up in this version, the app's own edit or a plug-in's (nothing when it passed);
-          shot 0 is no shot: the line of a look or a fix that could not be made, and why */}
-      {(own?.fails ?? edit?.fails)?.map((f) => (
-        <div key={f.n} className="text-[11px] text-amber-300">{f.n ? `Shot ${f.n}: ` : ""}{f.why}</div>
-      ))}
+      {/* the shots the look before Review found still don't hold up in this version, the app's own edit or a plug-in's (nothing when it passed):
+          marked on the timeline, and one line here, the one under the playhead's or how many; it opens to the whole list.
+          Shot 0 is no shot: the line of a look or a fix that could not be made, and why */}
+      {said.filter((f) => !f.n).map((f) => <div key={f.why} className="text-[11px] text-amber-300">{f.why}</div>)}
+      {shotsSaid.length > 0 && (
+        <div className="text-[11px] text-amber-300">
+          <button type="button" onClick={() => setSaidOpen((v) => !v)} className="max-w-full truncate text-left hover:text-amber-200"
+            title={saidOpen ? "Hide the list" : "Every shot the check before Review flagged"}>
+            {here ? `Shot ${here.n}: ${here.why}` : `${shotsSaid.length} shot${shotsSaid.length === 1 ? "" : "s"} flagged by the check before Review`}
+          </button>
+          {saidOpen && shotsSaid.map((f) => (
+            <button key={f.n} type="button" disabled={f.at === undefined} onClick={() => f.at !== undefined && slots.current.player.seek(f.at + 0.01)}
+              className={`block text-left ${f === here ? "text-amber-200" : "text-amber-300/70"} enabled:hover:text-amber-200`}>
+              Shot {f.n}: {f.why}
+            </button>
+          ))}
+        </div>
+      )}
       {sentEdits.length > 0 && (
         <div className="text-[11px] text-zinc-500">
           {sentEdits.length} edit{sentEdits.length === 1 ? "" : "s"} already sent with an open comment, shown until it is resolved
@@ -545,6 +563,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
       <EditTimeline
         view={shown}
         time={time}
+        notes={notes}
         onSeek={(t) => slots.current.player.seek(t)}
         edits={planEdits}
         waves={clipWaves ? { ...waves, ...clipWaves } : waves}
