@@ -32,7 +32,7 @@ import { Timeline } from "@/components/screen-editor/Timeline";
 import { Segmented } from "@/components/screen-editor/controls";
 import { useMacRecorderState } from "@/components/settings/ThisMacSection";
 import { usePlayer } from "@/components/screen-editor/usePlayer";
-import { ExportDialog, parseExportSettings, type ExportSettings } from "@/components/screen-editor/ExportDialog";
+import { ExportDialog, exportSize, parseExportSettings, type ExportSettings } from "@/components/screen-editor/ExportDialog";
 
 /** A way out for the finished video. `run` gets it (`name` has no extension) and reports its own steps. */
 export type EditorAction = {
@@ -407,7 +407,7 @@ export function ScreenRecordingEditor({
     player.pause();
     const ctl = new AbortController();
     abort.current = ctl;
-    const out = outputSize(look.shape, width, height, a ? settings.short : 1080);
+    const out = a ? exportSize(settings, look.shape, width, height) : outputSize(look.shape, width, height, 1080);
     const kept = trimOf(look, duration);
     try {
       setError("");
