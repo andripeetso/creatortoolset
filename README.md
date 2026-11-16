@@ -138,7 +138,8 @@ Every other paid service works the same way: transcription, voices, audio engine
 key you add, and that provider bills you. Instagram is read only through the official login (for your own posts) and
 your own Apify key (for other creators), never by scraping web pages.
 
-**Speech** is set in Settings → AI → Voice: the languages spoken in your videos, and for captions, Media Library
+**Speech** is set in Settings → Voice: the languages you speak (a workspace's videos are heard in the language set in
+Settings → Workspace → Details, when it has one), and for captions, Media Library
 transcripts, the AI Editor and talking to the assistant, which engine hears it. That can be Deepgram or OpenAI on your
 key, or Whisper and Parakeet models running on your own computers, a Mac or a Linux machine (Settings → Devices → Add
 computer). The same page turns on reading the assistant's replies aloud.
@@ -190,7 +191,7 @@ key.
 The downloaded app sends anonymous usage and crash reports to creatortoolset.com, which may pass them to PostHog and
 Sentry. A report holds a random install id, the version and system, which of the app's pages were opened and how often,
 whether Connect is on, which kinds of AI are set up, and the message and code location of any error. It never holds
-your name, account, files or content. Turn it off in **Settings → General → Send anonymous usage and crash reports**.
+your name, account, files or content. Turn it off in **Settings → General → Usage and crash reports**.
 A server you build or host yourself sends none (`api/lib/telemetry.ts`).
 
 The **Servers** menu, or the picker right of the window buttons, switches the window between this Mac's server and any

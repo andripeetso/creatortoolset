@@ -9,6 +9,8 @@ import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
 import { availableEngines, readVoicePrefs, speechFor } from "./lib/speech";
+import { videoLanguages } from "./lib/video-languages";
+import { currentWorkspaceId } from "./lib/workspace-scope";
 import { NeedsKey, transcribeFile, type Route } from "./library/transcribe";
 import { CAPTION_LIMITS, ComputerBusy, ComputerOff, EDITOR_LIMITS, transcribeOnComputer } from "./lib/computer-transcribe";
 import { STT_MODELS } from "../contracts/voice";
@@ -37,11 +39,12 @@ export function cloudTranscribeBlock(user: AuthVars["user"]): string | null {
 
 /**
  * The model on the person's own computers their captions run on (Settings → AI → Voice, speechFor "captions"), or null:
- * the engines captions used before (their Deepgram key, else the browser's model).
+ * the engines captions used before (their Deepgram key, else the browser's model). `languages`: the workspace's
+ * (hereLanguages); none: the person's own list.
  */
-export function captionsComputer(user: AuthVars["user"]): { model: string; languages: string[] } | null {
+export function captionsComputer(user: AuthVars["user"], languages?: string[]): { model: string; languages: string[] } | null {
   if (!mayUseCloud(user)) return null;
-  const s = speechFor(user, "captions");
+  const s = speechFor(user, "captions", languages);
   return !("needs" in s) && s.engine === "local" && s.on === "computers" ? { model: s.model, languages: s.languages } : null;
 }
 
@@ -83,11 +86,14 @@ export async function editorWordsFromComputer(owner: string, languages: string[]
   return wordsFromComputer(owner, s, audio, "editor");
 }
 
+/** The languages of the videos of the workspace this request works in; undefined: the person's own list (lib/video-languages.ts). */
+const hereLanguages = async (user: AuthVars["user"]) => videoLanguages(user.username, await currentWorkspaceId(user));
+
 /** `computers`: the captions run on the person's own computers, this model's name (the page's engine label). */
-transcribeApp.get("/available", (c) => {
+transcribeApp.get("/available", async (c) => {
   const user = c.get("user");
   const missing = keyFor(user, "DEEPGRAM_API_KEY").missing;
-  const pc = captionsComputer(user);
+  const pc = captionsComputer(user, await hereLanguages(user));
   const computers = pc && (STT_MODELS.find((m) => m.id === pc.model)?.name ?? pc.model);
   return c.json({ available: !missing || !!pc, allowed: mayUseCloud(user), ...(computers ? { computers } : missing ? { why: missing } : {}) });
 });
@@ -333,7 +339,7 @@ export function mergeOverlappingWindows(
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** `fillers`: keep filler words (the Media Library, for the AI Editor's cuts); Caption Studio leaves them out. */
+/** `fillers`: keep filler words (the Media Library, for the AI Editor's cuts); Caption Studio leaves them out. `languages`: the workspace's or the edit's; none: the person's own list. */
 export async function transcribeWav(
   audio: Uint8Array | ArrayBuffer,
   user: SessionUser,
@@ -398,7 +404,9 @@ transcribeApp.post("/", async (c) => {
   if (captioning.has(c.req.query("project") ?? "")) {
     return c.json({ error: "This project's captions are already being made: they show here when they are ready", code: "CAPTIONING" }, 409);
   }
-  const pc = captionsComputer(user);
+  // a workspace's videos are heard in its own language (Settings → Workspace → Details)
+  const languages = await hereLanguages(user);
+  const pc = captionsComputer(user, languages);
   const accessError = pc ? null : cloudTranscribeBlock(user);
   if (accessError) {
     const locked = !mayUseCloud(user);
@@ -414,7 +422,7 @@ transcribeApp.post("/", async (c) => {
     if (cloudTranscribeBlock(user)) return c.json({ error: r.why, code: "USE_BROWSER", why: r.why }, 503);
     note = `${r.why}: written by Deepgram`;
   }
-  const result = await transcribeWav(audio, user);
+  const result = await transcribeWav(audio, user, { languages });
   if ("error" in result) return c.json({ error: result.error }, result.status);
   return c.json(note ? { ...result, note } : result);
 });

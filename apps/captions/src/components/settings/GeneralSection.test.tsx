@@ -14,14 +14,14 @@ describe("the recording shortcut row", () => {
 
   it("shows the shortcut as its status, with Change", () => {
     const html = renderToStaticMarkup(<ScreenRecording mac={state({ shortcut: "⌥⇧R" })} />);
-    expect(html).toContain("Screen recording");
+    expect(html).toContain("Screen Recorder");
     expect(html).toContain("Recording shortcut");
     expect(html).toContain("⌥⇧R");
     expect(html).toContain(">Change</button>");
   });
 
-  it("says Off when no shortcut is set", () => {
-    expect(renderToStaticMarkup(<ScreenRecording mac={state({ shortcut: "" })} />)).toContain(">Off</div>");
+  it("says Not set when no shortcut is set", () => {
+    expect(renderToStaticMarkup(<ScreenRecording mac={state({ shortcut: "" })} />)).toContain(">Not set</div>");
   });
 });
 
@@ -55,7 +55,7 @@ describe("the dictation group", () => {
 
   it("names what the keys do and shows each setting", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />);
-    for (const text of ["Talk", "Hold fn", "F16", ">Choose key</button>", "Transcribe a file", ">Open setup</button>", "Speech model", "Sound cues", ">Open</button>"]) {
+    for (const text of ["Talk key", "Hold fn", "F16", "Not set</button>", "File transcription", 'aria-label="Open setup"', "Dictation model", "Sound cues", ">Open</button>"]) {
       expect(html).toContain(text);
     }
     // every model is listed with what it is good at; the chosen one, on this Mac, is In use
@@ -72,7 +72,7 @@ describe("the dictation group", () => {
     const base = (m: Partial<DictationState["models"][number]>) => dictation({ model: "whisper-base.en", models: [{ ...dictation().models[1], ...m }] });
     const missing = renderToStaticMarkup(<Dictation mac={state({ dictation: base({}) })} />);
     expect(missing).toContain(">Download</button>");
-    expect(missing).toContain("Chosen, not on this Mac yet");
+    expect(missing).toContain("Needs download");
     expect(missing).not.toContain("In use");
     const busy = renderToStaticMarkup(<Dictation mac={state({ dictation: base({ progress: 0.42 }) })} />);
     expect(busy).toContain("Downloading · 42%");
@@ -94,12 +94,12 @@ describe("the dictation group", () => {
     const server = "http://tiny-acrobatics.example:7886/api/transcribe";
     // answering, or not checked yet (or an older app): nothing to say
     for (const serverAnswers of [true, null, undefined]) {
-      expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers }) })} />)).not.toContain("Not answering");
+      expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers }) })} />)).not.toContain("Offline");
     }
     // the chosen model (Turbo) is on this Mac: it transcribes
-    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers: false }) })} />)).toContain("Not answering · this Mac transcribes for now");
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers: false }) })} />)).toContain("Offline · transcribed on this Mac");
     // the chosen model isn't here: nothing downloads by itself, the recording waits
-    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers: false, model: "whisper-base.en" }) })} />)).toContain("Not answering · recordings wait in History");
+    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server, serverAnswers: false, model: "whisper-base.en" }) })} />)).toContain("Offline · recordings kept in History");
   });
 
   it("offers Cancel on a running download where the app can stop one, and says its size", () => {
@@ -112,10 +112,10 @@ describe("the dictation group", () => {
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ models }) })} />)).not.toContain(">Cancel</button>");
   });
 
-  it("says which permission is missing, next to Set up", () => {
+  it("says which permission is missing, with the row that opens setup", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ needs: "Accessibility" }) })} />);
     expect(html).toContain("Needs Accessibility");
-    expect(html).toContain(">Open setup</button>");
+    expect(html).toContain('aria-label="Open setup"');
   });
 
   it("says in one line why the keys are off while another dictation app is open", () => {
@@ -128,7 +128,6 @@ describe("the dictation group", () => {
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />)).not.toContain("Speech server");
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "http://tiny-acrobatics.example:7886/api/transcribe" }) })} />);
     expect(html).toContain("Speech server");
-    expect(html).toContain("Used when your server doesn&#x27;t answer.");
     expect(html).toContain('value="http://tiny-acrobatics.example:7886/api/transcribe"');
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "", engine: "server" }) })} />)).not.toContain("Speech server");
   });

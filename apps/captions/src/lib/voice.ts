@@ -21,7 +21,7 @@ export const putModel = (computer: string, model: string, keep: boolean) =>
 
 export const useVoice = () => useCachedLoad<VoiceView>("/api/voice-prefs", getVoice, { own: true });
 
-export const ENGINE_NAMES: Record<SttEngine, string> = { auto: "Automatic", deepgram: "Deepgram", openai: "OpenAI", local: "On my computers" };
+export const ENGINE_NAMES: Record<SttEngine, string> = { auto: "Automatic", deepgram: "Deepgram", openai: "OpenAI", local: "Your computers" };
 
 /** A use's "Same as default" in its select. */
 export const SAME = "same";
@@ -39,9 +39,6 @@ export function engineOptions(can: Exclude<SttEngine, "auto">[], current: SttEng
 }
 
 export const modelOf = (id: string): SttModel | undefined => STT_MODELS.find((m) => m.id === id);
-
-/** Where a need is fixed: the row of API keys the server named (none for a local engine). */
-export const keyFix = (key: string | undefined): string | null => (key ? `/settings/keys#api-key-${key}` : null);
 
 /** A need in the app's one wording ("Needs a Deepgram key"); one without a key as the server says it. */
 export function needWords(r: Extract<SttResolved, { needs: string }>): string {

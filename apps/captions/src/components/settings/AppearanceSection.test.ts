@@ -119,7 +119,7 @@ describe("a tool's row says what stops it and where that is fixed", () => {
     expect(needFix(need("enhance", 0))).toEqual({ label: "Add key", to: "/settings/keys#api-key-ELEVENLABS_API_KEY" });
     expect(needFix(need("instagram", 0))).toEqual({ label: "New workspace", to: "/projects" });
     expect(needFix(need("instagram", 1))).toEqual({ label: "Add key", to: "/settings/keys#apify-key" });
-    expect(needFix(need("workshop", 1))).toEqual({ label: "Add AI", to: "/settings/providers" });
+    expect(needFix(need("workshop", 1))).toEqual({ label: "Add provider", to: "/settings/providers" });
     expect(needFix(need("media", 0))).toEqual({ label: "Open Media Library", to: "/library" });
   });
 });

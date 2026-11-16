@@ -25,6 +25,7 @@ import { onEvent } from "../lib/events";
 import { readComments, readMeta } from "../review";
 import { inProjectOf, projectOf } from "../lib/project-of";
 import { sharedHere } from "../lib/workshop/workspace";
+import { currentWorkspaceId } from "../lib/workspace-scope";
 import type { SessionUser } from "../users";
 import { resolveProjectId } from "../lib/workshop/workspace";
 
@@ -129,19 +130,21 @@ editorApp.get("/footage-target", async (c) => {
 });
 
 // the defaults are registered before /:id, so "defaults" is never read as an edit id
+// the defaults of the workspace the request works in (the window's, or the one picked in Settings: X-CT-Workspace);
 // in a workspace given to the person, the workspace's own (its owner's): what a new edit there is made with
-editorApp.get("/defaults", async (c) => c.json(await editorDefaults(await settingsOf(c))));
+editorApp.get("/defaults", async (c) => c.json(await editorDefaults(await settingsOf(c), await currentWorkspaceId(c.get("user")))));
 
-/** One slot's default: an item id the person can choose from, or null for back to the pack's or the built-in one. */
+/** One slot's default in that workspace: an item id the person can choose from, or null for back to the pack's or the built-in one. */
 editorApp.put("/defaults/:slot", async (c) => {
   const user = c.get("user").username;
   const slot = c.req.param("slot") as EditSlot;
   if (!EDIT_SLOTS.includes(slot)) return c.json({ error: "Unknown slot", code: "invalid" }, 400);
   const id = (await body(c)).id ?? null;
-  const defaults = await editorDefaults(user);
+  const ws = await currentWorkspaceId(c.get("user"));
+  const defaults = await editorDefaults(user, ws);
   if (id !== null && (typeof id !== "string" || !defaults.items[slot].some((i) => i.id === id))) return c.json({ error: "No such item for this slot", code: "invalid" }, 400);
-  await setChosenDefault(user, slot, id);
-  return c.json(await editorDefaults(user));
+  await setChosenDefault(user, slot, id, ws);
+  return c.json(await editorDefaults(user, ws));
 });
 
 // the person's editing styles (contracts/editor-styles.ts), the workspace's in one given to them; registered before /:id, as the defaults are

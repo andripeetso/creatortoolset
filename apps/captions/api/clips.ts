@@ -26,6 +26,7 @@ import { ffmpegCommand } from "./ffmpeg-runtime";
 import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
 import { env } from "./lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { videoLanguages } from "./lib/video-languages";
 import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { isWithin, sharedFolder } from "./folders";
 import type { SharedFolder, ToolFolder } from "../contracts/folders";
@@ -759,7 +760,9 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       meta.progress = 0.38;
       await jobPersist(meta);
       stopCrawl = crawlProgress(meta, 0.72);
-      const result = onDevice ? await transcribeOnDevice(wavPath(id), id) : await transcribeWav(await readFile(wavPath(id)), user);
+      const result = onDevice
+        ? await transcribeOnDevice(wavPath(id), id)
+        : await transcribeWav(await readFile(wavPath(id)), user, { languages: await videoLanguages(user.username, meta.projectId) });
       stopCrawl();
       await rm(wavPath(id), { force: true }).catch(() => {});
       if ("error" in result) throw new Error(result.error);

@@ -21,6 +21,7 @@ import { accountOf, givenLibrary, homeOf, libraryRole } from "../library/access"
 import { readerOf } from "../library/reader";
 import { assetRef, canSee } from "../library/sources";
 import { sharedTo } from "../lib/project-of";
+import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { ownedTeamWithMembers } from "../lib/workspaces";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
@@ -376,27 +377,49 @@ const BUILT_IN_ITEMS: Record<EditSlot, EditItem[]> = {
   sfxSet: [{ id: "none", title: "No sound effects", from: null }],
 };
 
-/** One person's default choices, one file per account: $DATA_DIR/editor-defaults/<username>.json. */
+/**
+ * One account's default choices, one file: $DATA_DIR/editor-defaults/<username>.json. `by` holds each workspace's own
+ * (its id → the slots chosen there). The slots beside it are the ones chosen before the defaults were per workspace:
+ * what a request with no workspace still reads and writes (a person with none).
+ */
+type Chosen = Partial<EditBundle> & { by?: Record<string, Partial<EditBundle>> };
 const defaultsFile = (username: string) => path.join(env.dataDir, "editor-defaults", `${username}.json`);
 const USER = /^[a-zA-Z0-9._-]{1,64}$/;
 
-export function chosenDefaults(username: string): Partial<EditBundle> {
-  if (!USER.test(username)) return {};
+function keptDefaults(username: string): Chosen {
   try {
-    return JSON.parse(readFileSync(defaultsFile(username), "utf8")) as Partial<EditBundle>;
+    return JSON.parse(readFileSync(defaultsFile(username), "utf8")) as Chosen;
   } catch {
     return {};
   }
 }
 
-/** Sets the person's default for one slot to an item, or clears it (null) back to the pack's or the built-in one. */
-export async function setChosenDefault(username: string, slot: EditSlot, id: string | null): Promise<void> {
+/**
+ * What the account chose in `workspace`. The first read since the defaults became per workspace gives every workspace
+ * the account has then what it had chosen before, so nothing changes until one is changed; a workspace made later has
+ * no entry and starts from the app's defaults.
+ */
+export async function chosenDefaults(username: string, workspace?: string): Promise<Partial<EditBundle>> {
+  if (!USER.test(username)) return {};
+  const { by, ...before } = keptDefaults(username);
+  if (!workspace) return before;
+  if (by || !Object.keys(before).length) return { ...by?.[workspace] };
+  const have = [...(await ownedProjects(username)), ...(await sharedProjects(username))];
+  const seeded = Object.fromEntries(have.map((p) => [p.id, { ...before }]));
+  await writeJsonAtomic(defaultsFile(username), { ...before, by: seeded });
+  return { ...seeded[workspace] };
+}
+
+/** Sets the account's default for one slot in `workspace` to an item, or clears it (null) back to the pack's or the built-in one. */
+export async function setChosenDefault(username: string, slot: EditSlot, id: string | null, workspace?: string): Promise<void> {
   if (!USER.test(username)) throw new Error("Bad account name");
-  const chosen = chosenDefaults(username);
+  const chosen = await chosenDefaults(username, workspace);
   if (id === null) delete chosen[slot];
   else chosen[slot] = id;
+  // read again: the read above may have just given each workspace its starting values
+  const { by } = keptDefaults(username);
   await mkdir(path.dirname(defaultsFile(username)), { recursive: true });
-  await writeJsonAtomic(defaultsFile(username), chosen);
+  await writeJsonAtomic(defaultsFile(username), workspace ? { ...keptDefaults(username), by: { ...by, [workspace]: chosen } } : { ...chosen, ...(by ? { by } : {}) });
 }
 
 /**
@@ -406,11 +429,12 @@ export async function setChosenDefault(username: string, slot: EditSlot, id: str
 const usablePacks = async (username: string) => (await listInstalled(username)).filter((p) => packOn({ ...p, projectId: undefined, projectIds: undefined }));
 
 /**
- * The editor defaults of one person: the items each slot can take (built-in, then their installed packs'), their own
- * choices, and the set a new edit gets. For each slot that set is the person's choice, else the first installed pack's
- * default for it, else the built-in item; a choice or default naming an item no longer installed is skipped.
+ * The editor defaults of one account in `workspace`: the items each slot can take (built-in, then its installed
+ * packs'), the choices made in that workspace, and the set a new edit there gets. For each slot that set is the choice,
+ * else the first installed pack's default for it, else the built-in item; a choice or default naming an item no longer
+ * installed is skipped. No `workspace`: the account's choices from before they were per workspace.
  */
-export async function editorDefaults(username: string): Promise<EditorDefaults> {
+export async function editorDefaults(username: string, workspace?: string): Promise<EditorDefaults> {
   const items = structuredClone(BUILT_IN_ITEMS);
   const packs = await usablePacks(username);
   for (const p of packs) {
@@ -421,7 +445,7 @@ export async function editorDefaults(username: string): Promise<EditorDefaults> 
     add("voiceMix", p.voiceMixes);
     add("sfxSet", p.sfxSets);
   }
-  const chosen = chosenDefaults(username);
+  const chosen = await chosenDefaults(username, workspace);
   const bundle = { ...BUILT_IN_BUNDLE };
   for (const slot of EDIT_SLOTS) {
     const candidates = [chosen[slot], ...packs.map((p) => p.editorDefaults?.[slot])];
@@ -478,7 +502,7 @@ export async function cleanBrief(body: Record<string, unknown>, username: string
     if (!(await collectionOk(username, ws, body.brollCollectionId))) throw new NoCollection("No such collection");
     out.brollCollectionId = body.brollCollectionId;
   }
-  // null or [] = the person's Voice languages again; anything not a list of codes is ignored
+  // null or [] = its workspace's language again (none there: the person's own list); anything not a list of codes is ignored
   if (body.languages === null) out.languages = [];
   else if (Array.isArray(body.languages) && body.languages.every(isLanguage)) out.languages = [...new Set(body.languages as string[])].slice(0, 5);
   // planned from the brief, not cut around speech (plan.ts); kept only when asked for, so every other edit is as it was
@@ -514,12 +538,12 @@ export class NoStyle extends Error {}
  * What an editing style gives an edit in workspace `ws`: its choices, and the copy the edit keeps. `username` is the
  * account the workspace is (ownerOf): the style and grades are its. A B-roll folder the edit cannot read and a grade
  * that account no longer has are left out, not an error. `on` is an edit that already exists (PATCH): where the style
- * names no folder or grade, that edit keeps its own.
+ * names no folder or grade, that edit keeps its own. `workspace`: the one a new edit is made in (its defaults).
  */
-export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">): Promise<Partial<EditMeta>> {
+export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">, workspace?: string): Promise<Partial<EditMeta>> {
   const s = findStyle(username, id);
   if (!s) throw new NoStyle("No such style");
-  const d = await editorDefaults(username);
+  const d = await editorDefaults(username, workspace);
   return {
     versions: s.versions,
     targetS: s.targetS,
@@ -592,7 +616,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
   const now = Date.now();
   const brief = await cleanBrief(body, username, ws);
   // `style` names an editing style: its choices go under the request's own. No `style` key at all: none, as before.
-  const styled = typeof body.style === "string" ? await styleFields(account, ws, body.style) : {};
+  const styled = typeof body.style === "string" ? await styleFields(account, ws, body.style, undefined, projectId) : {};
   const e: EditMeta = {
     id: randomUUID(),
     workspaceId: ws,
@@ -609,7 +633,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     targetS: 0,
     brollCollectionId: null,
     framing: { punch: 1.15 },
-    bundle: (await editorDefaults(account)).bundle,
+    bundle: (await editorDefaults(account, projectId)).bundle,
     steps: chosenSteps(account, await stepsOffIn(username, account, projectId)),
     ...styled,
     ...brief,

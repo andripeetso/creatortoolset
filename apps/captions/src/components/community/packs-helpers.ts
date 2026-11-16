@@ -135,7 +135,7 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
   if (has("editor.cards"))
     out.push({ ...editor, spot: "The cards", does: "Added to what the AI is told when it picks the lines that get a card, in an edit whose style has an animation style." });
   if (c.home)
-    out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Shown on Home", does: "Sets which tools Home shows, when you press Use on Home. Every switch stays yours to change." });
+    out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Home tools", does: "Sets which tools Home shows, when you press Use on Home. Every switch stays yours to change." });
   return out;
 }
 

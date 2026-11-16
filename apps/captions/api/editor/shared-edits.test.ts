@@ -179,3 +179,27 @@ describe.skipIf(rootReplaced)("AI Editor: edits shared in their workspace", () =
     for (const u of ["cy", "eve"]) expect((await play(u)).status).toBe(404);
   });
 });
+
+describe.skipIf(rootReplaced)("AI Editor: the defaults are each workspace's own", () => {
+  const THIRD = "cccccccc-0000-4000-8000-000000000003";
+  const at = (ws: string, method = "GET", slot = "", body?: unknown) =>
+    app.request(`/api/editor/defaults${slot}`, { method, headers: { cookie: cookies.ana!, "content-type": "application/json", "x-ct-workspace": ws }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const grade = async (r: Response | Promise<Response>) => (await json(r)).bundle.grade;
+
+  it("what was chosen before starts every workspace she has; a change in one leaves the other, and a new edit takes its own workspace's", async () => {
+    // ana chose Warm before the defaults were per workspace (beforeAll): both her workspaces start with it
+    expect(await grade(at(FIRST))).toBe("warm");
+    expect(await grade(at(SECOND))).toBe("warm");
+    expect(await grade(at(SECOND, "PUT", "/grade", { id: null }))).toBe("none");
+    expect(await grade(at(FIRST))).toBe("warm");
+    expect(readEdit(await make("ana", ["ver_2"], SECOND))!.bundle.grade).toBe("none");
+    expect(readEdit(await make("ana", ["ver_1"], FIRST))!.bundle.grade).toBe("warm");
+  });
+
+  it("a workspace made later starts from the app's defaults", async () => {
+    writeFileSync(path.join(dir, "workshop", "projects", `${THIRD}.json`), JSON.stringify({ id: THIRD, owner: "ana", name: "Tiny Acrobatics 3", createdAt: 3, updatedAt: 3 }));
+    const d = await json(at(THIRD));
+    expect(d.chosen).toEqual({});
+    expect(d.bundle.grade).toBe("none");
+  });
+});

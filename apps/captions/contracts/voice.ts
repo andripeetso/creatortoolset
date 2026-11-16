@@ -1,9 +1,14 @@
 /**
- * Settings → AI → Voice: the languages a person speaks in their videos, and which engine turns speech into text, by
- * default and for each use. One record per account ($DATA_DIR/voice-prefs/<user>.json, api/voice-prefs.ts):
+ * Settings → Voice: the languages a person speaks, and which engine turns speech into text, by default and for each
+ * use. One record per account ($DATA_DIR/voice-prefs/<user>.json, api/voice-prefs.ts):
  *   GET /api/voice-prefs → VoiceView   PUT /api/voice-prefs { languages?, stt? } → VoiceView
  * Every speech-to-text call asks api/lib/speech.ts `speechFor(actor, use)`, so a choice here changes that use and only
- * that one. A project or an edit can name its own language (it wins over these).
+ * that one.
+ *
+ * Whose language is heard: what is transcribed from a workspace's videos (captions, Media Library transcripts, an AI
+ * Editor edit that names none of its own) is heard in that workspace's language (Settings → Workspace → Details;
+ * api/lib/video-languages.ts). The person's own list here is for what is theirs, dictation and talking to the
+ * assistant, and for a workspace with no language set.
  */
 
 /** Where speech becomes text. `mic` is talking to the assistant (the web dock and the phone). */
@@ -21,7 +26,7 @@ export const SPEECH_USE_NAMES: Record<SpeechUse, string> = {
   captions: "Captions",
   transcripts: "Media Library transcripts",
   editor: "AI Editor",
-  mic: "Talking to the assistant",
+  mic: "Assistant voice input",
 };
 
 /**
@@ -43,7 +48,7 @@ export interface SttModel {
   id: string;
   engine: Exclude<SttEngine, "auto">;
   name: string;
-  /** One line: what it is good at, measured where we measured. */
+  /** What it is good at, in a few words (Settings shows it with the size, nothing else). */
   about: string;
   /** Who made it: the catalog line reads "Whisper large-v3 turbo by OpenAI, MIT". */
   by: string;
@@ -82,28 +87,28 @@ export interface SttModel {
  * on Estonian; Parakeet was the fastest and closest in timing on English.
  */
 export const STT_MODELS: SttModel[] = [
-  { id: "nova-3", engine: "deepgram", name: "Deepgram Nova-3", by: "Deepgram", about: "Keeps every um and restart, which the AI Editor cuts at",
+  { id: "nova-3", engine: "deepgram", name: "Deepgram Nova-3", by: "Deepgram", about: "Most accurate · keeps filler words",
     page: "https://developers.deepgram.com/docs/models-languages-overview", licence: "Paid API, your own key", languages: "many" },
-  { id: "whisper-1", engine: "openai", name: "OpenAI Whisper", by: "OpenAI", about: "Tidies speech: an um or a restart is often left out",
+  { id: "whisper-1", engine: "openai", name: "OpenAI Whisper", by: "OpenAI", about: "Accurate · leaves out filler words",
     page: "https://platform.openai.com/docs/guides/speech-to-text", licence: "Paid API, your own key", languages: "many" },
   // the first a computer has is the one used when no model is chosen (api/lib/speech.ts localFor): turbo is the default
-  { id: "whisper-large-v3-turbo", engine: "local", name: "Whisper large-v3 turbo", by: "OpenAI", about: "As close as large-v3 on Estonian, twice as fast with half the memory",
+  { id: "whisper-large-v3-turbo", engine: "local", name: "Whisper large-v3 turbo", by: "OpenAI", about: "Most accurate · every language",
     page: "https://huggingface.co/openai/whisper-large-v3-turbo", licence: "MIT", download: "deepdml/faster-whisper-large-v3-turbo-ct2", coreml: "openai_whisper-large-v3-v20240930_turbo", mb: 1621, languages: "many", computer: true },
-  { id: "whisper-large-v3", engine: "local", name: "Whisper large-v3", by: "OpenAI", about: "The closest a free model came to Deepgram on Estonian (30% words wrong), best with a graphics card",
+  { id: "whisper-large-v3", engine: "local", name: "Whisper large-v3", by: "OpenAI", about: "Most accurate, slower · every language",
     page: "https://huggingface.co/openai/whisper-large-v3", licence: "Apache-2.0", download: "Systran/faster-whisper-large-v3", mb: 3090, languages: "many", computer: true },
   // its card lists 25 languages; on Estonian it got nearly half the words wrong, so it is offered for English only
-  { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", by: "NVIDIA", about: "English only: the fastest, and the closest word times",
+  { id: "parakeet-tdt-0.6b-v3", engine: "local", name: "Parakeet TDT 0.6B v3", by: "NVIDIA", about: "Fastest · English",
     page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", licence: "CC-BY-4.0", download: "istupakov/parakeet-tdt-0.6b-v3-onnx", coreml: "FluidInference/parakeet-tdt-0.6b-v3-coreml", macSince: "0.15.38", coremlMb: 494, mb: 2550, languages: ["en"], computer: true },
-  { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Small and quick, the one the browser already uses",
+  { id: "whisper-base", engine: "local", name: "Whisper base", by: "OpenAI", about: "Smallest · every language",
     page: "https://huggingface.co/openai/whisper-base", licence: "Apache-2.0", mb: 291, languages: "many" },
   // a Mac's smaller ones (Dictation on a Mac): after the others, so none of them is a computer's default
-  { id: "whisper-small", engine: "local", name: "Whisper small", by: "OpenAI", about: "Quicker than turbo on a Mac, less exact",
+  { id: "whisper-small", engine: "local", name: "Whisper small", by: "OpenAI", about: "Quicker, less accurate · every language",
     page: "https://huggingface.co/openai/whisper-small", licence: "Apache-2.0", coreml: "openai_whisper-small", mb: 490, languages: "many", computer: true },
-  { id: "whisper-small.en", engine: "local", name: "Whisper small (English)", by: "OpenAI", about: "English only, quicker than turbo on a Mac",
+  { id: "whisper-small.en", engine: "local", name: "Whisper small (English)", by: "OpenAI", about: "Quicker, less accurate · English",
     page: "https://huggingface.co/openai/whisper-small.en", licence: "Apache-2.0", coreml: "openai_whisper-small.en", mb: 488, languages: ["en"], computer: true },
-  { id: "whisper-base.en", engine: "local", name: "Whisper base (English)", by: "OpenAI", about: "English only, the smallest and quickest",
+  { id: "whisper-base.en", engine: "local", name: "Whisper base (English)", by: "OpenAI", about: "Smallest, least accurate · English",
     page: "https://huggingface.co/openai/whisper-base.en", licence: "Apache-2.0", coreml: "openai_whisper-base.en", mb: 145, languages: ["en"], computer: true },
-  { id: "parakeet-tdt-0.6b-v2", engine: "local", name: "Parakeet TDT 0.6B v2", by: "NVIDIA", about: "English only, on a Mac: as quick as v3",
+  { id: "parakeet-tdt-0.6b-v2", engine: "local", name: "Parakeet TDT 0.6B v2", by: "NVIDIA", about: "Fastest · English",
     page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2", licence: "CC-BY-4.0", coreml: "FluidInference/parakeet-tdt-0.6b-v2-coreml", macSince: "0.15.38", mb: 475, languages: ["en"], computer: true },
 ];
 
@@ -127,7 +132,7 @@ export const runsOn = (m: SttModel, os: string | undefined, version?: string): b
 export const sizeOn = (m: SttModel, os: string | undefined): number | undefined => (os === "mac" ? m.coremlMb ?? m.mb : m.mb);
 
 export interface VoicePrefs {
-  /** ISO 639-1 codes, the ones spoken in this person's videos; empty = detect it each time. */
+  /** ISO 639-1 codes, the ones this person speaks: dictation, talking to the assistant, and the videos of a workspace with no language of its own. */
   languages: string[];
   stt: { default: SttChoice; per: Partial<Record<SpeechUse, SttChoice>> };
 }
