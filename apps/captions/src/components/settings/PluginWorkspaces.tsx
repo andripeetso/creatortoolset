@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Card, EmptyRow, ErrorRow, LoadingRow, Notice, Row, saveFailed, Section } from "@/components/settings/ui";
+import { Card, EmptyRow, ErrorRow, LoadingRow, Notice, Row, saveFailed, Section, useSettingsWorkspace, WorkspacePick } from "@/components/settings/ui";
 import { pluginOffHere, useMe } from "@/lib/auth";
 import { getEditSteps } from "@/lib/editor";
 import { scopeRequests } from "@/lib/current-workspace";
@@ -25,7 +24,7 @@ export interface PluginWorkspacesView {
 async function send(id: string, body?: unknown): Promise<PluginWorkspacesView> {
   const r = await fetch(`/api/plugins/${encodeURIComponent(id)}/workspaces`, body === undefined ? undefined : { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = (await r.json().catch(() => null)) as (PluginWorkspacesView & { error?: string }) | null;
-  if (!r.ok || !j) throw new Error(j?.error ?? "That did not save. Try again.");
+  if (!r.ok || !j) throw new Error(j?.error ?? "Could not save");
   return j;
 }
 
@@ -46,18 +45,18 @@ export function PluginWorkspaces({ id, onView }: { id: string; onView?: (v: Plug
     );
 
   let rows: ReactNode;
-  if (failed && !view) rows = <ErrorRow title="The workspaces could not be read" retry={() => { setFailed(false); void load(); }} />;
+  if (failed && !view) rows = <ErrorRow title="Could not load workspaces" retry={() => { setFailed(false); void load(); }} />;
   else if (!view) rows = <LoadingRow />;
   // no switch: the row says why, in words
   else if (view.fixed) rows = <Row title="All workspaces" description={view.fixed} />;
-  else if (!view.workspaces.length) rows = <EmptyRow title="All workspaces" description="You have no workspaces yet." />;
+  else if (!view.workspaces.length) rows = <EmptyRow title="No workspaces" />;
   else {
     const on = (w: { on: boolean }) => view.all || w.on;
     rows = (
       <>
         <Row
           title="All workspaces"
-          description="Also the ones you add later"
+          description="Includes workspaces added later."
           control={
             <Switch
               checked={view.all}
@@ -94,59 +93,37 @@ export function PluginWorkspaces({ id, onView }: { id: string; onView?: (v: Plug
 export const pluginOfSection = (sectionId: string) => webPlugins.find((p) => p.settings?.some((s) => s.id === sectionId && !s.adminTab))?.id;
 
 /**
- * A plug-in's own settings under its workspaces. They are a workspace's own: the window's when the plug-in is on there,
- * else one where it is on (its requests, /api/x/<id>/, say that workspace), and a choice when it is on in several.
+ * A plug-in's own settings under its workspaces. They are a workspace's own, so the page's header has the workspace
+ * selector over the workspaces the plug-in is on in, and the settings below are the chosen one's (their requests,
+ * /api/x/<id>/, say that workspace). They are never locked because the window is in a workspace where it is off: the
+ * selector then starts on one where it is on. On in one workspace only, there is nothing to choose. Fixed on for the
+ * whole server, it has one set of settings and no selector.
  */
 export function WithPluginWorkspaces({ id, children }: { id: string; children: ReactNode }) {
   useMe(); // drawn again when the workspace changes what is off here
   const current = useWorkspace((s) => s.currentProjectId);
   const [view, setView] = useState<PluginWorkspacesView | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
   const places = view && !view.fixed ? view.workspaces.filter((w) => view.all || w.on) : [];
-  const here = !pluginOffHere(id) && (!view || !!view.fixed || !view.workspaces.length || places.some((w) => w.id === current));
-  const target = places.find((w) => w.id === picked) ?? (here ? places.find((w) => w.id === current) : places[0]);
+  // until the server says where it is on, every workspace: the choice made on another Settings page is not lost
+  const w = useSettingsWorkspace("one", view ? places.map((p) => p.id) : undefined);
+  // the workspace whose settings are drawn: null = the window's own, undefined = none to draw
+  let shown: string | null | undefined;
+  if (!view) shown = !pluginOffHere(id) && (!w.id || w.id === current) ? null : undefined;
+  else if (view.fixed || !view.workspaces.length) shown = null;
+  else shown = (places.find((p) => p.id === w.id) ?? places.find((p) => p.id === current) ?? places[0])?.id;
   const prefix = `/api/x/${id}/`;
   // set while drawing, before the settings below fetch in their effects
-  scopeRequests(prefix, target && target.id !== current ? target.id : null);
+  scopeRequests(prefix, shown && shown !== current ? shown : null);
   useEffect(() => () => scopeRequests(prefix, null), [prefix]);
-
-  let body: ReactNode = children;
-  if (!here && !target) body = view ? <Notice>It is off in every workspace. Switch it on for one above to change its settings.</Notice> : null;
-  else if (places.length > 1 && target)
-    body = (
-      <>
-        <Section title="Settings for">
-          <Card>
-            {places.map((w) => (
-              <Row
-                key={w.id}
-                title={w.name}
-                description={w.id === current ? "This workspace" : undefined}
-                control={
-                  w.id === target.id ? (
-                    <span className="text-xs text-muted-foreground">Shown below</span>
-                  ) : (
-                    <Button variant="outline" size="sm" onClick={() => setPicked(w.id)}>Show</Button>
-                  )
-                }
-              />
-            ))}
-          </Card>
-        </Section>
-        <div key={target.id}>{children}</div>
-      </>
-    );
-  else if (target && target.id !== current)
-    body = (
-      <>
-        <Notice>These are its settings for {target.name}.</Notice>
-        <div key={target.id}>{children}</div>
-      </>
-    );
   return (
     <>
+      {view && <WorkspacePick mode="one" only={places.map((p) => p.id)} />}
       <PluginWorkspaces id={id} onView={setView} />
-      {body}
+      {shown === undefined && view && <Notice>Off in every workspace.</Notice>}
+      {/* no selector to say it (on in one workspace only, and the window is in another) */}
+      {shown && shown !== current && !w.many && <Notice>These are its settings for {places.find((p) => p.id === shown)?.name}.</Notice>}
+      {/* a keyed fragment: another workspace's settings are read anew, and the page's own spacing between sections stays */}
+      {shown !== undefined && <Fragment key={shown ?? current ?? ""}>{children}</Fragment>}
     </>
   );
 }
