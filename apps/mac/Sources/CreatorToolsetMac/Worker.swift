@@ -77,6 +77,9 @@ func workRow(_ s: WorkStatus) -> ActivityRow {
 
 @MainActor
 final class Worker: ObservableObject {
+    /// The work package version the bundled worker runs (apps/captions/contracts/work.ts WORK_V): sent with the long poll.
+    static let packageVersion = 1
+
     /// What runs now, for the menu; nil between steps.
     @Published private(set) var status: WorkStatus?
     /// The server wants a newer app: no worker until the app is updated (the relaunch clears it).

@@ -472,7 +472,7 @@ const unclaimedMessage = (device: string, on: boolean): string =>
  * The relay's routes for a device (mounted at /api/devices/relay, its ctd_ token). `deviceOf` says which device the
  * caller is (null = not allowed).
  */
-export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits?: (device: string, kinds: unknown) => Promise<DeviceHint | null>) {
+export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits?: (device: string, kinds: unknown, work?: unknown) => Promise<DeviceHint | null>) {
   const app = new Hono<{ Variables: { device: string } }>();
 
   /** Any call from the relay says its device is here: a running job's text, step, done or fail keeps it on while every slot is busy (no poll then). */
@@ -494,14 +494,14 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const keeps = b.blobs === true;
     // a poll that lists editor step kinds (contracts/devices.ts): when one waits that this device could claim now, the
     // poll is answered with the hint, after any AI request. A poll that lists none is never answered with it.
-    const step = "editor" in b ? await editorWaits?.(device, b.editor) : null;
+    const step = "editor" in b || "work" in b ? await editorWaits?.(device, b.editor, b.work) : null;
     const queued = next(device);
     if (queued) return c.json(packFor(claim(queued), keeps));
     if (step) return c.json(step);
     const got = await new Promise<Req | DeviceHint | null>((resolve) => {
       const w = {
         device,
-        ...("editor" in b && editorWaits ? { step: () => editorWaits(device, b.editor) } : {}),
+        ...(("editor" in b || "work" in b) && editorWaits ? { step: () => editorWaits(device, b.editor, b.work) } : {}),
         fn: (r: Req | DeviceHint | null) => {
           clearTimeout(timer);
           resolve(r);

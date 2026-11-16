@@ -156,6 +156,15 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     settle();
   });
 
+  it("a computer whose worker never claimed is told too, from the version its long poll sends", async () => {
+    const fresh = pairDevice("maker", "Fresh Mac");
+    await report(fresh.token, BIG);
+    const e = await newEdit("maker", ["ver_up"]);
+    queue("maker", e, "v1");
+    expect(await json(post(fresh.token, "/api/devices/relay/wait", { blobs: true, work: 1 }))).toEqual({ work: true });
+    settle();
+  });
+
   it("with no computer online the step says so in one line, and a computer that comes online takes it", async () => {
     const mac = pairDevice("solo", "Solo Mac");
     file("solo", "ver_solo", { uploaded: true });

@@ -398,7 +398,9 @@ final class RelayRunner {
 
     /// The long poll's body: big files come as hashes, and the editor kinds this Mac would take now, if any are to be said.
     func waitBody(listing kinds: [String]?) -> [String: Any] {
-        var body: [String: Any] = ["blobs": true]
+        // `work`: the work package version this app's worker runs (contracts/work.ts WORK_V), so the server tells this Mac
+        // when one of its steps waits, before the worker ever claimed (Worker.swift)
+        var body: [String: Any] = ["blobs": true, "work": Worker.packageVersion]
         if let kinds { body["editor"] = kinds }
         return body
     }
