@@ -1,4 +1,6 @@
 import { LIBRARY_LOOK_KIND, type DeviceJob } from "../../contracts/devices";
+import type { Device } from "../../contracts/providers";
+import { deviceOf, listDevices, setDeviceLooks } from "../lib/devices";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import type { DeviceJobSlot } from "../lib/plugin";
 import { libraryChanged } from "./access";
@@ -16,17 +18,24 @@ import { parseSignal, takeSignal } from "./stretches";
  * and sends them. The look lane (worker.ts) then asks the job's actor's AI from them, as for a file the server holds
  * (shots.ts lookFromSheets), and drops them: the sheets are held in memory until that call and never written here.
  * Only the Mac in the version's mac_device takes it, and only when its account added the file; one look at a time.
+ * The Mac keeps its sheets; each claim it makes says which versions it keeps them for, and the answer names the ones it
+ * may drop (lookSheetsClaim). Settings → Storage counts them and empties them (api/kept.ts).
  */
 
 /** How long a Mac holds a look without a word (it beats once a minute while it reads). */
 const LEASE_S = 300;
-/** Sheets one look may send: six hours of footage at about 600 stretches an hour. */
-const MOST_SHEETS = 400;
+/**
+ * The most one look may send: its sheets' JPEGs together, all held in memory until the AI's call. About ten hours of
+ * footage at 250 KB a sheet of 16 stretches; one sheet is at most JPEG_MAX.
+ */
+export const LOOK_BYTES_MAX = 100_000_000;
 const JPEG_MAX = 4 * 1024 * 1024;
+/** Why a look past LOOK_BYTES_MAX failed: it stays failed, since the same file sends the same sheets again. */
+export const TOO_BIG = "This video is too long to describe shot by shot: its sheets come to more than 100 MB.";
 
 type Sheet = LookSheet & { ph: string[] };
-/** The looks Macs hold now, by job id: the Mac, the version, its length, and the sheets sent so far. */
-const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; sheets: Sheet[] }>();
+/** The looks Macs hold now, by job id: the Mac, the version, its length, and the sheets sent so far and their bytes. */
+const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; sheets: Sheet[]; bytes: number }>();
 /** The sheets a Mac finished sending, by version, until the look lane takes them for its AI call. */
 const sent = new Map<string, LookSheet[]>();
 
@@ -77,7 +86,7 @@ function parseSheet(v: unknown): Sheet | string {
 /** The device job road's side of it (api/devices.ts lists it with the app's own). */
 export const macLookJob: DeviceJobSlot = {
   kind: LIBRARY_LOOK_KIND,
-  waits: (owner, device) => !busy(device) && !!nextFor(device, owner),
+  waits: (owner, device) => !!deviceOf(device)?.looks?.clear || (!busy(device) && !!nextFor(device, owner)),
   claim: (d): DeviceJob | null => {
     if (busy(d.id)) return null;
     const r = nextFor(d.id, d.owner);
@@ -87,7 +96,7 @@ export const macLookJob: DeviceJobSlot = {
     // the lane's claim that parked it counted this try
     db.prepare("UPDATE jobs SET state = 'running', lease_until = ?, started_at = ?, error = NULL WHERE id = ?").run(now + LEASE_S * 1000, now, r.id);
     const duration = Number((JSON.parse(r.probe ?? "null") as { duration?: number } | null)?.duration) || 0;
-    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, sheets: [] });
+    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, sheets: [], bytes: 0 });
     libraryChanged(r.library_id);
     const stretches = (db.prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(r.version_id) as { a: number; b: number }[]).map((s) => [s.a, s.b]);
     return {
@@ -110,12 +119,21 @@ export const macLookJob: DeviceJobSlot = {
       const x = parseSignal(b.signal);
       if (typeof x === "string") return { error: x, status: 400 };
       h.sheets = [];
+      h.bytes = 0;
       return { reply: { stretches: takeSignal(db, h.versionId, h.duration, x).map(({ seg, a, b }) => ({ seg, a, b })) } };
     }
     if (b.sheet !== undefined) {
       const sheet = parseSheet(b.sheet);
       if (typeof sheet === "string") return { error: sheet, status: 400 };
-      if (h.sheets.length >= MOST_SHEETS) return { error: `A look sends ${MOST_SHEETS} sheets at most`, status: 413 };
+      h.bytes += Buffer.byteLength(sheet.jpeg, "base64");
+      if (h.bytes > LOOK_BYTES_MAX) {
+        // for good: the file would send the same sheets again; Retry or Describe again on the clip asks once more
+        held.delete(id);
+        db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?").run(TOO_BIG, id);
+        libraryChanged(h.libraryId);
+        void wakeEditorPolls();
+        return { error: TOO_BIG, status: 413 };
+      }
       h.sheets.push(sheet);
       return { reply: {} };
     }
@@ -145,3 +163,49 @@ export const macLookJob: DeviceJobSlot = {
     return true;
   },
 };
+
+/** The sheets a Mac keeps, as its claim says (contracts/devices.ts DeviceClaimBody.looks): bytes by version; null when not said. */
+function parseKept(v: unknown): Map<string, number> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out = new Map<string, number>();
+  for (const [id, bytes] of Object.entries(v as Record<string, unknown>).slice(0, 20_000))
+    if (/^[\w-]{1,100}$/.test(id) && typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0) out.set(id, bytes);
+  return out;
+}
+
+/**
+ * A Mac's claim lists the versions it keeps sheets for: kept as its count for Settings → Storage, and answered with
+ * those it may drop, every version that is gone, in the trash, or no longer the file on this Mac of this account's.
+ * After Empty (emptyLookSheets) the answer says to drop them all. Undefined when the claim says nothing of sheets
+ * (an older Mac app).
+ */
+export function lookSheetsClaim(d: Device, body: unknown): { gone: string[]; clear?: true } | undefined {
+  const kept = parseKept(body);
+  if (!kept) return undefined;
+  if (deviceOf(d.id)?.looks?.clear) {
+    setDeviceLooks(d.id, { bytes: 0, items: 0 });
+    return { gone: [], clear: true };
+  }
+  const mine = libraryDb().prepare(
+    "SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL AND v.source_key LIKE 'mac:%' AND v.mac_device = ? AND v.created_by = ?",
+  );
+  const gone = [...kept.keys()].filter((v) => !mine.get(v, d.id, d.owner));
+  for (const v of gone) kept.delete(v);
+  setDeviceLooks(d.id, { bytes: [...kept.values()].reduce((n, b) => n + b, 0), items: kept.size });
+  return { gone };
+}
+
+/** The sheets `owner`'s Macs keep, by their last claims (Settings → Storage). */
+export function lookSheetsOf(owner: string): { bytes: number; items: number } {
+  const own = listDevices((d) => d.owner === owner);
+  return { bytes: own.reduce((n, d) => n + (d.looks?.bytes ?? 0), 0), items: own.reduce((n, d) => n + (d.looks?.items ?? 0), 0) };
+}
+
+/**
+ * Settings → Storage → Empty: each of `owner`'s Macs that keeps sheets drops them all, told on its next claim (its long
+ * poll is woken for it now). A look of a version whose sheets went makes them from the video again.
+ */
+export function emptyLookSheets(owner: string): void {
+  for (const d of listDevices((x) => x.owner === owner && !!(x.looks?.items || x.looks?.bytes))) setDeviceLooks(d.id, { bytes: 0, items: 0, clear: true });
+  void wakeEditorPolls();
+}

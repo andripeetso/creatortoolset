@@ -186,6 +186,11 @@ export interface Device {
   stt?: { want: string[]; held: string[]; getting: string[]; claimed?: true; ready?: string[] };
   /** its last test for helping with heavy work (contracts/devices.ts HELPER_CHECK_KIND) */
   check?: HelperCheck;
+  /**
+   * the Media Library's shot description sheets a Mac keeps for this server, by its last claim (contracts/devices.ts
+   * LIBRARY_LOOK_KIND): their size and how many clips; `clear`: Settings → Storage → Empty, told on its next claim
+   */
+  looks?: { bytes: number; items: number; clear?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

@@ -28,7 +28,9 @@ const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { stretchesOf } = await import("./stretches");
 const { MAC_WAITS, queueLook } = await import("./shots");
-const { takeMacSheets } = await import("./mac-look");
+const { LOOK_BYTES_MAX, macLookJob, takeMacSheets, TOO_BIG } = await import("./mac-look");
+const { deviceOf } = await import("../lib/devices");
+const { emptyKept, keptView } = await import("../kept");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
 const { MacClaudeError } = await import("../lib/mac-claude");
@@ -190,5 +192,71 @@ describe("a look of a file kept on a Mac", () => {
     const v = await seed("ast-m-30");
     expect(job(v)).toMatchObject({ state: "needs_key", error: "Connect an AI" });
     expect(await claim()).toBeNull();
+  });
+});
+
+describe("what one look may send", () => {
+  it("past 100 MB of sheets the look is refused with why, fails for good and is not offered again", async () => {
+    const v = await seed("ast-m-40");
+    const got = (await claim())!;
+    await post(road(got.id), { signal });
+    // the biggest sheet there may be, sent as many times as fit (the same string: the test holds one copy)
+    const big = Buffer.alloc(4 * 1024 * 1024, 7);
+    big[0] = 0xff;
+    big[1] = 0xd8;
+    const jpeg = big.toString("base64");
+    const fit = Math.floor(LOOK_BYTES_MAX / big.length);
+    for (let i = 0; i < fit; i++) expect(await macLookJob.answer(mac.device.id, got.id, { sheet: { segs: [i % 2], jpeg } })).toEqual({ reply: {} });
+    const over = await post(road(got.id), { sheet: { segs: [1], jpeg } });
+    expect(over.status).toBe(413);
+    expect(await over.json()).toEqual({ error: TOO_BIG });
+    expect(job(v)).toMatchObject({ state: "failed", error: TOO_BIG });
+    // nothing held: the Mac's next word on it is not its own any more, and no look waits for it
+    expect((await post(road(got.id), { done: true, format: "3x16" })).status).toBe(404);
+    expect(takeMacSheets(v)).toBeNull();
+    expect(await claim()).toBeNull();
+    await runLooks();
+    expect(job(v).state).toBe("failed");
+  });
+});
+
+describe("the sheets a Mac keeps", () => {
+  /** A version on `device` with no look job, as a clip whose look is done. */
+  const clip = async (id: string, device = mac.device.id) => {
+    const v = await seed(id, device);
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id = ?").run(v);
+    return v;
+  };
+  const claimWith = async (looks: unknown, token = mac.token) =>
+    (await (await post("/api/devices/relay/editor/claim", { kinds: ["library-look"], ...(looks === undefined ? {} : { looks }) }, token)).json()) as { job: DeviceJob | null; looks?: { gone: string[]; clear?: true } };
+
+  it("a claim lists them and is answered with the gone, trashed and no longer this Mac's; Storage counts the rest", async () => {
+    const mine = await clip("ast-k-01");
+    const trashed = await clip("ast-k-02");
+    libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-k-02'").run();
+    const laptops = await clip("ast-k-03", second.device.id);
+    const answer = await claimWith({ [mine]: 1000, [trashed]: 300, [laptops]: 200, "ver-deleted": 500, "../x": 9 });
+    expect(answer).toEqual({ job: null, looks: { gone: [trashed, laptops, "ver-deleted"] } });
+    expect(deviceOf(mac.device.id)!.looks).toEqual({ bytes: 1000, items: 1 });
+    expect((await keptView({ username: "local" })).rows.find((r) => r.kind === "look-sheets")).toEqual({ kind: "look-sheets", bytes: 1000, items: 1 });
+    expect((await keptView({ username: "bo" })).rows.find((r) => r.kind === "look-sheets")).toMatchObject({ bytes: 0, items: 0 });
+    // an older Mac app says nothing of sheets: nothing is answered or changed
+    expect(await claimWith(undefined)).toEqual({ job: null });
+    expect(deviceOf(mac.device.id)!.looks).toEqual({ bytes: 1000, items: 1 });
+  });
+
+  it("Empty in Settings → Storage tells each Mac on its next claim to drop them all, and counts nothing from then", async () => {
+    expect(macLookJob.waits("local", mac.device.id)).toBe(false);
+    await emptyKept("look-sheets", { username: "local" });
+    expect((await keptView({ username: "local" })).rows.find((r) => r.kind === "look-sheets")).toMatchObject({ bytes: 0, items: 0 });
+    // its long poll is answered with the hint, so it claims now
+    expect(macLookJob.waits("local", mac.device.id)).toBe(true);
+    expect(macLookJob.waits("local", second.device.id)).toBe(false); // it kept none
+    expect((await claimWith({ "ver-ast-k-01": 1000 })).looks).toEqual({ gone: [], clear: true });
+    expect(deviceOf(mac.device.id)!.looks).toEqual({ bytes: 0, items: 0 });
+    expect(macLookJob.waits("local", mac.device.id)).toBe(false);
+    // through the page's route, as any other kind Empty clears
+    const r = await app.request("/api/devices/storage/kept/look-sheets/empty", { method: "POST" });
+    expect(r.status).toBe(200);
   });
 });
