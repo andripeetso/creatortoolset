@@ -15,6 +15,8 @@ import { waitLine } from "./reach";
 import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
+import { progressOf } from "../work/place";
+import { deviceName } from "../lib/devices";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
 import { accountOf, givenLibrary, homeOf, libraryRole } from "../library/access";
@@ -583,11 +585,14 @@ interface JobDbRow {
 }
 
 export function jobsOf(id: string): EditJob[] {
-  const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error, actor FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as Array<JobDbRow & { actor: string | null }>;
+  const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error, actor, device FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as Array<JobDbRow & { actor: string | null; device: string | null }>;
   return rows.map((r) => {
+    // running on a computer: what it last said (work/place.ts), else which computer holds it
+    const p = r.state === "running" ? progressOf(r.id) : undefined;
+    const progress = p ? { device: p.device, done: p.done, total: p.total, leftS: p.leftS } : r.state === "running" && r.device ? { device: deviceName(r.device) } : undefined;
     // queued: why no computer has taken it, when none that runs it can read its files (reach.ts)
-    const line = r.state === "running" ? lineOf(r.id) : r.state === "queued" && r.actor ? waitLine(r.actor, r) : undefined;
-    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}) };
+    const line = r.state === "running" ? (p?.line ?? lineOf(r.id)) : r.state === "queued" && r.actor ? waitLine(r.actor, r) : undefined;
+    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}), ...(progress ? { progress } : {}) };
   });
 }
 
