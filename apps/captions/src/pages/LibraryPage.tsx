@@ -132,7 +132,7 @@ export default function LibraryPage() {
   /** a workspace given to this person by its owner, or the Media Library on Read for them: to look at and download from,
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
-  const readOnly = !!library?.readOnly || !canChange(me, "media");
+  const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -776,7 +776,7 @@ export default function LibraryPage() {
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
   const changing = !!library && !readOnly && !trash;
-  const mayAdd = !!library && (!readOnly || (!!library.canAdd && canChange(me, "media"))) && !trash;
+  const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
 
   const sidebar = library && (
     <LibrarySidebar

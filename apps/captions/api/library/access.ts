@@ -122,7 +122,7 @@ export function libraryRole(username: string, libraryId: string): "owner" | null
  * libraryRole (the owner), and a member's upload is marked as theirs (created_by).
  */
 export async function mayAdd(user: SessionUser, libraryId: string): Promise<boolean> {
-  return !!libraryRole(user.username, libraryId) || (mayChange(user, "media") && (await givenLibrary(user.username, libraryId)));
+  return !!libraryRole(user.username, libraryId) || ((await givenLibrary(user.username, libraryId)) && mayChange(user, "media"));
 }
 
 /**
