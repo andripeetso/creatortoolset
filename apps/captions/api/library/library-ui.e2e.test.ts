@@ -112,7 +112,7 @@ describe.skipIf(!enabled)("Media Library in the browser", () => {
     await search.fill("tiny");
     await card.waitFor();
     await search.fill("zzqx");
-    await page.getByText("No matches.").waitFor();
+    await page.getByText("No clips found").waitFor();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await search.fill("");

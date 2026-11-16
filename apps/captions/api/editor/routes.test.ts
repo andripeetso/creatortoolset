@@ -176,7 +176,7 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect((await cut({ asset: "rev-1", n: 2, edits: [] })).status).toBe(400);
     const refused = await cut({ asset: "rev-1", n: 2, edits: [...edits, { key: "A1:0", label: "First voice", move: 5 }] });
     expect(refused.status).toBe(400);
-    expect((await json(refused)).error).toBe("First voice: a voice stays with its picture, it can only be cut or taken out");
+    expect((await json(refused)).error).toBe("First voice: a voice stays with its picture, it can only be cut or removed");
     expect(readDraft(id, "v1")!.timeline.tracks.V1.items).toHaveLength(3);
 
     const e = await json<Edit>(cut({ asset: "rev-1", n: 2, edits }));
@@ -196,7 +196,7 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     libraryDb().prepare("UPDATE edit_jobs SET state = 'failed' WHERE edit_id = ? AND kind = 'post'").run(id);
     const refused = await call("maker", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`);
     expect(refused.status).toBe(409);
-    expect(((await refused.json()) as { error: string }).error).toBe("Post-processing did not finish on this version: run it again before you export");
+    expect(((await refused.json()) as { error: string }).error).toBe("Post-processing did not finish on this version: run it again before exporting");
     // nor is a preview made from the older copies (it would be filed in Review as this cut)
     const { previewStep } = await import("./preview");
     const { readEdit } = await import("./store");
@@ -284,7 +284,7 @@ describe.skipIf(rootReplaced)("AI Editor: the worker", () => {
       libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast_a2'").run();
       await call("maker", "POST", `/api/editor/${id}/run`, {});
       await drain();
-      expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).jobs[0]).toMatchObject({ state: "failed", error: expect.stringMatching(/no longer yours/) });
+      expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).jobs[0]).toMatchObject({ state: "failed", error: expect.stringMatching(/cannot be read by this account/) });
     } finally {
       STEPS.analyze = real!;
       libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_a2'").run();

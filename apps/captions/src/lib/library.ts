@@ -397,7 +397,7 @@ export async function uploadFile(
         });
         if (r.status === 409) offset = ((await r.json()) as { offset: number }).offset;
         else if (r.ok) offset = Number(r.headers.get("upload-offset"));
-        else throw new Error(`Upload failed (${r.status})`);
+        else throw new Error("Could not upload the file");
         failures = 0;
       } catch (e) {
         if (signal?.aborted || ++failures > 5) throw e;

@@ -90,7 +90,7 @@ type Drag =
       add?: boolean; dup?: boolean; group?: string[] }
   | { kind: "hole"; ph: Placeholder; mode: Mode | "draw"; x0: number; f0: number; df: number; moved: boolean };
 
-export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true,
+export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, showFlags = true, notes,
   edits, placeholders, onEdit, onPlaceholder, onPickPlaceholder, onReframe, onColor, onFace, range, onRange, onClearRange, waves, history, onLive, marked, onPin, rules }: {
   view: TimelineView;
   /** seconds */
@@ -107,6 +107,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   /** a count clicked: its comment */
   onPin?: (key: string) => void;
   showFlags?: boolean;
+  /** shots someone said something about (frames), marked under the ruler; the text shows on hover */
+  notes?: { rec: number; len: number; text: string }[];
   /** hand edits to draw (the ones being made, or a picked comment's) */
   edits?: ItemEdit[];
   placeholders?: Placeholder[];
@@ -667,8 +669,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
           {onEdit && (
             <>
               {edit && holePicked && hole && (
-                <button onClick={() => { onPlaceholder?.(null); setHolePicked(false); }} title="Drop this placeholder (Delete)" className={tbtn}>
-                  <Trash2 className="h-3 w-3" /> Delete
+                <button onClick={() => { onPlaceholder?.(null); setHolePicked(false); }} title="Remove this placeholder (Delete)" className={tbtn}>
+                  <Trash2 className="h-3 w-3" /> Remove
                 </button>
               )}
               {edit && !holePicked && sel && (
@@ -680,7 +682,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                   )}
                   {sel.track === "V1" && onColor && (
                     <button onClick={() => onColor(sel)} title="Colour: grade this shot (or its take, or match the others to it)" className={tbtn}>
-                      <Palette className="h-3 w-3" /> Color
+                      <Palette className="h-3 w-3" /> Colour
                     </button>
                   )}
                   {sel.track === "V1" && onFace && (
@@ -688,9 +690,9 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                       <Smile className="h-3 w-3" /> Face
                     </button>
                   )}
-                  <button onClick={() => removeToggle(group.length ? group : [sel])} title={editOf[sel.key]?.remove ? "Put it back" : "Take it out (Delete)"} className={tbtn}>
+                  <button onClick={() => removeToggle(group.length ? group : [sel])} title={editOf[sel.key]?.remove ? "Restore" : "Remove (Delete)"} className={tbtn}>
                     {editOf[sel.key]?.remove ? <Undo2 className="h-3 w-3" /> : <Trash2 className="h-3 w-3" />}
-                    {editOf[sel.key]?.remove ? "Put back" : group.length > 1 ? `Delete ${group.length}` : "Delete"}
+                    {editOf[sel.key]?.remove ? "Restore" : group.length > 1 ? `Remove ${group.length}` : "Remove"}
                   </button>
                 </>
               )}
@@ -727,14 +729,14 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 </button>
               )}
               <button onClick={() => { setEditing(!editing); setTool("select"); setHolePicked(false); }}
-                title="Edit mode: drag items to move them (up or down for another layer), their edges to trim or extend; ⌘Z undoes; your edits go with your next comment"
+                title="Edit mode: drag items to move them (up or down for another layer), their edges to trim or extend; ⌘Z undoes"
                 className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${editing ? "bg-violet-600 text-white" : "text-zinc-300 hover:bg-zinc-900"}`}>
                 <Pencil className="h-3 w-3" /> Edit
               </button>
               <span className="mx-1 h-3 w-px bg-zinc-800" />
             </>
           )}
-          <button aria-label="Reset the view" title="Reset the view: the whole cut, audio layers back to their height" onClick={resetView} className={btn}>
+          <button aria-label="Reset the view" title="Reset the view: the whole version, audio layers back to their height" onClick={resetView} className={btn}>
             <RotateCcw className="h-3 w-3" />
           </button>
           <button aria-label="Zoom out (-)" disabled={zoom <= 1} onClick={() => zoomBy(1 / 1.5)} className={btn}>
@@ -748,7 +750,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
           <button aria-label="Zoom in (=)" disabled={zoom >= maxZoom} onClick={() => zoomBy(1.5)} className={btn}>
             <Plus className="h-3 w-3" />
           </button>
-          <button onClick={() => zoomTo(1)} title="Fit the whole cut (\)"
+          <button onClick={() => zoomTo(1)} title="Fit the whole version (\)"
             className="w-8 rounded text-center tabular-nums hover:bg-zinc-900">{zoom < 10 ? zoom.toFixed(1).replace(/\.0$/, "") : Math.round(zoom)}×</button>
         </div>
       </div>
@@ -793,6 +795,10 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 <span key={i} title={`${f.check}: ${f.what}`} className="absolute top-2 h-2 rounded-full bg-red-500"
                   style={{ left: x(f.rec), width: Math.max(4, x(f.len ?? 1)) }} />
               ))}
+              {notes?.map((n) => (
+                <span key={n.rec} title={n.text} className="absolute bottom-0 h-1 rounded-full bg-amber-400"
+                  style={{ left: x(n.rec) + 1, width: Math.max(4, x(n.len) - 2) }} />
+              ))}
             </>
         )}>
           {lanes.map((t) => (
@@ -816,7 +822,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 <span className="font-mono text-zinc-400">{t.id}</span>
                 <span className="truncate text-[9px]">{t.name}</span>
                 {edit && layered && t.id !== "V1" && t.id !== "A1" && (
-                  <button aria-label={`Remove layer ${t.id}`} title="Remove this layer (takes out what's on it)"
+                  <button aria-label={`Remove layer ${t.id}`} title="Remove this layer and what is on it"
                     onPointerDown={(e) => e.stopPropagation()} onClick={() => dropLayer(t.id)}
                     className="ml-auto hidden rounded text-zinc-500 hover:text-rose-400 group-hover/lane:block">
                     <X className="h-3 w-3" />
@@ -951,7 +957,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
           })()}
           {pps >= 30 && view.words.length > 0 && (
             <div className="flex h-4 border-t border-zinc-900/80">
-              <div className="sticky left-0 z-20 shrink-0 bg-zinc-950 px-1.5 text-[9px] text-zinc-600" style={{ width: LABEL_W }}>words</div>
+              <div className="sticky left-0 z-20 shrink-0 bg-zinc-950 px-1.5 text-[9px] text-zinc-600" style={{ width: LABEL_W }}>Words</div>
               <div className="relative flex-1">
                 {view.words.map((w) => (
                   <span key={`${w.rs}-${w.t}`} className="absolute truncate text-[9px] leading-4 text-zinc-500"
@@ -977,13 +983,13 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
         return (
           <div data-menu className="fixed z-50 w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 text-[12px] shadow-xl"
             style={{ left: Math.min(menu.x, window.innerWidth - 216), top: Math.min(menu.y, window.innerHeight - 280) }}>
-            {menu.onHole && hole && <button className={row} onClick={act(() => { onPlaceholder?.(null); setHolePicked(false); })}>Delete placeholder</button>}
+            {menu.onHole && hole && <button className={row} onClick={act(() => { onPlaceholder?.(null); setHolePicked(false); })}>Remove placeholder</button>}
             {it && (
               <>
                 <div className="truncate px-3 pb-1 pt-0.5 text-[10px] text-zinc-500">{it.track} · {it.label}</div>
                 <button className={row} onClick={act(() => onSelect?.(it, false))}>Comment on this</button>
                 {may && <button className={row} onClick={act(() => { setEditing(true); removeToggle(group.some((g) => g.key === it.key) ? group : [it]); })}>
-                  {editOf[it.key]?.remove ? "Put back" : group.length > 1 && group.some((g) => g.key === it.key) ? `Delete ${group.length}` : "Delete"}</button>}
+                  {editOf[it.key]?.remove ? "Restore" : group.length > 1 && group.some((g) => g.key === it.key) ? `Remove ${group.length}` : "Remove"}</button>}
                 {may && it.track !== "V1" && it.track !== "A1" && (
                   <>
                     <button className={row} onClick={act(() => {
@@ -1038,7 +1044,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
               </>
             )}
             <div className="my-1 border-t border-zinc-800" />
-            <button className={row} onClick={act(() => { setEditing(!editing); setTool("select"); })}>{editing ? "Leave Edit mode" : "Edit mode"}</button>
+            <button className={row} onClick={act(() => { setEditing(!editing); setTool("select"); })}>{editing ? "Turn off Edit mode" : "Edit mode"}</button>
           </div>
         );
       })()}

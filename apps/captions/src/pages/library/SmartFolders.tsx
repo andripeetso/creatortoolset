@@ -51,21 +51,21 @@ export function SmartFolderDialog({
   return (
     <Dialog open={!!folder} onOpenChange={(o) => !o && onClose()}>
       <DialogContent aria-describedby={undefined} className="flex flex-col gap-3 sm:max-w-md">
-        <DialogTitle className="truncate pr-6 text-base">What goes in “{folder?.name}”</DialogTitle>
+        <DialogTitle className="truncate pr-6 text-base">Rule for “{folder?.name}”</DialogTitle>
         <Textarea
           autoFocus
           rows={4}
           value={rule}
           maxLength={600}
           onChange={(e) => setRule(e.target.value)}
-          placeholder="Phone gameplay: touch buttons in the corners, a round joystick bottom left, the picture wider than 16:9"
+          placeholder="Describe the clips for this folder"
         />
-        <p className="text-xs text-zinc-500">Clips that fit go in by themselves, now and as new ones come in. The ones you move in or out stay where you put them</p>
+        <p className="text-xs text-zinc-500">Clips that fit the rule are filed in this folder, now and when new ones are added.</p>
         {error && <p className="text-sm text-red-400">{error}</p>}
         <div className="flex justify-end gap-2">
           {folder?.rule && (
             <Button variant="ghost" disabled={busy} onClick={() => void save(null)} className="mr-auto">
-              Stop sorting
+              Delete rule
             </Button>
           )}
           <Button variant="outline" onClick={onClose}>

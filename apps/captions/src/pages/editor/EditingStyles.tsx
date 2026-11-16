@@ -220,7 +220,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="style-notes">Describe the editing style</Label>
-            <Textarea id="style-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} maxLength={STYLE_NOTES_MAX} placeholder="Fast, no intro: start on the strongest line. Keep the jokes and the laughs. One idea per line. End on the question." />
+            <Textarea id="style-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} maxLength={STYLE_NOTES_MAX} />
           </div>
           {style?.playbook && playbook !== null && (
             <div className="flex flex-col gap-1.5">
@@ -389,7 +389,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
           <div className="flex items-center justify-between gap-3">
             <div className="flex flex-col gap-0.5">
               <Label htmlFor="style-passes">Edit in passes</Label>
-              <span className="text-xs text-muted-foreground">Each pass waits for you in Review</span>
+              <span className="text-xs text-muted-foreground">Each pass goes to Review before the next</span>
             </div>
             <Switch id="style-passes" checked={passes} onCheckedChange={setPasses} />
           </div>
@@ -448,7 +448,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 shrink-0"
-                        aria-label={`Remove what the edit of ${day} taught`}
+                        aria-label={`Remove the notes from the edit of ${day}`}
                         onClick={() =>
                           void removeLearned(style.id, l.editId).then(() => {
                             const next = learned.filter((x) => x.editId !== l.editId);

@@ -163,7 +163,7 @@ export function PhoneRowView({
         </div>
       </div>
       {code === undefined && <p className={cn("text-xs text-muted-foreground", hold && "h-44")}>Making a code…</p>}
-      {code === null && <p className="text-xs text-muted-foreground">Couldn't make a code. Check the connection, then reopen this step.</p>}
+      {code === null && <p className="text-xs text-muted-foreground">Could not make a code. Check the connection, then reopen this step.</p>}
       {code === "signin" && <p className="text-xs text-muted-foreground">Sign in first, then this code appears here.</p>}
       {code === "local" && (
         <div className="space-y-2">
@@ -475,7 +475,7 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
       setLink("");
       setJoinNote({ ok: true, text: `Joined ${j.server}${j.device?.name ? ` as ${j.device.name}` : ""}.` });
       void refresh().catch(() => {});
-    } else setJoinNote({ ok: false, text: j?.message ?? "Couldn't reach this computer. Try again." });
+    } else setJoinNote({ ok: false, text: j?.message ?? "Could not reach this computer. Try again." });
   };
 
   return (

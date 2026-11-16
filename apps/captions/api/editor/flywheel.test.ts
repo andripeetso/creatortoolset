@@ -190,7 +190,7 @@ describe.skipIf(rootReplaced)("the gate asks for what is missing, each once", ()
     const { sources, left } = await indexSources(e, signal); // asked (the stand-in says it gets no look), then read
     expect(shotLog.redo).toHaveBeenCalledWith("ver_10", "maker");
     expect(sources.map((s) => s.id)).toEqual(["ver_1"]);
-    expect(left).toEqual([{ id: "ver_10", title: "On the Mac", why: "it is kept on a Mac, not uploaded, and has no shot descriptions to cut from" }]);
+    expect(left).toEqual([{ id: "ver_10", title: "On the Mac", why: "it is on a computer, not uploaded, and has no shot descriptions" }]);
     expect(now.left).toEqual(left);
   });
 

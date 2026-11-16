@@ -77,7 +77,7 @@ async function checkFolder(libraryId: string, raw: unknown, by: string): Promise
   const given = typeof r.path === "string" ? r.path.trim() : "";
   if (!path.isAbsolute(given)) return `Not a full path: ${given || "(empty)"}`;
   const real = await realpath(given).catch(() => null);
-  if (!real || !(await stat(real)).isDirectory()) return `No such folder on the server: ${given}`;
+  if (!real || !(await stat(real)).isDirectory()) return `Folder not found on the server: ${given}`;
   const data = await realpath(env.dataDir).catch(() => path.resolve(env.dataDir));
   if (inside(real, data) || inside(data, real)) return `That folder holds the app's own data: ${given}`;
   const mode = r.mode === "copy" ? "copy" : r.mode === "reference" || r.mode === undefined ? "reference" : null;
@@ -109,7 +109,7 @@ export async function copyTarget(source: string, to: string, data: string): Prom
   if (!path.isAbsolute(given)) return { error: `Not a full path: ${to}` };
   const made = await mkdir(given, { recursive: true }).then(
     () => null,
-    (e: unknown) => ({ error: `Couldn't make the folder ${to}: ${e instanceof Error ? e.message : String(e)}` }),
+    (e: unknown) => ({ error: `Could not create the folder ${to}: ${e instanceof Error ? e.message : String(e)}` }),
   );
   if (made) return made;
   const dest = await realpath(given);
@@ -395,13 +395,13 @@ const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(o
 export async function addWatchFolder(username: string, folderPath: string, libraryId?: string, copyTo?: string): Promise<string | null> {
   if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
   const target = libraryId ?? (await ensureLibrary(username));
-  if (!target) return "The Library is not made yet. Try again.";
-  if (!libraryRole(username, target)) return "That library is not yours to add a folder to.";
+  if (!target) return "No library: try again later";
+  if (!libraryRole(username, target)) return "Only the library's owner can add a folder";
   const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference", copyTo }, username);
   if (typeof f === "string") return f;
   const current = foldersOf(target);
   if (current.some((g) => g.path === f.path)) return null;
-  if (current.length >= MAX_FOLDERS) return `The Library watches up to ${MAX_FOLDERS} folders. Remove one first.`;
+  if (current.length >= MAX_FOLDERS) return `A library has up to ${MAX_FOLDERS} footage folders: remove one first`;
   writeWatch(target, [...current, f]);
   libraryChanged(target);
   scanSoon();

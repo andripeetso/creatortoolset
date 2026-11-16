@@ -127,8 +127,8 @@ export function takeMap(raw: RawScript, sentences: Sentence[], count: number): M
       const a = byN.get(t.first);
       const b = byN.get(t.last);
       const range = `${t.first}-${t.last}`;
-      if (!Number.isInteger(t.first) || !Number.isInteger(t.last) || !a || !b || t.first > t.last) notes.push(`Line ${l.id}: take ${range} is not in sentences 1-${max}: dropped`);
-      else if (a.src !== b.src) notes.push(`Line ${l.id}: take ${range} runs across two files: dropped`);
+      if (!Number.isInteger(t.first) || !Number.isInteger(t.last) || !a || !b || t.first > t.last) notes.push(`Line ${l.id}: take ${range} is not in sentences 1-${max}: left out`);
+      else if (a.src !== b.src) notes.push(`Line ${l.id}: take ${range} runs across two files: left out`);
       else takes.push({ first: t.first, last: t.last, score: Number.isFinite(t.score) ? Math.min(1, Math.max(0, t.score)) : 0 });
     }
     if (!takes.length) {
@@ -224,7 +224,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
       throw e;
     }
     const made = momentMap(found, analysis.sentences, edit.moments, edit.targetS);
-    if (!made.plans.length) throw new Error(`The AI found no part of the recording that can stand alone (${made.notes.slice(0, 3).join("; ") || "it named none"})`);
+    if (!made.plans.length) throw new Error(`No part of the recording stands on its own (${made.notes.slice(0, 3).join("; ") || "none named"})`);
     // found again: m1 is a rank, not a part. A name that now means other sentences lets go of its Review video, so the
     // new cut is filed as a video of its own and never as the next version of another moment's
     const before = readStep(edit.id, "plan");

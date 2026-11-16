@@ -475,9 +475,18 @@ describe("a cut the app's own AI Editor made", () => {
 
   it("names the shots the look before Review found still don't hold up, and nothing when the cut passed", async () => {
     server([], () => new Response("{}", { status: 200 }));
-    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens" }] } });
+    // the one under the playhead is said, the others counted, the whole list one click away
+    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 7, why: "walking through town, nothing happens", at: 0, dur: 2 }, { n: 9, why: "dark" }] } });
     await settle();
     expect(host.textContent).toContain("Shot 7: walking through town, nothing happens");
+    expect(host.textContent).not.toContain("Shot 9");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await mount([], { ...own, draft: { ...own.draft, fails: [{ n: 9, why: "dark" }] } });
+    await settle();
+    const line = [...host.querySelectorAll("button")].find((x) => x.textContent === "1 shot flagged by the check before Review")!;
+    await act(async () => line.click());
+    expect(host.textContent).toContain("Shot 9: dark");
     await act(async () => root.unmount());
     root = createRoot(host);
     await mount([], own);
@@ -613,7 +622,7 @@ describe("Face (the face refinement strength)", () => {
     });
     await act(async () => button("Use 80% for this edit")!.click());
     expect(face.save).toHaveBeenCalledWith(edit, 0.8);
-    expect(host.textContent).toContain("A new version with this strength is on its way");
+    expect(host.textContent).toContain("Making a new version with this strength");
     stage.remove();
   });
 });

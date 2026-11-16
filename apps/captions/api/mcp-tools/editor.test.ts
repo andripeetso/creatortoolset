@@ -407,7 +407,7 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     expect((await cut([{ key: "V1:0", head: -2.5 }])).text).toContain("Hello there: head can't be used on this clip as written.");
     expect((await cut([{ key: "V1:0", remove: true }, { key: "V1:0", tail: -3 }])).text).toBe("Hello there: two edits name this clip. Give one edit per clip.");
     expect((await cut([{ key: "V1:30", remove: false, head: 0 }])).text).toContain("Take 1: this edit changes nothing");
-    expect(await cut([{ key: "V1:30", remove: true }, { key: "A1:0", move: 5 }])).toMatchObject({ error: true, text: "Hello there: a voice stays with its picture, it can only be cut or taken out" });
+    expect(await cut([{ key: "V1:30", remove: true }, { key: "A1:0", move: 5 }])).toMatchObject({ error: true, text: "Hello there: a voice stays with its picture, it can only be cut or removed" });
     expect(await cut([{ key: "V1:31", remove: true }])).toMatchObject({ error: true, text: "V1:31 is not on this version's timeline" });
     expect(readDraft(id, "v1")!.timeline.tracks.V1.items).toHaveLength(3);
 

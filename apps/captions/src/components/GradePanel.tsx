@@ -296,11 +296,11 @@ function Loading({ what, onCancel }: { what: "frame" | "clip"; onCancel: () => v
       <div>
         <p className="text-base font-semibold">{what === "clip" ? "Loading the full-quality clip" : "Loading the full-quality frame"}</p>
         <p className="mt-1 text-xs text-zinc-300">
-          from the camera original on the Mac{secs >= 2 ? ` · ${secs} s` : ""}{secs >= 20 ? " (the footage drive is slow to wake)" : ""}
+          from the camera original{secs >= 2 ? ` · ${secs} s` : ""}{secs >= 20 ? " (the footage drive is starting)" : ""}
         </p>
       </div>
       <button onClick={onCancel} className="rounded-md border border-white/30 bg-white/10 px-4 py-1.5 text-sm font-medium hover:bg-white/20">
-        Cancel
+        Stop
       </button>
       <p className="text-[11px] text-zinc-400">Playback starts when it is loaded.</p>
     </div>

@@ -31,7 +31,7 @@ export async function writeDown(recording: Blob, onProgress: (p: number) => void
   if (res.ok) return (await res.json()) as { text: string; note?: string };
   const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; chosen?: boolean; why?: string };
   // an engine the person picked that can't run says so; only Automatic falls back to the browser's model
-  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Couldn't write that down (${res.status})`);
+  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || `Could not transcribe (${res.status})`);
   // no engine on the server for this account: the captions' local model, else the first
   const engine = storedEngine();
   // ponytail: a new worker loads the model (from the browser cache) on every message; keep one alive if that's slow
@@ -145,7 +145,7 @@ export function useVoiceInput(onText: (text: string) => void) {
       void note;
       setError(text ? null : "Didn't catch anything. Try again a little closer to the mic.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't write that down");
+      setError(e instanceof Error ? e.message : "Could not transcribe");
     }
     setProgress(null);
     setPhase("idle");

@@ -31,10 +31,10 @@ const label = (u: Upload) =>
     : u.status === "added"
       ? "Added"
       : u.status === "duplicate"
-        ? "Already in library"
+        ? "Already in the library"
         : u.status === "cancelled"
           ? "Cancelled"
-          : "Failed";
+          : "Not added";
 
 /** Still to go or on its way: Cancel stops it. */
 const going = (u: Upload) => u.status === "waiting" || u.status === "checking" || u.status === "copying" || u.status === "uploading";

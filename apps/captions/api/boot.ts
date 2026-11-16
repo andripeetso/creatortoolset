@@ -29,6 +29,7 @@ import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
 import { releaseRunningSteps, startEditorWorker } from "./editor/worker";
 import { serverWorkApp } from "./work/server-work-routes";
+import { serverUpdateApp } from "./server-update";
 import { settleServerWork } from "./work/server-work";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
@@ -430,6 +431,7 @@ app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
 app.route("/api/work/server-work", serverWorkApp);
+app.route("/api/server-update", serverUpdateApp);
 // Settings → Connect: link this computer to the account on the connect broker (api/connect/routes.ts)
 app.route("/api/connect", connectApp);
 // the menu bar panel's rows from plug-ins (activity.ts)

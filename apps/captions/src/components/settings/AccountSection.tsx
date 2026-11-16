@@ -192,7 +192,7 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
   // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
   const failed =
     mac.problem ??
-    (mac.account.state === "error" ? mac.account.message || "The sign-in didn't work. Try again." : mac.account.state === "unreachable" ? "Couldn't reach the account server. Try again." : null);
+    (mac.account.state === "error" ? mac.account.message || "Could not sign in. Try again." : mac.account.state === "unreachable" ? "Could not reach the account server. Try again." : null);
   useEffect(() => {
     if (failed) toast.error(failed);
   }, [failed]);
