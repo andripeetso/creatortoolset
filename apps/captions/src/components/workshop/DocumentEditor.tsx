@@ -706,6 +706,11 @@ function PieceEditor({
       ? addedSpans(reelBody(blocks.map((b) => ({ text: b.id && changes.before.has(b.id) ? changes.before.get(b.id)! : b.text }))), reelBody(blocks))
       : undefined;
   const changesOn = !!changes?.on;
+  // a slide the last AI turn rewrote keeps a green border until it is clicked, so the touched slides show at a glance
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
+  const changedBefore = changes?.before;
+  useEffect(() => setSeenIds(new Set()), [changedBefore]);
+  const touched = (b: EditorBlock) => !!b.id && !!changedBefore?.has(b.id) && changedBefore.get(b.id) !== b.text && !seenIds.has(b.id);
   // Cite on a reel's script, its hooks, the post description and the pinned comment: the words and which field they're in
   const citePill = (key: string, text: string, where: Omit<PieceQuote, "text">) => {
     const words = sel?.key === key ? text.slice(sel.start, sel.end).trim() : "";
@@ -885,7 +890,8 @@ function PieceEditor({
                   setDragKey(null);
                   setOverKey(null);
                 }}
-                className={`group flex gap-2 ${doc.kind === "carousel" ? SLIDE_SURFACE : `py-4 ${i < blocks.length - 1 ? "border-b border-border/70" : ""}`} ${b.id && lockedIds.includes(b.id) ? "!ring-amber-400/40" : ""} ${overKey === b.key && dragKey && dragKey !== b.key ? "bg-muted/40" : ""} ${dragKey === b.key ? "opacity-50" : ""}`}
+                onPointerDown={() => (b.id && touched(b) ? setSeenIds((s) => new Set(s).add(b.id!)) : undefined)}
+                className={`group flex gap-2 ${doc.kind === "carousel" ? `${SLIDE_SURFACE} transition-shadow duration-1000 ${touched(b) ? "ring-2 ring-emerald-400/70" : ""}` : `py-4 ${i < blocks.length - 1 ? "border-b border-border/70" : ""}`} ${b.id && lockedIds.includes(b.id) ? "!ring-amber-400/40" : ""} ${overKey === b.key && dragKey && dragKey !== b.key ? "bg-muted/40" : ""} ${dragKey === b.key ? "opacity-50" : ""}`}
               >
                 <button
                   type="button"

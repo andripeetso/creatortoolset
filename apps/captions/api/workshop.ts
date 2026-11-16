@@ -86,7 +86,6 @@ import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, renderDocument, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
-import { readThrough } from "./lib/workshop/readthrough";
 import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
@@ -1703,15 +1702,6 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       const at = (await readDoc(session.id, target.id))?.blocks.map((b) => b.id) ?? [];
       const nums = [...refused].map((id) => at.indexOf(id) + 1).filter((n) => n > 0).sort((a, b) => a - b);
       notes.push(`Locked and not changed: ${nums.length ? `${nums.length > 1 ? "slides" : "slide"} ${nums.join(", ")}` : "the locked slides"}.`);
-    }
-    // the read-through: the whole piece against what the model never checks, and against the author's posted carousels
-    if (blockIds.length || created) {
-      const edited = await readDoc(session.id, target.id);
-      if (edited) {
-        const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
-        const found = readThrough(edited, { slides: (own?.posts ?? []).flatMap((p) => p.slides ?? []), captions: (own?.posts ?? []).map((p) => p.item.caption ?? "") });
-        if (found.length) notes.push(`Read-through:\n${found.map((f) => `- ${f}`).join("\n")}`);
-      }
     }
     // the draft changed: check it against its rules (flags only, never blocks)
     let flags: Awaited<ReturnType<typeof checkDraft>> | undefined;
