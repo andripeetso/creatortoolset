@@ -130,6 +130,17 @@ export interface LibraryPackage {
   proxy?: { cloud: boolean; on: boolean };
   /** send: the person said it is a song or a sound effect: no strip, no fingerprint */
   music?: boolean;
+  /** transcribe: the sound to cut from the file (library/transcribe.ts soundArgs), sent to the server's /hear for the words */
+  audio?: "wav" | "m4a";
+}
+
+/** A transcript as the library keeps it (library/transcribe.ts): times in seconds, words with fillers kept. */
+export interface LibraryTranscript {
+  provider: string;
+  model?: string;
+  language: string | null;
+  segments: { start: number; end: number; text: string }[];
+  words: { w: string; s: number; e: number; c?: number }[];
 }
 
 /** What came of a library job: the files PUT before (by name), and the small results inline. */
@@ -144,6 +155,8 @@ export interface LibraryResult {
   quick?: string;
   /** the fingerprint job's JSON */
   fingerprint?: string;
+  /** the transcribe job's rows */
+  transcript?: LibraryTranscript;
 }
 
 export interface WorkBeat {

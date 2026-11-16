@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { WORK_V, type LibraryPackage, type LibraryResult } from "../../contracts/work";
+import { WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript } from "../../contracts/work";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
 import { fingerprint } from "../library/fingerprint";
@@ -12,6 +12,8 @@ import { makeProxy, wantsProxy } from "../library/media/proxy";
 import { makeSprite } from "../library/media/sprite";
 import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
+import { ffmpegTo } from "../library/media/run";
+import { soundArgs } from "../library/transcribe";
 import { sizeOf } from "./cache";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
@@ -26,7 +28,7 @@ import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
  * original's checksum; the original itself is sent only to a library that keeps originals ("all").
  */
 
-type Made = Pick<LibraryResult, "probe" | "sha256" | "quick" | "fingerprint"> & { files: Partial<Record<LibraryResult["files"][number], string>> };
+type Made = Pick<LibraryResult, "probe" | "sha256" | "quick" | "fingerprint" | "transcript"> & { files: Partial<Record<LibraryResult["files"][number], string>> };
 
 const LINE: Record<string, string> = {
   send: "Preparing the file to send",
@@ -34,14 +36,15 @@ const LINE: Record<string, string> = {
   wave: "Making the waveform",
   sprite: "Making the strip of frames",
   fingerprint: "Reading the file for duplicates",
+  transcribe: "Transcribing",
 };
 
 /** The running library job, for Cancel (the menu). */
 let current: AbortController | null = null;
 export const cancelLibraryJob = (): void => current?.abort(new Error("Stopped"));
 
-/** Makes what `lib` asks for from `src` into `dir`. */
-export async function makeDerived(lib: LibraryPackage, src: string, dir: string): Promise<Made> {
+/** Makes what `lib` asks for from `src` into `dir`; `hear` turns a transcript's sound into its words (the server's /hear). */
+export async function makeDerived(lib: LibraryPackage, src: string, dir: string, hear?: (sound: string) => Promise<LibraryTranscript>): Promise<Made> {
   const out = (name: string) => path.join(dir, name);
   const kind = lib.job.kind;
   if (kind === "send") {
@@ -68,6 +71,13 @@ export async function makeDerived(lib: LibraryPackage, src: string, dir: string)
   if (kind === "wave") return { files: { wave: (await makeWave(src, out("wave.json"), !!p.acodec), out("wave.json")) } };
   if (kind === "sprite") return { files: { sprite: (await makeSprite(src, out("sprite.jpg"), p.duration, p.turn), out("sprite.jpg")) } };
   if (kind === "fingerprint") return { files: {}, fingerprint: JSON.stringify(await fingerprint(src, p.duration, dir)) };
+  if (kind === "transcribe" && hear) {
+    // the server's own cut, from this computer's copy: the same sound, so the same words
+    const wav = lib.audio !== "m4a";
+    const sound = out(wav ? "sound.wav" : "sound.m4a");
+    await ffmpegTo(sound, ["-i", src, ...soundArgs(wav)]);
+    return { files: {}, transcript: await hear(sound) };
+  }
   throw new Error(`No library job ${kind} on this computer`);
 }
 
@@ -127,7 +137,18 @@ export async function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Prom
     }
     src ??= (await resolveFiles({ files: [lib.file] }, { folders: [], get: (_v, init) => c.raw(`${base}/light`, init), signal: ctl.signal, progress }))[lib.file.id]!;
     still();
-    const made = await makeDerived(lib, src, dir);
+    const made = await makeDerived(lib, src, dir, async (sound) => {
+      const res = await c.raw(`${base}/hear`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream", "content-length": String(statSync(sound).size) },
+        body: Readable.toWeb(createReadStream(sound)) as ReadableStream,
+        signal: ctl.signal,
+        duplex: "half",
+      } as RequestInit);
+      const said = (await res.json().catch(() => ({}))) as LibraryTranscript & { error?: string };
+      if (!res.ok) throw new Error(said.error ?? `The server could not hear it (${res.status})`);
+      return said;
+    });
     ctl.signal.throwIfAborted();
 
     const names = Object.keys(made.files) as LibraryResult["files"];

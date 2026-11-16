@@ -80,13 +80,28 @@ export function wantModel(owner: string, id: string, model: string, keep: boolea
   return null;
 }
 
+/**
+ * A library file whose sound the computer cuts itself, from its own copy (library/transcribe.ts ownSound): what the
+ * computer is told (`options`: where the file is on it, the server's proxy it may download), the proxy's storage key,
+ * and the server's own cut, made only when a computer asks for the audio after all (an older app, a Linux helper).
+ */
+export interface OwnSound {
+  /** the file's length: how long a computer may take */
+  seconds: number;
+  options: (device: string) => Record<string, string>;
+  proxy: string | null;
+  cut: () => Promise<string>;
+}
+
 interface Job {
   id: number;
   owner: string;
   model: string;
   languages: string[];
-  /** the WAV the computer fetches */
-  audio: string;
+  /** the WAV the computer fetches, or the file it cuts the sound from itself */
+  audio: string | OwnSound;
+  /** the server's cut of an OwnSound, once a computer asked for the audio */
+  cutting?: Promise<string>;
   /** the computer that claimed it, and since when (ms); or since when it waits for one */
   device?: string;
   since: number;
@@ -170,13 +185,14 @@ type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: numb
  * `limits.claimMs`: it fails when no computer took it in that time, whatever else they work on (CAPTION_LIMITS).
  */
 export function transcribeOnComputer(
-  owner: string, model: string, languages: string[], audio: string,
+  owner: string, model: string, languages: string[], audio: string | OwnSound,
   limits: Limits = {},
 ): Promise<TranscribeResult> {
   if (!onlineHolders(owner, model, !!limits.noMac, !!limits.soon).length) return Promise.reject(new ComputerOff(offLine(model)));
   // 16 kHz mono 16-bit: 32,000 bytes a second; `exact`: no longer for a longer recording
   const least = limits.takeMs ?? COMPUTER_LIMITS.takeMs;
-  const takeMs = limits.exact ? least : Math.max(least, (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32 * 3);
+  const seconds = typeof audio === "string" ? (statSync(audio, { throwIfNoEntry: false })?.size ?? 0) / 32_000 : audio.seconds;
+  const takeMs = limits.exact ? least : Math.max(least, seconds * 3000);
   return new Promise((resolve, reject) => {
     const id = ++lastId;
     // a computer that went off gives its transcript back; with none left that is on, the caller waits and tries again.
@@ -233,14 +249,23 @@ export function claimTranscript(d: Device, balance: Balance): DeviceJob | null {
   if (!j) return null;
   j.device = d.id;
   j.since = Date.now();
-  return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages, ...(j.soon ? { soon: true } : {}) };
+  const own = typeof j.audio === "string" ? undefined : j.audio.options(d.id);
+  return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages, ...(j.soon ? { soon: true } : {}), ...(own ? { options: own } : {}) };
 }
 
-/** The audio file of a transcript this computer holds, or null. */
-export const heldAudio = (device: string, id: number): string | null => {
+/** The audio file of a transcript this computer holds (a library file's cut here only now, once), or null. */
+export async function heldAudio(device: string, id: number): Promise<string | null> {
   const j = jobs.get(id);
-  return j?.device === device ? j.audio : null;
-};
+  if (j?.device !== device) return null;
+  if (typeof j.audio === "string") return j.audio;
+  return (j.cutting ??= j.audio.cut());
+}
+
+/** The storage key of the server's proxy of a library file whose transcript this computer holds, or null. */
+export function heldProxy(device: string, id: number): string | null {
+  const j = jobs.get(id);
+  return j?.device === device && typeof j.audio !== "string" ? j.audio.proxy : null;
+}
 
 /** What the computer sent: words end the transcript, anything else is refused. The reason, "Not found" (not its own), or null. */
 export function transcriptSent(device: string, id: number, body: unknown): string | null {

@@ -6,6 +6,9 @@
  * where it is on that computer, else the proxy the server has; never the original. A "send" job is a file on one
  * computer that nothing uploaded yet (library/derived.ts sendLater): only a computer that has it takes it, and this
  * server never runs it. Until the server-work switch (phase 7) the server still runs a job no such computer can take.
+ * A transcript on the person's key (6B) is one of them too: the computer cuts the sound from its copy, the server hears
+ * it on the key (/hear, nothing decoded here), and the words come back in the result. A transcript on a computer's own
+ * speech model goes the speech road instead (lib/computer-transcribe.ts), where that computer cuts the sound itself.
  */
 import { Hono, type Context } from "hono";
 import { createWriteStream } from "node:fs";
@@ -15,7 +18,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { SOUNDS } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
-import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type WorkFile } from "../../contracts/work";
+import { WORK_MIN, WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type WorkFile } from "../../contracts/work";
 import { computers, fileFor, foldersOf, ONLINE_MS, type FileRow } from "../editor/reach";
 import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { deviceForToken, isOnline, isThisMachine, listDevices, touchDevice } from "../lib/devices";
@@ -23,18 +26,20 @@ import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "../library/db";
 import { recordDerived, type DerivedFile } from "../library/derived";
-import { claimJob, extendLease, finishJob, type JobRow } from "../library/jobs";
+import { canEmbed } from "../library/embed";
+import { claimJob, enqueueJob, extendLease, finishJob, type JobRow } from "../library/jobs";
 import type { ProbeSummary } from "../library/media/probe";
 import { sortAfter } from "../library/roll";
 import { serveBlob } from "../library/routes";
+import { fileTranscript, hearSound, keySound } from "../library/transcribe";
 import { leaveToComputers } from "../library/worker";
 
 /** The library jobs a computer runs; "send" only a computer can. */
-export const LIBRARY_ON_COMPUTER: readonly string[] = ["proxy", "wave", "sprite", "fingerprint"];
+export const LIBRARY_ON_COMPUTER: readonly string[] = ["proxy", "wave", "sprite", "fingerprint", "transcribe"];
 const KINDS = ["send", ...LIBRARY_ON_COMPUTER];
 const LEASE_S = 300;
 /** The files each kind may send back. */
-const SENDS: Record<string, DerivedFile[]> = { send: ["original", "proxy", "thumb", "wave", "sprite"], proxy: ["proxy"], wave: ["wave"], sprite: ["sprite"], fingerprint: [] };
+const SENDS: Record<string, DerivedFile[]> = { send: ["original", "proxy", "thumb", "wave", "sprite"], proxy: ["proxy"], wave: ["wave"], sprite: ["sprite"], fingerprint: [], transcribe: [] };
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
@@ -69,8 +74,10 @@ function rowOf(versionId: string | null): LibRow | undefined {
 const where = (r: LibRow): FileRow => (r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device });
 
 /** How well computer `d` can take library job `job`: 3 has the file, 2 reads the server's proxy, 1 downloads the original (proxy only), 0 never. */
-export function libraryRank(d: Device, job: Pick<JobRow, "kind">, r: LibRow, folders: ReturnType<typeof foldersOf>): number {
+export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: LibRow, folders: ReturnType<typeof foldersOf>): number {
   if (!takesLibrary(d)) return 0;
+  // only a transcript on the person's key: the speech road takes one on a computer's model, this server one on its own
+  if (job.kind === "transcribe" && !keySound(job.actor, r.id)) return 0;
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   if (at && "path" in at) return 3;
   if (job.kind === "send") return 0;
@@ -153,6 +160,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     }),
     ...(job.kind === "proxy" && !r.source_key.startsWith("mac:") ? { original: { bytes: r.bytes } } : {}),
     ...(r.probe && job.kind !== "send" ? { probe: JSON.parse(r.probe) as Record<string, unknown> } : {}),
+    ...(job.kind === "transcribe" ? { audio: keySound(job.actor, r.id) ?? "wav" } : {}),
     ...(send
       ? {
           upload,
@@ -202,6 +210,17 @@ export async function libraryWaits(d: Device, now = Date.now()): Promise<boolean
 const incoming = (jobId: number) => path.join(env.dataDir, "library", "incoming", String(jobId));
 const NAME = /^(original|proxy|thumb|wave|sprite)$/;
 
+/** Passes at most `cap` bytes, then fails the stream. */
+function capped(cap: number): Transform {
+  let n = 0;
+  return new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      n += chunk.length;
+      done(n > cap ? new Error("The file is larger than allowed") : null, chunk);
+    },
+  });
+}
+
 /** A file a held job sends, streamed to its incoming folder under its cap; false when it may not send it. */
 export async function acceptLibraryFile(jobId: number, deviceId: string, name: string, body: Readable): Promise<boolean> {
   const job = heldBy(jobId, deviceId);
@@ -211,15 +230,8 @@ export async function acceptLibraryFile(jobId: number, deviceId: string, name: s
   const cap = name === "original" ? (rowOf(job.version_id)?.bytes ?? 0) : name === "proxy" ? FILE_MAX : SMALL_MAX;
   await mkdir(incoming(jobId), { recursive: true });
   const out = path.join(incoming(jobId), name);
-  let n = 0;
-  const count = new Transform({
-    transform(chunk: Buffer, _enc, done) {
-      n += chunk.length;
-      done(n > cap ? new Error("The file is larger than allowed") : null, chunk);
-    },
-  });
   try {
-    await pipeline(body, count, createWriteStream(out));
+    await pipeline(body, capped(cap), createWriteStream(out));
   } catch {
     await rm(out, { force: true });
     return false;
@@ -243,6 +255,13 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
     const sha256 = hex(r.sha256);
     const quick = hex(r.quick);
     if (job.kind === "send" && !probe) return failLibrary(job, "Your computer sent no probe of the file");
+    if (job.kind === "transcribe") {
+      const t = transcriptOf(r.transcript);
+      if (!t) return failLibrary(job, "Your computer sent no transcript");
+      fileTranscript(db, job.version_id!, job.actor, t);
+      // new words to search by meaning, as after a transcript made here (library/worker.ts)
+      if (librarySetting(job.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, job.library_id, job.version_id!, "embed", job.actor, true);
+    }
     await recordDerived(job.version_id!, { files, ...(probe ? { probe } : {}), ...(fingerprint ? { fingerprint } : {}), ...(sha256 ? { sha256 } : {}), ...(quick ? { quick } : {}) }, job.actor);
     finishJob(db, job.id, true, undefined, Date.now());
     sortAfter(job);
@@ -252,6 +271,18 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
   } finally {
     await rm(incoming(jobId), { recursive: true, force: true });
   }
+}
+
+const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x >= 0;
+const text = (x: unknown, max: number): x is string => typeof x === "string" && x.length <= max;
+/** The transcript in a computer's result, when it is one: the shapes /hear answered, bounded. */
+function transcriptOf(x: unknown): LibraryTranscript | null {
+  const t = x as Partial<LibraryTranscript> | null | undefined;
+  if (!t || !text(t.provider, 40) || (t.model !== undefined && !text(t.model, 100)) || !(t.language === null || text(t.language, 20))) return null;
+  if (!Array.isArray(t.segments) || !Array.isArray(t.words) || t.segments.length > 200_000 || t.words.length > 2_000_000) return null;
+  const segments = t.segments.filter((s) => num(s?.start) && num(s.end) && text(s.text, 20_000)).map((s) => ({ start: s.start, end: s.end, text: s.text }));
+  const words = t.words.filter((w) => num(w?.s) && num(w.e) && text(w.w, 200) && (w.c === undefined || num(w.c))).map((w) => ({ w: w.w, s: w.s, e: w.e, ...(w.c !== undefined ? { c: w.c } : {}) }));
+  return { provider: t.provider, ...(t.model ? { model: t.model } : {}), language: t.language, segments, words };
 }
 
 /** A failed try (retried after its backoff); the last one of a step the card is shown with fails the version, as on the server. */
@@ -303,6 +334,30 @@ libWorkApp.get("/:id/original", (c) => {
   const job = heldBy(idOf(c), d.id);
   const r = job?.kind === "proxy" ? rowOf(job.version_id) : undefined;
   return r && !r.source_key.startsWith("mac:") ? serveBlob(c, r.source_key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
+});
+
+/**
+ * A transcribe job's sound, cut on the computer from its own copy (library/transcribe.ts soundArgs): heard here on the
+ * actor's key, nothing decoded, and the words answered for the job's result. Only while the computer holds the job.
+ */
+libWorkApp.post("/:id/hear", async (c) => {
+  const d = caller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const job = heldBy(idOf(c), d.id);
+  const body = c.req.raw.body;
+  if (job?.kind !== "transcribe" || !job.version_id) return c.json({ error: "Not found" }, 404);
+  if (!body) return c.json({ error: "Send the sound." }, 400);
+  await mkdir(incoming(job.id), { recursive: true });
+  const file = path.join(incoming(job.id), `sound.${keySound(job.actor, job.version_id) ?? "wav"}`);
+  try {
+    await pipeline(Readable.fromWeb(body as never), capped(FILE_MAX), createWriteStream(file));
+    // ponytail: one request for the whole hearing; an hour of talk takes the key's provider well under a minute
+    return c.json(await hearSound(job.version_id, job.actor, file));
+  } catch (e) {
+    return c.json({ error: (e instanceof Error ? e.message : String(e)).slice(0, 500) }, 502);
+  } finally {
+    await rm(file, { force: true });
+  }
 });
 
 libWorkApp.put("/:id/file", async (c) => {

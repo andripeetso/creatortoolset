@@ -49,7 +49,7 @@ vi.mock("./transcribe", async (real) => {
   return {
     ...m,
     transcribeVersion: (...a: Parameters<typeof m.transcribeVersion>) =>
-      heard.on ? (heard.files.push(a[2]), Promise.resolve()) : stuck.model ? Promise.reject(new ModelNotReady("not downloaded")) : m.transcribeVersion(...a),
+      heard.on ? (async () => void heard.files.push(typeof a[2] === "string" ? a[2] : await a[2]()))() : stuck.model ? Promise.reject(new ModelNotReady("not downloaded")) : m.transcribeVersion(...a),
   };
 });
 
