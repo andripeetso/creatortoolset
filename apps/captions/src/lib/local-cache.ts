@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
-import { currentWorkspace, onWorkspaceChange } from "./current-workspace";
+import { currentWorkspace, onWorkspaceChange, workspaceFor } from "./current-workspace";
 import { useAuth } from "./auth";
 import { boot, onTopic, seqNow, syncReady, topicOf, whenVisible } from "./sync";
 
@@ -47,7 +47,8 @@ const perWorkspace = (url: string) => {
 const keyOf = (user: string, url: string, shown?: string) => {
   // a Settings page showing another workspace than the window's (or all of them, "*") keeps that copy under its own key
   if (shown) return `${baseOf(user, url)}#ws=${shown}`;
-  const ws = currentWorkspace();
+  // the workspace the request itself goes to: a plug-in's settings page may send its own to another one (scopeRequests)
+  const ws = workspaceFor(url);
   return baseOf(user, url) + (ws && perWorkspace(url) ? `#ws=${ws}` : "");
 };
 const urlOf = (k: string) => k.slice(k.indexOf("|") + 1).replace(/#ws=[^#]*$/, "");
