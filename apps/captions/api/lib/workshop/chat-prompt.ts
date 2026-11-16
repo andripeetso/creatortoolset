@@ -1,7 +1,7 @@
 import type { ChatMessage, PieceQuote, ContextField, ContextSnippet, DocKind, Document, Framework, FrameworkRole, KnowledgeFile, Project, SourcePart, UserEdit } from "./types";
 import { carouselTypePrompt } from "../../../src/lib/carousel-visualize";
 import { renderAccountContext, renderAccountIndex, renderInstructions, renderLoadedKnowledge, renderProjectStable } from "./prompt";
-import { sourceFile } from "./folder";
+import { attachedDir, sourceFile } from "./folder";
 import { type EditPair, renderPairs } from "./edit-log";
 import { PLAIN_VOICE } from "./plain-voice";
 import type { AccountContext } from "../instagram/types";
@@ -186,8 +186,12 @@ export interface TurnPromptInput {
   files?: Array<{ name: string; file: string }>;
   /** Media Library clips with this message: title, description and a transcript excerpt (their thumbnails are with the pictures). */
   library?: Array<{ title: string; description?: { text: string; source: "user" | "ai" }; transcript?: string }>;
-  /** Claude on the Mac reads a folder (folder.ts): sources and context files are files there, nothing is cut. */
-  folder?: { contextFiles: string[] };
+  /** The author's messages right before this one whose reply never came (stopped or failed), oldest first, with their
+   * pictures and files as `images`/`files` above (on the API key their pictures ride after this message's). */
+  unanswered?: Array<{ text: string; images: Array<{ name: string; file?: string }>; files: Array<{ name: string; file: string }> }>;
+  /** Claude on the Mac reads a folder (folder.ts): sources and context files are files there, nothing is cut.
+   * `attached`: every picture and PDF of this chat is in it, at attached/<message>/. */
+  folder?: { contextFiles: string[]; attached?: boolean };
   /** The Mac's Claude session for this conversation is resumed: it holds the history and the sources it saw, so this turn
    * carries the new message, the document and what changed (newSources: sources added since its last turn). */
   resumed?: { newSources: Array<{ ref: string; handle: string }> };
@@ -312,6 +316,19 @@ export function renderUserEdits(edits: UserEdit[]): string {
 /** A caption turn reads only the last few messages: earlier ones are about the script, and their research turns make the caption a footnote. */
 const CAPTION_TURN_HISTORY = 6;
 
+/** The author's messages on this piece right before `ask` whose reply never came (stopped or failed: such a reply is
+ * left out of the history), oldest first. A reply that came ends the run. */
+export function unansweredBefore(messages: ChatMessage[], ask: ChatMessage): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = messages.findIndex((m) => m.id === ask.id) - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.docId !== ask.docId) continue;
+    if (m.role === "user") out.unshift(m);
+    else if (m.status !== "error") break;
+  }
+  return out;
+}
+
 export function buildTurnPrompt(input: TurnPromptInput): { system: string; user: string } {
   const captionOnly = askedOnlyForCaption(input.message);
   const folder = input.folder;
@@ -400,6 +417,8 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   // The folder turn too; the
   // whole conversation stays in sessions/, and every note of theirs is listed in full below.
   const recent = resumed ? [] : input.history.slice(-(captionOnly ? CAPTION_TURN_HISTORY : TURN_BUDGET.historyTurns));
+  // where an earlier message's pictures and files are: its folder on the Mac, or not with this turn at all
+  const kept = (m: ChatMessage) => (folder?.attached ? ` in ${attachedDir(m.id)}` : ", not with this turn");
   if (recent.length) {
     let used = 0;
     const lines: string[] = [];
@@ -409,8 +428,8 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
       const pointed =
         (m.role === "user" && m.quotes?.length ? ` ${m.quotes.map((q) => `[about «${q.text}»${q.comment ? `: ${q.comment}` : ""}]`).join(" ")}` : "") +
         (m.role === "user" && m.pasted?.length ? ` [pasted: ${m.pasted.map((p) => `${p.name}, ${p.chars.toLocaleString("en-US")} characters${folder ? ", in pasted/" : ""}`).join("; ")}]` : "") +
-        (m.role === "user" && m.images?.length ? ` [${m.images.length === 1 ? "a picture" : `${m.images.length} pictures`}: ${m.images.map((im) => im.name).join(", ")}]` : "") +
-        (m.role === "user" && m.files?.length ? ` [${m.files.length === 1 ? "a file" : `${m.files.length} files`}: ${m.files.map((f) => f.name).join(", ")}]` : "");
+        (m.role === "user" && m.images?.length ? ` [${m.images.length === 1 ? "a picture" : `${m.images.length} pictures`}${kept(m)}: ${m.images.map((im) => im.name).join(", ")}]` : "") +
+        (m.role === "user" && m.files?.length ? ` [${m.files.length === 1 ? "a file" : `${m.files.length} files`}${kept(m)}: ${m.files.map((f) => f.name).join(", ")}]` : "");
       const line = `${who}${note}: ${m.role === "user" ? m.text : cut(m.text, TURN_BUDGET.perMessage)}${pointed}`;
       if (lines.length && used + line.length > TURN_BUDGET.history) break;
       lines.unshift(line);
@@ -487,6 +506,23 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
     const n = input.files.length;
     blocks.push(
       `The author attached ${n === 1 ? "a file" : `${n} files`} with this message:\n${input.files.map((f) => `- ${f.name}: read ${f.file} (the Read tool reads PDFs)`).join("\n")}`,
+    );
+  }
+  if (input.unanswered?.length) {
+    // a stopped or failed reply is left out of the history, so nothing else says the message before went unanswered
+    let shown = input.images?.length ?? 0;
+    const one = input.unanswered.length === 1;
+    const it = one ? "it" : "them";
+    blocks.push(
+      `${one ? "The author's message" : "These messages of the author's"} right before this one never got your reply: it was stopped or failed before you answered.\n${input.unanswered
+        .map((u) =>
+          [
+            `- ${u.text.trim() ? `«${cut(u.text.trim(), 300)}»` : "(no words, only what came with it)"}`,
+            ...u.images.map((im) => `  - picture ${im.name}${im.file ? `: read ${im.file}` : ` (image ${++shown} above)`}`),
+            ...u.files.map((f) => `  - file ${f.name}: read ${f.file}`),
+          ].join("\n"),
+        )
+        .join("\n")}\nAnswer ${it} in this reply as well, unless the new message takes ${it} back or replaces ${it}.${input.unanswered.some((u) => u.images.length) ? " Look at every picture listed before you answer." : ""}`,
     );
   }
   if (input.library?.length) {

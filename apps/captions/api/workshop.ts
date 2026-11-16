@@ -37,7 +37,7 @@ import { bumpUsage, findUser } from "./users";
 import { scriptsOwnerFor } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
-import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
+import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
 import { setSessionStatus, TURN_STOPPED, type ShareProgressState } from "./lib/workshop/types";
@@ -84,7 +84,7 @@ import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
-import { buildTurnPrompt, renderDocument, wantsComments } from "./lib/workshop/chat-prompt";
+import { buildTurnPrompt, renderDocument, unansweredBefore, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
 import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
@@ -820,6 +820,25 @@ const imagePath = (id: string, im: Pick<ImageRef, "id" | "type">) => path.join(s
 /** Files sent with messages (PDFs), one file each, in sessions/<id>/files/. */
 const filePath = (id: string, f: Pick<FileRef, "id" | "type">) => path.join(sessionDir(id), "files", `${f.id}.${ATTACH_EXT[f.type]}`);
 
+/** A message's stored pictures and PDFs as base64, each with its path in the turn folder (attached.ts); a gone one is
+ * left out. PDFs only when the Mac reads them (`pdfs`): the rest are `unread`. */
+async function readAttachments(sessionId: string, m: ChatMessage, pdfs: boolean) {
+  const images: Array<ImageRef & { data: string; file: string }> = [];
+  const files: Array<FileRef & { data: string; file: string }> = [];
+  const unread: FileRef[] = [];
+  for (const a of messageAttachments(m)) {
+    if (a.kind === "image") {
+      const data = await readFile(imagePath(sessionId, a.ref)).catch(() => null);
+      if (data) images.push({ ...a.ref, data: data.toString("base64"), file: a.file });
+      continue;
+    }
+    const data = pdfs ? await readFile(filePath(sessionId, a.ref)).catch(() => null) : null;
+    if (data) files.push({ ...a.ref, data: data.toString("base64"), file: a.file });
+    else unread.push(a.ref);
+  }
+  return { images, files, unread };
+}
+
 /** A picture a piece holds (the editor's Add picture): stored in the session's images/ like a chat picture; found by id and whichever type it is. */
 async function pieceImage(sessionId: string, iid: string): Promise<ImageRef | null> {
   if (!okId(iid)) return null;
@@ -1323,13 +1342,16 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const askPasted = await readPasted(session.id, ask.pasted);
     // the pieces as the author saw them when they wrote: a line they gave their own version of is kept from these
     const piecesAsked = (await listDocs(session.id)).filter((d) => d.kind !== "notes");
-    const askImages: Array<ImageRef & { data: string }> = [];
-    for (const im of ask.images ?? []) {
-      const data = await readFile(imagePath(session.id, im)).catch(() => null);
-      if (data) askImages.push({ ...im, data: data.toString("base64") });
-    }
+    // PDFs are read by the Mac only (its folder, or the files it reads without one); the API-key path has no way to read them
+    const macReads = onMac(user, session.ai);
+    const { images: askImages, files: askFiles, unread: unreadFiles } = await readAttachments(session.id, ask, macReads);
+    // The author's messages a stop or a failure left without a reply: this turn answers them too, with their pictures
+    const unanswered = unansweredBefore(chat.messages, ask);
+    const missed = await Promise.all(unanswered.map((m) => readAttachments(session.id, m, macReads)));
+    const missedImages = missed.flatMap((a) => a.images);
     // Media Library clips: read now, as the author; each thumbnail goes with the pictures, the words into the prompt
     const askLibrary: Array<{ title: string; description?: { text: string; source: "user" | "ai" }; transcript?: string }> = [];
+    let thumbs = 0;
     for (const ref of ask.library ?? []) {
       if (ref.kind === "external") {
         // a source's clip: its title only until the source serves its description and thumbnail (external refs have no file here)
@@ -1341,18 +1363,14 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       if (!clip) continue;
       const { thumb, ...words } = clip;
       askLibrary.push(words);
-      if (thumb) askImages.push({ id: ref.versionId, name: `${clip.title} (library thumbnail)`, type: "image/jpeg", data: thumb });
+      if (thumb) {
+        const im = { id: ref.versionId, name: `${clip.title} (library thumbnail)`, type: "image/jpeg" as const };
+        // numbered after the message's own pictures and files, so theirs keep the same paths on every later turn
+        askImages.push({ ...im, data: thumb, file: attachedFile(im, (ask.images?.length ?? 0) + (ask.files?.length ?? 0) + thumbs++, ask.id) });
+      }
     }
-    // PDFs are read by the Mac only (its folder, or the files it reads without one); the API-key path has no way to read them
-    const macReads = onMac(user, session.ai);
-    const askFiles: Array<FileRef & { data: string }> = [];
-    const unreadFiles: FileRef[] = [];
-    for (const f of ask.files ?? []) {
-      const data = macReads ? await readFile(filePath(session.id, f)).catch(() => null) : null;
-      if (data) askFiles.push({ ...f, data: data.toString("base64") });
-      else unreadFiles.push(f);
-    }
-    const attachments = [...askImages, ...askFiles]; // the folder's attached/ files, numbered in this order
+    // the folder's attached/<message>/ files, this message's and the unanswered ones'
+    const attachments = [...askImages, ...askFiles, ...missed.flatMap((a) => [...a.images, ...a.files])];
     // Next to the piece: the few of the author's posts and rewrites closest to it (closest.ts), the
     // description rewrites when the author asks for one, the slide/hook/script ones always. The rest is in the folder.
     const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
@@ -1374,6 +1392,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // On the Mac the turn reads a folder with everything; on the API key, the packed prompt below. A caption turn
     // needs none of it: the Mac answers from the prompt (a folder can be megabytes of tokens per turn).
     let folder: Folder | null = null;
+    // Grok's prompt gets the folder's files whole and it can't be given pictures: no skills, no earlier pictures for it
+    const grok = workshopAi(user, session.ai).mac?.provider?.driver === "grok";
     if (onMac(user, session.ai) && !(captionOnly && !approvedWeb)) {
       // the folder is all it reads (no pulls): a source video nobody transcribed yet is transcribed first
       const untranscribed = index.filter((e) => e.kind !== "carousel" && !e.has.transcript).map((e) => e.id);
@@ -1387,8 +1407,17 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         return null;
       });
       if (folder) {
-        // the relay writes "base64:" entries as bytes; Claude's Read tool shows them as pictures
-        attachments.forEach((f, i) => (folder![attachedFile(f, i)] = `base64:${f.data}`));
+        // the relay writes "base64:" entries as bytes; Claude's Read tool shows them as pictures. Every picture and PDF
+        // sent in this chat stays at its message's path for the whole session, so a later turn or a new Claude session
+        // can still open it (the Mac keeps them by hash: mac-claude.ts packFor).
+        if (!grok) {
+          for (const m of chat.messages) {
+            if (m.role !== "user" || m.id === ask.id || !(m.images?.length || m.files?.length)) continue;
+            const kept = await readAttachments(session.id, m, true);
+            for (const f of [...kept.images, ...kept.files]) folder[f.file] = `base64:${f.data}`;
+          }
+        }
+        for (const f of attachments) folder[f.file] = `base64:${f.data}`;
         const chars = Object.values(folder).reduce((n, f) => n + f.length, 0);
         console.log(`[workshop] folder: ${Object.keys(folder).length} files, ${(chars / 1e6).toFixed(1)} MB of text, ${Date.now() - t} ms`);
       }
@@ -1398,7 +1427,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const askAt = chat.messages.findIndex((m) => m.id === ask.id);
     // The author's own skills for this project (lib/skills.ts): a file each in the folder, a line each in the prompt, and
     // a change to them starts the Mac's session over. Not for Grok, whose prompt gets the folder's files whole.
-    const skills = folder && workshopAi(user, session.ai).mac?.provider?.driver !== "grok" ? await skillsFor(user.username, session.projectId) : [];
+    const skills = folder && !grok ? await skillsFor(user.username, session.projectId) : [];
     Object.assign(folder ?? {}, skillFiles(skills));
     const context = contextKey(project, frameworks) + skills.map((s) => `:${s.id}@${s.updatedAt}`).join("");
     const claude = folder ? resumableClaude(session, askAt > 0 ? chat.messages[askAt - 1]!.id : undefined, ids, context, providerKey(user, session.ai)) : undefined;
@@ -1474,10 +1503,17 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         web: folder && onWebMac(user, session.ai) ? approvedWeb || undefined : undefined,
         quotes: ask.quotes,
         pasted: askPasted.map((p) => ({ name: p.name, text: p.text, ...(folder ? { file: pastedFile(session, p) } : {}) })),
-        images: askImages.map((im, i) => ({ name: im.name, ...(folder || macReads ? { file: attachedFile(im, i) } : {}) })),
-        files: askFiles.map((f, j) => ({ name: f.name, file: attachedFile(f, askImages.length + j) })),
+        images: askImages.map((im) => ({ name: im.name, ...(folder || macReads ? { file: im.file } : {}) })),
+        files: askFiles.map((f) => ({ name: f.name, file: f.file })),
+        unanswered: unanswered.length
+          ? unanswered.map((m, k) => ({
+              text: m.text,
+              images: missed[k]!.images.map((im) => ({ name: im.name, ...(folder || macReads ? { file: im.file } : {}) })),
+              files: missed[k]!.files.map((f) => ({ name: f.name, file: f.file })),
+            }))
+          : undefined,
         library: askLibrary.length ? askLibrary : undefined,
-        folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)) } : undefined,
+        folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)), attached: !grok } : undefined,
         resumed: resume && folder ? { newSources: index.filter((e) => !resume.sources.includes(e.id)).map((e) => ({ ref: refOf.get(e.id)!, handle: e.handle })) } : undefined,
       });
       return prompt;
@@ -1531,7 +1567,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
             ...workshopAi(user, session.ai).mac,
             label: "Workshop",
             // no folder: the pictures still go as files the provider reads
-            files: folder ?? (attachments.length ? Object.fromEntries(attachments.map((f, i) => [attachedFile(f, i), `base64:${f.data}`])) : undefined),
+            files: folder ?? (attachments.length ? Object.fromEntries(attachments.map((f) => [f.file, `base64:${f.data}`])) : undefined),
             web: !!folder && !!approvedWeb && onWebMac(user, session.ai),
             onStep: step,
             ...(folder ? { session: { key: session.id, resume: resume?.id }, onSession: (s: MacSession) => (got.session = s) } : {}),
@@ -1560,7 +1596,9 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       } else {
         // the API key (a guest or the demo, when switched on): the packed prompt, pictures sent along
         const prompt = await build();
-        const pictures = askImages.length ? { images: askImages.map((im) => ({ type: im.type, data: im.data })) } : {};
+        // the unanswered messages' pictures after this one's, in the order the prompt numbers them
+        const shown = [...askImages, ...missedImages];
+        const pictures = shown.length ? { images: shown.map((im) => ({ type: im.type, data: im.data })) } : {};
         out = await streamWithFallback(prompt.system, prompt.user, signal, parseTurn, hooks, { ...workshopAi(user, session.ai), ...pictures });
       }
       plan = out.result;

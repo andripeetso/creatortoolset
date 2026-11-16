@@ -252,6 +252,20 @@ export const pastedFile = (s: Pick<SessionMeta, "id" | "title" | "createdAt">, p
 
 export const sessionFile = (s: Pick<SessionMeta, "id" | "title" | "createdAt">) => `sessions/${day(s.createdAt)}-${slug(s.title)}-${s.id.slice(0, 6)}.md`;
 
+/** A message's own folder for its pictures and PDFs in the turn folder: attached/<the first 8 of its id>/ (attached.ts). */
+export const attachedDir = (messageId: string) => `attached/${messageId.slice(0, 8)}/`;
+
+/** The pictures and files a message came with; this project's are in the folder at attached/<message>/. */
+function sentWith(m: ChatMessage, here: boolean): string {
+  const what = [
+    m.images?.length ? (m.images.length === 1 ? "a picture" : `${m.images.length} pictures`) : "",
+    m.files?.length ? (m.files.length === 1 ? "a file" : `${m.files.length} files`) : "",
+  ].filter(Boolean);
+  if (!what.length) return "";
+  const names = [...(m.images ?? []), ...(m.files ?? [])].map((x) => x.name).join(", ");
+  return `\n(${what.join(" and ")}${here ? `, in ${attachedDir(m.id)}` : ""}: ${names})`;
+}
+
 /**
  * sessions/<…>.md: one Workshop session, its pieces as they stand, the author's edits, and the whole conversation.
  */
@@ -275,8 +289,8 @@ export function sessionText(
     "## Conversation",
     "",
     ...messages
-      .filter((m) => m.status !== "error" && m.text.trim())
-      .map((m) => `**${m.role === "user" ? "Author" : m.review ? "A follower's read (another model, shown only the piece)" : "AI"}** (${day(m.at)}${titleOf.has(m.docId) ? `, on ${titleOf.get(m.docId)}` : ""}):\n${m.text.trim()}${m.pasted?.length ? `\n(pasted: ${m.pasted.map((p) => `${p.name}, ${p.chars.toLocaleString("en-US")} characters, in pasted/`).join("; ")})` : ""}\n`),
+      .filter((m) => m.status !== "error" && (m.text.trim() || m.images?.length || m.files?.length))
+      .map((m) => `**${m.role === "user" ? "Author" : m.review ? "A follower's read (another model, shown only the piece)" : "AI"}** (${day(m.at)}${titleOf.has(m.docId) ? `, on ${titleOf.get(m.docId)}` : ""}):\n${m.text.trim()}${m.pasted?.length ? `\n(pasted: ${m.pasted.map((p) => `${p.name}, ${p.chars.toLocaleString("en-US")} characters, in pasted/`).join("; ")})` : ""}${sentWith(m, current)}\n`),
   ].join("\n");
 }
 
