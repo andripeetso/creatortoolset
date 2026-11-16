@@ -8,9 +8,9 @@ import XCTest
 @MainActor
 final class UploadTabTests: XCTestCase {
     private func upload(_ asset: String, _ state: UploadItem.State, size: Int64 = 100, sent: Int64 = 0,
-                        finishedAt: Date? = nil) -> UploadItem {
-        var item = UploadItem(asset: asset, filename: "\(asset).MOV", isVideo: true, capturedAt: nil, server: "s")
-        item.state = state
+                        finishedAt: Date? = nil, id: UUID = UUID()) -> UploadItem {
+        var item = UploadItem(asset: asset, filename: "\(asset).MOV", isVideo: true, capturedAt: nil, server: "s", id: id,
+                              state: state)
         item.size = size
         item.sent = sent
         item.finishedAt = finishedAt
@@ -83,11 +83,9 @@ final class UploadTabTests: XCTestCase {
 
     /// A New edit's clips and another server's uploads are not the tab's: not counted, listed or tried again by Upload.
     func testTheTabLeavesNewEditClipsAndOtherServersAlone() {
-        var editClip = UploadItem(id: UUID(), filename: "a.mp4", size: 10, server: "s")
+        var editClip = UploadItem(id: UUID(), filename: "a.mp4", size: 10, server: "s", state: .failed)
         editClip.edit = UUID()
-        editClip.state = .failed
-        var elsewhere = UploadItem(asset: "b", filename: "b.MOV", isVideo: true, capturedAt: nil, server: "other")
-        elsewhere.state = .failed
+        let elsewhere = UploadItem(asset: "b", filename: "b.MOV", isVideo: true, capturedAt: nil, server: "other", state: .failed)
         let mine = upload("c", .failed)
         let tab = UploadSums.tab([editClip, elsewhere, mine], server: "s")
         XCTAssertEqual(tab.map(\.id), [mine.id])
@@ -130,9 +128,7 @@ final class UploadTabTests: XCTestCase {
         sending.note = "The connection dropped"
         sending.attempts = 2
         XCTAssertEqual(UploadSums.states([sending, waiting]), before)
-        sending.state = .done
-        XCTAssertNotEqual(UploadSums.states([sending, waiting]), before)
-        sending.state = .sending
+        XCTAssertNotEqual(UploadSums.states([upload("a", .done, id: sending.id), waiting]), before)
         XCTAssertNotEqual(UploadSums.states([sending, waiting, upload("c", .picked)]), before)
     }
 
@@ -202,11 +198,224 @@ final class UploadTabTests: XCTestCase {
         XCTAssertEqual(ActivityView.status(item, sent: 25, now: now), "The connection dropped · trying again in 40 s")
         item.nextAttemptAt = now.addingTimeInterval(130)
         XCTAssertEqual(ActivityView.status(item, sent: 25, now: now), "The connection dropped · trying again in 2 min")
-        item.state = .failed
-        XCTAssertEqual(ActivityView.status(item, sent: 0, now: now), "Couldn't upload: The connection dropped")
-        item.state = .done
-        item.duplicate = true
-        XCTAssertEqual(ActivityView.status(item, sent: 0, now: now), "Already in the library")
+        var failed = upload("a", .failed)
+        failed.note = item.note
+        failed.nextAttemptAt = item.nextAttemptAt
+        XCTAssertEqual(ActivityView.status(failed, sent: 0, now: now), "Couldn't upload: The connection dropped")
+        var there = upload("a", .done)
+        there.note = item.note
+        there.duplicate = true
+        XCTAssertEqual(ActivityView.status(there, sent: 0, now: now), "Already in the library")
+    }
+}
+
+/// An upload changes state in one place (`UploadStore.move`) and only along `UploadItem.State.moves`.
+@MainActor
+final class UploadMovesTests: XCTestCase {
+    private typealias State = UploadItem.State
+    private let all: [State] = [.picked, .preparing, .sending, .finishing, .confirming, .done, .failed]
+    private let engine = UploadEngine.shared
+
+    /// In the phone's own queue, under a server no upload goes to; `tearDown` takes them out again.
+    private var made: [UUID] = []
+    private func queued(_ state: State) -> UUID {
+        let id = UUID()
+        engine.store.add(UploadItem(id: id, filename: "tinyacrobatics.mp4", size: 10, server: "upload-moves-test", state: state))
+        made.append(id)
+        return id
+    }
+
+    override func tearDown() async throws {
+        for id in made { engine.store.remove(id) }
+        made = []
+    }
+
+    /// Each way an upload goes today, state by state (who makes each move is written at `moves`).
+    func testEveryWayAnUploadGoesIsMadeOfListedMoves() {
+        let ways: [String: [State]] = [
+            "Upload, in chunks or parts": [.picked, .preparing, .sending, .sending, .finishing, .done],
+            "the server has fewer bytes than were sent": [.finishing, .sending, .finishing, .finishing, .done],
+            "the server dropped the upload at finish": [.finishing, .sending, .sending, .finishing],
+            "Try again": [.sending, .failed, .preparing, .failed, .preparing, .sending],
+            "a New edit": [.picked, .sending, .finishing, .done],
+            "a New edit's Try again": [.picked, .picked, .sending, .picked, .sending, .finishing, .picked, .sending,
+                                       .failed, .picked, .sending, .finishing, .done, .picked],
+            "catalog: the library has it already": [.picked, .preparing, .done],
+            "catalog: the fast route": [.preparing, .sending, .sending, .finishing, .confirming, .done],
+            "catalog: the library could not fetch it": [.finishing, .confirming, .sending, .sending, .finishing, .done],
+            "catalog: the fast route no longer has it": [.sending, .confirming, .failed],
+            "catalog: the library has it, found on a look": [.sending, .done],
+            "catalog: the copy on the phone is gone": [.sending, .preparing, .sending, .finishing, .preparing, .failed],
+            "catalog: the send's record is gone": [.confirming, .preparing],
+            "catalog: finish asked again, then failed": [.finishing, .finishing, .failed],
+            "catalog: signed out while the library fetches it": [.confirming, .failed],
+        ]
+        for (name, way) in ways {
+            for (from, to) in zip(way, way.dropFirst()) {
+                XCTAssertTrue(from.canMove(to: to), "\(name): \(from.rawValue) to \(to.rawValue)")
+            }
+        }
+        XCTAssertTrue(all.allSatisfy { State.moves[$0] != nil })
+    }
+
+    /// Picked, done and failed are where an upload stops: Upload, Try again and a New edit's Start take it on from
+    /// there, and nothing else does.
+    func testOnlyThePersonTakesAnUploadOnFromWhereItStopped() {
+        func from(_ state: State) -> Set<State> { Set(all.filter { state.canMove(to: $0) }) }
+        XCTAssertEqual(from(.picked), [.picked, .preparing, .sending])
+        XCTAssertEqual(from(.done), [.picked])
+        XCTAssertEqual(from(.failed), [.preparing, .picked])
+        // on its way, it never goes back to waiting for Upload by itself, and what is not prepared is not finishing
+        XCTAssertEqual(from(.preparing), [.sending, .done, .failed])
+        XCTAssertEqual(from(.confirming), [.sending, .preparing, .done, .failed])
+    }
+
+    /// The finish request's answer says the file is in the library; a look at the queue that began before it came
+    /// then goes on with what it read. It found no copy on the phone (deleted once the file is in the library) and
+    /// turned the clip to "Couldn't upload: The copy on the phone is gone".
+    func testAClipInTheLibraryStaysUploadedWhenAStepFromBeforeComesBack() throws {
+        let id = queued(.finishing)
+        let answer = HTTPURLResponse(url: URL(string: "http://127.0.0.1/finish")!, statusCode: 200, httpVersion: nil, headerFields: nil)
+        engine.transferFinished(TransferStep(itemId: id, kind: .finish), response: answer, body: Data(#"{"assetId":"a1"}"#.utf8), error: nil)
+        let landed = try XCTUnwrap(engine.store.item(id))
+        XCTAssertEqual(landed.state, .done)
+
+        engine.fail(id, "The copy on the phone is gone: pick the file again")
+        engine.perform(.startOver("The server dropped the upload: sending it again"), id)
+        engine.perform(.signedOut, id)
+        engine.perform(.failed("The server answered 500"), id)
+        engine.landed(id, duplicate: true)
+        XCTAssertEqual(engine.store.item(id), landed)
+        XCTAssertEqual(ActivityView.status(landed, sent: 0), "Uploaded")
+    }
+
+    /// A clip that failed is the person's to try again: a late step neither sends it nor marks it uploaded.
+    func testAFailedClipWaitsForTryAgain() {
+        let id = queued(.sending)
+        engine.fail(id, "The server answered 413")
+        engine.perform(.startOver("The upload link expired: sending it again"), id)
+        engine.landed(id, duplicate: false)
+        XCTAssertEqual(engine.store.item(id)?.state, .failed)
+        XCTAssertEqual(engine.store.item(id)?.note, "The server answered 413")
+        engine.retry(id)
+        XCTAssertEqual(engine.store.item(id)?.state, .preparing)
+    }
+
+    /// A move that is not listed changes nothing, not what goes with it either, and the rest of the queue moves on.
+    func testARefusedMoveChangesNothingAndTheQueueCarriesOn() {
+        let done = queued(.done), waiting = queued(.picked)
+        XCTAssertFalse(engine.store.move(done, to: .sending) { $0.note = "late" })
+        XCTAssertFalse(engine.store.move(waiting, to: .done) { $0.note = "late" })
+        XCTAssertEqual(engine.store.item(done)?.state, .done)
+        XCTAssertNil(engine.store.item(done)?.note)
+        XCTAssertEqual(engine.store.item(waiting)?.state, .picked)
+        XCTAssertTrue(engine.store.move(waiting, to: .preparing) { $0.note = "Starting…" })
+        XCTAssertEqual(engine.store.item(waiting)?.note, "Starting…")
+        // removed meanwhile: nothing to move
+        engine.store.remove(waiting)
+        XCTAssertFalse(engine.store.move(waiting, to: .sending))
+    }
+
+    /// A step that began before the clip stopped comes back with "try again later": it wrote its note over
+    /// "Couldn't upload: …" and set a next try on a clip that waits for the person. Both routes.
+    func testALateTryAgainLaterLeavesAClipThatStoppedAsItIs() {
+        let failed = queued(.sending), there = queued(.done), waiting = queued(.picked)
+        engine.fail(failed, "The server answered 413")
+        let before = [failed, there, waiting].map { engine.store.item($0) }
+        for id in [failed, there, waiting] {
+            engine.perform(.retryLater("The network connection was lost"), id)
+            engine.catalogRetryLater(id, "The network connection was lost")
+        }
+        XCTAssertEqual([failed, there, waiting].map { engine.store.item($0) }, before)
+        XCTAssertEqual(engine.store.item(failed).map { ActivityView.status($0, sent: 0) }, "Couldn't upload: The server answered 413")
+
+        // a clip on its way waits and tries again, as before
+        let library = queued(.sending), catalog = queued(.finishing)
+        engine.perform(.retryLater("Offline"), library)
+        engine.catalogRetryLater(catalog, "Offline")
+        for id in [library, catalog] {
+            XCTAssertEqual(engine.store.item(id)?.note, "Offline")
+            XCTAssertEqual(engine.store.item(id)?.attempts, 1)
+            XCTAssertNotNil(engine.store.item(id)?.nextAttemptAt)
+        }
+    }
+}
+
+/// One clip, one transfer: the app's own record of the transfers on their way (`Transfers.onTheWay`).
+@MainActor
+final class OneTransferAClipTests: XCTestCase {
+    /// Takes every request and never answers: a transfer stays on its way until it is cancelled.
+    private final class NeverAnswers: URLProtocol {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {}
+        override func stopLoading() {}
+    }
+
+    private var transfers: Transfers!
+    private let body = FileManager.default.temporaryDirectory.appendingPathComponent("one-transfer-\(UUID().uuidString)")
+    private let request: URLRequest = {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1/upload")!)
+        request.httpMethod = "PATCH"
+        return request
+    }()
+
+    override func setUp() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [NeverAnswers.self]
+        transfers = Transfers(configuration: config)
+        try Data("tinyacrobatics".utf8).write(to: body)
+    }
+
+    override func tearDown() async throws {
+        transfers.session.invalidateAndCancel()
+        try? FileManager.default.removeItem(at: body)
+    }
+
+    private func start(_ clip: UUID, _ kind: TransferStep.Kind, offset: Int64 = 0) -> Bool {
+        transfers.start(request, file: body, step: TransferStep(itemId: clip, kind: kind, offset: offset))
+    }
+
+    /// Until `done`, for as long as an answer of the session takes to come.
+    private func wait(_ what: String, _ done: () -> Bool) async throws {
+        for _ in 0 ..< 250 where !done() { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(done(), what)
+    }
+
+    /// A look at the queue asked iOS which clips had a transfer running and waited for the answer; the clip's
+    /// finished chunk started the next one meanwhile, and the look then started it too.
+    func testAClipWithATransferOnItsWayGetsNoSecondOne() async throws {
+        let clip = UUID(), other = UUID()
+        XCTAssertTrue(start(clip, .patch))
+        XCTAssertFalse(start(clip, .patch, offset: 32 << 20))
+        XCTAssertFalse(start(clip, .finish))
+        XCTAssertTrue(start(other, .patch), "another clip's goes beside it")
+        let made = await transfers.session.allTasks
+        XCTAssertEqual(made.compactMap { TransferStep(encoded: $0.taskDescription)?.itemId }.sorted { $0.uuidString < $1.uuidString },
+                       [clip, other].sorted { $0.uuidString < $1.uuidString }, "nothing was made for a refused start")
+    }
+
+    /// A New edit's Try again cancels the clip's transfer and sends it again at once; the cancelled one ends later.
+    func testACancelledTransferEndingLaterLeavesTheNewOneOnRecord() async throws {
+        let clip = UUID(), other = UUID()
+        XCTAssertTrue(start(clip, .patch))
+        XCTAssertTrue(start(other, .patch))
+        let cancelled = try XCTUnwrap(transfers.onTheWay[clip])
+        await transfers.cancel(itemId: clip)
+        XCTAssertNil(transfers.onTheWay[clip], "off the record at once")
+        XCTAssertTrue(start(clip, .patch), "cancel, then start")
+        let new = try XCTUnwrap(transfers.onTheWay[clip])
+        XCTAssertNotEqual(new.taskIdentifier, cancelled.taskIdentifier)
+
+        // a transfer that ends takes its own entry off: the other clip's, ended after the cancelled one
+        transfers.onTheWay[other]?.cancel()
+        try await wait("an ended transfer leaves the record") { transfers.onTheWay[other] == nil && cancelled.state == .completed }
+        XCTAssertEqual(transfers.onTheWay[clip]?.taskIdentifier, new.taskIdentifier, "the cancelled one's end left the new one")
+        XCTAssertFalse(start(clip, .finish), "which is still the clip's one transfer")
+        XCTAssertTrue(start(other, .patch), "a clip whose transfer ended gets its next")
+
+        new.cancel()
+        try await wait("the new one's own end takes it off") { transfers.onTheWay[clip] == nil }
     }
 }
 

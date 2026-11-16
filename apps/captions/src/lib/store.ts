@@ -1,4 +1,12 @@
 import { create } from "zustand";
+import {
+  badge,
+  CLIP_UPLOAD_MOVES,
+  LOCAL_SAVE_MOVES,
+  SERVER_SAVE_MOVES,
+  type ClipUploadState,
+  type ProjectSaveState,
+} from "./persistence-status";
 import { extractAudio } from "./audio";
 import { alignDocumentTokens } from "./align";
 import { applyMasterToClip } from "./applyMaster";
@@ -111,7 +119,7 @@ export interface ClipInfo {
   /** True once the clip has a transcript (words exist). */
   transcribed: boolean;
   /** Upload pipeline: local (unsaved) → uploading → processing → done. */
-  uploadState: "local" | "uploading" | "processing" | "done" | "error";
+  uploadState: ClipUploadState;
   uploadPct: number;
   uploadError: string | null;
   /** The server still holds the uploaded source (needed for burn-in). */
@@ -205,7 +213,7 @@ export function retainClipSourceFile(id: string, file: File): boolean {
   if (!slot || !clip) return false;
   slot.file = file;
   updateClipInfo(id, {
-    uploadState: "local",
+    uploadState: badge(CLIP_UPLOAD_MOVES, clip.uploadState, "local", "retainClipSourceFile"),
     uploadPct: 0,
     uploadError: null,
     hasOriginal: false,
@@ -478,7 +486,7 @@ interface StudioState {
   /** Why the last project save/upload failed (shown on the header badge). */
   saveError: string | null;
   /** Browser-disk recovery snapshot, independent of server/media upload. */
-  localSaveState: "idle" | "saving" | "saved" | "error";
+  localSaveState: ProjectSaveState;
   localSaveError: string | null;
   fileName: string;
   /** Dimensions of the video being PLAYED (may be a low-res proxy). */
@@ -599,7 +607,7 @@ interface StudioState {
    * Project persistence phase for data saves. Uploads are tracked per
    * clip (ClipInfo.uploadState) since a batch imports many at once.
    */
-  saveState: "idle" | "saving" | "saved" | "error";
+  saveState: ProjectSaveState;
 
   /** Import one or more videos as a NEW project (replaces the current one). */
   importFiles: (files: File[]) => void;
@@ -1473,7 +1481,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   openProjectLibrary: () => set({ projectLibraryOpen: true }),
   importedFile: null,
   saveError: null,
-  localSaveState: "idle",
+  localSaveState: badge(LOCAL_SAVE_MOVES, null, "idle", "first state"),
   localSaveError: null,
   fileName: "",
   videoWidth: 1920,
@@ -1517,7 +1525,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   serverConflict: false,
   serverCaptioning: false,
   setupPending: false,
-  saveState: "idle",
+  saveState: badge(SERVER_SAVE_MOVES, null, "idle", "first state"),
 
   dismissSetup: () => set({ setupPending: false }),
 
@@ -1548,7 +1556,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       srcFps: null,
       status: { phase: "idle" },
       transcribed: false,
-      uploadState: "local",
+      uploadState: badge(CLIP_UPLOAD_MOVES, null, "local", "importFiles"),
       uploadPct: 0,
       uploadError: null,
       hasOriginal: false,
@@ -1580,9 +1588,9 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       scriptFixes: {},
       scriptCheckError: null,
       setupPending: true,
-      saveState: "idle",
+      saveState: badge(SERVER_SAVE_MOVES, null, "idle", "importFiles"),
       saveError: null,
-      localSaveState: "saving",
+      localSaveState: badge(LOCAL_SAVE_MOVES, null, "saving", "importFiles"),
       localSaveError: null,
       refiningClipId: null,
       refining: false,
@@ -1624,7 +1632,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
         srcFps: null,
         status: { phase: "idle" },
         transcribed: false,
-        uploadState: "local",
+        uploadState: badge(CLIP_UPLOAD_MOVES, null, "local", "addClips"),
         uploadPct: 0,
         uploadError: null,
         hasOriginal: false,
@@ -2977,7 +2985,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       projectLibraryOpen: true,
       importedFile: null,
       saveError: null,
-      localSaveState: "idle",
+      localSaveState: badge(LOCAL_SAVE_MOVES, null, "idle", "reset"),
       localSaveError: null,
       fileName: "",
       clips: [],
@@ -3025,7 +3033,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       scriptFixes: {},
       scriptCheckError: null,
       setupPending: false,
-      saveState: "idle",
+      saveState: badge(SERVER_SAVE_MOVES, null, "idle", "reset"),
     });
   },
 };

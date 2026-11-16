@@ -14,6 +14,7 @@ import {
   type ClipSnapshot,
 } from "./store";
 import { storedAutoCadence } from "./cadence-preference";
+import { badge, CLIP_UPLOAD_MOVES, SERVER_SAVE_MOVES } from "./persistence-status";
 import { onTopic, whenVisible } from "./sync";
 import { bumpCueIdCounter, type CadenceFit } from "./captions";
 import { storedStyle, storedTexts } from "./export-request";
@@ -421,7 +422,7 @@ function applyServerProject(id: string, p: ProjectData, keep?: StudioSnapshot): 
       srcFps: cm.srcFps ?? null,
       status: { phase: transcribed ? "done" : "idle" },
       transcribed,
-      uploadState: "done",
+      uploadState: badge(CLIP_UPLOAD_MOVES, null, "done", "applyServerProject"),
       uploadPct: 100,
       uploadError: null,
       hasOriginal: !!cm.hasOriginal,
@@ -460,7 +461,7 @@ function applyServerProject(id: string, p: ProjectData, keep?: StudioSnapshot): 
     serverConflict: false,
     serverCaptioning: !!p.captioning,
     setupPending: false,
-    saveState: "saved",
+    saveState: badge(SERVER_SAVE_MOVES, null, "saved", "applyServerProject"),
     saveError: null,
     fileName: p.name,
     clips,
@@ -588,7 +589,7 @@ const newMutationId = () =>
 
 function patchActiveProject(
   id: string,
-  patch: Partial<ReturnType<typeof useStudio.getState>>,
+  patch: (s: StudioSnapshot) => Partial<StudioSnapshot>,
 ): void {
   if (useStudio.getState().projectId === id) useStudio.setState(patch);
 }
@@ -613,22 +614,22 @@ async function syncData(id: string, payload: string): Promise<void> {
         // The server copy is permanently gone (trash-purged or hard-deleted)
         // — retrying forever just storms 404s. Keep the local copy, stop
         // syncing, and don't auto-recreate it.
-        patchActiveProject(id, {
-          saveState: "error",
+        patchActiveProject(id, (s) => ({
+          saveState: badge(SERVER_SAVE_MOVES, s.saveState, "error", "syncData: server copy deleted"),
           saveError:
             "The server copy of this project was deleted. Your edits remain saved on this device only.",
           serverProjectReady: false,
           serverConflict: true,
-        });
+        }));
         return;
       }
       if (res.status === 409 && body?.code === "REVISION_CONFLICT") {
-        patchActiveProject(id, {
-          saveState: "error",
+        patchActiveProject(id, (s) => ({
+          saveState: badge(SERVER_SAVE_MOVES, s.saveState, "error", "syncData: newer server version"),
           saveError:
             "A newer server version exists. Your local edits are still safe; reload or duplicate before resolving it.",
           serverConflict: true,
-        });
+        }));
         // unless the newer copy is only the captions the server made for this project: then they join what was
         // refused here and it is sent again (takeServerCopy; not awaited, it waits for this very save to end)
         void takeServerCopy(id);
@@ -638,23 +639,23 @@ async function syncData(id: string, payload: string): Promise<void> {
         throw new Error(body?.error || `Save failed (${res.status})`);
       }
       serverRevisions.set(id, body.revision);
-      patchActiveProject(id, {
+      patchActiveProject(id, (s) => ({
         serverRevision: body.revision,
         serverConflict: false,
-        saveState: pendingSave ? "saving" : "saved",
+        saveState: badge(SERVER_SAVE_MOVES, s.saveState, pendingSave ? "saving" : "saved", "syncData: saved"),
         saveError: null,
-      });
+      }));
       return;
     } catch (error) {
       lastError = error;
       if (attempt < 4) await pause(Math.min(400 * 2 ** attempt, 4000));
     }
   }
-  patchActiveProject(id, {
-    saveState: "error",
+  patchActiveProject(id, (s) => ({
+    saveState: badge(SERVER_SAVE_MOVES, s.saveState, "error", "syncData: gave up"),
     saveError:
       lastError instanceof Error ? lastError.message : String(lastError),
-  });
+  }));
 }
 
 /** An account set to Read on Caption Studio: the server would refuse every save, so none is sent. */
@@ -665,7 +666,7 @@ const mayNotSave = (): boolean => {
 
 async function putData(id: string, payload: string): Promise<void> {
   if (mayNotSave()) return;
-  patchActiveProject(id, { saveState: "saving" });
+  patchActiveProject(id, (s) => ({ saveState: badge(SERVER_SAVE_MOVES, s.saveState, "saving", "putData") }));
   const previous = syncTails.get(id) ?? Promise.resolve();
   const current = previous.catch(() => {}).then(() => syncData(id, payload));
   syncTails.set(id, current);
@@ -737,7 +738,7 @@ function scheduleSave(s: StudioSnapshot): void {
   pendingFor = id;
   // Mark dirty immediately, including during the debounce window. Otherwise
   // the UI can falsely say SAVED for 1.2 seconds after every edit.
-  useStudio.setState({ saveState: "saving" });
+  useStudio.setState((now) => ({ saveState: badge(SERVER_SAVE_MOVES, now.saveState, "saving", "scheduleSave") }));
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const run = pendingSave;
@@ -767,13 +768,16 @@ const uploadQueue: string[] = [];
 let uploading = false;
 let creatingProject: Promise<void> | null = null;
 
-function patchClip(id: string, patch: Partial<ClipInfo>): void {
+function patchClip(id: string, change: Partial<ClipInfo> | ((clip: ClipInfo) => Partial<ClipInfo>)): void {
   useStudio.setState((s) => {
     // upload progress fires many times per whole percent: a no-op patch
     // keeps the clip list as-is, so its subscribers don't re-render
     const clip = s.clips.find((c) => c.id === id);
+    if (!clip) return s;
+    // a function is given the clip as it is now: an upload's answer names the state it leaves (badge)
+    const patch = typeof change === "function" ? change(clip) : change;
     const keys = Object.keys(patch) as (keyof ClipInfo)[];
-    if (!clip || keys.every((k) => clip[k] === patch[k])) return s;
+    if (keys.every((k) => clip[k] === patch[k])) return s;
     return {
       clips: s.clips.map((c) => (c.id === id ? { ...c, ...patch } : c)),
     };
@@ -1287,13 +1291,13 @@ async function ensureRemoteClip(
   });
   if (res.status === 404) {
     // Server copy of the project is gone — see syncData's 404 handling.
-    patchActiveProject(projectId, {
-      saveState: "error",
+    patchActiveProject(projectId, (s) => ({
+      saveState: badge(SERVER_SAVE_MOVES, s.saveState, "error", "ensureRemoteClip: server copy deleted"),
       saveError:
         "The server copy of this project was deleted. Your edits remain saved on this device only.",
       serverProjectReady: false,
       serverConflict: true,
-    });
+    }));
     throw new DOMException("Project deleted on server", "AbortError");
   }
   if (!res.ok) {
@@ -1319,7 +1323,10 @@ async function ensureServerProject(): Promise<void> {
     // here would re-enter the persistence subscriber with the guard still
     // unset, calling ensureServerProject again — infinite recursion.
     await Promise.resolve();
-    useStudio.setState({ saveState: "saving", saveError: null });
+    useStudio.setState((s) => ({
+      saveState: badge(SERVER_SAVE_MOVES, s.saveState, "saving", "ensureServerProject"),
+      saveError: null,
+    }));
     try {
       const res = await fetch(`/api/projects/${projectId}/draft`, {
         method: "PUT",
@@ -1354,7 +1361,10 @@ async function ensureServerProject(): Promise<void> {
       await saveData();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      useStudio.setState({ saveState: "error", saveError: message });
+      useStudio.setState((s) => ({
+        saveState: badge(SERVER_SAVE_MOVES, s.saveState, "error", "ensureServerProject: failed"),
+        saveError: message,
+      }));
     }
   })().finally(() => {
     creatingProject = null;
@@ -1384,7 +1394,7 @@ async function uploadClip(clipId: string): Promise<void> {
   if (clip.uploadState !== "local" && clip.uploadState !== "error") return;
   const file = slot.file;
   patchClip(clipId, {
-    uploadState: "uploading",
+    uploadState: badge(CLIP_UPLOAD_MOVES, clip.uploadState, "uploading", "uploadClip"),
     uploadError: null,
   });
   console.log(
@@ -1419,17 +1429,21 @@ async function uploadClip(clipId: string): Promise<void> {
       return;
     }
     console.log(`[cap-upload] clip=${clipId} source stored, awaiting proxy`);
-    patchClip(clipId, {
-      uploadState: "done",
+    const stored = resp;
+    patchClip(clipId, (now) => ({
+      uploadState: badge(CLIP_UPLOAD_MOVES, now.uploadState, "done", "uploadClip: stored"),
       uploadPct: 100,
       hasOriginal: true,
-      originalBytes: resp.originalBytes ?? file.size,
-    });
+      originalBytes: stored.originalBytes ?? file.size,
+    }));
     void waitForProxy(projectId, clipId, clip.videoUrl, file.size);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[cap-upload] clip=${clipId} failed:`, msg);
-    patchClip(clipId, { uploadState: "error", uploadError: msg });
+    patchClip(clipId, (now) => ({
+      uploadState: badge(CLIP_UPLOAD_MOVES, now.uploadState, "error", "uploadClip: failed"),
+      uploadError: msg,
+    }));
   }
 }
 
@@ -1490,7 +1504,10 @@ function applyProbe(clipId: string, resp: UploadResp): void {
 
 /** Manual retry after a failed upload (the clip bar's error badge). */
 export function retryClipUpload(clipId: string): void {
-  patchClip(clipId, { uploadState: "local", uploadError: null });
+  patchClip(clipId, (now) => ({
+    uploadState: badge(CLIP_UPLOAD_MOVES, now.uploadState, "local", "retryClipUpload"),
+    uploadError: null,
+  }));
   queueUpload(clipId);
 }
 
@@ -1530,12 +1547,12 @@ async function switchToProxy(
   if (fromUrl.startsWith("blob:")) URL.revokeObjectURL(fromUrl);
   // Keep the original File handle for this tab. Local export must remain
   // available even after playback switches to the lightweight server proxy.
-  patchClip(clipId, {
+  patchClip(clipId, (now) => ({
     videoUrl: proxyUrl,
-    uploadState: "done",
+    uploadState: badge(CLIP_UPLOAD_MOVES, now.uploadState, "done", "switchToProxy"),
     hasOriginal: true,
     originalBytes,
-  });
+  }));
   if (s.activeClipId === clipId) {
     const t = s.currentTime;
     useStudio.setState({ videoUrl: proxyUrl, importedFile: null });

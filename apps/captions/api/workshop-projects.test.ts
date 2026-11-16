@@ -118,7 +118,8 @@ describe("projects kept apart", () => {
 
   it("knowledge: a project's old context files stay its own, a new source reaches every project until one switches it off", async () => {
     const tinyFile = ws("projects", `${tiny}.json`);
-    writeFileSync(tinyFile, JSON.stringify({ ...JSON.parse(readFileSync(tinyFile, "utf-8")), knowledge: [{ id: uuid(), name: "offers-facts.md", text: "Offer facts", addedAt: 1 }] }));
+    // a form open since before context files became sources saves them back with the project (one a start finds: workshop-sources-start.test.ts)
+    expect((await call("PATCH", `/api/workshop/projects/${tiny}`, { knowledge: [{ id: uuid(), name: "offers-facts.md", text: "Offer facts", addedAt: 1 }] })).status).toBe(200);
     type Row = { name: string; projectId?: string; status: string };
     const before = (await (await workspaceScope.run({ id: tiny }, () => call("GET", "/api/workshop/sources"))).json()) as Row[];
     expect(before.find((x) => x.name === "offers-facts.md")).toMatchObject({ projectId: tiny, status: "new" });
@@ -265,15 +266,13 @@ describe("projects kept apart", () => {
     expect((await call("PATCH", `/api/workshop/projects/${tiny}`, { notes: "" })).status).toBe(200);
   });
 
-  it("a folder kept as one source splits into its files; a limit leaves one waiting, no error; the inbox hears when all are read", async () => {
-    const id = uuid();
-    const text = "# brandkit/a.md\n\nalpha\n\n# brandkit/b.md\n\nbeta";
-    writeFileSync(ws("sources", `${id}.json`), JSON.stringify({ id, owner: "alex", name: "brandkit", chars: text.length, status: "failed", error: "API Error: Request rejected (429)", createdAt: 5, updatedAt: 5 }));
-    writeFileSync(ws("sources", `${id}.txt`), text);
+  it("a limit leaves a file waiting, no error; Read on it reads every waiting one; the inbox hears when all are read", async () => {
     const ai = vi.mocked(completeWithFallback);
     ai.mockImplementationOnce(async () => {
       throw new Error("Claude on the Mac: Claude: API Error: Request rejected (429) · rate_limit_error (reset after 2h25m50s)");
     });
+    // a folder's two files, each its own source (one kept as one source before that: workshop-sources-start.test.ts)
+    await call("POST", "/api/workshop/sources", { name: "brandkit", files: [{ name: "brandkit/a.md", text: "alpha" }, { name: "brandkit/b.md", text: "beta" }] });
     type Row = { id: string; name: string; status: string; waitUntil?: number; error?: string };
     const rows = async () => ((await (await call("GET", "/api/workshop/sources")).json()) as Row[]).filter((x) => x.name.startsWith("brandkit"));
     let got: Row[] = [];
@@ -282,13 +281,14 @@ describe("projects kept apart", () => {
       await new Promise((res) => setTimeout(res, 10));
     }
     expect(got.map((x) => x.name)).toEqual(["brandkit/a.md", "brandkit/b.md"]);
-    expect(existsSync(ws("sources", `${id}.txt`))).toBe(false);
     const waiting = got.find((x) => x.waitUntil)!;
     expect(waiting).toMatchObject({ status: "queued" });
     expect(waiting.error).toBeUndefined();
     expect(waiting.waitUntil! - Date.now()).toBeGreaterThan(2 * 3600_000);
-    // Read again after the reset (here: by hand): both read, one note
-    for (const r of got) await call("POST", `/api/workshop/sources/${r.id}/read`);
+    // listing them starts nothing while the limit holds: both still wait
+    expect((await rows()).map((x) => x.status)).toEqual(["queued", "queued"]);
+    // Read again after the reset (here: by hand, on one): both read, one note
+    await call("POST", `/api/workshop/sources/${waiting.id}/read`);
     for (let i = 0; i < 100 && !got.every((x) => x.status === "read"); i++) {
       await new Promise((res) => setTimeout(res, 10));
       got = await rows();
