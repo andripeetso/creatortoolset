@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
@@ -10,6 +11,8 @@ import { env, keepsOverRestart } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
 import { noteCallOutcome } from "./providers";
+import { okId } from "./workshop/validate";
+import { workspaceScope } from "./workshop/workspace";
 
 /**
  * The AI providers on the paired Macs (contracts/providers.ts). A request waits
@@ -109,28 +112,50 @@ export type MacAskStatus = "waiting" | "allowed" | "denied" | "expired";
 /* ---- usage: every answer's tokens and API-equivalent cost, by hour (UTC) and what it was for ---- */
 
 type Tally = { calls: number; tokens: number; costUsd: number };
+/** Totals, and the same split by `${scope}:${instance}` (`by`). Entries from before scopes have a bare instance id: those are the workspace's. */
+type Split = Tally & { by?: Record<string, Tally> };
 /**
- * hour → label → totals, and the same split by `${scope}:${instance}` (`by`). Entries from before scopes have a bare
- * instance id: those are the workspace's.
+ * hour → label → totals with their split, and under `ws` the part of them each workspace's calls made (by the
+ * workspace's id). A call recorded before workspaces were kept (2026-11-16), or made in none, is in the totals only.
  */
-export type UsageTally = Record<string, Record<string, Tally & { by?: Record<string, Tally> }>>;
+export type UsageTally = Record<string, Record<string, Split & { ws?: Record<string, Split> }>>;
 const USAGE_FILE = () => path.join(env.dataDir, "mac-claude-usage.json");
 let tally: Promise<UsageTally> | null = null;
 let saving: Promise<void> = Promise.resolve();
 const loadTally = () => (tally ??= readFile(USAGE_FILE(), "utf-8").then((t) => JSON.parse(t) as UsageTally).catch((): UsageTally => ({})));
 
-/** One answer's usage, tallied by hour and label (the Mac's own, and the API path's with " (API)"), and by scope and provider instance. */
-export async function recordUsage(label: string, u: MacUsage, instance?: string, scope: Scope = "workspace"): Promise<void> {
+const usageScope = new AsyncLocalStorage<string>();
+/**
+ * Work that runs outside a request (a queue's worker, a chat's reply in its own workspace) names the workspace its AI
+ * calls count under. It changes nothing else: what the work reads is still its own business (workspaceScope).
+ */
+export const usageIn = <T>(workspace: string | undefined, fn: () => T): T => (workspace ? usageScope.run(workspace, fn) : fn());
+/** The workspace an AI call made now counts under: the one named for the work (usageIn), else the request's own. */
+function usageWorkspace(): string | undefined {
+  const id = usageScope.getStore() ?? workspaceScope.getStore()?.id;
+  return okId(id) ? id : undefined;
+}
+
+/**
+ * One answer's usage, tallied by hour and label (the Mac's own, and the API path's with " (API)"), by scope and provider
+ * instance, and by the workspace the call ran in. `workspace` null: in none (an answer whose request named none).
+ */
+export async function recordUsage(label: string, u: MacUsage, instance?: string, scope: Scope = "workspace", workspace: string | null | undefined = usageWorkspace()): Promise<void> {
   const all = await loadTally();
   const hour = new Date().toISOString().slice(0, 13);
-  const t = ((all[hour] ??= {})[label] ??= { calls: 0, tokens: 0, costUsd: 0 });
+  const zero = (): Tally => ({ calls: 0, tokens: 0, costUsd: 0 });
+  const t = ((all[hour] ??= {})[label] ??= zero());
   const add = (x: Tally) => {
     x.calls++;
     x.tokens += u.tokens;
     x.costUsd += u.costUsd;
   };
-  add(t);
-  if (instance) add((t.by ??= {})[`${scope}:${instance}`] ??= { calls: 0, tokens: 0, costUsd: 0 });
+  const count = (x: Split) => {
+    add(x);
+    if (instance) add(((x.by ??= {})[`${scope}:${instance}`] ??= zero()));
+  };
+  count(t);
+  if (workspace) count(((t.ws ??= {})[workspace] ??= zero()));
   for (const h of Object.keys(all).sort().slice(0, -24 * 90)) delete all[h]; // 90 days
   const json = JSON.stringify(all);
   saving = saving
@@ -146,6 +171,36 @@ export async function recordUsage(label: string, u: MacUsage, instance?: string,
 export async function macUsageSince(since: number): Promise<UsageTally> {
   const from = new Date(since).toISOString().slice(0, 13);
   return Object.fromEntries(Object.entries(await loadTally()).filter(([h]) => h >= from));
+}
+
+/** One line of the tally: an hour's calls for one label, one provider (`key`, `${scope}:${instance}`; none = no provider) and one workspace (none = recorded in none). */
+export type UsageLine = Tally & { hour: string; label: string; key?: string; workspace?: string };
+
+/**
+ * The tally since `since` (ms) as lines that add up to its totals: each workspace's calls, then what was recorded in
+ * no workspace (the totals less the workspaces' parts).
+ */
+export async function macUsageLines(since: number): Promise<UsageLine[]> {
+  const out: UsageLine[] = [];
+  const less = (a: Tally, parts: Tally[]): Tally => ({
+    calls: a.calls - parts.reduce((n, x) => n + x.calls, 0),
+    tokens: a.tokens - parts.reduce((n, x) => n + x.tokens, 0),
+    costUsd: Math.max(0, a.costUsd - parts.reduce((n, x) => n + x.costUsd, 0)),
+  });
+  for (const [hour, labels] of Object.entries(await macUsageSince(since))) {
+    for (const [label, t] of Object.entries(labels)) {
+      const push = (x: Tally, key?: string, workspace?: string) => void (x.calls > 0 && out.push({ hour, label, ...(key ? { key } : {}), ...(workspace ? { workspace } : {}), calls: x.calls, tokens: x.tokens, costUsd: x.costUsd }));
+      const lines = (s: Split, workspace?: string) => {
+        const by = Object.entries(s.by ?? {});
+        for (const [key, x] of by) push(x, key, workspace);
+        push(less(s, by.map(([, x]) => x)), undefined, workspace); // no provider: the API path, a stopped run
+      };
+      const ws = Object.entries(t.ws ?? {});
+      for (const [id, s] of ws) lines(s, id);
+      lines({ ...less(t, ws.map(([, s]) => s)), by: Object.fromEntries(Object.entries(t.by ?? {}).map(([key, x]) => [key, less(x, ws.flatMap(([, s]) => s.by?.[key] ?? []))])) });
+    }
+  }
+  return out;
 }
 
 /** Why an answer from the Mac did not come, so callers can tell a Stop from a limit from a Mac that never picked up. */
@@ -177,6 +232,8 @@ interface Req {
   files?: Record<string, string>;
   model?: string;
   provider?: MacOpts["provider"];
+  /** the workspace its usage counts under, read when it was asked (the answer arrives in the computer's own request) */
+  workspace?: string;
   onStep?: (label: string) => void;
   session?: MacOpts["session"];
   mcp?: MacOpts["mcp"];
@@ -254,13 +311,13 @@ function claim(r: Req): Req {
 /* ---- claimed requests kept on disk, so a restart doesn't lose their answers ---- */
 
 /** What the file holds: who runs it and for whom. The Mac already has the prompt, the files and the token. */
-type Saved = Pick<Req, "id" | "device" | "web" | "background" | "label" | "model" | "provider" | "session"> & { keep: Kept };
+type Saved = Pick<Req, "id" | "device" | "web" | "background" | "label" | "model" | "provider" | "workspace" | "session"> & { keep: Kept };
 const openDir = () => path.join(env.dataDir, "mac-claude-open");
 const openFile = (id: string) => path.join(openDir(), `${id}.json`);
 
 function keepOpen(r: Req): void {
   if (!r.keep || !keepsOverRestart()) return;
-  const saved: Saved = { id: r.id, device: r.device, web: r.web, background: r.background, label: r.label, model: r.model, provider: r.provider, session: r.session, keep: r.keep };
+  const saved: Saved = { id: r.id, device: r.device, web: r.web, background: r.background, label: r.label, model: r.model, provider: r.provider, workspace: r.workspace, session: r.session, keep: r.keep };
   try {
     mkdirSync(openDir(), { recursive: true, mode: 0o700 });
     const tmp = `${openFile(r.id)}.tmp-${process.pid}`;
@@ -382,7 +439,7 @@ export function streamMacClaude(
   // ponytail: no device = nothing to run it: an unclaimed miss, so an API-key fallback may still answer
   if (!opts.provider?.device) return Promise.reject(new MacClaudeError("No Mac runs this provider: pick one in Settings → Providers", "unclaimed"));
   return wait(
-    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, model: opts.model, provider: opts.provider, session: opts.session, mcp: opts.mcp, keep: opts.keep },
+    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, model: opts.model, provider: opts.provider, workspace: usageWorkspace(), session: opts.session, mcp: opts.mcp, keep: opts.keep },
     false,
     cancel,
     onDelta,
@@ -391,7 +448,7 @@ export function streamMacClaude(
   );
 }
 
-type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "model" | "provider" | "session" | "mcp" | "keep">;
+type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "model" | "provider" | "workspace" | "session" | "mcp" | "keep">;
 type Hooks = Pick<MacOpts, "onStep" | "onAsk" | "onSession">;
 
 /** The promise of one request's answer: a new one waits for its Mac, one taken up after a restart (`claimed`) is already with it. */
@@ -412,7 +469,7 @@ function wait(asked: Asked, claimed: boolean, cancel: AbortSignal | undefined, o
         end();
         if (usage) {
           console.log(`[mac-claude] ${r.label}${r.provider ? ` (${r.provider.instance})` : ""}: ${usage.tokens} tokens, $${usage.costUsd.toFixed(2)} API-equivalent`);
-          void recordUsage(r.label, usage, r.provider?.instance, r.provider?.scope);
+          void recordUsage(r.label, usage, r.provider?.instance, r.provider?.scope, r.workspace ?? null);
           onUsage?.(usage);
         }
         if (session) hooks.onSession?.(session);
@@ -588,7 +645,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const b = await body(c);
     if (!r) {   // stopped meanwhile: its tokens are still tallied, as /fail does
       const usage = usageOf(b.usage);
-      if (usage) void recordUsage("Stopped", usage);
+      if (usage) void recordUsage("Stopped", usage, undefined, undefined, null);
       return c.json({ error: "Not found" }, 404);
     }
     await r.chain; // what streamed lands before the final answer
@@ -601,7 +658,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const r = mine(c);
     const b = await body(c);
     const usage = usageOf(b.usage);
-    if (usage) void recordUsage(r?.label ?? "Stopped", usage, r?.provider?.instance, r?.provider?.scope);
+    if (usage) void recordUsage(r?.label ?? "Stopped", usage, r?.provider?.instance, r?.provider?.scope, r?.workspace ?? null);
     if (!r) return c.json({ error: "Not found" }, 404);
     const error = String(b.error ?? "failed").slice(0, 300);
     // the relay says what the CLI said; a closed usage window says when it opens again

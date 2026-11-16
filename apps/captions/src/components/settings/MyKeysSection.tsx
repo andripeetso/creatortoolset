@@ -25,7 +25,7 @@ export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
   if (!keys)
     return (
       <Card>
-        {error ? <ErrorRow title="Couldn't load your keys" detail={error} retry={() => void load()} /> : <LoadingRow />}
+        {error ? <ErrorRow title="Could not load API keys" detail={error} retry={() => void load()} /> : <LoadingRow />}
       </Card>
     );
   return (

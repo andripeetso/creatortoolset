@@ -12,10 +12,10 @@ import { InstallHelp, SignInHelp } from "./AiSetup";
 import { Advanced, RowMenu, Row, SettingsSelect, Status, TextField, type RowMenuItem } from "./ui";
 
 /**
- * One AI's settings: the right half of the Providers panel from `lg`, its own page below it. Rows with a line between
- * them, no cards of their own: Status, Name, Model, Thinking, and Advanced with only the fields the Mac reads for this
- * tool (driverFields). Remove is in the header's menu and asks first; a tool that a job uses can't be removed until that
- * job picks another.
+ * One AI provider's settings: the right half of the Providers panel from `lg`, its own page below it. Rows with a line
+ * between them, no cards of their own: Status, Name, Model, Thinking, and Advanced with only the fields the Mac reads
+ * for this tool (driverFields). Remove is in the header's menu and asks first; a provider that a job uses can't be
+ * removed until that job has another.
  */
 export function ProviderDetail({
   inst,
@@ -41,7 +41,7 @@ export function ProviderDetail({
   checking: boolean;
   /** a test can run now: the computer is online and no test is running */
   canTest: boolean;
-  /** what uses this AI ("the default", job names) */
+  /** what uses this provider ("Default", job names) */
   used: string[];
   /** the models this AI offers; empty = the tool's own default */
   models: string[];
@@ -49,7 +49,7 @@ export function ProviderDetail({
   selection: { model: string; effort: Effort };
   /** the computers this AI can move to (only when it runs on none, or on one that was removed) */
   computers?: Array<{ id: string; name: string }>;
-  /** the sentence about its computer: "Its computer was removed: pick another." */
+  /** the state of its computer, when that needs saying: "Computer not found" */
   computerNote?: string;
   /** below `lg` this page is a sub-page: its back arrow goes here */
   backTo?: string;
@@ -62,23 +62,23 @@ export function ProviderDetail({
 }) {
   const driver = DRIVERS.find((d) => d.id === inst.driver);
   const fields = driverFields(inst.driver);
-  const testTitle = "Sends one short question to check it answers.";
-  // what is true when it works: the last answer, its model and how long it took
+  const testTitle = "Sends one short test question.";
+  // what is true when it works: the last test, its model and how long it took
   const answered = check?.ok && !check.note
-    ? `Answered ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""}${check.ms > 0 ? ` · ${(check.ms / 1000).toFixed(1)} s` : ""}`
+    ? `Tested ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""}${check.ms > 0 ? ` · ${(check.ms / 1000).toFixed(1)} s` : ""}`
     : undefined;
   const menu: RowMenuItem[] = [
     {
-      label: "Test now",
+      label: "Test",
       tooltip: testTitle,
       onSelect: () => {
-        if (!canTest) throw new Error(checking ? "It is being tested now." : "The computer is offline, so it can't be tested now.");
+        if (!canTest) throw new Error(checking ? "A test is running." : "Computer offline");
         onTest();
       },
     },
     used.length
-      ? { label: "Remove", destructive: true, onSelect: () => { throw new Error(`${inst.name} is used by ${used.join(", ")}. Pick another there first.`); } }
-      : { label: "Remove", destructive: true, onSelect: onRemove, confirm: { title: `Remove ${inst.name}?`, body: "Its settings are removed from this account.", ok: "Remove" } },
+      ? { label: "Remove", destructive: true, onSelect: () => { throw new Error(`${inst.name} is in use by ${used.join(", ")}.`); } }
+      : { label: "Remove", destructive: true, onSelect: onRemove, confirm: { title: `Remove ${inst.name}?`, body: "Its settings are removed.", ok: "Remove" } },
   ];
   // one line, always there, so nothing under it moves: what needs the person in its colour, else what is true. Laid out
   // as a flex row: set in a line of text, the status with its dot is a pixel taller than words alone, and a test
@@ -86,11 +86,11 @@ export function ProviderDetail({
   const statusLine = (
     <span className="flex min-w-0">
       {checking ? (
-        "Checking…"
+        "Testing…"
       ) : status.text && status.tone !== "neutral" ? (
         <Status tone={status.tone}>{status.text}</Status>
       ) : (
-        [status.text, answered ?? (status.text ? "" : "Not tested yet")].filter(Boolean).join(" · ")
+        [status.text, answered ?? (status.text ? "" : "Not tested")].filter(Boolean).join(" · ")
       )}
     </span>
   );
@@ -99,7 +99,7 @@ export function ProviderDetail({
       {/* as tall as a row of the list beside it, so the first line runs straight across the panel */}
       <div className={cn(PROVIDER_ROW, "flex items-center gap-2.5 px-3 sm:px-4")}>
         {backTo && (
-          <Button asChild variant="ghost" size="icon-xs" className="lg:hidden" aria-label="Back to the AI list">
+          <Button asChild variant="ghost" size="icon-xs" className="lg:hidden" aria-label="Back to Providers">
             <Link to={backTo}>
               <ArrowLeft />
             </Link>
@@ -107,7 +107,7 @@ export function ProviderDetail({
         )}
         <DriverMark driver={inst.driver} className="size-5" />
         <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">{inst.name}</h3>
-        <RowMenu label={`More for ${inst.name}`} items={menu} />
+        <RowMenu label={`${inst.name} actions`} items={menu} />
       </div>
 
       <Row
@@ -115,9 +115,9 @@ export function ProviderDetail({
         description={statusLine}
         control={
           status.action === "test" ? (
-            // only a failed check offers the retry here; a working AI shows no button ("Test now" is in the menu)
+            // only a failed test offers another here; a working provider shows no button ("Test" is in the menu)
             <Button size="sm" variant="outline" className="min-w-28 justify-center" disabled={!canTest || checking} title={testTitle} onClick={onTest}>
-              {checking ? "Testing…" : "Test again"}
+              {checking ? "Testing…" : "Test"}
             </Button>
           ) : status.action === "sign-in" && onSignIn ? (
             <Button size="sm" variant="outline" onClick={onSignIn}>
@@ -152,7 +152,7 @@ export function ProviderDetail({
       />
       <Row
         title="Model"
-        description="Used for the Default, or a job that picks this AI."
+        description="Used unless a job sets its own."
         control={
           selection.model ? (
             <SettingsSelect
@@ -162,7 +162,7 @@ export function ProviderDetail({
               options={modelChoices(models, selection.model).map((m) => ({ value: m, label: modelName(m) }))}
             />
           ) : (
-            <span className="text-sm text-muted-foreground">Uses the tool's own default</span>
+            <span className="text-sm text-muted-foreground">Tool default</span>
           )
         }
       />
@@ -192,7 +192,7 @@ export function ProviderDetail({
           {fields.program && (
             <Row
               title="Program"
-              description="Full path to the program on this computer. Empty uses the one on its PATH."
+              description="Full path to the program, if not the installed one."
               control={
                 <TextField label="Program" value={inst.binaryPath ?? ""} placeholder="/usr/local/bin/…" onCommit={(v) => onChange({ binaryPath: v.trim() || undefined })} />
               }
@@ -204,7 +204,7 @@ export function ProviderDetail({
             </Row>
           )}
           {fields.env && (
-            <Row title="Variable names" description="Names only: their values stay on this computer.">
+            <Row title="Variable names" description="Environment variable names, one per line.">
               <LinesField label="Variable names" value={inst.envNames ?? []} onCommit={(list) => onChange({ envNames: list.length ? list : undefined })} />
             </Row>
           )}

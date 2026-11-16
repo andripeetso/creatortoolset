@@ -32,7 +32,7 @@ export function providerStatus(o: {
   check?: ProviderCheck;
 }): ProviderStatus {
   if (!o.enabled) return { tone: "neutral", text: "" };
-  if (!o.runs) return { tone: "neutral", text: "Not in the Mac app yet" };
+  if (!o.runs) return { tone: "neutral", text: "Not supported by the Mac app" };
   if (!o.online) return { tone: "neutral", text: "Computer offline" };
   if (o.report && !o.found?.installed) return { tone: "attention", text: "Not installed", action: "install" };
   const answeredSinceReport = !!o.check?.ok && (o.reportAt === undefined || o.check.at >= o.reportAt);
@@ -44,7 +44,7 @@ export function providerStatus(o: {
     // the plain reason is in the detail; a sign-in problem gets its fix on the row
     const signIn = /sign in|log ?in|login/i.test(o.check.error ?? "");
     const computer = /did not pick up|is offline|stopped answering/i.test(o.check.error ?? "");
-    return { tone: "broken", text: computer ? "Computer didn't answer" : "Didn't answer", action: signIn ? "sign-in" : "test" };
+    return { tone: "broken", text: computer ? "Computer offline" : "Test failed", action: signIn ? "sign-in" : "test" };
   }
   // it works, with something to know (a plan limit and when it resets): said plainly, nothing to press
   if (o.check?.ok && o.check.note) return { tone: "neutral", text: o.check.note };

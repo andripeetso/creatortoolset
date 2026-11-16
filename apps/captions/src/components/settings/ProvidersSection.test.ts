@@ -66,12 +66,12 @@ describe("/settings/providers?add=1 (the address of the Add provider dialog)", (
 
   it("with no computer shows the page as it is and stays on it", async () => {
     await follow("admin", []);
-    expect(document.body.textContent).toContain("No computer connected");
+    expect(document.body.textContent).toContain("Needs a computer");
     expect(dialog()).toBe("");
     expect(search).toBe("");
   });
 
-  it("opens nothing for a member who only reads the team's AI", async () => {
+  it("opens nothing for a member who only has the team budget", async () => {
     await follow("team", [mac]);
     expect(dialog()).toBe("");
     expect(search).toBe("");

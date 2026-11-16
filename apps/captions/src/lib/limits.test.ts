@@ -28,7 +28,7 @@ describe("numbers", () => {
     expect(formatDuration(H + 55 * 60_000)).toBe("1h 55m");
     expect(formatDuration(41 * 60_000)).toBe("41m");
     expect(resetsIn(w({ id: "x", kind: "session", label: "S", usedPercent: 0, resetsAt: NOW - 1 }), NOW)).toBe("resets now");
-    expect(resetsIn(w({ id: "x", kind: "session", label: "S", usedPercent: 0, resetsAt: NOW + 30_000 }), NOW)).toBe("Resets momentarily");
+    expect(resetsIn(w({ id: "x", kind: "session", label: "S", usedPercent: 0, resetsAt: NOW + 30_000 }), NOW)).toBe("resets in under a minute");
   });
 });
 
@@ -50,12 +50,12 @@ describe("a window as it counts", () => {
 describe("the sentence for a login with no reading", () => {
   it("never says 'not signed in': a folder with no sign-in has no plan to read, and the line says why", () => {
     const line = noticeOf(id([], { state: "no_login" })) ?? "";
-    expect(line).toBe("This folder has no Claude sign-in, so there is no plan to read.");
+    expect(line).toBe("No Claude sign-in in this account folder.");
     expect(line.toLowerCase()).not.toContain("not signed in");
   });
 
-  it("names a custom endpoint when the Mac reports one for that folder", () => {
-    expect(noticeOf(id([], { state: "no_login" }), true)).toContain("custom endpoint");
+  it("says the folder's requests go elsewhere when the Mac reports a custom endpoint for it", () => {
+    expect(noticeOf(id([], { state: "no_login" }), true)).toContain("another address than Claude's");
   });
 
   it("is null for a reading with windows", () => {

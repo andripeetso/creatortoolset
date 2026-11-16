@@ -1,7 +1,7 @@
 import { groupComputers } from "./computers-group";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { Plus, RotateCcw } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   addInstanceTo,
   DRIVERS,
@@ -27,21 +27,24 @@ import { AddProviderDialog } from "./AddProviderDialog";
 import { ProviderDetail } from "./ProviderDetail";
 import { DriverMark, PROVIDER_ROW, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
 import { isLocalCli, LocalAiRows, localInstall, localSignIn, useLocalAi } from "./AiSetup";
-import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
+import { LocalModelRow } from "./LocalModelRow";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
 
 /** The tools the Mac app can start a sign-in for: in Terminal (the Mac's signInCommands), Muse Code's in the browser. */
 const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok", "musecode"];
-/** The "Use the Default" choice of a job (a select's option needs a value; "" is not allowed). */
+/** The "Default" choice of a job (a select's option needs a value; "" is not allowed). */
 const USE_DEFAULT = "use-default";
 
 /**
  * Settings → Providers. The computers that run AI are tabs on top. Under them is one bordered panel: on the left the
- * AIs on the chosen computer, the tools it has installed and not yet added (each with Add) and Add provider; on the
- * right the chosen AI's settings. Below `lg` the panel shows one or the other (`sub` = the AI's id is its own page).
- * "Who does what" sets the Default and the tool-by-tool picks.
- * A member sees the AI they use: their own, or the team's API budget. On an own-computer install with no Mac app paired,
- * the list is the AI apps found on this computer (the same source as Headless access).
+ * AI providers on the chosen computer and the tools it has installed and not yet added (each with Add); on the right
+ * the chosen provider's settings. Below `lg` the panel shows one or the other (`sub` = the provider's id is its own
+ * page). Add provider is beside the section's title. The section is titled "Server providers" while a hosted server's
+ * admin with no providers of their own edits the set the server shares. "AI by job" sets the Default and each job's
+ * pick, every row open. A member sees what they use: their own providers, or the team budget. On an own-computer
+ * install with no Mac app paired, the list is the AI apps found on this computer (the same source as Headless
+ * access); its admin also gets the Local model row (LocalModelRow), under the list.
  */
 /** "2.1.321" from "2.1.321 (Claude Code)", "codex-cli 0.39.0" or "grok 1.0.4 (d846eb93d94d)": the number a person reads. */
 export const shortVersion = (v: string | undefined): string | undefined => v?.match(/\d+(?:\.\d+)+/)?.[0] ?? v;
@@ -49,6 +52,7 @@ export const shortVersion = (v: string | undefined): string | undefined => v?.ma
 export function ProvidersSection({ sub }: { sub?: string }) {
   const navigate = useNavigate();
   const me = useAuth((s) => s.me);
+  const hosted = useAuth((s) => s.hosted);
   const isAdmin = me?.role === "admin";
   const providers = useProviders();
   // the change being saved, shown at once: a read that lands meanwhile never puts the old set back
@@ -151,7 +155,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     return (
       <Section title="Providers">
         <Card>
-          <ErrorRow title="Could not load your AIs" detail={providers.error} retry={refreshAll} />
+          <ErrorRow title="Could not load AI providers" detail={providers.error} retry={refreshAll} />
         </Card>
       </Section>
     );
@@ -173,6 +177,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const editing: ProviderSettings | null = toOwn ? view.own : (view.workspace?.settings ?? null);
   const shown: ProviderSettings | null = editing ?? (readOnly ? (view.workspace?.settings ?? null) : null);
   const scope: Scope = toOwn ? me.username : "workspace";
+  // the set the server shares (it runs the admins' jobs and the background work) is named, so it is not taken for the admin's own
+  const title = hosted && !toOwn ? "Server providers" : "Providers";
   // one tab per Mac: a Mac that paired twice (the app and the worker) is one tab holding the AIs of both records
   const allGroups = groupComputers(devices, me.username);
   // a tab is a computer that can do something here: it is online, or it already holds an AI of this set. A computer that
@@ -194,8 +200,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   const reportOf = (i: ProviderInstance) => devices.find((d) => d.id === deviceOf(i))?.report ?? null;
   const statusOf = (i: ProviderInstance): ProviderStatus => {
-    if (!readOnly && !onDevice(i)) return { tone: "attention", text: "No computer" };
-    // while a test runs the status stays what it was: the detail's title says "Checking…" and its help lines stay put
+    if (!readOnly && !onDevice(i)) return { tone: "attention", text: "Needs a computer" };
+    // while a test runs the status stays what it was: the detail's title says "Testing…" and its help lines stay put
     return providerStatus({
       enabled: i.enabled,
       runs: runsOn(i.driver),
@@ -207,7 +213,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     });
   };
   const usedBy = (id: string): string[] =>
-    shown ? [shown.default.instance === id ? "the Default" : null, ...JOBS.filter((j) => shown.jobs[j.id]?.instance === id).map((j) => j.label)].filter((x): x is string => !!x) : [];
+    shown ? [shown.default.instance === id ? "Default" : null, ...JOBS.filter((j) => shown.jobs[j.id]?.instance === id).map((j) => j.label)].filter((x): x is string => !!x) : [];
 
   // Saves the whole set and shows the change at once. Throws a sentence when it can't save; reverts first.
   const saveSet = async (next: ProviderSettings) => {
@@ -257,13 +263,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   // on an own-computer install the app signs in and installs the tool itself (the local routes)
   const signInHere = (inst: ProviderInstance) => {
     setSigningIn(inst.driver);
-    void localSignIn(inst.driver as CliId).then((r) => !r.ok && saveFailed(r.message ?? "Couldn't start the sign-in."), (e) => saveFailed(msg(e)));
+    void localSignIn(inst.driver as CliId).then((r) => !r.ok && saveFailed(r.message ?? "Could not start the sign-in."), (e) => saveFailed(msg(e)));
   };
   const installHere = async (inst: ProviderInstance) => {
     setInstalling(inst.id);
     try {
       const r = await localInstall(inst.driver as CliId);
-      if (!r.ok) saveFailed(r.message ?? "Couldn't install it. Try again.");
+      if (!r.ok) saveFailed(r.message ?? "Could not install it.");
     } catch (e) {
       saveFailed(msg(e));
     } finally {
@@ -273,7 +279,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   };
 
   const addAi = async (inst: ProviderInstance) => {
-    if (!tabDevice) throw new Error("Connect a computer first.");
+    if (!tabDevice) throw new Error("Needs a computer");
     await saveSet(addInstanceTo(editing, { ...inst, device: tabDevice.id }));
   };
 
@@ -303,20 +309,20 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     return undefined;
   };
 
-  // ---- a member: the AI they use, read-only (their own set is the only one they edit) ----
+  // ---- a member: what they use, read-only (their own set is the only one they edit) ----
   if (readOnly) {
     const team = view.teamAi;
     return (
       <Section id="add-provider" title="Providers">
         <Card>
           {team ? (
-            <TeamAiRow team={team} description="Content Workshop needs your own AI." onAdd={() => openAdd()} />
+            <TeamBudgetRow team={team} description="Content Workshop needs an AI provider." onAdd={() => openAdd()} />
           ) : (
             <>
-              <EmptyRow title="No AI answers your jobs yet" description="Add your own AI on a computer you connect." />
+              <EmptyRow title="No AI provider" />
               <div className="px-3 pb-3 sm:px-4">
                 <Button size="sm" variant="outline" onClick={() => openAdd()}>
-                  <Plus /> Add my own
+                  <Plus /> Add provider
                 </Button>
               </div>
             </>
@@ -330,16 +336,17 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   if (devices.length === 0) {
     if (localHere && localAi) {
       return (
-        <Section id="add-provider" title="Providers">
+        <Section id="add-provider" title={title}>
           <Card>
             <LocalAiRows rows={localAi.rows.filter((r) => r.kind === "cli")} device={thisMacDevice() ?? ""} onChanged={refreshAll} />
           </Card>
+          <LocalModelRow />
         </Section>
       );
     }
     if (!localAi) {
       return (
-        <Section id="add-provider" title="Providers">
+        <Section id="add-provider" title={title}>
           <Card>
             <LoadingRow />
           </Card>
@@ -347,15 +354,16 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       );
     }
     return (
-      <Section id="add-provider" title="Providers">
+      <Section id="add-provider" title={title}>
         <Card>
-          <EmptyRow title="No computer connected" description="Your AI runs on your own computer, through the Mac app or the command-line tool." />
+          <EmptyRow title="Needs a computer" />
           <div className="px-3 pb-3 sm:px-4">
             <Button asChild size="sm" variant="outline">
               <Link to="/settings/devices?add=1">Add computer</Link>
             </Button>
           </div>
         </Card>
+        <LocalModelRow />
       </Section>
     );
   }
@@ -377,8 +385,16 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         </Tabs>
       )}
 
-      {/* one panel: the list on the left, the chosen AI's settings on the right (below `lg`, one or the other) */}
-      <Section id="add-provider" title="Providers">
+      {/* one panel: the list on the left, the chosen provider's settings on the right (below `lg`, one or the other) */}
+      <Section
+        id="add-provider"
+        title={title}
+        action={
+          <Button size="xs" variant="ghost" onClick={() => openAdd()}>
+            <Plus className="size-3" /> Add provider
+          </Button>
+        }
+      >
         <div className={cn("overflow-hidden rounded-xl border border-border/60 bg-card/40 text-foreground", twoPane && "lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]")}>
           <div className={cn("min-w-0 [&>*+*]:border-t [&>*+*]:border-border/50", twoPane && "lg:border-r lg:border-border/50", sub && "hidden lg:block")}>
             {[...listed, ...orphans].map((inst) => (
@@ -412,16 +428,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                 }
               />
             ))}
-            <button
-              type="button"
-              onClick={() => openAdd()}
-              className="flex h-12 w-full items-center gap-3 px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4"
-            >
-              <span className="flex size-5 items-center justify-center">
-                <Plus className="size-4" aria-hidden />
-              </span>
-              Add provider
-            </button>
+            {listed.length + orphans.length + installedHere.length === 0 && <EmptyRow title="No AI provider" />}
           </div>
 
           {twoPane && (
@@ -437,7 +444,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   models={modelsOf(view, detailInst)}
                   selection={effectiveSelection(editing, detailInst, modelsOf(view, detailInst))}
                   computers={!onDevice(detailInst) ? devices.map((d) => ({ id: d.id, name: d.name })) : undefined}
-                  computerNote={!onDevice(detailInst) ? (deviceOf(detailInst) ? "Its computer was removed: pick another." : "Pick the computer that runs it.") : undefined}
+                  computerNote={!onDevice(detailInst) && deviceOf(detailInst) ? "Computer not found" : undefined}
                   backTo="/settings/providers"
                   onChange={(p) => patch(detailInst, p)}
                   onTest={() => void runCheck(detailInst)}
@@ -447,10 +454,10 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                 />
               ) : (
                 <>
-                  <EmptyRow title="This AI is no longer here" />
+                  <EmptyRow title="Provider not found" />
                   <div className="px-3 pb-3 sm:px-4">
                     <Button asChild size="sm" variant="outline">
-                      <Link to="/settings/providers">Back to the list</Link>
+                      <Link to="/settings/providers">Back</Link>
                     </Button>
                   </div>
                 </>
@@ -458,56 +465,43 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             </div>
           )}
         </div>
+        <LocalModelRow />
       </Section>
 
       {view.teamAi && (
         <div className={cn("mt-8", sub && "hidden lg:block")}>
-          <Section title="Team's AI">
+          <Section title="Team budget">
             <Card>
-              <TeamAiRow team={view.teamAi} description="Used when none of your AIs can run. Content Workshop needs your own AI." onAdd={() => openAdd()} />
+              <TeamBudgetRow team={view.teamAi} description="Used when no AI provider can run." />
             </Card>
           </Section>
         </div>
       )}
 
       {shown && (
-        <div className={cn("mt-8 space-y-8", sub && "hidden lg:block")}>
-          <Section title="Who does what">
+        <div className={cn("mt-8", sub && "hidden lg:block")}>
+          <Section id="tool-ai" title="AI by job">
             <Card>
-              <PickRow
-                id="default-ai"
-                title="Default"
-                sel={shown.default}
-                set={shown}
-                listModels={(i) => modelsOf(view, i)}
-                readOnly={readOnly}
-                withModel={false}
-                onChange={(v) => v && editing && void save({ ...editing, default: v })}
-              />
-              <Advanced summary="A different AI for one tool">
-                {JOBS.map((j, n) => (
-                  <PickRow
-                    key={j.id}
-                    id={n === 0 ? "tool-ai" : undefined}
-                    title={j.label}
-                    sel={shown.jobs[j.id]}
-                    fallback={shown.default}
-                    set={shown}
-                    listModels={(i) => modelsOf(view, i)}
-                    readOnly={readOnly}
-                    onChange={(v) => {
-                      if (!editing) return;
-                      const jobs = { ...editing.jobs };
-                      if (v) jobs[j.id] = v;
-                      else delete jobs[j.id];
-                      void save({ ...editing, jobs });
-                    }}
-                  />
-                ))}
-              </Advanced>
+              <PickRow id="default-ai" title="Default" sel={shown.default} set={shown} listModels={(i) => modelsOf(view, i)} withModel={false} onChange={(v) => v && editing && void save({ ...editing, default: v })} />
+              {JOBS.map((j) => (
+                <PickRow
+                  key={j.id}
+                  title={j.label}
+                  sel={shown.jobs[j.id]}
+                  fallback={shown.default}
+                  set={shown}
+                  listModels={(i) => modelsOf(view, i)}
+                  onChange={(v) => {
+                    if (!editing) return;
+                    const jobs = { ...editing.jobs };
+                    if (v) jobs[j.id] = v;
+                    else delete jobs[j.id];
+                    void save({ ...editing, jobs });
+                  }}
+                />
+              ))}
             </Card>
           </Section>
-
         </div>
       )}
 
@@ -529,34 +523,38 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 const money = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
 
 /**
- * The team's AI for a member on the team's API budget: what they may spend this month and what they spent. Only their
- * own numbers. Its one action is Add my own (a computer of their own), as the secondary action.
+ * The team budget of a member (hosted): what they may spend on the team's API key this month and what they spent. Only
+ * their own numbers. `onAdd`: a member with no provider of their own adds one from this row (elsewhere the section has
+ * Add provider).
  */
-function TeamAiRow({ team, description, onAdd }: { team: NonNullable<ProvidersView["teamAi"]>; description: string; onAdd: () => void }) {
+function TeamBudgetRow({ team, description, onAdd }: { team: NonNullable<ProvidersView["teamAi"]>; description: string; onAdd?: () => void }) {
   const status = !team.ready ? (
-    <Status tone="attention">The team's AI isn't set up on this server. Ask the owner.</Status>
+    <Status tone="attention">Not set up on this server</Status>
   ) : team.left <= 0 ? (
-    <Status tone="attention">Used up for this month. Ask the owner for more.</Status>
+    <Status tone="attention">Used up this month</Status>
   ) : (
-    <span className="text-muted-foreground">{money(team.spentUsd)} spent this month</span>
+    `${money(team.spentUsd)} of ${money(team.budgetUsd)} spent this month`
   );
   return (
     <Row
-      title={`You use the team's AI, up to ${money(team.budgetUsd)} a month`}
+      title="Team budget"
       description={description}
       status={status}
       control={
-        <Button size="sm" variant="outline" onClick={onAdd}>
-          Add my own
-        </Button>
+        onAdd && (
+          <Button size="sm" variant="outline" onClick={onAdd}>
+            Add provider
+          </Button>
+        )
       }
     />
   );
 }
 
 /**
- * One pick: an AI, its model and thinking level. `sel` undefined on a job = "Use the Default" (its status says which AI that
- * is). Read-only (the team's): the pick as text, no controls.
+ * One pick: an AI provider, and for a job its model and thinking level in two rows under it. `sel` undefined on a job =
+ * "Default" (its status names the provider that is). The Default's own model and thinking level are the provider's (in
+ * its detail).
  */
 function PickRow({
   id,
@@ -565,7 +563,6 @@ function PickRow({
   fallback,
   set,
   listModels,
-  readOnly,
   withModel = true,
   onChange,
 }: {
@@ -576,8 +573,7 @@ function PickRow({
   fallback?: Selection;
   set: ProviderSettings;
   listModels: (i: ProviderInstance) => string[];
-  readOnly: boolean;
-  /** a per-tool pick may override the model and thinking level; the Default's are the AI's own (in its detail) */
+  /** a job's pick may set the model and thinking level; the Default's are the provider's own (in its detail) */
   withModel?: boolean;
   onChange: (v: Selection | undefined) => void;
 }) {
@@ -590,92 +586,54 @@ function PickRow({
     const list = target ? listModels(target) : [];
     onChange({ instance: instanceId, model: target?.model ?? list[0] ?? "", effort: target?.effort ?? cur.effort });
   };
-
-  if (readOnly) {
-    return <Row id={id} title={title} status={`${inst?.name ?? "No AI"}${sel || isDefault ? ` · ${modelName(cur.model) || "Tool's default"} · ${effortLabel(cur.effort)}` : ""}`} />;
-  }
-  if (!withModel) {
-    // the Default: only the choice of which AI; the model and thinking level are on that AI's own page
-    return (
-      <Row
-        id={id}
-        title={title}
-        control={
-          <SettingsSelect
-            label={`${title}: AI`}
-            value={cur.instance}
-            onValueChange={(v) => pick(v)}
-            options={set.instances.map((i) => ({ value: i.id, label: `${i.name}${i.enabled ? "" : " (off)"}` }))}
-          />
-        }
-      />
-    );
-  }
+  const providers = set.instances.map((i) => ({ value: i.id, label: `${i.name}${i.enabled ? "" : " (off)"}` }));
 
   const explicit = isDefault || !!sel;
-  const defaultName = set.instances.find((i) => i.id === set.default.instance)?.name ?? "the Default";
   // the stored model is always offered, even when the tool's list doesn't have it (never swapped for the first one)
   const options = modelChoices(models, cur.model);
+  // the two rows under a job's pick end where its own control ends
+  const under = "py-1.5 pr-0 sm:pr-0";
   return (
     <Row
       id={id}
       title={title}
-      status={!explicit ? `Uses ${defaultName}` : undefined}
+      status={!explicit ? set.instances.find((i) => i.id === set.default.instance)?.name : undefined}
       control={
-        <div className="flex items-center gap-2">
-          <SettingsSelect
-            label={`${title}: AI`}
-            value={explicit ? cur.instance : USE_DEFAULT}
-            onValueChange={(v) => (v === USE_DEFAULT ? onChange(undefined) : pick(v))}
-            options={[
-              ...(isDefault ? [] : [{ value: USE_DEFAULT, label: "Use the Default" }]),
-              ...set.instances.map((i) => ({ value: i.id, label: `${i.name}${i.enabled ? "" : " (off)"}` })),
-            ]}
-          />
-          {!isDefault && sel && (
-            <Button size="icon-xs" variant="ghost" aria-label={`Use the Default for ${title}`} title="Use the Default" onClick={() => onChange(undefined)}>
-              <RotateCcw />
-            </Button>
-          )}
-        </div>
+        <SettingsSelect
+          label={`${title}: AI provider`}
+          value={explicit ? cur.instance : USE_DEFAULT}
+          onValueChange={(v) => (v === USE_DEFAULT ? onChange(undefined) : pick(v))}
+          options={[...(isDefault ? [] : [{ value: USE_DEFAULT, label: "Default" }]), ...providers]}
+        />
       }
     >
       {withModel && explicit && inst && (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          {cur.model && options.length ? (
-            <Field label="Model">
+        <>
+          <Row
+            className={under}
+            title="Model"
+            control={
+              cur.model && options.length ? (
+                <SettingsSelect label={`${title}: model`} value={cur.model} onValueChange={(m) => onChange({ ...cur, model: m })} options={options.map((m) => ({ value: m, label: modelName(m) }))} />
+              ) : (
+                <span className="text-sm text-muted-foreground">Tool default</span>
+              )
+            }
+          />
+          <Row
+            className={under}
+            title="Thinking"
+            control={
               <SettingsSelect
-                label={`${title}: model`}
-                value={cur.model}
-                onValueChange={(m) => onChange({ ...cur, model: m })}
-                options={options.map((m) => ({ value: m, label: modelName(m) }))}
-                className="sm:w-56"
+                label={`${title}: thinking level`}
+                value={cur.effort}
+                onValueChange={(e) => onChange({ ...cur, effort: e as Selection["effort"] })}
+                options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
               />
-            </Field>
-          ) : (
-            <span className="self-center text-xs text-muted-foreground">Uses the tool's own default</span>
-          )}
-          <Field label="Thinking">
-            <SettingsSelect
-              label={`${title}: thinking level`}
-              value={cur.effort}
-              onValueChange={(e) => onChange({ ...cur, effort: e as Selection["effort"] })}
-              options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
-              className="sm:w-36"
-            />
-          </Field>
-        </div>
+            }
+          />
+        </>
       )}
     </Row>
-  );
-}
-
-/** A select's visible label, above it: both selects of a row share one height and width. */
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      {children}
-    </div>
   );
 }

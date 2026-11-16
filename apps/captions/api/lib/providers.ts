@@ -427,7 +427,7 @@ export function driverCatalog(devices: Array<Device & { online: boolean }>): Dri
       label: d.label,
       featured: d.featured,
       runs,
-      ...(runs ? {} : { reason: "The Creator Toolset Mac app can't run this CLI yet." }),
+      ...(runs ? {} : { reason: "Not supported by the Mac app" }),
       devices: perDevice(d.id),
     };
   });
@@ -437,7 +437,7 @@ export function driverCatalog(devices: Array<Device & { online: boolean }>): Dri
     label: k.label,
     featured: k.featured,
     runs: false,
-    reason: "The Creator Toolset Mac app can't run this CLI yet.",
+    reason: "Not supported by the Mac app",
     devices: perDevice(k.id),
   }));
   // a preset's view leaves out its endpoint

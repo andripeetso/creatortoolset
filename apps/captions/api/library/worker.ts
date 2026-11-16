@@ -5,7 +5,7 @@ import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
 import { blobs, libraryDb, librarySetting, libraryUpload, proxiesInCloud } from "./db";
-import { describeFromLines, describeSlot, describeVersion } from "./describe";
+import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
@@ -14,7 +14,7 @@ import { isThisMachine } from "../lib/devices";
 import { ModelNotReady } from "../lib/device-transcribe";
 import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
-import { MacClaudeError, wakeEditorPolls } from "../lib/mac-claude";
+import { MacClaudeError, usageIn, wakeEditorPolls } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
 import { SOUNDS } from "../../contracts/library";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
@@ -205,7 +205,9 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   const beat = setInterval(() => extendLease(db, job.id, LEASE_S), 60_000);
   beat.unref();
   try {
-    await run(job);
+    // a job runs in no request: its AI calls count under its library's workspace (Settings → Usage)
+    const workspace = ON_AI.includes(job.kind) ? await workspaceIdOf(db, job.version_id ?? "").catch(() => undefined) : undefined;
+    await usageIn(workspace, () => run(job));
     finishJob(db, job.id, true, undefined, Math.max(now, Date.now())); // its end, so done_at - started_at is how long it took
     if (ON_AI.includes(job.kind)) releaseLimit(db, job.actor);
   } catch (e) {

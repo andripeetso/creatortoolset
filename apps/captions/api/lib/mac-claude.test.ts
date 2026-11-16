@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "mac-claude-")); // the usage tally lands here
 const { isOnline, pairDevice } = await import("./devices");
-const { macUsageSince, patienceMs, relayRoutes, streamMacClaude: streamOnMac } = await import("./mac-claude");
+const { macUsageLines, macUsageSince, patienceMs, recordUsage, relayRoutes, streamMacClaude: streamOnMac, usageIn } = await import("./mac-claude");
+const { workspaceScope } = await import("./workshop/workspace");
 import type { MacOpts, MacUsage } from "./mac-claude";
 
 const mac = pairDevice("alex", "Test Mac").device;
@@ -229,5 +230,34 @@ describe("Claude on the Mac", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("usage per workspace", () => {
+  const since = () => Date.now() - 3_600_000;
+  const linesOf = async (label: string) => (await macUsageLines(since())).filter((l) => l.label === label).map(({ hour: _hour, label: _label, ...rest }) => rest);
+
+  it("an answer counts under the workspace its request was in, though it arrives in the computer's own request", async () => {
+    const wait = post("/wait");
+    const answer = workspaceScope.run({ id: "brand-one" }, () => streamMacClaude("sys", "hi", undefined, () => {}, undefined, { label: "In a workspace" }));
+    const req = (await (await wait).json()) as { id: string };
+    await post(`/${req.id}/done`, { text: "ok", usage: { input: 4, output: 2, cost_usd: 0.5 } });
+    await answer;
+    await vi.waitFor(async () => expect(await linesOf("In a workspace")).toEqual([{ key: "workspace:claude", workspace: "brand-one", calls: 1, tokens: 6, costUsd: 0.5 }]));
+  });
+
+  it("work outside a request names its workspace; a call in none, or with an id that is not one, counts in none; the totals hold them all", async () => {
+    const u = { tokens: 10, costUsd: 1 };
+    await usageIn("brand-two", () => recordUsage("Split", u, "claude", "alex"));
+    await workspaceScope.run({ id: "brand-one" }, () => usageIn("brand-two", () => recordUsage("Split", u))); // the work's own wins over the request's
+    await recordUsage("Split", u, "claude", "alex");
+    await workspaceScope.run({ id: "../not an id" }, () => recordUsage("Split", u));
+    expect(await linesOf("Split")).toEqual([
+      { key: "alex:claude", workspace: "brand-two", calls: 1, tokens: 10, costUsd: 1 },
+      { workspace: "brand-two", calls: 1, tokens: 10, costUsd: 1 },
+      { key: "alex:claude", calls: 1, tokens: 10, costUsd: 1 },
+      { calls: 1, tokens: 10, costUsd: 1 },
+    ]);
+    expect(Object.values(await macUsageSince(since())).map((h) => h.Split).find(Boolean)).toMatchObject({ calls: 4, tokens: 40, by: { "alex:claude": { calls: 2 } } });
   });
 });

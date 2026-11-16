@@ -70,8 +70,8 @@ const STATIC_ROWS = [
   { section: "library", id: "library-ai", title: "Media Library AI", description: "Descriptions, shot descriptions and search by meaning", keywords: ["media library", "describe", "shot", "shots", "search", "meaning", "ai"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
-  { section: "providers", id: "default-ai", title: "Default AI", description: "Which AI does the work unless a tool picks another", keywords: ["provider", "default", "which ai", "model", "thinking"] },
-  { section: "providers", id: "tool-ai", title: "A different AI for one tool", keywords: ["provider", "tool", "override", "use default", "model", "thinking"] },
+  { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
+  { section: "providers", id: "tool-ai", title: "AI by job", keywords: ["provider", "tool", "job", "override", "different ai", "use default", "model", "thinking"] },
   { section: "providers", id: "add-provider", title: "Add provider", keywords: ["install", "sign in", "claude", "codex", "cursor", "grok", "gemini"] },
   // Voice: the languages the person speaks, speech to text (one row per use, below) and read-aloud
   { section: "voice", id: "voice-languages", title: "Spoken languages", keywords: ["language", "estonian", "english", "detect", "speech", "transcribe"] },
@@ -89,8 +89,8 @@ const STATIC_ROWS = [
   { section: "memory", id: "memory-rules", title: "Rules", keywords: ["memory", "remember", "rule", "chat", "assistant", "forget", "workspace"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
-  { section: "usage", id: "your-plan", title: "Your AI plan", description: "On Pro or Plus, big jobs ask before they start", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
-  { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage"] },
+  { section: "usage", id: "your-plan", title: "Plan", description: "On Pro or Plus, big jobs start after a confirmation", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
+  { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage", "workspace", "period"] },
   // Social accounts: the accounts the person signs in to, one row each
   { section: "connectors", id: "social-platforms", title: "Platforms", description: "Instagram, Facebook, YouTube and TikTok: sign in to your own accounts", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "sign in", "login", "add account"] },
   { section: "connectors", id: "platform-instagram", title: "Instagram", description: "Your own Instagram account", keywords: ["instagram", "sign in", "login", "reach", "saves"] },
@@ -115,7 +115,7 @@ const STATIC_ROWS = [
   { section: "team", id: "team-accounts", title: "Accounts", keywords: ["account", "users", "password", "reset", "create account", "new account", "admin", "role", "lock", "unlock", "delete"], needs: "server-admin" },
   { section: "team", id: "admin-sign-in-code", title: "Sign-in code", description: "Every password sign-in on this server needs a code from an authenticator app", keywords: ["two-factor", "2fa", "authenticator", "code", "security", "everyone"], needs: "server-admin" },
   { section: "storage", id: "admin-projects", title: "All projects", keywords: ["projects", "server", "newest", "delete", "size"], needs: "server-admin" },
-  { section: "keys", id: "server-keys", title: "Keys for everyone on this server", keywords: ["env", "server", "api key", "secret", "fallback", "server keys"], needs: "server-admin" },
+  { section: "keys", id: "server-keys", title: "Server keys", keywords: ["env", "server", "api key", "secret", "fallback", "server keys"], needs: "server-admin" },
   // Account: the person's own profile and sign-in
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },

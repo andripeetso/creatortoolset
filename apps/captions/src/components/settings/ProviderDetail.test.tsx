@@ -11,15 +11,15 @@ const base = { enabled: true, runs: true, online: true, report: true };
 describe("providerStatus", () => {
   it("says what applies first: off, not run by the app, offline, not installed, failed check, signed out", () => {
     expect(providerStatus({ ...base, enabled: false, found: signedIn })).toEqual({ tone: "neutral", text: "" });
-    expect(providerStatus({ ...base, runs: false }).text).toBe("Not in the Mac app yet");
+    expect(providerStatus({ ...base, runs: false }).text).toBe("Not supported by the Mac app");
     expect(providerStatus({ ...base, online: false, found: signedIn }).text).toBe("Computer offline");
     expect(providerStatus({ ...base, found: { driver: "codex", installed: false } })).toEqual({ tone: "attention", text: "Not installed", action: "install" });
-    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Timed out", at: 1 } })).toEqual({ tone: "broken", text: "Didn't answer", action: "test" });
+    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Timed out", at: 1 } })).toEqual({ tone: "broken", text: "Test failed", action: "test" });
     // a computer that did not pick the request up is not the AI failing
-    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Sam's Mac did not pick up the request", at: 1 } }).text).toBe("Computer didn't answer");
+    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Sam's Mac did not pick up the request", at: 1 } }).text).toBe("Computer offline");
     // a failure about signing in gets its fix on the row
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Not logged in · run /login", at: 1 } }).action).toBe("sign-in");
-    // an account with no plan for this AI: setup's sentence, and no Test again that cannot help
+    // an account with no plan for this AI: setup's sentence, and no Test that cannot help
     const noPlan = "Codex: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.";
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: noPlan, at: 1 } })).toEqual({ tone: "attention", text: "Codex needs ChatGPT Plus or higher, which this account doesn't have." });
   });
@@ -94,25 +94,24 @@ describe("ProviderDetail", () => {
   });
 
   it("says the tool's own default instead of an empty model list", () => {
-    expect(detail({ id: "grok", driver: "grok", name: "Grok", enabled: true, device: "mac1" })).toContain("Uses the tool&#x27;s own default");
+    expect(detail({ id: "grok", driver: "grok", name: "Grok", enabled: true, device: "mac1" })).toContain("Tool default");
   });
 
-  it("the Status row rests on what is true, with no button to press; only a failed check offers the retry", () => {
+  it("the Status row rests on what is true, with no button to press; only a failed test offers another", () => {
     const html = detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" });
     expect(html).not.toContain(">Test<");
-    expect(html).not.toContain(">Test again<");
-    expect(html).toContain("Not tested yet");
-    expect(html).not.toContain("Checking…");
+    expect(html).toContain("Not tested");
+    expect(html).not.toContain("Testing…");
     const failed = detail(
       { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" },
-      { status: { tone: "broken" as const, text: "Didn't answer", action: "test" as const } },
+      { status: { tone: "broken" as const, text: "Test failed", action: "test" as const } },
     );
-    expect(failed).toContain(">Test again<");
+    expect(failed).toContain(">Test<");
     const answered = detail(
       { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" },
       { check: { ok: true, ms: 3700, model: "claude-opus-5-5", at: Date.now() - 180_000 } },
     );
-    expect(answered).toContain("Answered 3 min ago · Claude Opus 5.5 · 3.7 s");
+    expect(answered).toContain("Tested 3 min ago · Claude Opus 5.5 · 3.7 s");
   });
 
   it("offers Sign in only when the status asks for it and the page can open it", () => {

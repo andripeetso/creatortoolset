@@ -12,7 +12,7 @@ const catalog: DriverCatalog = {
       label: d.label,
       featured: d.featured,
       runs,
-      ...(runs ? {} : { reason: d.id === "musecode" ? "The Creator Toolset Mac app can't run this CLI yet." : `${d.label} can't run yet.` }),
+      ...(runs ? {} : { reason: d.id === "musecode" ? "Not supported by the Mac app" : `${d.label} can't run yet.` }),
       devices: [],
     };
   }),
@@ -40,7 +40,7 @@ describe("Add provider tool grid", () => {
 
   it("disables every tool the Mac app can't run, with the server's reason", () => {
     const html = grid(null, false);
-    expect(html).toContain("The Creator Toolset Mac app can&#x27;t run this CLI yet.");
+    expect(html).toContain("Not supported by the Mac app");
     expect((html.match(/disabled=""/g) ?? []).length).toBe(7);
   });
 
