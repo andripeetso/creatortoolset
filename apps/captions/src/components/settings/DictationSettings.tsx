@@ -91,7 +91,11 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
             {d.engine !== "server" && <Row
               id="dictation-model"
               title="Speech model"
-              status={model && model.progress !== null ? `Downloading · ${Math.round(model.progress * 100)}%` : undefined}
+              description={d.server ? "Used when the speech server doesn't answer." : undefined}
+              status={!model ? undefined
+                : model.progress !== null ? `Downloading · ${Math.round(model.progress * 100)}%`
+                : model.here ? undefined
+                : <Status tone="attention">Not on this Mac</Status>}
               control={
                 <>
                   {model && !model.here && model.progress === null && <Button size="sm" variant="outline" onClick={() => set("download", model.id)}>Download</Button>}
@@ -99,8 +103,12 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                   <SettingsSelect
                     label="Speech model"
                     value={d.model}
-                    onValueChange={(v) => set("model", v)}
-                    options={d.models.map((m) => ({ value: m.id, label: `${m.name} · ${m.size}` }))}
+                    onValueChange={(v) => {
+                      set("model", v);
+                      // picking a model is asking for it: one not on this Mac starts downloading
+                      if (!d.models.find((m) => m.id === v)?.here) set("download", v);
+                    }}
+                    options={d.models.map((m) => ({ value: m.id, label: `${m.name} · ${m.here ? "on this Mac" : `${m.size} download`}` }))}
                   />
                 </>
               }

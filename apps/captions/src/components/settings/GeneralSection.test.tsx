@@ -66,7 +66,9 @@ describe("the dictation group", () => {
 
   it("offers Download for a model not here, its progress while it downloads, and Remove for its own", () => {
     const base = (m: Partial<DictationState["models"][number]>) => dictation({ model: "whisper-base.en", models: [{ ...dictation().models[1], ...m }] });
-    expect(renderToStaticMarkup(<Dictation mac={state({ dictation: base({}) })} />)).toContain(">Download</button>");
+    const missing = renderToStaticMarkup(<Dictation mac={state({ dictation: base({}) })} />);
+    expect(missing).toContain(">Download</button>");
+    expect(missing).toContain("Not on this Mac");
     const busy = renderToStaticMarkup(<Dictation mac={state({ dictation: base({ progress: 0.42 }) })} />);
     expect(busy).toContain("Downloading · 42%");
     expect(busy).not.toContain(">Download</button>");
@@ -89,6 +91,7 @@ describe("the dictation group", () => {
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />)).not.toContain("Speech server");
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "http://tiny-acrobatics.example:7886/api/transcribe" }) })} />);
     expect(html).toContain("Speech server");
+    expect(html).toContain("Used when the speech server doesn&#x27;t answer.");
     expect(html).toContain('value="http://tiny-acrobatics.example:7886/api/transcribe"');
     expect(renderToStaticMarkup(<Dictation mac={state({ dictation: dictation({ server: "", engine: "server" }) })} />)).not.toContain("Speech server");
   });
