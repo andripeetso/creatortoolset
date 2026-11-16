@@ -40,7 +40,7 @@ import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRe
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
-import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
+import { setSessionStatus, TURN_STOPPED, type ShareProgressState } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { announce } from "./lib/sync";
@@ -4198,13 +4198,17 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
   if ("error" in made) return c.json({ error: made.error }, 400);
   const { draft, input } = made;
   generating.add(draft.id);
+  // checked again inside the write, as startTurn does: two requests at once cannot both start a draft
+  let taken = false;
   const next = await updateSession(meta.id, (m) => {
+    taken = m.drafts.some((d) => d.status === "generating");
+    if (taken) return;
     m.drafts = [draft, ...m.drafts];
     if (input.projectId) m.projectId = input.projectId;
   });
-  if (!next) {
+  if (!next || taken) {
     generating.delete(draft.id);
-    return c.json({ error: "Not found" }, 404);
+    return taken ? c.json({ error: "A draft is already generating in this project — wait for it" }, 409) : c.json({ error: "Not found" }, 404);
   }
   void inJob([next.owner, user.username], () => runDraft(next, draft, user), next.id);
   return c.json({ draft }, 202);
@@ -4255,7 +4259,7 @@ interface WorkshopShare {
   title: string;
   createdAt: number;
   /** The freelancer's own mark. */
-  progress?: { state: "producing" | "done"; by?: string; at: number };
+  progress?: { state: ShareProgressState; by?: string; at: number };
   /** Finals the freelancer uploaded through the link: sessions/<id>/deliveries/<did>/<name>. */
   deliveries?: Delivery[];
   /** The Finals piece the share's files went into (a library piece linked to the session), and the delivery ids already sent. */

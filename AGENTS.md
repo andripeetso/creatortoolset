@@ -272,3 +272,10 @@ and answers:
   `as const` array, which the client imports, never retypes), its allowed moves sit next to it as a `Moves` table
   (`apps/captions/api/lib/transition.ts`), and every write goes through `move()` (`canMove()` in background loops;
   a route answers 409). Reads never write: a stale `running`/`processing`/`thinking` is reconciled once at startup.
+  A table nothing passes to `move()`/`canMove()` fails `transition.test.ts`; a status only its own run writes needs none.
+- Work that answers later (a job, a request, an `await`) checks it is still wanted before it writes:
+  - A row in SQLite: the write names the state it expects (`WHERE id = ? AND state = 'running'`), so a late answer
+    never moves a job stopped meanwhile (`api/library/jobs.ts`).
+  - A screen: what is in flight is state its button reads, so the button is off while it runs; a ref alone is not
+    enough. An answer for something that changed since (another project, a dialog opened again, Cancel) is dropped.
+  - The Mac and iPhone apps: after an `await`, compare the server, token or run with the one that asked, then assign.
