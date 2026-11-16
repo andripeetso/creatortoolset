@@ -123,7 +123,7 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
         </Card>
       </Section>
 
-      <OnMyComputers computers={view.computers} want={want} />
+      <OnMyComputers computers={view.computers} want={want} dictation={!!mac?.dictation} />
 
       <Dictation mac={mac} serverNeeds={needsOf(view.resolved.find((r) => r.use === "mic"))} />
 
@@ -156,7 +156,7 @@ function Origin({ m, os }: { m: SttModel; os?: string }) {
  * Speech models on the person's own computers: nothing downloads until Download is pressed, and the strongest computer
  * that has a model does the work. No computer runs them yet: the button that adds one.
  */
-function OnMyComputers({ computers, want }: { computers: SttComputer[]; want: (computer: string, model: string, keep: boolean) => void }) {
+function OnMyComputers({ computers, want, dictation }: { computers: SttComputer[]; want: (computer: string, model: string, keep: boolean) => void; dictation?: boolean }) {
   return (
     <Section title="Models on your computers">
       {computers.length ? (
@@ -191,6 +191,8 @@ function OnMyComputers({ computers, want }: { computers: SttComputer[]; want: (c
         <Card>
           <Row
             title="Run speech models on your own computers"
+            // in the Mac app, Dictation's own list of this Mac's models is right below: this one is for the uses above
+            description={dictation ? "For captions, transcripts, the AI Editor and the assistant. Dictation has its own, below." : undefined}
             control={
               <Button asChild size="sm" variant="outline">
                 <Link to="/settings/devices">Add a computer</Link>

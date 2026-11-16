@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -45,6 +46,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
   const set = (what: string, value = "") => tell(`dictation:${what}:${value}`);
   const key = (action: DictationAction) => (
     <Button size="sm" variant="outline" className="min-w-24" aria-label={`${NAMES[action]} key`} title="Change key" onClick={() => set("pick", action)}>
+      <Keyboard className="text-muted-foreground" aria-hidden />
       {d.picking === action ? "Press a key…" : d.keys[action] || "Choose key"}
     </Button>
   );
@@ -85,7 +87,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                     label="Recordings kept"
                     value={String(d.keep)}
                     onValueChange={(v) => set("keep", v)}
-                    options={keep.map((n) => ({ value: String(n), label: `Last ${n}` }))}
+                    options={keep.map((n) => ({ value: String(n), label: `Keep ${n}` }))}
                     className="sm:min-w-28"
                   />
                   {key("history")}
@@ -124,6 +126,9 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                 id="dictation-server"
                 title="Speech server"
                 description={d.server ? undefined : "Your own server's address. Tried first, then this Mac."}
+                status={d.server && d.serverAnswers === false
+                  ? <Status tone="attention">{d.models.find((m) => m.id === d.model)?.here ? "Not answering · this Mac transcribes for now" : "Not answering · recordings wait in History"}</Status>
+                  : undefined}
                 control={<ServerField value={d.server} save={(v) => set("server", v)} />}
               />
             )}
@@ -138,17 +143,22 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                         title={m.name}
                         subtitle={[GOOD_AT[m.id], m.size].filter(Boolean).join(" · ")}
                         status={
-                          m.progress !== null ? `Downloading · ${Math.round(m.progress * 100)}%`
+                          m.progress !== null ? `Downloading · ${Math.round(m.progress * 100)}% of ${m.size}`
                           : chosen && !m.here ? <Status tone="attention">Chosen, not on this Mac yet</Status>
                           : undefined
                         }
                         actions={
                           <>
+                            {m.progress !== null && d.cancel && (
+                              <Button size="sm" variant="ghost" aria-label={`Cancel the download of ${m.name}`} onClick={() => set("cancel", m.id)}>Cancel</Button>
+                            )}
                             {chosen && m.here && <InUse>In use</InUse>}
                             {!chosen && m.here && <Button size="sm" variant="outline" aria-label={`Use ${m.name}`} onClick={() => set("model", m.id)}>Use</Button>}
                             {!m.here && m.progress === null && (
                               <Button size="sm" variant="outline" aria-label={`Download ${m.name}`} disabled={downloading} onClick={() => set("download", m.id)}>Download</Button>
                             )}
+                            {/* the menu's room is kept on every row, so the buttons line up */}
+                            {!m.removable && <span className="size-7 shrink-0" aria-hidden />}
                             {m.removable && (
                               <RowMenu
                                 label={`${m.name}: more`}

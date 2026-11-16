@@ -57,6 +57,10 @@ export type DictationState = {
   sounds: boolean;
   /** the person's own speech server, tried before this Mac's model ("" = none); missing in older Mac apps */
   server?: string;
+  /** whether that server answered its last check; null with none set or before the first check; missing in older Mac apps */
+  serverAnswers?: boolean | null;
+  /** the app stops a running download on `dictation:cancel:<id>`; missing in older Mac apps */
+  cancel?: true;
   /** the permission still to give, or null */
   needs: "Microphone" | "Accessibility" | null;
 };
