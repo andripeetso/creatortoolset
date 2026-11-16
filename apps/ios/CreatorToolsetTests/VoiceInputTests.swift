@@ -82,6 +82,20 @@ final class VoiceInputTests: XCTestCase {
         XCTAssertEqual(refused.notice, "The microphone is off")
     }
 
+    func testLeavingWhileTheMicIsStillStartingRecordsNothing() async {
+        var started: CheckedContinuation<Void, Never>?
+        var stopped = 0
+        let voice = VoiceInput(mic: .init(start: { await withCheckedContinuation { started = $0 } },
+                                          stop: { stopped += 1; return nil })) { _ in "x" }
+        let asked = Task { await voice.record() }
+        for _ in 0..<1000 where started == nil { await Task.yield() }
+        voice.cancel()   // the chat was left while the microphone was still starting
+        started?.resume()
+        await asked.value
+        XCTAssertEqual(voice.phase, .idle)
+        XCTAssertEqual(stopped, 1)   // the microphone it started is let go
+    }
+
     func testLeavingWhileRecordingThrowsTheRecordingAway() async {
         var written = false
         let voice = VoiceInput(mic: .init(start: {}, stop: { nil })) { _ in written = true; return "x" }

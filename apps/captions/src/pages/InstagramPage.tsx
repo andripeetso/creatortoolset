@@ -1176,10 +1176,13 @@ export default function InstagramPage() {
     }
   }, [allowed, editable, avail?.ai, posts, applyPost]);
 
+  // asked again on each workspace change: only the last one asked for is shown
+  const boardAsked = useRef(0);
   const refreshBoard = useCallback(() => {
+    const mine = ++boardAsked.current;
     getIdeaBoard()
-      .then(setIdeaBoard)
-      .catch(() => setIdeaBoard({ generatedAt: 0, ideas: [] }));
+      .catch(() => ({ generatedAt: 0, ideas: [] }))
+      .then((b) => mine === boardAsked.current && setIdeaBoard(b));
   }, []);
 
   const runGenerateBoard = useCallback(async () => {

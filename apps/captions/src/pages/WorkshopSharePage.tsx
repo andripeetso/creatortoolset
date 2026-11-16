@@ -171,7 +171,7 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
     setName(v);
     localStorage.setItem("ws.name", v);
   };
-  const mark = async (state: "producing" | "done") => {
+  const mark = async (state: ShareProgress["state"]) => {
     setBusy(state);
     setError(null);
     try {

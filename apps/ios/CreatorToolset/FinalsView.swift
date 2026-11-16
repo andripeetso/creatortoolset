@@ -408,7 +408,7 @@ final class FinalsModel: ObservableObject {
         }
         if !force, let checkedAt, Date().timeIntervalSince(checkedAt) < 60 { return }
         loading = data == nil
-        defer { loading = false }
+        defer { if key == self.key { loading = false } }   // another list asked for meanwhile is still being read
         // a server without the Workshop link or the AI Editor, an account without them: the finals show all the same
         async let linked: FinalsLinks? = try? await api.get("/api/library/workshop")
         async let edited: Lossy<FinalsEdit>? = try? await api.get("/api/editor")

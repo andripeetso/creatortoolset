@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, KeyRound } from "lucide-react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
@@ -162,15 +162,19 @@ export function SignInCodeRow() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const asked = useRef(0);
   const open = async (which: "on" | "off") => {
+    const mine = ++asked.current;
     setCode("");
     setError(null);
     setSecret(null);
     setDialog(which);
     if (which === "off") return;
-    const r = await post<Secret>("/api/auth/code/new", {});
-    if (r.ok) setSecret(r.d);
-    else setError(r.d.error || "Could not start it");
+    const r = await post<Secret>("/api/auth/code/new", {}).catch(() => null);
+    // closed and opened again meanwhile: that one's answer is the dialog's
+    if (mine !== asked.current) return;
+    if (r?.ok) setSecret(r.d);
+    else setError(r?.d.error || "Could not start it");
   };
   const submit = async () => {
     setBusy(true);

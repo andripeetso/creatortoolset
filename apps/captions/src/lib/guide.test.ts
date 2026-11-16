@@ -6,6 +6,7 @@ import {
   parseDocKind,
   parseGuidePlan,
   parseStoredGuide,
+  saveLabel,
   planToGuide,
 } from "./guide";
 
@@ -134,5 +135,18 @@ describe("guideToMarkdown", () => {
     expect(md).toContain("# Share a clip");
     expect(md).not.toMatch(/\/clips\//);
     expect(md).not.toMatch(/!\[/);
+  });
+});
+
+describe("the Guide Builder's save label", () => {
+  it("says Saved only when the server has everything typed", () => {
+    expect(saveLabel({ edits: 0, tried: 0, saved: 0, out: 0 })).toBe("Saved");
+    expect(saveLabel({ edits: 3, tried: 3, saved: 3, out: 0 })).toBe("Saved");
+    // typed, the save not gone yet
+    expect(saveLabel({ edits: 4, tried: 3, saved: 3, out: 0 })).toBe("Saving…");
+    // one of two saves has answered
+    expect(saveLabel({ edits: 4, tried: 4, saved: 3, out: 1 })).toBe("Saving…");
+    // the save failed: its error is on the page, the label says nothing
+    expect(saveLabel({ edits: 4, tried: 4, saved: 3, out: 0 })).toBe("");
   });
 });

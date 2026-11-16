@@ -906,7 +906,11 @@ export default function WorkshopSessionPage() {
   };
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2 || /instagram\.com\//i.test(q)) return;
+    if (q.length < 2 || /instagram\.com\//i.test(q)) {
+      setResults(null);
+      setSearching(false);
+      return;
+    }
     let stopped = false;
     const t = window.setTimeout(() => {
       setSearching(true);

@@ -91,7 +91,7 @@ export function FacePanel({ slot, edit, item, fps, video, onClose }: {
       <label className="flex items-center gap-2">
         Strength
         <input type="range" min={0} max={max} step={5} value={pct} list="face-strength-marks" disabled={kept === null}
-          onChange={(e) => (setPct(Number(e.target.value)), setSaving(""))} className="w-56 accent-violet-500" />
+          onChange={(e) => (setPct(Number(e.target.value)), setSaving((s) => (s === "busy" ? s : "")))} className="w-56 accent-violet-500" />
         <datalist id="face-strength-marks"><option value={100} /></datalist>
         <span className="w-10 tabular-nums text-zinc-100">{pct}%</span>
       </label>

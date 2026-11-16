@@ -240,12 +240,16 @@ function ClipView({
 
   const making = useChapters(session, editable, onChange);
 
+  const [retrying, setRetrying] = useState(false);
   const retry = async () => {
+    setRetrying(true);
     setError(null);
     try {
       onChange(await retryClip(session.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -488,7 +492,8 @@ function ClipView({
             {editable && (
               <button
                 onClick={retry}
-                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-accent"
+                disabled={retrying}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-accent disabled:opacity-50"
               >
                 <RotateCcw className="h-3 w-3" /> Retry
               </button>

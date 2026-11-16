@@ -51,6 +51,8 @@ const server = vi.hoisted(() => ({
   /** the library is someone else's, given to look at */
   readOnly: false,
   gate: undefined as Promise<void> | undefined,
+  /** a test holds every upload until it lets go */
+  uploading: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -62,6 +64,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   uploadFile: async (_: string, f: File) => {
     server.sent.push(`upload ${f.name}`);
     server.uploaded.push(f.name);
+    await server.uploading;
     return { assetId: "new" };
   },
   updateLibrary: async (_: string, patch: { settings: Record<string, unknown> }) => {
@@ -146,6 +149,7 @@ beforeEach(() => {
   server.uploaded = [];
   server.readOnly = false;
   server.gate = undefined;
+  server.uploading = undefined;
   localStorage.clear();
 });
 afterEach(() => {
@@ -579,6 +583,28 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await settle();
     expect(server.uploaded).toEqual(["Tiny drop.mp4"]);
     expect(host.querySelector('[aria-label="Uploads"]')?.textContent).toContain("Tiny drop.mp4");
+  });
+
+  it("a waiting file cancelled and retried goes once: the queue does not send it again when its turn comes", async () => {
+    server.settings = { organize: "own" };
+    const host = await mount();
+    let letGo = () => {};
+    server.uploading = new Promise((r) => (letGo = r));
+    const files = ["Tiny one.mp4", "Tiny two.mp4"].map((n) => new File(["x"], n, { type: "video/mp4" }));
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files, items: files.map(() => ({ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) })) } });
+    await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await settle();
+    await settle();
+    expect(server.uploaded).toEqual(["Tiny one.mp4"]); // on its way; the second waits
+    const press = (find: (b: HTMLButtonElement) => boolean) => act(async () => [...host.querySelectorAll("button")].find(find)!.click());
+    await press((b) => b.getAttribute("aria-label") === "Cancel Tiny two.mp4");
+    await press((b) => b.textContent === "Retry");
+    await settle();
+    letGo();
+    await settle();
+    await settle();
+    expect(server.uploaded).toEqual(["Tiny one.mp4", "Tiny two.mp4"]);
   });
 });
 

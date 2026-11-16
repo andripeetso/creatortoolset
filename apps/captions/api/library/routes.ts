@@ -698,7 +698,8 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     uploadDone(row.id, versionId);
     return c.json({ assetId, versionId });
   } catch (e) {
-    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(row.id);
+    // only one still open: an upload whose file is already in the library stays done
+    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ? AND state = 'open'").run(row.id);
     return c.json({ error: e instanceof Error ? e.message : String(e), code: "conflict" }, 500);
   } finally {
     busy.delete(row.id);

@@ -410,6 +410,8 @@ export function AssistantDock() {
   // chat only: another chat's messages still go
   const [held, setHeld] = useState<string[]>([]);
   const sending = useRef(false);
+  // the queued message on its way to the server: its row can't be edited or removed meanwhile
+  const [sendingId, setSendingId] = useState<string | null>(null);
   useEffect(() => {
     const save = (q: Queued[]) => (q.length ? localStorage.setItem(QUEUE_KEY, JSON.stringify(q)) : localStorage.removeItem(QUEUE_KEY));
     try {
@@ -502,8 +504,10 @@ export function AssistantDock() {
     // the server queues a message sent while a reply is being written: only a send in flight or a refused one holds this
     if (!next || !connectedNow || sending.current) return;
     sending.current = true;
+    setSendingId(next.id);
     void send(next).then((ok) => {
       sending.current = false;
+      setSendingId(null);
       if (ok) setQueue((q) => q.filter((x) => x.id !== next.id));
       else setHeld((h) => [...h, next.id]);
     });
@@ -1022,7 +1026,7 @@ export function AssistantDock() {
           {shownQueue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
               {shownQueue.map((it) => (
-                <QueuedRow key={it.id} text={it.text} extra={attachmentsLabel(it)} held={held.includes(it.id)} thinking={thinking} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />
+                <QueuedRow key={it.id} text={it.text} extra={attachmentsLabel(it)} held={held.includes(it.id)} thinking={thinking} sending={sendingId === it.id} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />
               ))}
             </ul>
           )}

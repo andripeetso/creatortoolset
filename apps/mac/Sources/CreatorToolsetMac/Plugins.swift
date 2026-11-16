@@ -526,6 +526,7 @@ extension Shell {
         watch.looking = true
         defer { watch.looking = false }
         for (id, on) in record.on {
+            guard runsHere else { return }   // another server was opened during the look: nothing is prepared there
             let folder = pluginsFolder.appendingPathComponent(on.folder)
             let stamp = pluginFolderStamp(folder)
             defer { watch.last[id] = stamp }
@@ -579,7 +580,7 @@ extension Shell {
     /// Whether the server here is in the middle of something a restart would end (serverBusyHere), asked now. No answer
     /// from the server counts as busy: nothing is restarted blind.
     private func busyHere() async -> Bool {
-        guard let server else { return true }
+        guard runsHere, let server else { return true }
         let site = await client()
         guard let sessions: [SessionRow] = try? await site.get("/api/workshop/sessions/summary"),
               let rows: [PluginRow] = try? await site.get("/api/activity") else { return true }

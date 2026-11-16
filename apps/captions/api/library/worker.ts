@@ -273,8 +273,8 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
-    const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
-    if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+    const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
+    if (after?.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   } finally {
     running.delete(job.id);
     if (device) onDevice--;
@@ -544,5 +544,6 @@ async function run(job: JobRow): Promise<void> {
 export function markReady(db: ReturnType<typeof libraryDb>, versionId: string, p: ProbeSummary): void {
   const want = ["wave", ...(p.vcodec ? ["thumb"] : [])];
   const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(versionId) as { kind: string }[]).map((h) => h.kind));
-  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
+  // never over `missing`: only the folder walk says an original is back (watch.ts refreshMissing)
+  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ? AND state != 'missing'").run(versionId);
 }

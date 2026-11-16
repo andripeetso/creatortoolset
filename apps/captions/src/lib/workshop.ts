@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { FindHit } from "@/lib/instagram";
 import type { SocialPlatform } from "@contracts/connectors";
 import type { Selection } from "@contracts/providers";
-import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type SessionStatus } from "@contracts/workshop-statuses";
+import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type DraftStatus, type ProposalStatus, type ReplyStatus, type SessionStatus, type ShareProgressState } from "@contracts/workshop-statuses";
 /**
  * Client for the Content Workshop (api/workshop.ts): research sessions on
  * top of the Content Analyzer library — sources, notes, drafts.
@@ -108,7 +108,7 @@ export interface WorkshopRule {
 export type RuleFields = Pick<WorkshopRule, "name" | "text" | "on">;
 
 export type DraftKind = "reel" | "carousel" | "ad" | "free";
-export type DraftStatus = "generating" | "ready" | "error";
+export type { DraftStatus };
 
 export interface DraftMeta {
   id: string;
@@ -329,10 +329,12 @@ export type FileFiling = { file: string; keep: boolean; kind?: string; about?: s
 /**
  * A project's instructions drafted from what the person gave: text (its links are read), files and folders, Instagram
  * accounts; and each file filed. A folder's read answers with spaces while it runs, so an error comes in the body.
+ * `projectId`: the workspace being edited, whose saved context files are read too. `unsure`: what the material says
+ * two ways, for the person to settle.
  */
-export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }> }) =>
+export const draftProjectNotes = (input: { name: string; text?: string; accountIds?: string[]; files?: Array<{ name: string; text?: string; data?: string }>; projectId?: string }) =>
   fetch("/api/workshop/projects/draft-notes", jsonInit(input))
-    .then((r) => json<{ notes: string; files?: FileFiling[]; error?: string }>(r))
+    .then((r) => json<{ notes: string; files?: FileFiling[]; unsure?: string[]; error?: string }>(r))
     .then((j) => {
       if (j.error) throw new Error(j.error);
       return j;
@@ -597,7 +599,7 @@ export interface ChatMessage {
   files?: FileRef[];
   /** Media Library clips sent with the message (the AI reads their thumbnail, description and transcript). */
   library?: Array<{ kind: "library"; assetId: string; versionId: string; title: string } | { kind: "external"; refId: string; title: string }>;
-  status?: "thinking" | "done" | "error";
+  status?: ReplyStatus;
   error?: string;
   /** While thinking: what is happening, and who is answering. */
   stage?: "packing" | "thinking" | "writing" | "applying" | "searching" | "researching";
@@ -645,7 +647,7 @@ export interface Proposal {
   depth: AuditDepth;
   question?: string;
   reason?: string;
-  status: "open" | "accepted" | "declined";
+  status: ProposalStatus;
 }
 
 /* ---- accuracy audit ---- */
@@ -1149,7 +1151,7 @@ export const workshopShareUrl = (token: string) => `${window.location.origin}/ws
 
 /** What the freelancer marked and delivered on a share link. */
 export interface ShareProgress {
-  state: "producing" | "done";
+  state: ShareProgressState;
   by?: string;
   at: number;
 }

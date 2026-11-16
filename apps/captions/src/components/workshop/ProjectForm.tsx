@@ -122,6 +122,8 @@ export function ProjectForm({
   const [dropped, setDropped] = useState<File[]>([]);
   const [filing, setFiling] = useState<FileFiling[]>([]);
   const [before, setBefore] = useState<{ notes: string; files: File[]; filing: FileFiling[] } | null>(null);
+  // what the material said two ways without saying which is right: his to settle
+  const [unsure, setUnsure] = useState<string[]>([]);
   const [drafting, setDrafting] = useState(false);
   const [over, setOver] = useState(false);
   const pick = useRef<HTMLInputElement>(null);
@@ -160,7 +162,8 @@ export function ProjectForm({
   };
   // only files: dragged or pasted text still lands in the box
   const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
-  const canWrite = !!f.notes.trim() || dropped.length > 0 || !!initial?.accountId;
+  // a saved workspace may hold context files, which the draft reads too
+  const canWrite = !!f.notes.trim() || dropped.length > 0 || !!initial;
   const write = async () => {
     setError(null);
     setDrafting(true);
@@ -172,13 +175,14 @@ export function ProjectForm({
       const known = handles.size ? await listAccounts("", { projectId: null }).catch(() => []) : [];
       const accountIds = [initial?.accountId, ...known.filter((a) => handles.has(a.username.toLowerCase())).map((a) => a.id)].filter((x): x is string => !!x);
       const files = await Promise.all(dropped.map(materialOf));
-      const { notes, files: filed = [] } = await draftProjectNotes({ name: f.name, text: context.trim(), accountIds, files });
+      const { notes, files: filed = [], unsure: open = [] } = await draftProjectNotes({ name: f.name, text: context.trim(), accountIds, files, projectId: initial?.id });
       if (!alive.current) return;
       setBefore({ notes: context, files: dropped, filing });
       setF((cur) => ({ ...cur, notes }));
       // the files stay, to look things up in later; only what it says a writer never needs goes
       const out = new Set(filed.filter((x) => !x.keep).map((x) => x.file));
       setFiling(filed);
+      setUnsure(open);
       setDropped((cur) => cur.filter((x) => !out.has(filePath(x))));
     } catch (err) {
       if (alive.current) setError(err instanceof Error ? err.message : String(err));
@@ -371,7 +375,7 @@ export function ProjectForm({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => (setF((cur) => ({ ...cur, notes: before.notes })), setDropped(before.files), setFiling(before.filing), setBefore(null))}
+                  onClick={() => (setF((cur) => ({ ...cur, notes: before.notes })), setDropped(before.files), setFiling(before.filing), setUnsure([]), setBefore(null))}
                   className={cn("rounded-full", quiet)}
                 >
                   <Undo2 /> Undo
@@ -404,6 +408,11 @@ export function ProjectForm({
                 .reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), [])}
             </p>
           ) : null}
+          {unsure.map((u) => (
+            <p key={u} className="pt-2 text-xs text-muted-foreground">
+              Not sure: {u}
+            </p>
+          ))}
         </Row>
       )}
       {!setup && (

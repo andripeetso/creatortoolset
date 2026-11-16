@@ -297,6 +297,8 @@ export function ChatPane({
   });
   // a queued message the server refused stays first and waits for a click (no retry loop)
   const [held, setHeld] = useState(false);
+  // the queued message on its way to the server: its row can't be edited or removed meanwhile
+  const [sendingId, setSendingId] = useState<string | null>(null);
   useEffect(() => {
     try {
       if (queue.length) localStorage.setItem(`${draftKey}:queue`, JSON.stringify(queue.map((it) => ({ ...it, images: it.images.map((im) => ({ ...im, url: "" })) }))));
@@ -309,11 +311,13 @@ export function ChatPane({
     const next = queue[0];
     if (!next || thinking || held || !activeDoc || !aiAvailable || sending.current) return;
     sending.current = true;
+    setSendingId(next.id);
     follow();
     void deliver(next)
       .catch(() => false)
       .then((ok) => {
         sending.current = false;
+        setSendingId(null);
         if (!ok) return setHeld(true);
         next.images.forEach((im) => URL.revokeObjectURL(im.url));
         setQueue((q) => q.filter((x) => x.id !== next.id));
@@ -629,7 +633,7 @@ export function ChatPane({
             {queue.map((it, i) => {
               const words = readable(it.text, it.quotes ?? []);
               const extra = [it.images.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...it.pasted.map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
-              return <QueuedRow key={it.id} text={words} extra={extra} held={i === 0 && held} thinking={thinking} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />;
+              return <QueuedRow key={it.id} text={words} extra={extra} held={i === 0 && held} thinking={thinking} sending={sendingId === it.id} onSteer={() => steer(it.id)} onEdit={() => editQueued(it)} onRemove={() => unqueue(it)} />;
             })}
           </ul>
         )}

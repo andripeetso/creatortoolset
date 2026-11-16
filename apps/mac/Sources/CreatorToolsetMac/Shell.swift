@@ -404,6 +404,8 @@ final class Shell: NSObject, ObservableObject {
             }
         }
         server.otherDevices = on
+        // another server was opened while the password was set: the one here is stopped, and starts with this when opened
+        guard runsHere else { return nil }
         server.stop()
         startServer()
         return nil
@@ -439,6 +441,8 @@ final class Shell: NSObject, ObservableObject {
         stopRunner()
         webView.loadHTMLString(splashPage("Moving your data…"), baseURL: nil)
         let problem = await server.move(to: dest)
+        // another server was opened during the move: the one here stays stopped, and the window stays on that server
+        guard runsHere else { server.stop(); return problem }
         if problem != nil, server.state == .running { open("/") }
         return problem
     }
@@ -702,6 +706,7 @@ final class Shell: NSObject, ObservableObject {
 
     /// The site's cookies from the web view's store, for the requests below.
     func client() async -> Site {
+        let base = self.base   // the site open when asked, not the one opened while the cookies were read
         let all: [HTTPCookie] = await withCheckedContinuation { continuation in
             webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
         }
@@ -724,28 +729,31 @@ final class Shell: NSObject, ObservableObject {
 
     private func startAI() { _ = bringUpAI() }
 
-    /// The pairing in progress, so a second press joins it instead of pairing again.
-    private var pairing: Task<Bool, Never>?
+    /// The pairings in progress, by site, so a second press joins the open site's instead of pairing again.
+    private var pairing: [URL: Task<Bool, Never>] = [:]
 
     /// Pairs this Mac with the open site once, then starts the runner. The task's value: whether the runner is running.
     private func bringUpAI() -> Task<Bool, Never> {
-        if let pairing { return pairing }
+        let site = base
+        if let task = pairing[site] { return task }
         let task = Task { () -> Bool in
-            defer { pairing = nil }
-            guard hasServer else { return false }
-            if DeviceVault.token(for: base.host ?? "") == nil {
+            defer { pairing[site] = nil }
+            // another server opened meanwhile: its own task pairs and starts the runner there
+            guard hasServer, base == site else { return false }
+            if DeviceVault.token(for: site.host ?? "") == nil {
                 do {
                     try await pairThisMac()
                 } catch {
-                    setAIOff("Could not add this Mac: \(error.localizedDescription)")
+                    if base == site { setAIOff("Could not add this Mac: \(error.localizedDescription)") }
                     return false
                 }
-                guard aiOn else { return false }   // turned off while pairing: the pairing stays, no runner
+                // turned off, or another server opened, while pairing: the pairing stays, no runner
+                guard aiOn, base == site else { return false }
             }
             startRunner()
             return runner != nil
         }
-        pairing = task
+        pairing[site] = task
         return task
     }
 
@@ -761,8 +769,8 @@ final class Shell: NSObject, ObservableObject {
 
     /// POST /api/devices with the window's cookies: the site makes the device and returns its token once.
     private func pairThisMac() async throws {
-        let host = base.host ?? ""
         let client = await client()
+        let host = client.base.host ?? ""   // the site the device is made on, whatever is open when it answers
         let name = Host.current().localizedName ?? macHostName()
         let data = try await client.postData("/api/devices", ["name": name, "version": appVersion])
         let pair = try JSONDecoder().decode(PairReply.self, from: data)

@@ -40,7 +40,7 @@ import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRe
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
-import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
+import { setSessionStatus, TURN_STOPPED, type ShareProgressState } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { announce } from "./lib/sync";
@@ -2047,7 +2047,9 @@ const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text :
 
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
-  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown; projectId?: unknown } | null;
+  // the workspace being edited: its saved context files are read too, and what is in the box is its instructions so far
+  const project = typeof body?.projectId === "string" ? await readProject(body.projectId, user) : null;
   const text = typeof body?.text === "string" ? body.text.slice(0, DRAFT_TEXT).trim() : "";
   const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
   const given = givenFiles(body?.files, DRAFT_FILES);
@@ -2076,23 +2078,31 @@ workshopApp.post("/projects/draft-notes", async (c) => {
   ]);
   const read = files.filter((f) => f.text.trim());
   const unread = files.filter((f) => !f.text.trim()).map((f) => `(${f.name} could not be read${"error" in f ? `: ${f.error}` : ""})`);
-  if (!text && !read.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
+  // the saved context files, one per path (a file saved twice: the newer); one given again now is read as given
+  const now = new Set(read.map((f) => f.name));
+  const kept = project ? (await knowledgeFor(user, project)).filter((f) => f.text.trim() && !now.has(f.name)) : [];
+  const saved = [...new Map(kept.map((f) => [f.name, { name: f.name, text: f.text }])).values()].slice(0, DRAFT_FILES);
+  const all = [...read, ...saved];
+  if (!text && !all.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
   const ai = route(user, "workshop", "Workspace setup");
   // on the Mac the files go as files, read whole; elsewhere into the prompt
-  const mac = onMac(user) && read.length > 0;
+  const mac = onMac(user) && all.length > 0;
+  const list = (fs: Array<{ name: string }>) => fs.map((f) => `- ${f.name}`).join("\n");
   const prompt = [
     typeof body?.name === "string" && body.name.trim() ? `Workspace: ${body.name.slice(0, 80)}` : "",
-    text ? `What they wrote:\n${text}` : "",
+    `Today: ${new Date().toISOString().slice(0, 10)}`,
+    text ? `${project?.notes.trim() ? "The workspace's instructions as they stand" : "What they wrote"}:\n${text}` : "",
     ...parts.filter(Boolean),
     ...unread,
-    read.length ? (mac ? `The files, in material/ in your folder (read every one):\n${read.map((f) => `- ${f.name}`).join("\n")}` : `The files:\n${inlineFiles(read)}`) : "",
+    all.length ? (mac ? `The files, in material/ in your folder (read every one):\n${list(all)}` : `The files:\n${inlineFiles(all)}`) : "",
+    saved.length ? `Of those, the workspace's saved context files, filed already (leave them out of "files"):\n${list(saved)}` : "",
   ].filter(Boolean).join("\n\n");
   const draft = () =>
     completeWithFallback(DRAFT_SYSTEM, prompt, undefined, (t) => parseDraft(t, read.map((f) => f.name), LIMITS.projectNotes), {
       ...ai,
-      ...(mac ? { mac: { ...ai.mac, label: "Workspace setup", files: Object.fromEntries(read.map((f) => [`material/${f.name.split("/").filter((x) => x && x !== "." && x !== "..").join("/")}`, f.text])) } } : {}),
+      ...(mac ? { mac: { ...ai.mac, label: "Workspace setup", files: Object.fromEntries(all.map((f) => [`material/${f.name.split("/").filter((x) => x && x !== "." && x !== "..").join("/")}`, f.text])) } } : {}),
     });
-  if (!read.length) {
+  if (!all.length) {
     try {
       return c.json(await draft());
     } catch (e) {
@@ -4203,13 +4213,17 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
   if ("error" in made) return c.json({ error: made.error }, 400);
   const { draft, input } = made;
   generating.add(draft.id);
+  // checked again inside the write, as startTurn does: two requests at once cannot both start a draft
+  let taken = false;
   const next = await updateSession(meta.id, (m) => {
+    taken = m.drafts.some((d) => d.status === "generating");
+    if (taken) return;
     m.drafts = [draft, ...m.drafts];
     if (input.projectId) m.projectId = input.projectId;
   });
-  if (!next) {
+  if (!next || taken) {
     generating.delete(draft.id);
-    return c.json({ error: "Not found" }, 404);
+    return taken ? c.json({ error: "A draft is already generating in this project — wait for it" }, 409) : c.json({ error: "Not found" }, 404);
   }
   void inJob([next.owner, user.username], () => runDraft(next, draft, user), next.id);
   return c.json({ draft }, 202);
@@ -4260,7 +4274,7 @@ interface WorkshopShare {
   title: string;
   createdAt: number;
   /** The freelancer's own mark. */
-  progress?: { state: "producing" | "done"; by?: string; at: number };
+  progress?: { state: ShareProgressState; by?: string; at: number };
   /** Finals the freelancer uploaded through the link: sessions/<id>/deliveries/<did>/<name>. */
   deliveries?: Delivery[];
   /** The Finals piece the share's files went into (a library piece linked to the session), and the delivery ids already sent. */

@@ -133,6 +133,7 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
     /// Restart to Update. Something running is asked about first (below), as for any install that is not the quiet one.
     @MainActor func installNow() {
         guard held != nil, install != nil else { return }
+        quiet = false   // a press asks first, whatever a quiet install that failed left set
         held?.waiting = true
         installHeld()
     }

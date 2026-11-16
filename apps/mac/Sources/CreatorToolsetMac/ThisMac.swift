@@ -196,13 +196,16 @@ struct ThisMacView: View {
                 HStack {
                     Button("Cancel") { askPassword = false; password = ""; again = "" }
                     Button("Set password and turn on") {
+                        guard !busy else { return }   // a second press while the first is with the server
                         guard password == again else { accessMessage = "The two passwords differ."; return }
+                        busy = true
                         Task {
                             accessMessage = await shell.setOtherDevices(true, password: password)
+                            busy = false
                             if accessMessage == nil { askPassword = false; password = ""; again = "" }
                         }
                     }
-                    .disabled(password.count < 10)
+                    .disabled(password.count < 10 || busy)
                 }
             }
             if let accessMessage {

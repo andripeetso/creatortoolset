@@ -47,7 +47,7 @@ import {
   type DocumentRecord,
   type MediaClip,
 } from "@/lib/documents";
-import { parseDocKind, type DocKind, type GuideDoc } from "@/lib/guide";
+import { parseDocKind, saveLabel, type DocKind, type GuideDoc } from "@/lib/guide";
 import { GuideBody } from "@/components/GuideBody";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { DocumentWysiwyg } from "@/components/DocumentWysiwyg";
@@ -498,7 +498,10 @@ function Editor({
   );
   const [guide, setGuide] = useState<GuideDoc | null>(doc.guide ?? null);
   const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
+  // what was typed against what the server has (saveLabel), and the last answer to a save of this page's own
+  const sync = useRef({ edits: 0, tried: 0, saved: 0, out: 0 });
+  const [label, setLabel] = useState("Saved");
+  const own = useRef<DocumentRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compose, setCompose] = useState(false);
@@ -515,9 +518,14 @@ function Editor({
 
   useEffect(() => {
     setName(doc.name);
+  }, [doc.id, doc.name]);
+  useEffect(() => {
+    // the answer to a save that went out before the last thing typed: the box keeps what was typed, the next save carries it
+    const s = sync.current;
+    if (own.current && doc.body === own.current.body && doc.guide === own.current.guide && s.saved < s.edits) return;
     setBody(splitDocumentTitle(parseDocumentMarkdown(doc.body)).rest);
     setGuide(doc.guide ?? null);
-  }, [doc.id, doc.name, doc.body, doc.guide]);
+  }, [doc.id, doc.body, doc.guide]);
 
   const save = useCallback(
     async (patch: {
@@ -526,21 +534,36 @@ function Editor({
       published?: boolean;
       guide?: GuideDoc;
     }) => {
-      setSaving(true);
+      const s = sync.current;
+      // a save that carries the text takes everything typed so far
+      const at = patch.body !== undefined || patch.guide ? s.edits : 0;
+      s.tried = Math.max(s.tried, at);
+      s.out++;
+      setLabel(saveLabel(s));
       setError(null);
       try {
-        onChange(await patchDocument(doc.id, patch));
+        const d = await patchDocument(doc.id, patch);
+        s.saved = Math.max(s.saved, at);
+        own.current = d;
+        onChange(d);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setSaving(false);
+        s.out--;
+        setLabel(saveLabel(s));
       }
     },
     [doc.id, onChange],
   );
 
+  const typed = () => {
+    sync.current.edits++;
+    setLabel(saveLabel(sync.current));
+  };
+
   const scheduleBody = (next: string) => {
     setBody(next);
+    typed();
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(
       () => void save({ body: withDocumentTitle(next, name) }),
@@ -550,6 +573,7 @@ function Editor({
 
   const scheduleGuide = (next: GuideDoc) => {
     setGuide(next);
+    typed();
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void save({ guide: next }), 700);
   };
@@ -582,7 +606,7 @@ function Editor({
       {editable && (
         <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-0.5 sm:mb-4">
           <span className="mr-auto shrink-0 text-[11px] text-muted-foreground">
-            {saving ? "Saving…" : "Saved"}
+            {label}
           </span>
           {editing ? (
             <button
