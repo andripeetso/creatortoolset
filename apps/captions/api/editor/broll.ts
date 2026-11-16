@@ -5,7 +5,7 @@ import { NeedsKey, wordsOf } from "../library/transcribe";
 import { buildAssetQuery, MAX_LIMIT, type CardRow } from "../library/query";
 import type { ProbeSummary } from "../library/media/probe";
 import { brollMinFrames } from "./qa";
-import { ownerOf, readDraft, saveDraft, sourcesWorkspace } from "./store";
+import { ownerOf, readDraft, saveDraft, seesClip, sourcesWorkspace } from "./store";
 import { noPicture, sourceOf } from "./timeline";
 import type { StepContext } from "./worker";
 
@@ -289,7 +289,7 @@ export function rankByWords(rows: { id: string }[]): (text: string) => string[] 
 }
 
 /** The B-roll step for one version's draft: its cutaways from the edit's collection (a cut with no picture: its whole picture), saved over the draft. */
-export async function brollStep({ edit, variant, signal }: StepContext): Promise<void> {
+export async function brollStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   if (!variant) return; // a whole-edit step is not a draft: each version's draft queues its own
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to add B-roll to`);
@@ -297,7 +297,10 @@ export async function brollStep({ edit, variant, signal }: StepContext): Promise
   const cover = noPicture(draft.timeline);
   if (!edit.brollCollectionId && !cover) return;
   const lib = cover && !edit.brollCollectionId ? (libraryDb().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(edit.sources[0] ?? "") as { library_id: string } | undefined) : undefined;
-  const rows = edit.brollCollectionId ? brollRows(edit.brollCollectionId) : lib ? sortedBroll(lib.library_id) : [];
+  const all = edit.brollCollectionId ? brollRows(edit.brollCollectionId) : lib ? sortedBroll(lib.library_id) : [];
+  // only clips the one who asked for this step may see (store.ts seesClip): a teammate's cut never shows them more than the library does
+  const seen = await Promise.all(all.map((r) => seesClip(job.actor ?? "", r.id)));
+  const rows = all.filter((_, i) => seen[i]);
   // a cut with no picture and nothing to show is a black video: it waits here, in words, before a preview is made of it (Retry carries on)
   if (!rows.length && cover) throw new NeedsKey(edit.brollCollectionId ? NO_COVER_IN_FOLDER : NO_COVER);
   if (!rows.length) return;

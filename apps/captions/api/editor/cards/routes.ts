@@ -4,7 +4,7 @@ import type { AuthVars } from "../../auth";
 import { libraryDb } from "../../library/db";
 import { enqueueJob } from "../../library/jobs";
 import { addPicture } from "../animation-styles";
-import { editRole, ownerOf, readDraft, readEdit, viewOf } from "../store";
+import { editRole, ownerOf, readDraft, readEdit, seesEdit, viewOf } from "../store";
 import { cardFile, clearCards, readCards, saveCards } from "./state";
 import { withdraw } from "./step";
 
@@ -20,7 +20,7 @@ const notFound = { error: "Not found", code: "not_found" };
 /** The edit, when the caller sees it, and the version's card state, or null. */
 async function load(user: string, id: string, variant: string) {
   const e = readEdit(id);
-  const st = e && (await editRole(user, e)) ? readCards(e.id, variant) : null;
+  const st = e && (await editRole(user, e)) && (await seesEdit(user, e)) ? readCards(e.id, variant) : null;
   return e && st ? { e, st } : null;
 }
 
@@ -56,7 +56,7 @@ cardsApp.post("/:id/cards/:variant/:card/like", async (c) => {
 cardsApp.post("/:id/cards/:variant/again", async (c) => {
   const { id, variant } = c.req.param();
   const e = readEdit(id);
-  if (!e || !(await editRole(c.get("user").username, e)) || !e.style?.animation || !readDraft(id, variant)) return c.json(notFound, 404);
+  if (!e || !(await editRole(c.get("user").username, e)) || !(await seesEdit(c.get("user").username, e)) || !e.style?.animation || !readDraft(id, variant)) return c.json(notFound, 404);
   const db = libraryDb();
   const vid = `${id}:${variant}`;
   if (db.prepare("SELECT 1 FROM edit_jobs WHERE version_id = ? AND state IN ('queued', 'running')").get(vid)) {
