@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Photos
 import UIKit
 
@@ -133,6 +134,7 @@ final class UploadEngine: ObservableObject {
         }
         reconciling = true
         defer { reconciling = false }
+        await transfers.recall()
         repeat {
             reconcileAgain = false
             for listed in store.items where listed.isWorking {
@@ -140,7 +142,7 @@ final class UploadEngine: ObservableObject {
                 // clip that started sending meanwhile must not be started twice
                 guard let item = store.item(listed.id), item.isWorking else { continue }
                 if let at = item.nextAttemptAt, at > Date() { continue }
-                if await transfers.activeItemIds().contains(item.id) { continue }
+                if transfers.onTheWay[item.id] != nil { continue }
                 switch item.state {
                 case .preparing: await prepare(item.id)
                 case .confirming: break
@@ -403,9 +405,12 @@ final class UploadEngine: ObservableObject {
     }
 
     /// A request on its way: its upload moves to `state`, then the background session sends it. Nothing is sent for
-    /// an upload that stopped meanwhile (it is in the library, failed, or was sent again from the start).
+    /// an upload that stopped meanwhile (it is in the library, failed, or was sent again from the start), and
+    /// nothing changes for one that has a request on its way already: its state stays, and so does the slice, which
+    /// can be the file being sent.
     func start(_ request: URLRequest, file: URL, step: TransferStep, as state: UploadItem.State,
                _ change: (inout UploadItem) -> Void) {
+        if transfers.refuses(step) { return }
         guard store.move(step.itemId, to: state, change) else {
             try? FileManager.default.removeItem(at: AppFiles.slice(step))
             return
@@ -519,34 +524,71 @@ final class Transfers: NSObject, URLSessionDataDelegate {
     var backgroundCompletion: (() -> Void)?
     weak var engine: UploadEngine?
     private var bodies: [Int: Data] = [:]
+    /// The clips with a transfer on its way, each with the task that carries it. The app's own record, changed in
+    /// the same instant a transfer is made, cancelled or ended: iOS answers only after a wait, and a transfer made
+    /// during the wait went unseen, so one clip had two.
+    @MainActor private(set) var onTheWay: [UUID: URLSessionTask] = [:]
+    /// The transfers that outlived the app's last run, which only iOS knows of: read once.
+    @MainActor private lazy var survivors = Task { @MainActor in
+        for task in await self.session.allTasks where task.state == .running || task.state == .suspended {
+            guard let clip = TransferStep(encoded: task.taskDescription)?.itemId else { continue }
+            if self.endedEarly?.contains(task.taskIdentifier) == true || self.onTheWay[clip] != nil { continue }
+            self.onTheWay[clip] = task
+        }
+        self.endedEarly = nil
+    }
+    /// The tasks that ended before that read came back (its list can still name them); nil once it has.
+    @MainActor private var endedEarly: Set<Int>? = []
 
-    override init() {
+    /// The background session; a test gives its own, so nothing leaves the phone.
+    init(configuration: URLSessionConfiguration = Transfers.background) {
         super.init()
-        let config = URLSessionConfiguration.background(withIdentifier: Self.identifier)
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
+    }
+
+    static var background: URLSessionConfiguration {
+        let config = URLSessionConfiguration.background(withIdentifier: identifier)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.timeoutIntervalForRequest = 120
-        session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        return config
     }
 
-    func start(_ request: URLRequest, file: URL, step: TransferStep) {
+    /// Over once the record holds the transfers from before this run: nothing is started or cancelled before.
+    @MainActor func recall() async { await survivors.value }
+
+    /// One clip, one transfer: true, and logged, for a step of a clip that has one on its way.
+    @MainActor func refuses(_ step: TransferStep) -> Bool {
+        guard let task = onTheWay[step.itemId] else { return false }
+        Self.log.error("transfer refused: \(step.kind.rawValue, privacy: .public) for a clip with \(TransferStep(encoded: task.taskDescription)?.kind.rawValue ?? "one", privacy: .public) on its way")
+        return true
+    }
+
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CreatorToolset", category: "uploads")
+
+    /// The one place a transfer is made, and the record with it. False, with nothing made, for a clip that has one.
+    @MainActor @discardableResult
+    func start(_ request: URLRequest, file: URL, step: TransferStep) -> Bool {
+        if refuses(step) { return false }
         let task = session.uploadTask(with: request, fromFile: file)
         task.taskDescription = step.encoded
+        onTheWay[step.itemId] = task
         task.resume()
+        return true
     }
 
-    func activeItemIds() async -> Set<UUID> {
-        let tasks = await session.allTasks
-        return Set(tasks.filter { $0.state == .running || $0.state == .suspended }
-            .compactMap { TransferStep(encoded: $0.taskDescription)?.itemId })
+    /// The clip's transfer is cancelled and off the record at once, so a new one can be started straight after.
+    @MainActor func cancel(itemId: UUID) async {
+        await recall()
+        onTheWay.removeValue(forKey: itemId)?.cancel()
     }
 
-    func cancel(itemId: UUID) async {
-        for task in await session.allTasks where TransferStep(encoded: task.taskDescription)?.itemId == itemId {
-            task.cancel()
-        }
+    /// A task has ended: only its own entry goes. A cancelled task ends after its clip may have a new one.
+    @MainActor private func ended(_ task: URLSessionTask, of clip: UUID) {
+        endedEarly?.insert(task.taskIdentifier)
+        if onTheWay[clip]?.taskIdentifier == task.taskIdentifier { onTheWay[clip] = nil }
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -563,7 +605,11 @@ final class Transfers: NSObject, URLSessionDataDelegate {
         let body = bodies.removeValue(forKey: task.taskIdentifier) ?? Data()
         guard let step = TransferStep(encoded: task.taskDescription) else { return }
         let response = task.response as? HTTPURLResponse
-        MainActor.assumeIsolated { engine?.transferFinished(step, response: response, body: body, error: error) }
+        MainActor.assumeIsolated {
+            // off the record before its answer is read: the answer starts the clip's next request
+            ended(task, of: step.itemId)
+            engine?.transferFinished(step, response: response, body: body, error: error)
+        }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

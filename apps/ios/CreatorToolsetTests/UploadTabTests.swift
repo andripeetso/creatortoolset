@@ -317,6 +317,84 @@ final class UploadMovesTests: XCTestCase {
     }
 }
 
+/// One clip, one transfer: the app's own record of the transfers on their way (`Transfers.onTheWay`).
+@MainActor
+final class OneTransferAClipTests: XCTestCase {
+    /// Takes every request and never answers: a transfer stays on its way until it is cancelled.
+    private final class NeverAnswers: URLProtocol {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {}
+        override func stopLoading() {}
+    }
+
+    private var transfers: Transfers!
+    private let body = FileManager.default.temporaryDirectory.appendingPathComponent("one-transfer-\(UUID().uuidString)")
+    private let request: URLRequest = {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1/upload")!)
+        request.httpMethod = "PATCH"
+        return request
+    }()
+
+    override func setUp() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [NeverAnswers.self]
+        transfers = Transfers(configuration: config)
+        try Data("tinyacrobatics".utf8).write(to: body)
+    }
+
+    override func tearDown() async throws {
+        transfers.session.invalidateAndCancel()
+        try? FileManager.default.removeItem(at: body)
+    }
+
+    private func start(_ clip: UUID, _ kind: TransferStep.Kind, offset: Int64 = 0) -> Bool {
+        transfers.start(request, file: body, step: TransferStep(itemId: clip, kind: kind, offset: offset))
+    }
+
+    /// Until `done`, for as long as an answer of the session takes to come.
+    private func wait(_ what: String, _ done: () -> Bool) async throws {
+        for _ in 0 ..< 250 where !done() { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(done(), what)
+    }
+
+    /// A look at the queue asked iOS which clips had a transfer running and waited for the answer; the clip's
+    /// finished chunk started the next one meanwhile, and the look then started it too.
+    func testAClipWithATransferOnItsWayGetsNoSecondOne() async throws {
+        let clip = UUID(), other = UUID()
+        XCTAssertTrue(start(clip, .patch))
+        XCTAssertFalse(start(clip, .patch, offset: 32 << 20))
+        XCTAssertFalse(start(clip, .finish))
+        XCTAssertTrue(start(other, .patch), "another clip's goes beside it")
+        let made = await transfers.session.allTasks
+        XCTAssertEqual(made.compactMap { TransferStep(encoded: $0.taskDescription)?.itemId }.sorted { $0.uuidString < $1.uuidString },
+                       [clip, other].sorted { $0.uuidString < $1.uuidString }, "nothing was made for a refused start")
+    }
+
+    /// A New edit's Try again cancels the clip's transfer and sends it again at once; the cancelled one ends later.
+    func testACancelledTransferEndingLaterLeavesTheNewOneOnRecord() async throws {
+        let clip = UUID(), other = UUID()
+        XCTAssertTrue(start(clip, .patch))
+        XCTAssertTrue(start(other, .patch))
+        let cancelled = try XCTUnwrap(transfers.onTheWay[clip])
+        await transfers.cancel(itemId: clip)
+        XCTAssertNil(transfers.onTheWay[clip], "off the record at once")
+        XCTAssertTrue(start(clip, .patch), "cancel, then start")
+        let new = try XCTUnwrap(transfers.onTheWay[clip])
+        XCTAssertNotEqual(new.taskIdentifier, cancelled.taskIdentifier)
+
+        // a transfer that ends takes its own entry off: the other clip's, ended after the cancelled one
+        transfers.onTheWay[other]?.cancel()
+        try await wait("an ended transfer leaves the record") { transfers.onTheWay[other] == nil && cancelled.state == .completed }
+        XCTAssertEqual(transfers.onTheWay[clip]?.taskIdentifier, new.taskIdentifier, "the cancelled one's end left the new one")
+        XCTAssertFalse(start(clip, .finish), "which is still the clip's one transfer")
+        XCTAssertTrue(start(other, .patch), "a clip whose transfer ended gets its next")
+
+        new.cancel()
+        try await wait("the new one's own end takes it off") { transfers.onTheWay[clip] == nil }
+    }
+}
+
 /// The queue saved by an older build still reads, New edit clips included.
 final class UploadQueueTests: XCTestCase {
     func testAQueueSavedBeforeTheCameraRollStillReads() throws {
