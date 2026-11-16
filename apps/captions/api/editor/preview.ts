@@ -164,14 +164,21 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
   }
 }
 
+/** Said when a plug-in step would be handed a proxy: it rewrites footage, and its copies take the originals' place. */
+export const onlyProxy = (title: string) => `Post-processing can't run here: this server has only the proxy of ${title}, not the original`;
+
 /**
  * Local files for a timeline's sources (a bucket library's are downloaded into the library's cache once). With `editId`
  * the edit's own clips (a card, TimelineSource.file) are in the answer too; without it they are left out. With `proxies`
  * a source whose original is not on this server is its proxy (a render for Review); post-processing reads originals
- * only, as its copies take the originals' place in the exports.
+ * only, as its copies take the originals' place in the exports: a source whose original is gone (a library that keeps
+ * only proxies, worker.ts dropOriginal, where the source is the proxy) is refused (onlyProxy), never handed over as one.
  */
 export async function localFiles(tl: Timeline, editId?: string, proxies = false): Promise<Record<string, string>> {
-  const q = libraryDb().prepare("SELECT source_key FROM asset_versions WHERE id = ?");
+  const q = libraryDb().prepare(
+    `SELECT v.source_key, a.title, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+     LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
+  );
   const out: Record<string, string> = {};
   for (const id of Object.keys(tl.sources)) {
     const own = tl.sources[id]!.file;
@@ -179,8 +186,9 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       if (editId) out[id] = path.join(editDir(editId), own);
       continue;
     }
-    const row = q.get(id) as { source_key: string } | undefined;
+    const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
     if (!row) throw new Error("Some footage is gone from the library");
+    if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
     out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
   }
   return out;

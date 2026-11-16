@@ -183,6 +183,33 @@ describe("proxy", () => {
     expect(await probe(out)).toMatchObject({ acodec: "aac", vcodec: "" });
   });
 
+  it("keeps every sound track, so the transcript hears the same one from the proxy, at the same times", async () => {
+    // track 1 a silent mono guide, track 2 the voice in stereo and marked the default: ffmpeg's own pick (the
+    // transcript's, the sound levels': the default track, then the most channels) is track 2
+    const two = path.join(dir, "two-tracks.mov");
+    ff(["-f", "lavfi", "-i", "testsrc=duration=2:size=1280x720:rate=30", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-f", "lavfi", "-i", "sine=frequency=440:duration=2:sample_rate=48000",
+      "-filter_complex", "[2:a]aformat=channel_layouts=stereo[v]", "-map", "0:v", "-map", "1:a", "-map", "[v]",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", "-disposition:a:0", "0", "-disposition:a:1", "default", "-t", "2", two]);
+    const out = path.join(dir, "two-proxy.mp4");
+    await makeProxy(two, out);
+    const channels = (f: string) => execFileSync("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=channels", "-of", "csv=p=0", f], { encoding: "utf8" }).trim().split("\n");
+    expect(channels(out)).toEqual(channels(two));
+    // the transcript's own cut of the sound (library/transcribe.ts, DEVICE_AUDIO)
+    const heard = (f: string) => {
+      const pcm = execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-i", f, "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "pipe:1"], { maxBuffer: 1 << 24 });
+      const x = new Float32Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 4);
+      return { n: x.length, rms: Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length) };
+    };
+    const [a, b] = [heard(two), heard(out)];
+    expect(a.rms).toBeGreaterThan(0.05); // the voice, not the silent guide
+    expect(b.rms).toBeGreaterThan(0.05);
+    // the same length to a few ms (AAC's own frame), so a cut measured on the proxy lands on the original's times
+    expect(Math.abs(a.n - b.n) / 16000).toBeLessThan(0.03);
+    const [pa, pb] = [await probe(two), await probe(out)];
+    expect(Math.abs(pa.duration - pb.duration)).toBeLessThan(0.05);
+    expect(pb).toMatchObject({ height: 720, width: 1280 });
+  });
+
   it.skipIf(!hevcOk)("is needed for HEVC and makes H.264 without upscaling", async () => {
     const src = await probe(hevc);
     expect(needsProxy(src)).toBe(true);

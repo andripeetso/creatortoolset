@@ -11,7 +11,7 @@ import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
 import { askVersionIn, editorKey, editorRoute, heardForEditor, versionRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { eyelineOf } from "./eyeline";
-import { readable } from "./media";
+import { measurable } from "./media";
 import { allBroll, isMusic } from "./plan";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
@@ -260,10 +260,10 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
     if (signal.aborted) return;
     sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
     if (planned) continue; // the cut's loudness and eye line are for cutting around speech
-    await energyOf(row.id, () => readable(row.id, row.source_key), signal);
+    await energyOf(row.id, () => measurable(row.id, row.source_key), signal);
     const turned = probe.rotation === 90 || probe.rotation === 270;
     const dims = { w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, duration: probe.duration };
-    const y = probe.vcodec ? await eyelineOf(row.id, () => readable(row.id, row.source_key), dims, signal) : null;
+    const y = probe.vcodec ? await eyelineOf(row.id, () => measurable(row.id, row.source_key), dims, signal) : null;
     if (y !== null) eyeline[row.id] = y;
   }
   if (!sentences.length && !planned)
