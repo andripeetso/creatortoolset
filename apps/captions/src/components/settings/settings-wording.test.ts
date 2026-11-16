@@ -14,7 +14,6 @@ const ELSEWHERE = [
   "pages/library/UploadSelect.tsx",
   "pages/LibraryStorage.tsx",
   "pages/LibraryWatchFolders.tsx",
-  "components/AdminPanel.tsx",
   "components/setup/HelperStep.tsx",
 ];
 const files = [
@@ -41,9 +40,7 @@ const NOT_YET = new Set([
   "components/settings/ProvidersSection.tsx",
   "components/settings/StorageRows.tsx",
   "components/settings/UsageSection.tsx",
-  "components/settings/WorkspaceSection.tsx",
   "pages/library/LibrarySettings.tsx",
-  "components/AdminPanel.tsx",
   "components/setup/HelperStep.tsx",
 ]);
 

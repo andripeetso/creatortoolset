@@ -35,12 +35,12 @@ describe("budgetFrom (the AI dialog's budget field)", () => {
 
 describe("memberLine (the owner's row subtitle)", () => {
   it("shows the budget's spend and the cap on a budget member", () => {
-    expect(memberLine(member({}), false, true)).toMatch(/^Team budget \$14\.20 of \$25 this month · not signed in yet$/);
+    expect(memberLine(member({}), false, true)).toMatch(/^Team budget \$14\.20 of \$25 this month · never signed in$/);
   });
 
   it("says the same for the person's own row as for anyone's, and nothing for another member's row", () => {
-    expect(memberLine(member({ ai: "own" }), false, true)).toBe("Own AI provider · not signed in yet");
-    expect(memberLine(member({ ai: "own" }), true, false)).toBe("Own AI provider · not signed in yet");
+    expect(memberLine(member({ ai: "own" }), false, true)).toBe("Own AI provider · never signed in");
+    expect(memberLine(member({ ai: "own" }), true, false)).toBe("Own AI provider · never signed in");
     expect(memberLine(member({}), false, false)).toBe("");
   });
 });
@@ -112,7 +112,7 @@ describe("/settings/team?add=1 (the address of the Invite dialog)", () => {
     );
     const row = (text: string) => [...document.querySelectorAll("div.grid")].find((r) => r.textContent?.includes(text))!;
     expect([...row("alex").querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["More for alex"]);
-    expect(row("alex").textContent).toContain("Own AI provider · not signed in yet · Tiny Acrobatics");
+    expect(row("alex").textContent).toContain("Own AI provider · never signed in · Tiny Acrobatics");
     expect([...row("kim@").querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["More for kim@tinyacrobatics.example"]);
     expect(row("kim@").textContent).toContain("2 workspaces");
     // the owner who is no admin has no accounts to run
@@ -132,7 +132,7 @@ describe("/settings/team?add=1 (the address of the Invite dialog)", () => {
     const labels = (el: Element) => [...el.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
     expect(labels(titled("Members"))).toEqual(["Invite", "More for alex"]);
     expect(labels(titled("Accounts"))).toEqual(["New account", "More for alex", "More for robin"]);
-    expect(titled("Accounts").textContent).toContain("samAdmin · not signed in yet");
+    expect(titled("Accounts").textContent).toContain("samAdmin · never signed in");
     expect(sections.map((s) => s.querySelector("h2")?.textContent)).not.toContain("Other accounts");
   });
 });

@@ -140,7 +140,7 @@ export function LoadingRow({ title = "Loading…" }: { title?: string }) {
   );
 }
 
-/** A failed load, as a row inside the card. `retry` adds a "Try again" button. */
+/** A failed load, as a row inside the card. `retry` adds a "Retry" button. */
 export function ErrorRow({ title, detail, retry }: { title: ReactNode; detail?: ReactNode; retry?: () => void }) {
   return (
     <div role="alert" className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
@@ -150,7 +150,7 @@ export function ErrorRow({ title, detail, retry }: { title: ReactNode; detail?: 
       </div>
       {retry && (
         <Button size="sm" variant="outline" onClick={retry}>
-          Try again
+          Retry
         </Button>
       )}
     </div>
