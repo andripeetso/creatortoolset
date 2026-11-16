@@ -62,7 +62,8 @@ const version = (id: string) =>
     from_path: string | null;
   };
 const jobs = (id: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? ORDER BY kind").all(id) as { kind: string }[]).map((j) => j.kind);
-const files = LANES.find((l) => l.name === "files")!.kinds;
+// the media steps: pictures (probe, thumb, wave) and files (proxy, sprite, fingerprint) run in their own lanes
+const files = LANES.filter((l) => l.name === "pictures" || l.name === "files").flatMap((l) => [...l.kinds]);
 
 /** Its proxy made (a stand-in file) and every job done, as the worker leaves them. */
 async function proxied(id: string): Promise<string> {
