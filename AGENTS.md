@@ -171,6 +171,26 @@ Three levels, the same in every screen, doc, notice and AI prompt (tool names st
 
 Never put "project" on screen for the brand-level thing, or "session" for a project.
 
+## The words for where work runs
+
+Where the data lives and which machine does the work are two questions. Keep them apart in comments, docs, prompts
+and answers:
+
+- A **server** comes in three kinds. **This Mac** is the server built into the Mac app (`apps/mac` `Server.swift`,
+  `CT_LOCAL=1`): one person's, and it is their own computer. **Your own server** is one somebody runs on a box and
+  opens by its address. **Creator Toolset Cloud** is ours (`CT_MODE=hosted`). "The server does X" says which kind: on
+  This Mac it means the person's own computer.
+- A **computer** is a Mac or PC signed in to a server through the app, or a Linux helper. In code: `device`,
+  "paired Mac", `relay`, `helper`. It is the machine its person sits at, not a second one. On screen and in prose say
+  "computer" or "their Mac", never "paired Mac" or "device".
+- **Work** is whatever reads or writes video or sound: the library's index, proxies, transcripts, the AI Editor's
+  steps, previews, exports. **AI** is a language-model call and goes its own road (`api/ai-complete.ts` `aiFor`), to
+  the asker's own AI.
+- Which machine runs a piece of work is written in the code, never guessed: an AI Editor step with `source: "core"`
+  (`api/editor/engine.ts`) and a library job (`api/library/worker.ts`) run on the server they belong to; a `device`
+  kind (`contracts/devices.ts`) runs on a computer of the account that asked. Read it there before saying who does
+  what.
+
 ## Working in the code
 
 - Routes: each `api/*.ts` file exports a Hono app; `api/boot.ts` mounts them and applies the account gate.
