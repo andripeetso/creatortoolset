@@ -422,17 +422,15 @@ function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, on
             {related}
             {jobs}
           </div>
-          {/* the assistant's round button sits over the window's bottom right (on a phone, and on a computer while it is in
-              that corner): the actions leave it room */}
-          <div className="border-t border-border p-4 max-md:pr-20 [html:has(button[data-assistant-dock][data-corner=br])_&]:pr-20">{actions}</div>
+          {/* the assistant's button is hidden while a clip is open (index.css), so the actions need no room for it */}
+          <div className="border-t border-border p-4">{actions}</div>
         </aside>
         {share}
       </div>
     );
 
   return (
-    // its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the panel)
-    <div tabIndex={0} className="flex flex-col gap-4 p-4 pt-12 outline-none [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
+    <div tabIndex={0} className="flex flex-col gap-4 p-4 pt-12 outline-none">
       {picture}
       {head}
       {actions}
