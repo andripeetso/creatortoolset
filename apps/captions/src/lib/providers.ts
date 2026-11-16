@@ -48,7 +48,7 @@ export const saveOwn = (settings: ProviderSettings | null) =>
 
 /** One short question through the instance's device. `scope` is "workspace" or the account's username. */
 export const checkProvider = (scope: Scope, id: string) =>
-  // a test the computer never answers ends here, so "Checking…" is never the resting state
+  // a test the computer never answers ends here, so "Testing…" is never the resting state
   fetch(`/api/providers/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/check`, { method: "POST", signal: AbortSignal.timeout(90_000) }).then((r) =>
     json<ProviderCheck>(r),
   );
@@ -78,7 +78,7 @@ export const selectionLabel = (s: Selection) => `${modelName(s.model)} · ${effo
 /** The message box's short form: "Opus 5.5 High" (the maker's name dropped), or the AI's name with no model of its own. */
 export const shortSelectionLabel = (s: Selection, name: string) => `${s.model ? modelName(s.model).replace(/^Claude /, "") : name} ${effortLabel(s.effort)}`;
 
-/** A failed test is not repeated by itself for this long (the person can press Test now at any time). */
+/** A failed test is not repeated by itself for this long (the person can press Test at any time). */
 export const RETEST_AFTER_MS = 5 * 60_000;
 
 /**
@@ -131,7 +131,7 @@ export const thisMacDevice = (): string | undefined =>
 /** The name of an instance in a scope, for usage rows. */
 export function instanceName(view: ProvidersView, scope: Scope, id: string): string {
   const set = scope === "workspace" ? view.workspace?.settings : view.own;
-  return set?.instances.find((i) => i.id === id)?.name ?? (id || "No AI yet");
+  return set?.instances.find((i) => i.id === id)?.name ?? (id || "No AI provider");
 }
 
 export interface UsageTotals {

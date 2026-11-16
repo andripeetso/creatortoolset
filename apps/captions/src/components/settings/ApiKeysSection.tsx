@@ -5,14 +5,13 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { useSetup } from "@/lib/setup";
 import { Card, ErrorRow, LoadingRow, Section } from "./ui";
 import { KeyRow } from "./KeyRow";
-import { LocalModelRow } from "./LocalModelRow";
 import { saveMyKey, useMyKeys } from "./MyKeysSection";
 import { ServerKeysTab } from "./ServerKeysTab";
 import type { ApiKeyRowId } from "./search";
 
 const GROUPS: Array<{ id: MyKeyGroup; title: string }> = [
-  { id: "voice", title: "Transcription and voice" },
-  { id: "research", title: "Research and reading the web" },
+  { id: "voice", title: "Voice" },
+  { id: "research", title: "Research" },
   { id: "ai", title: "AI" },
 ];
 
@@ -32,7 +31,7 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
   const { data: status, error, refresh } = useCachedLoad<ApifyStatus>("/api/instagram/apify", getApify, { topic: [] });
   const load = () => refresh().catch(() => {});
   if (!status)
-    return error ? <ErrorRow title="Couldn't load the Apify key" detail={error} retry={() => void load()} /> : <LoadingRow />;
+    return error ? <ErrorRow title="Could not load the Apify key" detail={error} retry={() => void load()} /> : <LoadingRow />;
   return (
     <KeyRow
       id="apify-key"
@@ -41,12 +40,13 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
       set={status.configured}
       last4={status.last4}
       readOnly={status.source === "env"}
-      broken={status.configured && status.valid === false ? "Apify refused this key" : undefined}
-      removeBody="Social accounts and the Content Analyzer stop reading public posts until you add it again."
+      readOnlyText="Server key"
+      broken={status.configured && status.valid === false ? "Key not accepted" : undefined}
+      removeBody="Social accounts and Content Analyzer stop reading public posts."
       save={async (value) => {
         try {
           const s = value ? await saveApify(value) : await removeApify();
-          if (value && s.valid === false) throw new Error("Apify refused this key. Paste a new one.");
+          if (value && s.valid === false) throw new Error("Apify did not accept this key.");
         } finally {
           void load();
           onChanged?.();
@@ -59,14 +59,13 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
 /**
  * Settings → API keys: every key the person can paste, in sections by what it is for. Each service appears once. A key
  * that is not set shows only its button. A key the server provides says so, and the person can use a key of their own
- * instead (their own key wins, api/my-keys.ts keyFor). Anthropic is listed only when the account has no AI of its own;
- * so is the Local model row under it, which only an install's own admin gets (a hosted server refuses its routes).
+ * instead (their own key wins, api/my-keys.ts keyFor). Anthropic is listed only when the account has no AI provider.
+ * (The Local model, which answers before that key, is an AI provider: its row is on Providers.)
  */
 export function ApiKeysSection() {
   const { data: keys, error, refresh } = useMyKeys();
   // no AI of its own yet: the Anthropic key is what the tools use. Until the setup is known, it stays hidden.
   const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
-  const localModel = useAuth((s) => !s.hosted && s.me?.role === "admin");
   // the server's own keys, for everyone on it (was Admin → Server keys): admins on a hosted server (ServerKeysTab checks hosted)
   const serverKeys = useAuth((s) => s.me?.role === "admin");
   const reload = () => refresh().catch(() => {});
@@ -74,7 +73,7 @@ export function ApiKeysSection() {
   if (!keys)
     return (
       <Card>
-        {error ? <ErrorRow title="Couldn't load your API keys" detail={error} retry={() => void reload()} /> : <LoadingRow />}
+        {error ? <ErrorRow title="Could not load API keys" detail={error} retry={() => void reload()} /> : <LoadingRow />}
       </Card>
     );
 
@@ -105,7 +104,6 @@ export function ApiKeysSection() {
           <Card>
             {g.id === "research" && <ApifyKeyRow />}
             {rows(g.id)}
-            {g.id === "ai" && localModel && <LocalModelRow ownAi={ownAi} />}
           </Card>
         </Section>
       ))}

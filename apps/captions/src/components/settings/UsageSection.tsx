@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router";
 import { DRIVERS, type LimitsIdentity, type LimitWindow, type ProviderInstance, type ProvidersView } from "@contracts/providers";
 import { PLANS, planFromCli, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
@@ -10,7 +9,7 @@ import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, PageAction, Row, Section, SettingsSelect, Status, WorkspacePick, saveFailed, useSettingsWorkspace } from "./ui";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 // The Macs post their readings every five minutes, and nothing tells the page when one lands (a reading and an answer's
@@ -19,11 +18,14 @@ const RELOAD_MS = 5 * 60_000;
 const TICK_MS = 60_000; // the countdowns
 const STALE_MS = 15 * 60_000;
 const API = " (API)"; // the tally's label for calls on the app's own Anthropic key
-const TOOL: Record<string, string> = { Automation: "Scheduled task" };
+const TOOL: Record<string, string> = { Automation: "Scheduled task", Stopped: "Stopped run", other: "Other" };
 
 /**
  * Settings → Usage: the plan left on each AI login (its saved copy at once, read again every five minutes and when an AI
- * or a computer changes), then what the app used in the period picked, as one table by tool and AI.
+ * provider or a computer changes), then Activity: what the app used in the period picked, as one table by tool and AI
+ * provider. The page header has the workspace selector and the period: All workspaces is everything, one workspace only
+ * the calls made in it (a call from before workspaces were recorded has none, so it counts under All workspaces only).
+ * Plan limits are the logins', the same whatever is picked.
  */
 export function UsageSection() {
   const { data: view, error, refresh } = useProviders();
@@ -33,7 +35,7 @@ export function UsageSection() {
   const bridge = useThisMac(hasThisMac());
   const limitsOn = bridge?.limits;
   const wasOff = useRef(false);
-  // the plan the person picked (setup's answer), else the one their AI names: "Your plan" reads it, and the warning
+  // the plan the person picked (setup's answer), else the one their AI names: "Plan" reads it, and the warning
   // before a heavy run does too. Read again with the page (on open and each reload): a reading that names the plan can
   // come in after setup was first read
   const setup = useSetup((s) => s.view);
@@ -62,7 +64,7 @@ export function UsageSection() {
   if (!view) {
     return (
       <Section title="Plan limits">
-        <Card>{error ? <ErrorRow title="Could not load usage" detail={error} retry={() => void load()} /> : <LoadingRow title="Loading usage…" />}</Card>
+        <Card>{error ? <ErrorRow title="Could not load usage" detail={error} retry={() => void load()} /> : <LoadingRow />}</Card>
       </Section>
     );
   }
@@ -84,10 +86,10 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
       <Section id="plan-limits" title="Plan limits">
         <Card>
           {view.teamAi ? (
-            // on the team's key there is no plan of your own to read: the budget is the limit
-            <EmptyRow title="You use the team's AI" description={`$${view.teamAi.spentUsd.toFixed(2)} of $${view.teamAi.budgetUsd} used this month.`} />
+            // on the team's key there is no plan of their own to read: the budget is the limit
+            <EmptyRow title="Team budget" description={`$${view.teamAi.spentUsd.toFixed(2)} of $${view.teamAi.budgetUsd} spent this month.`} />
           ) : (
-            <EmptyRow title="No plan limits to show" description="Add Claude or Codex in Providers, and the plan left on it shows here." />
+            <EmptyRow title="No plan limits" />
           )}
         </Card>
       </Section>
@@ -111,28 +113,28 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
 }
 
 /**
- * "Your plan": the person's pick, else the plan their AI names (setup's `detected`: Claude's sign-in, Codex's usage
- * page), else Not sure. It is what a heavy run reads before it starts (confirmHeavy in lib/setup.ts; it asks first on
- * Pro and Plus). Picking one saves it as theirs; nothing the AI says replaces it.
+ * "Plan": the person's pick, else the plan their AI names (setup's `detected`: Claude's sign-in, Codex's usage page),
+ * else Not set. It is what a heavy run reads before it starts (confirmHeavy in lib/setup.ts; it asks first on Pro and
+ * Plus). Picking one saves it as theirs; nothing the AI says replaces it.
  */
 function YourPlan({ setup }: { setup: SetupView | null }) {
   if (!setup) return null;
   const save = (v: string) => void useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) }).catch(() => saveFailed("That did not save. Try again."));
-  // the first choice follows the account: the plan it names, or Not sure when it names none. Choosing it drops a pick
-  // made by hand, so every choice in the list does something (Not sure beside a found plan used to jump straight back)
+  // the first choice follows the account: the plan it names, or Not set when it names none. Choosing it drops a pick
+  // made by hand, so every choice in the list does something (Not set beside a found plan used to jump straight back)
   const found = PLANS.find((x) => x.id === setup.detected);
   return (
     <Card>
       <Row
         id="your-plan"
-        title="Your AI plan"
-        description="On Pro or Plus, big jobs ask before they start."
+        title="Plan"
+        description="On Pro or Plus, big jobs start after a confirmation."
         control={
           <SettingsSelect
-            label="Your plan"
+            label="Plan"
             value={setup.plan ?? "none"}
             onValueChange={save}
-            options={[{ value: "none", label: found ? `${found.label}, read from your account` : "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
+            options={[{ value: "none", label: found ? `${found.label} (detected)` : "Not set" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
           />
         }
       />
@@ -184,53 +186,35 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
 }
 
 /**
- * An AI with no reading: the true reason for its computer, and the fix where the person can make one. On this Mac, a Mac
- * app that reports its switch (`bridge.limits`) turns it on from the row; elsewhere the row names the fix.
+ * An AI provider with no reading: the true state of its computer, and the fix where the person can make one. On this
+ * Mac, a Mac app that reports its switch (`bridge.limits`) turns it on from the row; elsewhere the row names the fix.
  */
 function Unread({ inst, device, view, bridge, hit }: { inst: ProviderInstance; device: string; view: ProvidersView; bridge: ThisMacState | null; hit?: string }) {
   const mac = view.devices.find((d) => d.id === device);
-  const who = mac?.name ?? "another Mac";
+  const who = mac?.name ?? "another computer";
   const here = thisMacDevice() === device;
   const reported = here && typeof bridge?.limits === "boolean" ? bridge.limits : undefined;
   // the Mac app reports its version, the worker does not; a Mac app posts no sign-in state while its switch is off
   const installed = (mac?.report?.drivers ?? []).filter((d) => (d.driver === "claude" || d.driver === "codex") && d.installed);
   const off = reported !== undefined ? !reported : !!mac?.version && installed.length > 0 && installed.every((d) => d.signedIn === undefined);
   const signedOut = !!mac?.online && !!mac.report?.drivers.some((d) => d.driver === inst.driver && d.installed && d.signedIn === false);
-  if (signedOut) {
-    // the same state Providers shows: amber, with where to sign in (Providers has the sign-in itself)
-    return (
-      <Row
-        title={`${inst.name} on ${who}`}
-        status={<Status tone="attention">{`Not signed in on ${who}, so there is no plan to read.`}</Status>}
-        control={<OpenProviders />}
-      />
-    );
-  }
-  let reason = "No reading yet. One comes in within five minutes.";
-  let fix: string | undefined;
+  const title = `${inst.name} on ${who}`;
+  // the same state Providers shows, in amber: the sign-in itself is on that page
+  if (signedOut) return <Row title={title} status={<Status tone="attention">Not signed in</Status>} />;
+  let state: string | undefined;
+  let fix: string | undefined = "The first reading takes up to five minutes.";
   let control: ReactNode | undefined;
-  if (!mac) reason = "Its computer is no longer connected to this account.";
-  else if (!mac.online) reason = "Its Mac is offline, so no reading comes in.";
+  if (!mac) [state, fix] = ["Computer not found", undefined];
+  else if (!mac.online) [state, fix] = ["Computer offline", undefined];
   else if (off) {
-    reason = "Plan limits are off on this Mac.";
+    state = "Plan limits off";
+    fix = undefined;
     if (reported !== undefined) control = <Button size="sm" variant="outline" onClick={() => tell("limits:on")}>Turn on</Button>;
-    else
-      fix = here
-        ? "Turn on Read this Mac's Claude and Codex limits under This Mac."
-        : `Open the Mac app on ${who} and turn on Read this Mac's Claude and Codex limits under This Mac.`;
+    else fix = `Turn on plan limits in the Mac app on ${who}.`;
   }
-  // its last call met the plan's limit (the AI's check note, mac-claude.ts): that, in amber, says more than "no reading"
-  if (hit) return <Row title={`${inst.name} on ${who}`} status={<Status tone="attention">{hit}</Status>} description={off ? "Turn on plan limits to see how much is left." : undefined} control={control} />;
-  return <Row title={`${inst.name} on ${who}`} description={reason} status={fix} control={control} />;
-}
-
-function OpenProviders() {
-  const navigate = useNavigate();
-  return (
-    <Button size="sm" variant="outline" onClick={() => navigate("/settings/providers")}>
-      Open Providers
-    </Button>
-  );
+  // its last call met the plan's limit (the provider's check note, mac-claude.ts): that, in amber, says more than "no reading"
+  if (hit) return <Row title={title} status={<Status tone="attention">{hit}</Status>} description={off ? "Turn on plan limits to see how much is left." : undefined} control={control} />;
+  return <Row title={title} description={fix} status={state} control={control} />;
 }
 
 function WindowBar({ w, now }: { w: LimitWindow; now: number }) {
@@ -255,7 +239,7 @@ function WindowBar({ w, now }: { w: LimitWindow; now: number }) {
 
 function staleLine(i: LimitsIdentity, now: number): string | undefined {
   const age = now - i.at;
-  if (!i.online) return `Mac offline · last reading ${ago(age)} ago`;
+  if (!i.online) return `Computer offline · last reading ${ago(age)} ago`;
   if (age > STALE_MS) return `Reading ${ago(age)} old`;
   return undefined;
 }
@@ -272,17 +256,21 @@ type Line = { key: string; tool: string; ai: string; paid: boolean; calls: numbe
 
 const sum = (ls: Line[]) => ls.reduce((t, l) => ({ calls: t.calls + l.calls, tokens: t.tokens + l.tokens, costUsd: t.costUsd + l.costUsd }), { calls: 0, tokens: 0, costUsd: 0 });
 
-function aiNameOf(view: ProvidersView, r: UsageRow): string {
-  if (!r.instance) return "Not tied to an AI";
+function aiNameOf(view: Pick<ProvidersView, "own" | "workspace">, r: UsageRow): string {
+  if (!r.instance) return "No AI provider";
   const set = r.scope === "workspace" ? view.workspace?.settings : view.own;
-  return set?.instances.find((i) => i.id === r.instance)?.name ?? "Removed AI";
+  return set?.instances.find((i) => i.id === r.instance)?.name ?? "Not found";
 }
 
-/** One line per tool and AI for the period: calls, tokens and what they cost at API prices, biggest first. */
-function linesOf(view: ProvidersView, since: number): Line[] {
+/**
+ * One line per tool and AI provider for the period: calls, tokens and what they cost at pay-per-use prices, biggest
+ * first. `workspace`: only the calls made in that workspace (a call recorded with none is left out); null = every call.
+ */
+export function linesOf(view: Pick<ProvidersView, "usage" | "own" | "workspace">, since: number, workspace: string | null = null): Line[] {
   const out = new Map<string, Line>();
   for (const r of view.usage) {
     if (Date.parse(`${r.hour}:00:00Z`) < since) continue;
+    if (workspace && r.workspace !== workspace) continue;
     const paid = r.label.endsWith(API);
     const base = paid ? r.label.slice(0, -API.length) : r.label;
     const tool = TOOL[base] ?? base;
@@ -298,27 +286,39 @@ function linesOf(view: ProvidersView, since: number): Line[] {
 }
 
 function Activity({ view, days, onDays }: { view: ProvidersView; days: number; onDays: (d: number) => void }) {
-  const period = USAGE_PERIODS.find((p) => p.id === days)?.label.toLowerCase() ?? `${days} days`;
-  const lines = linesOf(view, usageSince(days));
+  // All workspaces = every call, as before workspaces were recorded; one picked = the calls made in it
+  const w = useSettingsWorkspace("list");
+  const lines = linesOf(view, usageSince(days), w.many && !w.all ? w.id : null);
   const total = sum(lines);
   const paid = sum(lines.filter((l) => l.paid));
+  const totalRow = (ai: string, t: ReturnType<typeof sum>) => (
+    <tr className="border-t border-border/50 font-medium">
+      <td className="py-2 pr-4 text-foreground">Total</td>
+      <td className="py-2 pr-4 text-muted-foreground">{ai}</td>
+      <td className="py-2 pr-4 text-right tabular-nums">{t.calls}</td>
+      <td className="hidden py-2 pr-4 text-right tabular-nums text-muted-foreground sm:table-cell">{tokensLabel(t.tokens)}</td>
+      <td className="py-2 text-right tabular-nums">${t.costUsd.toFixed(2)}</td>
+    </tr>
+  );
   return (
-    <Section id="activity" title="Activity" action={<PeriodPicker value={days} onChange={onDays} />}>
+    <Section id="activity" title="Activity">
+      <WorkspacePick mode="list" />
+      <PageAction>
+        <PeriodPicker value={days} onChange={onDays} />
+      </PageAction>
       <Card>
-        <Row
-          title={total.calls ? `${total.calls} calls · ${tokensLabel(total.tokens)} tokens in the last ${period}` : `No AI calls in the last ${period}`}
-          description={paid.calls ? `On the app's own key: $${paid.costUsd.toFixed(2)}` : undefined}
-        />
-        {lines.length > 0 && (
+        {lines.length === 0 ? (
+          <EmptyRow title="No AI calls" />
+        ) : (
           <div className="overflow-x-auto px-3 py-2 sm:px-4">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="text-xs text-muted-foreground">
                   <th className="py-1.5 pr-4 font-medium">Tool</th>
-                  <th className="py-1.5 pr-4 font-medium">AI</th>
+                  <th className="py-1.5 pr-4 font-medium">AI provider</th>
                   <th className="py-1.5 pr-4 text-right font-medium">Calls</th>
-                  <th className="hidden py-1.5 pr-4 text-right font-medium sm:table-cell">Tokens</th>
-                  <th className="py-1.5 text-right font-medium">Cost at API prices</th>
+                  <th className="hidden py-1.5 pr-4 text-right font-medium sm:table-cell">Tokens (text units)</th>
+                  <th className="py-1.5 text-right font-medium">Pay-per-use cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -331,6 +331,9 @@ function Activity({ view, days, onDays }: { view: ProvidersView; days: number; o
                     <td className="py-2 text-right tabular-nums">${l.costUsd.toFixed(2)}</td>
                   </tr>
                 ))}
+                {totalRow("", total)}
+                {/* what was paid for on the Anthropic key, apart from what a plan covered */}
+                {paid.calls > 0 && paid.calls < total.calls && totalRow("Anthropic API key", paid)}
               </tbody>
             </table>
           </div>
@@ -340,7 +343,7 @@ function Activity({ view, days, onDays }: { view: ProvidersView; days: number; o
   );
 }
 
-/** 24 h, 7 d, 30 d, 90 d: short enough for a phone's header beside the title. */
+/** 24 h, 7 d, 30 d, 90 d: short enough for a phone's header beside the workspace selector. */
 function PeriodPicker({ value, onChange }: { value: number; onChange: (d: number) => void }) {
   return (
     <div role="radiogroup" aria-label="Period" className="flex gap-1">
@@ -351,6 +354,7 @@ function PeriodPicker({ value, onChange }: { value: number; onChange: (d: number
           variant={value === p.id ? "secondary" : "ghost"}
           role="radio"
           aria-checked={value === p.id}
+          aria-label={p.label}
           onClick={() => onChange(p.id)}
         >
           {p.id === 1 ? "24 h" : `${p.id} d`}

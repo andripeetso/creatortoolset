@@ -7,7 +7,10 @@ import { cn } from "@/lib/utils";
 import { msg } from "./helpers";
 import { DriverMark } from "./ProviderInstanceCard";
 import { InstallHelp, SIGN_IN } from "./AiSetup";
-import { FormDialog } from "./ui";
+import { FormDialog, Row, SettingsSelect } from "./ui";
+
+/** The "Default folder" choice of the account picker (a select's option needs a value; "" is not allowed). */
+const DEFAULT_HOME = "default-folder";
 
 /** The id a new AI gets: "~/.claude-work" → "claude_work"; no folder → the tool's id. Starts with a letter, unique. */
 export function instanceId(driver: Driver, home: string, taken: string[]): string {
@@ -95,7 +98,7 @@ export function ToolGrid({
         label={d.label}
         selected={driver === d.id}
         disabled={(!!catalog && !runs) || isAdded}
-        sub={isAdded ? "Added" : !catalog ? undefined : !runs ? (entry?.reason ?? "Not available here") : installed(d.id) ? "Installed" : undefined}
+        sub={isAdded ? "Added" : !catalog ? undefined : !runs ? (entry?.reason ?? "Not supported by the Mac app") : installed(d.id) ? "Installed" : undefined}
         onClick={() => onPick(d.id)}
       />
     );
@@ -112,10 +115,10 @@ export function ToolGrid({
         {shown.map(tile)}
       </div>
       {hidden && (
-        <button type="button" aria-expanded={showMore} onClick={onToggleMore} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+        <Button type="button" variant="ghost" size="xs" aria-expanded={showMore} onClick={onToggleMore}>
           {showMore ? "Show less" : "Show more"}
-          <ChevronDown className={cn("size-3.5 transition-transform", showMore && "rotate-180")} />
-        </button>
+          <ChevronDown className={cn("transition-transform", showMore && "rotate-180")} />
+        </Button>
       )}
     </div>
   );
@@ -149,7 +152,8 @@ function Tile({ driver, label, selected, disabled, sub, onClick }: { driver: Dri
 
 /**
  * Settings → Providers → Add provider: one dialog for every path. Pick the tool; if the computer has more than one folder for
- * it, pick the account (only then); name it. A tool the computer lacks or is signed out of gets its one help line.
+ * it, pick the account (only then); name it. A tool the computer lacks or is signed out of gets its one help line. The
+ * fields are kit rows: the name on the left, its control on the right.
  */
 export function AddProviderDialog({
   deviceName,
@@ -209,11 +213,11 @@ export function AddProviderDialog({
   };
 
   const submit = async () => {
-    if (!driver) return setError("Choose the AI first.");
-    if (!runs) return setError(entry?.reason ?? "The Mac app can't run this yet.");
-    if (!label.trim()) return setError("Give it a name.");
-    if (duplicate) return setError("That account is already added on this computer.");
-    if (driver === "acp" && !command.trim()) return setError("Give the command that starts it.");
+    if (!driver) return setError("Needs a tool");
+    if (!runs) return setError(entry?.reason ?? "Not supported by the Mac app");
+    if (!label.trim()) return setError("Needs a name");
+    if (duplicate) return setError("This account is already added on this computer.");
+    if (driver === "acp" && !command.trim()) return setError("Needs a command");
     setBusy(true);
     setError(null);
     try {
@@ -249,41 +253,37 @@ export function AddProviderDialog({
       />
 
       {driver && homes.length > 1 && (
-        <div className="space-y-1.5">
-          <p className="text-sm text-foreground">Which {toolLabel} account?</p>
-          <p className="text-xs text-muted-foreground">Each folder on the computer holds one.</p>
-          <div className="flex flex-col gap-1.5">
-            {["", ...homes].map((h) => (
-              <Button key={h || "default"} variant={chosenHome === h ? "secondary" : "outline"} size="sm" className="justify-start font-normal" onClick={() => setHome(h)}>
-                <span className={cn(h && "font-mono text-xs")}>{h || "Default folder"}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
+        <Row
+          className="p-0 sm:p-0"
+          title="Account"
+          description="Each folder on the computer holds one account."
+          control={
+            <SettingsSelect
+              label={`${toolLabel} account`}
+              value={chosenHome || DEFAULT_HOME}
+              onValueChange={(h) => setHome(h === DEFAULT_HOME ? "" : h)}
+              options={[{ value: DEFAULT_HOME, label: "Default folder" }, ...homes.map((h) => ({ value: h, label: h }))]}
+              className="sm:w-64"
+            />
+          }
+        />
       )}
 
-      {driver && (
-        <div className="space-y-1.5">
-          <label htmlFor="add-ai-name" className="text-xs text-muted-foreground">
-            Name
-          </label>
-          <Input id="add-ai-name" value={label} onChange={(e) => setNameDraft(e.target.value)} className="h-8 text-sm" />
-        </div>
-      )}
+      {driver && <Row className="p-0 sm:p-0" title="Name" control={<Input aria-label="Name" value={label} onChange={(e) => setNameDraft(e.target.value)} className="h-8 w-full text-sm sm:w-64" />} />}
 
       {driver === "acp" && (
-        <div className="space-y-1.5">
-          <label htmlFor="add-ai-command" className="text-xs text-muted-foreground">
-            Command that starts it
-          </label>
-          <Input id="add-ai-command" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx some-agent acp" className="h-8 font-mono text-xs" />
-        </div>
+        <Row
+          className="p-0 sm:p-0"
+          title="Command"
+          description="A program that speaks the Agent Client Protocol (ACP)."
+          control={<Input aria-label="Command" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx some-agent acp" className="h-8 w-full font-mono text-xs sm:w-64" />}
+        />
       )}
 
       {driver && found && !found.installed && report && <InstallHelp driver={driver} />}
       {driver && runs && found?.installed && found.signedIn === false && signIn && (
         <p className="text-xs text-muted-foreground">
-          Then sign in on {deviceName}: run <code>{signIn}</code> once in Terminal there.
+          Then sign in on {deviceName}: run <code>{signIn}</code> once in Terminal.
         </p>
       )}
     </FormDialog>

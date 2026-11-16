@@ -11,7 +11,7 @@ import { ListRow, Status } from "./ui";
 /**
  * How to install and sign in a coding tool on a computer, from its own docs: shown when the tool is not there. The site
  * never installs anything on a computer itself: that would make it a way to run commands there. A tool not listed here
- * gets only a line saying to install it there and press Test. The own-computer install (the local routes below) installs
+ * gets only a line saying to install it there and test it. The own-computer install (the local routes below) installs
  * and signs in from the app itself, on the computer it runs on.
  */
 const TOOLS: Partial<Record<Driver, { name: string; install: string; signIn: string }>> = {
@@ -27,14 +27,14 @@ export const SIGN_IN: Partial<Record<Driver, string>> = { codex: "codex login", 
 export function InstallHelp({ driver }: { driver: Driver }) {
   const tool = TOOLS[driver];
   if (!tool) {
-    return <p className="text-xs text-muted-foreground">Not installed on this computer. Install it there, then press Test.</p>;
+    return <p className="text-xs text-muted-foreground">Not installed on its computer.</p>;
   }
   return (
     <div className="space-y-1.5 text-xs text-muted-foreground">
-      <p>Not installed on this computer. Install {tool.name} in Terminal there:</p>
+      <p>Not installed. Install {tool.name} in Terminal on its computer:</p>
       <Command text={tool.install} />
       <p>
-        Then sign in: run <code>{tool.signIn}</code> once.
+        Then run <code>{tool.signIn}</code> once to sign in.
       </p>
     </div>
   );
@@ -45,7 +45,7 @@ export function SignInHelp({ driver, computer }: { driver: Driver; computer: str
   const cmd = SIGN_IN[driver];
   return (
     <p className="text-xs text-muted-foreground">
-      Sign in on {computer}: run {cmd ? <code>{cmd}</code> : "its sign-in"} once in Terminal there.
+      Sign in on {computer}: run {cmd ? <code>{cmd}</code> : "its sign-in"} once in Terminal.
     </p>
   );
 }
@@ -138,7 +138,7 @@ function LocalAiItem({ row, device, onChanged }: { row: LocalAiRow; device: stri
       const r = await fn();
       const failed = "state" in r ? r.state !== "ready" : !r.ok;
       if (kind === "sign-in" && !failed) setWaiting(true);
-      else if (failed) setNote({ tone: "state" in r && r.state === "mac" ? "attention" : "broken", text: r.message ?? "That didn't work. Try again." });
+      else if (failed) setNote({ tone: "state" in r && r.state === "mac" ? "attention" : "broken", text: r.message ?? "That did not work. Try again." });
     } catch (e) {
       setNote({ tone: "broken", text: msg(e) });
     } finally {
@@ -157,7 +157,7 @@ function LocalAiItem({ row, device, onChanged }: { row: LocalAiRow; device: stri
       </Button>
     );
   } else if (row.signedIn === false) {
-    status = waiting ? <span className="text-muted-foreground">Finish signing in in your browser</span> : <Status tone="attention">Not signed in</Status>;
+    status = waiting ? <span className="text-muted-foreground">Finish in the browser</span> : <Status tone="attention">Not signed in</Status>;
     action = (
       <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run("sign-in", () => localSignIn(id))}>
         {busy === "sign-in" ? "Opening…" : "Sign in"}
@@ -166,7 +166,7 @@ function LocalAiItem({ row, device, onChanged }: { row: LocalAiRow; device: stri
   } else if (!row.connected) {
     action = (
       <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run("connect", () => localConnect(id, device))}>
-        {busy === "connect" ? "Connecting…" : "Connect"}
+        {busy === "connect" ? "Adding…" : "Add"}
       </Button>
     );
   }

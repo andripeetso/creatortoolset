@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance, ProvidersView } from "@contracts/providers";
 import type { SetupView } from "@contracts/tools";
-import { PlanLimits } from "./UsageSection";
+import { linesOf, PlanLimits } from "./UsageSection";
 import type { ThisMacState } from "./ThisMacSection";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -20,50 +20,65 @@ const thisMac = () => vi.stubGlobal("document", { documentElement: { dataset: { 
 describe("plan limits that are off on a Mac", () => {
   it("in a browser, names the fix in words and offers no button", () => {
     const html = page(null);
-    expect(html).toContain("Plan limits are off on this Mac.");
-    expect(html).toContain("Open the Mac app on Studio");
+    expect(html).toContain("Plan limits off");
+    expect(html).toContain("Turn on plan limits in the Mac app on Studio.");
     expect(html).not.toContain(">Turn on</button>");
   });
 
   it("in the Mac app, this Mac's row turns the switch on from the row", () => {
     thisMac();
     const html = page(bridge({ limits: false }));
-    expect(html).toContain("Plan limits are off on this Mac.");
+    expect(html).toContain("Plan limits off");
     expect(html).toContain(">Turn on</button>");
-    expect(html).not.toContain("Open the Mac app");
+    expect(html).not.toContain("in the Mac app on");
   });
 
-  it("once the switch is on, this Mac says a reading is on its way", () => {
+  it("once the switch is on, this Mac says how long the first reading takes", () => {
     thisMac();
     const html = page(bridge({ limits: true }));
-    expect(html).toContain("No reading yet.");
+    expect(html).toContain("The first reading takes up to five minutes.");
     expect(html).not.toContain(">Turn on</button>");
   });
 
   it("an older Mac app (no switch in its state) keeps the one-line instruction", () => {
     thisMac();
     const html = page(bridge());
-    expect(html).toContain("Turn on Read this Mac&#x27;s Claude and Codex limits under This Mac.");
+    expect(html).toContain("Turn on plan limits in the Mac app on Studio.");
     expect(html).not.toContain(">Turn on</button>");
   });
 });
 
-describe("your plan", () => {
+describe("the plan", () => {
   // the plan a big job warns by is planToWarnBy's (the pick, else the plan the AI names), tested in lib/plan-warning.test.ts
   it("is shown when nothing names the plan, and when the AI names it", () => {
-    expect(page(null, setup())).toContain("Your plan");
-    expect(page(null, setup({ detected: "chatgpt_plus" }))).toContain("Your plan");
+    expect(page(null, setup())).toContain('aria-label="Plan"');
+    expect(page(null, setup({ detected: "chatgpt_plus" }))).toContain('aria-label="Plan"');
+  });
+});
+
+describe("activity by workspace", () => {
+  const row = (label: string, calls: number, workspace?: string) => ({ hour: "2026-11-16T09", label, scope: "sam", instance: "claude", calls, tokens: calls * 10, costUsd: calls, ...(workspace ? { workspace } : {}) });
+  const v = { usage: [row("Workshop", 2, "brand-one"), row("Workshop", 3, "brand-two"), row("Workshop", 4), row("Assistant", 1, "brand-two")], own: { instances: [inst] }, workspace: null } as unknown as ProvidersView;
+  const calls = (workspace: string | null) => Object.fromEntries(linesOf(v, 0, workspace).map((l) => [l.tool, l.calls]));
+
+  it("All workspaces counts every call, the ones recorded with no workspace too", () => {
+    expect(calls(null)).toEqual({ Workshop: 9, Assistant: 1 });
+  });
+
+  it("one workspace counts only the calls made in it", () => {
+    expect(calls("brand-two")).toEqual({ Workshop: 3, Assistant: 1 });
+    expect(calls("brand-one")).toEqual({ Workshop: 2 });
   });
 });
 
 describe("an AI that is not signed in", () => {
-  it("is amber on its computer, with a way to Providers", () => {
+  it("is amber on its computer, with no button to another page", () => {
     const codex = { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "dev_2" } as ProviderInstance;
     const studio = { id: "dev_2", name: "Studio", online: true, version: "2.0", report: { drivers: [{ driver: "codex", installed: true, signedIn: false }], homes: [] } };
     const v = { limits: [], devices: [studio], own: { instances: [codex] }, workspace: null } as unknown as ProvidersView;
     const html = renderToStaticMarkup(<MemoryRouter><PlanLimits view={v} now={0} bridge={null} setup={setup()} /></MemoryRouter>);
-    expect(html).toContain("Not signed in on Studio, so there is no plan to read.");
-    expect(html).toContain("Open Providers");
+    expect(html).toContain("Not signed in");
+    expect(html).not.toContain("Providers");
   });
 });
 
@@ -93,7 +108,7 @@ describe("an AI with no plan reading", () => {
     const login = { driver: "claude", label: "default", state: "no_login", at: 0, device: "dev_1", online: true, instances: ["dev_1:claude"], windows: [] };
     const v = { limits: [login], devices: [studio], own: null, workspace: null } as unknown as ProvidersView;
     const html = renderToStaticMarkup(<PlanLimits view={v} now={0} bridge={null} setup={setup()} />);
-    expect(html).toContain("This folder has no Claude sign-in, so there is no plan to read.");
+    expect(html).toContain("No Claude sign-in in this account folder.");
     expect(html).not.toContain("No plan reading");
   });
 });

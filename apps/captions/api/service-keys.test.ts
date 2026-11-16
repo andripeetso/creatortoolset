@@ -27,11 +27,11 @@ it("a key pasted in Settings wins over the .env, Forget puts the .env's back; ad
   expect((await list()).find((k) => k.env === "NVIDIA_API_KEY")).toMatchObject({ source: "server", last4: "1234" });
   expect((await list()).find((k) => k.env === "DEEPGRAM_API_KEY")?.source).toBeNull();
 
-  expect((await put("DEEPGRAM_API_KEY", "dg-secret-abcd")).status).toBe(200);
+  expect((await put("DEEPGRAM_API_KEY", "dg-hidden-abcd")).status).toBe(200);
   expect((await put("NVIDIA_API_KEY", "nvapi-settings-9999")).status).toBe(200);
-  expect(process.env.DEEPGRAM_API_KEY).toBe("dg-secret-abcd");
+  expect(process.env.DEEPGRAM_API_KEY).toBe("dg-hidden-abcd");
   expect(process.env.NVIDIA_API_KEY).toBe("nvapi-settings-9999");
-  expect(JSON.stringify(await list())).not.toContain("secret");
+  expect(JSON.stringify(await list())).not.toContain("hidden");
   expect(statSync(path.join(process.env.DATA_DIR!, "service-keys.json")).mode & 0o777).toBe(0o600);
 
   await put("NVIDIA_API_KEY", null);

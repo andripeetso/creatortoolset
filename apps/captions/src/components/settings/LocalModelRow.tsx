@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import type { LocalModel } from "@contracts/service-keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
-import { FormDialog, ListRow, RowMenu, Status } from "./ui";
+import { useSetup } from "@/lib/setup";
+import { Card, FormDialog, ListRow, Row, RowMenu, Status } from "./ui";
 import { msg } from "./helpers";
 
 const ROUTE = "/api/my-keys/local-model";
@@ -23,13 +25,16 @@ const modelsAt = (url: string) =>
     .then((j) => j.models, () => [] as string[]);
 
 /**
- * Settings → API keys → AI: a model the person runs themselves (api/local-model.ts). The row shows the model and its
- * address; the dialog takes the address and the model's name, and lists what that address has so a name can be picked
- * instead of typed. Shown by ApiKeysSection only to an install's own admin; `ownAi` hides it, like the Anthropic key,
- * while the account has an AI of its own and no local model saved.
+ * Settings → Providers: a model the person runs themselves (api/local-model.ts), in a card of its own under the
+ * provider list. The row shows the model and its address; the dialog takes the address and the model's name, and lists
+ * what that address has so a name can be picked instead of typed. Only an install's own admin gets it (a hosted server
+ * refuses its routes); like the Anthropic key, it is hidden while the account has an AI provider and no local model
+ * saved (until the setup is known, too).
  */
-export function LocalModelRow({ ownAi }: { ownAi: boolean }) {
-  const { data, refresh } = useCachedLoad<Partial<LocalModel>>(ROUTE, getLocalModel, { own: true });
+export function LocalModelRow() {
+  const mine = useAuth((s) => !s.hosted && s.me?.role === "admin");
+  const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
+  const { data, refresh } = useCachedLoad<Partial<LocalModel>>(mine ? ROUTE : null, getLocalModel, { own: true });
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [model, setModel] = useState("");
@@ -50,7 +55,7 @@ export function LocalModelRow({ ownAi }: { ownAi: boolean }) {
     };
   }, [open, url]);
 
-  if (!data || (ownAi && !data.url)) return null;
+  if (!mine || !data || (ownAi && !data.url)) return null;
   const set = !!data.url;
 
   const show = () => {
@@ -74,61 +79,56 @@ export function LocalModelRow({ ownAi }: { ownAi: boolean }) {
     }
   };
 
+  // the two fields are one width, so their left edges line up
+  const input = "h-8 w-full font-mono text-xs sm:w-64";
   return (
     <>
-      {/* no search id: the search index can't tell an install's own admin from everyone else, and a hit must land on a row */}
-      <ListRow
-        title="Local model"
-        subtitle="A model you run yourself. The tools send it their text jobs, before your Anthropic key"
-        status={set ? <Status>{data.url}</Status> : undefined}
-        actions={
-          set ? (
-            <>
-              <span className="max-w-40 truncate font-mono text-xs text-muted-foreground">{data.model}</span>
-              <RowMenu
-                label="Local model actions"
-                items={[
-                  { label: "Change", onSelect: show },
-                  {
-                    label: "Remove",
-                    destructive: true,
-                    confirm: { title: "Remove the local model?", body: "The tools stop sending their text jobs to it.", ok: "Remove" },
-                    onSelect: async () => {
-                      await saveLocalModel({ url: null });
-                      await refresh();
+      <Card>
+        {/* no search id: the search index can't tell an install's own admin from everyone else, and a hit must land on a row */}
+        <ListRow
+          title="Local model"
+          subtitle="Used by the tools before the Anthropic API key."
+          status={set ? <Status>{data.url}</Status> : undefined}
+          actions={
+            set ? (
+              <>
+                <span className="max-w-40 truncate font-mono text-xs text-muted-foreground">{data.model}</span>
+                <RowMenu
+                  label="Local model actions"
+                  items={[
+                    { label: "Change", onSelect: show },
+                    {
+                      label: "Remove",
+                      destructive: true,
+                      confirm: { title: "Remove the local model?", body: "The tools stop using it.", ok: "Remove" },
+                      onSelect: async () => {
+                        await saveLocalModel({ url: null });
+                        await refresh();
+                      },
                     },
-                  },
-                ]}
-              />
-            </>
-          ) : (
-            <Button size="sm" variant="outline" onClick={show}>
-              Connect
-            </Button>
-          )
-        }
-      />
+                  ]}
+                />
+              </>
+            ) : (
+              <Button size="sm" variant="outline" onClick={show}>
+                Add
+              </Button>
+            )
+          }
+        />
+      </Card>
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title={set ? "Change the local model" : "Connect a local model"}
-        submitLabel={set ? "Save" : "Connect"}
+        title={set ? "Change local model" : "Add local model"}
+        submitLabel={set ? "Save" : "Add"}
         onSubmit={submit}
         busy={busy}
         submitDisabled={!url.trim() || !model.trim()}
         error={error}
       >
-        <div className="space-y-1.5">
-          <label htmlFor="local-model-address" className="text-xs text-muted-foreground">
-            Address
-          </label>
-          <Input id="local-model-address" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://localhost:11434" autoComplete="off" spellCheck={false} className="h-8 font-mono text-xs" />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="local-model-name" className="text-xs text-muted-foreground">
-            Model
-          </label>
-          <Input id="local-model-name" value={model} onChange={(e) => setModel(e.target.value)} autoComplete="off" spellCheck={false} className="h-8 font-mono text-xs" />
+        <Row className="p-0 sm:p-0" title="Address" control={<Input aria-label="Address" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://localhost:11434" autoComplete="off" spellCheck={false} className={input} />} />
+        <Row className="p-0 sm:p-0" title="Model" control={<Input aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)} autoComplete="off" spellCheck={false} className={input} />}>
           {listed.length > 0 && (
             <div data-local-models className="flex max-h-44 flex-col gap-1.5 overflow-y-auto [scrollbar-gutter:stable]">
               {listed.map((m) => (
@@ -138,7 +138,7 @@ export function LocalModelRow({ ownAi }: { ownAi: boolean }) {
               ))}
             </div>
           )}
-        </div>
+        </Row>
       </FormDialog>
     </>
   );

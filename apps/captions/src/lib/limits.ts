@@ -28,11 +28,11 @@ export function formatDuration(ms: number): string {
   return `${minutes}m`;
 }
 
-/** "resets in 2h 5m", "resets now", "Resets momentarily"; null when the window has no reset. */
+/** "resets in 2h 5m", "resets now", "resets in under a minute"; null when the window has no reset. */
 export function resetsIn(w: LimitWindow, now: number): string | null {
   if (w.resetsAt === undefined) return null;
   if (w.resetsAt <= now) return "resets now";
-  if (w.resetsAt - now < MINUTE) return "Resets momentarily";
+  if (w.resetsAt - now < MINUTE) return "resets in under a minute";
   return `resets in ${formatDuration(w.resetsAt - now)}`;
 }
 
@@ -83,13 +83,13 @@ export function claudeLimitReset(limits: LimitsIdentity[], now: number): string 
  */
 export function noticeOf(i: LimitsIdentity, customEndpoint = false): string | null {
   if (i.state === "no_login") {
-    if (i.driver !== "claude") return "This folder has no ChatGPT sign-in, so there is no plan to read.";
+    if (i.driver !== "claude") return "No ChatGPT sign-in in this account folder.";
     return customEndpoint
-      ? "This folder sends its requests through a custom endpoint, so there is no plan to read."
-      : "This folder has no Claude sign-in, so there is no plan to read.";
+      ? "This account folder sends its requests to another address than Claude's, so it has no plan limits."
+      : "No Claude sign-in in this account folder.";
   }
-  if (i.state === "signed_out") return "Signed out in this folder. Sign in again there, and the reading comes back within five minutes.";
-  if (i.state === "error") return `Its limits could not be read${i.error ? ` (${i.error})` : ""}.`;
+  if (i.state === "signed_out") return "Signed out in this account folder.";
+  if (i.state === "error") return `Could not read the limits${i.error ? ` (${i.error})` : ""}.`;
   return i.windows.length === 0 ? "No limits reported." : null;
 }
 
