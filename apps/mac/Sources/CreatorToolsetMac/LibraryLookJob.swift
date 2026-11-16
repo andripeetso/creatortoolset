@@ -10,8 +10,11 @@
 //   or …/fail { error }                     with a reason a person can read
 // The sheets stay on this Mac (the relay folder's looks/<version>.json), so lines written again under a new context
 // send them again without reading the video. Only a video in a folder the person gave this app is read (MediaFiles.gate).
-// ponytail: a version deleted on the server leaves its sheets here (about 2 MB for 45 minutes of footage); clear them
-// when a version goes, if that ever adds up
+// Every claim this Mac makes lists them (`looks`: bytes by version, `kept`); its answer names those to drop (`drop`): a
+// version that is gone, trashed or no longer this Mac's, or all of them after Settings → Storage → Empty. A look whose
+// sheets went makes them from the video again.
+// A look's sheets may come to 100 MB on the server; past that it answers 413 and fails the look for good, so this Mac
+// stops it, logs why, and is not asked for it again.
 import Foundation
 
 /// The device job kind this Mac lists for shot descriptions of its own files.
@@ -112,7 +115,11 @@ struct LibraryLookJob {
     private func send(_ path: String, _ body: [String: Any], timeout: TimeInterval = 60) throws -> DeviceReply {
         let reply = try api.call("POST", path, body, tries: 3, timeout: timeout)
         if reply.status == 404 || reply.status == 401 { throw LookGone() }
-        guard reply.status == 200 else { throw LibraryLookRefused(why: "The server refused it: \(FaceBlurAutoJob.problem(reply))") }
+        // 413: the look's sheets came to more than the server takes, its own words say so; the look failed there for good
+        guard reply.status == 200 else {
+            let problem = FaceBlurAutoJob.problem(reply)
+            throw LibraryLookRefused(why: reply.status == 413 ? problem : "The server refused it: \(problem)")
+        }
         return reply
     }
 
@@ -129,6 +136,28 @@ struct LibraryLookJob {
                                 ph: LookSheets.hashes(ffmpeg: ffmpeg, sheet: out, count: these.count, landscape: landscape)))
         }
         return Kept(format: LookSheets.format, stretches: stretches, sheets: sheets)
+    }
+
+    /// The sheets kept in `folder`: each version's file size, by version id.
+    static func kept(in folder: URL) -> [String: Int] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        var out: [String: Int] = [:]
+        for f in files where f.pathExtension == "json" {
+            out[f.deletingPathExtension().lastPathComponent] = (try? f.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        }
+        return out
+    }
+
+    /// Drops what a claim's answer says (`looks: { gone: [versions], clear? }`): those versions' sheets, or all of them.
+    static func drop(_ answer: Data, in folder: URL) {
+        guard let looks = ((try? JSONSerialization.jsonObject(with: answer)) as? [String: Any])?["looks"] as? [String: Any] else { return }
+        if looks["clear"] as? Bool == true {
+            for v in kept(in: folder).keys { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(v).json")) }
+            return
+        }
+        for v in looks["gone"] as? [String] ?? [] where v.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(v).json"))
+        }
     }
 
     static func load(_ file: URL) -> Kept? {

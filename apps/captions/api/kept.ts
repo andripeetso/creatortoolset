@@ -10,7 +10,10 @@ import type { SessionUser } from "./users";
  * Settings → Storage, "Kept on the server" (contracts/storage.ts KEPT_KINDS), mounted at /api/devices/storage/kept:
  *   GET  /              → KeptView: this account's files in the server's data folder, by kind (size and count)
  *   POST /:kind/empty   → deletes this account's files of one EMPTIED kind: the trash, a chat's pictures and videos,
- *                         finished renders. Work (projects, Review videos, posts…) is deleted in its own tool.
+ *                         finished renders, the shot description sheets its Macs keep. Work (projects, Review videos,
+ *                         posts…) is deleted in its own tool.
+ * The shot description sheets are on the account's Macs, not here: counted from what each Mac's last claim said, and
+ * emptied by telling each Mac on its next claim (library/mac-look.ts).
  * Only the caller's own files: a kind's folder is fixed here, never sent by the client. A file with no owner (made before
  * accounts) counts as the server's first admin's.
  *
@@ -140,6 +143,8 @@ async function itemsOf(kind: KeptKind, u: Who, stores: Stores): Promise<Item[]> 
     }
     case "exports":
       return (await (await import("./exports")).finishedExportDirs(u.username)).map((d) => ({ id: path.basename(d), paths: [d] }));
+    case "look-sheets":
+      return []; // on the Macs: measure reads their count
   }
 }
 
@@ -200,6 +205,11 @@ async function measure(u: Who, stores: Stores = new Map()): Promise<Array<KeptRo
       listed.push(item);
     }
     if (kind === "library") bytes += await bucketBytes(listed.map((i) => i.id));
+    if (kind === "look-sheets") {
+      const on = (await import("./library/mac-look")).lookSheetsOf(u.username);
+      rows.push({ kind, ...on, listed });
+      continue;
+    }
     if (kind === "captions" || kind === "captions-trash") bytes += await bucketOriginals(stores, listed.map((i) => i.id));
     const keepDays = await keepDaysOf(kind);
     // a library is counted by its size alone: its folder is there before anything is in it
@@ -219,6 +229,7 @@ export async function emptyKept(kind: KeptKind, u: Who): Promise<void> {
   if (kind === "captions-trash") return (await import("./projects")).emptyProjectTrash(listed.map((i) => i.id));
   if (kind === "review-trash") return (await import("./review")).emptyReviewTrash(listed.map((i) => i.id));
   if (kind === "exports") return (await import("./exports")).removeFinishedExports(u.username, listed.flatMap((i) => i.paths));
+  if (kind === "look-sheets") return (await import("./library/mac-look")).emptyLookSheets(u.username);
   // a chat's pictures and videos are plain files of this account's own folder
   if (kind === "chat-pictures" || kind === "chat-videos")
     for (const p of listed.flatMap((i) => i.paths)) await rm(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

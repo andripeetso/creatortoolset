@@ -142,6 +142,56 @@ final class LibraryLookTests: XCTestCase {
         XCTAssertEqual(site.requests.map(\.path), ["/api/devices/relay/job/library-look/6/fail", "/api/devices/relay/job/library-look/7/fail"])
     }
 
+    /// Sheets kept for `version` in `folder`, as a look leaves them: `stretches` on one sheet each.
+    private func keep(_ version: String, in folder: URL, stretches: [[Double]]) throws {
+        let jpeg = Data([0xff, 0xd8, 0xff, 0xe0]).base64EncodedString()
+        let kept = LibraryLookJob.Kept(format: LookSheets.format, stretches: stretches,
+                                       sheets: stretches.indices.map { .init(segs: [$0], jpeg: jpeg, ph: [""]) })
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try JSONEncoder().encode(kept).write(to: folder.appendingPathComponent("\(version).json"))
+    }
+
+    func testALookPastWhatTheServerTakesStopsSaysWhyAndSendsNothingMore() async throws {
+        let dir = testFolder("look-too-big")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let stretches: [[Double]] = [[0, 4], [4, 8], [8, 12]]
+        try keep("ver-big", in: dir, stretches: stretches)
+        let site = FakeSite()
+        let line = "This video is too long to describe shot by shot: its sheets come to more than 100 MB."
+        site.answer = { r in r.path.hasSuffix("/fail") ? (200, #"{"ok":false}"#) : (413, #"{"error":"\#(line)"}"#) }
+        let options = ["path": "/nowhere.mov", "version": "ver-big", "stretches": String(decoding: try JSONSerialization.data(withJSONObject: stretches), as: UTF8.self)]
+        let job = LibraryLookJob(api: DeviceAPI(base: site.url, token: "ctd_test"), step: EditorJob(id: 8, kind: libraryLookKind, options: options), folder: dir)
+        let end = await offMain { job.run().end }
+        XCTAssertEqual(end, .failed(line), "the server's own words, for the log")
+        // the first sheet was refused: no other sheet and no done follow, and the server is told once
+        XCTAssertEqual(site.requests.map(\.path), ["/api/devices/relay/job/library-look/8", "/api/devices/relay/job/library-look/8/fail"])
+    }
+
+    func testEachClaimListsTheKeptSheetsAndDropsTheOnesTheServerNames() throws {
+        let dir = testFolder("look-claim")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let site = FakeSite()
+        let runner = RelayRunner(base: site.url, token: "ctd_test", work: dir.appendingPathComponent("relay"), home: dir, onStatus: { _ in }, onRevoked: {})
+        for v in ["ver-a", "ver-b", "ver-c"] { try keep(v, in: runner.looksFolder, stretches: [[0, 4]]) }
+        // gone, trashed or no longer this Mac's: the server names them; a name that is no version id is left alone
+        site.answer = { _ in (200, #"{"job":null,"looks":{"gone":["ver-b","../ver-a"]}}"#) }
+        XCTAssertNil(runner.claimStep(hinted: false))
+        let body = try XCTUnwrap((try JSONSerialization.jsonObject(with: site.requests[0].body)) as? [String: Any])
+        let looks = try XCTUnwrap(body["looks"] as? [String: Int])
+        XCTAssertEqual(looks.keys.sorted(), ["ver-a", "ver-b", "ver-c"])
+        XCTAssertTrue(looks.values.allSatisfy { $0 > 0 }, "each version's size")
+        XCTAssertEqual(LibraryLookJob.kept(in: runner.looksFolder).keys.sorted(), ["ver-a", "ver-c"])
+        // Settings → Storage → Empty: the next claim's answer drops them all
+        site.answer = { _ in (200, #"{"job":null,"looks":{"gone":[],"clear":true}}"#) }
+        XCTAssertNil(runner.claimStep(hinted: false))
+        XCTAssertEqual(LibraryLookJob.kept(in: runner.looksFolder), [:])
+        // an older server says nothing of sheets: nothing goes
+        try keep("ver-d", in: runner.looksFolder, stretches: [[0, 4]])
+        site.answer = { _ in (200, #"{"job":null}"#) }
+        XCTAssertNil(runner.claimStep(hinted: false))
+        XCTAssertEqual(LibraryLookJob.kept(in: runner.looksFolder).keys.sorted(), ["ver-d"])
+    }
+
     /// A JPEG as grey pixels, with its size.
     static func grey(_ url: URL) -> (width: Int, height: Int, pixels: [UInt8])? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }

@@ -254,6 +254,14 @@ export function setDeviceKinds(id: string, kinds: string[]): void {
   persist();
 }
 
+/** The shot description sheets a Mac keeps for this server (library/mac-look.ts). Written only when they change. */
+export function setDeviceLooks(id: string, looks: NonNullable<Device["looks"]>): void {
+  const d = find(id);
+  if (!d || JSON.stringify(d.looks ?? null) === JSON.stringify(looks)) return;
+  d.looks = looks;
+  persist();
+}
+
 /** A computer's last test for helping with heavy work (lib/helper-check.ts); its owner's pages are told. */
 export function setDeviceCheck(id: string, check: NonNullable<Device["check"]>): void {
   const d = find(id);

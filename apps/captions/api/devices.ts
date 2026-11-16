@@ -25,7 +25,7 @@ import { storageApp } from "./devices-storage";
 import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
-import { macLookJob } from "./library/mac-look";
+import { lookSheetsClaim, macLookJob } from "./library/mac-look";
 import { env } from "./lib/env";
 
 /**
@@ -82,12 +82,15 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const ready = b?.ready === undefined ? undefined : parseModels(b.ready, isComputerModel);
   if (!held || !getting || !asked || ready === null) return c.json({ error: "models, getting, asked, ready: lists of model ids" }, 400);
   const k = await declared(d, kinds);
-  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? (await editorStep(d, k)) } satisfies DeviceClaim);
+  // the shot description sheets it keeps: counted, and the ones to drop named (library/mac-look.ts)
+  const looks = lookSheetsClaim(d, b?.looks);
+  const sheets = looks ? { looks } : {};
+  if (!k.includes(TRANSCRIBE_KIND)) return c.json({ job: claimCutout(d, k) ?? claimPluginJob(d, k) ?? (await editorStep(d, k)), ...sheets } satisfies DeviceClaim);
   // a computer that runs speech models: what it has now, its transcript if one waits for it, and what its owner wants on it
   declareModels(d, held, getting, asked, ready);
   const now = deviceOf(d.id)!;
   const job = claimCutout(now, k) ?? claimPluginJob(now, k) ?? claimTranscript(now, await readBalance(d.owner)) ?? (await editorStep(now, k));
-  return c.json({ job, models: deviceOf(d.id)!.stt!.want } satisfies DeviceClaim);
+  return c.json({ job, models: deviceOf(d.id)!.stt!.want, ...sheets } satisfies DeviceClaim);
 });
 /** An AI Editor step for the device, if one waits for it: a step that reads footage carries where its files are for it. */
 async function editorStep(d: Device, kinds: string[]) {

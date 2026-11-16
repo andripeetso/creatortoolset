@@ -87,7 +87,11 @@ export const FOLDER_LIST_KIND = "folder-list";
  *   POST job/library-look/:id   { sheet: { segs, jpeg, ph } }      → {}   one sheet: base64 JPEG, its stretches' picture hashes
  *   POST job/library-look/:id   { done: true, format }             → DeviceEnded: the look lane asks the AI from them once
  *   POST job/library-look/:id/fail   { error } → DeviceEnded
- * The sheets stay on the Mac; the server holds them in memory until the AI's call and keeps none.
+ * The sheets stay on the Mac; the server holds them in memory until the AI's call and keeps none. A look's sheets
+ * together may come to 100 MB (mac-look.ts LOOK_BYTES_MAX): past it the sheet is answered 413 with why, and the look
+ * fails for good. Every claim of a Mac that lists this kind carries `looks`, the sheets it keeps, and is answered with
+ * `looks: { gone, clear? }`: the versions whose sheets it drops (gone, trashed, no longer this Mac's), or all of them
+ * (Settings → Storage → Empty).
  */
 export const LIBRARY_LOOK_KIND = "library-look";
 
@@ -210,6 +214,8 @@ export interface DeviceClaimBody {
   getting?: string[];
   /** the ones its person got on the computer itself since its last claim; one that went from it was removed there */
   asked?: string[];
+  /** with LIBRARY_LOOK_KIND: the shot description sheets it keeps for this server, bytes by version id */
+  looks?: Record<string, number>;
 }
 
 /** A step handed to a device: its job id, its kind, and the edit it belongs to ("" variant = the whole edit). */
@@ -241,4 +247,6 @@ export interface DeviceClaim {
   job: DeviceJob | null;
   /** to a device that declares TRANSCRIBE_KIND: the speech models its owner wants on it */
   models?: string[];
+  /** to a claim that said which sheets it keeps: the versions whose sheets it drops, or `clear`: all of them */
+  looks?: { gone: string[]; clear?: true };
 }
