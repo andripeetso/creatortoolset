@@ -1073,7 +1073,7 @@ final class CaptionEditor: ObservableObject, Identifiable {
             // Another device saved first. Take its revision so the next save can go through,
             // and keep this phone's version: the message says the last change wasn't saved.
             if let fresh: CapProject = try? await api.get("/api/projects/\(id)") { revision = fresh.revision }
-            fail("This project changed on another device, so your last change wasn't saved. Save again to keep this version, or check the website first.")
+            fail("This project changed on another phone or computer, so your last change wasn't saved. Save again to keep this version, or check the website first.")
         } catch {
             fail("Not saved: \(error.localizedDescription)")
         }

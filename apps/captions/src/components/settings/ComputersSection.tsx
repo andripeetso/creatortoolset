@@ -411,8 +411,8 @@ function LinuxSteps() {
 
   if (code === undefined) return <Card><LoadingRow title="Creating a code…" /></Card>;
   if (code === null) return <Card><ErrorRow title="Could not create a code" detail="Check the connection, then try again." retry={mint} /></Card>;
-  // "Access from other devices" is the switch's name in the Mac app
-  if (!code.url) return <Status tone="attention">Needs Access from other devices, in the Creator Toolset Mac app</Status>;
+  // "Network access" is the switch's name in the Mac app
+  if (!code.url) return <Status tone="attention">Needs Network access, in the Creator Toolset Mac app</Status>;
   return (
     <div className="space-y-3 text-sm">
       <p>Run this on the Linux computer, as the user it should run under.</p>
@@ -425,7 +425,7 @@ function LinuxSteps() {
 /** A code is one-time and lasts a minute; the server keeps one live code per account (so this runs only while the dialog is open). */
 const isCode = (c: PhoneState | undefined): c is Exclude<PhoneState, "local" | "signin" | null> => typeof c === "object" && c !== null;
 
-/** After the Mac app restarts the server for "Access from other devices": asks again each second, 20 times at most. */
+/** After the Mac app restarts the server for "Network access": asks again each second, 20 times at most. */
 async function afterRestart(): Promise<PhoneState> {
   for (let tries = 1; ; tries++) {
     const c = await mintPhoneCode();
@@ -506,7 +506,7 @@ function AddPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     body = (
       <Card>
         <Row
-          title="Access from other devices"
+          title="Network access"
           description={p.canTurnOn ? "A phone reaches this computer only while it is on." : "Turn it on in the Creator Toolset Mac app."}
           status={p.problem ? <Status tone="broken">{p.problem}</Status> : undefined}
           control={

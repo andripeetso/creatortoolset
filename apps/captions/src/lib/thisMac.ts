@@ -135,13 +135,13 @@ export async function installInMacAi(app: "claude" | "codex", key: string): Prom
 }
 
 /**
- * "Access from other devices" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
+ * "Network access" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
  * owner's password first, when there is none). Resolves to the problem to show, or null when it is on and the server
  * is restarting.
  */
 export async function allowOtherDevices(): Promise<string | null> {
   const bridge = thisMacBridge();
-  if (!bridge) return "Turn on Access from other devices in the Creator Toolset Mac app.";
+  if (!bridge) return "Turn on Network access in the Creator Toolset Mac app.";
   try {
     const s = await bridge.postMessage("access");
     return s.problem ?? null;
@@ -165,7 +165,7 @@ export async function thisMacLinked(): Promise<boolean | undefined> {
 
 /**
  * Setup's Add this computer: the Mac app opens the site's page with this Mac's code in the browser, waits for the yes and
- * starts this Mac's tunnel (the Servers menu's Add this Mac to my account…). Resolves to null once it is on the account,
+ * starts this Mac's tunnel (the Servers menu's Add this Mac to the account…). Resolves to null once it is on the account,
  * else the problem to show.
  */
 export async function connectThisMac(): Promise<string | null> {

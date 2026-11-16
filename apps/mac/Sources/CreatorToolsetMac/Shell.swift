@@ -385,7 +385,7 @@ final class Shell: NSObject, ObservableObject {
         AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
     }
 
-    /// Access from other devices: on needs the owner's own password first (the server refuses another device's sign-in
+    /// Network access: on needs the owner's own password first (the server refuses another device's sign-in
     /// while it is still APP_SECRET); the window keeps its session through the change. The server restarts on the new
     /// interface. Returns what went wrong, or nil.
     func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
@@ -514,7 +514,7 @@ final class Shell: NSObject, ObservableObject {
         return ai.running > 0 ? "AI on this Mac: running \(ai.running)" : "AI on this Mac: on"
     }
 
-    /// The Mac's device is known for this site (paired once); "Remove this Mac from my account" needs it.
+    /// The Mac's device is known for this site (paired once); "Remove this Mac from the account" needs it.
     var pairedHere: Bool { DeviceVault.deviceID(for: base.host ?? "") != nil }
 
     // MARK: window and site
@@ -710,7 +710,7 @@ final class Shell: NSObject, ObservableObject {
 
     // MARK: this Mac for the person's AI (Relay.swift)
 
-    /// "Use this Mac for my AI": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
+    /// "AI on this Mac": on pairs this Mac once (signed in to the site in the window) and starts the runner; off stops it and keeps the pairing.
     func setAI(_ on: Bool) {
         aiOn = on
         UserDefaults.standard.set(on, forKey: aiKey)
@@ -737,7 +737,7 @@ final class Shell: NSObject, ObservableObject {
                 do {
                     try await pairThisMac()
                 } catch {
-                    setAIOff("Could not pair this Mac: \(error.localizedDescription)")
+                    setAIOff("Could not add this Mac: \(error.localizedDescription)")
                     return false
                 }
                 guard aiOn else { return false }   // turned off while pairing: the pairing stays, no runner
@@ -820,7 +820,7 @@ final class Shell: NSObject, ObservableObject {
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
-        setAIOff("This Mac was removed from your account. Turn it on again to pair it.")
+        setAIOff("This Mac was removed from the account. Turn on AI on this Mac to add it again.")
     }
 
     private func setAIOff(_ message: String?) {
@@ -831,7 +831,7 @@ final class Shell: NSObject, ObservableObject {
         notice = message
     }
 
-    /// "Remove this Mac from my account": stops it, drops its token here and asks the site to remove the device.
+    /// "Remove this Mac from the account": stops it, drops its token here and asks the site to remove the device.
     func forgetThisMac() {
         let host = base.host ?? ""
         let id = DeviceVault.deviceID(for: host)
@@ -1217,7 +1217,7 @@ enum SiteError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .status(let code): return code == 401 || code == 403 ? "sign in in the window first" : "the site answered \(code)"
-        case .keychain: return "the Keychain did not keep the device token"
+        case .keychain: return "the Keychain did not keep this Mac's token"
         }
     }
 }

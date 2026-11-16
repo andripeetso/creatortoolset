@@ -531,7 +531,7 @@ func isLimitError(_ text: String) -> Bool {
 func plainLimitLine(_ text: String) -> String? {
     guard isLimitError(text) else { return nil }
     let head = text.components(separatedBy: ": ").first ?? ""
-    let who = head.count <= 20 && head != text ? "\(head)'s" : "Your AI's"
+    let who = head.count <= 20 && head != text ? "\(head)'s" : "The AI provider's"
     let window = text.range(of: "weekly", options: .caseInsensitive) != nil ? "weekly limit"
         : text.range(of: "session|5-hour", options: [.regularExpression, .caseInsensitive]) != nil ? "5-hour limit" : "limit"
     var line = "\(who) \(window) is reached"
