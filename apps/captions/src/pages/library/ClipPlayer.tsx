@@ -13,6 +13,9 @@ import { copyReady, original, playerNote, type PlayerNote } from "./clip";
  * window cannot decode says so in the player's place; while its lighter copy is being made the panel's detail says so
  * (read again on each library change), and the player starts once the copy is there: the same play address then
  * serves the copy. Under a video, its strip of frames (Filmstrip).
+ * A clip with its own turn (a screen recorded on its side) is turned here, the file never is. The window's own controls
+ * would turn with it, so it has none: a click plays or pauses, and the strip under it goes to a moment.
+ * ponytail: no volume or full screen on a turned clip; its own controls if he asks for them
  */
 
 type Phase = "loading" | "playing" | "paused" | "failed";
@@ -66,6 +69,8 @@ export function ClipPlayer({
   const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
   const note = said === "missing" ? null : said;
   const picture = a.thumbUrl;
+  const turn = a.kind === "video" ? a.turn : undefined;
+  const side = turn === 90 || turn === 270;
 
   const events = {
     onPlaying: () => to("playing"),
@@ -101,6 +106,7 @@ export function ClipPlayer({
       <div
         className={cn(
           "relative w-full overflow-hidden bg-black bg-contain bg-center bg-no-repeat",
+          turn && "[container-type:size]",
           a.kind === "audio" ? "h-40 md:h-auto" : "aspect-[var(--ar)]",
           fill ? "max-h-[45dvh] md:min-h-0 md:flex-1 md:max-h-none md:aspect-auto" : "max-h-[70vh] rounded-lg",
         )}
@@ -114,11 +120,15 @@ export function ClipPlayer({
             key={src}
             ref={media}
             src={src}
-            poster={picture}
-            controls={phase !== "failed"}
+            // the picture is upright already: on a turned video it would be turned twice
+            poster={turn ? undefined : picture}
+            controls={phase !== "failed" && !turn}
             playsInline
             preload="auto"
-            className={phase === "failed" ? "hidden" : "absolute inset-0 h-full w-full object-contain"}
+            className={phase === "failed" ? "hidden" : turn ? "absolute left-1/2 top-1/2 cursor-pointer object-contain" : "absolute inset-0 h-full w-full object-contain"}
+            // turned about its middle; on its side it is laid out as tall as the box is wide, so it fills the box once turned
+            style={turn ? { width: side ? "100cqh" : "100%", height: side ? "100cqw" : "100%", transform: `translate(-50%, -50%) rotate(${turn}deg)` } : undefined}
+            onClick={turn ? (e) => void (e.currentTarget.paused ? e.currentTarget.play().catch(() => {}) : e.currentTarget.pause()) : undefined}
             {...events}
           />
         )}

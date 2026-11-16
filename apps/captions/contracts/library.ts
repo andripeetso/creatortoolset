@@ -15,8 +15,11 @@ export interface AssetCard {
   versionId: string;
   versionN: number;
   durationS?: number;
+  /** as shown: with `turn` 90 or 270 they are the file's, swapped */
   width?: number;
   height?: number;
+  /** clockwise degrees the player turns the video to show it upright (the AI's or the person's; the file is never changed). Thumb and strip are upright already */
+  turn?: 90 | 180 | 270;
   thumbUrl?: string; // /api/library/media/<versionId>/thumb
   tags: string[]; // user and ai, with `aiTags` marking the AI ones
   aiTags: string[];

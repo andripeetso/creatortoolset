@@ -23,6 +23,8 @@ export interface ProbeSummary {
   song?: true; // sound only or under a cover, tagged with an artist or an album: a released track, not someone talking
   /** ISO 3166-1 alpha-2 of where it was filmed, from the file's own location; "" when it has none or it is at sea. Never the coordinates */
   country?: string;
+  /** the library's own turn on top of `rotation` (the AI's or the person's, api/library/turn.ts); never read from the file */
+  turn?: number;
 }
 
 const TIMECODE = /^\d\d:\d\d:\d\d[:;]\d\d$/;

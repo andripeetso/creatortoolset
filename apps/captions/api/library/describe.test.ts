@@ -25,7 +25,7 @@ const { searchApp } = await import("./search");
 const { indexAsset, buildAssetQuery, pageOf } = await import("./query");
 const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
-const { describePrompt, parseDescribe, saveDescribed, tagsOf, workspaceOf } = await import("./describe");
+const { describePrompt, describeVersion, parseDescribe, saveDescribed, tagsOf, workspaceOf } = await import("./describe");
 const { saveTranscript } = await import("./transcribe");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -99,7 +99,7 @@ describe("describe job", () => {
 
   it("the prompt builder has no field for names or ages, and the answer keeps only description, tags and roll", () => {
     const p = describePrompt({ title: "Forward roll", transcript: "[0:00] Tuck the chin.", frames: 4 });
-    expect(p.user).toMatch(/"roll": "a" or "b"\}$/);
+    expect(p.user).toMatch(/"roll": "a" or "b", "turn": 0\}$/);
     expect(p.user).not.toMatch(/creator|who/i); // A-roll is anyone talking to the camera, never a guess at who
     expect(parseDescribe('{"description": "A person talks.", "tags": [], "roll": "a"}').roll).toBe("a");
     expect(parseDescribe('{"description": "A person talks.", "tags": [], "roll": "maybe"}')).toEqual({ description: "A person talks.", tags: [] });
@@ -206,6 +206,39 @@ describe("describe job", () => {
       expect([job(v, "transcribe"), job(v, "fingerprint"), job(v, "describe")]).toEqual([undefined, undefined, undefined]);
       expect(job(v, "wave")).toBeDefined();
     }
+  });
+});
+
+describe("a clip filmed on its side", () => {
+  it("the AI's turn and Rotate turn the card, its thumbnail and its strip, never the file", async () => {
+    const v = await seed("ast-turn-001");
+    libraryDb().prepare(`UPDATE asset_versions SET probe = '{"duration":2,"vcodec":"h264","width":160,"height":120}' WHERE id = ?`).run(v);
+    const thumb = path.join(dir, "turn-thumb.jpg");
+    execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-i", clip, "-frames:v", "1", thumb]);
+    const key = `libraries/lib_a/v/${v}/thumb.jpg`;
+    await blobs.put(key, thumb);
+    libraryDb().prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', ?, 1)").run(v, key);
+    const size = async () =>
+      execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", await blobs.localCopy(key)]).toString().trim();
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] });
+    vi.mocked(completeVisionWithFallback).mockImplementationOnce(
+      async (_s, user, _i, _c, parse) => {
+        expect(user).toContain("turn");
+        return { value: parse('{"description": "A game recorded sideways.", "tags": [], "roll": "b", "turn": 270}'), provider: "test" } as never;
+      },
+    );
+    // straight to the step: describe jobs queued by the tests above would take the AI's answer first
+    await describeVersion(libraryDb(), v, clip, 2, "local", dir);
+    let c = card("ast-turn-001");
+    expect([c.turn, c.width, c.height]).toEqual([270, 120, 160]);
+    expect(c.thumbUrl).toContain("?t=270");
+    expect(await size()).toBe("120,160");
+    expect(job(v, "sprite")?.state).toBe("queued"); // made again, upright
+    // Rotate: a quarter clockwise from 270 is upright again
+    expect((await call("local", "/api/library/lib_a/assets/ast-turn-001", "PATCH", { turn: 0 })).status).toBe(200);
+    c = card("ast-turn-001");
+    expect([c.turn, c.width, c.height]).toEqual([undefined, 160, 120]);
+    expect(await size()).toBe("160,120");
   });
 });
 
