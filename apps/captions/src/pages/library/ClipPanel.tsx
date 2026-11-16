@@ -482,8 +482,10 @@ function TagEditor({
       {asset.tags.length > 0 && (
         <ul className="flex flex-wrap gap-1">
           {[...userTags, ...aiTags].map((t) => (
-            <li key={t} className="flex items-center rounded-full border border-zinc-500/25 py-0.5 pl-2 pr-1 text-[11px] text-zinc-500">
-              {asset.aiTags.includes(t) && <span className="mr-1 font-medium uppercase opacity-70">AI</span>}
+            <li
+              key={t}
+              className={`flex items-center rounded-full border py-0.5 pl-2 pr-1 text-[11px] text-zinc-500 ${asset.aiTags.includes(t) ? "border-zinc-500/25" : "border-transparent bg-zinc-500/15"}`}
+            >
               {t}
               {readOnly ? (
                 <span className="w-1" />
