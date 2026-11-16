@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useId, useMemo } from "react";
 import { create } from "zustand";
 import { PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import type { WorkshopProject } from "@/lib/workshop";
@@ -22,6 +22,9 @@ export const ALL_WORKSPACES = "all";
 
 const usePick = create<{ picked: string | null }>(() => ({ picked: null }));
 
+/** The selectors mounted now, oldest first (WorkspacePick draws only the first). */
+const useDrawn = create<{ ids: string[] }>(() => ({ ids: [] }));
+
 /** Settings closed: the next time it opens it starts from the window's workspace again (SettingsPage). */
 export const resetWorkspacePick = () => usePick.setState({ picked: null });
 
@@ -40,31 +43,34 @@ export interface SettingsWorkspace {
   name: (id?: string | null) => string;
 }
 
+/** What a page shows for a choice (`picked`: an id, ALL_WORKSPACES or none yet) among `every` workspace, the window being in `here`. */
+export function shownWorkspace(mode: "list" | "one", picked: string | null, every: WorkshopProject[], here: string | null, only?: readonly string[] | null): SettingsWorkspace {
+  const allowed = only ? new Set(only) : null;
+  const workspaces = allowed ? every.filter((p) => allowed.has(p.id)) : every;
+  const many = workspaces.length > 1;
+  const known = (id: string | null) => (id && workspaces.some((p) => p.id === id) ? id : null);
+  const own = known(here) ?? workspaces[0]?.id ?? null;
+  const chosen = picked === ALL_WORKSPACES ? null : known(picked);
+  // a list starts on all of them; a page of single values on the window's own
+  const all = mode === "list" && many && (picked === null || picked === ALL_WORKSPACES);
+  const id = all ? null : many ? (chosen ?? own) : own;
+  return {
+    id,
+    all,
+    workspaces,
+    many,
+    cacheKey: all ? "*" : id && id !== here ? id : undefined,
+    name: (w) => (w ? (every.find((p) => p.id === w)?.name ?? "Another workspace") : "Every workspace"),
+  };
+}
+
 /** `only`: the workspaces this page can show (a plug-in's page: the ones it is on in); left out, all of them. */
 export function useSettingsWorkspace(mode: "list" | "one", only?: readonly string[]): SettingsWorkspace {
   const picked = usePick((s) => s.picked);
   const every = useWorkspace((s) => s.projects);
   const here = useWorkspace((s) => s.currentProjectId);
   const onlyKey = only ? only.join(" ") : null;
-  return useMemo(() => {
-    const allowed = onlyKey === null ? null : new Set(onlyKey.split(" "));
-    const workspaces = allowed ? every.filter((p) => allowed.has(p.id)) : every;
-    const many = workspaces.length > 1;
-    const known = (id: string | null) => (id && workspaces.some((p) => p.id === id) ? id : null);
-    const own = known(here) ?? workspaces[0]?.id ?? null;
-    const chosen = picked === ALL_WORKSPACES ? null : known(picked);
-    // a list starts on all of them; a page of single values on the window's own
-    const all = mode === "list" && many && (picked === null || picked === ALL_WORKSPACES);
-    const id = all ? null : many ? (chosen ?? own) : own;
-    return {
-      id,
-      all,
-      workspaces,
-      many,
-      cacheKey: all ? "*" : id && id !== here ? id : undefined,
-      name: (w) => (w ? (workspaces.find((p) => p.id === w)?.name ?? "Another workspace") : "Every workspace"),
-    };
-  }, [picked, every, here, mode, onlyKey]);
+  return useMemo(() => shownWorkspace(mode, picked, every, here, onlyKey === null ? null : onlyKey.split(" ").filter(Boolean)), [picked, every, here, mode, onlyKey]);
 }
 
 /** The fetch options for a request that works in one workspace, whatever the window is in (the X-CT-Workspace header). */
@@ -78,7 +84,14 @@ export function inWorkspace(id: string | null | undefined, init?: RequestInit): 
 /** The selector, in the page header. Nothing to choose with fewer than two workspaces, so nothing is drawn. */
 export function WorkspacePick({ mode, only }: { mode: "list" | "one"; only?: readonly string[] }) {
   const w = useSettingsWorkspace(mode, only);
-  if (!w.many) return null;
+  // one selector per page: when two parts of a page ask for it (a tool's page and a plug-in's section on it), the first draws
+  const me = useId();
+  useEffect(() => {
+    useDrawn.setState((s) => ({ ids: [...s.ids, me] }));
+    return () => useDrawn.setState((s) => ({ ids: s.ids.filter((x) => x !== me) }));
+  }, [me]);
+  const first = useDrawn((s) => s.ids[0] === me);
+  if (!w.many || !first) return null;
   return (
     <PageAction>
       <SettingsSelect
