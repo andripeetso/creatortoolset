@@ -20,6 +20,9 @@ import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
+import { pluginsOffIn } from "../lib/plugin-workspaces";
+import { currentWorkspaceId } from "../lib/workspace-scope";
+import type { SessionUser } from "../users";
 
 /**
  * The AI Editor's edits: $DATA_DIR/editor/<id>/edit.json (what the user asked for), and its steps in the library
@@ -425,6 +428,12 @@ export function uploadFinished(uploadId: string, versionId: string): Promise<voi
   return waiting;
 }
 
+/** The plug-ins off in the workspace a new edit is made in (its own, else the one the request works in): their steps are left out. */
+async function stepsOffIn(username: string, projectId?: string): Promise<string[]> {
+  const ws = projectId ?? (await currentWorkspaceId({ username } as SessionUser));
+  return ws ? ((await pluginsOffIn([{ id: ws, owner: username }]))[ws] ?? []) : [];
+}
+
 /** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
 export async function createEdit(username: string, body: Record<string, unknown>, tool = false, projectId?: string): Promise<EditMeta | null> {
   const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
@@ -455,7 +464,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     brollCollectionId: null,
     framing: { punch: 1.15 },
     bundle: (await editorDefaults(username)).bundle,
-    steps: chosenSteps(username),
+    steps: chosenSteps(username, await stepsOffIn(username, projectId)),
     ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },

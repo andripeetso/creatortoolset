@@ -203,7 +203,7 @@ function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; rec
           <RecorderSettings />
         </Section>
       )}
-      <ToolPlugins steps={steps} tool={tile} inSettings switches={tile === "editor" && hasThisMac() && !hosted} />
+      <ToolPlugins steps={steps} tool={tile} switches={tile === "editor" && hasThisMac() && !hosted} />
       {toolSectionsFor(me, webPlugins, tile).map((s) => (
         <Section key={s.id} title={s.title}>
           {s.body}

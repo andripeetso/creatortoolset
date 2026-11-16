@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import type { WorkshopProject } from "./workshop";
-import { useAuth } from "./auth";
+import { setOffHere, useAuth } from "./auth";
 import { putCached, readCached, warmCached } from "./local-cache";
 import { setCurrentWorkspace } from "./current-workspace";
 
@@ -14,6 +14,8 @@ import { setCurrentWorkspace } from "./current-workspace";
 export interface Workspace {
   currentProjectId: string | null;
   projects: WorkshopProject[];
+  /** per workspace, the plug-ins off there (by id and gate): hidden there at once on a switch (auth.ts setOffHere) */
+  pluginsOff?: Record<string, string[]>;
 }
 
 interface WorkspaceState extends Workspace {
@@ -45,7 +47,7 @@ export function applyWorkspace(ws: Workspace | null, keepMine = true): void {
   if (!ws) return;
   const s = useWorkspace.getState();
   const keep = keepMine && s.loaded && ws.projects.some((p) => p.id === s.currentProjectId);
-  useWorkspace.setState({ projects: ws.projects, currentProjectId: keep ? s.currentProjectId : ws.currentProjectId, loaded: true });
+  useWorkspace.setState({ projects: ws.projects, pluginsOff: ws.pluginsOff ?? {}, currentProjectId: keep ? s.currentProjectId : ws.currentProjectId, loaded: true });
 }
 
 /** Before the first render (main.tsx): the last projects this account saw. */
@@ -86,12 +88,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       throw e;
     }
   },
-  reset: () => set({ currentProjectId: null, projects: [], loaded: false }),
+  reset: () => set({ currentProjectId: null, projects: [], pluginsOff: {}, loaded: false }),
 }));
 
 // the window's workspace for every request and saved copy (current-workspace.ts), in step at once: a switch's own
 // PATCH already says the new one
-useWorkspace.subscribe((s) => setCurrentWorkspace(s.currentProjectId));
+useWorkspace.subscribe((s) => {
+  setCurrentWorkspace(s.currentProjectId);
+  setOffHere(s.pluginsOff?.[s.currentProjectId ?? ""] ?? []);
+});
 
 export const currentProject = (s: WorkspaceState): WorkshopProject | null =>
   s.projects.find((p) => p.id === s.currentProjectId) ?? null;

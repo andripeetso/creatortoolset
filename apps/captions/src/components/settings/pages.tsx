@@ -17,6 +17,7 @@ import { ServersSection } from "./ServersSection";
 import { GeneralSection } from "./GeneralSection";
 import { ToolsSection } from "./ToolsSection";
 import { VoiceSection } from "./VoiceSection";
+import { PluginSettingsPage } from "./PluginWorkspaces";
 
 /**
  * Which component draws each Settings page. One line per page: a screen builder changes only the component on their own
@@ -42,4 +43,5 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   team: WorkspaceSection,
   admin: AdminSection,
   account: AccountSection,
+  plugin: PluginSettingsPage,
 };

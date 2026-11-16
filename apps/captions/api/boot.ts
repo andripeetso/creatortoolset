@@ -70,6 +70,7 @@ import { serverPlugins } from "./plugins.gen";
 import { clearLoadingMark, loadFolderPlugins, mountFolderPlugins, startFolderPlugin } from "./lib/folder-plugins";
 import { announceWrites, syncApp } from "./lib/sync";
 import { inRequestWorkspace } from "./lib/workspace-scope";
+import { guardPlugins, pluginGuard, pluginWorkspacesApp } from "./lib/plugin-workspaces";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { mcpChallenge, oauthApp } from "./oauth";
 import { cardApp } from "./mcp-cards";
@@ -485,8 +486,11 @@ app.route("/api/folders", foldersApp);
 app.route("/api/account-profile", accountProfileApp);
 app.route("/api/telemetry", telemetryApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
-mountPlugins(app, serverPlugins);
+// a plug-in off in the workspace a request works in refuses it (lib/plugin-workspaces.ts); mounted before its routes
+guardPlugins(app, serverPlugins);
+mountPlugins(app, serverPlugins, pluginGuard);
 mountPluginsList(app);
+app.route("/api/plugins", pluginWorkspacesApp);
 mountFolderPlugins(app);
 mountGatedRoutes(app, serverPlugins);
 // hosted mode only (CT_MODE=hosted): the platform admin, the team and invite links. On one person's Mac they don't exist.
