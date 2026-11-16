@@ -27,7 +27,7 @@ import { STYLE_NAME_MAX } from "@contracts/editor-styles";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const STEP_NAME: Record<string, string> = { analyze: "Analyzing", script: "Writing the script", draft: "Drafting", preview: "Making the preview", critique: "Checking the cut", file: "Filing in Review", broll: "Adding B-roll", cards: "Making cards", "cards-draw": "Drawing cards", post: "Post-processing" };
+const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards", post: "Post-processing" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
