@@ -61,10 +61,11 @@ export interface TextOn extends PlanText {
 }
 
 const even = (x: number) => Math.max(2, Math.round(x / 2) * 2);
-/** A picture scaled to cover w×h, the middle kept. */
-const cover = (src: { w: number; h: number }, w: number, h: number) => {
+/** A picture scaled to cover w×h, the middle kept, or the window at `focus` (where it moves). */
+const cover = (src: { w: number; h: number }, w: number, h: number, focus?: { x: number; y: number }) => {
   const k = Math.max(w / src.w, h / src.h);
-  return `scale=${even(src.w * k)}:${even(src.h * k)},crop=${w}:${h}`;
+  const [sw, sh] = [even(src.w * k), even(src.h * k)];
+  return `scale=${sw}:${sh},crop=${w}:${h}${focus ? `:${Math.round((sw - w) * focus.x)}:${Math.round((sh - h) * focus.y)}` : ""}`;
 };
 
 /**
@@ -83,9 +84,9 @@ function framed(tl: Timeline, item: Item, s: Stretch, o: { grade?: Cdl; under?: 
   const tidy = `setsar=1,fps=${den}/${num},format=yuv420p`;
   const f = fitted(src, tl.width, tl.height);
   if (item.split?.length) {
-    const pics = [{ src, at: "" }, ...item.split.map((p, j) => ({ src: tl.sources[p.src]!, at: `[${j + 2}:v]${speed},` }))];
+    const pics = [{ src, at: "", focus: item.focus }, ...item.split.map((p, j) => ({ src: tl.sources[p.src]!, at: `[${j + 2}:v]${speed},`, focus: p.focus }))];
     const h = pics.map((_, j) => (j < pics.length - 1 ? even(PH / pics.length) : PH - even(PH / pics.length) * (pics.length - 1)));
-    const cells = pics.map((p, j) => `${j ? p.at : ""}${cover(p.src, PW, h[j]!)},${tidy}[c${j}]`);
+    const cells = pics.map((p, j) => `${j ? p.at : ""}${cover(p.src, PW, h[j]!, p.focus)},${tidy}[c${j}]`);
     return [...head, `${cells.join(";")};${pics.map((_, j) => `[c${j}]`).join("")}vstack=inputs=${pics.length}`, ...end];
   }
   if (item.frame === "blur") {
@@ -100,8 +101,8 @@ function framed(tl: Timeline, item: Item, s: Stretch, o: { grade?: Cdl; under?: 
       ...end,
     ];
   }
-  const base = [...head, shotFilter(tl, item, o.grade)];
   const bar = Math.round((PH - PW / LETTERBOX) / 2);
+  const base = [...head, shotFilter(tl, item, o.grade, item.frame === "letterbox" && bar > 0 ? PH - 2 * bar : undefined)];
   if (item.frame === "letterbox" && bar > 0) base.push(`drawbox=x=0:y=0:w=iw:h=${bar}:c=black:t=fill`, `drawbox=x=0:y=ih-${bar}:w=iw:h=${bar}:c=black:t=fill`);
   return base;
 }

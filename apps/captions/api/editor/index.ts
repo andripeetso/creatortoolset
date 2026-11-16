@@ -27,7 +27,7 @@ import { macAway } from "./script";
 // ── the picture ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Bump when the shots a source gets would change: a cached index of another version is read again. */
-const INDEX_V = 1;
+const INDEX_V = 2;
 /** Frames are read this small and grey: enough to see a cut and how much moves, cheap to compare. */
 const FW = 64;
 const FH = 36;
@@ -49,6 +49,35 @@ const LAG_S = 0.5;
 /** Movement (mean |Δ| a second) below which a source counts as still, whatever its own most is */
 const STILL_PER_S = 0.15;
 
+/**
+ * Junk: pictures that are no shot (a world map or a dark crop of a game's skill buttons in a cut is noise). Measured on
+ * the FW×FH grey frame (`looks`), set on real game footage (desktop, phone, screen recordings; frames per bin looked
+ * at): a black, fade or loading frame has detail under FLAT; real dark-dungeon fights sit at luma 0.06-0.08 with detail
+ * 0.04+; a frame whose 4×4 blocks are flat panels (spread under 3 grey levels, not black) for UI_PANELS or more, and
+ * whose panels are near grey (chroma under UI_TINT: desktops and menus measured 8-14, a colourful snow fight 35+, test
+ * patterns and cartoons far more), is a desktop, web page or menu; a stretch whose change over LAG_S (mean |Δ| in grey
+ * levels) has a median under STILL is a map, inventory, menu, character select or someone standing. A shot is junk when
+ * JUNK_SHARE of its LAG_S samples are, or it sits still.
+ */
+export const DARK = 0.06;
+export const FLAT = 0.03;
+export const UI_PANELS = 0.3;
+export const UI_TINT = 20;
+export const STILL = 0.6;
+const JUNK_SHARE = 0.2;
+/** HUD: a 16×9 cell that changes under 2 grey levels over LAG_S in STEADY of the frames where the rest moves (a game's
+ * bottom bars measured 0.8-0.9, its world under 0.3). A crop window more than HUD_MAX of it never fills the frame. */
+const STEADY = 0.6;
+export const HUD_MAX = 0.5;
+/** A phone game's skill buttons sit over a moving world and never stay put: in a very wide picture (a 9:16 window
+ * under WIDE of its width, a phone's 2.2:1) a window at the outer EDGE of either side never fills either. */
+const WIDE = 0.3;
+const EDGE = 0.15;
+/** A crop window off-centre must hold this much more of what moves: a game keeps its hero in the middle */
+const CENTRE = 0.25;
+const CX = 16;
+const CY = 9;
+
 export interface PictureRead {
   /** frames read a second */
   fps: number;
@@ -58,7 +87,74 @@ export interface PictureRead {
   cut: Float32Array;
   /** change from LAG_S before (0 until then) */
   lag: Float32Array;
+  /** each frame's junk ("" when it is a picture), from `looks` */
+  junk?: string[];
+  /** where each frame changed from LAG_S before: CX×CY cells (row by row), mean |Δ| × 4, frames one after another */
+  maps?: Uint8Array;
 }
+
+/** Which CX×CY cells of a FW×FH grey frame are flat (their 4×4 pixels spread under 3 grey levels): 1 = flat. */
+function flatCells(f: Uint8Array): Uint8Array {
+  const out = new Uint8Array(CX * CY);
+  for (let cy = 0; cy < CY; cy++)
+    for (let cx = 0; cx < CX; cx++) {
+      let s = 0;
+      let q = 0;
+      for (let y = cy * 4; y < cy * 4 + 4; y++) for (let x = cx * 4; x < cx * 4 + 4; x++) (s += f[y * FW + x]!), (q += f[y * FW + x]! ** 2);
+      out[cy * CX + cx] = Math.sqrt(Math.max(0, q / 16 - (s / 16) ** 2)) < 3 ? 1 : 0;
+    }
+  return out;
+}
+
+/** An RGB picture as grey (BT.601 luma, 0..255) and each pixel's chroma (its distance from grey, as YCbCr's Cb, Cr). */
+export function grey(rgb: Uint8Array): [Buffer, Float32Array] {
+  const n = rgb.length / 3;
+  const g = Buffer.alloc(n);
+  const c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const [r, gr, b] = [rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!];
+    g[i] = Math.round(0.299 * r + 0.587 * gr + 0.114 * b);
+    c[i] = Math.hypot(-0.1687 * r - 0.3313 * gr + 0.5 * b, 0.5 * r - 0.4187 * gr - 0.0813 * b);
+  }
+  return [g, c];
+}
+
+/** (luma 0..1, detail: mean |step| between neighbours 0..1, the share of 4×4 blocks that are flat panels, those panels'
+ * mean chroma when `chroma` is given) of a grey picture `w`×`h` at the index's scale (FW×FH for a whole frame). */
+export function looks(g: ArrayLike<number>, w: number, h: number, chroma?: ArrayLike<number>): { luma: number; detail: number; panels: number; tint: number } {
+  let sum = 0;
+  let dx = 0;
+  let dy = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const v = g[y * w + x]!;
+      sum += v;
+      if (x) dx += Math.abs(v - g[y * w + x - 1]!);
+      if (y) dy += Math.abs(v - g[(y - 1) * w + x]!);
+    }
+  let flat = 0;
+  let tint = 0;
+  const bw = Math.floor(w / 4);
+  const bh = Math.floor(h / 4);
+  for (let by = 0; by < bh; by++)
+    for (let bx = 0; bx < bw; bx++) {
+      let s = 0;
+      let q = 0;
+      for (let y = by * 4; y < by * 4 + 4; y++)
+        for (let x = bx * 4; x < bx * 4 + 4; x++) (s += g[y * w + x]!), (q += g[y * w + x]! ** 2);
+      const mean = s / 16;
+      if (Math.sqrt(Math.max(0, q / 16 - mean * mean)) >= 3 || mean <= 25) continue;
+      flat++;
+      if (chroma) for (let y = by * 4; y < by * 4 + 4; y++) for (let x = bx * 4; x < bx * 4 + 4; x++) tint += chroma[y * w + x]! / 16;
+    }
+  const detail = w > 1 && h > 1 ? (dx / (h * (w - 1)) + dy / ((h - 1) * w)) / 255 : 0;
+  return { luma: sum / (w * h) / 255, detail, panels: bw * bh ? flat / (bw * bh) : 0, tint: flat ? tint / flat : 0 };
+}
+
+/** Why a picture is no shot: "dark", "flat" (black, a fade, a loading screen) or "ui" (a desktop, page or menu: grey
+ * flat panels); "" when it is one. */
+export const junkOf = ({ luma, detail, panels, tint = 0 }: { luma: number; detail: number; panels: number; tint?: number }) =>
+  luma < DARK ? "dark" : detail < FLAT ? "flat" : panels >= UI_PANELS && tint < UI_TINT ? "ui" : "";
 
 /** Every frame of `src` at up to MAX_READ_FPS, FW×FH grey, compared with the one before and the one LAG_S before. */
 export async function readPicture(src: string, fps: number, signal?: AbortSignal): Promise<PictureRead> {
@@ -70,10 +166,11 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
       new Promise((resolve, reject) => {
         const p = spawn(
           ffmpegCommand(),
-          ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn", "-vf", `fps=${rate},scale=${FW}:${FH}:flags=area,format=gray`, "-f", "rawvideo", "pipe:1"],
+          ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-an", "-sn", "-vf", `fps=${rate},scale=${FW}:${FH}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"],
           { signal },
         );
         const ring: Buffer[] = []; // the last L+1 frames
+        const flats: Uint8Array[] = []; // and which of their cells are flat
         const step: number[] = [];
         const cut: number[] = [];
         let spreadBefore = 0;
@@ -84,6 +181,8 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
           return Math.sqrt(Math.max(0, q / size - (s / size) ** 2)) / 255;
         };
         const lag: number[] = [];
+        const junk: string[] = [];
+        const maps: Uint8Array[] = [];
         const diff = (x: Buffer, y: Buffer) => {
           let s = 0;
           for (let i = 0; i < size; i++) s += Math.abs(x[i]! - y[i]!);
@@ -93,18 +192,34 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
         let err = "";
         p.stdout.on("data", (d: Buffer) => {
           let buf = carry.length ? Buffer.concat([carry, d]) : d;
-          while (buf.length >= size) {
-            const f = Buffer.from(buf.subarray(0, size));
-            buf = buf.subarray(size);
+          while (buf.length >= 3 * size) {
+            const [f, tint] = grey(buf.subarray(0, 3 * size));
+            buf = buf.subarray(3 * size);
             const prev = ring[ring.length - 1];
             const d = prev ? diff(f, prev) : 0;
             const sp = spread(f);
             step.push(d);
             cut.push(prev ? d / Math.max(SPREAD_FLOOR, (sp + spreadBefore) / 2) : 0);
             spreadBefore = sp;
-            lag.push(ring.length > L ? diff(f, ring[ring.length - 1 - L]!) : 0);
+            const back = ring.length > L ? ring[ring.length - 1 - L]! : undefined;
+            lag.push(back ? diff(f, back) : 0);
+            junk.push(junkOf(looks(f, FW, FH, tint)));
+            // where it moves: change in a cell with texture (a flat panel flipping from white to black is no action)
+            const flat = flatCells(f);
+            const backFlat = ring.length > L ? flats[flats.length - 1 - L]! : undefined;
+            const cells = new Uint8Array(CX * CY);
+            if (back)
+              for (let cy = 0; cy < CY; cy++)
+                for (let cx = 0; cx < CX; cx++) {
+                  if (flat[cy * CX + cx] && backFlat![cy * CX + cx]) continue;
+                  let s = 0;
+                  for (let y = cy * 4; y < cy * 4 + 4; y++) for (let x = cx * 4; x < cx * 4 + 4; x++) s += Math.abs(f[y * FW + x]! - back[y * FW + x]!);
+                  cells[cy * CX + cx] = Math.min(255, Math.round((s / 16) * 4));
+                }
+            maps.push(cells);
             ring.push(f);
-            if (ring.length > L + 1) ring.shift();
+            flats.push(flat);
+            if (ring.length > L + 1) ring.shift(), flats.shift();
           }
           carry = Buffer.from(buf);
         });
@@ -112,7 +227,9 @@ export async function readPicture(src: string, fps: number, signal?: AbortSignal
         p.on("error", reject);
         p.on("close", (code) => {
           if (code !== 0) return reject(new Error(err.trim() || `ffmpeg exited ${code}`));
-          resolve({ fps: rate, step: Float32Array.from(step), cut: Float32Array.from(cut), lag: Float32Array.from(lag) });
+          const all = new Uint8Array(maps.length * CX * CY);
+          maps.forEach((m, i) => all.set(m, i * CX * CY));
+          resolve({ fps: rate, step: Float32Array.from(step), cut: Float32Array.from(cut), lag: Float32Array.from(lag), junk, maps: all });
         });
       }),
   );
@@ -178,11 +295,117 @@ export function shotsOf(read: PictureRead, dur: number): IndexShot[] {
   }
   const most = Math.max(STILL_PER_S, ...per);
   const r2 = (x: number) => Math.round(x * 100) / 100;
+  const hud = hudOf(read);
   return per.map((m, k) => ({
     a: r2(all[k]! / read.fps),
     b: k === per.length - 1 ? dur : r2(all[k + 1]! / read.fps),
     motion: r2(Math.min(1, m / most)),
+    ...pictureOf(read, all[k]!, all[k + 1]!, hud),
   }));
+}
+
+/** The HUD of what was read: the CX×CY cells that change under 2 grey levels over LAG_S in STEADY of the frames whose
+ * change is over its median (where the rest moves): a game's bars and buttons. Row by row, 1 = HUD. */
+export function hudOf(read: PictureRead): number[] {
+  const out = new Array<number>(CX * CY).fill(0);
+  const { maps, lag } = read;
+  if (!maps?.length) return out;
+  const L = Math.max(1, Math.round(LAG_S * read.fps));
+  const live = Array.from(lag).slice(L);
+  const mid = median(live);
+  const act: number[] = [];
+  for (let i = L; i < lag.length; i++) if (lag[i]! > mid) act.push(i);
+  if (!act.length) return out;
+  for (let c = 0; c < CX * CY; c++) {
+    let still = 0;
+    for (const i of act) if (maps[i * CX * CY + c]! < 8) still++;
+    out[c] = still / act.length >= STEADY ? 1 : 0;
+  }
+  return out;
+}
+
+/** A shot's frames [a, b) as a picture: why it is junk (JUNK_SHARE of its LAG_S samples junk, or it sits still) and
+ * where it moves, the HUD left out. */
+function pictureOf(read: PictureRead, a: number, b: number, hud: number[]): Pick<IndexShot, "junk" | "moves"> {
+  if (!read.junk?.length || !read.maps) return {};
+  const L = Math.max(1, Math.round(LAG_S * read.fps));
+  const codes: string[] = [];
+  const lags: number[] = [];
+  const cols = new Array<number>(CX).fill(0);
+  const rows = new Array<number>(CY).fill(0);
+  for (let i = a; i < Math.max(a + 1, b) && i < read.junk.length; i += L) {
+    codes.push(read.junk[i]!);
+    if (i < L) continue;
+    lags.push(read.lag[i]!);
+    for (let c = 0; c < CX * CY; c++) {
+      if (hud[c]) continue;
+      const v = read.maps[i * CX * CY + c]!;
+      cols[c % CX] += v;
+      rows[Math.floor(c / CX)] += v;
+    }
+  }
+  const bad = codes.filter(Boolean);
+  const junk = codes.length && bad.length / codes.length >= JUNK_SHARE ? bad.sort((x, y) => bad.filter((z) => z === y).length - bad.filter((z) => z === x).length)[0] : lags.length && median(lags) < STILL / 255 ? "still" : "";
+  const tot = cols.reduce((x, y) => x + y, 0);
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  return { ...(junk ? { junk } : {}), ...(tot > 0 ? { moves: { cols: cols.map((x) => r3(x / tot)), rows: rows.map((x) => r3(x / tot)) } } : {}) };
+}
+
+/** A shot is no shot: measured junk, or the AI saw "junk: …" on the contact sheet. */
+export const isJunk = (x: Pick<IndexShot, "junk" | "desc">) => !!x.junk || /^junk\b/i.test(x.desc ?? "");
+
+/** A window `r` of a line of cells wide over shares `e`: the place holding the most, a centred one favoured by CENTRE
+ * -> [place 0..1, share held, first and last edge as fractions]. */
+function place(e: number[], r: number): [number, number, number, number] {
+  if (r >= 0.98) return [0.5, 1, 0, 1];
+  const n = e.length;
+  const cum = [0];
+  for (const v of e) cum.push(cum[cum.length - 1]! + v);
+  const tot = cum[n]!;
+  const at = (u: number) => {
+    const x = Math.min(n, Math.max(0, u));
+    const i = Math.min(n - 1, Math.floor(x));
+    return cum[i]! + (cum[i + 1]! - cum[i]!) * (x - i);
+  };
+  const held = (x: number) => (tot > 0 ? (at((x * (1 - r) + r) * n) - at(x * (1 - r) * n)) / tot : r);
+  let best = 0;
+  let score = -Infinity;
+  for (let k = 0; k <= 40; k++) {
+    const x = k / 40;
+    const v = held(x) + CENTRE * (1 - 2 * Math.abs(x - 0.5));
+    if (v > score + 1e-12) [best, score] = [x, v];
+  }
+  return [Math.round(best * 1000) / 1000, held(best), best * (1 - r), best * (1 - r) + r];
+}
+
+/**
+ * Where a w:h crop window sits in a source's picture for its stretch a..b s, so it shows what moves there, never a HUD
+ * corner or empty floor: the shots' change across and down, weighted by how much of
+ * each the stretch covers, the HUD left out; then the window holding the most (`place`). One window a shot, no drift.
+ * `ok` is false when no window of that shape holds its share of what moves, it is more than HUD_MAX HUD, or it sits at
+ * the edge of a very wide picture (WIDE, EDGE): a fill becomes a blur (the whole picture over a blurred copy).
+ */
+export function focusOf(src: Pick<IndexSource, "w" | "h" | "shots" | "hud">, a: number, b: number, w: number, h: number): { x: number; y: number; ok: boolean } {
+  const cols = new Array<number>(CX).fill(0);
+  const rows = new Array<number>(CY).fill(0);
+  for (const x of src.shots) {
+    const k = Math.max(0, Math.min(b, x.b) - Math.max(a, x.a)) / Math.max(1e-6, x.b - x.a);
+    if (k <= 0 || !x.moves) continue;
+    x.moves.cols.forEach((v, i) => (cols[i] += k * v));
+    x.moves.rows.forEach((v, i) => (rows[i] += k * v));
+  }
+  const rx = Math.min(1, w / h / (src.w / src.h));
+  const ry = Math.min(1, src.w / src.h / (w / h));
+  const [x, hx, x0, x1] = place(cols, rx);
+  const [y, hy, y0, y1] = place(rows, ry);
+  const hud = src.hud ?? [];
+  let n = 0;
+  let on = 0;
+  const c0 = Math.floor(x0 * CX + 1e-6);
+  const r0 = Math.floor(y0 * CY + 1e-6);
+  for (let r = r0; r < Math.max(r0 + 1, Math.ceil(y1 * CY - 1e-6)); r++)
+    for (let c = c0; c < Math.max(c0 + 1, Math.ceil(x1 * CX - 1e-6)); c++) (n++, (on += hud[r * CX + c] ?? 0));
+  return { x, y, ok: on / Math.max(1, n) <= HUD_MAX && hx >= 0.85 * rx && hy >= 0.85 * ry && (rx >= WIDE || (x >= EDGE && x <= 1 - EDGE)) };
 }
 
 /**
@@ -244,14 +467,66 @@ export async function indexSources(edit: { sources: string[] }, signal: AbortSig
     if (!src) {
       const turned = probe.rotation === 90 || probe.rotation === 270;
       const picture = !!probe.vcodec && !probe.cover;
-      const shots = picture ? shotsOf(await readPicture(await readable(id, row.source_key), probe.fps, signal), probe.duration) : [];
-      src = { id, title: row.title, dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, shots };
+      const read = picture ? await readPicture(await readable(id, row.source_key), probe.fps, signal) : null;
+      const shots = read ? shotsOf(read, probe.duration) : [];
+      src = { id, title: row.title, dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height, shots, ...(read ? { hud: hudOf(read) } : {}) };
       await keep(src);
     }
     sources.push({ ...src, title: row.title, speech });
   }
   return { sources };
 }
+
+/**
+ * The last look before a shot is used: its frame at `t` s as the shot shows it (a `shape` window at `focus`, else the
+ * whole picture), at the index's scale -> why it is no shot (`junkOf`, or "ui" when more than UI_BRIGHT of it is bright
+ * and colourless: an app window or a document; snow stays well under), "" when fine or unreadable.
+ */
+export async function frameJunk(file: string, t: number, size: { w: number; h: number }, shape: [number, number] | null, focus?: { x: number; y: number }, signal?: AbortSignal): Promise<string> {
+  const buf = await ffmpegSlot(
+    () =>
+      new Promise<Buffer>((resolve) => {
+        const p = spawn(
+          ffmpegCommand(),
+          ["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", Math.max(0, t).toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale='if(gte(iw,ih),256,-2)':'if(gte(iw,ih),-2,256)'", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+          { signal },
+        );
+        const parts: Buffer[] = [];
+        p.stdout.on("data", (d: Buffer) => parts.push(d));
+        p.on("error", () => resolve(Buffer.alloc(0)));
+        p.on("close", () => resolve(Buffer.concat(parts)));
+      }),
+  );
+  if (!buf.length) return "";
+  // the frame is 256 on its long side
+  const [W, H] = size.w >= size.h ? [256, buf.length / 3 / 256] : [buf.length / 3 / 256, 256];
+  if (!Number.isInteger(W) || !Number.isInteger(H)) return "";
+  let [x0, y0, cw, ch] = [0, 0, W, H];
+  if (shape) {
+    const r = shape[0] / shape[1] / (W / H);
+    [cw, ch] = r < 1 ? [Math.round(W * r), H] : [W, Math.round(H / r)];
+    [x0, y0] = [Math.round((W - cw) * (focus?.x ?? 0.5)), Math.round((H - ch) * (focus?.y ?? 0.5))];
+  }
+  const gw = Math.max(4, Math.floor(cw / 4));
+  const gh = Math.max(4, Math.floor(ch / 4));
+  const g = new Float32Array(gw * gh);
+  const ch2 = new Float32Array(gw * gh);
+  let bright = 0;
+  for (let y = 0; y < gh * 4 && y < ch; y++)
+    for (let x = 0; x < gw * 4 && x < cw; x++) {
+      const i = ((y0 + y) * W + x0 + x) * 3;
+      const [r, gr, b] = [buf[i]!, buf[i + 1]!, buf[i + 2]!];
+      const hi = Math.max(r, gr, b);
+      if (hi > 217 && (hi - Math.min(r, gr, b)) / hi < 31 / 255) bright++;
+      const j = Math.floor(y / 4) * gw + Math.floor(x / 4);
+      g[j] += (0.299 * r + 0.587 * gr + 0.114 * b) / 16;
+      ch2[j] += Math.hypot(-0.1687 * r - 0.3313 * gr + 0.5 * b, 0.5 * r - 0.4187 * gr - 0.0813 * b) / 16;
+    }
+  return junkOf(looks(g, gw, gh, ch2)) || (bright / (Math.min(ch, gh * 4) * Math.min(cw, gw * 4)) > UI_BRIGHT ? "ui" : "");
+}
+
+/** A window more than this share bright and colourless is an app window or a document, not a shot */
+const UI_BRIGHT = 0.2;
 
 // ── contact sheets and the person's AI ──────────────────────────────────────────────────────────────────────────
 
@@ -332,6 +607,7 @@ export function lookPrompt(lines: string[], story: boolean, workspace = ""): { s
     system:
       "You look at contact sheets of footage for a video editor, so it can pick shots without watching them. For each numbered " +
       "shot say in a few words what is seen: the subject, the action, the setting and the kind of shot (wide, close, screen, text). " +
+      'A shot that shows no action, only a map, an inventory, a menu, character select, a loading screen, a chat window, a desktop, a dark or empty frame, or mostly a game\'s buttons and bars, begins with "junk:" and that kind ("junk: map", "junk: menu", "junk: loading", "junk: dark", "junk: ui"). ' +
       `${RULE} Answer with JSON only.`,
     user: [
       ...(workspace
