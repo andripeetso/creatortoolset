@@ -111,8 +111,20 @@ export function mergeKeys(base: unknown, mine: unknown, cur: unknown): unknown {
   return out;
 }
 
+/** The result being applied per edit: two computers' results for one edit apply one after the other, so each merge reads
+ *  the file the other wrote (a merge reads, then writes after an await). */
+const applying = new Map<string, Promise<unknown>>();
+
 /** Applies a result while `deviceId` still holds the step; false (nothing applied) when it does not. */
-export async function applyResult(jobId: number, deviceId: string, r: WorkResult): Promise<boolean> {
+export function applyResult(jobId: number, deviceId: string, r: WorkResult): Promise<boolean> {
+  const { editId } = splitJob(heldBy(jobId, deviceId) ?? { version_id: "" });
+  const next = (applying.get(editId) ?? Promise.resolve()).catch(() => {}).then(() => applyNow(jobId, deviceId, r));
+  applying.set(editId, next);
+  void next.catch(() => {}).finally(() => applying.get(editId) === next && applying.delete(editId));
+  return next;
+}
+
+async function applyNow(jobId: number, deviceId: string, r: WorkResult): Promise<boolean> {
   const job = heldBy(jobId, deviceId);
   const pkg = job && readKept(jobId);
   if (!job || !pkg) return false;
@@ -159,22 +171,23 @@ export async function applyResult(jobId: number, deviceId: string, r: WorkResult
     await saveStep(editId, "post", { ...post, [variant]: { files: r.kept, notes: post[variant]?.notes ?? [], on: deviceId } as (typeof post)[string] });
   }
 
-  // 4. what the step queued: this edit's versions and core kinds only
-  const db = libraryDb();
+  // 4. the preview into Review, with the thumbnail and waveform made on the computer; before what the step queued, as
+  // the step itself files it first (critique.ts): a file step queued sooner would find no preview in Review yet
   const edit = readEdit(editId);
-  const kinds = new Set(Object.keys(coreSteps()));
-  for (const q of r.effects.queue ?? []) {
-    const [e, v = ""] = q.version.split(/:(.*)/s);
-    if (edit && e === editId && (!v || /^(v[1-9]|m[1-9]\d?)$/.test(v)) && kinds.has(q.kind)) enqueueJob(db, edit.workspaceId, `${editId}:${v}`, q.kind, job.actor, true, "edit_jobs");
-  }
-
-  // 5. the preview into Review, with the thumbnail and waveform made on the computer
   const rv = r.effects.review;
   // only this step's own version
   const d = rv && edit && rv.variant === variant && readDraft(editId, rv.variant);
   if (rv && d && edit) {
     const given = (rel: string) => (rel && allowed(jobId, rel) ? path.join(env.dataDir, rel) : undefined);
     await fileInReview(edit, rv.variant, d.timeline, rv.fails as Critique["fails"], job.actor, { thumb: given(rv.thumb), wave: given(rv.wave) });
+  }
+
+  // 5. what the step queued: this edit's versions and core kinds only
+  const db = libraryDb();
+  const kinds = new Set(Object.keys(coreSteps()));
+  for (const q of r.effects.queue ?? []) {
+    const [e, v = ""] = q.version.split(/:(.*)/s);
+    if (edit && e === editId && (!v || /^(v[1-9]|m[1-9]\d?)$/.test(v)) && kinds.has(q.kind)) enqueueJob(db, edit.workspaceId, `${editId}:${v}`, q.kind, job.actor, true, "edit_jobs");
   }
 
   // 6. the outcome, as runStep classifies a throw (editor/worker.ts)

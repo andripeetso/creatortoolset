@@ -8,6 +8,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Edit } from "../../contracts/editor";
+import { WORK_V } from "../../contracts/work";
 
 /**
  * Where work runs, end to end (PRD section 7, as far as phase 4 reaches): the server's real app on a local port, and the
@@ -71,6 +72,8 @@ const srv = {
   ...(await import("../library/jobs")),
   ...(await import("../library/transcribe")),
   ...(await import("../lib/devices")),
+  ...(await import("../library/sources")),
+  ...(await import("./package")),
   ...(await import("../editor/index")),
   ...(await import("../editor/store")),
   ...(await import("../editor/worker")),
@@ -127,13 +130,16 @@ function footage(who: string, from = 0): Record<string, number> {
   return out;
 }
 const jobRow = (id: number) => srv.libraryDb().prepare("SELECT * FROM edit_jobs WHERE id = ?").get(id) as { version_id: string; kind: string; state: string; error: string | null } | undefined;
-/** Which computer sent the result of each of this edit's steps of `kind` (since hit `from`). */
-function ranBy(editId: string, kind: string, from = 0): string[] {
-  return hits.slice(from).flatMap((h) => {
+/** A point in the traffic and in the server's own runs, to look from. */
+const mark = () => ({ hits: hits.length, server: ranOnServer.length });
+/** Where each of this edit's steps of `kind` ran since `from`: the computer that sent its result, or "server". */
+function ranBy(editId: string, kind: string, from = { hits: 0, server: 0 }): string[] {
+  const on = hits.slice(from.hits).flatMap((h) => {
     const m = h.method === "POST" && h.path.match(/\/work\/(\d+)\/done$/);
     const r = m && jobRow(Number(m[1]));
     return r && r.kind === kind && r.version_id.startsWith(`${editId}:`) ? [h.who] : [];
   });
+  return [...on, ...ranOnServer.slice(from.server).filter((r) => r.kind === kind && r.version.startsWith(`${editId}:`)).map(() => "server")];
 }
 
 // ---- hooks the computers' traffic passes through ----
@@ -152,9 +158,13 @@ let base = "";
 let server: ReturnType<typeof serve>;
 /** Runs computer `c`'s worker until it has had nothing to do for a moment: "idle", or "update" when told to. */
 const work = (c: Computer) =>
-  ff.als.run("computer", () => c.mod.startComputerWorker({ server: base, token: c.token, fetch: fetchFor(c.name), beatMs: 50, downloadBeatMs: 50, idleMs: 1500, retryMs: 50 }));
+  ff.als.run("computer", () => c.mod.startComputerWorker({ server: base, token: c.token, fetch: fetchFor(c.name), beatMs: 50, downloadBeatMs: 50, idleMs: 4000, retryMs: 50 }));
 
-/** The server's own loop, while `on`. */
+/** Until each computer's worker has claimed with this app's package version (it is online, and takes steps). */
+const ready = (...cs: Computer[]) => until("the computers online", () => cs.every((c) => srv.isOnline(c.id) && srv.deviceOf(c.id)?.work?.v === WORK_V));
+
+/** The server's own loop, while `on`. In phase 4 it still takes a video step no computer online can take: the tests
+ *  start it once the computers have claimed. */
 const loop = { on: false, done: Promise.resolve() };
 function startLoop() {
   loop.on = true;
@@ -320,6 +330,8 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     // only the proxies of the edit's two clips, each once, never ver_c, never an original
     expect(footage("bo-mac")).toEqual({ ver_a: bytes.proxy.ver_a, ver_b: bytes.proxy.ver_b });
     expect(hits.filter((h) => h.path.includes("/footage/") && (h.query.includes("original") || h.who !== "bo-mac"))).toEqual([]);
+    // each step ran once: none was handed out before what it reads was in place (the file step after Review has the preview)
+    expect(srv.libraryDb().prepare("SELECT kind, attempts, error FROM edit_jobs WHERE edit_id = ? AND attempts != 1").all(bos)).toEqual([]);
     // filed in the workspace's Review under bo, and shown on the edit
     expect(review(bos).v1).toMatchObject({ by: "bo" });
     const e = await json<Edit>(call("bo", "GET", `/api/editor/${bos}`));
@@ -333,15 +345,17 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
 
   it("the cache emptied: the next job downloads what it needs again (PRD 6)", async () => {
     const again = async () => {
-      const from = hits.length;
+      const at = mark();
+      const from = at.hits;
       const n = review(bos).v1!.n;
       expect((await call("bo", "POST", `/api/editor/${bos}/drafts/v1/review`, {})).status).toBe(200);
       const worker = work(boMac);
+      await ready(boMac);
       startLoop();
       await until("filed again", () => review(bos).v1!.n > n && !active(bos).length, bos);
       await stopLoop();
       await worker;
-      expect(ranBy(bos, "preview", from)).toEqual(["bo-mac"]);
+      expect(ranBy(bos, "preview", at)).toEqual(["bo-mac"]);
       return footage("bo-mac", from);
     };
     // the proxies are in its cache: nothing downloads
@@ -351,6 +365,24 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     expect(await again()).toEqual({ ver_a: bytes.proxy.ver_a, ver_b: bytes.proxy.ver_b });
     expect(serverDecodes()).toEqual([]);
   }, 120_000);
+
+  it("a teammate a library policy refuses one of the edit's clips gets no package and no footage for it", async () => {
+    const at = mark();
+    // a stand-in policy (a plug-in that shows members only blurred footage, say): bo may no longer see the town clip
+    srv.registerLibrarySlot("test-refuse", { policies: [{ sourceId: "library", canSee: (v, a) => a.assetId !== "a_ver_b" || v.username !== "bo" }] });
+    try {
+      srv.enqueueJob(srv.libraryDb(), "t", `${bos}:v1`, "preview", "bo", true, "edit_jobs");
+      const job = srv.libraryDb().prepare("SELECT id FROM edit_jobs WHERE edit_id = ? AND kind = 'preview' AND state = 'queued'").get(bos) as { id: number };
+      // the server's loop is off: only the claim decides
+      expect(await work(boMac)).toBe("idle");
+      expect(jobRow(job.id)).toMatchObject({ state: "failed", error: "Some footage is gone or no longer yours to read" });
+      expect(existsSync(srv.keptPath(job.id))).toBe(false);
+      expect(hits.slice(at.hits).filter((h) => h.who === "bo-mac" && !h.path.endsWith("/work/claim"))).toEqual([]);
+      expect(ranBy(bos, "preview", at)).toEqual([]);
+    } finally {
+      srv.resetLibrarySlots();
+    }
+  }, 60_000);
 
   it("an older app takes nothing and is told to update; the step says so (PRD 7)", async () => {
     answers.plan = JSON.stringify({
@@ -372,7 +404,8 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
   });
 
   it("two computers of one person: the one with the originals takes the job and reads them from its disk; two versions at once merge per key (PRD 2)", async () => {
-    const from = hits.length;
+    const at = mark();
+    const from = at.hits;
     const ff0 = ffRuns();
     // the look fails each version's first shot once: both fix rounds write shots.json at the same time, on two computers
     answers.lookFails = 2;
@@ -388,6 +421,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     };
     try {
       const workers = [work(studio), work(laptop)];
+      await ready(studio, laptop);
       startLoop();
       await until("ana's two versions filed in Review", () => !!review(anas).v1 && !!review(anas).v2 && !active(anas).length, anas, 150_000);
       await stopLoop();
@@ -396,7 +430,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
       delete hooks.done;
     }
     // the script (index and plan) went to the computer that has the originals, which downloaded nothing
-    expect(ranBy(anas, "script", from)).toEqual(["studio-mac"]);
+    expect(ranBy(anas, "script", at)).toEqual(["studio-mac"]);
     expect(footage("studio-mac", from)).toEqual({});
     // the two first looks were held at once, one on each computer
     expect(held.map((h) => h.who).sort()).toEqual(["ana-laptop", "studio-mac"]);
@@ -409,13 +443,15 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
   }, 240_000);
 
   it("a computer set to Off takes nothing while the other can (PRD 2)", async () => {
-    const from = hits.length;
+    const at = mark();
+    const from = at.hits;
     mkdirSync(path.join(S, "balance"), { recursive: true });
     writeFileSync(path.join(S, "balance", "ana.json"), JSON.stringify({ on: true, weights: { [studio.id]: 0 } }));
     try {
       const n = review(anas).v1!.n;
       expect((await call("ana", "POST", `/api/editor/${anas}/drafts/v1/review`, {})).status).toBe(200);
       const workers = [work(studio), work(laptop)];
+      await ready(studio, laptop);
       startLoop();
       await until("filed again", () => review(anas).v1!.n > n && !active(anas).length, anas);
       await stopLoop();
@@ -423,7 +459,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     } finally {
       rmSync(path.join(S, "balance", "ana.json"));
     }
-    expect(ranBy(anas, "preview", from)).toEqual(["ana-laptop"]);
+    expect(ranBy(anas, "preview", at)).toEqual(["ana-laptop"]);
     expect(hits.slice(from).filter((h) => h.who === "studio-mac" && !h.path.endsWith("/work/claim"))).toEqual([]);
   }, 120_000);
 
@@ -445,6 +481,7 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     try {
       expect((await call("ana", "POST", `/api/editor/${anas}/drafts/v2/review`, {})).status).toBe(200);
       const workers = [work(studio), work(laptop)];
+      await ready(studio, laptop);
       startLoop();
       await until("stopped", () => !!jobId && !active(anas).length, anas);
       await stopLoop();

@@ -7,13 +7,14 @@
  * and only those whose worker reads this server's package (WORK_MIN). Until the server-work switch (phase 7) the server
  * still runs a step no such computer can take, as before; while one can, the server's loop leaves it alone.
  */
-import type { Device } from "../../contracts/providers";
+import { readFileSync } from "node:fs";
+import type { Balance, Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
 import { WORK_MIN, type WorkBeat } from "../../contracts/work";
 import { coreKinds, placeOf, type StepContext } from "../editor/engine";
 import { computers, editOf, either, fileFor, foldersOf, jobFiles, ONLINE_MS, rankOf, type FileRow } from "../editor/reach";
 import { readEdit, readStep } from "../editor/store";
-import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
+import { balanceFile, mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
@@ -40,6 +41,19 @@ const variantOf = (job: Pick<JobRow, "version_id">) => {
   return vid.slice(vid.indexOf(":") + 1);
 };
 
+/**
+ * The owner's computers set to Off in Load balancing (lib/balance.ts, weight 0 while it is on): they take no step, so
+ * none of them counts as the one that could, and the step goes to another computer (or, in phase 4, the server).
+ */
+function offOf(owner: string): Set<string> {
+  try {
+    const b = JSON.parse(readFileSync(balanceFile(owner), "utf8")) as Partial<Balance>;
+    return b.on === false ? new Set() : new Set(Object.entries(b.weights ?? {}).flatMap(([id, w]) => (w === 0 ? [id] : [])));
+  } catch {
+    return new Set();
+  }
+}
+
 /** How well computer `d` can take `job`: 3 has every file, 2 gets the rest as the server's proxies, 0 never. */
 export function rankFor(d: Device, job: Pick<JobRow, "kind" | "version_id">, rows: FileRow[], folders: StorageFolder[]): number {
   if (!works(d)) return 0;
@@ -64,7 +78,8 @@ export async function fitsWork(d: Device, now = Date.now()): Promise<(job: JobRo
   const folders = foldersOf(d.owner);
   const balance = await readBalance(d.owner);
   // the one asking has a free slot, whatever the list says
-  const peers = computers(d.owner).filter((c) => c.x.id === d.id || c.free).map((c) => (c.x.id === d.id ? d : c.x)).filter(works);
+  const off = offOf(d.owner);
+  const peers = computers(d.owner).filter((c) => c.x.id === d.id || c.free).map((c) => (c.x.id === d.id ? d : c.x)).filter((x) => works(x) && !off.has(x.id));
   return (job) => {
     if (placeOf(job) !== "computer") return false;
     const rows = jobFiles(job);
@@ -82,7 +97,8 @@ export async function fitsWork(d: Device, now = Date.now()): Promise<(job: JobRo
 /** One of the asker's computers that can take this step is online (busy or not): the server's loop leaves it to that one. */
 export function computerCanTake(job: JobRow): boolean {
   if (!job.actor) return false;
-  const own = listDevices((x) => x.owner === job.actor && isOnline(x.id) && works(x));
+  const off = offOf(job.actor);
+  const own = listDevices((x) => x.owner === job.actor && isOnline(x.id) && works(x) && !off.has(x.id));
   if (!own.length) return false;
   const rows = jobFiles(job);
   const folders = foldersOf(job.actor);
@@ -111,7 +127,8 @@ export async function workWaits(d: Device, now = Date.now()): Promise<boolean> {
  */
 export function workWaitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">): string | undefined {
   if (placeOf(job) !== "computer") return undefined;
-  const online = computers(owner).filter((c) => isOnline(c.x.id));
+  const off = offOf(owner);
+  const online = computers(owner).filter((c) => isOnline(c.x.id) && !off.has(c.x.id));
   const rows = jobFiles(job);
   const folders = foldersOf(owner);
   const can = online.filter((c) => rankFor(c.x, job, rows, folders) > 0);
