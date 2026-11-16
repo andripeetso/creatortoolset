@@ -315,6 +315,30 @@ final class UploadMovesTests: XCTestCase {
         engine.store.remove(waiting)
         XCTAssertFalse(engine.store.move(waiting, to: .sending))
     }
+
+    /// A step that began before the clip stopped comes back with "try again later": it wrote its note over
+    /// "Couldn't upload: …" and set a next try on a clip that waits for the person. Both routes.
+    func testALateTryAgainLaterLeavesAClipThatStoppedAsItIs() {
+        let failed = queued(.sending), there = queued(.done), waiting = queued(.picked)
+        engine.fail(failed, "The server answered 413")
+        let before = [failed, there, waiting].map { engine.store.item($0) }
+        for id in [failed, there, waiting] {
+            engine.perform(.retryLater("The network connection was lost"), id)
+            engine.catalogRetryLater(id, "The network connection was lost")
+        }
+        XCTAssertEqual([failed, there, waiting].map { engine.store.item($0) }, before)
+        XCTAssertEqual(engine.store.item(failed).map { ActivityView.status($0, sent: 0) }, "Couldn't upload: The server answered 413")
+
+        // a clip on its way waits and tries again, as before
+        let library = queued(.sending), catalog = queued(.finishing)
+        engine.perform(.retryLater("Offline"), library)
+        engine.catalogRetryLater(catalog, "Offline")
+        for id in [library, catalog] {
+            XCTAssertEqual(engine.store.item(id)?.note, "Offline")
+            XCTAssertEqual(engine.store.item(id)?.attempts, 1)
+            XCTAssertNotNil(engine.store.item(id)?.nextAttemptAt)
+        }
+    }
 }
 
 /// One clip, one transfer: the app's own record of the transfers on their way (`Transfers.onTheWay`).

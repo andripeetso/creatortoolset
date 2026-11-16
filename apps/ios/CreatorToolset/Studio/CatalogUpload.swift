@@ -703,9 +703,9 @@ extension UploadEngine {
     }
 
     /// Waits and tries again; after `CatalogRules.maxAttempts` tries in a row the clip needs a look (Try again counts
-    /// from zero).
-    private func catalogRetryLater(_ id: UUID, _ why: String) {
-        guard let item = store.item(id) else { return }
+    /// from zero). Nothing for a clip that stopped meanwhile: a failed one keeps the note that says why.
+    func catalogRetryLater(_ id: UUID, _ why: String) {
+        guard let item = store.item(id), item.isWorking else { return }
         if CatalogRules.exhausted(afterAttempt: item.attempts) {
             return fail(id, "Gave up after \(CatalogRules.maxAttempts) tries: \(why)")
         }

@@ -476,6 +476,8 @@ final class UploadEngine: ObservableObject {
             }
             kick()
         case .retryLater(let why):
+            // (asked by a step that began before the upload stopped: a failed clip keeps the note that says why)
+            guard store.item(id)?.isWorking == true else { return }
             // a lost connection never gives up: the upload waits, at most 10 minutes between tries
             store.update(id) {
                 $0.attempts += 1
