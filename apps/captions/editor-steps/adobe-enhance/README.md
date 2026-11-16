@@ -6,7 +6,7 @@ A plug-in for Creator Toolset. It adds Adobe's Enhance Speech to the Audio Enhan
 
 - **An engine in the Audio Enhancer:** Adobe Enhance Speech, beside NVIDIA and ElevenLabs. Once you are signed in, a new
   file starts on it.
-- **Settings → Adobe Enhance Speech:** one row. Sign in to Adobe, or Sign out.
+- **Settings → Adobe Enhance Speech:** one row. Sign in, or Disconnect.
 - **Setup:** the Audio Enhancer counts as set up once you are signed in to Adobe. Until then its row says "Needs an API
   key or an Adobe sign-in".
 
@@ -29,7 +29,7 @@ A plug-in for Creator Toolset. It adds Adobe's Enhance Speech to the Audio Enhan
 - When Adobe says no, the run ends with one line saying why: you are signed out, the day's time is used up, the file is
   longer than your plan takes, or Adobe took no upload (late in the day, when the time left is shorter than the file).
   After the day's time is used up, the engine waits until the time Adobe gives. The other engines keep working.
-- Its files: Chrome's profile, under the data folder in `plugins/adobe-enhance/<account>/`. Sign out deletes them.
+- Its files: Chrome's profile, under the data folder in `plugins/adobe-enhance/<account>/`. Disconnect deletes them.
 
 ## Add it
 
