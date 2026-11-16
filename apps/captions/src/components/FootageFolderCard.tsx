@@ -80,14 +80,14 @@ export function FootageFolderCard({
         body: JSON.stringify({ path: folder, libraryId, copyTo }),
       });
       const body = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok) throw new Error(body.error ?? `Couldn't add that folder (${r.status})`);
+      if (!r.ok) throw new Error(body.error ?? "Could not add the folder");
       // the shared saved status at once, read fresh (a refresh could join a read from before the folder was added): the
       // Library page goes straight to the clips coming in
       const fresh = await getWatch(libraryId).catch(() => null);
       if (fresh) live.set(fresh);
       setAdded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't add that folder. Try again.");
+      setError(e instanceof Error ? e.message : "Could not add the folder");
     } finally {
       setBusy(false);
     }
@@ -124,10 +124,10 @@ export function FootageFolderCard({
       <section aria-label="Footage folder" className={box}>
         <div className="flex flex-col gap-1.5">
           {heading}
-          {page && <p className="text-sm text-zinc-500">This is where you keep your raw materials: the clips you reuse across videos.</p>}
+          {page && <p className="text-sm text-zinc-500">No clips</p>}
           {status && (
             <p className="text-sm text-zinc-500">
-              Your videos are on your computer. Upload them here, or use the Creator Toolset Mac app to read a folder on your computer.
+              Reading a folder needs the Mac app.
             </p>
           )}
         </div>
@@ -147,7 +147,7 @@ export function FootageFolderCard({
         {heading}
         <p className="text-sm text-zinc-500">
           {page
-            ? "This is where you keep your raw materials: the clips you reuse across videos. You choose the folder they are in."
+            ? "No clips"
             : "Creator Toolset reads the folder you pick."}
         </p>
       </div>
@@ -162,13 +162,13 @@ export function FootageFolderCard({
           <Input
             value={path}
             onChange={(e) => setPath(e.target.value)}
-            placeholder="~/Movies/Trip"
+            placeholder="Folder path"
             aria-label="Folder path"
             className="min-w-0 flex-1 basis-60 font-mono"
             disabled={busy}
           />
           <Button type="submit" size="sm" disabled={busy || !path.trim()}>
-            Check folder
+            Add folder
           </Button>
           <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setTyping(false)}>
             Cancel

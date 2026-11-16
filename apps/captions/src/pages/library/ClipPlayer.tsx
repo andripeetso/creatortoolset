@@ -310,12 +310,11 @@ function Note({ note, file }: { note: PlayerNote; file: { href: string; name: st
       <div className="flex flex-col items-center gap-1.5">
         <Loader2 className="h-5 w-5 animate-spin" />
         <p className="text-sm font-medium">Making a proxy</p>
-        <p className="text-xs text-white/70">It starts playing when it's ready.</p>
       </div>
     );
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="text-sm">This file doesn't play here.</p>
+      <p className="text-sm">Could not play the file</p>
       <Button size="sm" variant="secondary" asChild>
         <a href={file.href} download={file.name}>
           <Download className="h-4 w-4" />

@@ -389,7 +389,7 @@ export default function LibraryPage() {
     try {
       const r = await importCopy(id, [{ from, to: u.copyTo! }]);
       signal.throwIfAborted();
-      if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Not copied");
+      if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Could not copy the file");
       return r.copied[0].to;
     } finally {
       clearInterval(tick);
@@ -532,7 +532,7 @@ export default function LibraryPage() {
     const sent = send(step);
     sent.then(reloadFolders, (e) => {
       back();
-      setError(`Couldn't move: ${message(e)}`);
+      setError(`Could not move the clips: ${message(e)}`);
       reloadFolders();
     });
     const name = to ? collections.find((c) => c.id === to)?.name : null;
@@ -584,7 +584,7 @@ export default function LibraryPage() {
       },
       (e) => {
         back();
-        setError(`Couldn't file as ${label}: ${message(e)}`);
+        setError(`Could not file as ${label}: ${message(e)}`);
       },
     );
     undoable(
@@ -638,7 +638,7 @@ export default function LibraryPage() {
       !readOnly && holdsClips(c) ? (
         <>
           <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>
-          {sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>What goes here…</ContextMenuItem>}
+          {sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
         </>
       ) : undefined,
   });
@@ -659,7 +659,7 @@ export default function LibraryPage() {
         <>
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
           {holdsClips(c) && <ContextMenuItem onSelect={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
-          {sortsItself(c) && <ContextMenuItem onSelect={() => setRuling(c)}>What goes here…</ContextMenuItem>}
+          {sortsItself(c) && <ContextMenuItem onSelect={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
           <ContextMenuSeparator />
           <ContextMenuItem className="text-red-400" onSelect={() => removeFolder(c)}>
             <Trash2 /> Delete folder
@@ -757,7 +757,7 @@ export default function LibraryPage() {
     if (!libId) return;
     const lib = libId;
     const done = (await Promise.all(cards.map((a) => setTrashed(lib, a.id, toTrash).then(() => a.id, () => null)))).filter((x): x is string => !!x);
-    if (done.length < cards.length) setError(`${plural(cards.length - done.length)} couldn't be ${toTrash ? "moved to the trash" : "restored"}`);
+    if (done.length < cards.length) setError(`Could not ${toTrash ? "move" : "restore"} ${plural(cards.length - done.length)}${toTrash ? " to the trash" : ""}`);
     if (!done.length) return;
     changeCards((all) => all.filter((x) => !done.includes(x.id)));
     picks.clear();
@@ -770,7 +770,7 @@ export default function LibraryPage() {
     const lib = libId;
     const these = cards.filter((a) => !a.tags.includes(tag));
     const done = (await Promise.all(these.map((a) => updateAsset(lib, a.id, { tags: [...a.tags, tag] }).then(() => a, () => null)))).filter((a): a is AssetCard => !!a);
-    if (done.length < these.length) setError(`${plural(these.length - done.length)} couldn't be tagged`);
+    if (done.length < these.length) setError(`Could not tag ${plural(these.length - done.length)}`);
     picks.clear();
     if (!done.length) return;
     const show = (back: boolean) =>
@@ -786,7 +786,7 @@ export default function LibraryPage() {
     if (!libId || !library) return;
     const label = redoKinds(library.settings).find((r) => r.kind === kind)?.label ?? kind;
     redoMany(libId, [kind], cards.map((a) => a.id)).then(
-      (r) => toast(r.clips ? `${label} are made again for ${plural(r.clips)}` : `Nothing to redo`),
+      (r) => toast(r.clips ? `Redoing ${label.toLowerCase()} for ${plural(r.clips)}` : `Nothing to redo`),
       (e) => setError(message(e)),
     );
     picks.clear();
@@ -911,7 +911,7 @@ export default function LibraryPage() {
 
           {libraries?.length === 0 && (
             <div className="flex flex-col items-center gap-3 py-16 text-center">
-              <p className="text-sm text-zinc-500">No library yet. Make one to start: it's where your footage lives.</p>
+              <p className="text-sm text-zinc-500">No library</p>
               <Button variant="outline" size="sm" onClick={create}>
                 Create library
               </Button>
@@ -939,13 +939,13 @@ export default function LibraryPage() {
                 <FolderTrail state={{ open: trash ? "trash" : open, trail, to: folderTo }} top={library.name} />
               )}
               <BrowseBar
-                search={{ value: q, onChange: setQ, placeholder: "Search clips and what is said" }}
+                search={{ value: q, onChange: setQ, placeholder: "Search clips and transcripts" }}
                 tools={
                   <>
                     {canSave && (
                       <Button size="sm" variant="ghost" className="h-8" onClick={() => void saveSearch()}>
                         <Search className="h-4 w-4" />
-                        Save this search as a folder
+                        Save as folder
                       </Button>
                     )}
                     {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
@@ -1036,11 +1036,11 @@ export default function LibraryPage() {
                   onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting" || u.status === "checking" || u.status === "copying"))}
                 />
 
-                {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Search by meaning is getting ready.</p>}
+                {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Preparing search by meaning</p>}
 
                 {said.length > 0 && (
-                  <section aria-label="Said in clips" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
-                    <span className="text-sm font-medium">Said in clips</span>
+                  <section aria-label="Transcripts" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
+                    <span className="text-sm font-medium">Transcripts</span>
                     {said.slice(0, 12).map((h, i) => (
                       <button
                         key={`${h.asset.versionId}-${i}`}
@@ -1099,16 +1099,14 @@ export default function LibraryPage() {
                   libraries !== null && (
                     <p className="py-16 text-center text-sm text-zinc-500">
                       {narrowed
-                        ? "No matches."
+                        ? "No clips found"
                         : adding
                           ? null // the line above the grid says how many are in
                           : trash
-                            ? "The trash is empty."
+                            ? "No clips in the trash"
                             : open
-                              ? "Nothing in this folder yet."
-                              : watch?.folders.length
-                                ? "No videos in your folder yet."
-                                : "Nothing here yet."}
+                              ? "No clips in this folder"
+                              : "No clips"}
                     </p>
                   )
                 )}

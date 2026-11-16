@@ -51,7 +51,7 @@ export function useLibraryDrop({
   const addFolder = async (folder: string, copyTo?: string) => {
     if (!libraryId) return;
     const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId, copyTo }) });
-    if (!r.ok) return onError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Couldn't add that folder (${r.status})`);
+    if (!r.ok) return onError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "Could not add the folder");
     onWatch(await getWatch(libraryId));
   };
   const folderIn = (folder: string) => {

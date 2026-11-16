@@ -52,17 +52,17 @@ export function aboutUsd(usd: number): string {
 /** One line per step that runs or waits; a step switched off says nothing. `proxies`: the library makes them (its settings). */
 export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
   if (s.route === "off") return null;
-  const what = { files: proxies ? "Thumbnails and proxies" : "Thumbnails", transcript: "Transcripts", describe: "AI descriptions", look: "Shot descriptions", embed: "Search by meaning" }[s.step];
+  const what = { files: proxies ? "Pictures and proxies" : "Pictures", transcript: "Transcripts", describe: "Descriptions", look: "Shot descriptions", embed: "Search by meaning" }[s.step];
   if (s.route === "none") return s.step === "embed" ? null : <Needs step={s.step} what={what} />;
   const on = {
     server: "on this server, free",
     device: "on this computer, free",
     computer: "on your own computer, free",
-    deepgram: `on your Deepgram key, ${aboutUsd(s.usd)}`,
-    openai: `on your OpenAI key, ${aboutUsd(s.usd)}`,
-    api: `on your Anthropic key, ${aboutUsd(s.usd)}`,
-    budget: `on your team's AI budget, ${aboutUsd(s.usd)}`,
-    provider: `on the AI provider, ${aboutUsd(s.usd)} of usage at API prices (your plan pays; it counts toward its limits)`,
+    deepgram: `on the Deepgram key, ${aboutUsd(s.usd)}`,
+    openai: `on the OpenAI key, ${aboutUsd(s.usd)}`,
+    api: `on the Anthropic key, ${aboutUsd(s.usd)}`,
+    budget: `on the team budget, ${aboutUsd(s.usd)}`,
+    provider: `on the AI provider, ${aboutUsd(s.usd)} of usage at API prices, counted toward the plan's limits`,
   }[s.route];
   return `${what} ${on}`;
 }
@@ -76,7 +76,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   proxy: "Proxies",
   fingerprint: "Duplicate checks",
   transcribe: "Transcripts",
-  describe: "AI descriptions",
+  describe: "Descriptions",
   look: "Shot descriptions",
   embed: "Search by meaning",
 };
@@ -175,11 +175,11 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
       {w.limit ? (
         <span>
-          {w.count.toLocaleString()} {w.step === "look" ? (w.count === 1 ? "shot description waits" : "shot descriptions wait") : w.count === 1 ? "AI description waits" : "AI descriptions wait"}: {w.missing}
+          {w.count.toLocaleString()} {w.step === "look" ? (w.count === 1 ? "shot description" : "shot descriptions") : w.count === 1 ? "description" : "descriptions"} paused: {w.missing}
         </span>
       ) : w.computer ? (
         <span>
-          Shot descriptions of {w.count.toLocaleString()} {w.count === 1 ? "video wait for the Mac it is on" : "videos wait for the Mac they are on"}
+          Shot descriptions for {w.count.toLocaleString()} {w.count === 1 ? "clip need the Mac the file is on" : "clips need the Mac the files are on"}
         </span>
       ) : (
         <Needs step={w.step} count={w.count} />
@@ -195,7 +195,7 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
               Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
               <span className="text-zinc-500"> · {aboutTime(p.seconds)} left</span>
             </span>
-            {needsYou && !open && <span aria-label="Something waits for you" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
+            {needsYou && !open && <span aria-label="Needs a key or an AI provider" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
             <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")} />
           </span>
           <MovingBar value={p.share} />
@@ -227,7 +227,7 @@ export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string;
   }, [libraryId]);
   const open = s?.stages.reduce((n, st) => n + st.open, 0) ?? 0;
   const broken = (s?.stages.reduce((n, st) => n + st.failed, 0) ?? 0) + (s?.unreadable ?? 0);
-  const line = !s ? (failed ?? "Counting…") : !s.clips ? "No clips yet" : [`${s.clips.toLocaleString()} ${s.clips === 1 ? "clip" : "clips"}`, open ? `${open.toLocaleString()} steps still to do` : "everything indexed", broken ? `${broken.toLocaleString()} failed` : ""].filter(Boolean).join(" · ");
+  const line = !s ? (failed ?? "Counting…") : !s.clips ? "No clips" : [`${s.clips.toLocaleString()} ${s.clips === 1 ? "clip" : "clips"}`, open ? `${open.toLocaleString()} ${open === 1 ? "step" : "steps"} left` : "", broken ? `${broken.toLocaleString()} failed` : ""].filter(Boolean).join(" · ");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
@@ -242,7 +242,7 @@ export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string;
         {!!s?.unreadable && (
           <p className="flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-            {s.unreadable.toLocaleString()} {s.unreadable === 1 ? "file can't be read as video or sound" : "files can't be read as video or sound"}
+            {s.unreadable.toLocaleString()} {s.unreadable === 1 ? "file could not be read as video or sound" : "files could not be read as video or sound"}
           </p>
         )}
       </DialogContent>
@@ -264,10 +264,10 @@ const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = 
   embed: "Adding to search",
 };
 const FAILED_WORDS: Record<NonNullable<AssetCard["failed"]>["step"], string> = {
-  probe: "This file can't be read as video or sound",
-  thumb: "Its picture could not be made",
-  wave: "Its sound could not be read",
-  proxy: "Its proxy could not be made",
+  probe: "Could not read the file as video or sound",
+  thumb: "Could not make the picture",
+  wave: "Could not read the sound",
+  proxy: "Could not make the proxy",
 };
 
 /**
@@ -333,7 +333,7 @@ export function BigUploadDialog({
         <DialogTitle>{title}</DialogTitle>
         {children}
         {estimate ? (
-          <DialogDescription>{e ? `${cap(aboutTime(e.minutes * 60))} of footage.` : (failed ?? "Working out what it takes…")}</DialogDescription>
+          <DialogDescription>{e ? `${cap(aboutTime(e.minutes * 60))} of footage.` : (failed ?? "Estimating…")}</DialogDescription>
         ) : (
           <DialogDescription className="sr-only">{title}</DialogDescription>
         )}
@@ -345,7 +345,7 @@ export function BigUploadDialog({
               ))}
             </ul>
             <p>
-              Ready in {aboutTime(e.seconds)}{guess ? " (a first guess: it gets closer after the first clips)" : ""}.
+              Ready in {aboutTime(e.seconds)}{guess ? ", a first estimate" : ""}.
             </p>
             {e.withApiKey && (
               <p className="text-zinc-400">
@@ -353,7 +353,7 @@ export function BigUploadDialog({
                 <Link to="/settings/keys" className="underline">
                   Settings → API keys
                 </Link>
-                , the AI descriptions run six at a time: ready in {aboutTime(e.withApiKey.seconds)}, {aboutUsd(e.withApiKey.usd)} on that key.
+                , the descriptions run six at a time: ready in {aboutTime(e.withApiKey.seconds)}, {aboutUsd(e.withApiKey.usd)} on that key.
               </p>
             )}
           </div>
@@ -378,7 +378,7 @@ export const gbOf = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 
  * chosen when there is room for it; `mode` is the library's own answer, else copying is the choice when it fits.
  * `onChange` gets the folder to copy into, or undefined to use them where they are. `short`: a new place's question.
  */
-export function KeepChoice({ libraryId, folder, bytes, to, free, mode, short, legend = "How do you want to add your files?", onChange }: { libraryId: string; folder: string; bytes: number; to: string; free?: number; mode?: ImportMode; short?: boolean; legend?: string; onChange: (copyTo: string | undefined) => void }) {
+export function KeepChoice({ libraryId, folder, bytes, to, free, mode, short, legend = "Import", onChange }: { libraryId: string; folder: string; bytes: number; to: string; free?: number; mode?: ImportMode; short?: boolean; legend?: string; onChange: (copyTo: string | undefined) => void }) {
   const [dest, setDest] = useState(to);
   const [room, setRoom] = useState(free);
   const [typing, setTyping] = useState(false);

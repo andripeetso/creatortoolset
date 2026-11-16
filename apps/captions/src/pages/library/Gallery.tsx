@@ -84,7 +84,7 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
       {(a.state === "missing" || a.state === "failed") && (
         <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
           <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", a.state === "failed" ? "bg-red-500" : "bg-amber-500")} />
-          {a.state === "failed" ? "Couldn't read this file" : "File not found"}
+          {a.state === "failed" ? "Could not read the file" : "File not found"}
         </span>
       )}
       <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-5 text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
