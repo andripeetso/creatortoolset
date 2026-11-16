@@ -33,7 +33,7 @@ import { thisMacDevice } from "@/lib/providers";
 /** The body, or the server's error with its `code` ("too_large": a refusal that a retry cannot change). */
 async function json<T>(r: Response): Promise<T> {
   const body = (await r.json().catch(() => ({}))) as T & { error?: string; code?: string };
-  if (!r.ok) throw Object.assign(new Error(body.error ?? "Server error"), { code: body.code });
+  if (!r.ok) throw Object.assign(new Error(body.error ?? `Request failed (${r.status})`), { code: body.code });
   return body;
 }
 
@@ -495,7 +495,7 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
 /** The library's footage folders as its owner sees them (anyone else: an error, so no status). */
 export async function getWatch(libraryId: string): Promise<WatchStatus> {
   const r = await fetch(`/api/library/${libraryId}/watch`);
-  if (!r.ok) throw new Error("Server error");
+  if (!r.ok) throw new Error(`Request failed (${r.status})`);
   return (await r.json()) as WatchStatus;
 }
 
