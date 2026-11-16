@@ -1,11 +1,12 @@
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { DeviceFootage } from "../../contracts/devices";
 import type { Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
 import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
-import { hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
+import { folderFor, hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
@@ -69,14 +70,20 @@ export function editFiles(editId: string): FileRow[] {
 export const editOf = (job: Pick<JobRow, "version_id">): string => (job.version_id ?? "").split(":")[0]!;
 
 /** The account's storage folders (Settings → Storage), with the computers that reach them through a connected share. */
-export async function foldersOf(owner: string): Promise<StorageFolder[]> {
-  const folders = parseStorageFile(await readFile(storageFilePath(env.dataDir, owner), "utf-8").catch(() => "{}")).folders;
+export function foldersOf(owner: string): StorageFolder[] {
+  let raw = "{}";
+  try {
+    raw = readFileSync(storageFilePath(env.dataDir, owner), "utf-8");
+  } catch {
+    // no folders set yet
+  }
+  const folders = parseStorageFile(raw).folders;
   return withMounts(folders, listDevices((x) => x.owner === owner).map((x) => ({ id: x.id, disks: x.report?.machine?.disks })));
 }
 
 /** What a device that took a step of `editId` is told of its files: each one's path on it, or which server copy to fetch. */
 export async function footageFor(d: Pick<Device, "id" | "owner">, editId: string): Promise<DeviceFootage[]> {
-  const folders = await foldersOf(d.owner);
+  const folders = foldersOf(d.owner);
   return editFiles(editId).flatMap((r) => {
     const at = fileFor(r, d.id, folders, isThisMachine);
     return at ? [{ id: r.id, ...at }] : [];
@@ -91,6 +98,35 @@ export function heldCopy(device: string, jobId: number, versionId: string): stri
   return !r ? null : !r.source_key.startsWith("mac:") ? r.source_key : r.proxy;
 }
 
+/** The account's computers, and whether each is online and free (holds no AI Editor step now). */
+function computers(owner: string): Array<{ x: Device; free: boolean }> {
+  const busy = new Set((libraryDb().prepare("SELECT DISTINCT device FROM edit_jobs WHERE state = 'running' AND device IS NOT NULL").all() as { device: string }[]).map((r) => r.device));
+  return listDevices((x) => x.owner === owner).map((x) => ({ x, free: isOnline(x.id) && !busy.has(x.id) }));
+}
+
+/** "A", "A or B", "A, B or C". */
+const either = (names: string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`);
+
+/**
+ * Why a queued step that reads footage waits, in one line, when no online, free computer that runs it can read its files
+ * ("Only Mac Studio can read Footage"); undefined while one can (it is about to be taken), or when no computer runs the
+ * step at all. Shown beside the step on the edit page (EditJob.line).
+ */
+export function waitLine(owner: string, job: Pick<JobRow, "kind" | "version_id">): string | undefined {
+  if (!usesFootage(job.kind)) return undefined;
+  const rows = editFiles(editOf(job));
+  const runs = computers(owner).filter((c) => (c.x.kinds ?? []).includes(job.kind));
+  if (!rows.length || !runs.length) return undefined;
+  const folders = foldersOf(owner);
+  const can = runs.filter((c) => rankOf(rows.map((r) => fileFor(r, c.x.id, folders, isThisMachine))) > 0);
+  if (can.some((c) => c.free)) return undefined;
+  // the files some computer can't get at: named by their folder, else by the file
+  const missing = rows.find((r) => runs.some((c) => !fileFor(r, c.x.id, folders, isThisMachine)));
+  const at = missing && (missing.mac_path ?? missing.source_path);
+  const what = (at && ((folderFor(at, folders, missing.mac_device ?? undefined) ?? folderFor(at, folders))?.folder.name ?? path.basename(at))) || "this footage";
+  return can.length ? `Only ${either(can.map((c) => c.x.name))} can read ${what}` : `No computer can read ${what} yet: connect it on one in Settings → Storage`;
+}
+
 /** The same window as isOnline (lib/devices.ts). */
 const ONLINE_MS = 40_000;
 
@@ -100,11 +136,10 @@ const ONLINE_MS = 40_000;
  * way, and load balancing picks `d` among those that get at them as well.
  */
 export async function fitsFor(d: Device, now = Date.now()): Promise<(job: JobRow) => boolean> {
-  const folders = await foldersOf(d.owner);
+  const folders = foldersOf(d.owner);
   const balance = await readBalance(d.owner);
-  const busy = new Set((libraryDb().prepare("SELECT DISTINCT device FROM edit_jobs WHERE state = 'running' AND device IS NOT NULL").all() as { device: string }[]).map((r) => r.device));
   // the one asking has a free slot, whatever the list says
-  const peers = listDevices((x) => x.owner === d.owner).filter((x) => x.id === d.id || (isOnline(x.id) && !busy.has(x.id)));
+  const peers = computers(d.owner).filter((c) => c.x.id === d.id || c.free).map((c) => c.x);
   const files = new Map<string, FileRow[]>();
   return (job) => {
     if (!usesFootage(job.kind)) return true;

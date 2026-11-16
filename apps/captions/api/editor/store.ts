@@ -11,6 +11,7 @@ import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
 import type { EditPlan } from "../../contracts/edit-plan";
 import { cardsView } from "./cards/state";
+import { waitLine } from "./reach";
 import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
@@ -478,9 +479,10 @@ interface JobDbRow {
 }
 
 export function jobsOf(id: string): EditJob[] {
-  const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as JobDbRow[];
+  const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error, actor FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as Array<JobDbRow & { actor: string | null }>;
   return rows.map((r) => {
-    const line = r.state === "running" ? lineOf(r.id) : undefined;
+    // queued: why no computer has taken it, when none that runs it can read its files (reach.ts)
+    const line = r.state === "running" ? lineOf(r.id) : r.state === "queued" && r.actor ? waitLine(r.actor, r) : undefined;
     return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}) };
   });
 }

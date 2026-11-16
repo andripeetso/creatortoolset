@@ -16,7 +16,7 @@ const { enqueueJob } = await import("../library/jobs");
 const { pairDevice, devicesSaved, setDeviceKinds } = await import("../lib/devices");
 const { registerDeviceKinds } = await import("./engine");
 const { blobs } = await import("../library/db");
-const { fileFor, rankOf } = await import("./reach");
+const { fileFor, rankOf, waitLine } = await import("./reach");
 
 const json = async <T = any>(r: Response | Promise<Response>): Promise<T> => (await r).json() as Promise<T>;
 const post = (token: string, url: string, body: unknown) =>
@@ -127,5 +127,21 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     expect(await got.text()).toBe("take one");
     expect((await get(weak.token, "ver_r1")).status).toBe(404);
     expect((await get(strong.token, "ver_r2")).status).toBe(404);   // not this step's file
+  });
+  it("a step no free computer can read says why, in one line", async () => {
+    // only the laptop has Take 2 (in the laptop's Footage folder); the PC never found that folder
+    writeFileSync(path.join(dir, "storage", "maker.json"), JSON.stringify({ folders: [{ id: "fold1", role: "footage", name: "Footage", origin: { host: weak.device.id, path: "/Volumes/Footage" }, make: false, createdAt: 0, reach: {} }] }));
+    const other = (await json<{ id: string }>(app.request("/api/editor", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Laptop only", sources: ["ver_r2"] }) }))).id;
+    setDeviceKinds(weak.device.id, ["reach-render"]);
+    const job = { kind: "reach-render", version_id: `${other}:v1` };
+    libraryDb().exec(`UPDATE edit_jobs SET state = 'done', device = NULL WHERE device = '${weak.device.id}'`);
+    expect(waitLine("maker", job)).toBeUndefined();   // the laptop is free: it is about to take it
+    libraryDb().exec(`UPDATE edit_jobs SET state = 'running', device = '${weak.device.id}' WHERE version_id = '${editId}:v1'`);
+    expect(waitLine("maker", job)).toBe("Only Laptop can read Footage");
+    // the Mac it was indexed on is gone and no folder holds it: named by its file
+    libraryDb().exec("UPDATE asset_versions SET mac_device = 'gone' WHERE id = 'ver_r2'");
+    writeFileSync(path.join(dir, "storage", "maker.json"), JSON.stringify({ folders: [] }));
+    expect(waitLine("maker", job)).toBe("No computer can read b.mp4 yet: connect it on one in Settings → Storage");
+    expect(waitLine("maker", { kind: "cards-draw", version_id: `${other}:v1` })).toBeUndefined();   // reads no footage
   });
 });

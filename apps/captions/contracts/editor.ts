@@ -120,7 +120,8 @@ export interface EditJob {
   attempts: number;
   /** the failure, or for needs_key what to add */
   error: string | null;
-  /** while it runs: what it is doing now, when the step says (a first-time install, waiting for the person's AI) */
+  /** while it runs: what it is doing now, when the step says (a first-time install, waiting for the person's AI); queued:
+   *  why no computer has taken it, when none that runs it can read its footage ("Only Mac Studio can read Footage") */
   line?: string;
 }
 
