@@ -1,0 +1,145 @@
+import Foundation
+import XCTest
+@testable import CreatorToolsetMac
+
+final class ImportTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+        // real path: /var is /private/var, and the checks compare real paths
+        let made = base.appendingPathComponent("import-tests/\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+        root = made.resolvingSymlinksInPath()
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    @discardableResult
+    private func write(_ relative: String, _ data: Data = Data("x".utf8)) throws -> String {
+        let file = root.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: file)
+        return file.path
+    }
+
+    private func at(_ relative: String) -> String { root.appendingPathComponent(relative).path }
+
+    func testAsksParsed() {
+        XCTAssertEqual(importAsk(#"import:copy:{"id":"c1","files":[{"from":"/a/b.mov","to":"/c/b.mov"}]}"#),
+                       .copy(id: "c1", files: [ImportPair(from: "/a/b.mov", to: "/c/b.mov")]))
+        XCTAssertEqual(importAsk("import:progress:c1"), .progress("c1"))
+        XCTAssertEqual(importAsk("import:cancel:c1"), .cancel("c1"))
+        XCTAssertEqual(importAsk(#"import:scan:{"path":"/Volumes/Footage"}"#), .scan("/Volumes/Footage"))
+        XCTAssertEqual(importAsk(#"import:print:{"paths":["/a.mov"]}"#), .print(["/a.mov"]))
+        XCTAssertNil(importAsk("import:progress:a b"))
+        XCTAssertNil(importAsk(#"import:copy:{"id":"c1","files":[{"from":"/a.mov"}]}"#))   // a pair without `to`
+        XCTAssertNil(importAsk("import:delete:{}"))
+        XCTAssertTrue(isImportAsk("import:scan:{}"))
+        XCTAssertFalse(isImportAsk("reveal:{}"))
+    }
+
+    /// Sources: under a dropped folder or a picked file, never next to it, never through `..` or a link out of it.
+    func testCopyReadsOnlyFromDropsAndPicks() throws {
+        let clip = try write("Drop/Day 1/A001.mov")
+        let picked = try write("Picked.mov")
+        try write("Dropbar/B.mov")
+        try write("Elsewhere/C.mov")
+        try FileManager.default.createSymbolicLink(atPath: at("Drop/out"), withDestinationPath: at("Elsewhere"))
+        let sources = [at("Drop"), picked]
+        XCTAssertEqual(Imports.inside(clip, sources), at("Drop"))
+        XCTAssertEqual(Imports.inside(picked, sources), picked)
+        XCTAssertNil(Imports.inside(at("Dropbar/B.mov"), sources))
+        XCTAssertNil(Imports.inside(at("Drop/../Elsewhere/C.mov"), sources))
+        XCTAssertNil(Imports.inside(at("Drop/out/C.mov"), sources))
+        XCTAssertNil(Imports.inside("relative/A001.mov", sources))
+        XCTAssertNil(Imports.inside("/etc/hosts", ["/"]))   // the whole disk is never a root
+    }
+
+    /// Destinations: under the library's folder or a chosen one (made as needed), never the folder itself.
+    func testCopyWritesOnlyUnderItsFolders() throws {
+        let library = at("Movies/Creator Toolset")   // not made yet
+        XCTAssertEqual(Imports.destination(at("Movies/Creator Toolset/Tiny/Footage/Day 1/A001.mov"), [library]), library)
+        XCTAssertNil(Imports.destination(library, [library]))
+        XCTAssertNil(Imports.destination(at("Movies/Other/A001.mov"), [library]))
+        XCTAssertNil(Imports.destination(at("Movies/Creator Toolset/../A001.mov"), [library]))
+        try FileManager.default.createDirectory(atPath: library, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: at("Movies/Creator Toolset/out"), withDestinationPath: at("Movies"))
+        XCTAssertNil(Imports.destination(at("Movies/Creator Toolset/out/A001.mov"), [library]))
+    }
+
+    func testNeverOverwrites() {
+        let sizes = ["/L/A001.mov": Int64(10), "/L/A001 2.mov": 20, "/L/B": 5]
+        let free = { (to: String, size: Int64) in Imports.freeName(to, size: size) { sizes[$0] } }
+        XCTAssertEqual(free("/L/New.mov", 10).path, "/L/New.mov")
+        XCTAssertTrue(free("/L/A001.mov", 10).copied)   // the same name and size: copied before
+        XCTAssertEqual(free("/L/A001.mov", 20).path, "/L/A001 2.mov")   // copied before under its numbered name
+        XCTAssertTrue(free("/L/A001.mov", 20).copied)
+        XCTAssertEqual(free("/L/A001.mov", 30).path, "/L/A001 3.mov")
+        XCTAssertFalse(free("/L/A001.mov", 30).copied)
+        XCTAssertEqual(free("/L/B", 6).path, "/L/B 2")
+    }
+
+    func testCopiesMakesFoldersAndKeepsWhatIsThere() throws {
+        let a = try write("Drop/A001.mov", Data(repeating: 1, count: 3000))
+        let b = try write("Drop/B.mov", Data(repeating: 2, count: 10))
+        let lib = at("Lib")
+        try write("Lib/Footage/B.mov", Data("other".utf8))   // a different file of that name
+        let pairs = [ImportPair(from: a, to: at("Lib/Footage/Drop/A001.mov")), ImportPair(from: b, to: at("Lib/Footage/B.mov")),
+                     ImportPair(from: at("Elsewhere.mov"), to: at("Lib/E.mov"))]
+        var granted: [String] = []
+        let reply = Imports().copy(id: "t1", pairs, sources: [at("Drop")], destinations: [lib]) { granted.append($0) }
+        let copied = reply["copied"] as? [[String: String]] ?? []
+        XCTAssertEqual(copied.map { $0["to"] }, [at("Lib/Footage/Drop/A001.mov"), at("Lib/Footage/B 2.mov")])
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: at("Lib/Footage/Drop/A001.mov"))), Data(repeating: 1, count: 3000))
+        XCTAssertEqual(try String(contentsOfFile: at("Lib/Footage/B.mov"), encoding: .utf8), "other")
+        XCTAssertEqual((reply["failed"] as? [[String: String]])?.count, 1)
+        XCTAssertNil(reply["stopped"])
+        // again: nothing new, both taken as copied
+        XCTAssertEqual(Set(granted), [lib])
+        let again = Imports().copy(id: "t2", Array(pairs.prefix(2)), sources: [at("Drop")], destinations: [lib]) { _ in }
+        XCTAssertEqual((again["copied"] as? [[String: String]])?.map { $0["to"] }, copied.map { $0["to"] })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: at("Lib/Footage/B 3.mov")))
+    }
+
+    func testScanFindsMediaOnlyInGrantedFolders() throws {
+        try write("Footage/A001.MOV")
+        try write("Footage/Day 2/song.mp3")
+        try write("Footage/Day 2/still.heic")
+        try write("Footage/notes.txt")
+        try write("Footage/.hidden.mov")
+        try write("Footage/.cache/C.mov")
+        try write("Footage/Tool.app/Contents/D.mov")
+        try write("Other/E.mov")
+        try FileManager.default.createSymbolicLink(atPath: at("Footage/link.mov"), withDestinationPath: at("Other/E.mov"))
+        try FileManager.default.createSymbolicLink(atPath: at("Footage/OtherLink"), withDestinationPath: at("Other"))
+        let reply = Imports.scan(at("Footage"), granted: [at("Footage")])
+        let found = Set((reply["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+        XCTAssertEqual(found, [at("Footage/A001.MOV"), at("Footage/Day 2/song.mp3"), at("Footage/Day 2/still.heic")])
+        XCTAssertNotNil(Imports.scan(at("Other"), granted: [at("Footage")])["error"])
+        XCTAssertEqual((Imports.scan(at("Footage"), granted: [at("Footage")], max: 1)["files"] as? [Any])?.count, 1)
+    }
+
+    /// The same bytes and hashes as node's crypto (sha256 of String(size), the first MiB, the last MiB over 2 MiB).
+    func testQuickPrintMatchesThePage() throws {
+        let vectors: [(Int, String)] = [
+            (10, "1c1f758fd6518ebea3430d680ad66cd1ec082267822301d3ec2b79f768ad32ad"),
+            (1_500_000, "7db8075b05d28821a7b9684f93988550e0e6c5d54669241da2a8bc12d5a234a5"),
+            (3 * (1 << 20) + 5, "0b278b3a924fefb72630a3220cfa132a13070a87f6f177aee8e38b81443ea522"),
+        ]
+        for (size, hex) in vectors {
+            let bytes = Data((0..<size).map { UInt8(($0 * 7 + 3) % 251) })
+            XCTAssertEqual(Imports.quickPrint(try write("p\(size).mov", bytes)), hex, "size \(size)")
+        }
+        XCTAssertNil(Imports.quickPrint(at("missing.mov")))
+    }
+
+    func testPicturesServed() throws {
+        try write("Drop/still.jpg")
+        if case .file(_, let type) = MediaFiles.gate(at("Drop/still.jpg"), granted: [at("Drop")]) { XCTAssertEqual(type, "image/jpeg") } else { XCTFail("not served") }
+        XCTAssertTrue(MediaFiles.isMedia("/a/B.TIFF"))
+        XCTAssertFalse(MediaFiles.isMedia("/a/b.txt"))
+    }
+}

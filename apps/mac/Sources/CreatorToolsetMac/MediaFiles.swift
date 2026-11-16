@@ -3,19 +3,34 @@ import Foundation
 // An edit's original video and sound files for the page's player, as `ctlocal://media/<base64url of the path>`
 // (ProjectScheme.swift serves them). The page knows the paths, but this app decides: a file is served only when it is a
 // video or sound file, exists, and its real path (symlinks resolved) is inside a folder the user chose in this app's
-// own open panel (the "mediaAccess" message, TitleBar.swift). The originals are private footage, so anything else
+// own open panel (the "mediaAccess" message, TitleBar.swift), dropped on its window (a dropped folder, a loose file's
+// folder) or copied into by a Media Library import (Import.swift). The originals are private footage, so anything else
 // gets a status and no contents, and a missing file outside the folders reads as not granted, never as missing.
 
 enum MediaFiles {
     static let host = "media"
     private static let key = "mediaFolders"
 
-    /// The file types served, by lowercased extension (camera files are often .MOV, .MP4, .WAV).
+    /// The file types served, by lowercased extension (camera files are often .MOV, .MP4, .WAV); pictures for a
+    /// Media Library rescan's thumbnails.
     static let types: [String: String] = [
         "mov": "video/quicktime", "mp4": "video/mp4", "m4v": "video/x-m4v", "mxf": "application/mxf",
         "wav": "audio/wav", "aif": "audio/aiff", "aiff": "audio/aiff", "m4a": "audio/mp4", "mp3": "audio/mpeg",
         "flac": "audio/flac", "caf": "audio/x-caf",
+        "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "heic": "image/heic", "webp": "image/webp",
+        "gif": "image/gif", "tif": "image/tiff", "tiff": "image/tiff",
     ]
+
+    /// A video, sound or picture file by its name.
+    static func isMedia(_ path: String) -> Bool { type(of: path) != nil }
+
+    /// A drop on the window: each dropped folder, and each loose file's folder, may be played and scanned from then on.
+    static func grantDropped(_ items: [[String: Any]]) {
+        for item in items {
+            guard let path = item["path"] as? String else { continue }
+            add(item["folder"] as? Bool == true ? path : (path as NSString).deletingLastPathComponent)
+        }
+    }
 
     /// The granted folders, as chosen in the open panel.
     static var granted: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }

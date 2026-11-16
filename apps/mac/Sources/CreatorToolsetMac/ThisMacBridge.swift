@@ -6,7 +6,7 @@ import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). One more has parts of its own:
-/// "install:<claude|codex>:<key>" (installAsk).
+/// "install:<claude|codex>:<key>" (installAsk), and the Media Library's "import:…" (Import.swift).
 let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
@@ -143,6 +143,7 @@ extension Shell {
         open.prompt = "Choose"
         open.message = "Choose the folder with your videos. Nothing is moved."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
         return ["path": url.path]
     }
 

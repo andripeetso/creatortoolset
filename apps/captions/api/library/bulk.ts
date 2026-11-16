@@ -46,9 +46,10 @@ bulkApp.get("/:id/zip", async (c) => {
   const taken = new Set<string>();
   for (const id of ids) {
     const a = db()
-      .prepare("SELECT a.current_version_id AS v, s.source_key AS key FROM assets a JOIN asset_versions s ON s.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?")
-      .get(id, libraryId) as { v: string; key: string } | undefined;
-    if (!a || !(await canSee(viewer, assetRef(libraryId, id, a.v)))) continue;
+      .prepare("SELECT a.current_version_id AS v, s.source_key AS key, s.mac_path FROM assets a JOIN asset_versions s ON s.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?")
+      .get(id, libraryId) as { v: string; key: string; mac_path: string | null } | undefined;
+    // an original kept on a Mac is not here (its source may be its proxy): the zip holds originals only
+    if (!a || a.mac_path || !(await canSee(viewer, assetRef(libraryId, id, a.v)))) continue;
     // a file read where it is may be on a drive that is away: stat first, so one gone file never breaks the zip midway
     const file = await blobs.localCopy(a.key).catch(() => null);
     if (!file || !(await stat(file).catch(() => null))?.isFile()) continue;

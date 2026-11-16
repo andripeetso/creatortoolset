@@ -375,4 +375,12 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE asset_versions ADD COLUMN mac_path TEXT;
   ALTER TABLE asset_versions ADD COLUMN mac_device TEXT;
   `,
+  // 20: where an uploaded file is on the computer it came from (its path, the Mac's device id), sent with the upload:
+  // a library that keeps only proxies deletes the original once its proxy is made and keeps this place (worker.ts dropOriginal)
+  `
+  ALTER TABLE uploads ADD COLUMN from_path TEXT;
+  ALTER TABLE uploads ADD COLUMN from_device TEXT;
+  ALTER TABLE asset_versions ADD COLUMN from_path TEXT;
+  ALTER TABLE asset_versions ADD COLUMN from_device TEXT;
+  `,
 ];

@@ -169,6 +169,10 @@ final class Shell: NSObject, ObservableObject {
                 }
                 return
             }
+            // the Media Library's imports (Import.swift): a copy reads only from this window's recent drops and picks
+            if isImportAsk(ask) {
+                return Imports.shared.answer(ask, sources: (self.pickedFiles + (view?.droppedPlaces ?? [])).map(\.path), done: done)
+            }
             // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
             if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
             // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a
