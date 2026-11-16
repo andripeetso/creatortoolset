@@ -23,8 +23,8 @@ export async function confirmDiscardUnsavedProject(action: string): Promise<bool
   const status = currentProjectPersistenceStatus();
   if (status.workSafe) return true;
   return confirmDialog({
-    title: `${action} anyway?`,
-    body: `${status.message ?? "This project is not saved yet."} Unsaved changes may be lost.`,
+    title: `${action}?`,
+    body: "This project's unsaved changes are lost.",
     ok: action,
     danger: true,
   });

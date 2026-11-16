@@ -51,8 +51,8 @@ function UploadStatus() {
       <p className="flex items-center gap-1.5 text-[11px] text-amber-400">
         <TriangleAlert className="h-3 w-3 shrink-0" />
         {failed.length === 1
-          ? "One clip failed to upload — retry it from the clip bar."
-          : `${failed.length} clips failed to upload — retry them from the clip bar.`}
+          ? "1 upload failed · Retry is in the clip bar"
+          : `${failed.length} uploads failed · Retry is in the clip bar`}
       </p>
     );
   }
@@ -71,8 +71,7 @@ function UploadStatus() {
             ) : (
               <>
                 <CloudUpload className="h-3 w-3 animate-pulse" /> Uploading{" "}
-                {clips.length === 1 ? "video" : `clip ${done + 1} of ${clips.length}`} in
-                the background…
+                {clips.length === 1 ? "video" : `clip ${done + 1} of ${clips.length}`}…
               </>
             )}
           </span>
@@ -90,7 +89,7 @@ function UploadStatus() {
   if (clips.length > 0) {
     return (
       <p className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-        <Check className="h-3 w-3 text-emerald-500" /> Saved to your projects
+        <Check className="h-3 w-3 text-emerald-500" /> Saved
       </p>
     );
   }
@@ -170,13 +169,8 @@ export function ProjectSetupDialog() {
           </div>
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-zinc-100">
-              Set up your project
+              New project
             </h2>
-            <p className="mt-0.5 text-xs text-zinc-500">
-              {batch
-                ? `${clipCount} clips are saving in the background — name the project and caption them all with the same settings.`
-                : "Your video is already saving in the background — name the project and choose how to caption it."}
-            </p>
           </div>
         </div>
 
@@ -191,7 +185,7 @@ export function ProjectSetupDialog() {
             <span className="min-w-0 truncate">
               {file.size > 0 && <>{fmtSize(file.size)} · </>}
               {batch
-                ? "one pool, one look"
+                ? "same settings for every clip"
                 : duration > 0
                   ? fmtClock(duration)
                   : "reading length…"}
@@ -250,7 +244,7 @@ export function ProjectSetupDialog() {
               maxLength={MAX_SCRIPT_CHARS}
               rows={3}
               spellCheck={false}
-              placeholder="Paste the script you filmed from. AI uses it to fix mis-heard names and words. It doesn't have to match the video."
+              placeholder="The script the video was filmed from, to correct mis-heard words"
               className="mb-3 max-h-60 w-full resize-y rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs leading-5 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
             />
           </>
@@ -268,8 +262,7 @@ export function ProjectSetupDialog() {
               Match cadence after transcription
             </span>
             <span className="mt-0.5 block text-[11px] leading-4 text-zinc-500">
-              Turn this off to start editing and position captions first. Your
-              choice is remembered on this device.
+              Groups the words into captions by the rhythm of the speech.
             </span>
           </span>
         </label>
@@ -286,7 +279,7 @@ export function ProjectSetupDialog() {
             onClick={() => close(false)}
             className="rounded-md border border-zinc-700 px-3.5 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
           >
-            I'll transcribe later
+            Transcribe later
           </button>
         </div>
 
