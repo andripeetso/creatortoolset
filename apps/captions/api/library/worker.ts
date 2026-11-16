@@ -19,7 +19,7 @@ import { limitLine } from "../../contracts/plans";
 import { SOUNDS } from "../../contracts/library";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
 import { makeSprite } from "./media/sprite";
-import { probe, type ProbeSummary } from "./media/probe";
+import { looksLikeSong, probe, type ProbeSummary } from "./media/probe";
 import { placeUnplaced } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
@@ -45,19 +45,21 @@ const IDLE_MS = 2000;
 const LEASE_S = 300;
 
 /**
- * Jobs at once, per lane. Files: one, since ffmpeg has its own server-wide limit (media/run.ts). Transcripts: a key's
+ * Jobs at once, per lane. Pictures: one, apart from the files, so a card's picture never waits for a proxy that already
+ * started (its ffmpeg runs in a line of its own, media/run.ts). Files: one, since ffmpeg has its own server-wide limit. Transcripts: a key's
  * service takes many, and on this computer they never overlap anyway (device-transcribe.ts). AI: the Mac relay runs
  * two library calls at once per computer (background slots, mac-claude.ts) and queues the rest; an API key takes all six.
  * ponytail: fixed sizes; per-key rate limits (429s back off and retry) would say how far an API key can go
  */
 export const LANES = [
-  { name: "files", kinds: ["probe", "thumb", "wave", "proxy", "sprite", "fingerprint"], size: 1 },
+  { name: "pictures", kinds: ["probe", "thumb", "wave"], size: 1 },
+  { name: "files", kinds: ["proxy", "sprite", "fingerprint"], size: 1 },
   { name: "transcripts", kinds: ["transcribe"], size: 4 },
   { name: "ai", kinds: ["describe", "embed"], size: 6 },
 ] as const;
 
 /** A card's own steps: they run before anything else, in any library. */
-export const PICTURES = ["probe", "thumb", "wave"];
+export const PICTURES: string[] = [...LANES[0].kinds];
 
 /** Extras: a failure leaves the version playable. Only the files it is shown with fail it. */
 const EXTRA = new Set(["transcribe", "describe", "fingerprint", "embed", "sprite"]);
@@ -68,6 +70,7 @@ interface VersionRow {
   id: string;
   library_id: string;
   kind: string;
+  title: string;
   source_key: string;
   source_path: string | null;
   probe: string | null;
@@ -309,7 +312,7 @@ async function run(job: JobRow): Promise<void> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id, a.kind, v.source_key, v.source_path, v.probe, v.mac_path, v.from_path FROM asset_versions v
+      `SELECT v.id, a.library_id, a.kind, a.title, v.source_key, v.source_path, v.probe, v.mac_path, v.from_path FROM asset_versions v
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
@@ -363,9 +366,13 @@ async function run(job: JobRow): Promise<void> {
     // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
     // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
     // or keys on a song nobody asked about)
-    const music =
+    let music =
       (!!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine))) ||
       !!db.prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map((s) => `'${s.tag}'`).join(", ")})`).get(v.id);
+    // a song nobody said was one (dropped, downloaded): known by its tags or its name, tagged music by the app
+    const song = !music && v.kind !== "image" && looksLikeSong(v.title, p);
+    if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
+    music ||= song;
     // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
@@ -384,7 +391,7 @@ async function run(job: JobRow): Promise<void> {
     // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
     if (!music && job.actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: job.actor });
     // a library the AI organizes: a sound or a picture goes to its folder now (a video when it is described)
-    organizeOnProbe(db, v.id, p.duration);
+    organizeOnProbe(db, v.id, p.duration, song);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {

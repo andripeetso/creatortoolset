@@ -126,7 +126,7 @@ describe("the order clips are prepared in", () => {
     enqueueJob(d, "lib_a", "v2", "probe", "local");
     enqueueJob(d, "lib_a", "v3", "probe", "local");
     expect(nextJob(d, Date.now(), lane("transcripts"))).toBeNull(); // no transcript while a picture can run
-    expect([next("files"), next("files"), next("files")]).toEqual(["v2 probe", "v3 probe", "v1 thumb"]);
+    expect([next("pictures"), next("pictures"), next("pictures")]).toEqual(["v2 probe", "v3 probe", "v1 thumb"]);
     for (const v of ["v2", "v3"]) for (const k of ["proxy", "fingerprint"]) enqueueJob(d, "lib_a", v, k, "local");
     expect(next("transcripts")).toBe("v1 transcribe");
     expect([1, 2, 3, 4, 5, 6].map(() => next("files"))).toEqual(["v1 proxy", "v2 proxy", "v3 proxy", "v1 fingerprint", "v2 fingerprint", "v3 fingerprint"]);
@@ -135,7 +135,9 @@ describe("the order clips are prepared in", () => {
   it("a video's strip of frames after every picture and lighter copy, before the duplicate checks", () => {
     for (const v of ["v1", "v2"]) for (const k of ["fingerprint", "sprite", "proxy"]) enqueueJob(d, "lib_a", v, k, "local");
     enqueueJob(d, "lib_a", "v3", "thumb", "local");
-    expect([1, 2, 3, 4, 5, 6].map(() => next("files"))).toEqual(["v3 thumb", "v1 proxy", "v2 proxy", "v1 sprite", "v2 sprite", "v1 fingerprint"]);
+    expect(next("files")).toBeNull(); // the library's picture first
+    expect(next("pictures")).toBe("v3 thumb");
+    expect([1, 2, 3, 4, 5].map(() => next("files"))).toEqual(["v1 proxy", "v2 proxy", "v1 sprite", "v2 sprite", "v1 fingerprint"]);
   });
 
   it("slow steps wait while the library's folders hand clips over, and a picture waiting for its retry holds nothing back", () => {
@@ -163,7 +165,8 @@ describe("the order clips are prepared in", () => {
     enqueueJob(d, "lib_a", "v2", "transcribe", "local");
     prepareFirst("v2");
     expect(next("transcripts")).toBeNull(); // its transcript waits for the pictures like any other
-    expect([1, 2, 3, 4, 5].map(() => next("files"))).toEqual(["v2 wave", "v3 thumb", "v4 thumb", "v2 proxy", "v1 proxy"]);
+    expect([1, 2, 3].map(() => next("pictures"))).toEqual(["v2 wave", "v3 thumb", "v4 thumb"]);
+    expect([1, 2].map(() => next("files"))).toEqual(["v2 proxy", "v1 proxy"]);
     expect(next("transcripts")).toBe("v2 transcribe");
   });
 

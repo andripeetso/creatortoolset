@@ -1,7 +1,7 @@
 import type { SplitBox, SplitLayout, SplitLine } from "../../contracts/design";
 import { CUTOUT_KIND, SPLIT_KIND, type DeviceJob } from "../../contracts/devices";
 import { needsLine } from "../../contracts/tools";
-import { isOnline, listDevices } from "./devices";
+import { isOnline, listDevices, quietLine, seenLately } from "./devices";
 import { wakeEditorPolls } from "./mac-claude";
 
 /**
@@ -60,9 +60,15 @@ export class NoMac extends Error {
   }
 }
 
+/** A paired Mac of theirs that is not on, named with all that is known ("Ana's Mac hasn't answered for 3 min"), the one seen last. */
+function quietMac(owner: string): NoMac | null {
+  const last = listDevices((d) => d.owner === owner).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+  return last && !isOnline(last.id) ? new NoMac(quietLine(last), { id: last.id, name: last.name }) : null;
+}
+
 /**
- * Why this account can't have a picture cut out (or split) now; null when a Mac of its own can. A Mac of theirs that
- * is paired and not on is named ("Ana's Mac is unreachable"), the one seen last; with none, what is missing.
+ * Why this account can't have a picture cut out (or split) now; null when a Mac of its own can. One heard from in the
+ * last 2 min (an update restarts the app) can: the cut waits for it to come back. Else the quiet Mac, or what is missing.
  */
 export function cutoutMissing(owner: string, kind: Kind = CUTOUT_KIND): NoMac | null {
   const mine = listDevices((d) => d.owner === owner);
@@ -70,8 +76,8 @@ export function cutoutMissing(owner: string, kind: Kind = CUTOUT_KIND): NoMac | 
   if (on.some((d) => d.kinds?.includes(kind))) return null;
   // a Mac that is on but lists no cut-out (or split) has an app older than it
   if (on.length) return new NoMac(needsLine([{ what: "The newest Creator Toolset Mac app", anyOf: [], form: "ai" }]));
-  const last = mine.sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
-  return last ? new NoMac(`${last.name} is unreachable`, { id: last.id, name: last.name }) : new NoMac(needsLine([{ what: "A Mac with Creator Toolset on", anyOf: [], form: "ai" }]));
+  if (mine.some((d) => seenLately(d) && d.kinds?.includes(kind))) return null;
+  return quietMac(owner) ?? new NoMac(needsLine([{ what: "A Mac with Creator Toolset on", anyOf: [], form: "ai" }]));
 }
 
 /**
@@ -93,7 +99,7 @@ function ask<T extends Buffer | Split>(owner: string, picture: Buffer, kind: Kin
   if (refused) return Promise.reject(refused);
   return new Promise((resolve, reject) => {
     const id = ++lastId;
-    const timer = setTimeout(() => end(new Error(`Your Mac did not ${kind === SPLIT_KIND ? "split the picture" : "cut the picture out"} in ${CUTOUT_LIMITS.ms / 1000} seconds.`)), CUTOUT_LIMITS.ms);
+    const timer = setTimeout(() => end(quietMac(owner) ?? new Error(`Your Mac did not ${kind === SPLIT_KIND ? "split the picture" : "cut the picture out"} in ${CUTOUT_LIMITS.ms / 1000} seconds.`)), CUTOUT_LIMITS.ms);
     const end = (r: Buffer | Split | Error) => {
       clearTimeout(timer);
       cuts.delete(id);

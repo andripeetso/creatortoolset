@@ -377,14 +377,16 @@ export { SOURCE_KINDS } from "@contracts/knowledge";
 import type { KnowledgeSource } from "@contracts/knowledge";
 
 /** The account's knowledge (api/workshop.ts "knowledge"): every project reads it unless kept to one or switched off. */
-export const listSources = () => fetch("/api/workshop/sources").then((r) => json<KnowledgeSource[]>(r));
+/** The account's sources one workspace reads: `projectId`'s (its own settings), else the open one's. */
+export const listSources = (projectId?: string) =>
+  fetch("/api/workshop/sources", projectId ? { headers: { "X-CT-Workspace": projectId } } : undefined).then((r) => json<KnowledgeSource[]>(r));
 /** One of: text, a .docx/.odt/.epub (`file`, base64), or a scan's pages (`pages`, base64 JPEGs). */
 export const addSource = (input: { name: string; text?: string; file?: string; pages?: string[]; more?: boolean; projectId?: string }) =>
   fetch("/api/workshop/sources", jsonInit(input)).then((r) => json<KnowledgeSource>(r));
 /** A scan's pages in batches of 30 (each request stays well under the server's 50 MB), read after the last. */
-export async function addScan(name: string, pages: string[], onBatch?: (sent: number) => void): Promise<KnowledgeSource> {
+export async function addScan(name: string, pages: string[], onBatch?: (sent: number) => void, projectId?: string): Promise<KnowledgeSource> {
   const BATCH = 30;
-  let s = await addSource({ name, pages: pages.slice(0, BATCH), more: pages.length > BATCH });
+  let s = await addSource({ name, pages: pages.slice(0, BATCH), more: pages.length > BATCH, projectId });
   for (let i = BATCH; i < pages.length; i += BATCH) {
     onBatch?.(i);
     s = await fetch(`/api/workshop/sources/${s.id}/pages`, jsonInit({ pages: pages.slice(i, i + BATCH), more: i + BATCH < pages.length })).then((r) => json<KnowledgeSource>(r));

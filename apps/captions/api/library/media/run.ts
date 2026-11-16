@@ -7,14 +7,29 @@ import { ffmpegCommand } from "../../ffmpeg-runtime";
 let running = 0;
 const waiting: (() => void)[] = [];
 const limit = () => Math.max(1, Number(process.env.FFMPEG_CONCURRENCY) || 1);
+// a few seconds' work a person waits to see has a line of its own, one at a time: a long run that already started (a
+// 46-minute clip's transcript on this computer, a 4K proxy) held the one slot for minutes and every card waited for its picture
+let quick = 0;
+const quickWaiting: (() => void)[] = [];
 
 /**
  * Runs `work` (one ffmpeg process) in the server-wide limit; for a caller that spawns ffmpeg itself to read its output.
- * `soon`: a few seconds' work a person waits to see (a clip's picture) goes before the queued long runs.
+ * `soon`: a few seconds' work a person waits to see (a clip's picture) runs in its own line of one, never behind a long run.
  */
 export async function ffmpegSlot<T>(work: () => Promise<T>, soon = false): Promise<T> {
+  if (soon) {
+    if (quick < 1) quick++;
+    else await new Promise<void>((r) => quickWaiting.push(r));
+    try {
+      return await work();
+    } finally {
+      const next = quickWaiting.shift();
+      if (next) next();
+      else quick--;
+    }
+  }
   if (running < limit()) running++;
-  else await new Promise<void>((r) => (soon ? waiting.unshift(r) : waiting.push(r))); // the releasing run hands its slot over: `running` stays counted
+  else await new Promise<void>((r) => waiting.push(r)); // the releasing run hands its slot over: `running` stays counted
   try {
     return await work();
   } finally {

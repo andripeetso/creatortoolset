@@ -113,6 +113,19 @@ describe("choosing faces", () => {
     expect(((await r.json()) as { error: string }).error).toMatch(/could not read your AI's answer/);
   });
 
+  it("says when a usage limit resets, as the chat does", async () => {
+    ai.answer = async () => {
+      throw new Error("Claude on the Mac: API Error: Request rejected (429) · rate_limit_error: try again later. (reset after 2h15m45s)");
+    };
+    const before = Date.now();
+    const r = await pick([face("T1")]);
+    expect(r.status).toBe(409);
+    const j = (await r.json()) as { error: string; limit: { until: number } };
+    expect(j.error).toBe("Your AI is at its usage limit. Nothing was blurred.");
+    expect(j.limit.until - before).toBeGreaterThanOrEqual((2 * 3600 + 15 * 60 + 45) * 1000);
+    expect(j.limit.until - before).toBeLessThan((2 * 3600 + 16 * 60) * 1000);
+  });
+
   it("refuses what isn't a pick, before asking the AI", async () => {
     const big = "A".repeat(Math.ceil(LIMITS.picture / 3) * 4 + 4);
     for (const bad of [

@@ -159,11 +159,13 @@ describe("before an AI is connected", () => {
 });
 
 describe("the dock's prompt", () => {
-  it("carries facts about the app and its tools, no writing or style rules", async () => {
+  it("carries facts about the app and its tools, short replies and no made-up causes, no setup flow rule", async () => {
     const { SYSTEM } = await import("./assistant");
     expect(SYSTEM).toContain("Creator Toolset");
     expect(SYSTEM).toContain("ask_secret");
-    expect(SYSTEM).not.toMatch(/one sentence|one step|one thing/i);
+    expect(SYSTEM).not.toMatch(/one sentence|one step|one thing at a time/i);
+    expect(SYSTEM).toContain("1 to 3 short lines");
+    expect(SYSTEM).toContain("never tell the user to open Creator Toolset");
     // what it lists is linked by its app path, so a phone or the dock can open it
     for (const page of ["/review/<id>", "/editor/<id>", "/workshop/sessions/<id>"]) expect(SYSTEM).toContain(`(${page}`);
   });
