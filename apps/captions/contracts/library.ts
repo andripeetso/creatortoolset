@@ -459,3 +459,46 @@ export function applyS3Preset<T extends { endpoint: string; region: string; path
  *  (transcript, description, search by meaning) off it, and the top-level folder it is filed in, made on first use. */
 export const SOUNDS = { music: { tag: "music", folder: "Music" }, effect: { tag: "sound effect", folder: "Sound effects" } } as const;
 export type Sound = keyof typeof SOUNDS;
+
+// ── shot descriptions (tasks/flywheel/PLAN.md stage 2) ─────────────────────────────────────────────────────────────
+
+/**
+ * A video's picture as numbers, one per frame read (api/library/look.ts readPicture): sent by whichever computer can
+ * read the file (the server, the studio's worker, a Mac), so the server finds the same stretches wherever it was read.
+ */
+export interface PictureSignal {
+  fps: number;
+  step: number[];
+  cut: number[];
+  lag: number[];
+}
+
+/**
+ * One stretch of a video between picture changes (a cut, or a long take split where it changes most), described by
+ * the person's own AI with the workspace's context: what happens, how much, and whether its subject is easy to see.
+ * Never who anyone is. The person can write their own line, which wins over the AI's.
+ */
+export interface Stretch {
+  versionId: string;
+  /** its place in the video, from 0 */
+  seg: number;
+  a: number;
+  b: number;
+  /** 0 still … 1 the most movement in this video */
+  motion: number;
+  /** 0 nothing changes (a menu, loading, standing) … 5 a peak of the action */
+  action: number;
+  /** the main subject is easy to see */
+  clear: boolean;
+  /** up to STRETCH_TAGS short free words */
+  tags: string[];
+  /** what happens, named in the workspace's words */
+  text: string;
+  /** 64-bit picture hash of its middle frame, hex */
+  ph: string;
+  source: "ai" | "user";
+  /** the context stamp it was written under (lib/workshop/context.ts contextStamp) */
+  stamp: string;
+}
+export const STRETCH_TEXT_MAX = 200;
+export const STRETCH_TAGS = 3;

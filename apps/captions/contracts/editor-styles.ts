@@ -75,6 +75,10 @@ export interface EditingStyle {
   size?: WorkingSize | null;
   /** edit in passes: the first cut, then the B-roll, then the cards, each waits in Review for Carry on (POST /api/editor/:id/pass) */
   passes?: boolean;
+  /** what this kind of edit is, researched by the AI before the first edit in the style; marked as researched, the person's to edit or delete */
+  playbook?: StylePlaybook | null;
+  /** what finished edits in the style taught, newest first, at most LEARNED_MAX */
+  learned?: StyleLearned[];
   createdAt: number;
   updatedAt: number;
 }
@@ -204,4 +208,41 @@ export interface FinishedEdit {
   said: string;
   /** the spoken words of lines the script step planned for this version and the person took out */
   cut: string[];
+}
+
+// ── a style that learns (tasks/flywheel/PLAN.md stage 5) ───────────────────────────────────────────────────────────
+
+/** Characters of a researched playbook. */
+export const PLAYBOOK_MAX = 6000;
+/** Finished edits a style keeps what they taught from. */
+export const LEARNED_MAX = 12;
+/** Characters of the person's own lines from finished edits that one prompt gets (newest first, the edit's own workspace only). */
+export const LEARNED_PROMPT_MAX = 2000;
+
+/**
+ * What a kind of edit is, written by the AI from research (the web, example videos) the first time the style is used:
+ * its structure, its pace in numbers, its effects in the renderer's own names, what makes it fail, and where that came
+ * from. Shown as "Researched"; once the person edits it, it is theirs (`by: "person"`). Kept apart from `notes`, which
+ * stay the person's own words.
+ */
+export interface StylePlaybook {
+  text: string;
+  sources: { title: string; url: string }[];
+  at: number;
+  by: "ai" | "person";
+}
+
+/**
+ * What one finished edit in the style taught, kept when its maker approved it: their feedback on its versions word for
+ * word (EditFeedback.text), numbers measured by code from the approved cut, and how many rounds it took. Read as
+ * examples of their taste, never as rules; a planner reads only the entries from the edit's own workspace.
+ */
+export interface StyleLearned {
+  editId: string;
+  workspaceId: string;
+  at: number;
+  /** versions made after the first before the approval */
+  rounds: number;
+  notes: string[];
+  cut: { seconds: number; shots: number; avgShotS: number; fxPerShot: number; sourcesUsed: number };
 }

@@ -16,6 +16,12 @@ export interface IndexShot {
   motion: number;
   /** what is seen, in a few words, when the AI has looked (contact sheets, or the library's own description) */
   desc?: string;
+  /** from the library's shot descriptions (contracts/library.ts Stretch), when the source has them */
+  action?: number;
+  clear?: boolean;
+  tags?: string[];
+  /** picture hash of its middle frame: two shots with close hashes show the same picture (shown once in a cut) */
+  ph?: string;
 }
 
 export interface IndexSource {
@@ -138,4 +144,33 @@ export interface EditPlan {
   texts?: PlanText[];
   /** for a batch: what makes this one different from the others ("faster cuts, red palette, hook first") */
   variation?: string;
+}
+
+/**
+ * What footage a cut was made from (tasks/flywheel/PLAN.md D7): said with a draft only when something was left out,
+ * so a cut from part of the footage is never presented as made from all of it.
+ */
+export interface Coverage {
+  /** the footage files the edit had, and their minutes */
+  files: number;
+  minutes: number;
+  /** the files the shot list could pick from, and their minutes */
+  pooled: number;
+  pooledMinutes: number;
+  /** the files the cut uses */
+  used: number;
+  /** each file left out, and why in plain words ("the face check found a face", "still being described") */
+  left: { title: string; why: string }[];
+}
+
+/**
+ * The look at a rendered cut before the person sees it (tasks/flywheel/PLAN.md stage 4): one judgement against the
+ * brief, the person's notes and the editing style. `fails` names the shots (by place in the cut, from 1) that don't
+ * hold up and why; Review shows them only when there are any.
+ */
+export interface Critique {
+  ok: boolean;
+  fails: { n: number; why: string }[];
+  /** 1: the first cut; 2: after the one fix round */
+  round: number;
 }

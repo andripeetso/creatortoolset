@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { KnowledgeSource } from "../../../contracts/knowledge";
@@ -91,4 +92,16 @@ export function renderContext(p: Project, files: KnowledgeFile[], max: number): 
 export async function workspaceContext(projectId: string | undefined, max: number): Promise<string> {
   const p = await readWorkspace(projectId);
   return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
+}
+
+/**
+ * Which context a stored text was written under: a short hash of exactly what `workspaceContext(projectId, max)` gives
+ * now, plus `salt` (the version of the prompt that wrote it). A library description or shot description keeps the stamp
+ * it was written with; when the workspace's instructions or files change what that call reads, the stamp differs and
+ * the text is written again the next time an edit or a search uses it (tasks/flywheel/PLAN.md, 6.1). A change past
+ * what the call reads (beyond `max`) leaves the stamp alone.
+ */
+export async function contextStamp(projectId: string | undefined, max: number, salt = ""): Promise<string> {
+  const text = await workspaceContext(projectId, max);
+  return createHash("sha256").update(`${salt}\n${text}`).digest("hex").slice(0, 16);
 }

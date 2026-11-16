@@ -346,3 +346,23 @@ export interface FootageTarget {
   libraryId: string;
   collectionId: string;
 }
+
+/**
+ * One thing the person said about an edit's versions, kept word for word and read with every later version of that
+ * edit (tasks/flywheel/PLAN.md D8): a message in chat (tool editor_feedback) or a Review comment on a version set to
+ * Changes. Never rewritten or summed up; the newest is read last.
+ */
+export interface EditFeedback {
+  at: number;
+  from: "chat" | "review";
+  /** the version it was said about ("v1".."v5"; a Review comment's own version) */
+  variant?: string;
+  /** seconds into that version, when it sits on a moment (a Review comment) */
+  t?: number;
+  text: string;
+  /** who said it: their username */
+  by: string;
+}
+/** Notes one edit keeps, and the characters of each. */
+export const EDIT_FEEDBACK_MAX = 60;
+export const EDIT_FEEDBACK_TEXT_MAX = 4000;
