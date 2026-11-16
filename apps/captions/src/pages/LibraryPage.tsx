@@ -338,10 +338,15 @@ export default function LibraryPage() {
   upload.current = library?.settings.upload ?? "none";
   const macRemote = !!thisMacBridge() && !watch?.allowed;
   const onMac = macRemote && upload.current === "none";
-  const send = async (u: UploadItem) => {
-    if (!libId || cancelled.current.has(u.key)) return;
+  // `retry`: Retry sends a cancelled file; its key stays in `cancelled`, so the queue below never starts it a second time
+  const send = async (u: UploadItem, retry = false) => {
+    if (!libId || (cancelled.current.has(u.key) && !retry)) return;
+    // on its way already (Retry pressed twice)
+    if (controllers.current.get(u.key)?.signal.aborted === false) return;
     const ctl = new AbortController();
     controllers.current.set(u.key, ctl);
+    // a cancelled run still finishing never writes over the Retry that came after it
+    const mine = () => controllers.current.get(u.key) === ctl;
     try {
       const mac = macRemote && upload.current === "none";
       let here = u.path ?? (await pathOnMac(u.file));
@@ -352,7 +357,7 @@ export default function LibraryPage() {
         ? u.copyTo
           ? ((await checkUpload(libId, u.file.size, `mac:${await quickPrint(u.file)}`).catch(() => null))?.duplicateOf ?? null)
           : null
-        : await alreadyThere(libId, u.file, () => patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+        : await alreadyThere(libId, u.file, () => ctl.signal.aborted || patch(u.key, { status: "checking", error: undefined })).catch(() => null);
       ctl.signal.throwIfAborted();
       if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
       // copied into the library's folder on this Mac first (the Mac app does it), then taken in from there
@@ -366,10 +371,11 @@ export default function LibraryPage() {
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {
-      if (ctl.signal.aborted) patch(u.key, { status: "cancelled", error: undefined });
-      else patch(u.key, { status: "failed", error: message(e), final: ["too_large", "not_uploaded"].includes((e as { code?: string }).code ?? "") });
+      if (ctl.signal.aborted) {
+        if (mine()) patch(u.key, { status: "cancelled", error: undefined });
+      } else patch(u.key, { status: "failed", error: message(e), final: ["too_large", "not_uploaded"].includes((e as { code?: string }).code ?? "") });
     } finally {
-      controllers.current.delete(u.key);
+      if (mine()) controllers.current.delete(u.key);
     }
   };
   // one file's copy, its bytes counted in the tray; Cancel stops it and the Mac removes the part written
@@ -1020,7 +1026,7 @@ export default function LibraryPage() {
 
                 <UploadTray
                   uploads={uploads}
-                  onRetry={(u) => (cancelled.current.delete(u.key), void send(u))}
+                  onRetry={(u) => void send(u, true)}
                   onCancel={cancel}
                   onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting" || u.status === "checking" || u.status === "copying"))}
                 />
