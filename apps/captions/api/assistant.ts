@@ -458,6 +458,9 @@ function load(username: string): Conv {
   // a reply a restart of the server ended: it can't finish any more and it can't do what it asked. Said in words: the
   // dock shows a failed reply without any as "That didn't work." Not one a computer is still writing (kept: it goes on
   // when that computer's next post arrives) or one running here.
+  // This read writes on purpose, the one exception to "reads never write" (AGENTS.md): in a deploy the old and new
+  // server read the same file, and a reply is adopted or ended at this first read. Moved to startup, it would end a
+  // reply the Mac is about to hand over.
   let kept: Set<string> | undefined;
   for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking" && !conv.held?.[m.id] && !runsOf(username).has(m.id)) {
     if ((kept ??= keptTurns()).has(m.id)) continue;
