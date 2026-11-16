@@ -9,6 +9,7 @@ import {
   type ClipSnapshot,
 } from "./store";
 import { bumpCueIdCounter } from "./captions";
+import { badge, CLIP_UPLOAD_MOVES, LOCAL_SAVE_MOVES, SERVER_SAVE_MOVES } from "./persistence-status";
 import type { CaptionStyle, Cue, PosSegment, TextOverlay, Word } from "./types";
 
 const STORAGE_KEY = "caption-studio-emergency-project-v1";
@@ -482,10 +483,10 @@ function saveRecoveryNow(): void {
     if (!recovery) {
       localStorage.removeItem(STORAGE_KEY);
       void clearActiveRecoveryProject().catch(() => {});
-      useStudio.setState({
-        localSaveState: "idle",
+      useStudio.setState((s) => ({
+        localSaveState: badge(LOCAL_SAVE_MOVES, s.localSaveState, "idle", "saveRecoveryNow: nothing to keep"),
         localSaveError: null,
-      });
+      }));
       return;
     }
     // Best-effort synchronous crash copy. Large projects can exceed the small
@@ -497,24 +498,24 @@ function saveRecoveryNow(): void {
     }
     void persistRecoveryProject(state, recovery)
       .then(() => {
-        useStudio.setState({
-          localSaveState: "saved",
+        useStudio.setState((s) => ({
+          localSaveState: badge(LOCAL_SAVE_MOVES, s.localSaveState, "saved", "saveRecoveryNow: written"),
           localSaveError: null,
-        });
+        }));
       })
       .catch((error) => {
-        useStudio.setState({
-          localSaveState: "error",
+        useStudio.setState((s) => ({
+          localSaveState: badge(LOCAL_SAVE_MOVES, s.localSaveState, "error", "saveRecoveryNow: write failed"),
           localSaveError:
             error instanceof Error ? error.message : "Source backup failed",
-        });
+        }));
       });
   } catch (error) {
-    useStudio.setState({
-      localSaveState: "error",
+    useStudio.setState((s) => ({
+      localSaveState: badge(LOCAL_SAVE_MOVES, s.localSaveState, "error", "saveRecoveryNow: failed"),
       localSaveError:
         error instanceof Error ? error.message : "Local recovery save failed",
-    });
+    }));
   } finally {
     writing = false;
   }
@@ -524,7 +525,10 @@ let recoveryTimer: number | null = null;
 
 function scheduleRecoverySave(): void {
   if (recoveryTimer) clearTimeout(recoveryTimer);
-  useStudio.setState({ localSaveState: "saving", localSaveError: null });
+  useStudio.setState((s) => ({
+    localSaveState: badge(LOCAL_SAVE_MOVES, s.localSaveState, "saving", "scheduleRecoverySave"),
+    localSaveError: null,
+  }));
   recoveryTimer = window.setTimeout(() => {
     recoveryTimer = null;
     saveRecoveryNow();
@@ -576,7 +580,7 @@ async function attachRecoveredSourceFiles(
     if (!files.has(clip.id) || clip.hasOriginal) return clip;
     return {
       ...clip,
-      uploadState: "local" as const,
+      uploadState: badge(CLIP_UPLOAD_MOVES, clip.uploadState, "local", "attachRecoveredSourceFiles"),
       uploadError: null,
     };
   });
@@ -607,7 +611,7 @@ async function restoreRecoveryProject(
       videoUrl: proxyUrl,
       status: { phase: transcribed ? "done" : "idle" },
       transcribed,
-      uploadState: info.hasOriginal ? "done" : info.uploadState,
+      uploadState: badge(CLIP_UPLOAD_MOVES, null, info.hasOriginal ? "done" : info.uploadState, "restoreRecoveryProject"),
       uploadPct: info.hasOriginal ? 100 : info.uploadPct,
     };
   });
@@ -682,17 +686,16 @@ async function restoreRecoveryProject(
     status: active.status,
     setupPending: project.setupPending,
     // "saving" is what has the autosave send this copy (persist.ts)
-    saveState: project.serverConflict
-      ? "error"
-      : project.serverProjectReady
-        ? unsynced
-          ? "saving"
-          : "saved"
-        : "idle",
+    saveState: badge(
+      SERVER_SAVE_MOVES,
+      null,
+      project.serverConflict ? "error" : project.serverProjectReady ? (unsynced ? "saving" : "saved") : "idle",
+      "restoreRecoveryProject",
+    ),
     saveError: project.serverConflict
       ? "A newer server version exists. This local copy is preserved."
       : null,
-    localSaveState: "saved",
+    localSaveState: badge(LOCAL_SAVE_MOVES, null, "saved", "restoreRecoveryProject"),
     localSaveError: null,
     selectedTextId: null,
     editingTextId: null,
