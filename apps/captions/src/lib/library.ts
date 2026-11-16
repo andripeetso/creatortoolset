@@ -7,6 +7,7 @@ import type {
   Collection,
   LibraryEstimate,
   LibraryProgress,
+  LibraryStatus,
   LibrarySpace,
   LibrarySettings,
   LibraryStorage,
@@ -74,6 +75,7 @@ export const getEstimate = (libraryId: string, d: Drop) =>
   ).then((r) => json<LibraryEstimate>(r));
 
 /** The processing still to do in the library. */
+export const getStatus = (libraryId: string) => fetch(`/api/library/${libraryId}/status`).then((r) => json<LibraryStatus>(r));
 export const getProgress = (libraryId: string) => fetch(`/api/library/${libraryId}/progress`).then((r) => json<LibraryProgress>(r));
 
 export const createLibrary = (name: string) =>

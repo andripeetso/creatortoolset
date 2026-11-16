@@ -279,6 +279,15 @@ export interface LibraryProgress {
   stages?: LibraryStage[];
 }
 
+/** GET /api/library/:id/status: the whole library, not one run. Each step counts over the clips in it now (the trash left out). */
+export interface LibraryStatus {
+  clips: number;
+  /** files that could not be read as video or sound */
+  unreadable: number;
+  /** done + failed + open = of; open is queued, running or waiting for a key */
+  stages: (Omit<LibraryStage, "now"> & { open: number })[];
+}
+
 export interface LibrarySummary {
   id: string;
   name: string;

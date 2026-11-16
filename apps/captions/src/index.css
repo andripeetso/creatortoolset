@@ -337,11 +337,13 @@ html.mac-app[data-chat-mode] main [data-titlebar] { padding-left: 1rem; }
 
 html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }
 /* The dim behind a dialog covers the window but not the page's own bar beside it, where the window's backdrop shows
-   (the body's colour). While a dialog is open the backdrop is that colour as the dim leaves it (half black over it), so
-   no bright line stands at the window's edge in the light theme. Restyling the bar's own track does not take in WebKit
-   while it is on screen, which is why the backdrop is what changes. */
-html:has([data-slot$="-overlay"]) body { background: #060608; }
-html:not(.dark):has([data-slot$="-overlay"]) body { background: #7d7d7d; }
+   (the body's colour). While a dialog is open that strip is the colour the dim leaves (half black over it), so no
+   bright line stands at the window's edge in the light theme. Only the strip: the page keeps its own colour under the
+   dim (an image the page's width, tiled down), else the page darkens twice and its white cards and pictures glare out
+   of a near-black page. Restyling the bar's own track does not take in WebKit while it is on screen, which is why the
+   backdrop is what changes. */
+html:has([data-slot$="-overlay"]) body { background: linear-gradient(#0b0b10, #0b0b10) 0 0 / 100% 100% repeat-y #060608; }
+html:not(.dark):has([data-slot$="-overlay"]) body { background: linear-gradient(#fafafa, #fafafa) 0 0 / 100% 100% repeat-y #7d7d7d; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

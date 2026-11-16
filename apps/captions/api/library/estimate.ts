@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { LibraryEstimate, LibraryProgress, LibraryStage, LibraryStep, LibraryStepEstimate, LibraryStepRoute } from "../../contracts/library";
+import type { LibraryEstimate, LibraryProgress, LibraryStage, LibraryStatus, LibraryStep, LibraryStepEstimate, LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, librarySetting } from "./db";
@@ -279,6 +279,24 @@ const runs = new Map<string, Set<string>>();
 
 // a description held back by the plan's limit (worker.ts holdForLimit): it waits, and takes no time, until one gets through
 const HELD = "(kind IN ('describe', 'look') AND state != 'needs_key' AND IFNULL(error, '') LIKE ?)";
+
+/** The whole library's state per step, for "how far is indexing, is anything broken": every clip in it, not one run. */
+export function libraryStatus(libraryId: string): LibraryStatus {
+  const db = libraryDb();
+  const live = "FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL";
+  const head = db.prepare(`SELECT COUNT(*) AS clips, IFNULL(SUM(v.state = 'failed'), 0) AS unreadable ${live}`).get(libraryId) as { clips: number; unreadable: number };
+  const rows = db
+    .prepare(
+      `SELECT j.kind, SUM(j.state = 'done') AS done, SUM(j.state = 'failed') AS failed, SUM(j.state IN ('queued', 'running', 'needs_key')) AS open
+       FROM jobs j JOIN assets a ON a.current_version_id = j.version_id WHERE a.library_id = ? AND a.trashed_at IS NULL GROUP BY j.kind`,
+    )
+    .all(libraryId) as { kind: string; done: number; failed: number; open: number }[];
+  const stages = STAGES.flatMap((kind) => {
+    const r = rows.find((x) => x.kind === kind);
+    return r ? [{ kind, done: r.done, failed: r.failed, open: r.open, of: r.done + r.failed + r.open }] : [];
+  });
+  return { ...head, stages };
+}
 
 /**
  * The library's processing still to do, for `username`'s view of the pace. The library page, Home's tile and the Activity

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type ImportMode, type LibraryEstimate, type LibraryProgress, type LibrarySummary, type Organize, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { NEEDS, waitingLine, type AssetCard, type ImportMode, type LibraryEstimate, type LibraryProgress, type LibraryStatus, type LibrarySummary, type Organize, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { getEstimate, getProgress, getWatch, type Drop, listLibraries, updateLibrary } from "@/lib/library";
+import { getEstimate, getProgress, getStatus, getWatch, type Drop, listLibraries, updateLibrary } from "@/lib/library";
 import { OrganizePicker, offerAnswer, offersOrganize } from "@/pages/library/Organize";
 import { ImportCards } from "@/pages/library/Import";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -212,6 +212,41 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
       )}
       {(!moving || open) && waiting}
     </section>
+  );
+}
+
+/**
+ * The whole library, step by step: how many of its clips have pictures, transcripts, descriptions and search, what
+ * failed and what still waits. Opened from the page's More menu; the live run and what waits for a key on top.
+ */
+export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string; onClose: () => void }) {
+  const [s, setS] = useState<LibraryStatus | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => {
+    getStatus(libraryId).then(setS, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
+  }, [libraryId]);
+  const open = s?.stages.reduce((n, st) => n + st.open, 0) ?? 0;
+  const broken = (s?.stages.reduce((n, st) => n + st.failed, 0) ?? 0) + (s?.unreadable ?? 0);
+  const line = !s ? (failed ?? "Counting…") : !s.clips ? "No clips yet" : [`${s.clips.toLocaleString()} ${s.clips === 1 ? "clip" : "clips"}`, open ? `${open.toLocaleString()} steps still to do` : "everything indexed", broken ? `${broken.toLocaleString()} failed` : ""].filter(Boolean).join(" · ");
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogTitle>Library status</DialogTitle>
+        <DialogDescription>{line}</DialogDescription>
+        <LibraryProgressBar libraryId={libraryId} />
+        {!!s?.stages.length && (
+          <ul className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1.5">
+            {s.stages.map((st) => <StageRow key={st.kind} name={STAGE_NAME[st.kind]} done={st.done} of={st.of} failed={st.failed} busy={false} />)}
+          </ul>
+        )}
+        {!!s?.unreadable && (
+          <p className="flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+            {s.unreadable.toLocaleString()} {s.unreadable === 1 ? "file can't be read as video or sound" : "files can't be read as video or sound"}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

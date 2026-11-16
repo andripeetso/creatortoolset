@@ -440,11 +440,8 @@ export function ProjectForm({
   const form = <form id={fid} className="contents" onSubmit={submit} />;
   // saves when picked, so it is a card of its own, never a row among the ones that wait for Save
   const work = !setup && initial && <WorkspaceServerWork projectId={initial.id} />;
-  const files = !setup && initial && (
-    <Section id="workspace-files" title="Context files">
-      <KnowledgePanel projectId={initial.id} />
-    </Section>
-  );
+  // its own section (title, Add, the list), the same one the Workshop's Knowledge tab draws
+  const files = !setup && initial && <KnowledgePanel projectId={initial.id} />;
 
   if (settings)
     return (
