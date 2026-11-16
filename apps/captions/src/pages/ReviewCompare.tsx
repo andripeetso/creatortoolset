@@ -248,7 +248,7 @@ export function ReviewCompare({
         <button
           onClick={() => setAudio((x) => (x === "left" ? "right" : "left"))}
           className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-zinc-800"
-          title="Which version you hear"
+          title="Switch sound to the other version"
         >
           <Volume2 className="h-4 w-4" /> V{audio === "left" ? left : right}
         </button>

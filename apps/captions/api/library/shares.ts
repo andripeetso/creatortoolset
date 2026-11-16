@@ -278,7 +278,7 @@ publicShareApp.post("/s/:token/unlock", async (c) => {
   if (!s.password_hash) return c.body(null, 204);
   const tries = wrong.get(s.token_hash);
   if (tries && tries.resetAt > Date.now() && tries.n >= MAX_WRONG) {
-    return c.json({ error: "Too many wrong passwords; try again later", code: "rate_limited" }, 429);
+    return c.json({ error: "Too many wrong passwords. Retry later.", code: "rate_limited" }, 429);
   }
   const body = (await c.req.json().catch(() => null)) as { password?: unknown } | null;
   const pw = typeof body?.password === "string" ? body.password : "";

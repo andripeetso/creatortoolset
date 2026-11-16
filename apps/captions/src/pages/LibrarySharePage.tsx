@@ -40,7 +40,7 @@ export default function LibrarySharePage() {
     } else setWrong(true);
   };
 
-  if (gone) return <p className="p-8 text-center text-sm text-zinc-500">This link is off, has expired, or was never real.</p>;
+  if (gone) return <p className="p-8 text-center text-sm text-zinc-500">This link is turned off, expired or not found. Ask the person who shared it for a new link.</p>;
   if (!view) return <div aria-hidden="true" className="min-h-dvh" />; // no spinner: the page paints when its list arrives
 
   if (view.locked) {
@@ -49,7 +49,7 @@ export default function LibrarySharePage() {
         <Lock className="mx-auto h-6 w-6 text-zinc-500" />
         <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" aria-label="Password" />
         <Button type="submit">Open</Button>
-        {wrong && <p className="text-center text-xs text-red-400">That password is not right.</p>}
+        {wrong && <p className="text-center text-xs text-red-400">Wrong password</p>}
       </form>
     );
   }
@@ -57,7 +57,7 @@ export default function LibrarySharePage() {
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6">
       {view.name && <h1 className="text-lg font-semibold">{view.name}</h1>}
-      {view.items.length === 0 && <p className="text-sm text-zinc-500">Nothing is shared here any more.</p>}
+      {view.items.length === 0 && <p className="text-sm text-zinc-500">No files on this link</p>}
       {view.items.map((item) => (
         <figure key={item.id} className="flex flex-col gap-2">
           {item.kind === "audio" && <audio controls preload="metadata" src={item.playUrl} className="w-full" />}
