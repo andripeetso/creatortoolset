@@ -437,4 +437,6 @@ export const MIGRATIONS: string[] = [
   DROP TABLE derivatives;
   ALTER TABLE derivatives_new RENAME TO derivatives;
   `,
+  // a folder's place in the order the owner dragged the tabs into; none yet: after the placed ones, oldest first
+  `ALTER TABLE collections ADD COLUMN position INTEGER;`,
 ];

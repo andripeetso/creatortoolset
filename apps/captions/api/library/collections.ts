@@ -39,6 +39,7 @@ interface Row {
   kind: "manual" | "smart";
   query: string | null;
   created_by: string;
+  position?: number | null;
 }
 
 const db = () => libraryDb();
@@ -102,7 +103,7 @@ collectionApp.get("/:id/collections", async (c) => {
     .prepare(
       `SELECT c.*, (SELECT COUNT(*) FROM collection_items i JOIN assets a ON a.id = i.asset_id
           WHERE i.collection_id = c.id AND a.trashed_at IS NULL AND NOT ${FINISHED}) AS n
-       FROM collections c WHERE c.library_id = ? ORDER BY c.created_at, c.id`,
+       FROM collections c WHERE c.library_id = ? ORDER BY c.position IS NULL, c.position, c.created_at, c.id`,
     )
     .all(libraryId) as unknown as (Row & { n: number })[];
   const pictures = db().prepare(
@@ -183,6 +184,18 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
   }
   db().prepare("UPDATE collections SET name = ?, parent_id = ? WHERE id = ?").run(name, parent, row.id);
   return c.json(toCollection({ ...row, name, parent_id: parent }));
+});
+
+// PUT /api/library/:id/collections/order { ids } → the folders in this order (the tabs dragged into place; owner only).
+// Ids from another library are left out; folders not named keep their place after these
+collectionApp.put("/:id/collections/order", async (c) => {
+  const libraryId = c.req.param("id");
+  if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
+  const body = (await c.req.json().catch(() => null)) as { ids?: unknown } | null;
+  if (!Array.isArray(body?.ids) || !body.ids.every((x) => typeof x === "string")) return c.json({ error: "ids are needed", code: "invalid" }, 400);
+  const set = db().prepare("UPDATE collections SET position = ? WHERE id = ? AND library_id = ?");
+  inTx(() => (body.ids as string[]).forEach((id, i) => set.run(i, id, libraryId)));
+  return c.json({ ok: true });
 });
 
 // DELETE /api/library/:id/collections/:cid → gone, its items kept in the library, its folders move up one level. What it

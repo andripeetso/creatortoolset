@@ -166,6 +166,9 @@ export const changeFolderItems = (libraryId: string, collectionId: string, asset
 export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
   send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
 
+/** The folders in this order (the tabs dragged into place); the server keeps it for everyone who opens the library */
+export const orderCollections = (libraryId: string, ids: string[]) => send<{ ok: true }>(`/api/library/${libraryId}/collections/order`, "PUT", { ids });
+
 /** The folder goes (api/library/collections.ts): its folders move up one level, its clips stay in the library. */
 export const deleteCollection = (libraryId: string, collectionId: string) =>
   send<{ ok: true }>(`/api/library/${libraryId}/collections/${collectionId}`, "DELETE");
