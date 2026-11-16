@@ -17,7 +17,7 @@ const { default: faceBlur } = await import("../../editor-steps/blur-faces/plugin
 type P = import("./plugin").ServerPlugin;
 
 const byItself = (id: string): P => ({ id, name: id, start: () => {} });
-// a stand-in for the studio's own plug-in: it replaces the AI Editor's routes (where its kids' footage check lives)
+// a plug-in that runs part of the server: it replaces the AI Editor's routes, with its own checks
 const studio: P = { id: "studio", name: "Studio", replaces: { paths: ["/api/editor"], routes: new Hono() }, editFlags: [{ id: "children", label: "Contains children" }] };
 const echo = new Hono().get("/", (c) => c.json({ ok: true }));
 const plain: P = {
