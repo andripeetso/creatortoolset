@@ -17,15 +17,6 @@ vi.mock("./ai-complete", async (importOriginal) => ({
     parse(JSON.stringify({ kind: "book", title: "Offers", about: "A book about pricing offers.", uses: ["how to price a course"], sections: [{ title: "Pricing", from: 1, to: 2, about: "price anchors" }] })),
   ),
 }));
-// web research on the Mac: stood in for only while a test sets `web`, which is handed the question as it was sent
-let web: ((question: string) => void) | undefined;
-vi.mock("./lib/mac-claude", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib/mac-claude")>();
-  return {
-    ...actual,
-    streamMacClaude: ((...a: Parameters<typeof actual.streamMacClaude>) => (web ? (web(a[1]), Promise.resolve("Found.")) : actual.streamMacClaude(...a))) as typeof actual.streamMacClaude,
-  };
-});
 
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
@@ -274,22 +265,6 @@ describe("the workspace a session is in, carried to what is asked about one piec
     ai.mockImplementation(reader);
     expect(sent).toHaveLength(2);
     for (const prompt of sent) expect(prompt).toMatch(new RegExp(`^The workspace this piece belongs to\\.[^\\n]*\\n${TOLD.source}\\n\\n`));
-  });
-
-  it("a question for the web says which workspace it is asked in", async () => {
-    const asked: string[] = [];
-    web = (q) => asked.push(q);
-    mocked.mockImplementationOnce((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown) => ({ result: parse(JSON.stringify({ reply: "ok" })), provider: "Claude (Mac)" })) as never);
-    const r = (await (await call("POST", `/api/workshop/sessions/${guide.id}/chat`, { docId: guide.docId, text: "Which land has the most snow?", deep: true })).json()) as { reply: { id: string } };
-    for (let i = 0; i < 500; i++) {
-      const chat = (await (await call("GET", `/api/workshop/sessions/${guide.id}/chat`)).json()) as Array<{ id: string; status?: string }>;
-      if (chat.find((m) => m.id === r.reply.id)?.status !== "thinking") break;
-      await new Promise((res) => setTimeout(res, 10));
-    }
-    web = undefined;
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/^Which land has the most snow\?\n\nContext: the piece is "Carousel" \(carousel\), opening: Frost Peak guide piece\.\n\nThe workspace this is asked in\.[^\n]*\n/);
-    expect(asked[0]).toMatch(TOLD);
   });
 
   it("an admin's turn in someone else's session reads the project owner's context files, never the admin's own", async () => {

@@ -366,11 +366,6 @@ const WORKSPACE_MAX = 6000;
  */
 const contextOf = async (session: Pick<SessionMeta, "owner" | "projectId">): Promise<string> =>
   workspaceContext(await workspaceOf(session.owner, session.projectId), WORKSPACE_MAX);
-/** A question for the web with the workspace it is asked in, so the search is about the right product, game or field. */
-const askedIn = (question: string, workspace: string): string =>
-  workspace
-    ? `${question}\n\nThe workspace this is asked in. Use it only to know what the question is about (which product, game, field or audience); the answer comes from the web, never from this:\n${workspace}`
-    : question;
 
 /** A project as the prompts read it: its knowledge filled in from the account's sources. */
 async function projectForAi(id: string | undefined, user: SessionUser): Promise<Project | null> {
@@ -1269,7 +1264,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       await progress({ stage: "researching", provider: researchLabel(user), research: { question: ask.text, depth: "deep", status: "running" } }, true);
       const q = `${ask.text}\n\nContext: the piece is "${doc.title}" (${doc.kind})${doc.blocks[0] ? `, opening: ${doc.blocks[0].text.slice(0, 200)}` : ""}.`;
       try {
-        const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, askedIn(q, await contextOf(session)), { depth: "deep", signal });
+        const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, q, { depth: "deep", signal });
         addUsage(a.usage);
         research = { question: ask.text, depth: "deep", status: "done", answer: a.content.slice(0, 8000), citations: a.citations.slice(0, 20), model: a.model };
       } catch (e) {
@@ -1577,7 +1572,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         step(`Checking on the web: "${q.slice(0, 200)}"`);
         await progress({ stage: "researching", text: plan.reply }, true);
         try {
-          const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, askedIn(q, await contextOf(session)), { depth: "quick", signal });
+          const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, q, { depth: "quick", signal });
           addUsage(a.usage);
           research = { question: q, depth: "quick", status: "done", answer: a.content.slice(0, 6000), citations: a.citations.slice(0, 20), model: a.model };
         } catch (e) {
@@ -1811,7 +1806,7 @@ async function runResearch(session: SessionMeta, user: SessionUser, messageId: s
   const signal = stopSignal(messageId);
   try {
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
-    const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, askedIn(question, await contextOf(session)), { depth: "deep", signal });
+    const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, question, { depth: "deep", signal });
     const sources = a.citations.slice(0, 20).map((u, i) => `[${i + 1}] ${u}`);
     if (signal.aborted) throw new Error("Stopped"); // a Stop while the answer was in flight stays a Stop
     await patchMessage(session.id, messageId, {
