@@ -18,6 +18,7 @@ import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
+import { libraryWaits } from "./library-package";
 
 export interface WorkProgress extends WorkBeat {
   /** the computer's name, as Settings → Devices shows it */
@@ -96,6 +97,7 @@ export const serverMayTake = (job: JobRow): boolean => placeOf(job) !== "compute
 /** Whether a step waits that computer `d` would be handed by a work claim now: what its device runner's long poll is told. */
 export async function workWaits(d: Device, now = Date.now()): Promise<boolean> {
   if (!works(d)) return false;
+  if (await libraryWaits(d, now)) return true;
   const k = coreKinds();
   const fits = await fitsWork(d, now);
   return (

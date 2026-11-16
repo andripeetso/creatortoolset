@@ -11,6 +11,7 @@ import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker
 import { deviceForToken, deviceOf, setDeviceWork, touchDevice } from "../lib/devices";
 import { libraryDb } from "../library/db";
 import { finishJob, type JobRow } from "../library/jobs";
+import { claimLibraryForComputer, libWorkApp } from "./library-package";
 import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
@@ -41,6 +42,9 @@ const strings = (v: unknown, max: number): string[] | null =>
 
 export const workApp = new Hono();
 
+// library jobs (phase 6): their own ids, under work/lib/:id/
+workApp.route("/lib", libWorkApp);
+
 workApp.post("/claim", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
@@ -52,8 +56,10 @@ workApp.post("/claim", async (c) => {
   const cache = raw && typeof raw.bytes === "number" && raw.bytes >= 0
     ? { bytes: raw.bytes, ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}), ...(strings(raw.offline, 10_000) ? { offline: raw.offline as string[] } : {}) }
     : undefined;
+  // a worker that runs library jobs says so: one that doesn't is never handed one
+  const library = b?.library === true;
   // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it
-  setDeviceWork(d.id, { v, steps, ...(cache ? { cache } : {}) });
+  setDeviceWork(d.id, { v, steps, ...(cache ? { cache } : {}), ...(library ? { library: true as const } : {}) });
   if (v < WORK_MIN) return c.json({ pkg: null, update: true } satisfies WorkClaim);
   const end = Date.now() + CLAIM_POLL.holdMs;
   for (;;) {
@@ -69,6 +75,8 @@ workApp.post("/claim", async (c) => {
         continue;
       }
     }
+    const lib = library ? await claimLibraryForComputer(deviceOf(d.id)!) : null;
+    if (lib) return c.json({ pkg: null, lib } satisfies WorkClaim);
     if (Date.now() >= end || c.req.raw.signal.aborted) return c.json({ pkg: null } satisfies WorkClaim);
     await new Promise((r) => setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now()))));
     touchDevice(d.id, c.req.header("user-agent"));

@@ -125,7 +125,7 @@ const marks = (a: readonly unknown[]) => a.map(() => "?").join(",");
  * description waits while its clip's transcript is still to come, since it reads what is said.
  * ponytail: sorts every queued job of the lane's kinds per claim; fine to tens of thousands, an index on (state, kind) past that
  */
-export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number | null {
+export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[], skip: readonly number[] = []): number | null {
   const held = [
     ...takingClips,
     ...(db
@@ -137,12 +137,12 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
   // pictures) before the other slow steps: never before another clip's picture
   const row = db
     .prepare(
-      `SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(kinds)})
+      `SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(kinds)}) AND id NOT IN (${marks(skip)})
          AND (kind IN (${marks(PICTURES)}) OR library_id NOT IN (${marks(held)}))
          AND NOT (kind = 'describe' AND EXISTS (SELECT 1 FROM jobs t WHERE t.version_id = j.version_id AND t.kind = 'transcribe' AND t.state IN ('queued', 'running')))
        ORDER BY kind IN (${marks(PICTURES)}) DESC, version_id IN (${marks(first)}) DESC, CASE kind ${kinds.map((_, i) => `WHEN ? THEN ${i}`).join(" ")} END, id LIMIT 1`,
     )
-    .get(now, ...kinds, ...PICTURES, ...held, ...PICTURES, ...first, ...kinds) as { id: number } | undefined;
+    .get(now, ...kinds, ...skip, ...PICTURES, ...held, ...PICTURES, ...first, ...kinds) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
@@ -169,6 +169,23 @@ const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
 
 const running = new Set<number>();
 
+/**
+ * The library jobs one of the uploader's own computers takes (api/work/library-package.ts sets `test`): this server's
+ * loop leaves them alone while one can. Unset (a server without the work road), the server runs every job as before.
+ */
+export const leaveToComputers: { kinds: readonly string[]; test?: (job: JobRow) => boolean } = { kinds: [] };
+
+/** The queued jobs of `kinds` this server leaves to a computer now. */
+function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number[] {
+  const test = leaveToComputers.test;
+  const on = kinds.filter((k) => leaveToComputers.kinds.includes(k));
+  if (!test || !on.length) return [];
+  // ponytail: each waiting job placed again per tick; fine to hundreds queued, cache per tick past that
+  return (db.prepare(`SELECT * FROM jobs WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(on)}) ORDER BY id LIMIT 500`).all(now, ...on) as unknown as JobRow[])
+    .filter(test)
+    .map((j) => j.id);
+}
+
 /** The app is stopping (an update, Quit): the jobs this server runs go back in the queue at once, the try not counted. */
 export function releaseRunningJobs(now = Date.now()): void {
   for (const id of running) defer(libraryDb(), id, 0, now);
@@ -178,7 +195,7 @@ export function releaseRunningJobs(now = Date.now()): void {
 export async function tick(now = Date.now(), kinds: readonly string[] = LANES.flatMap((l) => l.kinds)): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now);
-  const id = nextJob(db, now, kinds);
+  const id = nextJob(db, now, kinds, leftToComputers(db, now, kinds));
   const device = id !== null && onThisComputer(db, id);
   if (device && onDevice > 0) return false;
   const job = id === null ? null : claimJob(db, LEASE_S, now, "jobs", kinds, id);
@@ -320,6 +337,45 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * What a probed version gets queued (the probe step, and api/library/derived.ts once a computer sent its probe): only
+ * what it does not have yet. A picture, a waveform, a proxy, a strip or a fingerprint a computer made and sent with the
+ * upload is never made again here.
+ */
+export async function afterProbe(db: ReturnType<typeof libraryDb>, v: Pick<VersionRow, "id" | "library_id" | "kind" | "title" | "source_path" | "from_path">, p: ProbeSummary, actor: string | null): Promise<void> {
+  const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(v.id) as { kind: string }[]).map((h) => h.kind));
+  const want = (kind: string) => !have.has(kind) && enqueueJob(db, v.library_id, v.id, kind, actor);
+  // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
+  // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
+  // or keys on a song nobody asked about)
+  let music =
+    (!!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, actor, isThisMachine))) ||
+    !!db.prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map((s) => `'${s.tag}'`).join(", ")})`).get(v.id);
+  // a song nobody said was one (dropped, downloaded): known by its tags or its name, tagged music by the app
+  const song = !music && v.kind !== "image" && looksLikeSong(v.title, p);
+  if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
+  music ||= song;
+  // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
+  const video = !!p.vcodec && !p.cover;
+  if (p.vcodec) want("thumb");
+  want("wave");
+  // a photo is probed as a one-frame video but shows as itself: no proxy
+  // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
+  const onlyProxy = v.kind === "video" && !!v.from_path && libraryUpload(v.library_id) === "proxies";
+  if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") })) want("proxy");
+  if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
+  // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
+  if (video && !music && v.kind !== "image") want("fingerprint");
+  // a photo is probed as a one-frame video: only a video asset gets a strip
+  if (video && !music && v.kind === "video") want("sprite");
+  // after transcribe in the queue, so the description reads what is said
+  if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", actor);
+  // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
+  if (!music && actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: actor });
+  // a library the AI organizes: a sound or a picture goes to its folder now (a video when it is described)
+  organizeOnProbe(db, v.id, p.duration, song);
+}
+
 /** Whether the AI described the version before. */
 const described = (versionId: string) => !!libraryDb().prepare("SELECT 1 FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId);
 
@@ -388,35 +444,7 @@ async function run(job: JobRow): Promise<void> {
     const turn = p?.turn;
     p = { ...(await probe(await src())), ...(turn ? { turn } : {}) };
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
-    // a file from the account's music folders, or one added as a song or a sound effect (its tag, routes.ts SOUNDS), is
-    // music: a thumbnail and a waveform, no transcript, no description, no search by meaning (each would spend their AI
-    // or keys on a song nobody asked about)
-    let music =
-      (!!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine))) ||
-      !!db.prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map((s) => `'${s.tag}'`).join(", ")})`).get(v.id);
-    // a song nobody said was one (dropped, downloaded): known by its tags or its name, tagged music by the app
-    const song = !music && v.kind !== "image" && looksLikeSong(v.title, p);
-    if (song) db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) SELECT asset_id, ?, 'ai' FROM asset_versions WHERE id = ?").run(SOUNDS.music.tag, v.id);
-    music ||= song;
-    // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
-    const video = !!p.vcodec && !p.cover;
-    if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
-    enqueueJob(db, v.library_id, v.id, "wave", job.actor);
-    // a photo is probed as a one-frame video but shows as itself: no proxy
-    // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
-    const onlyProxy = v.kind === "video" && !!v.from_path && libraryUpload(v.library_id) === "proxies";
-    if (v.kind !== "image" && wantsProxy(p, { cloud: proxiesInCloud(v.library_id) || onlyProxy, on: librarySetting(v.library_id, "proxy") })) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
-    if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
-    // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
-    if (video && !music && v.kind !== "image") enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
-    // a photo is probed as a one-frame video: only a video asset gets a strip
-    if (video && !music && v.kind === "video") enqueueJob(db, v.library_id, v.id, "sprite", job.actor);
-    // after transcribe in the queue, so the description reads what is said
-    if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
-    // plug-ins that work on what comes in (Face Blur's automatic covers): not for music
-    if (!music && job.actor) emitEvent("library.version.probed", { libraryId: v.library_id, versionId: v.id, owner: job.actor });
-    // a library the AI organizes: a sound or a picture goes to its folder now (a video when it is described)
-    organizeOnProbe(db, v.id, p.duration, song);
+    await afterProbe(db, v, p, job.actor);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
@@ -464,8 +492,12 @@ async function run(job: JobRow): Promise<void> {
     throw new Error(`No worker for ${job.kind}`);
   }
 
-  // ready: probed, and the derivatives the probe asked for are there (audio has no thumb)
+  markReady(db, v.id, p);
+}
+
+/** Ready: probed, and the derivatives the probe asked for are there (audio has no thumb). */
+export function markReady(db: ReturnType<typeof libraryDb>, versionId: string, p: ProbeSummary): void {
   const want = ["wave", ...(p.vcodec ? ["thumb"] : [])];
-  const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(v.id) as { kind: string }[]).map((h) => h.kind));
-  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(v.id);
+  const have = new Set((db.prepare("SELECT kind FROM derivatives WHERE version_id = ?").all(versionId) as { kind: string }[]).map((h) => h.kind));
+  if (want.every((k) => have.has(k))) db.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
 }

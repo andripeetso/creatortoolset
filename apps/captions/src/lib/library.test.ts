@@ -138,7 +138,22 @@ describe("uploadFile from the Mac app on its own server", () => {
       return new Response(null, { status: 204, headers: { "upload-offset": "5000" } });
     });
     expect(await uploadFile("lib_1", clip(), () => {})).toEqual({ assetId: "a3" });
-    expect(starts).toEqual([{ filename: "C0001.MP4", size: 5000, fromPath: "/Volumes/Card/C0001.MP4", fromDevice: "dev_1" }]);
+    // and that this Mac may send it itself: its quick fingerprint, so a server that lets it sends no bytes from here
+    expect(starts).toEqual([{ filename: "C0001.MP4", size: 5000, fromPath: "/Volumes/Card/C0001.MP4", fromDevice: "dev_1", quick: expect.stringMatching(/^[0-9a-f]{64}$/), send: true }]);
+  });
+
+  it("sends no bytes when the server lets this Mac send the file itself (its proxy, not the original)", async () => {
+    mac({ ...picked, device: "dev_1" });
+    const urls: string[] = [];
+    const told: number[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      urls.push(url);
+      if (url.endsWith("/in-place")) return new Response(JSON.stringify({ code: "forbidden" }), { status: 403 });
+      return new Response(JSON.stringify({ assetId: "a4", versionId: "v4", sent: true }));
+    });
+    expect(await uploadFile("lib_1", clip(), (sent) => told.push(sent))).toEqual({ assetId: "a4" });
+    expect(urls.filter((u) => !u.endsWith("/in-place"))).toEqual(["/api/library/lib_1/uploads"]);
+    expect(told.at(-1)).toBe(5000); // after the in-place attempt's own 0s
   });
 
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {

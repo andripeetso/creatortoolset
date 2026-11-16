@@ -195,7 +195,7 @@ export interface Device {
    * its work package worker, by its last work claim (contracts/work.ts, api/work/routes.ts): the package format it reads,
    * the plug-in steps it has, its proxy cache. Kept apart from `kinds`, which the device runner's claim rewrites.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[] } };
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[] }; library?: true };
 }
 
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */

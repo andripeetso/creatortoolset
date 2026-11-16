@@ -32,6 +32,9 @@ import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, parseOnMac } from "./on-mac";
+import { sendLater, sendsFromComputer } from "./derived";
+import { deviceOf } from "../lib/devices";
+import { WORK_MIN } from "../../contracts/work";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -394,8 +397,11 @@ libraryApp.post("/:id/uploads/check", async (c) => {
   return c.json(dup ? { duplicateOf: dup.id } : {});
 });
 
-// POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice? } → 201 { id, offset, chunkSize }
+// POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId?, fromPath?, fromDevice?, quick?, send? } → 201 { id, offset, chunkSize }
 // fromPath / fromDevice: where the file is on the Mac it is sent from (a library that keeps only proxies keeps that place)
+// send (with quick, the Mac's quickPrint): a video on the caller's own computer whose worker takes library jobs is not
+// uploaded by the page: 200 { assetId, versionId, sent: true } | { duplicateOf }, and that computer makes the proxy and
+// the small files and sends them, the original too only to a library that keeps originals (derived.ts sendLater)
 libraryApp.post("/:id/uploads", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -424,11 +430,19 @@ libraryApp.post("/:id/uploads", async (c) => {
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   }
-  await sweepStale();
   const id = randomUUID();
   const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
   const from = typeof body?.fromPath === "string" && body.fromPath.startsWith("/") && body.fromPath.length <= 2048 && !body.fromPath.split("/").includes("..") ? body.fromPath : null;
   const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
+  const sender = fromDevice ? deviceOf(fromDevice) : undefined;
+  if (
+    body?.send === true && from && !replaces && sender?.owner === user.username && sender.work?.library && sender.work.v >= WORK_MIN &&
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename)
+  ) {
+    const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
+    return c.json("versionId" in r ? { ...r, sent: true } : r);
+  }
+  await sweepStale();
   const staging = path.join(stagingDir(), id);
   // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
   const direct = libraryStore(libraryId).direct;

@@ -86,11 +86,52 @@ export interface WorkClaimBody {
   steps: string[];
   /** the proxy cache: bytes kept, and the versions kept offline */
   cache?: { bytes: number; limit?: number; offline?: string[] };
+  /** this worker runs library jobs too (LibraryPackage): a computer that doesn't say so is never handed one */
+  library?: true;
 }
 
 export type WorkClaim =
   | { pkg: WorkPackage }
-  | { pkg: null; update?: true; empty?: true };
+  | { pkg: null; update?: true; empty?: true; lib?: LibraryPackage };
+
+/**
+ * A library job run on one of the uploader's own computers (phase 6), on the same road: claim → package → result.
+ * Routes under work/lib/:id/ (api/work/library-package.ts): beat, light (the server's light copy), original (only for a
+ * proxy of a file only the server has), PUT file?name=, done, fail.
+ * - kind "send": a file on this computer, before anything uploads: it makes the probe, card picture, waveform, strip,
+ *   proxy and fingerprint here and sends them; the original goes too only to a library that keeps originals ("all").
+ * - kinds "proxy", "wave", "sprite", "fingerprint": that one file, of a file the server has (a phone or browser upload).
+ */
+export interface LibraryPackage {
+  v: number;
+  job: { id: number; kind: string; versionId: string; libraryId: string; actor: string };
+  /** the file, read where it is first (path, quick fingerprint), else the server's light copy (`proxy`) */
+  file: WorkFile;
+  /** the account's storage folders as paths on this computer */
+  folders?: string[];
+  /** kind "proxy" of a file only the server has: its original may be downloaded, to make the proxy, and is deleted after */
+  original?: { bytes: number };
+  /** the server's probe of the file (absent for "send", which probes it here) */
+  probe?: Record<string, unknown>;
+  /** send: what the library keeps of an upload */
+  upload?: "proxies" | "all";
+  /** send: wantsProxy's options (library/media/proxy.ts) */
+  proxy?: { cloud: boolean; on: boolean };
+  /** send: the person said it is a song or a sound effect: no strip, no fingerprint */
+  music?: boolean;
+}
+
+/** What came of a library job: the files PUT before (by name), and the small results inline. */
+export interface LibraryResult {
+  v: number;
+  outcome: { done: true } | { error: string };
+  files: ("original" | "proxy" | "thumb" | "wave" | "sprite")[];
+  probe?: Record<string, unknown>;
+  /** the original's SHA-256, read on this computer */
+  sha256?: string;
+  /** the fingerprint job's JSON */
+  fingerprint?: string;
+}
 
 export interface WorkBeat {
   line?: string;
