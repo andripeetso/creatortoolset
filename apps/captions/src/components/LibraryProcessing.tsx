@@ -335,7 +335,7 @@ export function BigUploadDialog({
   );
 }
 
-const gbOf = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
+export const gbOf = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
 
 /**
  * Where a chosen folder's files are kept, in the import question's words (pages/library/Import.tsx): used where they
