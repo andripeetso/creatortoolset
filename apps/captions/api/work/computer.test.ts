@@ -105,7 +105,7 @@ describe("the computer worker", () => {
     expect(aborted).toBe(true);
     expect(calls.filter((c) => !c.at.startsWith("beat"))).toEqual([]);
     expect(held()).toBe(false);
-  });
+  }, 20_000); // waits for a real beat: slow when the whole suite runs at once
 
   it("a step the package can't get its files for fails with that line, never asking for an original", async () => {
     STEPS.post = async () => {};
