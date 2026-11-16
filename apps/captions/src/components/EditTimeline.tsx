@@ -679,7 +679,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                     </button>
                   )}
                   {sel.track === "V1" && onColor && (
-                    <button onClick={() => onColor(sel)} title="Color: grade this shot (or its take, or match the others to it)" className={tbtn}>
+                    <button onClick={() => onColor(sel)} title="Colour: grade this shot (or its take, or match the others to it)" className={tbtn}>
                       <Palette className="h-3 w-3" /> Color
                     </button>
                   )}
@@ -1001,7 +1001,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                   </>
                 )}
                 {it.track === "V1" && onReframe && <button className={row} onClick={act(() => { setEditing(true); onReframe(it); })}>Reframe…</button>}
-                {it.track === "V1" && onColor && <button className={row} onClick={act(() => { setEditing(true); onColor(it); })}>Color…</button>}
+                {it.track === "V1" && onColor && <button className={row} onClick={act(() => { setEditing(true); onColor(it); })}>Colour…</button>}
                 {it.track === "V1" && onFace && <button className={row} onClick={act(() => { setEditing(true); onFace(it); })}>Face…</button>}
               </>
             )}

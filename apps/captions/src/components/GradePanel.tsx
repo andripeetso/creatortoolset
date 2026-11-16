@@ -191,12 +191,12 @@ export function GradePanel({ view, item, pending, video, edit: shotOf, look, onL
   return (
     <div className="flex min-h-0 flex-1 select-none flex-col gap-3 overflow-y-auto px-3 py-2 text-xs text-zinc-200">
       <div className="flex items-center gap-1">
-        <span className="font-medium">Color</span>
+        <span className="font-medium">Colour</span>
         <span className="mr-auto truncate text-zinc-400">{item.label.split(" · ")[0]}</span>
         <button className={cn(btn, bypass && "bg-amber-500/90 text-black hover:bg-amber-400")} onClick={() => setBypass((b) => !b)}
           title="The shot with no grade">Bypass</button>
         <button className={btn} onClick={() => jump(full(item.grade))} title="The grade this version has">Reset</button>
-        <button aria-label="Close color" className="rounded p-1 text-zinc-400 hover:bg-zinc-800" onClick={onClose}><X className="h-3.5 w-3.5" /></button>
+        <button aria-label="Close colour" className="rounded p-1 text-zinc-400 hover:bg-zinc-800" onClick={onClose}><X className="h-3.5 w-3.5" /></button>
       </div>
       {ref && (
         <div className="flex flex-wrap items-center gap-1">

@@ -536,7 +536,7 @@ function TextStylePanel() {
             />
           </div>
         </Row>
-        <Row label="Color">
+        <Row label="Colour">
           <ColorInput
             value={t.color}
             onChange={(v) => updateText(t.id, { color: v })}
@@ -552,7 +552,7 @@ function TextStylePanel() {
             />
             {t.outlineWidth > 0 && (
               <div className="grid grid-cols-2 gap-2">
-                <Row label="Outline color">
+                <Row label="Outline colour">
                   <ColorInput
                     value={t.outlineColor}
                     onChange={(v) => updateText(t.id, { outlineColor: v })}
@@ -598,7 +598,7 @@ function TextStylePanel() {
           </button>
         </div>
         {t.boxEnabled && (
-          <Row label="Box color">
+          <Row label="Box colour">
             <ColorInput
               value={t.boxColor}
               onChange={(v) => updateText(t.id, { boxColor: v })}
@@ -799,7 +799,7 @@ export function StylePanel() {
             />
             {style.outlineWidth > 0 && (
               <div className="mb-3 grid grid-cols-2 gap-3">
-                <Row label="Outline color">
+                <Row label="Outline colour">
                   <ColorInput
                     value={style.outlineColor}
                     onChange={(v) => setStyle({ outlineColor: v })}
@@ -848,7 +848,7 @@ export function StylePanel() {
         </div>
         {style.boxEnabled && (
           <div className="mb-3 grid grid-cols-2 gap-3">
-            <Row label="Box color">
+            <Row label="Box colour">
               <ColorInput
                 value={style.boxColor}
                 onChange={(v) => setStyle({ boxColor: v })}

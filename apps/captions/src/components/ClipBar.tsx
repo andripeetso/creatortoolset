@@ -10,7 +10,7 @@ import {
   Loader2,
   Plus,
   TriangleAlert,
-  Wand2,
+  CopyCheck,
   X,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -47,7 +47,7 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
     }
     return (
       <span className="flex items-center gap-1 text-amber-400">
-        <Wand2 className="h-3 w-3 shrink-0" />
+        <CopyCheck className="h-3 w-3 shrink-0" />
         <span className="truncate">Master applied</span>
       </span>
     );
@@ -377,7 +377,7 @@ export function ClipBar() {
               </>
             ) : (
               <>
-                <Wand2 className="h-3 w-3" />
+                <CopyCheck className="h-3 w-3" />
                 {selectedCount > 0
                   ? `Apply master to ${selectedCount} selected`
                   : "Apply master to all"}

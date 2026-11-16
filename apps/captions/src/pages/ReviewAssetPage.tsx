@@ -1196,7 +1196,7 @@ function Review({
                   {COLORS.map((c) => (
                     <button
                       key={c}
-                      aria-label={`Color ${c}`}
+                      aria-label={`Colour ${c}`}
                       onClick={() => setColor(c)}
                       className={cn("h-5 w-5 rounded-full border-2", color === c ? "border-white" : "border-transparent")}
                       style={{ background: c }}
