@@ -2,16 +2,19 @@ import { Hono } from "hono";
 import { jobTurn, type AuthVars } from "./auth";
 import { saidInChat } from "./assistant";
 import { aiFor, completeWithFallback } from "./ai-complete";
-import { currentProject, factOf, keep, listMemory, remove, setRule } from "./lib/memory";
+import { currentProject, factOf, keep, listMemory, remove, setProject, setRule } from "./lib/memory";
+import { inProjectOf } from "./lib/project-of";
 import { MEMORY_QUOTE_MIN, MEMORY_RULE_MAX, tidy } from "../contracts/memory";
 
 /**
  * What the assistant keeps from one chat to the next (contracts/memory.ts; the store and its rules: lib/memory.ts).
  *
- *   GET    /api/memory        the account's kept facts, newest first (Settings → Memory); ?here=1 = only the ones
- *                             a chat gets now: about the person, and the current project's
+ *   GET    /api/memory        the account's kept facts, newest first (Settings → Memory): the ones for every workspace
+ *                             and the request's workspace's; ?all=1 = every workspace's; ?here=1 = only the ones a
+ *                             chat gets now: about the person, and the current project's
  *   POST   /api/memory        { quote, rule?, project? } keep what the person said: only from a reply the assistant is writing
  *   PATCH  /api/memory/:id    { text } the rule in the person's own wording (Settings → Memory: Edit)
+ *   PUT    /api/memory/:id/workspace  { workspace } the workspace a rule is for; null = every workspace (Settings → Memory: Move to …)
  *   POST   /api/memory/:id/rewrite  the rule written again by their AI, not saved: Edit shows it first
  *   DELETE /api/memory/:id    remove one for good
  *
@@ -21,7 +24,7 @@ import { MEMORY_QUOTE_MIN, MEMORY_RULE_MAX, tidy } from "../contracts/memory";
  */
 export const memoryApp = new Hono<{ Variables: AuthVars }>();
 
-memoryApp.get("/", async (c) => c.json({ facts: await listMemory(c.get("user"), c.req.query("here") === "1") }));
+memoryApp.get("/", async (c) => c.json({ facts: await listMemory(c.get("user"), c.req.query("here") === "1" ? "here" : c.req.query("all") === "1" ? "all" : undefined) }));
 
 memoryApp.post("/", async (c) => {
   const u = c.get("user");
@@ -48,6 +51,16 @@ memoryApp.patch("/:id", async (c) => {
   return c.json({ id: out.id, text: out.text, said: out.said });
 });
 
+memoryApp.put("/:id/workspace", async (c) => {
+  if (!fromPage(c)) return c.json({ error: "A rule is changed in Settings, Memory" }, 403);
+  const u = c.get("user");
+  const b = ((await c.req.json().catch(() => null)) ?? {}) as { workspace?: unknown };
+  const to = typeof b.workspace === "string" && b.workspace ? b.workspace : null;
+  if (b.workspace !== null && !(to && (await inProjectOf(u, to)))) return c.json({ error: "Workspace not found" }, 400);
+  const out = setProject(u.username, c.req.param("id"), to ?? undefined);
+  return out ? c.json({ id: out.id, ...(out.project ? { workspace: out.project } : {}) }) : c.json({ error: "Not found" }, 404);
+});
+
 const REWRITE = `You turn one thing a person told their AI assistant to remember into a standing instruction for that assistant.
 Keep the meaning exactly, and every specific they named (words, examples, times, names). Drop filler, swearing, typos and talk to the AI ("remember", "I hate that").
 Write one plain sentence in the imperative, at most ${MEMORY_RULE_MAX} characters. Answer with that sentence alone.`;
@@ -63,12 +76,12 @@ memoryApp.post("/:id/rewrite", async (c) => {
   try {
     const text = await completeWithFallback(REWRITE, prompt, undefined, (t) => {
       const one = tidy(t).replace(/^["'](.*)["']$/, "$1");
-      if (one.length < MEMORY_QUOTE_MIN || one.length > MEMORY_RULE_MAX) throw new Error("The rewrite came back too long or empty");
+      if (one.length < MEMORY_QUOTE_MIN || one.length > MEMORY_RULE_MAX) throw new Error("The rewrite was too long or empty");
       return one;
     }, ai);
     return c.json({ text });
   } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : "The rewrite did not work" }, 502);
+    return c.json({ error: e instanceof Error ? e.message : "Could not rewrite the rule" }, 502);
   }
 });
 

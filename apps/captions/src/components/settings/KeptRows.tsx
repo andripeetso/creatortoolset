@@ -7,8 +7,8 @@ import { call } from "./StorageRows";
 import { Card, EmptyRow, ErrorRow, LoadingRow, Row, Section } from "./ui";
 
 /**
- * "Kept on the server" (api/kept.ts): what this account keeps in the server's data folder, one row per kind with its size,
- * the biggest first, and the total beside the title. Each row has a bar: its share of everything kept, all on one scale
+ * "Your files" (api/kept.ts): what this account keeps in the server's data folder, in every workspace, one row per kind
+ * with its size, the biggest first, and the total beside the title. Each row has a bar: its share of everything kept, all on one scale
  * and in one colour, so the rows compare at a glance (the same bar as Settings → Usage). The trash, a chat's pictures and
  * videos and finished renders have Empty, which asks first in the app's own dialog; the rest is the account's work,
  * deleted one by one in its own tool.
@@ -23,8 +23,8 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   guides: ["Guides", "guide", "guides"],
   enhance: ["Audio Enhancer sessions", "session", "sessions"],
   editor: ["AI Editor edits", "edit", "edits"],
-  analyzer: ["Analyzer posts", "post", "posts"],
-  workshop: ["Workshop projects and sources", "item", "items"],
+  analyzer: ["Content Analyzer posts", "post", "posts"],
+  workshop: ["Content Workshop projects and sources", "item", "items"],
   designs: ["Designs", "design", "designs"],
   "captions-trash": ["Deleted Caption Studio projects", "project", "projects"],
   "review-trash": ["Deleted Review videos", "video", "videos"],
@@ -32,13 +32,13 @@ const LABEL: Record<KeptKind, [title: string, one: string, many: string]> = {
   "chat-pictures": ["Chat pictures", "picture", "pictures"],
   exports: ["Exported videos", "video", "videos"],
   "chat-videos": ["Chat videos", "video", "videos"],
-  "look-sheets": ["Shot description sheets on your Mac", "clip", "clips"],
+  "look-sheets": ["Shot description sheets on the Mac", "clip", "clips"],
 };
 
 export const bytesLabel = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
 
-const keepLabel = (days: number) => (days < 1 ? `each goes after ${Math.round(days * 24)} hours` : `each goes after ${days} ${days === 1 ? "day" : "days"}`);
+const keepLabel = (days: number) => (days < 1 ? `deleted after ${Math.round(days * 24)} hours` : `deleted after ${days} ${days === 1 ? "day" : "days"}`);
 
 export function keptLine(r: KeptRow): string {
   const [, one, many] = LABEL[r.kind];
@@ -64,23 +64,23 @@ function ShareBar({ name, bytes, total }: { name: string; bytes: number; total: 
   );
 }
 
-/** What Empty deletes, and what stays, for the question asked before it: the thing in one word pair, then one line. */
-const ASK: Partial<Record<KeptKind, [thing: string, after: string]>> = {
-  "captions-trash": ["deleted Caption Studio project", "Nothing in this trash can be restored after that."],
-  "review-trash": ["deleted Review video", "Nothing in this trash can be restored after that."],
-  "chat-pictures": ["chat picture", "The chats stay; the pictures show as removed."],
-  exports: ["exported video", "The projects stay, so you can export again."],
-  "chat-videos": ["chat video", "A video already sent on to Review, Video Notes, Caption Studio or the Media Library stays there."],
-  "look-sheets": ["", "The shot descriptions stay. A clip described again reads its video on the Mac again."],
+/** What Empty deletes, for the question asked before it: the thing in one word pair, then the one line on what is kept. */
+const ASK: Partial<Record<KeptKind, [thing: string, kept: string]>> = {
+  "captions-trash": ["deleted Caption Studio project", "This cannot be undone."],
+  "review-trash": ["deleted Review video", "This cannot be undone."],
+  "chat-pictures": ["chat picture", "The chats are not deleted."],
+  exports: ["exported video", "The projects are not deleted."],
+  "chat-videos": ["chat video", "A video sent on to another tool is not deleted."],
+  "look-sheets": ["", "The shot descriptions are not deleted."],
 };
 
-/** The question Empty asks first, in the app's own dialog: how many of what, how much, what stays, and that it is for good. */
+/** The question Empty asks first, in the app's own dialog: how many of what in the title, what is kept under it, how much on the button. */
 export function emptyQuestion(r: KeptRow): DialogOpts {
-  const [thing, after] = ASK[r.kind] ?? [LABEL[r.kind][1], ""];
+  const [thing, kept] = ASK[r.kind] ?? [LABEL[r.kind][1], ""];
   const s = r.items === 1 ? "" : "s";
   return {
     title: r.kind === "look-sheets" ? `Delete the shot description sheets of ${r.items} clip${s}?` : `Delete ${r.items} ${thing}${s}?`,
-    body: [`${bytesLabel(r.bytes)}.`, after, "This cannot be undone."].filter(Boolean).join(" "),
+    body: kept,
     ok: `Delete ${bytesLabel(r.bytes)}`,
     danger: true,
   };
@@ -119,7 +119,7 @@ export function KeptSection() {
     <Section
       title={
         <>
-          {kept.data?.here ? "Kept on this computer" : "Kept on the server"}
+          Your files
           {total > 0 && <span className="ml-2 font-normal text-muted-foreground">{bytesLabel(total)}</span>}
         </>
       }
@@ -128,9 +128,9 @@ export function KeptSection() {
         {!kept.data && !kept.error ? (
           <LoadingRow />
         ) : !rows ? (
-          <ErrorRow title="Could not read what is kept" detail={kept.error} retry={() => void kept.refresh().catch(() => {})} />
+          <ErrorRow title="Could not load files" detail={kept.error} retry={() => void kept.refresh().catch(() => {})} />
         ) : rows.length === 0 ? (
-          <EmptyRow title="Nothing yet" />
+          <EmptyRow title="No files" />
         ) : (
           rows.map((r) => (
             <Row
@@ -143,7 +143,7 @@ export function KeptSection() {
             </Row>
           ))
         )}
-        {error && <ErrorRow title="Could not empty it" detail={error} />}
+        {error && <ErrorRow title="Could not empty" detail={error} />}
       </Card>
     </Section>
   );

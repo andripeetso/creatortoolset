@@ -30,7 +30,7 @@ import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac
 import { watchAllowed } from "./library/watch";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { parseStorageFile, storageFilePath } from "./lib/storage";
-import { LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
+import { folderIn, LIBRARY_SUBFOLDERS, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
@@ -115,7 +115,7 @@ Before saying a file is not there, or asking what it is called, look with folder
 export async function foldersNote(username: string, workspace?: string): Promise<string> {
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
   const inWs = await inProjectOf({ username } as SessionUser, workspace);
-  const all = [...st.folders.filter((f) => !inWs || inWs(f.workspace)), ...(await pluginStorageFolders(username))];
+  const all = [...st.folders.filter((f) => folderIn(f, inWs)), ...(await pluginStorageFolders(username))];
   const mine = sourcesOf(all);
   const lib = all.find((f) => f.role === "library");
   const on = (f: StorageFolder) => (f.origin.host === THIS_COMPUTER ? "" : ` (on ${deviceOf(f.origin.host)?.name ?? "another computer"})`);
@@ -1841,7 +1841,7 @@ assistantApp.post("/folder-list", async (c) => {
   const ws = await workspaceOfTurn(u.username, turn);
   const inWs = ws ? await inProjectOf(u, ws) : await inCurrentWorkspace(u);
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, u.username), "utf-8").catch(() => "{}"));
-  const kept = [...st.folders.filter((f) => !inWs || inWs(f.workspace)), ...(await pluginStorageFolders(u.username))];
+  const kept = [...st.folders.filter((f) => folderIn(f, inWs)), ...(await pluginStorageFolders(u.username))];
   const gave = turn ? chatGave(u.username, turn) : null;
   const own = kept.find((f) => within(asked, full(f.origin.path)));
   // a path the person typed: it, or a folder it is in, written whole in their words

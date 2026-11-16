@@ -6,23 +6,24 @@ import { useProviders } from "@/lib/providers";
 import type { StorageView } from "@contracts/storage";
 import { devicesSectionsFor, replacementFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section, Status } from "./ui";
-import { AddStorageButton, Storage, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section, Status, WorkspacePick, useSettingsWorkspace } from "./ui";
+import { STORAGE_ALL, STORAGE_API, Storage, call, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
 import { KeptSection } from "./KeptRows";
 import { ServerProjects } from "@/components/AdminPanel";
 
 /**
- * Settings → Folders (the Workspace group): where a workspace's finished videos, footage and music live, one row each.
- * A plug-in that owns storage (`replaces.storage`) draws its own rows here for admins; a member there has no Folders
- * page (nav.ts sectionsFor: only admins edit that server's folders).
+ * Settings → Folders (the Workspace group): where each workspace's finished videos, footage and music live. The
+ * workspace selector starts on All workspaces (every folder, each with its workspace); one picked shows its own and
+ * the ones every workspace uses. A plug-in that owns storage (`replaces.storage`) draws its own rows here for admins,
+ * selector and all; a member there has no Folders page (nav.ts sectionsFor: only admins edit that server's folders).
  */
 export function FoldersSection() {
   return <Folders />;
 }
 
 /**
- * Settings → Storage (the Server group): what is not one workspace's. What this account keeps on the server, for an
- * admin the drives of the computers, the plug-ins' own storage sections (network storage), and on a hosted server
+ * Settings → Storage (the Server group): what is not one workspace's. What this account keeps on the server (in every
+ * workspace), for an admin the drives of the computers, the plug-ins' own storage sections (network storage), and on a hosted server
  * every project on it (was Admin → Projects).
  */
 export function StorageSection() {
@@ -60,7 +61,7 @@ function Drives() {
             key={key}
             icon={<HardDrive className="size-4" />}
             title={disk.name}
-            subtitle={<>{disk.network ? "Network" : disk.path === "/" ? "Built in" : "Drive"} · {on} · {spaceOf(disk)}</>}
+            subtitle={<>{disk.network ? "Network" : disk.path === "/" ? "Built in" : "Drive"} · {on} · {spaceOf(disk, false)}</>}
             status={isFull(disk) ? <Status tone="attention">Almost full</Status> : undefined}
           />
         ))}
@@ -73,7 +74,9 @@ function Folders() {
   const me = useAuth((s) => s.me);
   const hosted = useAuth((s) => s.hosted);
   const providers = useProviders();
-  const store = useCachedLoad<StorageView>("/api/devices/storage", getStorage, { own: true });
+  const w = useSettingsWorkspace("list");
+  const url = w.all ? STORAGE_ALL : STORAGE_API;
+  const store = useCachedLoad<StorageView>(url, () => call<StorageView>(url, "GET", undefined, w.id), { own: true, workspace: w.cacheKey });
   const devices = providers.data?.devices ?? null;
   const storage = store.data;
   const error = providers.error || store.error;
@@ -84,9 +87,15 @@ function Folders() {
     void refreshStore().catch(() => {});
   }, [refreshProviders, refreshStore]);
 
+  // an admin's folders may be a plug-in's own store (the AI Editor's): its screen then stands in for the rows, the
+  // header and the workspace selector
+  const Replaced = me?.role === "admin" ? replacementFor(webPlugins, "storage") : undefined;
+  const pick = Replaced ? null : <WorkspacePick mode="list" />;
+
   if (!me || ((!storage || !devices) && !error)) {
     return (
       <Section title="Folders">
+        {pick}
         <Card>
           <LoadingRow />
         </Card>
@@ -96,6 +105,7 @@ function Folders() {
   if (!storage || !devices) {
     return (
       <Section title="Folders">
+        {pick}
         <Card>
           <ErrorRow title="Could not load folders" detail={error} retry={load} />
         </Card>
@@ -105,30 +115,23 @@ function Folders() {
 
   // the computers a folder can go on: this account's own, and for an admin the team's AI worker (the server takes both)
   const own = devices.filter((d) => d.owner === me.username || (me.role === "admin" && d.owner === "workspace"));
-  // a hosted member with no computer has nothing to put a folder on: say so once, instead of three Set folder buttons
+  // a hosted member with no computer has nothing to put a folder on: said once, instead of three Add folder buttons
   if (hosted && own.length === 0 && storage.folders.length === 0) {
     return (
       <Section title="Folders">
+        {pick}
         <Card>
-          <EmptyRow title="No computer yet" description="Footage, music and finished videos are folders on one of your computers. Add one in Computers." />
+          <EmptyRow title="No folders" description={<Status tone="attention">Needs a computer</Status>} />
         </Card>
       </Section>
     );
   }
 
-  // an admin's folders may be a plug-in's own store (the AI Editor's): its screen then stands in for the rows and its header
-  const Replaced = me.role === "admin" ? replacementFor(webPlugins, "storage") : undefined;
-
+  if (Replaced) return <Replaced />;
   return (
-    <>
-      {Replaced ? (
-        <Replaced />
-      ) : (
-        <Section title="Folders" action={own.length > 0 ? <AddStorageButton devices={own} serverDisks={storage.serverDisks} here={storage.here} onChanged={load} /> : undefined}>
-          <Storage devices={own} storage={storage} onChanged={load} />
-        </Section>
-      )}
-
-    </>
+    <Section title="Folders">
+      {pick}
+      <Storage devices={own} storage={storage} onChanged={load} w={w} />
+    </Section>
   );
 }

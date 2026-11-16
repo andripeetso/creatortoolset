@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
@@ -12,19 +12,25 @@ import { libraryPath, localDisks, mountOf, parseStorageFile, storageFilePath, wi
 import { keptApp } from "./kept";
 import { libraryDb } from "./library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
-import { inProjectOf } from "./lib/project-of";
+import { inProjectOf, projectOf } from "./lib/project-of";
+import { ownedProjects, sharedProjects } from "./lib/workshop/workspace";
+import { ensureLibrary } from "./library/access";
 
 /**
- * Settings → Storage (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
- *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1)
+ * Settings → Folders (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
+ *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1);
+ *                                     ?all=1: every workspace's folders
  *   POST   /library   {host, disk}  → make the Library ("Creator Toolset") in `disk` on one of this account's computers
  *   POST   /folders   {role, host, path} → use a folder you already have as footage or music (this computer's also go on
  *                                          the Library's watch list, which the Library and the AI Editor read)
+ *   PATCH  /folders/:id {workspace} → move a footage or music folder to another workspace; null = every workspace
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
  * Each account has its own list in $DATA_DIR/storage/<user>.json, and each workspace its own folders in it (a folder's
- * `workspace`, stamped when it is added; one from before belongs to the first brand, project-of.ts). Every route here
- * sees the workspace the request works in only. `host` is a device id this account owns.
+ * `workspace`, stamped when it is added; one from before belongs to the first brand, project-of.ts; EVERY_WORKSPACE =
+ * all of them). A list is the folders of the workspace the request works in, and a new folder goes to that workspace
+ * (Settings sends the one it shows, X-CT-Workspace); a folder is moved or forgotten by its id, whatever workspace it is
+ * in. `host` is a device id this account owns.
  * Nothing here moves a file: the folders are recorded, and each computer finds them by their marker.
  */
 
@@ -69,16 +75,56 @@ const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMo
  */
 const readHere = (user: string, host: string) => host === THIS_COMPUTER || (isThisMachine(host) && watchAllowed(user));
 
-/** Which folders are this request's workspace's, and the id a new one is stamped with. */
-async function scopeOf(c: C): Promise<{ mine: (f: StorageFolder) => boolean; workspace?: string }> {
+/** The workspace a folder is in, as a page names it: its own, the first brand's for one from before (project-of.ts), or EVERY_WORKSPACE. */
+type Named = (f: StorageFolder) => string | undefined;
+
+/** Which folders are this request's workspace's, the id a new one is stamped with, and the workspace each folder is in. */
+async function scopeOf(c: C): Promise<{ mine: (f: StorageFolder) => boolean; workspace?: string; named: Named }> {
   const u = c.get("user");
-  const inWs = await inCurrentWorkspace(u);
+  const [inWs, of] = await Promise.all([inCurrentWorkspace(u), projectOf(u)]);
   const workspace = inWs ? await currentWorkspaceId(u) : undefined;
-  return { mine: (f) => !inWs || inWs(f.workspace), ...(workspace ? { workspace } : {}) };
+  const named: Named = (f) => (f.workspace === EVERY_WORKSPACE || !of ? f.workspace : of(f.workspace));
+  return { mine: (f) => folderIn(f, inWs), ...(workspace ? { workspace } : {}), named };
 }
-/** The list the page gets: this workspace's folders only, with the account's computers that reach them through a connected share (lib/storage.ts withMounts). */
-const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string): StorageState =>
-  ({ ...st, folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))) });
+/** The list the page gets: the folders `mine` keeps, each with the workspace it is in and the account's computers that reach it through a connected share (lib/storage.ts withMounts). */
+const shown = (st: StorageState, mine: (f: StorageFolder) => boolean, user: string, named: Named): StorageState => ({
+  ...st,
+  folders: withMounts(st.folders.filter(mine), listDevices((d) => d.owner === user).map((d) => ({ id: d.id, disks: d.report?.machine?.disks }))).map((f) => {
+    const workspace = named(f);
+    return workspace ? { ...f, workspace } : f;
+  }),
+});
+
+/**
+ * The workspaces that read a folder on this computer through their Library's watch list: the ones that list its path
+ * as footage or music ("" for an account with no workspace). `of`: project-of.ts projectOf.
+ */
+async function readersOf(user: string, of: ((own?: string) => string) | null, folders: StorageFolder[], at: StorageFolder["origin"]): Promise<Set<string>> {
+  const same = folders.filter((f) => f.role !== "library" && f.origin.host === at.host && f.origin.path === at.path);
+  if (!of) return new Set(same.length ? [""] : []);
+  const every = same.some((f) => f.workspace === EVERY_WORKSPACE) ? [...(await ownedProjects(user)), ...(await sharedProjects(user))].map((p) => p.id) : [];
+  return new Set([...every, ...same.filter((f) => f.workspace !== EVERY_WORKSPACE).map((f) => of(f.workspace))]);
+}
+
+/** Puts a folder on the watch list of one workspace's Library ("" = the account has no workspace). The refusal, or null. */
+async function watchIn(user: string, folderPath: string, workspace: string): Promise<string | null> {
+  if (!workspace) return addWatchFolder(user, folderPath);
+  const library = await ensureLibrary(user, workspace);
+  return library ? addWatchFolder(user, folderPath, library) : null;
+}
+
+/**
+ * After a folder on this computer left a workspace (moved or forgotten): the Library of each workspace that still lists
+ * its path keeps reading it, the others stop. The files already in a Library stay.
+ * ponytail: removeWatchFolder takes the path off every Library of the account, so the ones that keep it are put back
+ * as a plain folder read in place (a copy-to or Library folder set on that entry in the Media Library is lost); a
+ * remove for one Library in library/watch.ts when that matters.
+ */
+async function unwatch(user: string, folderPath: string, was: Set<string>, now: Set<string>): Promise<void> {
+  if (![...was].some((id) => !now.has(id))) return;
+  await removeWatchFolder(user, folderPath);
+  for (const id of now) await watchIn(user, folderPath, id);
+}
 
 /** Whether a workspace's Media Library uploads what is added from a computer (`upload`: true or "all" or "proxies"; false or
  *  "none" keeps the files where they are), so the server has a copy to work from. */
@@ -94,7 +140,7 @@ async function copiedFolders(u: AuthVars["user"], folders: StorageFolder[]): Pro
     // a person with no workspace keeps their library under their own name; any other id must be one of their workspaces
     const inWs = id === u.username ? () => true : await inProjectOf(u, id);
     if (!inWs || !keepsCopies(id)) continue;
-    for (const f of folders) if (inWs(f.workspace)) out.add(f.id);
+    for (const f of folders) if (folderIn(f, inWs)) out.add(f.id);
   }
   return [...out];
 }
@@ -115,14 +161,15 @@ storageApp.get("/", async (c) => {
   const u = c.get("user");
   // ?all=1: every workspace's folders (setting up another computer: it helps with all of them), with `copied`
   const all = c.req.query("all") === "1";
-  const st = shown(await readStorage(u.username), all ? () => true : (await scopeOf(c)).mine, u.username);
+  const scope = await scopeOf(c);
+  const st = shown(await readStorage(u.username), all ? () => true : scope.mine, u.username, scope.named);
   const lib = st.folders.find((f) => f.role === "library");
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
   const local = process.env.CT_LOCAL === "1" && u.role === "admin";
   // which of this account's computers is this machine: a folder added on it goes into the Library (the page asks first when it is big)
   const here = watchAllowed(u.username) ? listDevices((d) => !!mine(c, d.id) && isThisMachine(d.id)).map((d) => d.id) : [];
-  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies((await scopeOf(c)).workspace ?? u.username), ...(all ? { copied: await copiedFolders(u, st.folders) } : {}) };
+  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies(scope.workspace ?? u.username), ...(all ? { copied: await copiedFolders(u, st.folders) } : {}) };
   return c.json(view);
 });
 
@@ -133,10 +180,10 @@ storageApp.post("/library", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const host = str(b?.host, 120);
   const disk = b?.disk;
-  if (!host || !okFolderPath(disk) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Pick a computer and a folder" }, 400);
+  if (!host || !okFolderPath(disk) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);
   const p = libraryPath(disk);
   if (!okFolderPath(p)) return c.json({ error: "Path too long" }, 400);
-  const { mine: here, workspace } = await scopeOf(c);
+  const { mine: here, workspace, named } = await scopeOf(c);
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     const old = st.folders.find((f) => f.role === "library" && here(f));
@@ -155,7 +202,7 @@ storageApp.post("/library", async (c) => {
     await writeStorage(user, st);
     return st;
   });
-  return out ? c.json(shown(out, here, user)) : c.json({ error: "The library is already there" }, 400);
+  return out ? c.json(shown(out, here, user, named)) : c.json({ error: "That folder is already there" }, 400);
 });
 
 /** Use a folder you already have as footage or music. */
@@ -165,7 +212,7 @@ storageApp.post("/folders", async (c) => {
   const role = STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
   const host = str(b?.host, 120);
   const raw = b?.path;
-  if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
+  if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Needs a computer and a folder" }, 400);
   // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
   const p = (raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there
@@ -173,7 +220,7 @@ storageApp.post("/folders", async (c) => {
     const refused = await addWatchFolder(user, p);
     if (refused) return c.json({ error: refused }, 400);
   }
-  const { mine: here, workspace } = await scopeOf(c);
+  const { mine: here, workspace, named } = await scopeOf(c);
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
@@ -183,25 +230,70 @@ storageApp.post("/folders", async (c) => {
     await writeStorage(user, st);
     return st;
   });
-  return out ? c.json(shown(out, here, user)) : c.json({ error: "That folder is already there" }, 400);
+  return out ? c.json(shown(out, here, user, named)) : c.json({ error: "That folder is already there" }, 400);
 });
 
-/** Forget a folder (its marker files stay where they are). */
-storageApp.delete("/folders/:id", async (c) => {
-  const user = c.get("user").username;
+/**
+ * Move a footage or music folder to another of the account's workspaces, or to every workspace (`workspace: null`).
+ * On this computer the Library of each workspace it is now in starts reading it (refused with the reason when the
+ * folder is not there now), and the one it left stops. Finished videos stays one folder per workspace: never moved.
+ */
+storageApp.patch("/folders/:id", async (c) => {
+  const u = c.get("user");
+  const user = u.username;
   const id = c.req.param("id");
-  const { mine: here } = await scopeOf(c);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const to = b?.workspace === null ? EVERY_WORKSPACE : typeof b?.workspace === "string" ? b.workspace : "";
+  const of = await projectOf(u);
+  if (!of || !to || (to !== EVERY_WORKSPACE && !(await inProjectOf(u, to)))) return c.json({ error: "Workspace not found" }, 400);
+  const { mine: here, named } = await scopeOf(c);
+  const before = (await readStorage(user)).folders;
+  const f = before.find((x) => x.id === id);
+  if (!f) return c.json({ error: "Not found" }, 404);
+  if (f.role === "library") return c.json({ error: "Finished videos is one folder per workspace" }, 400);
+  const moved = (list: StorageFolder[]) => list.map((x) => (x.id === id ? { ...x, workspace: to } : x));
+  const clash = (list: StorageFolder[]) =>
+    list.some((x) => x.id !== id && x.role === f.role && x.origin.host === f.origin.host && x.origin.path === f.origin.path && (to === EVERY_WORKSPACE || x.workspace === EVERY_WORKSPACE || of(x.workspace) === to));
+  if (clash(before)) return c.json({ error: "That folder is already there" }, 400);
+  const watched = readHere(user, f.origin.host);
+  const was = watched ? await readersOf(user, of, before, f.origin) : new Set<string>();
+  const now = watched ? await readersOf(user, of, moved(before), f.origin) : new Set<string>();
+  for (const ws of now) {
+    const refused = was.has(ws) ? null : await watchIn(user, f.origin.path, ws);
+    if (refused) return c.json({ error: refused }, 400);
+  }
   const out = await chained(user, async () => {
     const st = await readStorage(user);
-    const gone = st.folders.find((f) => f.id === id && here(f));
-    if (!gone) return null;
-    st.folders = st.folders.filter((f) => f !== gone);
+    if (!st.folders.some((x) => x.id === id) || clash(st.folders)) return null;
+    st.folders = moved(st.folders);
     await writeStorage(user, st);
-    return { st, gone };
+    return st;
   });
   if (!out) return c.json({ error: "Not found" }, 404);
-  // another workspace may read the same folder: it stays on the Library's watch list while one still lists it
-  const still = out.st.folders.some((f) => f.role !== "library" && f.origin.host === out.gone.origin.host && f.origin.path === out.gone.origin.path);
-  if (out.gone.role !== "library" && !still && readHere(user, out.gone.origin.host)) await removeWatchFolder(user, out.gone.origin.path);
-  return c.json(shown(out.st, here, user));
+  await unwatch(user, f.origin.path, was, now);
+  return c.json(shown(out, here, user, named));
+});
+
+/** Forget a folder, whatever workspace it is in (its marker files stay where they are). */
+storageApp.delete("/folders/:id", async (c) => {
+  const u = c.get("user");
+  const user = u.username;
+  const id = c.req.param("id");
+  const { mine: here, named } = await scopeOf(c);
+  const out = await chained(user, async () => {
+    const st = await readStorage(user);
+    const gone = st.folders.find((f) => f.id === id);
+    if (!gone) return null;
+    const before = st.folders;
+    st.folders = st.folders.filter((f) => f !== gone);
+    await writeStorage(user, st);
+    return { st, gone, before };
+  });
+  if (!out) return c.json({ error: "Not found" }, 404);
+  // another workspace may read the same folder: its Library keeps it on the watch list
+  if (out.gone.role !== "library" && readHere(user, out.gone.origin.host)) {
+    const of = await projectOf(u);
+    await unwatch(user, out.gone.origin.path, await readersOf(user, of, out.before, out.gone.origin), await readersOf(user, of, out.st.folders, out.gone.origin));
+  }
+  return c.json(shown(out.st, here, user, named));
 });

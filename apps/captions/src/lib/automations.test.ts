@@ -27,7 +27,7 @@ describe("scheduled task form", () => {
   });
 
   it("says what is missing before it sends", () => {
-    expect(draftError({ ...base, prompt: " " })).toContain("what the task should do");
+    expect(draftError({ ...base, prompt: " " })).toBe("Needs instructions");
     expect(draftError({ ...base, ai: null })).toContain("AI");
     expect(draftError({ ...base, weekdays: [] })).toContain("one day");
     expect(draftError({ ...base, mode: "once", runAt: "2020-01-01T09:00" })).toContain("passed");
@@ -52,7 +52,7 @@ describe("a task row's status", () => {
 
   it("says when it runs and when next, and nothing more when the last run was fine", () => {
     expect(statusOf(task({ lastResult: { status: "done", at: NOW - H, text: "All good" } }), NOW, null)).toEqual({ line: "Weekdays at 09:00 · Next run in 3 h" });
-    expect(statusOf(task({ enabled: false }), NOW, null).line).toBe("Weekdays at 09:00 · Paused");
+    expect(statusOf(task({ enabled: false }), NOW, null).line).toBe("Weekdays at 09:00 · Off");
     expect(statusOf(task({ timezone: "Pacific/Chatham" }), NOW, null).line).toBe("Weekdays at 09:00 (Pacific/Chatham) · Next run in 3 h");
   });
 
@@ -64,9 +64,9 @@ describe("a task row's status", () => {
   });
 
   it("a skipped run is amber and says why", () => {
-    expect(statusOf(task({ lastResult: { status: "skipped", at: NOW - H, text: "Missed the 09:00 run (Mac Studio is offline)." } }), NOW, null).problem).toEqual({
+    expect(statusOf(task({ lastResult: { status: "skipped", at: NOW - H, text: "Missed the 09:00 run (Mac Studio is offline)" } }), NOW, null).problem).toEqual({
       tone: "attention",
-      text: "Skipped 1 h ago: Missed the 09:00 run (Mac Studio is offline).",
+      text: "Skipped 1 h ago: Missed the 09:00 run (Mac Studio is offline)",
     });
   });
 });

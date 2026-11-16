@@ -1,6 +1,7 @@
 import type { Automation, Destination, Schedule, Weekday } from "@contracts/automations";
 import type { Selection } from "@contracts/providers";
 import { fmtAgo } from "@/components/settings/helpers";
+import { inWorkspace } from "@/components/settings/workspace-pick";
 
 /** Settings → Scheduled tasks' calls (api/automations.ts). The assistant's schedule_task tool sends the same body. */
 
@@ -37,7 +38,7 @@ export function untilLabel(at: number, now: number): string {
  * back, when a reading knows it). A run that went fine adds nothing.
  */
 export function statusOf(a: AutomationView, now: number, limitReset: string | null): { line: string; problem?: { tone: "broken" | "attention"; text: string } } {
-  const next = a.running ? "Running now" : !a.enabled ? "Paused" : a.nextRun ? `Next run ${untilLabel(a.nextRun, now)}` : "Not scheduled";
+  const next = a.running ? "Running" : !a.enabled ? "Off" : a.nextRun ? `Next run ${untilLabel(a.nextRun, now)}` : "Not scheduled";
   // a time of day on another zone's clock (made in another browser) says which zone
   const elsewhere = a.schedule.kind === "fixed" && a.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone ? ` (${a.timezone})` : "";
   const line = `${scheduleLabel(a.schedule, a.timezone)}${elsewhere} · ${next}`;
@@ -48,14 +49,14 @@ export function statusOf(a: AutomationView, now: number, limitReset: string | nu
   return { line, problem: { tone: r.status === "error" ? "broken" : "attention", text: `${r.status === "error" ? "Failed" : "Skipped"} ${ago}: ${r.text.split("\n")[0]}${reset}` } };
 }
 
-async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const r = await fetch(`/api/automations${path}`, {
+async function call<T>(path: string, method = "GET", body?: unknown, workspace?: string | null): Promise<T> {
+  const r = await fetch(`/api/automations${path}`, inWorkspace(workspace, {
     method,
     credentials: "same-origin",
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  }).catch(() => null);
-  if (!r) throw new Error("Can't reach the server");
+  })).catch(() => null);
+  if (!r) throw new Error("Could not reach the server");
   const data = (await r.json().catch(() => ({}))) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `Failed (${r.status})`);
   return data;
@@ -63,7 +64,8 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
 
 export type AutomationBody = Pick<Automation, "name" | "prompt" | "schedule" | "timezone" | "enabled" | "destination"> & { ai: Selection | null; project: string | null };
 
-export const listAutomations = () => call<{ items: AutomationView[]; blocked: string | null }>("");
+/** The window's workspace's tasks and the ones for every workspace; `workspace`: another workspace's; `all`: every workspace's (Settings). */
+export const listAutomations = (workspace?: string | null, all = false) => call<{ items: AutomationView[]; blocked: string | null }>(all ? "?all=1" : "", "GET", undefined, workspace);
 export const createAutomation = (body: AutomationBody) => call<AutomationView>("", "POST", body);
 export const updateAutomation = (id: string, patch: Partial<AutomationBody>) => call<AutomationView>(`/${id}`, "PATCH", patch);
 export const deleteAutomation = (id: string) => call<{ ok: true }>(`/${id}`, "DELETE");
@@ -77,7 +79,7 @@ export interface AutomationDraft {
   prompt: string;
   enabled: boolean;
   destination: Destination;
-  /** A Workshop project id, "" for none. */
+  /** The workspace it is for (its id), "" for every workspace. */
   project: string;
   /** The computer the task runs on: picks which AIs the Model list offers. */
   device: string;
@@ -144,17 +146,17 @@ export function draftSchedule(d: AutomationDraft): Schedule {
 
 /** Why the draft can't be saved, or null. */
 export function draftError(d: AutomationDraft, now = Date.now()): string | null {
-  if (!d.prompt.trim()) return "Say what the task should do.";
-  if (!d.name.trim()) return "Give the task a name.";
-  if (!d.ai) return "Pick the AI it runs on.";
-  if (d.mode === "fixed" && d.weekdays.length === 0) return "Pick at least one day.";
-  if (d.mode === "interval" && !(Number.isInteger(d.every) && d.every >= 1)) return "Run every: a whole number, 1 or more.";
+  if (!d.name.trim()) return "Needs a name";
+  if (!d.prompt.trim()) return "Needs instructions";
+  if (!d.ai) return "Needs an AI provider";
+  if (d.mode === "fixed" && d.weekdays.length === 0) return "Needs at least one day";
+  if (d.mode === "interval" && !(Number.isInteger(d.every) && d.every >= 1)) return "Interval: a whole number, 1 or more";
   if (d.mode === "once") {
     const t = new Date(d.runAt);
-    if (Number.isNaN(t.getTime())) return "Pick a date and time.";
+    if (Number.isNaN(t.getTime())) return "Needs a date and time";
     // a time a daylight saving change skips reads back as another time
-    if (localInput(t) !== d.runAt) return "That time doesn't exist in your time zone.";
-    if (d.enabled && t.getTime() <= now) return "The run time has passed. Pick a time in the future.";
+    if (localInput(t) !== d.runAt) return "That time does not exist in this time zone";
+    if (d.enabled && t.getTime() <= now) return "The run time has passed";
   }
   return null;
 }

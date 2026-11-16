@@ -78,7 +78,7 @@ const sizeOf = (facts: Array<Pick<Kept, "text">>) => facts.reduce((n, f) => n + 
 
 export { foundIn };
 
-const FULL = "Memory is full, so this was not kept. Tell the user: they can remove something in Settings, Memory, and then say it again.";
+const FULL = "Memory is full, so this was not kept. Tell the user: they can delete a rule in Settings, Memory, and then say it again.";
 
 export type KeepResult = { fact: Kept; added: boolean } | { error: string };
 
@@ -139,8 +139,19 @@ export function setRule(username: string, id: string, rule: unknown): Kept | { e
   if (!old) return null;
   const next = { ...old, text: r, said: old.said ?? old.text };
   const facts = store.facts.map((f) => (f === old ? next : f));
-  if (sizeOf(facts) > MEMORY_CAP) return { error: "Memory is full: make it shorter or remove something" };
+  if (sizeOf(facts) > MEMORY_CAP) return { error: "Memory is full: shorten the rule or delete another" };
   write(username, { ...store, facts });
+  return next;
+}
+
+/** The workspace a rule is for (Settings → Memory: Move to …); none = every workspace. null: no fact by that id. */
+export function setProject(username: string, id: string, project: string | undefined): Kept | null {
+  const store = read(username);
+  const old = store.facts.find((f) => f.id === id);
+  if (!old) return null;
+  const { project: _, ...rest } = old;
+  const next: Kept = { ...rest, ...(project ? { project } : {}) };
+  write(username, { ...store, facts: store.facts.map((f) => (f === old ? next : f)) });
   return next;
 }
 
@@ -156,19 +167,26 @@ export function remove(username: string, id: string): boolean {
 }
 
 /**
- * Everything the account has kept, newest first, each with its project's name (Settings → Memory). `here`: only what
- * a chat's prompt holds now, the facts about the person and the current project's (the assistant's forget tool).
+ * What the account has kept, newest first, each with its workspace (Settings → Memory): the rules for every workspace
+ * and the ones of the workspace the request works in; "all": every workspace's. "here": only what a chat's prompt holds
+ * now, the facts about the person and the current project's (the assistant's forget tool).
  */
-export async function listMemory(user: SessionUser, here = false): Promise<MemoryFact[]> {
+export async function listMemory(user: SessionUser, scope?: "here" | "all"): Promise<MemoryFact[]> {
   const { facts } = read(user.username);
   const ws = facts.some((f) => f.project) ? await getWorkspace(user) : null;
   const projects = ws?.projects ?? [];
-  // Settings → Memory: the facts about the person and this workspace's (one kept for a deleted workspace is the first brand's)
+  // Settings → Memory: a rule kept for a deleted workspace is the first brand's (project-of.ts), in the list and by name
   // imported when used: project-of.ts reads the Analyzer, which this small store must not load with it
-  const inWs = ws && !here ? await (await import("./workspace-scope")).inCurrentWorkspace(user) : null;
+  const scoped = !!ws && scope !== "here";
+  const inWs = scoped && scope !== "all" ? await (await import("./workspace-scope")).inCurrentWorkspace(user) : null;
+  const of = scoped ? await (await import("./project-of")).projectOf(user) : null;
+  const named = (project: string) => {
+    const id = of ? of(project) : project;
+    return { id, name: projects.find((p) => p.id === id)?.name ?? "Workspace not found" };
+  };
   return facts
-    .filter((f) => !f.project || (here ? f.project === ws?.currentProjectId : !inWs || inWs(f.project)))
-    .map(({ id, text, said, at, project }) => ({ id, text, ...(said ? { said } : {}), at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A workspace that is gone" } } : {}) }))
+    .filter((f) => !f.project || (scope === "here" ? f.project === ws?.currentProjectId : !inWs || inWs(f.project)))
+    .map(({ id, text, said, at, project }) => ({ id, text, ...(said ? { said } : {}), at, ...(project ? { project: named(project) } : {}) }))
     .reverse();
 }
 
