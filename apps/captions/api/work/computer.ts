@@ -11,7 +11,7 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport, dropProxies, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
+import { cacheReport, dropProxies, setCacheAccount, emptyCache, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache } from "./cache";
 import { resolveFiles, type Progress } from "./files";
 import { cancelLibraryJob, runLibraryJob } from "./library";
 import { turnOff, turnOn, type WorkServer } from "./on-computer";
@@ -99,6 +99,7 @@ export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "u
       await new Promise((r) => setTimeout(r, o.retryMs ?? 5000));
       continue;
     }
+    if (claim.account) setCacheAccount(claim.account);
     if (claim.offline) setKeptOffline(claim.offline.map((f) => f.id));
     if (claim.empty) emptyCache();
     if (claim.drop) dropProxies(claim.drop);

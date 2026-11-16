@@ -2,17 +2,18 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkClaim, WorkPackage } from "../../contracts/work";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-cache-"));
 process.env.DATA_DIR = dir;
 
-const { cacheReport, emptyCache, keptOffline, proxiesDir, proxyPath, partPath, setKeptOffline, touchProxy, trimCache } = await import("./cache");
+const { cacheReport, emptyCache, keptOffline, proxiesDir, proxyPath, partPath, setCacheAccount, setKeptOffline, touchProxy, trimCache } = await import("./cache");
 const { keepOffline, startComputerWorker } = await import("./computer");
 const { STEPS } = await import("../editor/worker");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+setCacheAccount("tinyacrobatics");
 
 /** A proxy of `bytes` in the cache, last used `ago` seconds back. */
 const proxy = (id: string, bytes: number, ago = 0) => {
@@ -21,7 +22,7 @@ const proxy = (id: string, bytes: number, ago = 0) => {
   const t = new Date(Date.now() - ago * 1000);
   utimesSync(proxyPath(id), t, t);
 };
-const cached = () => cacheReport().versions!.sort();
+const cached = () => cacheReport()!.versions!.sort();
 
 beforeEach(() => {
   rmSync(proxiesDir(), { recursive: true, force: true });
@@ -128,6 +129,32 @@ describe("the worker and its cache", () => {
     expect([partPath("va"), partPath("vc")].filter(existsSync)).toEqual([]);
     expect(bodies[1]!.cache).toMatchObject({ bytes: 5, versions: ["vb"] });
     expect(bodies[1]!.cache).not.toHaveProperty("parts");
+  });
+
+  it("one cache per account: a second account on this computer never sees the first's proxies, and the old shared folder goes", async () => {
+    // the cache from before there was one per account: whose it was is unknown
+    mkdirSync(path.join(dir, "proxies"), { recursive: true });
+    writeFileSync(path.join(dir, "proxies", "vold.mp4"), "old");
+    writeFileSync(path.join(dir, "proxies", "vold.mp4.part"), "o");
+    writeFileSync(path.join(dir, "offline.json"), JSON.stringify(["vold"]));
+    // a second account signs in on this computer: its worker is a new process, its account unknown until a claim answers
+    vi.resetModules();
+    const bo = { computer: await import("./computer"), cache: await import("./cache"), steps: (await import("../editor/worker")).STEPS };
+    bo.steps.preview = async () => {};
+    proxy("va", 5); // the first account's proxy of the same clip
+    claims = [{ pkg: null, account: "bo" }, { pkg, account: "bo" }];
+    expect(await bo.computer.startComputerWorker(o)).toBe("update");
+    expect(bodies[0]!.cache).toBeUndefined(); // nothing reported before the server named the account
+    expect(bodies[1]!.cache).toEqual({ bytes: 0, versions: [] }); // the first account's proxy is not its
+    expect(got).toEqual(["footage va"]); // so its step downloads its own copy
+    expect(bodies[2]!.cache).toMatchObject({ bytes: 5, versions: ["va"] });
+    expect(bo.cache.proxiesDir()).toBe(path.join(dir, "proxies", "bo"));
+    expect(proxiesDir()).toBe(path.join(dir, "proxies", "tinyacrobatics"));
+    expect(existsSync(proxyPath("va")) && existsSync(bo.cache.proxyPath("va"))).toBe(true);
+    for (const f of ["proxies/vold.mp4", "proxies/vold.mp4.part", "offline.json"]) expect(existsSync(path.join(dir, f))).toBe(false);
+    // and Empty on one account's computer leaves the other's
+    bo.cache.emptyCache();
+    expect(cached()).toEqual(["va"]);
   });
 
   it("keeps the server's offline list, downloads a missing one while idle, and the limit never removes it", async () => {

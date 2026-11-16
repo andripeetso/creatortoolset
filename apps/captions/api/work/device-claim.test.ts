@@ -75,8 +75,8 @@ beforeAll(async () => {
   await report(pc.token, BIG);
   await report(laptop.token, SMALL);
   // each worker says it is there once (nothing waits yet)
-  expect(await claim(pc.token)).toEqual({ pkg: null });
-  expect(await claim(laptop.token)).toEqual({ pkg: null });
+  expect(await claim(pc.token)).toEqual({ pkg: null, account: "maker" });
+  expect(await claim(laptop.token)).toEqual({ pkg: null, account: "maker" });
   file("maker", "ver_lap", { on: laptop.device.id, uploaded: true });
   file("maker", "ver_up", { uploaded: true });
 });
@@ -181,7 +181,7 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     file("old", "ver_old", { uploaded: true });
     const e = await newEdit("old", ["ver_old"]);
     queue("old", e, "v1");
-    expect(await claim(mac.token, 0)).toEqual({ pkg: null, update: true });
+    expect(await claim(mac.token, 0)).toEqual({ pkg: null, update: true, account: "old" });
     expect(deviceOf(mac.device.id)?.work?.v).toBe(0);
     expect(row(e, "v1").state).toBe("queued");
     expect(waitLine("old", row(e, "v1"))).toBe("Update Creator Toolset on Old Mac");

@@ -22,7 +22,7 @@ const { CLAIM_POLL, workApp } = await import("./routes");
 const { computerTakesLibrary } = await import("./library-package");
 const { runLibraryJob } = await import("./library");
 const { quickPrint } = await import("./files");
-const { proxyPath } = await import("./cache");
+const { proxyPath, setCacheAccount } = await import("./cache");
 
 CLAIM_POLL.holdMs = 0;
 
@@ -103,7 +103,8 @@ async function send(lib: string, file: string) {
 
 beforeAll(async () => {
   mac = pairDevice("tiny", "Studio Mac");
-  expect(await claim()).toEqual({ pkg: null }); // its worker says it runs library jobs
+  setCacheAccount("tiny"); // its worker learns it from the claim answer
+  expect(await claim()).toEqual({ pkg: null, account: "tiny" }); // its worker says it runs library jobs
 });
 afterAll(async () => {
   await devicesSaved();

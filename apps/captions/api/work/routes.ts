@@ -70,15 +70,17 @@ workApp.post("/claim", async (c) => {
   // kept apart from the runner's kinds; a v too old marks the computer, so the wait line says to update it. An Empty not
   // told yet stays, and the cache it will empty counts as emptied
   const empty = deviceOf(d.id)?.work?.empty;
+  // no report (a worker's first claim, before it knows whose cache it is): the device's last one stands, the same account's
+  const kept = cache ?? deviceOf(d.id)?.work?.cache;
   setDeviceWork(d.id, {
     v,
     steps,
-    ...(cache ? { cache: empty ? { ...cache, bytes: 0, versions: [] } : cache } : {}),
+    ...(kept ? { cache: empty ? { ...kept, bytes: 0, versions: [] } : kept } : {}),
     ...(empty ? { empty } : {}),
     ...(library ? { library: true as const } : {}),
   });
   // Empty, the proxies kept offline and the cached ones to delete go with every answer (api/work/offline.ts)
-  const answer = async (claim: WorkClaim) => c.json({ ...claim, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
+  const answer = async (claim: WorkClaim) => c.json({ ...claim, account: d.owner, ...(await claimExtras(d.id, cache?.offline, [...(cache?.versions ?? []), ...parts])) } satisfies WorkClaim);
   if (v < WORK_MIN) return answer({ pkg: null, update: true });
   const end = Date.now() + CLAIM_POLL.holdMs;
   for (;;) {

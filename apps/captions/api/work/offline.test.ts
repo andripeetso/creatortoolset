@@ -79,6 +79,7 @@ describe("Available offline", () => {
   it("each of their computers is sent the proxies to keep, without a file already on it", async () => {
     const off = (await claim(mac.token)).offline!.map((f) => f.id).sort();
     expect(off).toEqual(["va", "vb"]); // vm's file is on this Mac
+    expect((await claim(mac.token)).account).toBe("tiny"); // whose cache it is on that computer
     expect((await claim(laptop.token)).offline!.map((f) => f.id).sort()).toEqual(["va", "vb", "vm"]);
     expect((await claim(laptop.token)).offline!.find((f) => f.id === "va")).toEqual({ id: "va", title: "va.mov", bytes: "proxy va".length });
     expect((await claim(theirs.token)).offline).toBeUndefined(); // nothing to keep, and it keeps nothing

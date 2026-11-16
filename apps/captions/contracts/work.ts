@@ -84,7 +84,8 @@ export interface WorkClaimBody {
   v: number;
   /** plug-in steps installed on this computer */
   steps: string[];
-  /** the proxy cache: bytes kept, its size limit, the versions kept offline, and every version whose proxy it holds */
+  /** the proxy cache: bytes kept, its size limit, the versions kept offline, and every version whose proxy it holds.
+   * Absent on a worker's first claim, before the answer named its account: the device's last report stands */
   cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[] };
   /** this worker runs library jobs too (LibraryPackage): a computer that doesn't say so is never handed one */
   library?: true;
@@ -98,6 +99,8 @@ export interface WorkOffline {
 }
 
 export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?: LibraryPackage }) & {
+  /** the account this computer works for (the device's owner): its proxy cache is that account's own folder */
+  account?: string;
   /** Settings → Storage → Empty: empty the proxy cache now; the proxies kept offline stay */
   empty?: true;
   /** the proxies to keep (Available offline): never removed by the size limit, downloaded while nothing else runs.

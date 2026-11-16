@@ -8,7 +8,8 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-
 process.env.DATA_DIR = path.join(dir, "data");
 
 const { needsOriginal, quickPrint, resolveFiles } = await import("./files");
-const { partPath, proxyPath } = await import("./cache");
+const { partPath, proxyPath, setCacheAccount } = await import("./cache");
+setCacheAccount("tinyacrobatics"); // as a claim answer names it
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
