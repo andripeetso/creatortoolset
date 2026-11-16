@@ -28,6 +28,7 @@ import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { Picture } from "@/components/Picture";
+import { AccountAvatar } from "@/components/settings/AccountSection";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
 import { useToolFolders } from "@/lib/folders";
@@ -82,6 +83,16 @@ export function StateBadge({ state }: { state: string }) {
   return <Badge className={cn("border-transparent", STATE_TONE[state])}>{STATE_LABEL[state] ?? state}</Badge>;
 }
 
+/** Who made an edit, by picture and name (EditSummary.maker: sent where the workspace has a team). */
+export function Maker({ maker, className }: { maker: NonNullable<EditSummary["maker"]>; className?: string }) {
+  return (
+    <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
+      <AccountAvatar picture={maker.picture} initial={maker.name.slice(0, 1)} className="h-4 w-4 text-[9px]" />
+      <span className="truncate">{maker.name}</span>
+    </span>
+  );
+}
+
 export default function EditorPage() {
   // Read (Settings → Team → Access): edits and styles open to look at; nothing is created, moved, dropped in or changed
   const editable = canChange(useMe(), "editor");
@@ -104,9 +115,17 @@ export default function EditorPage() {
   const [view, setView] = useBrowseView("editor");
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  // Made by: one chip per person who made an edit here, once there are two ("" = anyone)
+  const [madeBy, setMadeBy] = useState("");
+  const makers = useMemo(() => {
+    const n = new Map<string, { name: string; count: number }>();
+    for (const e of edits ?? []) if (e.maker) n.set(e.createdBy, { name: e.maker.name, count: (n.get(e.createdBy)?.count ?? 0) + 1 });
+    return n.size > 1 ? [...n].map(([id, m]) => ({ id, label: m.name, count: m.count })) : [];
+  }, [edits]);
+  const by = makers.some((m) => m.id === madeBy) ? madeBy : "";
   // the open folder's edits (every folder's when searching); the server sends them newest change first
   const folders = useToolFolders("editor", edits ?? [], find);
-  const shown = folders.here.filter((e) => matches(find, e.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const shown = folders.here.filter((e) => matches(find, e.name) && (!by || e.createdBy === by)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
   const firstClip = (id: string) => {
     const v = edits?.find((e) => e.id === id)?.sources[0];
     return v ? thumb(v) : undefined;
@@ -262,6 +281,7 @@ export default function EditorPage() {
         {anything && (
           <BrowseBar
             search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}
+            chips={makers.length ? { value: by, onChange: setMadeBy, options: [{ id: "", label: "Made by anyone" }, ...makers] } : undefined}
             sort={{
               value: sort,
               onChange: (v) => {
@@ -288,7 +308,14 @@ export default function EditorPage() {
                 picture={e.sources[0] ? thumb(e.sources[0]) : undefined}
                 icon={Clapperboard}
                 name={e.name}
-                meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
+                meta={
+                  e.maker ? (
+                    <span className="flex min-w-0 items-center gap-1">
+                      <Maker maker={e.maker} />
+                      <span className="shrink-0">· {new Date(e.updatedAt).toLocaleDateString()}</span>
+                    </span>
+                  ) : `${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`
+                }
                 badge={e.last && <StateBadge state={e.last.stopped ? "stopped" : e.last.state} />}
                 drag={editable ? folders.drag(e.id) : undefined}
                 actions={editable && (folders.folders.length > 0 || folders.open) ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
@@ -316,7 +343,8 @@ export default function EditorPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{e.name}</div>
-                    <div className="truncate text-xs text-zinc-500">
+                    <div className="flex min-w-0 items-center gap-1 truncate text-xs text-zinc-500">
+                      {e.maker && <><Maker maker={e.maker} className="shrink-0" /> · </>}
                       {e.sources.length} {e.sources.length === 1 ? "clip" : "clips"} · {new Date(e.updatedAt).toLocaleString()}
                       {e.last && ` · ${e.last.kind}`}
                     </div>

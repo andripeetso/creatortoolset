@@ -35,8 +35,12 @@ export function homeOf(username: string): string {
 export function libraryChanged(libraryId: string): void {
   const row = libraryDb().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
   if (!row) return;
-  const accounts = [...listUsers().map((u) => u.username), LOCAL_USER.username];
-  announce(accounts.find((u) => homeOf(u) === row.workspace_id) ?? row.workspace_id, "library");
+  announce(accountOf(row.workspace_id) ?? row.workspace_id, "library");
+}
+
+/** The account whose libraries and AI Editor edits carry this id (homeOf), or null. */
+export function accountOf(workspaceId: string): string | null {
+  return [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === workspaceId) ?? null;
 }
 
 /** Which of the account's libraries are in a workspace: `projectId`, else the one this request works in (inProjectOf). */

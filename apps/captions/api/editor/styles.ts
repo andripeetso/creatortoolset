@@ -27,7 +27,7 @@ import { env } from "../lib/env";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
-import type { EditMeta } from "./store";
+import { ownerOf, type EditMeta } from "./store";
 
 /**
  * Editing styles (contracts/editor-styles.ts): one file per account, $DATA_DIR/editor-styles/<username>.json, holding
@@ -287,7 +287,7 @@ export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: 
  * a file changed by hand can never send more. With the edit (`now`: the plan and script steps), what the style as it
  * is now adds after the notes too (styleLayers); a style with no playbook and nothing learned adds nothing more.
  */
-export function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta, "id" | "createdBy" | "projectId">): string {
+export function styleBlock(style: EditStyleCopy | undefined, now?: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { workspaceId?: string }): string {
   return now ? styleLayers({ ...now, style }) : notesBlock(style);
 }
 
@@ -355,8 +355,9 @@ export function learnedBlock(list: StyleLearned[]): string {
  * itself left out). A style with neither gives styleBlock's text exactly. The workspace is the brand (`projectId`; an
  * edit with none matches entries of edits with none), never the library's `workspaceId`.
  */
-export function styleLayers(edit: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { style?: EditStyleCopy }): string {
-  return layersOf(edit.style, edit.style ? findStyle(edit.createdBy, edit.style.id) : null, edit);
+export function styleLayers(edit: Pick<EditMeta, "id" | "createdBy" | "projectId"> & { workspaceId?: string; style?: EditStyleCopy }): string {
+  // the style is the workspace's (store.ts ownerOf), also on an edit a teammate made
+  return layersOf(edit.style, edit.style ? findStyle(ownerOf(edit), edit.style.id) : null, edit);
 }
 
 /**

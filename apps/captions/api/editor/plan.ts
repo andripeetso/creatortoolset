@@ -23,7 +23,7 @@ import { macAway } from "./script";
 import { describeShots, focusOf, frameJunk, indexSources, isJunk, logged, songBeats, type LeftOut } from "./index";
 import { measurable, readable } from "./media";
 import { generateClip, styles } from "./generate";
-import { editDir, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta, type PlannedVersion } from "./store";
+import { editDir, ownerOf, readEdit, readStep, saveDraft, saveEdit, saveStep, sourcesWorkspace, UNNAMED, type EditMeta, type PlannedVersion } from "./store";
 import { finishedProfile, styleBlock } from "./styles";
 import { emptyTracks, sourceOf } from "./timeline";
 
@@ -141,7 +141,7 @@ const songOf = (r: MusicRow, from: string): Song | null => {
 export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
   const db = libraryDb();
   const row = db.prepare("SELECT v.id, a.title, v.probe, v.source_key, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL");
-  const mine = (id: string) => sourcesWorkspace(edit.createdBy, [id]) === edit.workspaceId;
+  const mine = (id: string) => sourcesWorkspace(ownerOf(edit), [id]) === edit.workspaceId;
   if (edit.song && mine(edit.song)) {
     const r = row.get(edit.song) as MusicRow | undefined;
     const s = r && songOf(r, "the song the edit names");
@@ -1143,9 +1143,12 @@ function wordsBySource(sentences: Sentence[]): Record<string, string> {
   return out;
 }
 
-/** The workspace the edit was made in: its instructions and what each context file is (lib/workshop/context.ts), in `max`. */
-export async function workspaceSetup(edit: Pick<EditMeta, "createdBy" | "projectId">, max: number): Promise<string> {
-  const projects = await ownedProjects(edit.createdBy);
+/**
+ * The workspace the edit was made in: its instructions and what each context file is (lib/workshop/context.ts), in
+ * `max`. It is its owner's (ownerOf), also for an edit a teammate made there.
+ */
+export async function workspaceSetup(edit: Pick<EditMeta, "createdBy" | "projectId"> & { workspaceId?: string }, max: number): Promise<string> {
+  const projects = await ownedProjects(ownerOf(edit));
   const p = projects.find((x) => x.id === edit.projectId) ?? (projects.length === 1 ? projects[0] : undefined);
   return p ? renderContext(p, await workspaceKnowledge(p), max) : "";
 }
@@ -1222,9 +1225,9 @@ async function planContext(edit: EditMeta, actor: string, sentences: Sentence[],
   index = await describeShots(index, { actor, story, workspace: await workspaceSetup(edit, 6000) }, signal);
   const gen = styles();
   // what footage the workspace holds and what was finished in it (lib/workshop/context.ts, styles.ts); none adds nothing
-  const profile = [await footageProfile(edit.projectId), finishedProfile(edit.createdBy, edit.projectId ?? "")].filter(Boolean).join("\n");
+  const profile = [await footageProfile(edit.projectId), finishedProfile(ownerOf(edit), edit.projectId ?? "")].filter(Boolean).join("\n");
   const setup = [await workspaceSetup(edit, 24_000), profile, styleBlock(edit.style, edit)].filter(Boolean).join("\n\n");
-  const packText = [await packInstructions(actor, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(edit.createdBy, [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
+  const packText = [await packInstructions(actor, "editor.script", null, { ai: route }), edit.style?.skill ? await skillText(ownerOf(edit), [edit.style.skill], null, { ai: route }) : ""].filter(Boolean).join("\n\n");
   const input: PlanInput = { brief: edit.brief, versions: edit.versions, targetS: edit.targetS, setup, index, words: wordsBySource(sentences), ...(song ? { song } : {}), gen, packText };
   const repair: RepairContext = { index, ...(song ? { song } : {}), targetS: edit.targetS, size: frameOf(edit, index), fixedSize: !!edit.size?.w, gen: gen.map((g) => g.id), brief: edit.brief };
   return { route, left, song, input, repair };

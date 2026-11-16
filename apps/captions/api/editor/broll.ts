@@ -5,7 +5,7 @@ import { NeedsKey, wordsOf } from "../library/transcribe";
 import { buildAssetQuery, MAX_LIMIT, type CardRow } from "../library/query";
 import type { ProbeSummary } from "../library/media/probe";
 import { brollMinFrames } from "./qa";
-import { readDraft, saveDraft, sourcesWorkspace } from "./store";
+import { ownerOf, readDraft, saveDraft, sourcesWorkspace } from "./store";
 import { noPicture, sourceOf } from "./timeline";
 import type { StepContext } from "./worker";
 
@@ -289,7 +289,7 @@ export function rankByWords(rows: { id: string }[]): (text: string) => string[] 
 }
 
 /** The B-roll step for one version's draft: its cutaways from the edit's collection (a cut with no picture: its whole picture), saved over the draft. */
-export async function brollStep({ edit, job, variant, signal }: StepContext): Promise<void> {
+export async function brollStep({ edit, variant, signal }: StepContext): Promise<void> {
   if (!variant) return; // a whole-edit step is not a draft: each version's draft queues its own
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to add B-roll to`);
@@ -302,7 +302,7 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   if (!rows.length && cover) throw new NeedsKey(edit.brollCollectionId ? NO_COVER_IN_FOLDER : NO_COVER);
   if (!rows.length) return;
   // read again at this step: the creator may have lost a library or the collection's footage since the edit was made
-  if (sourcesWorkspace(job.actor ?? "", rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("The B-roll collection is no longer yours to read");
+  if (sourcesWorkspace(ownerOf(edit), rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("The B-roll collection is no longer yours to read");
   const pool = rows.flatMap((r) => (r.probe ? [sourceOf(r.id, r.title, JSON.parse(r.probe) as ProbeSummary)] : []));
   if (signal.aborted) return;
   const spoken = () => Object.fromEntries([...new Set(draft.timeline.tracks.V1.items.map((i) => i.src))].map((id) => [id, wordsOf(libraryDb(), id) ?? []]));

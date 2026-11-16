@@ -17,18 +17,20 @@ import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
-import { libraryRole } from "../library/access";
+import { accountOf, givenLibrary, homeOf, libraryRole } from "../library/access";
+import { sharedTo } from "../lib/project-of";
+import { ownedTeamWithMembers } from "../lib/workspaces";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
 import { pluginsOffIn } from "../lib/plugin-workspaces";
 import { currentWorkspaceId } from "../lib/workspace-scope";
-import type { SessionUser } from "../users";
+import { findUser, pictureOf, type SessionUser } from "../users";
 
 /**
  * The AI Editor's edits: $DATA_DIR/editor/<id>/edit.json (what the user asked for), and its steps in the library
- * database's `edit_jobs` (version_id "<id>:<variant>"). An edit belongs to its creator, in the workspace of the
- * library its footage is in; the workspace's owner sees it too.
+ * database's `edit_jobs` (version_id "<id>:<variant>"). An edit is in the workspace of the library its footage is in
+ * and shared there (editRole): everyone given that workspace sees it, and makes its next version with their own AI.
  */
 
 export interface EditMeta extends EditBrief {
@@ -259,24 +261,59 @@ export function allEdits(): EditMeta[] {
   return ids.map(readEdit).filter((e): e is EditMeta => !!e);
 }
 
-/** Whether the edit is `username`'s own (out of the trash): nobody else sees or changes it. */
-export const editRole = (username: string, e: EditMeta | null): boolean => !!e && !e.trashedAt && e.createdBy === username;
+/**
+ * Who `username` is to the edit (out of the trash): "owner" when its workspace is theirs, "member" when the team's
+ * owner gave them the workspace it is in (Settings → Team → Access, read fresh), else null: they don't see it. Whether
+ * they may change it is the AI Editor's Read & write (boot.ts WRITE_GATES); renaming and deleting are mayRename's.
+ */
+export async function editRole(username: string, e: EditMeta | null): Promise<"owner" | "member" | null> {
+  if (!e || e.trashedAt) return null;
+  if (e.workspaceId === homeOf(username)) return "owner";
+  const owner = accountOf(e.workspaceId);
+  return owner && (await sharedTo({ username } as SessionUser, owner, e.projectId)) ? "member" : null;
+}
+
+/** Rename and delete: the edit's maker, or its workspace's owner. */
+export const mayRename = (username: string, e: EditMeta, role: Awaited<ReturnType<typeof editRole>>): boolean => role === "owner" || e.createdBy === username;
 
 /**
- * The workspace the versions' libraries are in, when `username` may read every one of them (out of the trash, in one
+ * The account the edit's workspace is: its grade, styles, skills, context and Review are that account's, never the
+ * maker's own (a member's edit is in the team owner's). An edit with no workspace id (a test's) is its maker's; a
+ * workspace id no account has is its own name, as homeOf gives most accounts.
+ */
+export const ownerOf = (e: Pick<EditMeta, "createdBy"> & { workspaceId?: string }): string =>
+  !e.workspaceId || homeOf(e.createdBy) === e.workspaceId ? e.createdBy : (accountOf(e.workspaceId) ?? e.workspaceId);
+
+/** A version's library and its workspace, while its asset is out of the trash. */
+const libraryOf = (versionId: string) =>
+  libraryDb()
+    .prepare(
+      `SELECT l.id AS library_id, l.workspace_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.trashed_at IS NULL`,
+    )
+    .get(versionId) as { library_id: string; workspace_id: string } | undefined;
+
+/**
+ * The workspace the versions' libraries are in, when they are all `username`'s own (out of the trash, in one
  * workspace). Null otherwise: the caller answers 404, as for a version that does not exist.
  */
 export function sourcesWorkspace(username: string, versionIds: string[]): string | null {
-  const db = libraryDb();
   let ws: string | null = null;
   for (const id of versionIds) {
-    const row = db
-      .prepare(
-        `SELECT l.id AS library_id, l.workspace_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.trashed_at IS NULL`,
-      )
-      .get(id) as { library_id: string; workspace_id: string } | undefined;
+    const row = libraryOf(id);
     if (!row || !libraryRole(username, row.library_id) || (ws && ws !== row.workspace_id)) return null;
+    ws = row.workspace_id;
+  }
+  return ws;
+}
+
+/** sourcesWorkspace, also for footage in a workspace the team's owner gave `username` (givenLibrary): what an edit is made from. */
+export async function editSources(username: string, versionIds: string[]): Promise<string | null> {
+  let ws: string | null = null;
+  for (const id of versionIds) {
+    const row = libraryOf(id);
+    if (!row || (ws && ws !== row.workspace_id)) return null;
+    if (!libraryRole(username, row.library_id) && !(await givenLibrary(username, row.library_id))) return null;
     ws = row.workspace_id;
   }
   return ws;
@@ -359,19 +396,19 @@ export async function gradeOf(username: string, bundle: EditBundle): Promise<Cdl
 /** A B-roll collection that is not the user's to read: the routes answer 404. */
 export class NoCollection extends Error {}
 
-/** A collection `username` may read in workspace `ws`, for B-roll. */
-function collectionOk(username: string, ws: string, id: string): boolean {
+/** A collection `username` may read in workspace `ws`, for B-roll: their own library's, or one given to them. */
+async function collectionOk(username: string, ws: string, id: string): Promise<boolean> {
   const row = libraryDb().prepare("SELECT l.id, l.workspace_id FROM collections c JOIN libraries l ON l.id = c.library_id WHERE c.id = ?").get(id) as
     | { id: string; workspace_id: string }
     | undefined;
-  return !!row && row.workspace_id === ws && !!libraryRole(username, row.id);
+  return !!row && row.workspace_id === ws && (!!libraryRole(username, row.id) || (await givenLibrary(username, row.id)));
 }
 
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
 const num = (v: unknown, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined);
 
 /** The brief fields of a body, cleaned; a field that is absent or of the wrong type is left out. Throws on a B-roll collection the user can't read. */
-export function cleanBrief(body: Record<string, unknown>, username: string, ws: string): Partial<EditBrief> {
+export async function cleanBrief(body: Record<string, unknown>, username: string, ws: string): Promise<Partial<EditBrief>> {
   const out: Partial<EditBrief> = {};
   const name = text(body.name, 120);
   if (name) out.name = name;
@@ -388,7 +425,7 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   if (moments !== undefined && Math.round(moments) >= 1) out.moments = Math.round(moments);
   if (body.brollCollectionId === null) out.brollCollectionId = null;
   else if (typeof body.brollCollectionId === "string") {
-    if (!collectionOk(username, ws, body.brollCollectionId)) throw new NoCollection("No such collection");
+    if (!(await collectionOk(username, ws, body.brollCollectionId))) throw new NoCollection("No such collection");
     out.brollCollectionId = body.brollCollectionId;
   }
   // null or [] = the person's Voice languages again; anything not a list of codes is ignored
@@ -399,7 +436,7 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   else if (body.plan === false) out.plan = false;
   // a song the person may read in this workspace; anything else is left out
   if (body.song === null) out.song = null;
-  else if (typeof body.song === "string" && sourcesWorkspace(username, [body.song]) === ws) out.song = body.song;
+  else if (typeof body.song === "string" && (await editSources(username, [body.song])) === ws) out.song = body.song;
   const punch = num((body.framing as { punch?: unknown } | undefined)?.punch, 1, 2);
   if (punch !== undefined) out.framing = { punch };
   // only the flags a loaded plug-in declares, each one a boolean; the others are ignored
@@ -424,9 +461,10 @@ export function byToolAfter(was: EditMeta["byTool"], patch: Partial<EditBrief>, 
 export class NoStyle extends Error {}
 
 /**
- * What an editing style gives an edit in workspace `ws`: its choices, and the copy the edit keeps. A B-roll folder the
- * edit cannot read and a grade the person no longer has are left out, not an error. `on` is an edit that already
- * exists (PATCH): where the style names no folder or grade, that edit keeps its own.
+ * What an editing style gives an edit in workspace `ws`: its choices, and the copy the edit keeps. `username` is the
+ * account the workspace is (ownerOf): the style and grades are its. A B-roll folder the edit cannot read and a grade
+ * that account no longer has are left out, not an error. `on` is an edit that already exists (PATCH): where the style
+ * names no folder or grade, that edit keeps its own.
  */
 export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">): Promise<Partial<EditMeta>> {
   const s = findStyle(username, id);
@@ -436,7 +474,7 @@ export async function styleFields(username: string, ws: string, id: string, on?:
     versions: s.versions,
     targetS: s.targetS,
     framing: { punch: s.punch },
-    brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
+    brollCollectionId: s.brollCollectionId && (await collectionOk(username, ws, s.brollCollectionId)) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
     bundle: { ...(on?.bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
     ...(s.steps ? { steps: s.steps } : {}),
     // always set, so a style that names none takes another style's size off an edit
@@ -446,13 +484,14 @@ export async function styleFields(username: string, ws: string, id: string, on?:
 }
 
 /** The workspace of uploads `username` started and has not finished, all in one; null otherwise. */
-function uploadsWorkspace(username: string, uploadIds: string[]): string | null {
+async function uploadsWorkspace(username: string, uploadIds: string[]): Promise<string | null> {
   let ws: string | null = null;
   for (const id of uploadIds) {
     const row = libraryDb()
       .prepare("SELECT u.library_id, l.workspace_id FROM uploads u JOIN libraries l ON l.id = u.library_id WHERE u.id = ? AND u.created_by = ? AND u.state = 'open'")
       .get(id, username) as { library_id: string; workspace_id: string } | undefined;
-    if (!row || !libraryRole(username, row.library_id) || (ws && ws !== row.workspace_id)) return null;
+    if (!row || (ws && ws !== row.workspace_id)) return null;
+    if (!libraryRole(username, row.library_id) && !(await givenLibrary(username, row.library_id))) return null;
     ws = row.workspace_id;
   }
   return ws;
@@ -478,25 +517,32 @@ export function uploadFinished(uploadId: string, versionId: string): Promise<voi
   return waiting;
 }
 
-/** The plug-ins off in the workspace a new edit is made in (its own, else the one the request works in): their steps are left out. */
-async function stepsOffIn(username: string, projectId?: string): Promise<string[]> {
+/** The plug-ins off in the workspace a new edit is made in (its own, else the one the request works in): their steps are left out. `owner`: whose workspace it is. */
+async function stepsOffIn(username: string, owner: string, projectId?: string): Promise<string[]> {
   const ws = projectId ?? (await currentWorkspaceId({ username } as SessionUser));
-  return ws ? ((await pluginsOffIn([{ id: ws, owner: username }]))[ws] ?? []) : [];
+  return ws ? ((await pluginsOffIn([{ id: ws, owner }]))[ws] ?? []) : [];
 }
 
-/** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
+/**
+ * A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so
+ * its name and brief are not the person's own words. Footage of a workspace the team's owner gave them makes an edit
+ * in that workspace only (`projectId` must be it), with that workspace's defaults, plug-in steps and styles (ownerOf).
+ */
 export async function createEdit(username: string, body: Record<string, unknown>, tool = false, projectId?: string): Promise<EditMeta | null> {
   const ids = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((s): s is string => typeof s === "string"))] : []);
   const sources = ids(body.sources);
   const uploads = sources.length ? [] : ids(body.uploads);
   const count = sources.length || uploads.length;
   if (!count || count > MAX_SOURCES) return null;
-  const ws = sources.length ? sourcesWorkspace(username, sources) : uploadsWorkspace(username, uploads);
+  const ws = sources.length ? await editSources(username, sources) : await uploadsWorkspace(username, uploads);
   if (!ws) return null;
+  const account = ws === homeOf(username) ? username : accountOf(ws);
+  // a member's edit is in the given workspace it was asked in, so it shows there and nowhere else
+  if (!account || (account !== username && !(projectId && (await sharedTo({ username } as SessionUser, account, projectId))))) return null;
   const now = Date.now();
-  const brief = cleanBrief(body, username, ws);
+  const brief = await cleanBrief(body, username, ws);
   // `style` names an editing style: its choices go under the request's own. No `style` key at all: none, as before.
-  const styled = typeof body.style === "string" ? await styleFields(username, ws, body.style) : {};
+  const styled = typeof body.style === "string" ? await styleFields(account, ws, body.style) : {};
   const e: EditMeta = {
     id: randomUUID(),
     workspaceId: ws,
@@ -513,8 +559,8 @@ export async function createEdit(username: string, body: Record<string, unknown>
     targetS: 0,
     brollCollectionId: null,
     framing: { punch: 1.15 },
-    bundle: (await editorDefaults(username)).bundle,
-    steps: chosenSteps(username, await stepsOffIn(username, projectId)),
+    bundle: (await editorDefaults(account)).bundle,
+    steps: chosenSteps(account, await stepsOffIn(username, account, projectId)),
     ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
@@ -550,8 +596,17 @@ export function summaryOf(e: EditMeta): EditSummary {
   const row = libraryDb().prepare("SELECT kind, state, error = 'Stopped' AS stopped FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as
     { kind: EditJob["kind"]; state: EditJob["state"]; stopped: number | null } | undefined;
   const last = row ? { kind: row.kind, state: row.state, ...(row.stopped ? { stopped: true as const } : {}) } : null;
-  return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
+  return { id: e.id, name: e.name, createdBy: e.createdBy, ...makerOf(e), createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
 }
+
+/** Who made it, by name and picture, where the edit's workspace has a team: one person's own edits carry none. */
+function makerOf(e: EditMeta): Pick<EditSummary, "maker"> {
+  if (!ownedTeamWithMembers(ownerOf(e))) return {};
+  const u = findUser(e.createdBy);
+  return { maker: { name: nameOf(e.createdBy), picture: u ? pictureOf(u) : null } };
+}
+
+const nameOf = (username: string) => findUser(username)?.displayName || username;
 
 export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
@@ -574,10 +629,17 @@ export function viewOf(e: EditMeta): Edit {
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
     ...(p?.coverage ? { coverage: p.coverage } : {}),
     previews: readStep(e.id, "review") ?? {},
+    ...askedBy(e),
     flagDefs: pluginEditFlags(),
     ...(cards ? { cards } : {}),
     ...(passes ? { passes } : {}),
   };
+}
+
+/** Who asked for each version's newest cut, by name, where the workspace has a team (summaryOf's `maker`). */
+function askedBy(e: EditMeta): Pick<Edit, "askedBy"> {
+  const filed = Object.entries(readStep(e.id, "review") ?? {}).filter(([, p]) => p.by);
+  return filed.length && ownedTeamWithMembers(ownerOf(e)) ? { askedBy: Object.fromEntries(filed.map(([v, p]) => [v, nameOf(p.by!)])) } : {};
 }
 
 /** Deletes edits trashed before `before`, with their steps. Returns how many went. */
