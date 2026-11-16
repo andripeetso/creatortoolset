@@ -157,7 +157,7 @@ const send = <T,>(url: string, method: string, body?: unknown): Promise<T> =>
 export const listCollections = (libraryId: string) =>
   send<{ collections: Collection[] }>(`/api/library/${libraryId}/collections`, "GET").then((x) => x.collections);
 
-export const createCollection = (libraryId: string, input: { name: string; kind?: "manual" | "smart"; query?: SearchQuery; parentId?: string }) =>
+export const createCollection = (libraryId: string, input: { name: string; kind?: "manual" | "smart"; query?: SearchQuery; parentId?: string; rule?: string }) =>
   send<Collection>(`/api/library/${libraryId}/collections`, "POST", input);
 
 export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>

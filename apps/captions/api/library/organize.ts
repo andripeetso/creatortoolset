@@ -67,9 +67,10 @@ export function ensureDefaultFolders(d: DatabaseSync, libraryId: string, by: str
   });
 }
 
-/** The plain top-level folders a clip may be filed in by the AI: never Finals (it has its own tool). */
+/** The plain top-level folders a clip may be filed in by the describe AI: never Finals (it has its own tool), nor a smart folder. */
 export function plainFolders(d: DatabaseSync, libraryId: string): string[] {
-  const rows = d.prepare("SELECT name FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name <> 'Finals' ORDER BY created_at, id").all(libraryId) as {
+  // a smart folder (smart.ts) is filed by its own rule, never by a guess from its name
+  const rows = d.prepare("SELECT name FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND rule IS NULL AND name <> 'Finals' ORDER BY created_at, id").all(libraryId) as {
     name: string;
   }[];
   return [...new Set(rows.map((r) => r.name))];

@@ -18,6 +18,7 @@ import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
 import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile } from "./organize";
+import { fileSmart } from "./smart";
 import { asTurn, turned, turnVersion } from "./turn";
 
 /**
@@ -267,9 +268,11 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider, await contextStamp(wsId, WORKSPACE_MAX, DESCRIBE_VERSION));
     if (value.turn) await turnVersion(db, versionId, base + value.turn);
+    // the library's smart folders judge it first (smart.ts); one it went in is where it is filed
+    const smart = await fileSmart(db, versionId, who, workspace).catch(() => 0);
     // a new name only while the library may get one; fileInto makes the folder with its first file
     const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
-    if (filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);
+    if (!smart && filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder);
   } finally {
     if (!made) await Promise.all(files.map((f) => rm(f, { force: true })));
   }

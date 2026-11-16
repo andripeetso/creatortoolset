@@ -344,7 +344,17 @@ export interface Collection {
   covers?: string[];
   /** a folder with no pictures: up to three of the songs or sounds in it, for its card */
   sounds?: string[];
+  /** a smart folder: what goes in it, in the person's own words; the AI files the library's clips by it (api/library/smart.ts) */
+  rule?: string;
+  /** a smart folder sorting the library into itself right now */
+  sorting?: true;
   createdBy: string;
+}
+
+/** Reorganize (POST /api/library/:id/collections/suggest): one way to sort the library, its smart folders and their counts. */
+export interface ReorganizeWay {
+  name: string;
+  folders: { name: string; rule: string; count?: number }[];
 }
 
 /** A share as its owner or creator lists it. `id` is the token's sha256, the handle for revoke: the token itself is shown once. */

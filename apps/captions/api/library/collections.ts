@@ -18,6 +18,9 @@ import { externalCanSee, externalRefById } from "./refs";
 import { FINISHED, KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
 import { fileRoll, rollFolder, rollOf, sortRoll } from "./roll";
+import { workspaceIdOf } from "./describe";
+import { workspaceContext } from "../lib/workshop/context";
+import { canJudge, isSorting, LABEL as SMART_LABEL, ruleOf, sortFolder, suggestWays } from "./smart";
 
 /**
  * Folders and collections (tasks/media-library-plan.md, sections 2, 7 and 9). One table: a folder is a collection with
@@ -39,6 +42,7 @@ interface Row {
   kind: "manual" | "smart";
   query: string | null;
   created_by: string;
+  rule?: string | null;
 }
 
 const db = () => libraryDb();
@@ -88,6 +92,7 @@ const toCollection = (r: Row, count?: number, covers?: string[], sounds?: string
   kind: r.kind,
   createdBy: r.created_by,
   ...(r.kind === "smart" ? { query: savedQuery(JSON.parse(r.query ?? "{}")) } : {}),
+  ...(r.rule ? { rule: r.rule, ...(isSorting(r.id) ? { sorting: true } : {}) } : {}),
   ...(count !== undefined ? { count } : {}),
   ...(covers?.length ? { covers } : {}),
   ...(sounds?.length ? { sounds } : {}),
@@ -146,7 +151,33 @@ function isAbove(parent: string | null, cid: string): boolean {
   return false;
 }
 
-// POST /api/library/:id/collections { name, parentId?, kind?: manual | smart, query? } → 201 Collection (any member)
+/** The context of the workspace the library is in (describe.ts workspaceOf), "" when it has no clip to read it from yet. */
+async function libraryWorkspace(libraryId: string): Promise<string> {
+  const v = db().prepare("SELECT current_version_id AS v FROM assets WHERE library_id = ? AND current_version_id IS NOT NULL LIMIT 1").get(libraryId) as { v: string } | undefined;
+  const ws = v ? await workspaceIdOf(db(), v.v) : undefined;
+  return ws ? workspaceContext(ws, 6000) : "";
+}
+
+const NO_JUDGE = "Smart folders need an AI to sort with: add one in Settings → AI, or a TypeSafe Jev key in Settings → Keys";
+
+/** A smart folder's rule was saved: the library is sorted against it in the background, as `user`. */
+const startSort = (libraryId: string, folderId: string, user: Parameters<typeof sortFolder>[2]) =>
+  void sortFolder(libraryId, folderId, user, libraryWorkspace(libraryId)).catch((e) => console.error(`[library] ${SMART_LABEL}: ${e instanceof Error ? e.message : e}`));
+
+// POST /api/library/:id/collections/suggest → { ways, about }: Reorganize, two or three ways to sort the library into
+// smart folders, each folder with its rule and how many clips would go in it (smart.ts). Nothing is made here
+collectionApp.post("/:id/collections/suggest", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return notFound(c);
+  try {
+    return c.json(await suggestWays(libraryId, user, await libraryWorkspace(libraryId)));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e), code: "conflict" }, 409);
+  }
+});
+
+// POST /api/library/:id/collections { name, parentId?, kind?: manual | smart, query?, rule? } → 201 Collection (any member)
 collectionApp.post("/:id/collections", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -158,14 +189,19 @@ collectionApp.post("/:id/collections", async (c) => {
   if (parent && !rowIn(libraryId, parent)) return notFound(c);
   const kind = body?.kind === "smart" ? "smart" : "manual";
   const query = kind === "smart" ? JSON.stringify(savedQuery(body?.query)) : null;
+  // a rule (smart.ts) is a plain folder's: a saved search fills itself
+  const rule = kind === "manual" ? ruleOf(body?.rule) : null;
+  if (rule && !canJudge(user)) return c.json({ error: NO_JUDGE, code: "needs_key" }, 409);
   const id = `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   db()
-    .prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(id, libraryId, parent, name, kind, query, Date.now(), user.username);
-  return c.json(toCollection({ id, library_id: libraryId, parent_id: parent, name, kind, query, created_by: user.username }, kind === "manual" ? 0 : undefined), 201);
+    .prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(id, libraryId, parent, name, kind, query, Date.now(), user.username, rule);
+  if (rule) startSort(libraryId, id, user);
+  return c.json(toCollection({ id, library_id: libraryId, parent_id: parent, name, kind, query, created_by: user.username, rule }, kind === "manual" ? 0 : undefined), 201);
 });
 
-// PATCH /api/library/:id/collections/:cid { name?, parentId? } → rename or move (creator or owner)
+// PATCH /api/library/:id/collections/:cid { name?, parentId?, rule? } → rename, move, or a plain folder's rule (smart.ts:
+// a string sorts the library into it again; null stops, and the clips the AI filed there leave it)
 collectionApp.patch("/:id/collections/:cid", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -181,8 +217,15 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
     if (parent && !rowIn(libraryId, parent)) return notFound(c);
     if (isAbove(parent, row.id)) return c.json({ error: "A folder can't go inside itself", code: "conflict" }, 409);
   }
-  db().prepare("UPDATE collections SET name = ?, parent_id = ? WHERE id = ?").run(name, parent, row.id);
-  return c.json(toCollection({ ...row, name, parent_id: parent }));
+  let rule = row.rule ?? null;
+  if (body?.rule !== undefined) {
+    if (row.kind !== "manual" || rollFolder(db(), libraryId, row.id)) return c.json({ error: "Only a plain folder sorts itself", code: "conflict" }, 409);
+    rule = ruleOf(body.rule);
+    if (rule && !canJudge(user)) return c.json({ error: NO_JUDGE, code: "needs_key" }, 409);
+  }
+  db().prepare("UPDATE collections SET name = ?, parent_id = ?, rule = ? WHERE id = ?").run(name, parent, rule, row.id);
+  if (body?.rule !== undefined && rule !== (row.rule ?? null)) startSort(libraryId, row.id, user);
+  return c.json(toCollection({ ...row, name, parent_id: parent, rule }));
 });
 
 // DELETE /api/library/:id/collections/:cid → gone, its items kept in the library, its folders move up one level. What it
@@ -325,10 +368,19 @@ async function changeItems(c: Ctx, add: boolean) {
   }
   if (!add) {
     const del = d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?");
+    // taken out of a smart folder by hand: never filed there again (smart.ts)
+    const out = d.prepare("INSERT OR IGNORE INTO folder_out (collection_id, asset_id) VALUES (?, ?)");
     let removed = 0;
-    for (const id of ids) removed += del.run(row.id, id).changes as number;
+    for (const id of ids) {
+      const n = del.run(row.id, id).changes as number;
+      if (n && row.rule) out.run(row.id, id);
+      removed += n;
+    }
     return c.json({ removed });
   }
+  // put in by hand: the person's, whatever the rule says
+  const mine = d.prepare("UPDATE collection_items SET by_ai = 0 WHERE collection_id = ? AND asset_id = ?");
+  const back = d.prepare("DELETE FROM folder_out WHERE collection_id = ? AND asset_id = ?");
   // added at the end, in the order given; trashed or foreign assets are skipped
   const ok = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL");
   const ins = d.prepare("INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by) VALUES (?, ?, ?, ?)");
@@ -338,6 +390,8 @@ async function changeItems(c: Ctx, add: boolean) {
     if (!ok.get(id, libraryId)) continue;
     pos += 1;
     added += ins.run(row.id, id, pos, user.username).changes as number;
+    mine.run(row.id, id);
+    back.run(row.id, id);
   }
   return c.json({ added });
 }
