@@ -9,7 +9,10 @@ final class LocateTests: XCTestCase {
         let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
         let made = base.appendingPathComponent("locate-tests/\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
-        root = made.resolvingSymlinksInPath()
+        // realpath, as Locate reads paths: resolvingSymlinksInPath turns /private/var back into /var on macOS
+        let real = realpath(made.path, nil)
+        defer { free(real) }
+        root = URL(fileURLWithPath: real.map { String(cString: $0) } ?? made.path, isDirectory: true)
     }
 
     override func tearDownWithError() throws {

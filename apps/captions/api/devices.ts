@@ -125,7 +125,7 @@ async function editorWaits(device: string, listed: unknown, workV?: unknown): Pr
   const kinds = parseKinds(listed);
   const editor = kinds ? await waits(d, await declared(d, kinds)) : false;
   // a core step placed on a computer: the app starts its worker, which claims it through work/claim
-  const work = await workWaits(d);
+  const work = await workWaits(deviceOf(device) ?? d);
   return editor || work ? { ...(editor ? { editor: true as const } : {}), ...(work ? { work: true as const } : {}) } : null;
 }
 /**

@@ -68,7 +68,7 @@ let laptop: ReturnType<typeof pairDevice>;
 let pc: ReturnType<typeof pairDevice>;
 
 beforeAll(async () => {
-  for (const u of ["maker", "other", "solo", "old", "loop"]) await login(u);
+  for (const u of ["maker", "other", "solo", "old", "loop", "fresh"]) await login(u);
   laptop = pairDevice("maker", "Laptop");
   pc = pairDevice("maker", "Big PC");
   // the PC is far roomier: balancing alone would always pick it
@@ -157,11 +157,13 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
   });
 
   it("a computer whose worker never claimed is told too, from the version its long poll sends", async () => {
-    const fresh = pairDevice("maker", "Fresh Mac");
+    const fresh = pairDevice("fresh", "Fresh Mac");
     await report(fresh.token, BIG);
-    const e = await newEdit("maker", ["ver_up"]);
-    queue("maker", e, "v1");
+    file("fresh", "ver_fresh", { uploaded: true });
+    const e = await newEdit("fresh", ["ver_fresh"]);
+    queue("fresh", e, "v1");
     expect(await json(post(fresh.token, "/api/devices/relay/wait", { blobs: true, work: 1 }))).toEqual({ work: true });
+    expect(deviceOf(fresh.device.id)?.work?.v).toBe(1);
     settle();
   });
 
