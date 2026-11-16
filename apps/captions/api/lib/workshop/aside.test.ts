@@ -12,6 +12,16 @@ const doc = {
 };
 
 describe("ask about this", () => {
+  it("is told the workspace first when the piece is in one, and reads exactly as before when it is in none", () => {
+    const input = { doc, blockId: "b1", text: doc.blocks[0]!.text, question: "Is this clear?", history: [], best: [] };
+    const plain = buildAsidePrompt(input);
+    expect(buildAsidePrompt({ ...input, workspace: "" })).toEqual(plain);
+    const told = buildAsidePrompt({ ...input, workspace: "Workspace: Tiny Acrobatics\nAudience: new parents" });
+    expect(told.system).toBe(plain.system);
+    expect(told.user).toMatch(/^The workspace this piece belongs to\.[^\n]*\nWorkspace: Tiny Acrobatics\nAudience: new parents\n\nSlide 1 of 2:\n/);
+    expect(told.user.endsWith(plain.user)).toBe(true);
+  });
+
   it("sees only the slide, where it sits and the best openings; nothing else", () => {
     const { system, user } = buildAsidePrompt({
       doc,

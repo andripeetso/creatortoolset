@@ -499,3 +499,21 @@ describe("a version of their own given in the Workshop's chat", () => {
     expect(rewrites).not.toContain("all afternoon");
   });
 });
+
+describe("workspace_files", () => {
+  it("lists and reads the current workspace's context files by lines, and neither lists nor reads one the workspace switched off", async () => {
+    const cookie = await cookieOf("ana");
+    const ws = String((await page(cookie, "/api/workshop/projects", "POST", { name: "Ember Realm" })).id);
+    await tool(key, "workshop_set_project", { project: ws });
+    const put = async (name: string, text: string) => String((await page(cookie, "/api/workshop/sources", "POST", { name, text, projectId: ws })).id);
+    const lands = await put("lands.md", "Frost Peak is the snowy one.\nEmber Vale is the warm one.");
+    const old = await put("old.md", "Out of date.");
+    const ids = async () => ((await tool(key, "workspace_files")).value!.files as Row[]).map((f) => f.id);
+    expect((await ids()).sort()).toEqual([lands, old].sort());
+    expect((await tool(key, "workspace_files", { file: "lands.md", from: 2 })).value).toMatchObject({ id: lands, lines: 2, from: 2, to: 2, text: "Ember Vale is the warm one." });
+
+    await page(cookie, `/api/workshop/projects/${ws}`, "PATCH", { name: "Ember Realm", off: [old] });
+    expect(await ids()).toEqual([lands]);
+    expect((await tool(key, "workspace_files", { file: old })).error).toBe("No such file in this workspace: workspace_files with no file lists them.");
+  });
+});

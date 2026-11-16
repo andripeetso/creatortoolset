@@ -99,6 +99,7 @@ import {
 } from "./lib/instagram/research";
 import { accountOwnsPost, nextMineFlags, postInProject } from "./lib/instagram/mine";
 import { accountProjects, inProject, resolveProjectId, unlinkAccount } from "./lib/workshop/workspace";
+import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { instagramLogin } from "./lib/connectors/store";
 import { catalogNewestAt, insightIdsToRead, mergeCatalog, mergeCatalogCounts, parseCatalogCount } from "./lib/instagram/catalog";
 import { publicGridReader } from "./lib/connectors/provider";
@@ -2324,9 +2325,13 @@ async function generateIdeaBoardNow(
   let usage: MacUsage | undefined;
   const mac = aiFor(user, "analyzer", "Idea board");
   const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null, { ai: mac });
+  // the ideas are for the brand to make: it is told which brand (lib/workshop/context.ts); with no workspace, nothing more
+  const workspace = await workspaceContext(await workspaceOf(user.username, projectId), 6000);
   const parsed = await completeWithFallback(
     packText ? `${IDEA_BOARD_SYSTEM}\n\n${packText}` : IDEA_BOARD_SYSTEM,
-    ideaBoardUserMessage(catalog, previous.length ? previous : undefined),
+    (workspace
+      ? `The workspace these ideas are for. Use it to pick what this brand could remake for its own audience; the ideas and their posts come only from the catalog:\n${workspace}\n\n`
+      : "") + ideaBoardUserMessage(catalog, previous.length ? previous : undefined),
     signal,
     (text) => parseIdeaBoard(text, catalog.map((p) => p.id)),
     mac && { ...mac, onUsage: (u) => (usage = u) },
