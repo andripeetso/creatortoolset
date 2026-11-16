@@ -244,6 +244,8 @@ function AddDialog({ projectId, onFiles, onPick, onAdded, onClose }: {
   const [paste, setPaste] = useState<{ name: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Add pressed with its field empty: the field says what it needs
+  const [needs, setNeeds] = useState<"link" | "text" | null>(null);
   const send = async (p: Promise<KnowledgeSource>) => {
     setBusy(true);
     setError(null);
@@ -294,10 +296,11 @@ function AddDialog({ projectId, onFiles, onPick, onAdded, onClose }: {
           className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (link.trim()) void send(addSourceLink(link.trim(), projectId));
+            if (!link.trim()) return setNeeds("link");
+            void send(addSourceLink(link.trim(), projectId));
           }}
         >
-          <Input value={link} onChange={(e) => setLink(e.target.value)} aria-label="Link" placeholder="A link: an article, a YouTube video" autoComplete="off" />
+          <Input value={link} onChange={(e) => (setLink(e.target.value), setNeeds(null))} aria-invalid={needs === "link" || undefined} aria-label="Link" placeholder="A link: an article, a YouTube video" autoComplete="off" />
           <Button type="submit" size="sm" variant="outline" disabled={busy}>
             Add
           </Button>
@@ -308,11 +311,12 @@ function AddDialog({ projectId, onFiles, onPick, onAdded, onClose }: {
             onSubmit={(e) => {
               e.preventDefault();
               const text = paste.text.trim();
-              if (text) void send(addSource({ name: paste.name.trim() || text.split("\n", 1)[0]!.slice(0, 80), text: paste.text, projectId }));
+              if (!text) return setNeeds("text");
+              void send(addSource({ name: paste.name.trim() || text.split("\n", 1)[0]!.slice(0, 80), text: paste.text, projectId }));
             }}
           >
             <Input value={paste.name} onChange={(e) => setPaste({ ...paste, name: e.target.value })} aria-label="Name" placeholder="Name" autoComplete="off" />
-            <Textarea autoFocus value={paste.text} onChange={(e) => setPaste({ ...paste, text: e.target.value })} aria-label="Text" placeholder="Paste or write it here" rows={8} className="max-h-[40vh] text-sm" />
+            <Textarea autoFocus value={paste.text} onChange={(e) => (setPaste({ ...paste, text: e.target.value }), setNeeds(null))} aria-invalid={needs === "text" || undefined} aria-label="Text" placeholder="Paste or write it here" rows={8} className="max-h-[40vh] text-sm" />
             <Button type="submit" size="sm" className="self-end" disabled={busy}>
               Add text
             </Button>
@@ -322,9 +326,9 @@ function AddDialog({ projectId, onFiles, onPick, onAdded, onClose }: {
             Paste text
           </Button>
         )}
-        {error && (
+        {(error || needs) && (
           <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-            {error}
+            {error || (needs === "link" ? "Needs a link" : "Needs text")}
           </p>
         )}
       </SettingsDialogContent>
