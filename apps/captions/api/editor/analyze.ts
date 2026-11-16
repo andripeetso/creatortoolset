@@ -13,7 +13,8 @@ import { askVersionIn, editorKey, editorRoute, heardForEditor, versionRoute, wor
 import { eyelineOf } from "./eyeline";
 import { measurable } from "./media";
 import { allBroll, isMusic } from "./plan";
-import { saveStep } from "./store";
+import { ownerOf, saveStep } from "./store";
+import { videoLanguages } from "../lib/video-languages";
 import { voiceChannel } from "./sync";
 import type { StepContext } from "./worker";
 
@@ -169,6 +170,8 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
         )
         .get(id) as unknown as SourceRow,
   );
+  // the edit's own language, else its workspace's (Settings → Workspace → Details); neither: the asker's own list
+  const spoken = edit.languages?.length ? edit.languages : await videoLanguages(ownerOf(edit), edit.projectId);
   const notes: string[] = [];
   const planned = !!edit.plan || allBroll(edit);
   const ready: { row: SourceRow; probe: ProbeSummary; words: TimedWord[] }[] = [];
@@ -194,7 +197,7 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
       if (words?.length) ready.push({ row, probe, words });
       continue;
     }
-    const languages = edit.languages?.length ? edit.languages : undefined;
+    const languages = spoken;
     askVersionIn.set(row.id, { by: asker, ...(languages ? { languages } : {}) });
     const words = wordsOf(db, row.id);
     // a take heard as silence (asked in another language) is heard once more in the language the edit names

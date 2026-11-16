@@ -64,8 +64,8 @@ export interface EditBrief {
   framing: { punch: number };
   /** the per-edit flags a plug-in declared (EditFlag), by id: on or off. A new edit records every declared flag. */
   flags: Record<string, boolean>;
-  /** the languages spoken in the footage (two-letter codes); they win over the person's Settings → AI → Voice
-   *  languages when its takes are transcribed. Missing or empty = the person's. */
+  /** the languages spoken in the footage (two-letter codes), for when its takes are transcribed. Missing or empty =
+   *  its workspace's language (Settings → Workspace → Details), else the person's own list (Settings → Voice). */
   languages?: string[];
   /**
    * Not cut around what is said: the AI plans the shots from the brief, to a song or the footage's own sound (a hard

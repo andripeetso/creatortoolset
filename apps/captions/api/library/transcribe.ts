@@ -6,9 +6,11 @@ import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { MIC_LIMITS, needComputerOn, transcribeOnComputer } from "../lib/computer-transcribe";
 import { readVoicePrefs, speechFor } from "../lib/speech";
+import { videoLanguages } from "../lib/video-languages";
 import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
+import { accountOf } from "./access";
 import { ffmpegTo } from "./media/run";
 
 /**
@@ -51,8 +53,8 @@ export type Route = { provider: "deepgram" | "openai"; key: string } | { provide
  * What transcribes `use` for `actor` (lib/speech.ts speechFor): their key, this computer when the server is on it, or a
  * model on one of their own computers. Throws NeedsKey when there is none.
  */
-export function transcribeRoute(actor: string | null, use: SpeechUse = "transcripts"): Route {
-  const s = speechFor(actor, use);
+export function transcribeRoute(actor: string | null, use: SpeechUse = "transcripts", languages?: string[]): Route {
+  const s = speechFor(actor, use, languages);
   if ("needs" in s) throw new NeedsKey(s.needs);
   if (s.engine !== "local") return { provider: s.engine, key: s.key };
   return s.on === "server" ? { provider: "device" } : { provider: "computer", model: s.model, languages: s.languages };
@@ -171,7 +173,7 @@ export async function transcribeFile(
   actor: string | null,
   scratch: string,
   status: string = src,
-  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use) }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route } = {},
+  { use = "transcripts", fillers = true, soon = false, languages, route = transcribeRoute(actor, use, languages) }: { use?: SpeechUse; fillers?: boolean; soon?: boolean; languages?: string[]; route?: Route } = {},
 ): Promise<Transcribed & { provider: Route["provider"]; model?: string }> {
   // no audio is cut for a computer that is off: the job waits a minute and asks again (worker.ts)
   if (route.provider === "computer") needComputerOn(actor ?? "", route.model);
@@ -194,8 +196,8 @@ export async function transcribeFile(
 
 /**
  * An AI Editor edit's ask for a version's transcript, set by analyze before it queues the transcript and cleared once
- * it is made: `by`, the account that started the edit; `languages`, the edit's (a version with none is heard in its
- * actor's Voice languages).
+ * it is made: `by`, the account that started the edit; `languages`, the edit's or its workspace's (a version with none
+ * is heard in its own library's workspace's: libraryLanguages).
  */
 // ponytail: kept in memory; analyze sets it again each time it looks while it waits, so a restart only loses a run already started
 export const askVersionIn = new Map<string, { by: string; languages?: string[] }>();
@@ -222,6 +224,17 @@ export function versionRoute(actor: string | null, versionId: string): Route {
   return (ask?.by === actor && editorRoute(actor, ask.languages)) || transcribeRoute(actor);
 }
 
+/**
+ * The languages of the videos of the workspace a version's library is in (its settings.projectId, read as its
+ * account's); undefined for one with none set: the actor's own list then.
+ */
+async function libraryLanguages(db: DatabaseSync, versionId: string, actor: string | null): Promise<string[] | undefined> {
+  const row = db
+    .prepare("SELECT l.workspace_id AS home, json_extract(l.settings, '$.projectId') AS ws FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?")
+    .get(versionId) as { home: string; ws: string | null } | undefined;
+  return row ? videoLanguages(accountOf(row.home) ?? actor, row.ws) : undefined;
+}
+
 /** Versions an edit had heard on the AI Editor row's route ("<version>|<provider>:<model>"): heard again for it once at most (analyze.ts). */
 export const heardForEditor = new Set<string>();
 export const editorKey = (versionId: string, r: Route) => `${versionId}|${r.provider}:${r.provider === "computer" ? r.model : ""}`;
@@ -234,7 +247,7 @@ export const editorKey = (versionId: string, r: Route) => `${versionId}|${r.prov
  */
 export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
   const ask = askVersionIn.get(versionId);
-  const languages = ask?.languages;
+  const languages = ask?.languages ?? (await libraryLanguages(db, versionId, actor));
   const editor = ask?.by === actor ? editorRoute(actor, languages) : null;
   const make = (route?: Route) => transcribeFile(src, actor, scratch, versionId, { languages, ...(route ? { use: "editor" as const, route } : {}) });
   let t: Awaited<ReturnType<typeof make>>;

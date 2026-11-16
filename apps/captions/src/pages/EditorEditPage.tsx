@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { cardStillUrl, carryOn, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
+import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import { confirmHeavy } from "@/lib/setup";
 import { Maker, StateBadge, thumb } from "./EditorPage";
@@ -37,6 +38,8 @@ export default function EditorEditPage() {
   // the saved copy paints at once; the server says when a step moved (lib/local-cache), so nothing polls
   const live = useCachedLoad<Edit>(`/api/editor/${id}`, () => getEdit(id));
   const edit = live.data;
+  // an edit with no language of its own is heard in its workspace's (api/lib/video-languages.ts)
+  const workspaceLanguages = useWorkspace((s) => s.projects.find((p) => p.id === (edit?.projectId ?? s.currentProjectId))?.languages);
   const setEdit = live.set;
   const [sentences, setSentences] = useState<Sentence[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -157,6 +160,7 @@ export default function EditorEditPage() {
 {editable &&         <label className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-zinc-500">Spoken in</span>
           <LanguageSelect
+            fallback={workspaceLanguages}
             value={edit.languages?.[0] ?? ""}
             onChange={(code) => void act(patchEdit(id, { languages: code ? [code] : [] }))}
             className="rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"

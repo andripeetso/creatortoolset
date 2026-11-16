@@ -7,12 +7,14 @@ import { useVoice } from "@/lib/voice";
 import { cn } from "@/lib/utils";
 
 /**
- * The language spoken in a project's or an edit's videos: one code, or "" for the person's own languages (Settings → AI
- * → Voice; none there = English, as api/transcribe.ts hears it). Saved as `languages: [code]` (none: []). A short
+ * The language spoken in a workspace's or an edit's videos: one code, or "" for the person's own languages (Settings →
+ * Voice; none there = English, as api/transcribe.ts hears it), or for `fallback`. Saved as `languages: [code]` (none: []). A short
  * list you can type into, so 30 languages never fill the screen.
  */
-export function LanguageSelect({ id, value, onChange, disabled, className, placeholder }: {
+export function LanguageSelect({ id, value, onChange, disabled, className, placeholder, fallback }: {
   id?: string;
+  /** The languages "" stands for when they are not the person's own: an edit's is its workspace's language, when that has one. */
+  fallback?: string[];
   /** The label of "" in place of the person's own languages (a question's "Other…"): every language is then listed. */
   placeholder?: string;
   value: string;
@@ -21,7 +23,8 @@ export function LanguageSelect({ id, value, onChange, disabled, className, place
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const mine = useVoice().data?.languages ?? [];
+  const own = useVoice().data?.languages ?? [];
+  const mine = fallback?.length ? fallback : own;
   const usual = placeholder ?? (mine.length ? mine.map(languageName).join(", ") : "English");
   // the default already names a single language: it is not listed twice
   const one = !placeholder && mine.length <= 1 ? (mine[0] ?? "en") : null;
