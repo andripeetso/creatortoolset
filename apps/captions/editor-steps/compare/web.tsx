@@ -4,7 +4,7 @@ import { Scale } from "lucide-react";
 import type { ProvidersView, Selection } from "@contracts/providers";
 import { AppBar } from "@/components/AppBar";
 import { MarkdownBody } from "@/components/MarkdownBody";
-import { Card, EmptyRow, ListRow, SettingsSelect } from "@/components/settings/ui";
+import { Card, EmptyRow, inWorkspace, ListRow, SettingsSelect, useSettingsWorkspace, WorkspacePick } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -21,8 +21,8 @@ interface CompareView {
   sides: Array<{ label: "A" | "B"; status: "writing" | "ready" | "error"; markdown?: string; error?: string; ai?: { name: string; model: string; effort: Selection["effort"] } }>;
 }
 
-async function call<T>(url: string, body?: unknown): Promise<T> {
-  const r = await fetch(url, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+async function call<T>(url: string, body?: unknown, init?: RequestInit): Promise<T> {
+  const r = await fetch(url, body === undefined ? init : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!r.ok) throw new Error(j?.error || `Request failed (${r.status})`);
   return j as T;
@@ -146,12 +146,20 @@ function ComparePage() {
 
 type Tally = { rows: Array<{ name: string; model: string; counts: Partial<Record<DraftKind, number>> }> };
 
+/**
+ * The picks, counted. The page header's workspace selector chooses whose: All workspaces (the totals, with the picks
+ * made before a pick kept its workspace), or one workspace's. With one workspace there is nothing to choose: the totals.
+ */
 function CompareSettings() {
-  const { data } = useCachedLoad<Tally>(`${API}/tally`, () => call(`${API}/tally`));
+  const w = useSettingsWorkspace("list");
+  const url = `${API}/tally${w.all || !w.many ? "?all=1" : ""}`;
+  const { data } = useCachedLoad<Tally>(url, () => call(url, undefined, inWorkspace(w.id)), { workspace: w.cacheKey });
   return (
-    <Card>
+    <>
+      <WorkspacePick mode="list" />
+      <Card>
         {!data ? null : data.rows.length === 0 ? (
-          <EmptyRow title="No picks yet" />
+          <EmptyRow title="No picks" />
         ) : (
           data.rows.map((r) => (
             <ListRow
@@ -161,7 +169,8 @@ function CompareSettings() {
             />
           ))
         )}
-    </Card>
+      </Card>
+    </>
   );
 }
 
@@ -173,7 +182,7 @@ const open = (id: string) => {
 export default defineWebPlugin({
   id: "compare",
   name: "Compare",
-  about: "Two of your AIs write the same draft, names hidden until you pick one.",
+  about: "Two AI providers write the same draft, names hidden until one is picked.",
   routes: [{ path: "/compare/:sessionId", element: <ComparePage /> }],
   itemActions: { session: [{ label: "Compare", icon: Scale, gate: "compare", onRun: open }] },
   settings: [{ id: "compare", title: "Compare picks", icon: Scale, tool: "workshop", body: <CompareSettings /> }],

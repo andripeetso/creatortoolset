@@ -20,7 +20,7 @@ const tools = {
 export default definePlugin({
   id: "hello",
   name: "Hello",
-  about: "The example plug-in: a route behind a gate, and a tool for your own AI.",
+  about: "The example plug-in: a route behind a gate, and a tool for AI apps.",
   env: ["HELLO_GREETING"],
   gates: { ids: ["hello"] },
   routes: app,

@@ -156,7 +156,7 @@ routes.post("/pick", async (c) => {
 /** The ids of the faces that match `who`, by the person's own AI; an error sentence (ending "Nothing was blurred.") when it can't say. */
 export async function pickFaces(user: string, who: string, faces: Face[], signal?: AbortSignal): Promise<{ blur: string[] } | { error: string; limit?: { until: number | null } }> {
   if (!faces.length) return { blur: [] };
-  if (!anyVisionConfigured(user)) return { error: `Face Blur needs your AI to choose the faces: connect one in Settings → Providers. ${NOTHING}` };
+  if (!anyVisionConfigured(user)) return { error: `Choosing faces needs an AI provider: add one in Settings → Providers. ${NOTHING}` };
   const blur: string[] = [];
   for (let i = 0; i < faces.length; i += PER_CALL) {
     const batch = faces.slice(i, i + PER_CALL);
@@ -169,13 +169,13 @@ export async function pickFaces(user: string, who: string, faces: Face[], signal
       const msg = (e as Error).message;
       // a usage limit says when it resets, as the chat's does (mac-claude.ts marks it; a gateway's 429 only says it in words)
       const limit = (e as { limited?: { until: number | null } }).limited ?? (/\b429\b|rate_limit_error/.test(msg) ? { until: limitResetAt(msg) } : undefined);
-      if (limit) return { error: `Your AI is at its usage limit. ${NOTHING}`, limit: { until: limit.until ?? limitResetAt(msg) } };
-      return { error: `Face Blur could not ask your AI which faces to blur (${msg}). ${NOTHING}` };
+      if (limit) return { error: `The AI provider is at its usage limit. ${NOTHING}`, limit: { until: limit.until ?? limitResetAt(msg) } };
+      return { error: `Face Blur could not ask the AI provider which faces to blur (${msg}). ${NOTHING}` };
     }
     try {
       blur.push(...chosenIn(answer, ids));
     } catch (e) {
-      return { error: `Face Blur could not read your AI's answer (${(e as Error).message}). ${NOTHING} Try again, or another AI in Settings → Providers.` };
+      return { error: `Face Blur could not read the AI provider's answer (${(e as Error).message}). ${NOTHING}` };
     }
   }
   return { blur };
@@ -257,7 +257,7 @@ function releaseStale(now = Date.now()): void {
   for (const j of jobs().jobs) {
     if (j.state !== "running" || (isOnline(j.device ?? "") && now - j.since < AUTO_LIMITS.holdMs)) continue;
     j.tries++;
-    Object.assign(j, j.tries >= AUTO_LIMITS.tries ? { state: "failed", error: "Your Mac stopped before it finished this file, three times." } : { state: "queued", since: now });
+    Object.assign(j, j.tries >= AUTO_LIMITS.tries ? { state: "failed", error: "The computer stopped before it finished this file, three times." } : { state: "queued", since: now });
     delete j.device;
     changed = true;
   }
@@ -277,9 +277,9 @@ const versionGone = (versionId: string) =>
 
 /** Whether this account can have new Media Library files covered by itself here, and why not. */
 export function autoCan(owner: string): { can: true } | { can: false; why: string } {
-  if (mainSource()) return { can: false, why: "This server's Media Library comes from a plug-in, so Face Blur can't cover what comes into it by itself." };
+  if (mainSource()) return { can: false, why: "Not available while this server's Media Library comes from a plug-in." };
   if (!listDevices((d) => d.owner === owner && !!d.kinds?.includes(AUTO_KIND)).length)
-    return { can: false, why: "Covering new Media Library files needs the newest Creator Toolset Mac app, on a Mac connected to this account." };
+    return { can: false, why: "Needs the newest Mac app on a computer added to this account." };
   return { can: true };
 }
 
@@ -340,7 +340,7 @@ export const autoJobs = {
     if (!right) return { error: j.kind === "video" ? "Send the covered copy as an MP4." : "Send the covered copy as a JPEG.", status: 400 };
     const saved = await saveToLibrary(j.owner, file, `${j.title} blurred.${j.kind === "video" ? "mp4" : "jpg"}`, [j.versionId], j.libraryId, true);
     if (!saved) {
-      end(j, "failed", "The covered copy could not be added: the Media Library is no longer yours to add to.");
+      end(j, "failed", "The covered copy could not be added: no access to the Media Library.");
       return { error: "Not yours", status: 403 };
     }
     if ("error" in saved) return { error: saved.error, status: 507 };

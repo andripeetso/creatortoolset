@@ -39,7 +39,7 @@ account's settings from before they were per workspace, which each workspace sta
 The style is the engine's (`FaceBlur/Cover.swift` `LookPreset`): the Mac app's jobs and test runs, the automatic covers
 (the device job's options carry it as text) and the iPhone app all draw with it. `GET /api/x/blur-faces/example` →
 `{ picture }`: the example picture (a base64 JPEG, a still from Tears of Steel, CC BY 3.0). The Style card's picture is the
-test: the example, or a photo or video the person picks in the Mac app (Try your own file), covered with the current settings
+test: the example, or a photo or video the person picks in the Mac app (Choose a file), covered with the current settings
 and written nowhere. With "Only some faces" the person's AI picks from the faces found, once per file and Which faces
 (`/pick`); moving a slider only draws again.
 
@@ -59,10 +59,10 @@ built-in Media Libraries (the library's `settings.projectId`) is covered by a Ma
 - **The Mac** (`FaceBlurAutoJob.swift`): `GET /api/devices/relay/job/faceblur/<id>` the original; in "some" mode `POST …/<id>`
   `{ faces }` → `{ blur }` (the server asks the person's AI, as `/pick`; a failed AI fails the file and nothing is
   written); no face covered → `POST …/<id>` `{ nothing: why }` and no copy; else `POST …/<id>/file` the MP4 or JPEG.
-- **Where it shows:** Settings → Face Blur → New Media Library files. The switch shows when a Mac of the account lists
+- **Where it shows:** Settings → Face Blur → New Media Library files. The switch can be turned on when a Mac of the account lists
   `faceblur` (the Mac app from this version) and the Media Library is the built-in one (no plug-in's source is `main`),
-  or while it is on; otherwise one line says why. Files that could not be covered are listed there with why and Try
-  again; nothing is shown while all goes well. `GET /api/x/blur-faces/auto`, `POST /api/x/blur-faces/auto/retry`.
+  and turned off whenever it is on; otherwise it is disabled and its description says why. Files that could not be
+  covered are listed there with why and Retry; nothing is shown while all goes well. `GET /api/x/blur-faces/auto`, `POST /api/x/blur-faces/auto/retry`.
 
 ## Choosing faces (only "some" mode)
 

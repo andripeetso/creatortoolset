@@ -19,7 +19,7 @@ function HelloPage() {
 // Its Settings section (admins only) and its Home tile, in the Tools row. The tile is hidden for an account that has
 // the "hello" gate switched off.
 function HelloSettings() {
-  return <p className="text-sm text-muted-foreground">This section comes from a plug-in folder too.</p>;
+  return <p className="text-sm text-muted-foreground">A Settings section of the example plug-in.</p>;
 }
 
 export default defineWebPlugin({

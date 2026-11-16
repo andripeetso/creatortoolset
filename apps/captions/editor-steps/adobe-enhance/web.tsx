@@ -38,30 +38,30 @@ function AdobeSection() {
   };
 
   if (!data)
-    return <Card>{error ? <ErrorRow title="Couldn't load the Adobe sign-in" detail={error} retry={() => void refresh().catch(() => {})} /> : <LoadingRow />}</Card>;
+    return <Card>{error ? <ErrorRow title="Could not load the Adobe sign-in" detail={error} retry={() => void refresh().catch(() => {})} /> : <LoadingRow />}</Card>;
 
   let status;
   let control = null;
-  if (!data.chrome) status = <Status tone="attention">Needs Google Chrome on this Mac</Status>;
+  if (!data.chrome) status = <Status tone="attention">Needs Google Chrome</Status>;
   else if (data.signingIn) {
-    status = "Sign in to Adobe in the Chrome window. It closes once you are in.";
+    status = "Sign in to Adobe in the Chrome window";
     control = (
       <Button size="sm" variant="outline" disabled>
-        <Loader2 className="size-3.5 animate-spin" aria-hidden /> Waiting for you
+        <Loader2 className="size-3.5 animate-spin" aria-hidden /> Waiting
       </Button>
     );
   } else if (data.signedIn) {
-    status = data.off ? <Status tone="attention">{data.off}</Status> : <Status tone="ok">Signed in</Status>;
+    status = data.off ? <Status tone="attention">{data.off}</Status> : <Status tone="ok">Connected</Status>;
     control = (
       <Button size="sm" variant="outline" disabled={busy} onClick={() => act("/signout")}>
-        Sign out
+        Disconnect
       </Button>
     );
   } else {
-    status = <Status tone="attention">Not signed in</Status>;
+    status = <Status tone="attention">Needs an Adobe sign-in</Status>;
     control = (
       <Button size="sm" disabled={busy} onClick={() => act("/signin")}>
-        Sign in to Adobe
+        Sign in
       </Button>
     );
   }
@@ -70,7 +70,6 @@ function AdobeSection() {
     <Card>
       <Row
         title="Adobe account"
-        description="For Adobe Enhance Speech in the Audio Enhancer."
         status={problem ? <Status tone="broken">{problem}</Status> : status}
         control={control}
       />

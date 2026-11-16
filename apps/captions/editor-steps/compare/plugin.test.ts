@@ -34,6 +34,7 @@ const { saveSettings } = await import("../../api/lib/providers");
 const { MacClaudeError } = await import("../../api/lib/mac-claude");
 const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
 const { installPack } = await import("../../api/lib/packs");
+const { inRequestWorkspace } = await import("../../api/lib/workspace-scope");
 const { default: plugin, PICKS_MAX, COMPARES_MAX } = await import("./plugin");
 
 createUser("nico", "password1");
@@ -64,10 +65,12 @@ const as = (username: string, off: string[] = [], role = "member") => {
     c.set("user", { username, role, cloud: true, off });
     await next();
   });
+  // as the app mounts it: a request works in the workspace its window names
+  app.use("*", inRequestWorkspace);
   app.route("/api/workshop", workshopApp as never);
   app.route("/api/x/compare", plugin.routes!);
-  return (method: string, url: string, body?: unknown) =>
-    app.request(url, { method, headers: { "Content-Type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+  return (method: string, url: string, body?: unknown, workspace?: string) =>
+    app.request(url, { method, headers: { "Content-Type": "application/json", ...(workspace ? { "X-CT-Workspace": workspace } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 };
 const call = as("nico");
 const plan = (title: string, text: string) => async () => JSON.stringify({ title, markdown: text });
@@ -303,5 +306,34 @@ describe("Compare", () => {
     const off = as("nico", ["compare"]);
     expect((await off("GET", `/api/x/compare/sessions/${id}`)).status).toBe(403);
     expect((await off("POST", `/api/x/compare/sessions/${id}`, { a: CLAUDE, b: CODEX, kind: "free", prompt: "x" })).status).toBe(403);
+  });
+
+  // last: from here on nico has workspaces
+  it("a pick keeps the workspace it was made in: Settings counts one workspace's picks, or all of them with the older ones", async () => {
+    type Rows = { rows: Array<{ name: string; counts: Record<string, number> }> };
+    const tally = async (query = "", workspace?: string) => ((await (await call("GET", `/api/x/compare/tally${query}`, undefined, workspace)).json()) as Rows).rows;
+    const before = await tally(); // no workspace yet: every pick, none of them with a workspace
+    expect(before.length).toBeGreaterThan(0);
+    const made = async (name: string) => ((await (await call("POST", "/api/workshop/projects", { name })).json()) as { id: string }).id;
+    const tiny = await made("Tiny Acrobatics");
+    const homes = await made("Tiny Homes");
+    const pickIn = async (workspace: string, title: string) => {
+      const id = session();
+      await start(id);
+      const done = await finished(id);
+      expect((await call("POST", `/api/x/compare/sessions/${id}/pick`, { side: sideOf(done, title) }, workspace)).status).toBe(200);
+    };
+    await pickIn(tiny, "Walk after lunch.");
+    await pickIn(homes, "Stretch every morning.");
+    await pickIn(homes, "Stretch every morning.");
+    expect(await tally("", tiny)).toEqual([{ name: "Codex", model: "gpt-6-luna", counts: { free: 1 } }]);
+    expect(await tally("", homes)).toEqual([{ name: "Claude (work)", model: "opus", counts: { free: 2 } }]);
+    // All workspaces: the three new ones on top of the picks from before a pick kept its workspace
+    const all = await tally("?all=1", tiny);
+    const count = (rows: Rows["rows"]) => rows.reduce((n, r) => n + Object.values(r.counts).reduce((a, b) => a + b, 0), 0);
+    expect(count(all)).toBe(Math.min(count(before) + 3, PICKS_MAX));
+    const file = JSON.parse(readFileSync(path.join(dataDir, "plugins", "compare", "nico.json"), "utf8")) as { picks: Array<{ workspace?: string }> };
+    expect(file.picks.slice(0, 3).map((p) => p.workspace)).toEqual([homes, homes, tiny]);
+    expect(file.picks.slice(3).every((p) => p.workspace === undefined)).toBe(true);
   });
 });
