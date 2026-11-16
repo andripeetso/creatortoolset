@@ -68,6 +68,8 @@ export interface WorkPackage {
   /** the job's library rows and this edit's edit_jobs; libraries go with storage_kind 'local' and no storage_config */
   rows: Partial<Record<WorkTable, Record<string, unknown>[]>>;
   files: WorkFile[];
+  /** the account's storage folders as paths on this computer (Settings → Storage): where a copy at another path is looked for */
+  folders?: string[];
   /** editor/cache/<version>.* the server has: name → base64 */
   caches: Record<string, string>;
   /** the kind's gate output (analyzeGate / indexGate), run on the server at claim */
