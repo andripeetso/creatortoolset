@@ -99,9 +99,49 @@ it("in a given workspace the owner's projects there are listed and open to read;
   expect((await call("bo", "PATCH", `/api/workshop/sessions/${S1}`, { title: "mine now" })).status).toBe(404);
 });
 
+it("the workspace's context files, as the workspace_files tool reads them: a member reads a given workspace's, never another's, and nobody one it switched off", async () => {
+  const sources = path.join(dataDir, "workshop", "sources");
+  mkdirSync(sources, { recursive: true });
+  const file = (id: string, owner: string, name: string, text: string, projectId: string) => {
+    writeFileSync(path.join(sources, `${id}.json`), JSON.stringify({ id, owner, name, projectId, chars: text.length, status: "read", createdAt: 1, updatedAt: 1 }));
+    writeFileSync(path.join(sources, `${id}.txt`), text);
+  };
+  file("s-lands1", "alex", "lands.md", "Frost Peak is the snowy one.", BRAND);
+  file("s-old001", "alex", "old.md", "Out of date.", BRAND);
+  file("s-north1", "alex", "northlight.md", "Northlight only.", OTHER);
+  file("s-eves01", "eve", "eve.md", "Eve's own.", EVES);
+  // the owner switches old.md off for the brand
+  writeFileSync(path.join(projects, `${BRAND}.json`), JSON.stringify({ id: BRAND, owner: "alex", name: "Tiny Acrobatics", audience: "", voice: "", cta: "", notes: "", off: ["s-old001"], createdAt: 1, updatedAt: 1 }));
+  const list = async (user: string, ws?: string) => ((await (await call(user, "GET", "/api/workshop/context-files", undefined, ws)).json()) as { id: string }[]).map((s) => s.id);
+  const read = (user: string, id: string, ws?: string) => call(user, "GET", `/api/workshop/context-files/${id}/text`, undefined, ws);
+
+  // bo was given the brand: its files are listed and read, the owner's words
+  expect(await list("bo", BRAND)).toEqual(["s-lands1"]);
+  const got = await read("bo", "s-lands1", BRAND);
+  expect(got.status).toBe(200);
+  expect(await got.text()).toBe("Frost Peak is the snowy one.");
+  // not a file of a workspace bo was not given, even asked for by its id or from inside that workspace
+  expect((await read("bo", "s-north1", BRAND)).status).toBe(404);
+  expect((await read("bo", "s-north1", OTHER)).status).toBe(404);
+  expect((await read("bo", "s-eves01", EVES)).status).toBe(404);
+  // not one the workspace switched off: the context leaves it out, so does the tool, for the owner too
+  expect((await read("bo", "s-old001", BRAND)).status).toBe(404);
+  expect(await list("alex", BRAND)).toEqual(["s-lands1"]);
+  expect((await read("alex", "s-old001", BRAND)).status).toBe(404);
+  // another account guessing the id gets nothing: a member given no workspace, and another owner
+  expect((await read("cy", "s-lands1", BRAND)).status).toBe(404);
+  expect((await read("eve", "s-lands1", BRAND)).status).toBe(404);
+  expect(await list("cy", BRAND)).toEqual([]);
+  // the Knowledge tab is the owner's own list as before: the switched-off file is still there to switch back on, and bo's holds none of alex's
+  expect(((await (await call("alex", "GET", "/api/workshop/sources", undefined, BRAND)).json()) as { id: string }[]).map((s) => s.id).sort()).toEqual(["s-lands1", "s-old001"]);
+  expect(await (await call("bo", "GET", "/api/workshop/sources", undefined, BRAND)).json()).toEqual([]);
+  expect((await call("bo", "GET", "/api/workshop/sources/s-lands1/text", undefined, BRAND)).status).toBe(404);
+});
+
 it("taking the workspace away holds at the next request", async () => {
   expect((await call("alex", "PATCH", "/api/workspace/members/bo", { workspaces: [] })).status).toBe(200);
   expect((await call("bo", "GET", `/api/workshop/team/sessions/${S1}`)).status).toBe(404);
+  expect((await call("bo", "GET", "/api/workshop/context-files/s-lands1/text", undefined, BRAND)).status).toBe(404);
   const ws = (await (await call("bo", "GET", "/api/workshop/workspace")).json()) as { projects: { id: string }[] };
   expect(ws.projects).toEqual([]);
 });

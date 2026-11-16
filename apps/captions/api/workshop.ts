@@ -63,7 +63,7 @@ import {
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
-import { workspaceContext, workspaceKnowledge, workspaceOf } from "./lib/workshop/context";
+import { workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -2160,6 +2160,26 @@ workshopApp.get("/sources", async (c) => {
 
 workshopApp.get("/sources/:id/text", async (c) => {
   const s = await readSource(c.req.param("id"), c.get("user"));
+  return s ? c.text(await readSourceText(s.id)) : c.json({ error: "Not found" }, 404);
+});
+
+/**
+ * The context files of the workspace this call works in, as its AI is told of them (workspaceSources: its owner's, kept
+ * to it or to every workspace, minus the ones it switched off): what the workspace_files tool lists and reads. In a
+ * workspace given to this account they are the owner's, to read only. Which workspace that is comes from getWorkspace,
+ * which reads the giving fresh, never from an id in the request. With no workspace: the account's own sources.
+ */
+async function contextFiles(user: SessionUser): Promise<KnowledgeSource[]> {
+  const { currentProjectId, projects } = await getWorkspace(user);
+  const p = projects.find((x) => x.id === currentProjectId);
+  if (!p) return listSources(user);
+  return workspaceSources(p, p.owner === user.username ? await listSources(user) : undefined);
+}
+
+workshopApp.get("/context-files", async (c) => c.json(await contextFiles(c.get("user"))));
+
+workshopApp.get("/context-files/:id/text", async (c) => {
+  const s = (await contextFiles(c.get("user"))).find((x) => x.id === c.req.param("id"));
   return s ? c.text(await readSourceText(s.id)) : c.json({ error: "Not found" }, 404);
 });
 

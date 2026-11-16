@@ -26,11 +26,12 @@ function codeOf(link: string): string {
 
 /** The current workspace's context files (Workshop → Knowledge, or the workspace's own settings): the list, or one's text by lines. */
 async function workspaceFiles(a: Args, ctx: ToolContext) {
-  const list = await ctx.json<Args[]>("/api/workshop/sources");
+  // the files as the workspace's AI is told of them: the owner's in a workspace given to this account, none it switched off
+  const list = await ctx.json<Args[]>("/api/workshop/context-files");
   if (!a.file) return { files: list.map((s) => pick(s, ["id", "name", "title", "kind", "about", "uses", "sections", "status"])) };
   const s = list.find((x) => x.id === a.file || x.name === a.file);
   if (!s) throw new ToolError("No such file in this workspace: workspace_files with no file lists them.");
-  const lines = (await (await ctx.api(`/api/workshop/sources/${String(s.id)}/text`)).text()).split("\n");
+  const lines = (await (await ctx.api(`/api/workshop/context-files/${String(s.id)}/text`)).text()).split("\n");
   const from = Math.max(1, Math.floor(Number(a.from) || 1));
   // ponytail: 600 lines a call, a file's sections (in the list) say where to read next
   const to = Math.min(lines.length, Math.floor(Number(a.to) || from + 599), from + 599);
