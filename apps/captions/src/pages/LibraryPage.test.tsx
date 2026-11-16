@@ -212,13 +212,19 @@ describe("Media Library page with a plug-in facet", () => {
 });
 
 const buttons = (host: HTMLElement) => [...host.querySelectorAll("button")].map((b) => b.textContent?.trim());
+// the row's More (…) menu: Library settings and the Trash
+const more = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('button[aria-label^="More"]');
+const openMore = async (host: HTMLElement) => {
+  await act(async () => more(host)!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+};
+const moreItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((x) => x.textContent?.includes(text));
 
 describe("Media Library page", () => {
   it("an empty library is its own page: it says what it is for, the folder to choose, upload as the second way", async () => {
     server.items = [];
     const host = await mount();
     expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
-    expect(host.querySelector('[aria-label^="Library settings"]')).not.toBeNull();
+    expect(more(host)).not.toBeNull(); // Library settings, in the More menu
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("raw materials");
     expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
@@ -290,19 +296,21 @@ describe("Media Library page", () => {
     ];
     const host = await mount();
     expect(host.textContent).not.toContain("Finals");
-    expect(host.querySelector('[aria-label^="Library settings"]')).not.toBeNull(); // the owner's one settings button
+    await openMore(host);
+    expect(moreItem("Library settings")).toBeDefined(); // the owner's one way to the settings
   });
 
   it("the settings button says so when a footage folder is not found (its drive unplugged)", async () => {
     server.watch = { allowed: true, folders: [{ path: "/Volumes/Card/Trip", mode: "reference", addedBy: "admin", found: false, imported: 3, files: 0, adding: 0 }], missing: 3 };
     const host = await mount();
-    expect(host.querySelector('[aria-label^="Library settings"]')?.getAttribute("aria-label")).toContain("not found");
+    expect(more(host)?.getAttribute("aria-label")).toContain("not found");
   });
 
   it("Library settings holds the footage folders, storage and the AI switches; a hosted server has no footage folders", async () => {
     const host = await mount();
     const open = async () => {
-      await act(async () => (host.querySelector('[aria-label^="Library settings"]') as HTMLButtonElement).click());
+      await openMore(host);
+      await act(async () => moreItem("Library settings")!.click());
       await act(async () => new Promise((r) => setTimeout(r, 0)));
     };
     await open();
@@ -316,7 +324,8 @@ describe("Media Library page", () => {
     document.body.innerHTML = "";
     server.watch = { allowed: false, folders: [], missing: 0 };
     const hosted = await mount();
-    await act(async () => (hosted.querySelector('[aria-label^="Library settings"]') as HTMLButtonElement).click());
+    await openMore(hosted);
+    await act(async () => moreItem("Library settings")!.click());
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(sheet()).toContain("Storage");
     expect(sheet()).not.toContain("Footage folders");
@@ -419,7 +428,8 @@ describe("Media Library folders", () => {
     const names = [...host.querySelectorAll('a[href^="/library?f="]')].map((a) => a.textContent);
     expect(names.findIndex((n) => n?.includes("Apples"))).toBeGreaterThan(names.findIndex((n) => n?.includes("Trip")));
     expect(server.asked).toContainEqual(expect.objectContaining({ unfiled: true }));
-    expect(host.querySelector('a[aria-label="Trash"]')?.getAttribute("href")).toBe("/library?trash=1");
+    await openMore(host);
+    expect(moreItem("Trash")?.getAttribute("href")).toBe("/library?trash=1");
     expect(buttons(host)).toContain("New folder");
   });
 
@@ -597,7 +607,8 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(bar.textContent).not.toContain("Upload");
     expect(bar.querySelector('a[aria-label="Trash"]')).toBeNull();
     expect(buttons(host)).toEqual(expect.arrayContaining(["Upload", "New folder"]));
-    expect(host.querySelector('a[aria-label="Trash"]')).not.toBeNull();
+    await openMore(host);
+    expect(moreItem("Trash")).toBeDefined();
     expect(host.querySelector('[aria-label="Kind"]')).toBeNull(); // the kinds are in the sidebar now
     expect(host.querySelector('aside [aria-label="Kinds"]')).not.toBeNull();
   });
@@ -682,7 +693,8 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     server.folders = folders;
     const host = await mount();
     expect(host.querySelector('a[href="/library?f=col_m"]')).not.toBeNull(); // Folders: the folder cards
-    await act(async () => (host.querySelector('[aria-label="Gallery"]') as HTMLButtonElement).click());
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "View")!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Gallery"]')!.click());
     expect(host.querySelector('a[href="/library?f=col_m"]')).toBeNull();
     expect(server.asked.at(-1)).not.toHaveProperty("unfiled");
     expect(localStorage.getItem("library:view")).toBe("gallery");
@@ -695,7 +707,8 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     const host = await mount();
     expect(buttons(host)).not.toContain("Upload");
     expect(buttons(host)).not.toContain("New folder");
-    expect(host.querySelector('a[aria-label="Trash"]')).toBeNull();
+    if (more(host)) await openMore(host);
+    expect(moreItem("Trash")).toBeUndefined();
     expect(host.querySelector("[data-space-menu]")).toBeNull();
     await act(async () => dropOn(tab(host, "col_m")!, "one"));
     expect(server.changed).toEqual([]);

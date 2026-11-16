@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Folder, Settings2 } from "lucide-react";
+import { Folder } from "lucide-react";
 import { NEEDS, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -46,13 +46,21 @@ const WHAT: Record<"describe" | "look" | "embed", string> = {
   embed: "A search for \"beach\" also finds \"sand and waves\"",
 };
 
+/** A footage folder or a clip the library cannot find: the page's More button carries a dot. */
+export const needsAttention = (watch: WatchStatus) => watch.missing > 0 || watch.folders.some((f) => !f.found);
+
+/** Library settings, a sheet on the right; the page's More menu opens it. */
 export function LibrarySettings({
+  open,
+  onOpenChange,
   library,
   watch,
   folders,
   onChange,
   onError,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   library: LibrarySummary;
   watch: WatchStatus;
   /** the library's manual folders, for a footage folder's "into" */
@@ -60,32 +68,16 @@ export function LibrarySettings({
   onChange: (l: LibrarySummary) => void;
   onError: (e: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const attention = watch.missing > 0 || watch.folders.some((f) => !f.found);
   return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        className="relative"
-        aria-label={attention ? "Library settings: a footage folder or clip is not found" : "Library settings"}
-        title="Library settings"
-        onClick={() => setOpen(true)}
-      >
-        <Settings2 className="h-4 w-4" />
-        <span className="hidden sm:inline">Settings</span>
-        {attention && <span aria-hidden className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-background" />}
-      </Button>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-lg">
-          {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
-          <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
-            <SheetTitle className="text-base">Library settings</SheetTitle>
-            <LibrarySettingsBody library={library} watch={watch} folders={folders} onChange={onChange} onError={onError} />
-          </div>
-        </SheetContent>
-      </Sheet>
-    </>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-lg">
+        {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
+        <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
+          <SheetTitle className="text-base">Library settings</SheetTitle>
+          <LibrarySettingsBody library={library} watch={watch} folders={folders} onChange={onChange} onError={onError} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

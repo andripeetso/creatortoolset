@@ -78,8 +78,7 @@ describe("the Media Library's settings", () => {
   });
 
   it("the library's own sheet shows the same", async () => {
-    await render(<LibrarySettings library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
-    act(() => (host!.querySelector('button[title="Library settings"]') as HTMLButtonElement).click());
+    await render(<LibrarySettings open onOpenChange={() => {}} library={library} watch={watch} folders={[]} onChange={() => {}} onError={() => {}} />);
     for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
     expect(headings(document.body.textContent ?? "")).toEqual(SECTIONS);
   });
