@@ -38,21 +38,21 @@ function render(dictation?: Partial<DictationState> | "none") {
   }
   return host;
 }
-const mic = () => host!.querySelector<HTMLButtonElement>('button[aria-label="Talk instead of typing"], button[aria-label="Dictation, in any app"]');
+const mic = () => host!.querySelector<HTMLButtonElement>('button[aria-label="Dictate"], button[aria-label="Set up dictation"]');
 
 it("in a browser the mic records, as before", () => {
   render();
-  expect(mic()?.getAttribute("aria-label")).toBe("Talk instead of typing");
+  expect(mic()?.getAttribute("aria-label")).toBe("Dictate");
 });
 
 it("in a Mac app without dictation the mic records, as before", () => {
   render("none");
-  expect(mic()?.getAttribute("aria-label")).toBe("Talk instead of typing");
+  expect(mic()?.getAttribute("aria-label")).toBe("Dictate");
 });
 
 it("in a Mac app too old to say whether dictation is set up, the mic records, as before (it has the old guide)", () => {
   render({});
-  expect(mic()?.getAttribute("aria-label")).toBe("Talk instead of typing");
+  expect(mic()?.getAttribute("aria-label")).toBe("Dictate");
 });
 
 it("in the Mac app with dictation set up and on, there is no mic: the talk key types into the box", () => {
@@ -62,7 +62,7 @@ it("in the Mac app with dictation set up and on, there is no mic: the talk key t
 
 it("in the Mac app not set up while the earlier dictation app is open, the mic still opens dictation's setup", () => {
   render({ setUp: false, paused: "Off while your earlier dictation app is open" });
-  expect(mic()?.getAttribute("aria-label")).toBe("Dictation, in any app");
+  expect(mic()?.getAttribute("aria-label")).toBe("Set up dictation");
 });
 
 it("in the Mac app not set up (or switched off), a click opens dictation's setup", () => {
@@ -70,7 +70,7 @@ it("in the Mac app not set up (or switched off), a click opens dictation's setup
   try {
     for (const d of [{ setUp: false }, { setUp: true, on: false }]) {
       render(d);
-      expect(mic()?.getAttribute("aria-label")).toBe("Dictation, in any app");
+      expect(mic()?.getAttribute("aria-label")).toBe("Set up dictation");
       sent.length = 0;
       act(() => mic()!.click());
       expect(sent).toEqual(["thismac-dictation:guide"]);

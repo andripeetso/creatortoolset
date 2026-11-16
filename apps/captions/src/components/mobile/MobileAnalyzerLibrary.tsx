@@ -22,7 +22,7 @@ import { timeAgo } from "@/lib/exports";
 function statusLine(post: InstagramPost, health: PostHealth): string {
   switch (health) {
     case "failed":
-      return post.error || "Couldn't crawl this one";
+      return post.error || "Run failed";
     case "stuck":
       return `Stuck since ${timeAgo(post.updatedAt)}`;
     case "partial": {
@@ -30,11 +30,11 @@ function statusLine(post: InstagramPost, health: PostHealth): string {
       return `Part failed${bad ? ` (${bad.type})` : ""}${bad?.error ? `: ${bad.error}` : ""}`;
     }
     case "waiting":
-      return "Not crawled yet";
+      return "Not run";
     case "working": {
       const pct = Math.round(Math.max(0, Math.min(1, post.progress)) * 100);
-      if (post.step === "queued") return "Waiting in the queue";
-      return pct ? `Crawling · ${pct}%` : "Crawling";
+      if (post.step === "queued") return "Queued";
+      return pct ? `Running · ${pct}%` : "Running";
     }
     default:
       return post.pulledAt ? timeAgo(post.pulledAt) : "Saved";
@@ -96,7 +96,7 @@ export function MobileAnalyzerLibrary({ posts, known, onChanged }: { posts: Inst
 
   return (
     <div>
-      <p className="mb-2 text-xs text-zinc-500">In the Analyzer{known ? ` · ${posts.length}` : ""}</p>
+      <p className="mb-2 text-xs text-zinc-500">In the Content Analyzer{known ? ` · ${posts.length}` : ""}</p>
       {due.length > 0 && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[13px] text-amber-200">
           <TriangleAlert className="h-4 w-4 shrink-0" />
@@ -110,7 +110,7 @@ export function MobileAnalyzerLibrary({ posts, known, onChanged }: { posts: Inst
             className="flex min-h-8 items-center gap-1 rounded-md bg-amber-500/20 px-2.5 text-[12px] font-medium active:bg-amber-500/30 disabled:opacity-50"
           >
             {running.size > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
-            Run them all
+            Run all
           </button>
         </div>
       )}
@@ -123,7 +123,7 @@ export function MobileAnalyzerLibrary({ posts, known, onChanged }: { posts: Inst
             setQ(e.target.value);
             setLimit(PAGE);
           }}
-          placeholder="Search captions, creators, tags"
+          placeholder="Search post descriptions, creators, tags"
           autoCapitalize="off"
           autoCorrect="off"
           className="min-h-10 min-w-0 flex-1 bg-transparent text-base text-zinc-100 outline-none placeholder:text-zinc-600"
@@ -151,7 +151,7 @@ export function MobileAnalyzerLibrary({ posts, known, onChanged }: { posts: Inst
       {shown.length === 0 ? (
         known && (
           <p className="py-8 text-center text-sm text-zinc-600">
-            {posts.length ? "Nothing matches." : "Nothing saved yet. Share a reel into this app, or paste a link above."}
+            {posts.length ? "No posts found" : "No posts"}
           </p>
         )
       ) : (

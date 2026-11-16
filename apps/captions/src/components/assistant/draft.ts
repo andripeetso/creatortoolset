@@ -147,7 +147,7 @@ export async function toPicture(file: File): Promise<AssistantImage> {
   };
   if (/jpe?g/i.test(file.type || file.name)) return jpeg();
   const bitmap = await createImageBitmap(file).catch(() => {
-    throw new Error(`Can't read ${name}: send a PNG, JPEG, WebP or GIF`);
+    throw new Error(`Could not read ${name}: use a PNG, JPEG, WebP or GIF`);
   });
   const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");

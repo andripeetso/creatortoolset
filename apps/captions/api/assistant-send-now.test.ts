@@ -207,7 +207,7 @@ describe("a message sent while its video uploads", () => {
     let last = (await p.view()).messages.at(-1)!;
     for (let i = 0; i < 100 && last.status === "thinking"; i++) last = (await new Promise((r) => setImmediate(r)), await p.view()).messages.at(-1)!;
     vi.useRealTimers();
-    expect(last).toMatchObject({ status: "error", text: `"Lost.mp4" didn't arrive, so this message wasn't answered: add it again and send the message again.` });
+    expect(last).toMatchObject({ status: "error", text: `"Lost.mp4" was not uploaded, so this message got no reply: add it again and send the message again.` });
     expect(heard).toMatchObject([{ username: "yul", kind: "failed", reply: last.id, title: "Here" }]);
   });
 });
@@ -318,7 +318,7 @@ describe("the attention hook", () => {
     await p.send({ text: "Make a file" });
     const asking = await p.claim();
     await p.ask(asking.id, { ask_id: "req-1", tool: "Bash", description: "Create made.txt", reason: "", detail: "touch made.txt" });
-    expect(heard).toMatchObject([{ kind: "asks", body: "Asks to run a command: Create made.txt", title: "Do the thing" }]);
+    expect(heard).toMatchObject([{ kind: "asks", body: "Needs approval · Run a command: Create made.txt", title: "Do the thing" }]);
     await p.answer(asking.id, "Made.");
     await settled(p);
     heard.length = 0;
@@ -574,7 +574,7 @@ describe("a video dropped in the Mac app goes as its path", () => {
     await p.answer(job.id, "Sending it first.");
     const reply = (await p.view()).messages.at(-1)!;
     const r = await app.request(`/api/assistant/sends/${reply.id}`, { method: "POST", ...json({ gone: true }, { cookie: p.cookie }) });
-    expect(((await r.json()) as View).messages.at(-1)).toMatchObject({ status: "done", text: `"old.mov" isn't in this window any more (the page was reloaded): drop it in the chat again.` });
+    expect(((await r.json()) as View).messages.at(-1)).toMatchObject({ status: "done", text: `"old.mov" was not sent (the page was reloaded): drop it in the chat again.` });
     // nothing waits any more
     expect((await app.request(`/api/assistant/sends/${reply.id}`, { method: "POST", ...json({ gone: true }, { cookie: p.cookie }) })).status).toBe(404);
   });

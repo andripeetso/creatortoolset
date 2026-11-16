@@ -429,7 +429,7 @@ export function AssistantDock() {
   const [dropping, setDropping] = useState(false);
   const addPictures = useCallback((imgs: AssistantImage[]) => {
     setDraft((d) => {
-      if (d.images.length + imgs.length > MAX_PICTURES) setError(`At most ${MAX_PICTURES} pictures go with one message`);
+      if (d.images.length + imgs.length > MAX_PICTURES) setError(`Send up to ${MAX_PICTURES} pictures at a time`);
       return { ...d, images: [...d.images, ...imgs].slice(0, MAX_PICTURES) };
     });
   }, []);
@@ -440,10 +440,10 @@ export function AssistantDock() {
       // a folder's other files (a camera's sidecars, notes) are passed over without a word
       const other = files.find((f) => !isPicture(f) && !isMediaFile(f));
       if (folder ? !pics.length && !media.length : other)
-        setError(folder ? "That folder has no pictures, videos or recordings" : `"${other?.name}" can't go with a message: only pictures, videos and recordings can`);
+        setError(folder ? "That folder has no pictures, videos or recordings" : `"${other?.name}" was not added: only pictures, videos and recordings can be attached`);
       const room = MAX_FILES - draftRef.current.files.length;
       if (media.length > room) {
-        setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
+        setError(`Send up to ${MAX_FILES} videos at a time: the first ${Math.max(room, 0)} were added`);
         media = media.slice(0, Math.max(room, 0));
       }
       // dropped in the Mac app, a video goes as its path and nothing uploads. Otherwise it uploads at once, and the message
@@ -664,7 +664,7 @@ export function AssistantDock() {
             setSeenId(last?.id ?? null);
             openAssistant();
           }}
-          aria-label={asking ? "Open the assistant: it asks to do something on your Mac" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
+          aria-label={asking ? "Open the assistant: needs an answer" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
           style={tint}
           title="Assistant · drag to move"
           data-assistant-dock
@@ -865,7 +865,7 @@ export function AssistantDock() {
           </button>
         )}
         {!!view?.messages.length && (
-          <button type="button" className={headBtn} onClick={() => void newChat()} aria-label="Start a new chat" title="New chat (this one stays in chat mode's list)">
+          <button type="button" className={headBtn} onClick={() => void newChat()} aria-label="New chat" title="New chat">
             <SquarePen className="size-4" />
           </button>
         )}
@@ -905,7 +905,7 @@ export function AssistantDock() {
             {welcome.showing ? (
               <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
             ) : (
-              <p className="text-base font-semibold">The assistant needs your AI connected first.</p>
+              <p className="text-base font-semibold">Needs an AI provider</p>
             )}
             {(!welcome.showing || welcome.stage === "ready") && (
               <Button size="sm" onClick={() => openSetupAt("agents", true)}>
@@ -931,7 +931,7 @@ export function AssistantDock() {
                 // the new-chat screen: the question, what this chat is to work on (something new, or a thing in the
                 // works), then the message box. The row keeps its height while the list of work is read
                 <div className="flex flex-col items-center pb-5">
-                  <h3 className="text-center text-3xl font-normal tracking-tight text-balance">What should we make?</h3>
+                  <h3 className="text-center text-3xl font-normal tracking-tight text-balance">New chat</h3>
                   <div className="mt-2 flex h-7 max-w-full items-center gap-2">
                     <NewChatWorkspace />
                     <WorkPicker />
@@ -995,10 +995,10 @@ export function AssistantDock() {
           >
             <p className="flex items-center gap-2 font-medium"><KeyRound className="size-4" aria-hidden /> {pending.name} key</p>
             <p className="text-muted-foreground">{pending.why}</p>
-            <Input type="password" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={`Paste your ${pending.name} key`} aria-label={`${pending.name} key`} />
+            <Input type="password" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} aria-label={`${pending.name} key`} />
             <div className="flex gap-2">
               <Button type="submit" size="sm" disabled={!secret.trim()}>Save key</Button>
-              <Button type="button" size="sm" variant="ghost" onClick={async () => { setSecret(""); const r = await cancelSecret(); if (r.ok) setView(r.data); }}>Not now</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={async () => { setSecret(""); const r = await cancelSecret(); if (r.ok) setView(r.data); }}>Cancel</Button>
             </div>
           </form>
         )}
@@ -1076,7 +1076,7 @@ const attachmentsLabel = (it: Queued) =>
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (
-    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code, Codex, Gemini CLI and Grok can) or do things on your Mac for you.`}>
+    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} cannot use the app's tools or run commands on the Mac (Claude Code, Codex, Gemini CLI and Grok can).`}>
       {view.aiName} · no app tools
     </span>
   );
@@ -1204,7 +1204,7 @@ export function Message({
         {m.send && sending ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="truncate" title={m.send.path}>
-              {sending.error ? `"${m.send.name}" didn't send: ${sending.error}` : `Sending to ${m.send.to} · ${sending.pct}%`}
+              {sending.error ? `Could not send "${m.send.name}": ${sending.error}` : `Sending to ${m.send.to} · ${sending.pct}%`}
             </span>
             <button type="button" onClick={onCancelSend} className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground" aria-label={`Stop sending ${m.send.name}`} title="Stop sending">
               <X className="size-3" />
@@ -1220,9 +1220,9 @@ export function Message({
       type="button"
       onClick={onRetry}
       className="mt-1.5 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]"
-      title="Send your last message again"
+      title="Send the last message again"
     >
-      <RotateCcw className="size-3.5" /> Try again
+      <RotateCcw className="size-3.5" /> Retry
     </button>
   );
   if (m.status === "error" && !m.text)
@@ -1232,7 +1232,7 @@ export function Message({
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
         <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
-        <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
+        <p className={cn("text-destructive", enter)}>Reply failed</p>
         {again}
       </div>
     );
@@ -1308,7 +1308,7 @@ function MessageMeta({ text, at, onBranch, className }: { text?: string; at?: nu
     >
       {text && <CopyButton className={`${metaBtn} [&_svg]:size-3.5`} text={() => text} title="Copy" />}
       {onBranch && (
-        <button type="button" className={metaBtn} onClick={onBranch} aria-label="New chat from here" title="New chat from here (this one stays as it is)">
+        <button type="button" className={metaBtn} onClick={onBranch} aria-label="New chat from here" title="New chat from here">
           <GitFork />
         </button>
       )}
@@ -1322,7 +1322,7 @@ const metaBtn = "flex size-6 shrink-0 items-center justify-center rounded-md hov
 
 function Dots() {
   return (
-    <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Thinking">
+    <span className="flex h-6 items-center gap-1 motion-safe:animate-in motion-safe:fade-in" role="status" aria-label="Loading">
       {[0, 1, 2].map((i) => (
         <span key={i} className="size-1.5 rounded-full bg-muted-foreground/70 motion-safe:animate-[ct-dot_1.2s_ease-in-out_infinite]" style={{ animationDelay: `${i * 0.15}s` }} />
       ))}

@@ -76,7 +76,7 @@ function Confirm({ q, onView }: { q: AssistantConfirm; onView: (v: AssistantView
                 </>
               ) : (
                 <>
-                  <X className="size-3.5 shrink-0 text-destructive" /> <span className="text-destructive">{q.result || "It didn't work."}</span>
+                  <X className="size-3.5 shrink-0 text-destructive" /> <span className="text-destructive">{q.result || "Failed"}</span>
                 </>
               )}
             </p>
