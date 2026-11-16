@@ -38,6 +38,9 @@ it("no files: the title, Add and one line", () => {
   const dialog = document.querySelector('[role="dialog"]')!;
   expect(dialog.querySelector("h2")?.textContent).toBe("Add context files");
   expect(buttons(dialog as HTMLElement).map((b) => b?.trim())).toEqual(["Choose files", "Choose a folder", "Add", "Paste text", "Close"]);
+  // Add with no link is never off: pressed, it says what is missing
+  act(() => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add")!.click());
+  expect(dialog.querySelector('[role="alert"]')?.textContent).toBe("Needs a link");
 });
 
 it("a row is a file: name, type, size, and the date or where its reading is; a folder is a row that opens", () => {
