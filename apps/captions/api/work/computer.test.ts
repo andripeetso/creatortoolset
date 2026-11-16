@@ -92,19 +92,21 @@ describe("the computer worker", () => {
   });
 
   it("a beat answered ok: false stops the step and sends nothing", async () => {
-    beatOk = false;
     let aborted = false;
+    // the lease is lost while the step runs
     STEPS.preview = ({ signal }) =>
-      new Promise((_, reject) =>
+      new Promise((_, reject) => {
         signal.addEventListener("abort", () => {
           aborted = true;
           reject(new Error("aborted"));
-        }),
-      );
+        });
+        beatOk = false;
+      });
     expect(await runJob(pkg("preview"), o)).toBe("stopped");
     expect(aborted).toBe(true);
     // lost before the step starts (the beat came while the files did): it never runs
     let ran = false;
+    beatOk = false;
     STEPS.preview = async () => void (ran = true);
     const slow = { ...o, fetch: async (u: string, i?: RequestInit) => (u.includes("/own") && (await new Promise((r) => setTimeout(r, 100))), fake.request(u, i)) };
     expect(await runJob(pkg("preview"), slow)).toBe("stopped");
