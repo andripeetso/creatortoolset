@@ -64,6 +64,7 @@ import {
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
 import { renderContext, workspaceContext, workspaceKnowledge, workspaceOf, workspaceSources } from "./lib/workshop/context";
+import { memoryFor } from "./lib/memory";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -2047,13 +2048,15 @@ const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text :
 
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
-  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; files?: unknown; projectId?: unknown } | null;
-  // the workspace being edited: its saved context files are read too, and what is in the box is its instructions so far
+  const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; said?: unknown; files?: unknown; projectId?: unknown } | null;
+  // the workspace being edited: its saved context files and the lines kept in Memory are read too, and `text` is its
+  // instructions so far (the form's box; from a chat, the saved ones, with what the person said now as `said`)
   const project = typeof body?.projectId === "string" ? await readProject(body.projectId, user) : null;
   const text = typeof body?.text === "string" ? body.text.slice(0, DRAFT_TEXT).trim() : "";
+  const said = typeof body?.said === "string" ? body.said.slice(0, DRAFT_TEXT).trim() : "";
   const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
   const given = givenFiles(body?.files, DRAFT_FILES);
-  const links = [...new Set(text.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
+  const links = [...new Set(`${text}\n${said}`.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
   const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
   // each part on its own: one that can't be read is said, the rest still drafts
   const [parts, files] = await Promise.all([
@@ -2083,15 +2086,21 @@ workshopApp.post("/projects/draft-notes", async (c) => {
   const kept = project ? (await knowledgeFor(user, project)).filter((f) => f.text.trim() && !now.has(f.name)) : [];
   const saved = [...new Map(kept.map((f) => [f.name, { name: f.name, text: f.text }])).values()].slice(0, DRAFT_FILES);
   const all = [...read, ...saved];
-  if (!text && !all.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
+  if (!text && !said && !all.length && !parts.some((p) => p && !p.startsWith("("))) return c.json({ error: "Paste or drop something about the workspace first" }, 400);
   const ai = route(user, "workshop", "Workspace setup");
   // on the Mac the files go as files, read whole; elsewhere into the prompt
   const mac = onMac(user) && all.length > 0;
   const list = (fs: Array<{ name: string }>) => fs.map((f) => `- ${f.name}`).join("\n");
+  // what the person said in earlier chats, kept in Memory: the rule, then their own words
+  const memory = project ? memoryFor(user.username, project.id) : null;
+  const lines = (fs: Array<{ text: string; said?: string }>) => fs.map((f) => `- ${f.text}${f.said ? ` (${JSON.stringify(f.said)})` : ""}`).join("\n");
   const prompt = [
     typeof body?.name === "string" && body.name.trim() ? `Workspace: ${body.name.slice(0, 80)}` : "",
     `Today: ${new Date().toISOString().slice(0, 10)}`,
     text ? `${project?.notes.trim() ? "The workspace's instructions as they stand" : "What they wrote"}:\n${text}` : "",
+    said ? `What they said about it now:\n${said}` : "",
+    memory?.here.length ? `Kept in Memory for this workspace:\n${lines(memory.here)}` : "",
+    memory?.mine.length ? `Kept in Memory about the person, in every workspace:\n${lines(memory.mine)}` : "",
     ...parts.filter(Boolean),
     ...unread,
     all.length ? (mac ? `The files, in material/ in your folder (read every one):\n${list(all)}` : `The files:\n${inlineFiles(all)}`) : "",

@@ -89,7 +89,8 @@ async function projectUpdate(a: Args, ctx: ToolContext) {
   const body: Args = {};
   if (a.name !== undefined) body.name = a.name;
   // draft_from goes through the form's own Write it for me: the facts a writer needs and nothing on how to write, since
-  // the writer takes the voice from the user's posts and rewrites
+  // the writer takes the voice from the user's posts and rewrites. It reads what the form's press reads: the
+  // instructions so far (kept), the workspace's saved context files and the lines kept in Memory
   const from = typeof a.draft_from === "string" ? a.draft_from.trim() : "";
   const was = from ? (await ctx.json<Args[]>("/api/workshop/projects")).find((p) => p.id === id) : undefined;
   const name = from && (a.name ?? was?.name);
@@ -99,7 +100,7 @@ async function projectUpdate(a: Args, ctx: ToolContext) {
   if (!from && typeof a.instructions === "string" && (await ctx.notTheirs([a.instructions], a.theirs))) {
     return { saved: false, answer: "These instructions aren't the user's own words: give what they said about the project as draft_from, and the project form's Write it for me writes the facts from it." };
   }
-  const instructions = from ? (await ctx.json<{ notes: string }>("/api/workshop/projects/draft-notes", "POST", { name, text: from })).notes : a.instructions;
+  const instructions = from ? (await ctx.json<{ notes: string }>("/api/workshop/projects/draft-notes", "POST", { name, text: String(was?.notes ?? ""), said: from, projectId: id })).notes : a.instructions;
   // the instructions are one text: the old audience, voice and CTA fields are folded into it, as the form does
   if (instructions !== undefined) Object.assign(body, { notes: instructions, audience: "", voice: "", cta: "" });
   if (a.color !== undefined) body.color = a.color;
