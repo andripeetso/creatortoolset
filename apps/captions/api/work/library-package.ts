@@ -48,6 +48,7 @@ interface LibRow extends FileRow {
   kind: string;
   bytes: number;
   sha256: string;
+  quick: string | null;
   from_path: string | null;
   from_device: string | null;
   proxy_bytes: number | null;
@@ -56,7 +57,7 @@ interface LibRow extends FileRow {
 function rowOf(versionId: string | null): LibRow | undefined {
   return libraryDb()
     .prepare(
-      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256,
+      `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.from_path, v.from_device, v.probe, v.bytes, v.sha256, v.quick,
          a.library_id, a.title, a.kind, d.storage_key AS proxy, d.bytes AS proxy_bytes
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
@@ -136,7 +137,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
     id: r.id,
     title: r.title,
     bytes: r.bytes,
-    ...(r.sha256.startsWith("mac:") ? { quick: r.sha256.slice(4) } : {}),
+    ...(r.quick ? { quick: r.quick } : r.sha256.startsWith("mac:") ? { quick: r.sha256.slice(4) } : {}),
     ...(at && "path" in at ? { path: at.path } : {}),
     ...(r.proxy && job.kind !== "proxy" && job.kind !== "send" ? { proxy: { bytes: r.proxy_bytes ?? 0 } } : {}),
   };
@@ -238,9 +239,11 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
     const files = Object.fromEntries(r.files.filter((f) => there.has(f) && SENDS[job.kind]?.includes(f)).map((f) => [f, path.join(incoming(jobId), f)]));
     const probe = job.kind === "send" && r.probe && typeof r.probe === "object" ? (r.probe as unknown as ProbeSummary) : undefined;
     const fingerprint = (job.kind === "fingerprint" || job.kind === "send") && typeof r.fingerprint === "string" && r.fingerprint.length < 1_000_000 ? r.fingerprint : undefined;
-    const sha256 = job.kind === "send" && typeof r.sha256 === "string" && /^[0-9a-f]{64}$/.test(r.sha256) ? r.sha256 : undefined;
+    const hex = (x: unknown) => (job.kind === "send" && typeof x === "string" && /^[0-9a-f]{64}$/.test(x) ? x : undefined);
+    const sha256 = hex(r.sha256);
+    const quick = hex(r.quick);
     if (job.kind === "send" && !probe) return failLibrary(job, "Your computer sent no probe of the file");
-    await recordDerived(job.version_id!, { files, ...(probe ? { probe } : {}), ...(fingerprint ? { fingerprint } : {}), ...(sha256 ? { sha256 } : {}) }, job.actor);
+    await recordDerived(job.version_id!, { files, ...(probe ? { probe } : {}), ...(fingerprint ? { fingerprint } : {}), ...(sha256 ? { sha256 } : {}), ...(quick ? { quick } : {}) }, job.actor);
     finishJob(db, job.id, true, undefined, Date.now());
     sortAfter(job);
     return true;

@@ -20,6 +20,8 @@ export interface Derived {
   probe?: ProbeSummary;
   /** the original's SHA-256, read on the computer */
   sha256?: string;
+  /** the original's quick fingerprint (asset_versions.quick) */
+  quick?: string;
   /** the fingerprint job's JSON */
   fingerprint?: string;
   /** files on this server's disk, moved into the library's store */
@@ -63,6 +65,7 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
   }
   if (x.fingerprint) db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, x.fingerprint, Buffer.byteLength(x.fingerprint));
   if (x.sha256) db.prepare("UPDATE asset_versions SET sha256 = ? WHERE id = ?").run(x.sha256, v.id);
+  if (x.quick) db.prepare("UPDATE asset_versions SET quick = ? WHERE id = ?").run(x.quick, v.id);
   let p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
   if (x.probe) {
     p = { ...x.probe, ...(p?.turn ? { turn: p.turn } : {}) };
@@ -89,9 +92,9 @@ export function sendLater(
   const dup = d
     .prepare(
       `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (? IN (v.mac_path, v.from_path) AND v.bytes = ?)) LIMIT 1`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (? IN (v.mac_path, v.from_path) AND v.bytes = ?)) LIMIT 1`,
     )
-    .get(libraryId, `mac:${x.quick}`, x.fromPath, x.size) as { id: string } | undefined;
+    .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.fromPath, x.size) as { id: string } | undefined;
   if (dup) return { duplicateOf: dup.id };
   const versionId = randomUUID();
   let assetId = "";
@@ -111,7 +114,7 @@ export function sendLater(
     });
     // the computer probes it: nothing here reads a file this server does not have yet
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
-    d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ? WHERE id = ?").run(x.fromPath, x.device, versionId);
+    d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, quick = ? WHERE id = ?").run(x.fromPath, x.device, x.quick, versionId);
     enqueueJob(d, libraryId, versionId, "send", by);
     d.exec("COMMIT");
   } catch (e) {

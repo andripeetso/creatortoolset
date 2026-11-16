@@ -14,7 +14,7 @@ import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
 import { sizeOf } from "./cache";
 import { client, type WorkerOptions } from "./computer";
-import { copyHere, resolveFiles, type Progress } from "./files";
+import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
 
 /**
  * A library job on this computer (contracts/work.ts LibraryPackage), with the library's own media code, so what is made
@@ -26,7 +26,7 @@ import { copyHere, resolveFiles, type Progress } from "./files";
  * original's checksum; the original itself is sent only to a library that keeps originals ("all").
  */
 
-type Made = Pick<LibraryResult, "probe" | "sha256" | "fingerprint"> & { files: Partial<Record<LibraryResult["files"][number], string>> };
+type Made = Pick<LibraryResult, "probe" | "sha256" | "quick" | "fingerprint"> & { files: Partial<Record<LibraryResult["files"][number], string>> };
 
 const LINE: Record<string, string> = {
   send: "Preparing the file to send",
@@ -59,7 +59,8 @@ export async function makeDerived(lib: LibraryPackage, src: string, dir: string)
     }
     // the original goes only to a library that keeps originals: in a proxies-only library it never leaves this computer
     if (lib.upload === "all") files.original = src;
-    return { files, probe: p as unknown as Record<string, unknown>, sha256: await sha256File(src), ...(print ? { fingerprint: print } : {}) };
+    const quick = await quickPrint(src);
+    return { files, probe: p as unknown as Record<string, unknown>, sha256: await sha256File(src), ...(quick ? { quick } : {}), ...(print ? { fingerprint: print } : {}) };
   }
   const p = lib.probe as unknown as ProbeSummary | undefined;
   if (!p) throw new Error("The file is not probed yet");

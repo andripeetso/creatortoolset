@@ -129,6 +129,8 @@ export interface LibraryResult {
   probe?: Record<string, unknown>;
   /** the original's SHA-256, read on this computer */
   sha256?: string;
+  /** the original's quick fingerprint (files.ts quickPrint), so Locate finds it once it moves */
+  quick?: string;
   /** the fingerprint job's JSON */
   fingerprint?: string;
 }

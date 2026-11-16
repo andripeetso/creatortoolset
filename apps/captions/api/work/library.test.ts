@@ -74,11 +74,12 @@ const o = () => ({
 });
 
 const version = (id: string) =>
-  d.prepare("SELECT source_key, mac_path, mac_device, sha256, probe, state FROM asset_versions WHERE id = ?").get(id) as {
+  d.prepare("SELECT source_key, mac_path, mac_device, sha256, quick, probe, state FROM asset_versions WHERE id = ?").get(id) as {
     source_key: string;
     mac_path: string | null;
     mac_device: string | null;
     sha256: string;
+    quick: string | null;
     probe: string | null;
     state: string;
   };
@@ -141,6 +142,7 @@ describe("library work on the computer that has the file", () => {
     expect(v.source_key).toBe(`libraries/lib_p/v/${r.versionId}/proxy.mp4`);
     expect(v.mac_path).toBe(file); // the original stays where it is on that Mac
     expect(v.sha256).toBe(await sha256File(file));
+    expect(v.quick).toBe(await quickPrint(file)); // Locate finds the original by it once it moves
     expect(JSON.parse(v.probe!)).toMatchObject({ width: 1920, height: 1080 });
     expect(v.state).toBe("ready");
     expect(Object.keys(got).sort()).toEqual([...MADE].sort());
@@ -161,6 +163,7 @@ describe("library work on the computer that has the file", () => {
     const v = version(r.versionId);
     expect(v.source_key).toBe(`libraries/lib_all/v/${r.versionId}/source`);
     expect(v.mac_path).toBeNull();
+    expect(v.quick).toBe(await quickPrint(file));
     expect(v.state).toBe("ready");
     expect(Object.keys(derived(r.versionId)).sort()).toEqual([...MADE].sort());
     expect(jobs(r.versionId).filter((j) => MADE.some((k) => j.startsWith(`${k}:`)))).toEqual([]);
