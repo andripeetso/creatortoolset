@@ -17,9 +17,15 @@ vi.mock("./ai-complete", async (importOriginal) => ({
     parse(JSON.stringify({ kind: "book", title: "Offers", about: "A book about pricing offers.", uses: ["how to price a course"], sections: [{ title: "Pricing", from: 1, to: 2, about: "price anchors" }] })),
   ),
 }));
-vi.mock("./lib/mac-claude", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./lib/mac-claude")>()),
-}));
+// web research on the Mac: stood in for only while a test sets `web`, which is handed the question as it was sent
+let web: ((question: string) => void) | undefined;
+vi.mock("./lib/mac-claude", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/mac-claude")>();
+  return {
+    ...actual,
+    streamMacClaude: ((...a: Parameters<typeof actual.streamMacClaude>) => (web ? (web(a[1]), Promise.resolve("Found.")) : actual.streamMacClaude(...a))) as typeof actual.streamMacClaude,
+  };
+});
 
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
@@ -57,11 +63,11 @@ function project(name: string, createdAt: number) {
   return id;
 }
 
-function session(title: string, projectId?: string) {
+function session(title: string, projectId?: string, owner = "alex") {
   const id = uuid();
   const docId = uuid();
   mkdirSync(ws("sessions", id, "docs"), { recursive: true });
-  writeFileSync(ws("sessions", id, "meta.json"), JSON.stringify({ id, owner: "alex", title, query: "", sources: [], drafts: [], ...(projectId ? { projectId } : {}), createdAt: 1, updatedAt: 1 }));
+  writeFileSync(ws("sessions", id, "meta.json"), JSON.stringify({ id, owner, title, query: "", sources: [], drafts: [], ...(projectId ? { projectId } : {}), createdAt: 1, updatedAt: 1 }));
   writeFileSync(
     ws("sessions", id, "docs", `${docId}.json`),
     JSON.stringify({ id: docId, sessionId: id, kind: "carousel", title: "Carousel", frameworkIds: [], versions: [], nextBlock: 2, nextVersion: 1, createdAt: 1, updatedAt: 1, blocks: [{ id: "b1", text: `${title} piece`, author: "ai", at: 1 }] }),
@@ -241,5 +247,60 @@ describe("projects kept apart", () => {
       got = await rows();
     }
     expect(got.every((x) => x.status === "read")).toBe(true);
+  });
+});
+
+describe("the workspace a session is in, carried to what is asked about one piece", () => {
+  const ember = project("Ember Realm", 30);
+  const file = ws("projects", `${ember}.json`);
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf-8")), notes: "A free online fantasy RPG server." }));
+  const guide = session("Frost Peak guide", ember);
+  const TOLD = /Workspace: Ember Realm\nInstructions:\nA free online fantasy RPG server\./;
+
+  it("rewrite and ask-about are told it", async () => {
+    const ai = vi.mocked(completeWithFallback);
+    const reader = ai.getMockImplementation()!;
+    const sent: string[] = [];
+    // only these two calls are answered here; a source still being read in the background keeps its own reader
+    ai.mockImplementation((async (system: string, user: string, c: unknown, parse: (t: string) => unknown, opts: unknown) => {
+      if (!system.startsWith("The author ")) return reader(system, user, c as never, parse as never, opts as never);
+      sent.push(user);
+      return parse(system.includes('"options"') ? '{"options":["a","b","c"]}' : "Clear enough.");
+    }) as never);
+    const text = "Frost Peak guide piece";
+    const at = `/api/workshop/sessions/${guide.id}/docs/${guide.docId}`;
+    expect((await call("POST", `${at}/lines`, { blockId: "b1", text, start: 0, end: 10 })).status).toBe(200);
+    expect((await call("POST", `${at}/ask`, { blockId: "b1", text, question: "Is this clear?" })).status).toBe(200);
+    ai.mockImplementation(reader);
+    expect(sent).toHaveLength(2);
+    for (const prompt of sent) expect(prompt).toMatch(new RegExp(`^The workspace this piece belongs to\\.[^\\n]*\\n${TOLD.source}\\n\\n`));
+  });
+
+  it("a question for the web says which workspace it is asked in", async () => {
+    const asked: string[] = [];
+    web = (q) => asked.push(q);
+    mocked.mockImplementationOnce((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown) => ({ result: parse(JSON.stringify({ reply: "ok" })), provider: "Claude (Mac)" })) as never);
+    const r = (await (await call("POST", `/api/workshop/sessions/${guide.id}/chat`, { docId: guide.docId, text: "Which land has the most snow?", deep: true })).json()) as { reply: { id: string } };
+    for (let i = 0; i < 500; i++) {
+      const chat = (await (await call("GET", `/api/workshop/sessions/${guide.id}/chat`)).json()) as Array<{ id: string; status?: string }>;
+      if (chat.find((m) => m.id === r.reply.id)?.status !== "thinking") break;
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    web = undefined;
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/^Which land has the most snow\?\n\nContext: the piece is "Carousel" \(carousel\), opening: Frost Peak guide piece\.\n\nThe workspace this is asked in\.[^\n]*\n/);
+    expect(asked[0]).toMatch(TOLD);
+  });
+
+  it("an admin's turn in someone else's session reads the project owner's context files, never the admin's own", async () => {
+    // bea's project and her file; alex, the admin, keeps offers.txt for every project of his own
+    const beas = uuid();
+    writeFileSync(ws("projects", `${beas}.json`), JSON.stringify({ id: beas, owner: "bea", name: "Bea's Bakery", audience: "", voice: "", cta: "", notes: "", createdAt: 40, updatedAt: 40 }));
+    writeFileSync(ws("sources", "s-bread1.json"), JSON.stringify({ id: "s-bread1", owner: "bea", name: "bread.md", chars: 9, status: "new", createdAt: 1, updatedAt: 1 }));
+    writeFileSync(ws("sources", "s-bread1.txt"), "Sourdough");
+    const hers = session("Morning loaves", beas, "bea");
+    const folder = await folderOf(hers.id, hers.docId);
+    expect(folder["context/bread.md"]).toBe("Sourdough");
+    expect(folder["context/offers.txt"]).toBeUndefined();
   });
 });

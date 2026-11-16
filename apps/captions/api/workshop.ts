@@ -63,7 +63,7 @@ import {
 } from "./lib/workshop/workspace";
 import { pluginsOffIn } from "./lib/plugin-workspaces";
 import { inProjectOf, sharedTo } from "./lib/project-of";
-import { workspaceKnowledge } from "./lib/workshop/context";
+import { workspaceContext, workspaceKnowledge, workspaceOf } from "./lib/workshop/context";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
 import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
@@ -351,9 +351,26 @@ async function sourceHead(id: string): Promise<string> {
   }
 }
 
-/** What a project's AI reads: the account's sources that are not another project's, minus the ones it switched off. */
+/**
+ * What a project's AI reads: its owner's sources that are not another project's, minus the ones it switched off.
+ * Someone else's project (an admin opened their session) reads its owner's files, never the caller's.
+ */
 const knowledgeFor = async (user: SessionUser, project: Project): Promise<KnowledgeFile[]> =>
-  workspaceKnowledge({ ...project, owner: user.username, knowledge: [] }, await listSources(user));
+  project.owner === user.username ? workspaceKnowledge({ ...project, knowledge: [] }, await listSources(user)) : workspaceKnowledge(project);
+
+/** Most of its workspace a one-shot call about one piece or question carries. */
+const WORKSPACE_MAX = 6000;
+/**
+ * What a one-shot call is told of the workspace a session is in (lib/workshop/context.ts: its own, or its owner's
+ * first brand for one from before workspaces); "" with no workspace, and the call reads what it always did.
+ */
+const contextOf = async (session: Pick<SessionMeta, "owner" | "projectId">): Promise<string> =>
+  workspaceContext(await workspaceOf(session.owner, session.projectId), WORKSPACE_MAX);
+/** A question for the web with the workspace it is asked in, so the search is about the right product, game or field. */
+const askedIn = (question: string, workspace: string): string =>
+  workspace
+    ? `${question}\n\nThe workspace this is asked in. Use it only to know what the question is about (which product, game, field or audience); the answer comes from the web, never from this:\n${workspace}`
+    : question;
 
 /** A project as the prompts read it: its knowledge filled in from the account's sources. */
 async function projectForAi(id: string | undefined, user: SessionUser): Promise<Project | null> {
@@ -1252,7 +1269,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       await progress({ stage: "researching", provider: researchLabel(user), research: { question: ask.text, depth: "deep", status: "running" } }, true);
       const q = `${ask.text}\n\nContext: the piece is "${doc.title}" (${doc.kind})${doc.blocks[0] ? `, opening: ${doc.blocks[0].text.slice(0, 200)}` : ""}.`;
       try {
-        const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, q, { depth: "deep", signal });
+        const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, askedIn(q, await contextOf(session)), { depth: "deep", signal });
         addUsage(a.usage);
         research = { question: ask.text, depth: "deep", status: "done", answer: a.content.slice(0, 8000), citations: a.citations.slice(0, 20), model: a.model };
       } catch (e) {
@@ -1560,7 +1577,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         step(`Checking on the web: "${q.slice(0, 200)}"`);
         await progress({ stage: "researching", text: plan.reply }, true);
         try {
-          const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, q, { depth: "quick", signal });
+          const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, askedIn(q, await contextOf(session)), { depth: "quick", signal });
           addUsage(a.usage);
           research = { question: q, depth: "quick", status: "done", answer: a.content.slice(0, 6000), citations: a.citations.slice(0, 20), model: a.model };
         } catch (e) {
@@ -1794,7 +1811,7 @@ async function runResearch(session: SessionMeta, user: SessionUser, messageId: s
   const signal = stopSignal(messageId);
   try {
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
-    const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, question, { depth: "deep", signal });
+    const a = await webResearch(user, RESEARCH_QUESTION_SYSTEM, askedIn(question, await contextOf(session)), { depth: "deep", signal });
     const sources = a.citations.slice(0, 20).map((u, i) => `[${i + 1}] ${u}`);
     if (signal.aborted) throw new Error("Stopped"); // a Stop while the answer was in flight stays a Stop
     await patchMessage(session.id, messageId, {
@@ -3562,7 +3579,7 @@ workshopApp.post("/sessions/:id/docs/:docId/lines", async (c) => {
   if (start < 0 || end <= start || !text.slice(start, end).trim()) return c.json({ error: "Select the words you want said another way" }, 400);
   if (!aiOn(user)) return c.json({ error: "AI is not configured on the server" }, 503);
   const notes = (await readChat(meta.id)).messages.filter((m) => m.docId === doc.id && m.role === "user" && m.text.trim()).map((m) => m.text.trim());
-  const { system, user: prompt } = buildLinesPrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, notes });
+  const { system, user: prompt } = buildLinesPrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, notes, workspace: await contextOf(meta) });
   try {
     let usage: MacUsage | undefined;
     const options = await completeWithFallback(system, prompt, undefined, parseLines, { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) });
@@ -3593,7 +3610,7 @@ workshopApp.post("/sessions/:id/docs/:docId/ask", async (c) => {
     .map((m) => ({ role: m.role, text: m.text.slice(0, 4000) }));
   const project = await projectForAi(meta.projectId, user);
   const { best } = await bestPosts(user, project, 10);
-  const { system, user: prompt } = buildAsidePrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, question, history, best });
+  const { system, user: prompt } = buildAsidePrompt({ doc, blockId: typeof body?.blockId === "string" ? body.blockId : undefined, text, start, end, question, history, best, workspace: await contextOf(meta) });
   try {
     let usage: MacUsage | undefined;
     const answer = await completeWithFallback(system, prompt, undefined, (t) => {

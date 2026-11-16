@@ -15,6 +15,8 @@ export interface LinesInput {
   end: number;
   /** What the author has said about this piece, in their words. */
   notes: string[];
+  /** The workspace the piece is in (workspaceContext): the brand's own names and the way it talks. */
+  workspace?: string;
 }
 
 export function buildLinesPrompt(input: LinesInput): { system: string; user: string } {
@@ -26,7 +28,10 @@ export function buildLinesPrompt(input: LinesInput): { system: string; user: str
     .join("\n\n");
   const system = `The author selected words in one ${unit.toLowerCase()} of their piece, marked «like this». Give three other ways to say just those words, each one fitting where the selection sits, between the text before and after it. Say the concrete thing the way the author talks: the puppy or the owner does it, not a position, a seat or a brain, and the actual case, not a summary of it. Keep their meaning. Return exactly {"options": [string, string, string]}: the replacement words only, no quote marks around them.`;
   const notes = input.notes.length ? `\n\nWhat the author has said about this piece:\n${input.notes.map((n) => `- ${n.replace(/\n+/g, " ")}`).join("\n")}` : "";
-  return { system, user: `${piece}${notes}` };
+  const workspace = input.workspace
+    ? `The workspace this piece belongs to. Use it for the brand's own names and the way it talks; never add what the selected words don't say:\n${input.workspace}\n\n`
+    : "";
+  return { system, user: `${workspace}${piece}${notes}` };
 }
 
 export function parseLines(text: string): string[] {

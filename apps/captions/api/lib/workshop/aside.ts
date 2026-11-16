@@ -19,6 +19,8 @@ export interface AsideInput {
   /** This side chat so far. */
   history: Array<{ role: "user" | "assistant"; text: string }>;
   best: ReviewPost[];
+  /** The workspace the piece is in (workspaceContext): who it is for, how the brand talks, what it offers. */
+  workspace?: string;
 }
 
 const MEDIUM: Partial<Record<Document["kind"], string>> = {
@@ -40,5 +42,8 @@ export function buildAsidePrompt(input: AsideInput): { system: string; user: str
         .join("\n")}`
     : "";
   const chat = input.history.length ? `\n\nSo far in this side chat:\n${input.history.map((m) => `${m.role === "user" ? "Author" : "You"}: ${m.text}`).join("\n")}` : "";
-  return { system, user: `${where[0]!.toUpperCase() + where.slice(1)}:\n${shown}${best}${chat}\n\nAuthor now: ${input.question}` };
+  const workspace = input.workspace
+    ? `The workspace this piece belongs to. Use it to know who the piece is for, how the brand talks and what it names; never add facts it doesn't give:\n${input.workspace}\n\n`
+    : "";
+  return { system, user: `${workspace}${where[0]!.toUpperCase() + where.slice(1)}:\n${shown}${best}${chat}\n\nAuthor now: ${input.question}` };
 }
