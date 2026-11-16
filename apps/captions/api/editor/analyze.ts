@@ -16,6 +16,7 @@ import { allBroll, isMusic } from "./plan";
 import { saveStep } from "./store";
 import { voiceChannel } from "./sync";
 import type { StepContext } from "./worker";
+import { gateOf, onComputer } from "../work/on-computer";
 
 /**
  * The AI Editor's analyze step: every source's words (the library's transcript, fillers and false starts kept) split
@@ -156,7 +157,24 @@ function editorWantsAgain(db: ReturnType<typeof libraryDb>, versionId: string, b
   return editorKey(versionId, want);
 }
 
-export async function analyzeStep({ edit, job, signal }: StepContext): Promise<void> {
+/** What the analyze gate hands the step's work: the sources ready to read, and what it noted of the rest. */
+export interface AnalyzeGate {
+  planned: boolean;
+  notes: string[];
+  ready: { row: SourceRow; probe: ProbeSummary; words: TimedWord[] }[];
+}
+
+export async function analyzeStep(ctx: StepContext): Promise<void> {
+  // on a computer the server ran the gate when it handed the step over (work/on-computer.ts)
+  await analyzeWork(ctx, onComputer.on ? gateOf<AnalyzeGate>() : await analyzeGate(ctx));
+}
+
+/**
+ * The analyze step's gate: what the server's library and its memory say about each source (probe, transcripts, the
+ * transcripts it queues and waits for). Throws Waiting while one is not ready. Runs on the server only, also for a step a
+ * computer takes (its claim runs it).
+ */
+export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job">): Promise<AnalyzeGate> {
   const db = libraryDb();
   // transcripts the edit waits for are heard on the keys of whoever asked for this run (a teammate's next version: theirs)
   const asker = job.actor ?? edit.createdBy;
@@ -254,7 +272,11 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
   // a transcript being made on this computer: the step says what it is doing while it waits (the worker clears it when the step is done)
   if (wait && waitingOn) db.prepare("UPDATE edit_jobs SET error = ? WHERE id = ?").run(waitingOn, job.id);
   if (wait) throw new Waiting();
+  return { planned, notes, ready };
+}
 
+/** The analyze step's work after its gate: sentences, loudness and eye line of the ready sources, saved as the analysis. */
+async function analyzeWork({ edit, signal }: StepContext, { planned, notes, ready }: AnalyzeGate): Promise<void> {
   ready.sort((a, b) => (a.probe.capturedAt ?? Infinity) - (b.probe.capturedAt ?? Infinity) || a.row.title.localeCompare(b.row.title));
   const sentences: Sentence[] = [];
   const eyeline: Record<string, number> = {};

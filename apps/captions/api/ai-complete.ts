@@ -3,7 +3,7 @@ import {
   outOfCreditsMessage,
 } from "./credits";
 import { DRIVERS, type JobId, type Selection } from "../contracts/providers";
-import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacOpts, type MacUsage } from "./lib/mac-claude";
+import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacErrorKind, type MacOpts, type MacUsage } from "./lib/mac-claude";
 import { instanceIn, limitFallbacks, routeFor, runFields } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
 import { hostedMode } from "./lib/env";
@@ -12,6 +12,7 @@ import { keyFor } from "./my-keys";
 import { fewestTokens, localModelOf, tooLongFor } from "./local-model";
 import type { LocalModel } from "../contracts/service-keys";
 import { findUser, type SessionUser } from "./users";
+import { onComputer } from "./work/on-computer";
 
 /**
  * Every AI call in the app. It goes to a provider (contracts/providers.ts: a coding-agent CLI on a Mac,
@@ -47,7 +48,8 @@ export class AiProviderError extends Error {
 /** "mac" = a provider on a paired Mac (lib/mac-claude.ts); "anthropic" = the API key (guests, demo);
  *  "local" = Claude Code on the machine running this code (lib/local-claude.ts), for scripts only. */
 // "localModel" = a model the person runs themselves, at the address they typed (local-model.ts); not "local", which is Claude Code here.
-export type ProviderId = "anthropic" | "mac" | "local" | "localModel";
+// "server" = on a computer running a server's step (work/on-computer.ts): that server asks the asker's own AI.
+export type ProviderId = "anthropic" | "mac" | "local" | "localModel" | "server";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -74,6 +76,8 @@ export type ProviderOpts = {
   images?: Array<{ type: string; data: string }>;
   /** The chosen AI answers or the call fails: a usage limit never moves it to another one (Compare, a plug-in). */
   fixed?: boolean;
+  /** On a computer (only: ["server"]): which of the asker's AI uses the server answers on. */
+  job?: JobId;
 };
 
 /** Who is asking: a session, or a username (background work names its owner). Nobody = no AI. */
@@ -89,6 +93,11 @@ export const macLabelOf = (opts: ProviderOpts): string => `${DRIVERS.find((d) =>
  * Anthropic key or no AI. Nobody named: no AI.
  */
 export function aiFor(who: Who, job: JobId, label: string, own?: Selection): ProviderOpts {
+  // on a computer: the server answers as the job's account (work/serve.ts); the package says whether it has AI for this
+  if (onComputer.on) {
+    const off = (job === "analyzer" ? onComputer.pkg!.ai.analyzer : onComputer.pkg!.ai.editor) ?? undefined;
+    return { only: ["server"], ...(off ? { off } : {}), job, mac: { label } };
+  }
   const name = typeof who === "string" ? who : who?.username;
   const role = typeof who === "string" ? findUser(who)?.role : who?.role;
   // nobody named: never the server's providers (background work names whose work it is)
@@ -456,6 +465,7 @@ export async function completeWithFallback<T>(
   parse: (text: string) => T,
   opts: ProviderOpts = {},
 ): Promise<T> {
+  if (onComputer.on) return onServer(system, user, cancelSignal, parse, opts);
   opts = routed(opts);
   const available = providers();
   const chain = providerChain(
@@ -503,6 +513,73 @@ export async function completeWithFallback<T>(
     throw new AiProviderError(OUT_OF_TOKENS_MSG, OUT_OF_TOKENS_CODE, false);
   }
   throw failures.at(-1) ?? new AiProviderError("AI caption pass failed", "FAILED", false);
+}
+
+/** An AI error as it crosses from the server to a computer, so the computer throws the same class (aiErrorFrom). */
+export interface AiErrorJson {
+  name: string;
+  message: string;
+  code?: AiProviderError["code"];
+  kind?: MacErrorKind;
+  retryable?: boolean;
+  /** a usage limit's reopening (MacClaudeError.limited): null = not said */
+  until?: number | null;
+  cause?: AiErrorJson;
+}
+
+export function aiErrorJson(e: unknown, depth = 0): AiErrorJson {
+  const x = e instanceof Error ? e : new Error(String(e));
+  const limited = (x as { limited?: { until: number | null } }).limited;
+  return {
+    name: x.name,
+    message: x.message,
+    ...(x instanceof AiProviderError ? { code: x.code, retryable: x.retryable } : {}),
+    ...(x instanceof MacClaudeError ? { kind: x.kind } : {}),
+    ...(limited ? { until: limited.until } : {}),
+    ...(x.cause instanceof Error && depth < 4 ? { cause: aiErrorJson(x.cause, depth + 1) } : {}),
+  };
+}
+
+/** The error the server's AI call threw, as the same class here: macAway, limitWait and NeedsKey read it as on the server. */
+export function aiErrorFrom(j: AiErrorJson): Error {
+  const cause = j.cause ? aiErrorFrom(j.cause) : undefined;
+  const e =
+    j.name === "AiProviderError"
+      ? new AiProviderError(j.message, j.code ?? "FAILED", !!j.retryable, cause)
+      : j.name === "MacClaudeError"
+        ? new MacClaudeError(j.message, j.kind ?? "failed")
+        : Object.assign(new Error(j.message, cause ? { cause } : undefined), { name: j.name });
+  if (cause && e instanceof MacClaudeError) Object.assign(e, { cause });
+  if (j.until !== undefined) Object.assign(e, { limited: { until: j.until } });
+  return e;
+}
+
+/** The server's answer to a computer's AI call (work/serve.ts serveAi): its text, or the error it threw, rebuilt. */
+export async function serverAnswer(body: Record<string, unknown>): Promise<{ text: string; provider: string; mac: boolean }> {
+  const r = (await onComputer.server!.ai(body)) as { text: string; provider: string; mac: boolean } | { error: AiErrorJson };
+  if ("error" in r) throw aiErrorFrom(r.error);
+  return r;
+}
+
+/**
+ * completeWithFallback on a computer: the server asks the asker's own AI as the job's account and sends the text; it is
+ * parsed here, and an answer that doesn't parse is asked again up to the same tries, as the server's chain does.
+ */
+async function onServer<T>(system: string, user: string, cancelSignal: AbortSignal | undefined, parse: (text: string) => T, opts: ProviderOpts): Promise<T> {
+  if (opts.off) throw new AiProviderError(opts.off, "FAILED", false);
+  let last: AiProviderError | undefined;
+  for (let attempt = 0; attempt < tries(opts); attempt++) {
+    if (cancelSignal?.aborted) throw new AiProviderError("Cadence matching was stopped", "ABORTED", false);
+    const { text, mac } = await serverAnswer({ system, user, job: opts.job, label: opts.mac?.label, ...(opts.retries ? { retries: opts.retries } : {}) });
+    try {
+      return parseAnswer(mac ? "mac" : "anthropic", text, parse);
+    } catch (e) {
+      if (e instanceof MacClaudeError || (e instanceof AiProviderError && !e.retryable)) throw e;
+      last = e instanceof AiProviderError ? e : new AiProviderError(e instanceof Error ? e.message : "AI caption pass failed", "FAILED", true, e);
+      console.warn(`[ai] the server's answer failed (${last.code}): ${last.message}`);
+    }
+  }
+  throw last!;
 }
 
 /* ---- streaming: the same chain, the answer arriving as it is written ---- */
@@ -623,7 +700,7 @@ async function streamAnthropic(system: string, user: string, cancelSignal: Abort
 }
 
 /** A Mac answer that does not parse is Claude's failure, not a miss: the API key must not run the same request again. */
-function parseAnswer<T>(id: ProviderId, text: string, parse: (text: string) => T): T {
+export function parseAnswer<T>(id: ProviderId, text: string, parse: (text: string) => T): T {
   if (id !== "mac") return parse(text);
   try {
     return parse(text);
@@ -648,6 +725,8 @@ const STREAMERS: Record<ProviderId, (system: string, user: string, cancel: Abort
     await onDelta(text);
     return text;
   },
+  // a computer's step never streams (no computer-run step does); providers() never offers it
+  server: () => Promise.reject(new AiProviderError("Streaming runs on the server only", "FAILED", false)),
 };
 
 /**

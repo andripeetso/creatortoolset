@@ -21,6 +21,7 @@ import { NeedsKey, segmentsOf, wordsOf } from "../library/transcribe";
 import { Waiting } from "./analyze";
 import { measurable } from "./media";
 import { macAway } from "./script";
+import { gateOf, onComputer } from "../work/on-computer";
 
 /**
  * The footage index for an edit planned as shots (contracts/edit-plan.ts): what each source holds, from its picture
@@ -155,6 +156,14 @@ const redone = new Set<string>();
 /** One of the edit's files the cut can't use, and why in plain words (Coverage.left). */
 export type LeftOut = { id: string; title: string; why: string };
 
+type IndexEdit = { id?: string; name?: string; createdBy?: string; projectId?: string; now?: boolean; sources: string[] };
+
+/** What the index gate hands the read: the sources ready to read, and the ones left out with why. */
+export interface IndexGate {
+  ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[] }[];
+  left: LeftOut[];
+}
+
 /**
  * What every source of the edit holds: length, frame rate, size, whether someone speaks, and its shots. The gate
  * (tasks/flywheel/PLAN.md 3.2) waits, and only waits, while the Media Library still works on a file (its probe, its
@@ -165,13 +174,47 @@ export type LeftOut = { id: string; title: string; why: string };
  * them as its shots; one without is read here as before (its picture once per version, cached). One with no picture (a
  * song) has no shots. A transcript is never asked for here (analyze does that).
  */
-export async function indexSources(
-  edit: { id?: string; name?: string; createdBy?: string; projectId?: string; now?: boolean; sources: string[] },
-  signal: AbortSignal,
-  now = Date.now(),
-): Promise<FootageIndex & { left: LeftOut[] }> {
+export async function indexSources(edit: IndexEdit, signal: AbortSignal, now = Date.now()): Promise<FootageIndex & { left: LeftOut[] }> {
+  // on a computer the server ran the gate when it handed the step over (work/on-computer.ts)
+  const { ready, left } = onComputer.on ? gateOf<IndexGate>() : await indexGate(edit, signal, now);
   const db = libraryDb();
-  const ready: { id: string; row: Row; probe: ProbeSummary; lines: Stretch[] }[] = [];
+  const sources: IndexSource[] = [];
+  for (const { id, row, probe, lines } of ready) {
+    if (signal.aborted) throw signal.reason ?? new Error("Stopped");
+    const speech = !!(wordsOf(db, id)?.length || segmentsOf(db, id).length);
+    const turned = probe.rotation === 90 || probe.rotation === 270;
+    const size = { dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height };
+    // the library's shot descriptions are its shots: the same stretches this file's picture gives (library/look.ts)
+    const described = !!probe.vcodec && !probe.cover && lines.length > 0;
+    // its picture is still read once per version (cached): the lines say what happens, the read where it moves and
+    // what is junk
+    let src = (await cached(id))?.src;
+    if (!src) {
+      const picture = !!probe.vcodec && !probe.cover;
+      const reading = picture ? measurable(id, row.source_key).then((f) => readPicture(f, probe.fps, signal)) : Promise.resolve(null);
+      // a source with shot descriptions that can't be read here (on a Mac, upload off) is cut from its lines alone
+      const read = await reading.catch((e: unknown) => {
+        if (described && !signal.aborted) return null;
+        throw e;
+      });
+      const shots = read ? shotsOf(read, probe.duration) : [];
+      src = { id, title: row.title, ...size, shots, ...(read ? { hud: hudOf(read) } : {}) };
+      if (read || !picture) await keep(src);
+    }
+    if (described) src = { ...src, ...size, shots: lines.map((l) => lineShot(l, src!.shots)) };
+    sources.push({ ...src, title: row.title, speech });
+  }
+  return { sources, left };
+}
+
+/**
+ * indexSources' gate: what the server's library and its memory say about each source (probe, the library's work on it,
+ * its shot descriptions and their stamp), waiting (Waiting) while the library still works on one. Runs on the server
+ * only, also for a step a computer takes (its claim runs it).
+ */
+export async function indexGate(edit: IndexEdit, signal: AbortSignal, now = Date.now()): Promise<IndexGate> {
+  const db = libraryDb();
+  const ready: IndexGate["ready"] = [];
   const left: LeftOut[] = [];
   const pending: { id: string; title: string; line?: string }[] = [];
   for (const id of edit.sources) {
@@ -223,34 +266,7 @@ export async function indexSources(
   }
   waits.delete(key);
   for (const p of pending) left.push({ id: p.id, title: p.title, why: "still being read by the Media Library" });
-
-  const sources: IndexSource[] = [];
-  for (const { id, row, probe, lines } of ready) {
-    if (signal.aborted) throw signal.reason ?? new Error("Stopped");
-    const speech = !!(wordsOf(db, id)?.length || segmentsOf(db, id).length);
-    const turned = probe.rotation === 90 || probe.rotation === 270;
-    const size = { dur: probe.duration, fps: probe.fps, w: turned ? probe.height : probe.width, h: turned ? probe.width : probe.height };
-    // the library's shot descriptions are its shots: the same stretches this file's picture gives (library/look.ts)
-    const described = !!probe.vcodec && !probe.cover && lines.length > 0;
-    // its picture is still read once per version (cached): the lines say what happens, the read where it moves and
-    // what is junk
-    let src = (await cached(id))?.src;
-    if (!src) {
-      const picture = !!probe.vcodec && !probe.cover;
-      const reading = picture ? measurable(id, row.source_key).then((f) => readPicture(f, probe.fps, signal)) : Promise.resolve(null);
-      // a source with shot descriptions that can't be read here (on a Mac, upload off) is cut from its lines alone
-      const read = await reading.catch((e: unknown) => {
-        if (described && !signal.aborted) return null;
-        throw e;
-      });
-      const shots = read ? shotsOf(read, probe.duration) : [];
-      src = { id, title: row.title, ...size, shots, ...(read ? { hud: hudOf(read) } : {}) };
-      if (read || !picture) await keep(src);
-    }
-    if (described) src = { ...src, ...size, shots: lines.map((l) => lineShot(l, src!.shots)) };
-    sources.push({ ...src, title: row.title, speech });
-  }
-  return { sources, left };
+  return { ready, left };
 }
 
 /** What is known of a source's shots without reading it again: the library's shot descriptions (with what its cached

@@ -151,7 +151,7 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
     const { system, user } = critiquePrompt({
       brief: edit.brief,
       notes: edit.feedback ?? [],
-      style: styleBlock(edit.style, edit),
+      style: await styleBlock(edit.style, edit),
       shots: await cutLines(plan, titles),
       sheets: sheets.length,
       seconds: plan.shots.reduce((t, s) => Math.max(t, s.at + s.dur), 0),

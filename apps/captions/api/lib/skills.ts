@@ -9,6 +9,7 @@ import { pluginSkills } from "./plugin";
 import { slug } from "./workshop/folder";
 import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import { readUserMarker } from "./workshop/workspace";
+import { ask, onComputer } from "../work/on-computer";
 
 /**
  * Skills (contracts/skills.ts), each for one place. A person's own are kept per account; the ones from installed
@@ -297,6 +298,8 @@ export async function slotSkills(username: string, slot: PackSkillSlot, projectI
  * with no `run`, the person's own alone. Empty when none of the ids is such a skill.
  */
 export async function skillText(username: string, ids: string[], projectId?: string | null, run?: { ai: ProviderOpts; tools?: boolean }): Promise<string> {
+  // on a computer: the server reads the edit's workspace's skills on the job's own route (work/serve.ts)
+  if (onComputer.on) return ask("skillText", ids, projectId ?? null, run ? !!run.tools : null);
   const picked = (await listSkills(username)).filter((s) => ids.includes(s.id) && skillOn(s, projectId)).slice(0, SKILL_LIMITS.perTurn);
   let shared: SharedSkill[] = [];
   if (run && !run.tools && ids.some((id) => /^(pack|plugin):/.test(id))) {
