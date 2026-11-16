@@ -277,7 +277,8 @@ and answers:
     - A page with more than about a dozen rows is split. A folded "Advanced" block needs three rows or more.
     - An error says what happened and what to do next ("Could not load folders" with Retry; "Needs an AI provider").
   - **App wording** (owner, 2026-11-16: "the same kind of language audit" for the whole app). Every screen, toast,
-    tooltip and server message a person reads follows "Settings wording" above; what that bullet does not say:
+    tooltip and server message a person reads follows "Settings wording" above (`src/app-wording.test.ts` holds the
+    mechanical ones, and the few lines kept as the owner's own); what that bullet does not say:
     - **AI is the default here, so nothing is labelled as AI.** No "AI", "by AI", "AI-made", "smart" on an option, a
       button, a badge or a section: say what the thing does ("Automatic", "Descriptions", "Suggested"). No wand or
       sparkle icon: `CtMark` on what is made for the person, else the icon of what the button does. Allowed: the

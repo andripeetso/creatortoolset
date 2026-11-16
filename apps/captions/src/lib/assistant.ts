@@ -141,4 +141,4 @@ export const saveKey = (env: string, value: string) =>
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ value }),
-  }).then(async (r) => (r.ok ? { ok: true as const } : { ok: false as const, error: ((await r.json().catch(() => ({}))) as { error?: string }).error ?? "Couldn't save the key" }));
+  }).then(async (r) => (r.ok ? { ok: true as const } : { ok: false as const, error: ((await r.json().catch(() => ({}))) as { error?: string }).error ?? "Could not save the key" }));

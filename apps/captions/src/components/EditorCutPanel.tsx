@@ -107,7 +107,7 @@ export function EditorCutPanel({ editId, name, title, at, working, kept, onKeep,
       .then((e) => {
         setHist(freshHist<ItemEdit[]>([]));
         onMade(e);
-      }, (e: Error) => setRefused(e.message || "Couldn't make the next version"))
+      }, (e: Error) => setRefused(e.message || "Could not make the next version"))
       .finally(() => setMaking(false));
   };
 

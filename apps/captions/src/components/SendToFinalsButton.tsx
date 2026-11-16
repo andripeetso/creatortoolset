@@ -84,9 +84,9 @@ export function SendToFinalsButton() {
       setNote(
         [
           started.length === 1
-            ? "Rendering with captions; it goes to Finals by itself when it's done (see the export tray)."
+            ? "Rendering with captions; it is sent to Finals when it is done (see the export tray)."
             : started.length
-              ? `Rendering ${started.length} with captions; each goes to Finals by itself when it's done, and the files download as one ZIP.`
+              ? `Rendering ${started.length} with captions; each is sent to Finals when it is done, and the files download as one ZIP.`
               : "",
           skipped.length ? `Not sent: ${skipped.join(", ")}.` : "",
         ].filter(Boolean).join(" "),
