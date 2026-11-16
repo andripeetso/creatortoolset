@@ -717,11 +717,12 @@ export function ChatPane({
         )}
         <VoiceError v={v} />
         {!readOnly && <div
-          className={cn(boxClass(v.recording), "cursor-text pl-1.5")}
+          // The field gets the whole width; its buttons sit on a row under it (beside it they squeezed it to half a narrow pane).
+          className={cn(boxClass(v.recording), "cursor-text flex-col items-stretch pl-1.5")}
           onKeyDown={(e) => v.recording && e.key === "Escape" && v.voice.cancel()}
           onMouseDown={(e) => {
-            // The box is bigger than the text field: a click on its padding puts you in it too.
-            if (e.target !== e.currentTarget) return;
+            // The box is bigger than the text field: a click on its padding or the button row's gaps puts you in it too.
+            if ((e.target as HTMLElement).closest("button, [contenteditable]")) return;
             e.preventDefault();
             inputRef.current?.focus();
           }}
@@ -753,6 +754,7 @@ export function ChatPane({
             onRemoveQuote={(id) => onUnquote?.(id)}
             onAddQuote={(q) => onQuote?.(q)}
           />}
+          <div className="flex items-center justify-end gap-1.5">
           {v.recording ? <VoiceDone v={v} /> : <>
           <button type="button" onClick={() => pickRef.current?.click()} className={cn(ICON_BTN, "text-muted-foreground hover:bg-muted hover:text-foreground")} title="Attach pictures, text files or PDFs" aria-label="Attach files">
             <Paperclip className="h-4 w-4" />
@@ -762,6 +764,7 @@ export function ChatPane({
           {/* While a reply thinks: Stop when the box is empty; Queue when there are words to send after it */}
           <SendButton empty={!composerBusy} waiting={thinking} disabled={!activeDoc || !aiAvailable || v.writing} onSend={() => void send()} onStop={onStop} />
           </>}
+          </div>
         </div>}
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <input
