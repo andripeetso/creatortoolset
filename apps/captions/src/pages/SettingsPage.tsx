@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PAGE_BODIES } from "@/components/settings/pages";
 import { AccountAvatar } from "@/components/settings/AccountSection";
 import { navBlocks, navListFor, resolveSection, sectionsFor, withToolPages, type NavContext, type SettingsPageId } from "@/components/settings/nav";
-import { PageActionContext } from "@/components/settings/page-action";
+import { PageActionContext, PageTitleContext } from "@/components/settings/page-action";
 import { resetWorkspacePick } from "@/components/settings/workspace-pick";
 import { pluginOfSection, WithPluginWorkspaces } from "@/components/settings/PluginWorkspaces";
 import { webPlugins } from "@/plugins.gen";
@@ -357,9 +357,12 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
               </Tooltip>
             </header>
             <PageActionContext.Provider value={actionEl}>
-              <div className="min-h-0 flex-1 overflow-y-scroll">
-                <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
-              </div>
+              {/* the header above says the page's name once: a section named the same prints no title (kit-rows.tsx Section) */}
+              <PageTitleContext.Provider value={title}>
+                <div className="min-h-0 flex-1 overflow-y-scroll">
+                  <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
+                </div>
+              </PageTitleContext.Provider>
             </PageActionContext.Provider>
           </div>
         </div>

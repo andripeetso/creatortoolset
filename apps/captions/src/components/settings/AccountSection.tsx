@@ -339,6 +339,8 @@ function SignInNameRow({ login, onSaved }: { login: string; onSaved: (login: str
   const [busy, setBusy] = useState(false);
   const problem = signInNameProblem(value);
   const save = async () => {
+    // the field is marked and says why under it
+    if (problem) return;
     setBusy(true);
     setError(null);
     try {
@@ -377,14 +379,13 @@ function SignInNameRow({ login, onSaved }: { login: string; onSaved: (login: str
         onOpenChange={setOpen}
         title="Sign-in name"
         submitLabel="Save"
-        submitDisabled={!value.trim() || !!problem || !password}
         busy={busy}
         error={error}
         onSubmit={save}
       >
-        <Input aria-label="New sign-in name" placeholder="New sign-in name" value={value} maxLength={24} autoFocus onChange={(e) => setValue(e.target.value)} />
+        <Input aria-label="New sign-in name" placeholder="New sign-in name" value={value} maxLength={24} autoFocus required aria-invalid={!!problem} onChange={(e) => setValue(e.target.value)} />
         {problem && <p className="text-xs text-muted-foreground">{problem}</p>}
-        <Input type="password" autoComplete="current-password" aria-label="Current password" placeholder="Current password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Input type="password" autoComplete="current-password" aria-label="Current password" placeholder="Current password" value={password} required onChange={(e) => setPassword(e.target.value)} />
       </FormDialog>
     </>
   );

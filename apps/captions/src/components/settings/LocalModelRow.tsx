@@ -124,11 +124,10 @@ export function LocalModelRow() {
         submitLabel={set ? "Save" : "Add"}
         onSubmit={submit}
         busy={busy}
-        submitDisabled={!url.trim() || !model.trim()}
         error={error}
       >
-        <Row className="p-0 sm:p-0" title="Address" control={<Input aria-label="Address" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://localhost:11434" autoComplete="off" spellCheck={false} className={input} />} />
-        <Row className="p-0 sm:p-0" title="Model" control={<Input aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)} autoComplete="off" spellCheck={false} className={input} />}>
+        <Row className="p-0 sm:p-0" title="Address" control={<Input aria-label="Address" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://localhost:11434" required autoComplete="off" spellCheck={false} className={input} />} />
+        <Row className="p-0 sm:p-0" title="Model" control={<Input aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)} required autoComplete="off" spellCheck={false} className={input} />}>
           {listed.length > 0 && (
             <div data-local-models className="flex max-h-44 flex-col gap-1.5 overflow-y-auto [scrollbar-gutter:stable]">
               {listed.map((m) => (

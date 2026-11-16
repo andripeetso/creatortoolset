@@ -1,8 +1,9 @@
-import { Children, useEffect, useRef, useState, type ReactNode } from "react";
+import { Children, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { PageTitleContext } from "./page-action";
 import type { SearchRowId } from "./search";
 
 /*
@@ -13,14 +14,19 @@ import type { SearchRowId } from "./search";
 /**
  * A section: `h2 text-base font-semibold`, an optional action on the right of the title (e.g. a `size="xs"` button "+ Add
  * computer"), then its cards or rows. Never text under the title. `id` lets a search result land on the section.
+ * The page's header already prints the page's name ("Settings › Folders"), so a section named the same prints no title;
+ * its action stays at the right. Outside the Settings frame (a static render) the title is always printed.
  */
 export function Section({ id, title, action, children, className }: { id?: SearchRowId; title: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
+  const named = title !== useContext(PageTitleContext);
   return (
     <section data-settings-row={id} className={cn("space-y-2.5", className)}>
-      <div className="flex min-h-7 items-center justify-between gap-4 px-0.5">
-        <h2 className="text-base font-semibold text-foreground">{title}</h2>
-        {action && <div className="flex shrink-0 items-center">{action}</div>}
-      </div>
+      {(named || action) && (
+        <div className={cn("flex min-h-7 items-center gap-4 px-0.5", named ? "justify-between" : "justify-end")}>
+          {named && <h2 className="text-base font-semibold text-foreground">{title}</h2>}
+          {action && <div className="flex shrink-0 items-center">{action}</div>}
+        </div>
+      )}
       {children}
     </section>
   );
