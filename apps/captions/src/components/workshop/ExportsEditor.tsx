@@ -64,7 +64,7 @@ export function ExportsEditor({ onSaved }: { onSaved?: () => void }) {
         e.id === BUILTIN_ID ? (
           <Card key={e.id} className="px-3 py-3 text-sm">
             <span className="font-medium">{e.name}</span>
-            <span className="ml-2 text-xs text-muted-foreground">Built in: downloads the note the way it always has.</span>
+            <span className="ml-2 text-xs text-muted-foreground">Built in: downloads the note</span>
           </Card>
         ) : (
           <Card key={e.id} className="space-y-3 p-3">
@@ -74,7 +74,7 @@ export function ExportsEditor({ onSaved }: { onSaved?: () => void }) {
               </Field>
               <Field label="Target">
                 <select value={e.target} onChange={(ev) => edit(i, { target: ev.target.value as WorkshopExport["target"] })} className={selectCls} aria-label="Target">
-                  <option value="plugin">Obsidian plugin (writes into the vault)</option>
+                  <option value="plugin">Obsidian plugin</option>
                   <option value="download">Download</option>
                 </select>
               </Field>
@@ -83,14 +83,14 @@ export function ExportsEditor({ onSaved }: { onSaved?: () => void }) {
               </Button>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Field label="Folder" hint="In the vault. Empty writes to the vault root.">
-                <Input value={e.folder} onChange={(ev) => edit(i, { folder: ev.target.value })} placeholder="e.g. Scripts" aria-label="Folder" className="h-8 text-xs" />
+              <Field label="Folder" hint="In the vault; empty is the vault root.">
+                <Input value={e.folder} onChange={(ev) => edit(i, { folder: ev.target.value })} aria-label="Folder" className="h-8 text-xs" />
               </Field>
               <Field label="File name" hint={`Placeholders: ${PLACEHOLDERS}`}>
                 <Input value={e.filename} onChange={(ev) => edit(i, { filename: ev.target.value })} placeholder="{{title}}.md" aria-label="File name" className="h-8 font-mono text-xs" />
               </Field>
             </div>
-            <Field label="Template" hint="The note's body. The same placeholders as the file name.">
+            <Field label="Template" hint="The note's body, with the same placeholders as the file name.">
               <Textarea value={e.template} onChange={(ev) => edit(i, { template: ev.target.value })} rows={8} aria-label="Template" className="font-mono text-xs" />
             </Field>
           </Card>
@@ -98,10 +98,10 @@ export function ExportsEditor({ onSaved }: { onSaved?: () => void }) {
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setList([...list, newExport()])}>
-          <Plus /> Add export
+          <Plus /> New export
         </Button>
         <Button size="sm" onClick={() => void save()}>
-          Save exports
+          Save
         </Button>
         {saved && <span className="text-xs text-muted-foreground">Saved</span>}
       </div>

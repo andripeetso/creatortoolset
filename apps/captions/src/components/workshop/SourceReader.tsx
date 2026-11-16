@@ -168,7 +168,7 @@ export function SourceReader({
           <span className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-200">Format</span>
         ) : null}
         {onOpenCreator ? (
-          <button type="button" onClick={onOpenCreator} className="font-medium text-zinc-200 hover:text-violet-300 hover:underline" title={`Open @${post.creator.username} in the Analyzer: pull more of their posts`}>
+          <button type="button" onClick={onOpenCreator} className="font-medium text-zinc-200 hover:text-violet-300 hover:underline" title={`Open @${post.creator.username} in Content Analyzer`}>
             @{post.creator.username}
           </button>
         ) : (
@@ -183,15 +183,15 @@ export function SourceReader({
               onClick={onTag}
               disabled={tagged}
               className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium ${tagged ? "border-violet-500/40 bg-violet-500/10 text-violet-200" : "border-zinc-700 text-zinc-200 hover:bg-zinc-800"}`}
-              title="Add this whole video to your next chat message: the AI reads its transcript and caption"
+              title="Adds the whole video to the next chat message, with its transcript and post description"
             >
               {tagged ? <Check className="h-3 w-3" /> : <AtSign className="h-3 w-3" />} {tagged ? "Tagged in chat" : "Tag in chat"}
             </button>
           ) : null}
           {onAudit ? <AuditButton available={researchAvailable ?? false} busy={auditBusy ?? false} onAudit={onAudit} /> : null}
           {analyzerHref ? (
-            <Link to={analyzerHref} className="flex items-center gap-1 text-zinc-500 hover:text-zinc-200" title="Open this post in the Content Analyzer: transcript, on-screen text, comments and every other action">
-              <BarChart3 className="h-3 w-3" /> Analyzer
+            <Link to={analyzerHref} className="flex items-center gap-1 text-zinc-500 hover:text-zinc-200" title="Open in Content Analyzer">
+              <BarChart3 className="h-3 w-3" /> Content Analyzer
             </Link>
           ) : null}
           <a href={post.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-zinc-500 hover:text-zinc-200">
@@ -208,7 +208,7 @@ export function SourceReader({
           {readError ? <p className="mt-2 text-[11px] text-red-300">{readError}</p> : null}
           {post.caption.trim() ? (
             <div className="mt-4">
-              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Caption</p>
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Post description</p>
               <p data-ctx={JSON.stringify({ postId: post.id, handle: post.creator.username, field: "caption" })} className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
                 {post.caption.trim()}
               </p>

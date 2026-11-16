@@ -56,34 +56,34 @@ export function FrameworkForm({
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <label className="text-[11px] text-zinc-400">
           Name
-          <input autoFocus value={f.name} onChange={set("name")} placeholder="Myth – Truth – Proof" className={`${input} mt-1`} />
+          <input autoFocus value={f.name} onChange={set("name")} className={`${input} mt-1`} />
         </label>
         <label className="text-[11px] text-zinc-400">
           Role
           <select value={f.role} onChange={set("role")} className={`${input} mt-1`}>
             {FRAMEWORK_ROLES.map((r) => (
               <option key={r.id} value={r.id} title={r.hint}>
-                {r.label} — {r.hint}
+                {r.label}
               </option>
             ))}
           </select>
         </label>
       </div>
       <label className="text-[11px] text-zinc-400">
-        How it works (one line)
-        <textarea value={f.summary} onChange={set("summary")} rows={2} placeholder="Take a belief the audience holds, overturn it, back the new view with evidence." className={`${input} mt-1`} />
+        Summary
+        <textarea value={f.summary} onChange={set("summary")} rows={2} className={`${input} mt-1`} />
       </label>
       <label className="text-[11px] text-zinc-400">
         Steps, one per line ({stepCount})
-        <textarea value={f.steps} onChange={set("steps")} rows={6} placeholder={"State the common belief\nWhy it is wrong\nWhat is actually true\nProof\nWhat to do instead"} className={`${input} mt-1 font-mono text-[13px]`} />
+        <textarea value={f.steps} onChange={set("steps")} rows={6} className={`${input} mt-1 font-mono text-[13px]`} />
       </label>
       <label className="text-[11px] text-zinc-400">
-        Works best for
-        <textarea value={f.whenToUse} onChange={set("whenToUse")} rows={2} placeholder="Contrarian and educational angles; comment-heavy topics." className={`${input} mt-1`} />
+        Best for
+        <textarea value={f.whenToUse} onChange={set("whenToUse")} rows={2} className={`${input} mt-1`} />
       </label>
       <label className="text-[11px] text-zinc-400">
         Pairs with
-        <input value={f.pairsWith} onChange={set("pairsWith")} placeholder="Backwards Reveal, I Was Wrong" className={`${input} mt-1`} />
+        <input value={f.pairsWith} onChange={set("pairsWith")} className={`${input} mt-1`} />
       </label>
       <label className="text-[11px] text-zinc-400">
         Example (optional)

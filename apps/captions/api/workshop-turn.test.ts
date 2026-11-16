@@ -178,7 +178,7 @@ describe("a turn's edits", () => {
 
     expect(done.status).toBe("done");
     expect(done.text).toBe("Rewrote the second slide.");
-    expect(done.notes).toContain("Left slide 1 as you locked it.");
+    expect(done.notes).toContain("Locked and not changed: slide 1.");
     expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["Hook for the piece", "Changed second slide"]);
     expect(done.edits?.blockIds).toEqual(["b2"]);
     expect(done.edits?.versionAfter).toBeTruthy();
@@ -481,11 +481,11 @@ describe("attached library clips the caller can't see", () => {
 
     const clip = await send(id, docId, "", { library: [{ assetId: "ast-bo-0001", versionId: "v-bo-0001" }] });
     expect(clip.status).toBe(404);
-    expect(clip.body.error).toBe("A library clip is gone, or not in your library");
+    expect(clip.body.error).toBe("A Media Library clip was not found");
 
     const external = await send(id, docId, "", { library: [{ refId: "ext_0123456789abcdef" }] });
     expect(external.status).toBe(404);
-    expect(external.body.error).toBe("A library clip is gone, or not in your library");
+    expect(external.body.error).toBe("A Media Library clip was not found");
     expect(mocked).not.toHaveBeenCalled(); // refused before any model call
   });
 });
