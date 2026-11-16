@@ -39,7 +39,7 @@ export interface StepInfo {
  */
 export interface StepRow extends StepInfo {
   state: "add" | "off" | "on" | "loaded";
-  /** its folder name in the plug-ins folder (add, off and loaded), for the Mac app's switch */
+  /** its folder name in the plug-ins folder (add, off, and on or loaded when it came from there), for the Mac app's switch */
   folder?: string;
   /** the Home tool it adds to, as its plugin.ts says (add, off and loaded; a HomeTile id, contracts/tools.ts): Community's heading */
   kind?: string;

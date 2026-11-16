@@ -1,11 +1,11 @@
 import { Link } from "react-router";
 import type { CatalogEntry, UpdateRow } from "@contracts/pack-catalog";
-import { compareVersions, type InstalledPack } from "@contracts/packs";
+import type { InstalledPack } from "@contracts/packs";
 import { Card, EmptyRow, ListRow, Section } from "@/components/settings/ui";
 import type { HomeTile } from "@contracts/tools";
 import { PACK_KINDS, firstSentence, kindsFor, packKinds, reachesTool, type KindId } from "./packs-helpers";
 import { OfficialBadge } from "./PacksShared";
-import { InstallButton, PackUpdateButton } from "./PackActions";
+import { InstallButton, InstalledPackActions } from "./PackActions";
 
 export interface CatalogProps {
   entries: CatalogEntry[];
@@ -73,11 +73,10 @@ function PackList({ entries, installed, updates, reload, empty, tool }: Omit<Cat
   );
 }
 
-/** A pack in Discover: the same row as in Installed, with Install (or Installed, or Update) where the switch would be. */
+/** A pack in Discover: the same row as in Installed (update, On, `…` Remove), or Install before it is installed. */
 function CatalogRow({ entry, installed, latest, reload, tool }: { entry: CatalogEntry; installed?: InstalledPack; latest?: string | null; reload: () => Promise<void>; tool?: HomeTile }) {
   // in a tool's section, what kind of thing it adds there: "Writing frameworks, Writing guides · by Tiny"
   const kinds = tool ? kindsFor(entry.contains, tool).map((k) => k.label).join(", ") : "";
-  const updatable = !!installed && !!latest && compareVersions(latest, installed.version) > 0;
   return (
     <ListRow
       title={
@@ -90,17 +89,7 @@ function CatalogRow({ entry, installed, latest, reload, tool }: { entry: Catalog
       }
       subtitle={kinds ? `${kinds} · by ${entry.author}` : `by ${entry.author}`}
       status={firstSentence(entry.description)}
-      actions={
-        installed ? (
-          updatable ? (
-            <PackUpdateButton id={entry.id} installed={installed} latest={latest} reload={reload} />
-          ) : (
-            <span className="px-2 text-xs text-muted-foreground">Installed</span>
-          )
-        ) : (
-          <InstallButton id={entry.id} reload={reload} />
-        )
-      }
+      actions={installed ? <InstalledPackActions id={entry.id} name={entry.name} installed={installed} latest={latest} reload={reload} /> : <InstallButton id={entry.id} reload={reload} />}
     />
   );
 }
