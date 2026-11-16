@@ -429,10 +429,7 @@ extension UploadEngine {
             }
             guard let sha = store.item(id)?.sha256 else { return }
             if try await catalog.known([sha]).contains(sha) { return landed(id, duplicate: true) }
-            store.update(id) {
-                $0.state = .sending
-                $0.note = nil
-            }
+            guard store.move(id, to: .sending, { $0.note = nil }) else { return }
             try await catalogBegin(id, catalog)
         } catch {
             catalogHandle(error, id)
@@ -452,13 +449,13 @@ extension UploadEngine {
                     send.relay = RelaySession(ingestId: mint.ingestId, videoId: mint.videoId, libraryId: mint.libraryId,
                                               signature: mint.signature, expiresAt: mint.expiresAt, uploadURL: url)
                     send.ingestId = mint.ingestId
-                    store.update(id) {
+                    let moved = store.move(id, to: .sending) {
                         $0.catalog = send
-                        $0.state = .sending
                         $0.sent = 0
                         $0.note = nil
                     }
-                    return startRelayPatch(id, from: 0)
+                    if moved { startRelayPatch(id, from: 0) }
+                    return
                 } catch let error as APIError where !error.transient {
                     send.direct = true
                 }
@@ -470,13 +467,12 @@ extension UploadEngine {
         send.ingestId = made.ingestId
         send.chunkSize = made.chunkSize
         send.direct = true
-        store.update(id) {
+        let moved = store.move(id, to: .sending) {
             $0.catalog = send
-            $0.state = .sending
             $0.sent = made.offset
             $0.note = nil
         }
-        startCatalogPatch(id, from: made.offset)
+        if moved { startCatalogPatch(id, from: made.offset) }
     }
 
     /// A clip on its way with no transfer running: ask where it stands and carry on from there.
@@ -484,10 +480,7 @@ extension UploadEngine {
         guard let item = store.item(id) else { return }
         guard let api = api(for: item) else { return fail(id, "Its server was removed") }
         guard FileManager.default.fileExists(atPath: AppFiles.upload(id).path), item.sha256 != nil else {
-            store.update(id) {
-                $0.state = .preparing
-                $0.catalog = nil
-            }
+            guard store.move(id, to: .preparing, { $0.catalog = nil }) else { return }
             return await prepare(id)
         }
         let catalog = CatalogAPI(api: api)
@@ -501,10 +494,10 @@ extension UploadEngine {
                     switch status.state {
                     case .complete, .duplicate: return acceptServerCopy(id, sha: status.sha256, duplicate: status.state == .duplicate)
                     case .receiving:
-                        return store.update(id) {
-                            $0.state = .confirming
+                        store.move(id, to: .confirming) {
                             if $0.catalog?.sentAt == nil { $0.catalog?.sentAt = Date() }
                         }
+                        return
                     case .failed, .missing: return sendDirectly(id, "The library couldn't fetch it from the fast route: sending it directly")
                     case .unknown: break
                     }
@@ -541,11 +534,7 @@ extension UploadEngine {
         request.setValue("application/offset+octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(String(offset), forHTTPHeaderField: "Upload-Offset")
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        store.update(id) {
-            $0.state = .sending
-            $0.sent = offset
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
     private func startRelayComplete(_ id: UUID) {
@@ -556,11 +545,7 @@ extension UploadEngine {
                                        contents: try? JSONSerialization.data(withJSONObject: ["video_id": relay.videoId]))
         var request = CatalogAPI(api: api).request("api/uploads/relay/\(relay.ingestId)/complete", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        store.update(id) {
-            $0.state = .finishing
-            $0.sent = $0.size
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .finishing) { $0.sent = $0.size }
     }
 
     private func startCatalogPatch(_ id: UUID, from offset: Int64) {
@@ -577,11 +562,7 @@ extension UploadEngine {
         request.setValue("application/offset+octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(String(offset), forHTTPHeaderField: "Upload-Offset")
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        store.update(id) {
-            $0.state = .sending
-            $0.sent = offset
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
     private func startCatalogComplete(_ id: UUID) {
@@ -589,12 +570,10 @@ extension UploadEngine {
         let step = TransferStep(itemId: id, kind: .catalogComplete)
         let body = AppFiles.slice(step)
         FileManager.default.createFile(atPath: body.path, contents: Data())
-        store.update(id) {
-            $0.state = .finishing
+        start(CatalogAPI(api: api).request("api/uploads/\(ingest)/complete", method: "POST"), file: body, step: step, as: .finishing) {
             $0.sent = $0.size
             $0.note = "Finishing…"
         }
-        transfers.start(CatalogAPI(api: api).request("api/uploads/\(ingest)/complete", method: "POST"), file: body, step: step)
     }
 
     // MARK: Answers
@@ -620,8 +599,7 @@ extension UploadEngine {
         case .complete:
             relay ? startRelayComplete(id) : startCatalogComplete(id)
         case .confirm:
-            store.update(id) {
-                $0.state = .confirming
+            store.move(id, to: .confirming) {
                 $0.catalog?.sentAt = Date()
                 $0.attempts = 0
                 $0.note = nil
@@ -654,8 +632,7 @@ extension UploadEngine {
     }
 
     private func catalogStartOver(_ id: UUID) {
-        store.update(id) {
-            $0.state = .preparing
+        store.move(id, to: .preparing) {
             $0.catalog = nil
             $0.sent = 0
         }
@@ -669,14 +646,13 @@ extension UploadEngine {
             guard send.relay != nil else { return fail(id, "The server kept losing this upload (\(why))") }
             return sendDirectly(id, why)
         }
-        store.update(id) {
+        store.move(id, to: .sending) {
             $0.catalog = send
             $0.catalog?.restarts += 1
             $0.catalog?.relay = nil
             $0.catalog?.ingestId = nil
             $0.sent = 0
             $0.note = why
-            $0.state = .sending
         }
         kick()
     }
@@ -687,8 +663,7 @@ extension UploadEngine {
         if send.direct && send.relay == nil && send.restarts >= CatalogRules.maxRestarts {
             return fail(id, "The server kept losing this upload (\(why))")
         }
-        store.update(id) {
-            $0.state = .sending
+        store.move(id, to: .sending) {
             $0.catalog?.direct = true
             $0.catalog?.restarts = send.direct ? send.restarts + 1 : 0
             $0.catalog?.relay = nil

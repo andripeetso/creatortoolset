@@ -53,8 +53,7 @@ final class UploadEngine: ObservableObject {
 
     /// One clip again from the start of its way: the copy on the phone, then the server's own count.
     func retry(_ id: UUID) {
-        store.update(id) {
-            $0.state = .preparing
+        store.move(id, to: .preparing) {
             $0.attempts = 0
             $0.nextAttemptAt = nil
             $0.note = nil
@@ -88,8 +87,7 @@ final class UploadEngine: ObservableObject {
     /// Then their bytes, through the background session.
     func send(_ ids: [UUID]) {
         for id in ids {
-            store.update(id) {
-                $0.state = .sending
+            store.move(id, to: .sending) {
                 $0.attempts = 0
                 $0.nextAttemptAt = nil
                 $0.note = nil
@@ -102,11 +100,10 @@ final class UploadEngine: ObservableObject {
     func restart(_ ids: [UUID]) async {
         for id in ids {
             await transfers.cancel(itemId: id)
-            store.update(id) {
+            store.move(id, to: .picked) {
                 $0.uploadId = nil
                 $0.direct = nil
                 $0.sent = 0
-                $0.state = .picked
                 $0.duplicate = false
                 $0.attempts = 0
                 $0.nextAttemptAt = nil
@@ -190,10 +187,7 @@ final class UploadEngine: ObservableObject {
             guard let fresh = store.item(id) else { return }
             item = fresh
             if item.route == .catalog { return await catalogPrepare(id, api) }
-            store.update(id) {
-                $0.state = .sending
-                $0.note = nil
-            }
+            guard store.move(id, to: .sending, { $0.note = nil }) else { return }
             await resume(id)
         } catch APIError.signedOut {
             perform(.signedOut, id)
@@ -373,11 +367,7 @@ final class UploadEngine: ObservableObject {
         request.setValue("application/offset+octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(String(offset), forHTTPHeaderField: "Upload-Offset")
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        store.update(id) {
-            $0.state = .sending
-            $0.sent = offset
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
     /// A part straight to the bucket's signed URL: no cookie and no other header goes with it.
@@ -394,11 +384,7 @@ final class UploadEngine: ObservableObject {
         var request = URLRequest(url: direct.urls[n - 1])
         request.httpMethod = "PUT"
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        store.update(id) {
-            $0.state = .sending
-            $0.sent = offset
-        }
-        transfers.start(request, file: body, step: step)
+        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
     }
 
     private func startFinish(_ id: UUID) {
@@ -410,12 +396,21 @@ final class UploadEngine: ObservableObject {
         FileManager.default.createFile(atPath: body.path, contents: json)
         var request = api.request("/api/library/uploads/\(uploadId)/finish", method: "POST")
         if !json.isEmpty { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        store.update(id) {
-            $0.state = .finishing
+        start(request, file: body, step: step, as: .finishing) {
             $0.sent = $0.size
             $0.note = "Finishing…"
         }
-        transfers.start(request, file: body, step: step)
+    }
+
+    /// A request on its way: its upload moves to `state`, then the background session sends it. Nothing is sent for
+    /// an upload that stopped meanwhile (it is in the library, failed, or was sent again from the start).
+    func start(_ request: URLRequest, file: URL, step: TransferStep, as state: UploadItem.State,
+               _ change: (inout UploadItem) -> Void) {
+        guard store.move(step.itemId, to: state, change) else {
+            try? FileManager.default.removeItem(at: AppFiles.slice(step))
+            return
+        }
+        transfers.start(request, file: file, step: step)
     }
 
     // MARK: Answers
@@ -467,11 +462,10 @@ final class UploadEngine: ObservableObject {
             if store.item(id)?.edit != nil { return fail(id, why) }
             let attempts = (store.item(id)?.attempts ?? 0) + 1
             if attempts > 5 { return fail(id, why) }
-            store.update(id) {
+            store.move(id, to: .sending) {
                 $0.uploadId = nil
                 $0.direct = nil
                 $0.sent = 0
-                $0.state = .sending
                 $0.attempts = attempts
                 $0.note = why
             }
@@ -494,8 +488,7 @@ final class UploadEngine: ObservableObject {
     /// In the library. A New edit's copy stays until its edit has started (Try again sends it once more); any other
     /// copy is deleted, and its camera-roll clip carries the green check from now on.
     func landed(_ id: UUID, duplicate: Bool) {
-        store.update(id) {
-            $0.state = .done
+        let moved = store.move(id, to: .done) {
             $0.duplicate = duplicate
             $0.sent = $0.size
             $0.note = nil
@@ -503,17 +496,15 @@ final class UploadEngine: ObservableObject {
             $0.finishedAt = Date()
             $0.catalog = nil
         }
-        guard let item = store.item(id), item.edit == nil else { return }
+        // (an upload that failed or waits to be sent again keeps its copy on the phone)
+        guard moved, let item = store.item(id), item.edit == nil else { return }
         try? FileManager.default.removeItem(at: AppFiles.upload(id))
         AppFiles.removeSlices(of: id)
         if let asset = item.assetId { LibraryIndex.shared.markInLibrary([asset], server: item.server) }
     }
 
     func fail(_ id: UUID, _ why: String) {
-        store.update(id) {
-            $0.state = .failed
-            $0.note = why
-        }
+        store.move(id, to: .failed) { $0.note = why }
     }
 }
 
