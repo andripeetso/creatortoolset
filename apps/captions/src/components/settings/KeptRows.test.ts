@@ -10,6 +10,10 @@ describe("Settings → Storage, what is kept", () => {
     expect(q.danger).toBe(true);
     expect(q.deleting).toBeUndefined(); // `deleting` lets a setting skip the question: not for this one
     expect(emptyQuestion({ kind: "review-trash", bytes: 3_500_000_000, items: 1 }).title).toBe("Delete 1 deleted Review video?");
+    // the sheets a Mac keeps for shot descriptions: counted by clip, and the lines stay
+    const sheets = emptyQuestion({ kind: "look-sheets", bytes: 12_000_000, items: 30 });
+    expect(sheets.title).toBe("Delete the shot description sheets of 30 clips?");
+    expect(sheets.body).toBe("12 MB. The shot descriptions stay. A clip described again reads its video on the Mac again. This cannot be undone.");
   });
 
   it("lists the kinds that hold something, the biggest first, and says each one's share", () => {
