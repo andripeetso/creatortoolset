@@ -324,7 +324,7 @@ describe("a Caption Studio project exported from the chat, with the captions bur
     await again.end();
     const before = (await viewOf(cookie)).messages.length;
     expect((await app.request(`/api/exports/${stopped.export}`, { method: "DELETE", headers: { cookie } })).status).toBe(200);
-    await until(async () => expect(await cardOf(stopped.export)).toMatchObject({ status: "failed", detail: "Stopped" }));
+    await until(async () => expect(await cardOf(stopped.export)).toMatchObject({ status: "stopped", detail: "Stopped" }));
     letGo();
     expect((await viewOf(cookie)).messages).toHaveLength(before);
   }, LONG);

@@ -175,6 +175,16 @@ const children = new Map<string, ReturnType<typeof spawn>>();
 const writeQ = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Set<BlockKind>>();
 
+// a note's card runs while it is made (assistant.ts sweepWork); readMeta resumes one a restart cut off, as a page read does
+void import("./assistant").then(({ checkWork }) => checkWork("notes", async (id) => {
+  const noteId = id.slice("notes:".length);
+  const meta = active.has(noteId) ? null : await readMeta(noteId);
+  if (active.has(noteId)) return null;
+  if (!meta) return { status: "stopped", detail: "Deleted" };
+  if (meta.status === "ready") return { status: "done", detail: "Ready" };
+  return meta.status === "error" ? { status: "failed", detail: (meta.error ?? "").trim().split("\n").at(-1)!.slice(0, 160) } : { status: "stopped", detail: "Stopped" };
+}));
+
 /** This account's notes being made and sections being written, for Home (api/activity.ts); with `keep`, one workspace's. */
 export async function notesWork(username: string, keep?: ((own?: string) => boolean) | null) {
   const mine = (m: Meta | null) => m?.owner === username && (!keep || keep(m.projectId));

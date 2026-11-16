@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { Check, Link2, Loader2, X } from "lucide-react";
+import { Check, CircleStop, Link2, Loader2, X } from "lucide-react";
 import type { AssistantWork } from "@contracts/assistant";
 import { cn } from "@/lib/utils";
 import { WORK_ICONS } from "./work-icons";
@@ -48,6 +48,7 @@ export function WorkCards({ work, className }: { work?: AssistantWork[]; classNa
 function Status({ status }: { status: AssistantWork["status"] }) {
   if (status === "running") return <Loader2 className="size-4 shrink-0 text-[var(--tint)] motion-safe:animate-spin" aria-label="Running" />;
   if (status === "failed") return <X className="size-4 shrink-0 text-destructive" aria-label="Failed" />;
+  if (status === "stopped") return <CircleStop className="size-4 shrink-0 text-muted-foreground" aria-label="Stopped" />;
   return <Check className="size-4 shrink-0 text-emerald-500" aria-label="Done" />;
 }
 

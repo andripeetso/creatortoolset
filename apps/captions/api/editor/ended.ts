@@ -64,5 +64,17 @@ export function runEnded(job: JobRow): void {
 /** Stop (the person's own press, or the edit going to the trash): the edit's cards end, and nothing is said. */
 export function editStopped(editId: string): void {
   const edit = readEdit(editId);
-  if (edit) workEnded(edit.createdBy, `edit:${editId}`, { status: "failed", detail: "Stopped" });
+  if (edit) workEnded(edit.createdBy, `edit:${editId}`, { status: "stopped", detail: "Stopped" });
 }
+
+// an edit's cards run while a step of it is queued or running (assistant.ts sweepWork). An edit this store doesn't
+// have is another editor's (a plug-in's own AI Editor answers for its edits).
+void import("../assistant").then(({ checkWork }) => checkWork("edit", (id) => {
+  const edit = readEdit(id.split(":")[1] ?? "");
+  if (!edit) return undefined;
+  const rows = libraryDb().prepare("SELECT id, version_id, kind, state, error FROM edit_jobs WHERE edit_id = ?").all(edit.id) as unknown as Row[];
+  if (rows.some((r) => r.state === "queued" || r.state === "running")) return null;
+  if (rows.some((r) => r.error === "Stopped")) return { status: "stopped", detail: "Stopped" };
+  const failed = rows.find(bad);
+  return failed ? { status: "failed", detail: (failed.error ?? "failed").replace(/\s+/g, " ").trim().slice(0, 200) } : { status: "done", detail: "Done" };
+}));
