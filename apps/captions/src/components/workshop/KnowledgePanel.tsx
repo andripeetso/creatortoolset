@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useCachedList } from "@/lib/local-cache";
-import { ChevronDown, ChevronRight, ExternalLink, Folder, FolderUp, Loader2, RotateCw, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, FolderUp, Loader2, RotateCw, Upload } from "lucide-react";
 import { CONTEXT_CAPACITY_CHARS } from "@contracts/knowledge";
 import { droppedFiles } from "../assistant/draft";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
@@ -19,24 +19,12 @@ import {
   readSourceAgain,
   sourceTextUrl,
   type KnowledgeSource,
-  type SourceKind,
-  type SourceSection,
 } from "@/lib/workshop";
 
 const ACCEPT = ".md,.markdown,.txt,.text,.pdf,.docx,.odt,.epub,text/plain,text/markdown,application/pdf,video/*,audio/*";
 const SCAN_PAGES = 600; // the server's SOURCE_LIMITS.scanPages
 const field = "w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-100 outline-none focus:border-violet-500";
 const small = "flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50";
-
-const sectionLine = (s: SourceSection) => `L${s.from}-L${s.to} ${s.title}${s.about ? ` — ${s.about}` : ""}`;
-/** "L12-L80 Title — about" lines back into sections; a line that doesn't parse is dropped. */
-export function parseSectionLines(text: string): SourceSection[] {
-  return text
-    .split("\n")
-    .map((l) => /^\s*L?(\d+)\s*[-–]\s*L?(\d+)\s+(.+?)(?:\s+—\s+(.*))?\s*$/.exec(l))
-    .filter((m): m is RegExpExecArray => !!m)
-    .map((m) => ({ from: Number(m[1]), to: Number(m[2]), title: m[3]!.trim(), about: (m[4] ?? "").trim() }));
-}
 
 type SourceBody = { text: string } | { file: string } | { pages: string[] };
 
@@ -113,7 +101,6 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
     () => listSources(projectId),
   );
   const sources = projectId ? listed.filter((s) => s.projectId === projectId) : listed;
-  const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
@@ -248,11 +235,9 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
                   key={s.id}
                   s={s}
                   folder={folder}
-                  open={open === s.id}
                   here={projects.find((p) => p.id === here)}
                   own={!!projectId}
                   readOnly={readOnly}
-                  onToggle={() => setOpen(open === s.id ? null : s.id)}
                   onSave={(fields) => act(patchSource(s.id, fields).then(moved))}
                   onRead={() => void act(readSourceAgain(s.id).then(put))}
                   onDelete={() => act(deleteSource(s.id).then(() => setSources((l) => l.filter((x) => x.id !== s.id))))}
@@ -289,9 +274,7 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
 
 function SourceRow({
   s,
-  open,
   here,
-  onToggle,
   onSave,
   onRead,
   onDelete,
@@ -305,46 +288,23 @@ function SourceRow({
   folder?: string;
   /** in a workspace's own settings: no choice of workspaces */
   own?: boolean;
-  open: boolean;
   here: ReturnType<typeof useWorkspace.getState>["projects"][number] | undefined;
-  onToggle: () => void;
   onSave: (fields: Parameters<typeof patchSource>[1]) => Promise<unknown>;
   onRead: () => void;
   onDelete: () => Promise<unknown>;
   onProject: (projectId: string) => void;
-  /** Shows the source as text: no kind picker, workspace choice, reading, deleting or editing. */
+  /** Shows the source as text: no workspace choice, reading or deleting. */
   readOnly?: boolean;
 }) {
-  const [draft, setDraft] = useState({ title: s.title ?? "", about: s.about ?? "", uses: (s.uses ?? []).join("\n"), sections: (s.sections ?? []).map(sectionLine).join("\n") });
-  useEffect(() => {
-    setDraft({ title: s.title ?? "", about: s.about ?? "", uses: (s.uses ?? []).join("\n"), sections: (s.sections ?? []).map(sectionLine).join("\n") });
-  }, [s.title, s.about, s.uses, s.sections]);
-  const Chevron = open ? ChevronDown : ChevronRight;
-
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
       <div className="flex items-start gap-2">
-        <button type="button" onClick={onToggle} className="mt-0.5 text-zinc-500 hover:text-zinc-200" aria-label={open ? "Close" : "Open"}>
-          <Chevron className="h-3.5 w-3.5" />
-        </button>
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-x-2 text-sm text-zinc-100">
-            <button type="button" onClick={onToggle} className="truncate text-left">
-              {s.title || (folder ? s.name.slice(folder.length + 1) : s.name)}
-            </button>
-            {readOnly ? s.status === "read" && <span className="text-[10px] text-zinc-400">{SOURCE_KINDS.find((k) => k.id === s.kind)?.label ?? "Other"}</span> : s.status === "read" && <select
-              value={s.kind ?? ""}
-              onChange={(e) => void onSave({ kind: e.target.value as SourceKind })}
-              className="rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-300 outline-none"
-              aria-label="What it is"
-            >
-              {!s.kind && <option value="">Other</option>}
-              {SOURCE_KINDS.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.label}
-                </option>
-              ))}
-            </select>}
+            <a href={sourceTextUrl(s.id)} target="_blank" rel="noreferrer" title="The text it reads" className="truncate hover:underline">
+              {folder ? s.name.slice(folder.length + 1) : s.name}
+            </a>
+            {s.status === "read" && s.kind && <span className="text-[10px] text-zinc-400">{SOURCE_KINDS.find((k) => k.id === s.kind)?.label}</span>}
             <span className="text-[10px] text-zinc-600">{knowledgeSizeLabel(s.chars)}</span>
             {s.status === "reading" && (
               <span className="flex items-center gap-1 text-[10px] text-violet-300">
@@ -360,8 +320,7 @@ function SourceRow({
             )}
             {s.readCost !== undefined && <span className="text-[10px] text-zinc-600">read for ${s.readCost.toFixed(2)} API-equivalent</span>}
           </p>
-          {open && s.status === "failed" && s.error && <p className="mt-0.5 text-[11px] text-red-400/80">{s.error}</p>}
-          {s.about && !open && <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{s.about}</p>}
+          {s.about && <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{s.about}</p>}
           {!own && !readOnly && <div className="mt-1 flex flex-wrap items-center gap-1">
             <select
               value={s.projectId ?? ""}
@@ -402,50 +361,6 @@ function SourceRow({
           />
         </div>}
       </div>
-      {open && (
-        <form
-          className="mt-2 flex flex-col gap-2 border-t border-zinc-800 pt-2 text-[11px] text-zinc-400"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (readOnly) return;
-            void onSave({
-              title: draft.title,
-              about: draft.about,
-              uses: draft.uses.split("\n").map((u) => u.trim()).filter(Boolean),
-              sections: parseSectionLines(draft.sections),
-            });
-          }}
-        >
-          <p className="text-[10px] text-zinc-600">
-            {s.name} ·{" "}
-            <a href={sourceTextUrl(s.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-violet-400 hover:underline">
-              the text it reads <ExternalLink className="h-2.5 w-2.5" />
-            </a>
-            {s.readAt ? ` · filed ${new Date(s.readAt).toLocaleDateString()}` : ""}
-          </p>
-          <label>
-            Title
-            <input value={draft.title} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`${field} mt-0.5`} />
-          </label>
-          <label>
-            What it is
-            <textarea value={draft.about} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, about: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
-          </label>
-          <label>
-            What it answers (one per line)
-            <textarea value={draft.uses} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, uses: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
-          </label>
-          <label>
-            Its parts (L first-L last Title — what's in it)
-            <textarea value={draft.sections} readOnly={readOnly} onChange={(e) => setDraft({ ...draft, sections: e.target.value })} className={`${field} mt-0.5 min-h-16 font-mono text-[11px] [field-sizing:content]`} />
-          </label>
-          {!readOnly && <div className="flex justify-end">
-            <button type="submit" className={small}>
-              Save
-            </button>
-          </div>}
-        </form>
-      )}
     </div>
   );
 }
