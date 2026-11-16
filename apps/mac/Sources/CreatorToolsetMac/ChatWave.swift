@@ -25,7 +25,7 @@ private let waveLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Creator
 ///   answered true once it is up, false when there is no wave (the page then changes at once)
 /// - `"drawn"`: the page has changed under the picture; a picture of the new screen is taken. Answered when the wave is
 ///   over
-/// - `"stop"`: chat mode was switched again; the wave goes at once
+/// - `"stop"`: chat mode was switched again; the wave goes at once, and so does a press that has none up yet
 /// - `"ready"`: the pointer came onto the button; a picture of the screen is taken now, so a press shows the wave at
 ///   once (on a big window, a picture can take half a second: what a press would wait for)
 final class ChatWaveHost {
@@ -36,7 +36,7 @@ final class ChatWaveHost {
     /// The page is from before holding (it says nothing of `hold`): its own entrances still run after the switch.
     private var oldPage = false
     /// The sound of a held wave (WaveSound.swift); a click makes none.
-    private let sound = WaveSound()
+    let sound = WaveSound()
     /// The picture taken when the pointer came onto the button ("ready"), and who waits for one being taken (nil when
     /// none is).
     private var early: (picture: Picture, at: CFTimeInterval)?
@@ -77,6 +77,13 @@ final class ChatWaveHost {
             }
         case "stop":
             wave?.finish()
+            // a press whose picture is still being taken has no wave to end yet: the press itself is over. Its
+            // picture then makes none (the page has moved on and would never say "drawn"), and its sound ends
+            if switching, wave == nil {
+                presses += 1
+                sound.end()
+                switching = false
+            }
             reply(true, nil)
         case "ready":
             prepare()

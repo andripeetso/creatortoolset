@@ -187,6 +187,46 @@ final class ChatWaveTests: XCTestCase {
         XCTAssertEqual(waves(), 0, "stop ends the wave that is up")
     }
 
+    /// "stop" while the press's picture of the screen is still being taken: there was no wave to end, so the stop was
+    /// forgotten, and the wave then started over a page that had moved on and would never say "drawn".
+    @MainActor
+    func testAStopBeforeTheWaveIsUpEndsThePress() async throws {
+        let page = try await page()
+        let host = ChatWaveHost(page.view)
+        let waves = { page.view.subviews.filter { $0 is ChatWaveView }.count }
+        func press(hold: Bool, then: () -> Void = {}) async -> Bool {
+            var up = false
+            let answered = expectation(description: "the press answered")
+            host.handle(["start": ["x": 20.0, "y": 20.0, "hold": hold]]) { v, _ in
+                up = v as? Bool ?? false
+                answered.fulfill()
+            }
+            then()
+            await fulfillment(of: [answered], timeout: 10)
+            return up
+        }
+        // a press by itself makes a wave here: the one below would make one too, were its stop forgotten
+        guard await press(hold: false) else { throw XCTSkip("no picture of a page can be taken here") }
+        host.handle("stop") { _, _ in }
+        XCTAssertEqual(waves(), 0)
+
+        var stopped: Bool?
+        let up = await press(hold: true) {
+            XCTAssertTrue(host.sound.isOn, "a held press has its sound from the start")
+            host.handle("stop") { v, _ in stopped = v as? Bool }
+            XCTAssertEqual(stopped, true, "the stop is answered at once, as before")
+            XCTAssertFalse(host.sound.isOn, "the press's sound ends with it")
+        }
+        XCTAssertFalse(up, "the press's picture came after its stop: the page changes with no wave")
+        XCTAssertEqual(waves(), 0)
+
+        // the next press is a press like any other
+        guard await press(hold: false) else { return XCTFail("a press after a stopped one makes its wave") }
+        XCTAssertEqual(waves(), 1)
+        host.handle("stop") { _, _ in }
+        XCTAssertEqual(waves(), 0)
+    }
+
     /// "drawn" asked twice while one wave is up: the first answer was dropped for the second.
     @MainActor
     func testEveryDrawnIsAnsweredWhenTheWaveIsOver() async throws {
