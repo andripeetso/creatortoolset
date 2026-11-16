@@ -165,7 +165,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
   const folderShown = folders.some((f) => f.id === folder) ? folder : "";
   const animationShown = animations.some((a) => a.id === animation) ? animation : "";
   const skillShown = skill ?? (skills.some((s) => s.id === style?.skill) ? style!.skill! : "");
-  // the steps as an edit made now would get them: this style's, else the ones in use in Settings → Tools → AI Editor
+  // the steps as an edit made now would get them: this style's, else the ones in use in Settings → AI Editor
   const stepsShown = steps ?? style?.steps ?? rows.filter((r) => r.use).map((r) => ({ id: r.id, values: r.values }));
   const setStep = (row: StepRow, on: boolean, values?: Record<string, string>) => {
     const rest = stepsShown.filter((s) => s.id !== row.id);

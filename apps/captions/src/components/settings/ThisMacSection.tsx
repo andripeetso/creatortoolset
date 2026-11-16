@@ -27,7 +27,7 @@ export type ThisMacState = {
   device?: string | null;
   /** Settings → General → Dictation (apps/mac Dictation.swift `bridgeState`); missing in older Mac apps */
   dictation?: DictationState;
-  /** Settings → Tools → Screen Recorder (apps/mac RecordTypes.swift `RecordPrefs`): streams saved separately, the screen's longest side, the camera's height; missing in older Mac apps */
+  /** Settings → Screen Recorder (apps/mac RecordTypes.swift `RecordPrefs`): streams saved separately, the screen's longest side, the camera's height; missing in older Mac apps */
   recorder?: { keep: boolean; screen: number; camera: number; faces?: boolean };
   /** the Mac app's version (CFBundleShortVersionString); missing in older Mac apps */
   version?: string;

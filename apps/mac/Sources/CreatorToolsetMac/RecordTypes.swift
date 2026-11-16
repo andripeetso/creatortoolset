@@ -33,7 +33,7 @@ enum ShareDestination: String { case review, notes, guide }
 /// writer fed made-up frames in real time: with reordering between 2 of 24 and 12 of 16 takes failed, batch by
 /// batch (none of 54 under 8 s); without it none of 177 (10 to 21 s, also at 2826×2934, also with a screen that
 /// stands still).
-/// Settings → Tools → Screen Recorder, kept in UserDefaults: how sharp the screen and the camera are recorded, and
+/// Settings → Screen Recorder, kept in UserDefaults: how sharp the screen and the camera are recorded, and
 /// whether Save and Send hand the streams over as separate files too (the camera, each sound track), so an AI or
 /// another editor can work with each one. The page sets them with `thismac-recorder:<what>:<value>`.
 enum RecordPrefs {

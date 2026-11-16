@@ -3,7 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { Row, SettingsSelect, TextField } from "./ui";
 
 /**
- * One loaded AI Editor step on Settings → Tools → AI Editor: its switch for new edits and, while it is used, its own
+ * One loaded AI Editor step on Settings → AI Editor: its switch for new edits and, while it is used, its own
  * options. An edit keeps the steps it was made with.
  */
 export function StepRowView({ step: s, onChange }: { step: StepRow; onChange: (c: { use?: boolean; values?: Record<string, string> }) => unknown }) {
