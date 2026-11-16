@@ -15,7 +15,11 @@ export function updateLine(v: { behind: number; failed: boolean }): string {
  * Update now, and the hour it updates each night (in this person's own time zone, whatever the server's clock is). A server with no updater (This Mac, Creator Toolset Cloud) shows
  * nothing: the Mac app's own update brings its server, and the cloud is updated for everyone.
  */
-export function ServerUpdateSection() {
+/**
+ * This server's update, for an admin (`enabled`): null while loading, for a member, or with no updater on its machine.
+ * `ask` starts it; `busy` holds while it runs (its end comes from the machine, so the view looks again every 15 s).
+ */
+export function useServerUpdate(enabled = true) {
   const [view, setView] = useState<ServerUpdateView | null>(null);
   const [asking, setAsking] = useState(false);
   const load = useCallback(
@@ -25,7 +29,7 @@ export function ServerUpdateSection() {
         .then((v) => v && setView(v), () => {}),
     [],
   );
-  useEffect(() => void load(), [load]);
+  useEffect(() => void (enabled && load()), [enabled, load]);
   // Only while an update is running: its end comes from the machine, not from this page, so the row looks again.
   const running = !!view?.available && view.requested;
   useEffect(() => {
@@ -33,8 +37,6 @@ export function ServerUpdateSection() {
     const t = setInterval(() => void load(), 15_000);
     return () => clearInterval(t);
   }, [running, load]);
-  if (!view?.available) return null;
-
   const ask = () => {
     setAsking(true);
     fetch("/api/server-update/request", { method: "POST" })
@@ -46,7 +48,20 @@ export function ServerUpdateSection() {
       .catch((e) => saveFailed(e instanceof Error ? e.message : String(e)))
       .finally(() => setAsking(false));
   };
-  const busy = asking || view.requested;
+  const on = enabled && view?.available ? view : null;
+  return { view: on, ask, busy: asking || !!on?.requested };
+}
+
+/** Under a server's name (Settings → Servers) and in its Update row: the update's state, or nothing when it is up to date. */
+export function UpdateStatus({ view, busy }: { view: Extract<ServerUpdateView, { available: true }>; busy: boolean }) {
+  if (busy) return <Status>Updating</Status>;
+  if (view.behind === 0 && !view.failed) return null;
+  return <Status tone={view.failed ? "broken" : undefined}>{updateLine(view)}</Status>;
+}
+
+export function ServerUpdateSection() {
+  const { view, ask, busy } = useServerUpdate();
+  if (!view) return null;
   return (
     <Section title="Update">
       <Card>

@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, InUse } from "./ui";
 import { CopyBox } from "./copy-box";
 import { tell, useThisMac } from "./ThisMacSection";
+import { UpdateStatus, useServerUpdate } from "./ServerUpdateSection";
+import { useAuth } from "@/lib/auth";
 
 /** The server built into the Mac app (Servers.swift `thisMacID`). */
 const THIS_MAC = "this-mac";
@@ -30,6 +32,9 @@ export async function switchServer(v: { id: string; name: string }, open?: { nam
  */
 export function ServersSection() {
   const s = useThisMac(true);
+  // the window's own server, for its admin: what waits, and Update server in its row's menu (This Mac updates with the app)
+  const admin = useAuth((a) => a.me?.role === "admin");
+  const update = useServerUpdate(admin && !!s?.servers.some((v) => v.current && v.id !== THIS_MAC));
   const [params, setParams] = useSearchParams();
   const [late, setLate] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -89,6 +94,7 @@ export function ServersSection() {
                     {v.id !== THIS_MAC && <span className="ml-2 font-normal text-muted-foreground">{v.url}</span>}
                   </>
                 }
+                status={v.current && update.view ? <UpdateStatus view={update.view} busy={update.busy} /> : undefined}
                 actions={
                   <>
                     <End className="w-[4.5rem]">
@@ -107,6 +113,9 @@ export function ServersSection() {
                       <RowMenu
                         label={`${v.name} actions`}
                         items={[
+                          ...(v.current && update.view && update.view.behind > 0 && !update.busy
+                            ? [{ label: update.view.failed ? "Retry update" : "Update server", onSelect: update.ask }]
+                            : []),
                           {
                             label: "Rename",
                             onSelect: async () => {
