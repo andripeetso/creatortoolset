@@ -168,7 +168,7 @@ export function useChapters(session: ClipSession, owns: boolean, onChange: (s: C
     },
   };
 }
-const NO_CHAPTERS = "Couldn't make chapters.";
+const NO_CHAPTERS = "Could not make chapters";
 
 /** True while the chapters are being made (useChapters, for a page that only shows that). */
 export const useAutoChapters = (session: ClipSession, owns: boolean, onChange: (s: ClipSession) => void): boolean =>
@@ -489,8 +489,7 @@ export function ClipBlocks({
 
       {owns && hasTranscript && !canAi && (
         <p className="mb-3 text-[11px] text-muted-foreground">
-          Takeaways, action plan, and quotes need AI keys. Summary from
-          processing can still be added.
+          Takeaways, action plan and quotes need an AI provider.
         </p>
       )}
       {error && <p className="mb-3 text-[11px] text-red-400">{error}</p>}

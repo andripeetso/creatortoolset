@@ -64,7 +64,7 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
     return (
       <span
         className="flex items-center gap-1 text-violet-400"
-        title="The server is compressing the uploaded video into a small editing proxy — captions are not affected"
+        title="The server is making a small copy of the video for editing"
       >
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
         <span className="truncate">Preparing video</span>
@@ -78,7 +78,7 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
           e.stopPropagation();
           retryClipUpload(clip.id);
         }}
-        title={`${clip.uploadError || "Upload failed"} — click to retry`}
+        title={clip.uploadError || "Could not upload the source video"}
         className="flex items-center gap-1 text-amber-400 hover:text-amber-300"
       >
         <TriangleAlert className="h-3 w-3 shrink-0" /> Retry upload
@@ -98,10 +98,10 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
         {st.phase === "extracting"
           ? st.detail?.startsWith("Uploading")
-            ? "Uploading source"
+            ? "Uploading"
             : "Preparing audio"
           : st.phase === "loading"
-            ? "Getting ready"
+            ? "Loading model"
           : st.phase === "matching"
             ? "Matching"
             : st.phase === "checking"
@@ -113,14 +113,14 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
   if (st.phase === "error") {
     return (
       <span className="flex items-center gap-1 text-red-400" title={st.message}>
-        <TriangleAlert className="h-3 w-3 shrink-0" /> Failed
+        <TriangleAlert className="h-3 w-3 shrink-0" /> Transcription failed
       </span>
     );
   }
   if (clip.transcribed) {
     return (
       <span className="flex items-center gap-1 text-emerald-500">
-        <Check className="h-3 w-3 shrink-0" /> Captioned
+        <Check className="h-3 w-3 shrink-0" /> Transcribed
       </span>
     );
   }
@@ -292,7 +292,7 @@ export function ClipBar() {
         </span>
         {busy > 0 && (
           <span className="flex items-center gap-1 normal-case tracking-normal text-violet-400">
-            <Loader2 className="h-2.5 w-2.5 animate-spin" /> {busy} working
+            <Loader2 className="h-2.5 w-2.5 animate-spin" /> {busy} processing
           </span>
         )}
         {applyingMaster && (
@@ -359,12 +359,12 @@ export function ClipBar() {
             disabled={applyDisabled}
             title={
               pendingCount > 0
-                ? `Wait — ${pendingCount} clip${pendingCount > 1 ? "s are" : " is"} still transcribing or matching captions`
+                ? `${pendingCount} clip${pendingCount > 1 ? "s are" : " is"} still being transcribed`
                 : readyCount === 0
-                  ? "No captioned clips to apply to yet"
+                  ? "No transcribed clips"
                   : selectedCount > 0
-                    ? "Apply what you changed on the master (first) clip to the selected clips: its word fixes where they say the same words, its caption breaks where they share words. Their own wording stays."
-                    : "Apply what you changed on the master (first) clip to every transcribed clip: its word fixes where they say the same words, its caption breaks where they share words. Their own wording stays."
+                    ? "Applies the master clip's word corrections and caption breaks to the selected clips"
+                    : "Applies the master clip's word corrections and caption breaks to every transcribed clip"
             }
             className="flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-amber-300 transition-colors hover:border-amber-400 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -420,11 +420,11 @@ export function ClipBar() {
               onClick={(e) => onChipClick(clip, i, e)}
               title={
                 master
-                  ? `${clip.name} — master clip: its transcript & cadence are the reference for the pool`
+                  ? `${clip.name} · master clip`
                   : skipped
-                    ? `${clip.name} — skipped by apply-master: only ${Math.round(applyCov * 100)}% of its words match the master (different video?)`
+                    ? `${clip.name} · skipped: ${Math.round(applyCov * 100)}% of its words match the master clip`
                     : applyCov != null
-                      ? `${clip.name} — master applied: ${Math.round(applyCov * 100)}% match${masterApplyInserted?.[clip.id] ? `, ${masterApplyInserted[clip.id]} words added` : ""}${masterApplyCorrected?.[clip.id] ? `, ${masterApplyCorrected[clip.id]} words corrected` : ""}`
+                      ? `${clip.name} · master applied: ${Math.round(applyCov * 100)}% match${masterApplyInserted?.[clip.id] ? `, ${masterApplyInserted[clip.id]} words added` : ""}${masterApplyCorrected?.[clip.id] ? `, ${masterApplyCorrected[clip.id]} words corrected` : ""}`
                       : `${clip.name} — shift-click to select a range, ⌘-click to toggle`
               }
               className={`group flex w-auto min-w-44 max-w-80 shrink-0 cursor-pointer select-none items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
@@ -451,7 +451,7 @@ export function ClipBar() {
                 title={
                   isSelected
                     ? "Remove from selection"
-                    : "Select for apply-master (shift-click = range, ⌘-click = toggle)"
+                    : "Select for Apply master (shift-click = range, ⌘-click = toggle)"
                 }
                 className="relative h-3.5 w-3.5 shrink-0"
               >
@@ -558,7 +558,7 @@ export function ClipBar() {
           );
         })}
         <label
-          title="Add video files to the pool — or drop them anywhere on this bar"
+          title="Add videos to the project, or drop them on this bar"
           className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-dashed px-2.5 py-1.5 text-[11px] transition-colors ${
             fileDrag
               ? "border-violet-400 text-violet-300"

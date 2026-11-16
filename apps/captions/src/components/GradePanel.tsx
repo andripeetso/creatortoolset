@@ -194,31 +194,31 @@ export function GradePanel({ view, item, pending, video, edit: shotOf, look, onL
         <span className="font-medium">Color</span>
         <span className="mr-auto truncate text-zinc-400">{item.label.split(" · ")[0]}</span>
         <button className={cn(btn, bypass && "bg-amber-500/90 text-black hover:bg-amber-400")} onClick={() => setBypass((b) => !b)}
-          title="Bypass: the shot with no grade at all">Bypass</button>
-        <button className={btn} onClick={() => jump(full(item.grade))} title="Back to the grade this version has">Reset</button>
-        <button aria-label="Close colour" className="rounded p-1 text-zinc-400 hover:bg-zinc-800" onClick={onClose}><X className="h-3.5 w-3.5" /></button>
+          title="The shot with no grade">Bypass</button>
+        <button className={btn} onClick={() => jump(full(item.grade))} title="The grade this version has">Reset</button>
+        <button aria-label="Close color" className="rounded p-1 text-zinc-400 hover:bg-zinc-800" onClick={onClose}><X className="h-3.5 w-3.5" /></button>
       </div>
       {ref && (
         <div className="flex flex-wrap items-center gap-1">
-          <label className="flex items-center gap-1 text-zinc-300" title="Paused on this shot, grade the frame from the camera original (10-bit, superwhites), not the preview">
+          <label className="flex items-center gap-1 text-zinc-300" title="Grades the paused frame from the camera original instead of the preview">
             <input type="checkbox" checked={hq} onChange={(e) => setHq(e.target.checked)} className="accent-violet-500" /> Full-quality frame
           </label>
           <button className={btn} onClick={clip ? () => setClip(null) : playClip}
-            title="Play this shot from the camera original, graded live">
+            title="Plays this shot from the camera original with the grade">
             <Film className="mr-1 inline h-3 w-3" />{clip ? "Close clip" : "Full-quality clip"}
           </button>
           {clip?.error || typeof hqState === "object" ? (
             <span className="text-[11px] text-amber-400">
               {clip?.error ?? (hqState as { error: string }).error}: grading the proxy.{" "}
               <button className="underline hover:text-amber-300"
-                onClick={() => (clip?.error ? playClip() : (setFailed(null), setRetry((r) => r + 1)))}>Try again</button>
+                onClick={() => (clip?.error ? playClip() : (setFailed(null), setRetry((r) => r + 1)))}>Retry</button>
             </span>
           ) : (
             <span className="text-[11px] text-zinc-500">
-              {clip && !clip.url ? "the Mac is rendering the shot…"
-                : hqState === "loading" ? "the Mac is sending the frame…"
-                : hq && !pos.paused ? "pause to grade the full-quality frame"
-                : hq && !inShot ? "the playhead isn't on this shot" : ""}
+              {clip && !clip.url ? "Rendering the shot…"
+                : hqState === "loading" ? "Loading the frame…"
+                : hq && !pos.paused ? "Needs the video paused"
+                : hq && !inShot ? "The playhead is not on this shot" : ""}
             </span>
           )}
         </div>
@@ -237,14 +237,14 @@ export function GradePanel({ view, item, pending, video, edit: shotOf, look, onL
       </div>
       <div className="flex flex-wrap gap-1">
         <button className={btn} disabled={!take.length} onClick={() => onApply([[item, edit(g)], ...take.map((x): [TimelineItem, Partial<ItemEdit>] => [x, edit(g, x)])])}
-          title="The same grade on every shot of this camera take (same light)">Copy to take ({take.length})</button>
+          title="Copies this grade to every shot of this camera take">Copy to take ({take.length})</button>
       </div>
       {ref && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-1">
             <span className="text-[11px] text-zinc-400">Gallery</span>
             <button className={cn(btn, "ml-auto")} disabled={!stillNow} onClick={grab}
-              title={stillNow ? "Keep this frame as graded now (in this browser)" : "Pause on the shot with Full-quality frame on first"}>
+              title={stillNow ? "Saves this frame as graded, in this browser" : "Needs a paused Full-quality frame"}>
               <Camera className="mr-1 inline h-3 w-3" />Grab still
             </button>
           </div>
@@ -266,11 +266,11 @@ export function GradePanel({ view, item, pending, video, edit: shotOf, look, onL
               ))}
             </div>
           )}
-          {cmp && !stillNow && <p className="text-[11px] text-amber-400">The wipe shows on the full-quality frame: pause on the shot.</p>}
+          {cmp && !stillNow && <p className="text-[11px] text-amber-400">The wipe needs a paused Full-quality frame</p>}
         </div>
       )}
       <p className="text-[10px] leading-snug text-zinc-500">
-        Double-click a wheel, ring or slider to reset it. Your grade goes with your next comment{ref ? "; the next version renders it" : ""}. The AI never grades on its own.
+        The grade is sent with the next comment{ref ? " and rendered in the next version" : ""}.
       </p>
       {stage && createPortal(
         <Stage still={clip ? null : stillNow} grade={shown} cmp={cmp} wipe={wipe} setWipe={setWipe}
@@ -296,13 +296,13 @@ function Loading({ what, onCancel }: { what: "frame" | "clip"; onCancel: () => v
       <div>
         <p className="text-base font-semibold">{what === "clip" ? "Loading the full-quality clip" : "Loading the full-quality frame"}</p>
         <p className="mt-1 text-xs text-zinc-300">
-          from the camera original on your Mac{secs >= 2 ? ` · ${secs} s` : ""}{secs >= 20 ? " (the footage drive is slow to wake)" : ""}
+          from the camera original on the Mac{secs >= 2 ? ` · ${secs} s` : ""}{secs >= 20 ? " (the footage drive is slow to wake)" : ""}
         </p>
       </div>
       <button onClick={onCancel} className="rounded-md border border-white/30 bg-white/10 px-4 py-1.5 text-sm font-medium hover:bg-white/20">
         Cancel
       </button>
-      <p className="text-[11px] text-zinc-400">Playing waits until it's here.</p>
+      <p className="text-[11px] text-zinc-400">Playback starts when it is loaded.</p>
     </div>
   );
 }
@@ -532,7 +532,7 @@ function Scopes({ sample, show, label }: { sample: () => Sample | null; show: (c
       </div>
       {blocked ? (
         <div className="flex aspect-[2/1] w-full items-center justify-center rounded bg-black text-center text-[11px] text-zinc-500">
-          Scopes can't read this video
+          Scopes are not available for this video
         </div>
       ) : (
         <canvas ref={canvas} width={CW} height={CH} className="w-full rounded bg-black" />

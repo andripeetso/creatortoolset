@@ -400,7 +400,7 @@ export async function exportCaptionedVideoLocal(
   const { file, codec, spec, fps, onProgress } = options;
   if (!("VideoEncoder" in window) || !("VideoDecoder" in window)) {
     throw new Error(
-      "Local video export needs browser video encoding. Use current Chrome or Edge, or choose Cloud background render.",
+      "This browser cannot encode video; export on the server",
     );
   }
 
@@ -445,7 +445,7 @@ export async function exportCaptionedVideoLocal(
   canvas.width = spec.width;
   canvas.height = spec.height;
   const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) throw new Error("Could not create the local video renderer.");
+  if (!ctx) throw new Error("Could not start the export on this computer");
 
   // the Mac app's web view takes H.264 above level 5.2 only this way (lib/h264-level.ts)
   await allowHighH264();
@@ -491,7 +491,7 @@ export async function exportCaptionedVideoLocal(
       !conversion.utilizedTracks.some((track) => track.isAudioTrack())
     ) {
       throw new Error(
-        "This browser cannot preserve the source audio during local export. Choose Cloud background render instead.",
+        "This browser cannot keep the video's sound; export on the server",
       );
     }
     conversion.onProgress = (progress) => onProgress?.(progress);

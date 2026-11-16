@@ -87,7 +87,7 @@ it("an answer without chapters is a failure too, in plain words", async () => {
   replies = [{ status: 200, body: { ...clip, chapters: [] } }];
   mount();
   await flush();
-  expect(says()).toBe("failed: Couldn't make chapters.");
+  expect(says()).toBe("failed: Could not make chapters");
 });
 
 it("with no AI connected, as the saved copy says before the first frame, it asks for nothing and draws no row", async () => {
