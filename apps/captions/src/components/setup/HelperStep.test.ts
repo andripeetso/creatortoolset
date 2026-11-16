@@ -10,16 +10,15 @@ const passed = { at: 1, ffmpeg: true, encode: 5, folders: [{ id: "a", name: "Foo
 describe("the Help screen", () => {
   it("says what the computer takes and from where, only once the test went well", () => {
     expect(readyLine(mac, passed)).toBe("Ready: this computer takes drafts and renders from Footage and Music");
-    expect(readyLine(linux, { ...passed, folders: [] })).toBe("Ready: this computer takes transcripts");
+    expect(readyLine(linux, passed)).toBe("Ready: this computer takes transcripts");
     expect(readyLine(mac, { ...passed, folders: [{ id: "a", name: "Footage", ok: false, error: "x" }] })).toBeNull();
     expect(readyLine(mac, { ...passed, encode: undefined })).toBeNull();
     expect(andList(["A", "B", "C"])).toBe("A, B and C");
   });
 
-  it("sets the weight from the result: Off when anything failed, else by encode speed", () => {
-    expect(weightFor({ ffmpeg: true, encode: 5, folders: [] })).toBe(100);
-    expect(weightFor({ ffmpeg: true, encode: 2, folders: [] })).toBe(50);
-    expect(weightFor({ ffmpeg: true, encode: 1, folders: [] })).toBe(25);
+  it("sets the weight from the result: Off when anything failed, Less often when slower than the video plays, else Normal", () => {
+    expect(weightFor({ ffmpeg: true, encode: 5, folders: [] })).toBe(50);
+    expect(weightFor({ ffmpeg: true, encode: 0.8, folders: [] })).toBe(25);
     expect(weightFor({ ffmpeg: true, encode: 5, folders: [{ id: "a", ok: false }] })).toBe(0);
     expect(weightFor({ ffmpeg: false, folders: [] })).toBe(0);
   });

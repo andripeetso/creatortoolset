@@ -60,10 +60,10 @@ describe("checking a computer", () => {
     await post(`/api/devices/relay/job/helper-check/${test.id}`, { ffmpeg: true, encode: 6.2, folders: [{ id: "f1", ok: true }, { id: "elsewhere", ok: true }] }, helper.token);
 
     const out = (await (await asked).json()) as { check: HelperCheck; weight: number };
-    expect(out.weight).toBe(100);
+    expect(out.weight).toBe(50);
     expect(out.check.folders).toEqual([{ id: "f1", name: "Trip", ok: true }]);
     expect(deviceOf(helper.device.id)?.check?.encode).toBe(6.2);
-    expect(JSON.parse(readFileSync(balanceFile(USER), "utf8"))).toMatchObject({ on: true, weights: { [helper.device.id]: 100 } });
+    expect(JSON.parse(readFileSync(balanceFile(USER), "utf8"))).toMatchObject({ on: true, weights: { [helper.device.id]: 50 } });
   });
 
   it("a computer that does not answer the check's kind is told to update first", async () => {

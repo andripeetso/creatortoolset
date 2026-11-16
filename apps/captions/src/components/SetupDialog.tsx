@@ -142,7 +142,7 @@ export function SetupDialog() {
   const asked = params.get("setup");
   // the Help screen: this Mac, and the account's other computers (it opens by itself once, right after a sign-in here)
   const macApp = hasThisMac();
-  const bridge = useThisMac(macApp && !!me);
+  const bridge = useThisMac(macApp && !!me && asked === "helper"); // asked every 3 s: only while the Help screen is up
   // read only in the Mac app (the screen is about this computer): a browser never loads it for this
   const { data: providers } = useCachedLoad<ProvidersView>(macApp ? "/api/providers" : null, getProviders, { topic: ["providers", "devices"], own: true });
   const self = bridge?.device ?? document.documentElement.dataset.macDevice ?? null;

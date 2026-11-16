@@ -116,12 +116,13 @@ export function parseHelperCheck(v: unknown, asked: readonly string[]): HelperCh
 
 /**
  * The Prefer / Normal / Less often / Off weight (contracts/providers.ts LOAD_PREFERENCES) a test sets: Off when it can't
- * render or a folder failed to read (a job would fail there), else by how fast it encodes.
- * ponytail: fixed speeds, not compared with the account's other computers; compare when people ask why.
+ * render or a folder failed to read (a job would fail there), Less often when it encodes slower than the video plays,
+ * else Normal. Never Prefer: the encode's speed depends on each computer's own ffmpeg build (measured 11-15: a 32-core
+ * Linux PC 3.0×, a Mac Studio 5.0×), and load balancing already weighs cores, load and memory; Prefer is the person's call.
  */
 export function weightFor(c: HelperCheckSent): number {
   if (!c.ffmpeg || !c.encode || c.folders.some((f) => !f.ok)) return 0;
-  return c.encode >= 4 ? 100 : c.encode >= 1.5 ? 50 : 25;
+  return c.encode >= 1 ? 50 : 25;
 }
 
 /** What a computer sends back: the words heard, with times in seconds, and the language heard (ISO 639-1) or null. */

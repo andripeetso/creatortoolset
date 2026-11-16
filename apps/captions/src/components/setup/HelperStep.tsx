@@ -31,8 +31,10 @@ export const workOf = (d: Pick<Computer, "kinds" | "report">): string =>
 /** The line a test that went well ends on; null while it has not, or a folder failed. */
 export function readyLine(d: Pick<Computer, "kinds" | "report">, check: HelperCheck | undefined): string | null {
   if (!check || !check.ffmpeg || !check.encode || check.folders.some((f) => !f.ok)) return null;
-  const from = [...new Set(check.folders.map((f) => f.name))];
-  return `Ready: this computer takes ${workOf(d)}${from.length ? ` from ${andList(from)}` : ""}`;
+  const work = workOf(d);
+  // transcripts come from the server, never from a folder
+  const from = work === "transcripts" ? [] : [...new Set(check.folders.map((f) => f.name))];
+  return `Ready: this computer takes ${work}${from.length ? ` from ${andList(from)}` : ""}`;
 }
 
 /** The footage and music folders another computer of the account added (each once, however many workspaces list it). */
@@ -141,7 +143,8 @@ export function HelperSetup({ device }: { device: string }) {
             const how = !has && f.mount && os ? connectFor(f.mount, os) : null;
             const role = STORAGE_ROLES.find((r) => r.value === f.role)?.label;
             const origin = names.get(f.origin.host) ?? "the computer that has it";
-            const where = f.mount ? `${role} · ${f.mount.share} on ${f.mount.server}` : `${role} · on ${origin}`;
+            // a folder on the other computer's own disk names that computer once: "Stays on …" or the server copy
+            const where = f.mount ? `${role} · ${f.mount.share} on ${f.mount.server}` : `${role}`;
             return (
               <Row
                 key={f.id}
