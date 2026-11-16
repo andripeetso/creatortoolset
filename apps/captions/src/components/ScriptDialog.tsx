@@ -46,7 +46,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     : !hasWords
       ? "Needs a transcript"
       : busy
-        ? "Captions are being processed"
+        ? "Locked while captions are processing"
         : null;
 
   return (
