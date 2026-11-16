@@ -38,6 +38,8 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var sha256: String?
     var catalog: CatalogSend?
     var finishedAt: Date?
+    /// What the phone read of the original before sending (`PhoneMade`): sent with every start of its upload.
+    var made: PhoneMade.Original?
 
     struct Direct: Codable, Hashable {
         let partSize: Int64

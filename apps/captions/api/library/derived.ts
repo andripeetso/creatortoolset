@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { libraryChanged } from "./access";
 import { blobs, libraryDb, libraryUpload } from "./db";
 import { enqueueJob } from "./jobs";
-import type { ProbeSummary } from "./media/probe";
+import { countryOf, type ProbeSummary } from "./media/probe";
 import { kindOf, recordVersion } from "./routes";
 import { afterProbe, dropOriginal, markReady } from "./worker";
 
@@ -127,3 +127,73 @@ export function sendLater(
 
 /** Whether a file of this name, sent to `libraryId`, goes the computer's way (sendLater) rather than as its original. */
 export const sendsFromComputer = (libraryId: string, filename: string): boolean => kindOf(filename) === "video" && libraryUpload(libraryId) !== "none";
+
+/**
+ * What a phone made of a video itself and sends with the upload start (phase 6, 6D; the iPhone's PhoneMade.swift), so this
+ * server reads none of it again: the original's quick fingerprint, its card picture, and, to a library that keeps only
+ * proxies, `proxy`: the bytes that follow are a 720p copy, and the original (this size, this probe) stayed on the phone.
+ * The server says it takes these in GET /api/library (`uploadTakes`), so an older server never gets a copy as an original.
+ */
+export interface Made {
+  quick: string;
+  /** the card picture, JPEG, base64 */
+  thumb?: string;
+  proxy?: { size: number; probe: ProbeSummary };
+}
+
+/** Which version of `Made` an upload start takes (GET /api/library `uploadTakes`). */
+export const UPLOAD_TAKES = 1;
+
+const MAX_THUMB_B64 = 700_000; // ~512 KB of JPEG; a 480-wide card picture is ~40 KB
+
+/** The probe a phone read (AVFoundation), as the server's own ProbeSummary; null when any field is off. The country from its location, never the coordinates. */
+async function probeFrom(x: unknown): Promise<ProbeSummary | null> {
+  const p = (x ?? {}) as Record<string, unknown>;
+  const num = (k: string, max: number) => (typeof p[k] === "number" && Number.isFinite(p[k]) && (p[k] as number) >= 0 && (p[k] as number) <= max ? (p[k] as number) : null);
+  const str = (k: string) => (typeof p[k] === "string" && (p[k] as string).length <= 64 ? (p[k] as string) : null);
+  const [duration, width, height, fps, rotation] = [num("duration", 1e6), num("width", 16384), num("height", 16384), num("fps", 1000), num("rotation", 270)];
+  const [format, vcodec, pixFmt, acodec] = [str("format"), str("vcodec"), str("pixFmt"), str("acodec")];
+  if (duration === null || width === null || height === null || fps === null || rotation === null || rotation % 90) return null;
+  if (format === null || vcodec === null || pixFmt === null || acodec === null) return null;
+  const capturedAt = num("capturedAt", 1e14);
+  const country = typeof p.location === "string" && p.location.length <= 64 ? await countryOf({ format: { tags: { location: p.location } } }) : "";
+  return { duration, width, height, fps, rotation, format, vcodec, pixFmt, acodec, ...(capturedAt ? { capturedAt } : {}), country };
+}
+
+/** `Made` from an upload start's body; null when it sends none, a string when what it sends is malformed (400). */
+export async function parseMade(body: Record<string, unknown> | null): Promise<Made | null | string> {
+  if (body?.quick === undefined) return null;
+  if (typeof body.quick !== "string" || !/^[0-9a-f]{64}$/.test(body.quick)) return "quick: the SHA-256 in hex";
+  const made: Made = { quick: body.quick };
+  if (body.thumb !== undefined) {
+    if (typeof body.thumb !== "string" || body.thumb.length > MAX_THUMB_B64) return "thumb: a JPEG in base64, under 512 KB";
+    const head = Buffer.from(body.thumb.slice(0, 8), "base64");
+    if (head[0] !== 0xff || head[1] !== 0xd8) return "thumb: a JPEG in base64, under 512 KB";
+    made.thumb = body.thumb;
+  }
+  if (body.proxy !== undefined) {
+    const x = body.proxy as { size?: unknown; probe?: unknown } | null;
+    const probe = await probeFrom(x?.probe);
+    if (!Number.isSafeInteger(x?.size) || (x?.size as number) <= 0 || !probe?.vcodec) return "proxy: the original's size and probe";
+    made.proxy = { size: x!.size as number, probe };
+  }
+  return made;
+}
+
+/**
+ * Files what the phone made for `versionId`, just recorded from its upload (`sent` bytes; the probe job was held back
+ * in the same transaction). A 720p copy is the version's source and its proxy at once (as after dropOriginal), recorded
+ * with the original's probe, so it is never probed or made again here; an original is probed here as always (a header
+ * read, exact), after the card picture is filed, so its thumbnail job is never queued. `thumbFile`: the picture on disk.
+ */
+export async function recordMade(versionId: string, made: Made, sent: number, thumbFile: string | null, actor: string): Promise<void> {
+  const db = libraryDb();
+  if (made.proxy) {
+    db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) SELECT id, 'proxy', source_key, ? FROM asset_versions WHERE id = ?").run(sent, versionId);
+  }
+  await recordDerived(versionId, { quick: made.quick, probe: made.proxy?.probe, files: thumbFile ? { thumb: thumbFile } : {} }, actor);
+  if (!made.proxy) {
+    const v = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined;
+    if (v) enqueueJob(db, v.library_id, versionId, "probe", actor);
+  }
+}

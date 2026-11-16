@@ -177,6 +177,7 @@ final class UploadEngine: ObservableObject {
                     $0.size = exported.size
                     $0.filename = exported.filename
                     $0.sha256 = nil
+                    $0.made = nil
                     $0.uploadId = nil
                     $0.direct = nil
                     $0.sent = 0
@@ -261,9 +262,22 @@ final class UploadEngine: ObservableObject {
         let direct: Direct?
     }
 
-    private struct Libraries: Decodable {
-        struct Library: Decodable { let id: String }
+    struct Libraries: Decodable {
+        struct Library: Decodable {
+            /// Only `upload` ("none", "proxies", "all"); a server from before it wrote true/false, read as nothing.
+            struct Settings: Decodable {
+                let upload: String?
+                private enum Key: CodingKey { case upload }
+                init(from decoder: Decoder) throws {
+                    upload = try? decoder.container(keyedBy: Key.self).decode(String.self, forKey: .upload)
+                }
+            }
+            let id: String
+            let settings: Settings?
+        }
         let libraries: [Library]
+        /// What an upload start takes besides the name and size (`PhoneMade`); nil on a server from before it.
+        let uploadTakes: Int?
     }
 
     private func create(_ id: UUID, _ api: API) async throws {
@@ -272,13 +286,15 @@ final class UploadEngine: ObservableObject {
         if item.direct != nil { startPart(id, 1) } else { startPatch(id, from: item.sent) }
     }
 
-    /// POST /api/library/:id/uploads into the account's first library.
+    /// POST /api/library/:id/uploads into the account's first library, with what the phone made of a video when the
+    /// server takes it.
     private func makeUpload(_ id: UUID, _ api: API) async throws {
-        guard let item = store.item(id) else { return }
         let libraries: Libraries = try await api.get("/api/library")
         guard let library = libraries.libraries.first else { throw APIError.server(404, "This server has no Media Library") }
+        let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: library.settings?.upload == "proxies") : [:]
+        guard let item = store.item(id) else { return }
         let data = try await api.send("/api/library/\(library.id)/uploads",
-                                      json: ["filename": item.filename, "size": item.size])
+                                      json: made.merging(["filename": item.filename, "size": item.size]) { $1 })
         let created = try JSONDecoder().decode(Created.self, from: data)
         store.update(id) {
             $0.uploadId = created.id
@@ -286,6 +302,61 @@ final class UploadEngine: ObservableObject {
             $0.direct = created.direct.map { UploadItem.Direct(partSize: $0.partSize, urls: $0.urls) }
             $0.sent = created.offset
         }
+    }
+
+    /// What the phone makes of a video itself for the upload start (`PhoneMade`, the server's derived.ts `Made`): the
+    /// original's quick fingerprint, the card picture, and to a library that keeps only proxies a 720p copy in place of
+    /// the bytes when it is lighter, with the original's size and probe. The original stays in Photos or Files.
+    /// Nothing (as an older server gets) when it is not a video or the phone can't read it.
+    func made(_ id: UUID, proxies: Bool) async -> [String: Any] {
+        guard let item = store.item(id) else { return [:] }
+        let file = AppFiles.upload(id)
+        let copy = AppFiles.slices.appendingPathComponent("\(id.uuidString)-720p.mp4")
+        var original = item.made
+        if original == nil {
+            guard let named = named(id), let probe = await PhoneMade.probe(named), let quick = PhoneMade.quickPrint(file) else { return [:] }
+            defer { try? FileManager.default.removeItem(at: named) }
+            var read = PhoneMade.Original(quick: quick, size: item.size, probe: probe, proxy: false)
+            var sending = (filename: item.filename, size: item.size)
+            if proxies, min(probe.width, probe.height) > 720 {
+                note(id, "Making a 720p copy…")
+                if (try? await PhoneMade.proxy(named, to: copy)) != nil,
+                   let size = (try? FileManager.default.attributesOfItem(atPath: copy.path))?[.size] as? Int64, size > 0, size < item.size {
+                    read.proxy = true
+                    sending = ((item.filename as NSString).deletingPathExtension + ".mp4", size)
+                } else {
+                    try? FileManager.default.removeItem(at: copy)
+                }
+                note(id, nil)
+            }
+            store.update(id) {
+                $0.made = read
+                $0.filename = sending.filename
+                $0.size = sending.size
+            }
+            original = read
+        }
+        guard let original else { return [:] }
+        // the copy takes the original's place only after the upload says so: a stop in between finds it here again
+        if original.proxy, FileManager.default.fileExists(atPath: copy.path) {
+            _ = try? FileManager.default.replaceItemAt(file, withItemAt: copy)
+        }
+        var json: [String: Any] = ["quick": original.quick]
+        if let named = named(id) {
+            if let picture = await PhoneMade.cardPicture(named, duration: original.probe.duration) { json["thumb"] = picture.base64EncodedString() }
+            try? FileManager.default.removeItem(at: named)
+        }
+        if original.proxy { json["proxy"] = ["size": original.size, "probe": original.probe.json] as [String: Any] }
+        return json
+    }
+
+    /// The copy on the phone under its file's name's extension, which AVFoundation knows a file by (the copy has none):
+    /// a hard link, no bytes copied. The caller removes it.
+    private func named(_ id: UUID) -> URL? {
+        let ext = store.item(id).map { ($0.filename as NSString).pathExtension } ?? ""
+        let link = AppFiles.slices.appendingPathComponent("\(id.uuidString)-named.\(ext.isEmpty ? "mov" : ext)")
+        try? FileManager.default.removeItem(at: link)
+        return (try? FileManager.default.linkItem(at: AppFiles.upload(id), to: link)) == nil ? nil : link
     }
 
     private func startPatch(_ id: UUID, from offset: Int64) {
