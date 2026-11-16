@@ -49,6 +49,7 @@ import { useChatPage } from "./useChatPage";
 import { Steps } from "@/components/chat/Steps";
 import { QueuedRow } from "@/components/chat/QueuedRow";
 import { useFollowEnd } from "@/components/chat/useFollowEnd";
+import { ScrollToEnd } from "@/components/chat/ScrollToEnd";
 import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { CopyButton } from "@/components/workshop/CopyButton";
 import { VideoCards } from "./VideoCard";
@@ -272,7 +273,7 @@ export function AssistantDock() {
   useChatModeKey(real);
   // The newest message in view (useFollowEnd). After the chat-mode layout above, which gives the list its width, and so
   // its height
-  const follow = useFollowEnd(() => bottom.current?.parentElement, collapsed && !chatMode ? null : `${chatMode} ${view?.id}`, [view?.messages.length, last?.text, last?.steps?.length, view?.pending]);
+  const { follow, away, toEnd } = useFollowEnd(() => bottom.current?.parentElement, collapsed && !chatMode ? null : `${chatMode} ${view?.id}`, [view?.messages.length, last?.text, last?.steps?.length, view?.pending]);
   // the list folded away opens over the chat from its button, until a chat is picked
   const [listOpen, setListOpen] = useState(false);
   // the page beside the chats is the open chat's own (useChatPage): its newest card or video is what it works on
@@ -1013,6 +1014,7 @@ export function AssistantDock() {
           </p>
         )}
         <div ref={bottom} />
+        <ScrollToEnd show={away} onClick={toEnd} />
       </div>
 
       {/* the message box shares the header's and the chat's left and right edges */}
