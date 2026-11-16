@@ -74,8 +74,10 @@ describe("groupComputers", () => {
     ]);
   });
 
-  it("names what a record is: the team's worker or the Mac app", () => {
-    expect(kindOf(mac({ owner: "workspace" }))).toBe("AI Editor worker");
+  it("names what a record is: the team's AI Editor or the Mac app, and nothing for a computer that is not a Mac", () => {
+    expect(kindOf(mac({ owner: "workspace" }))).toBe("AI Editor");
     expect(kindOf(mac({ owner: "andri" }))).toBe("Mac app");
+    const linux = mac({ owner: "andri" });
+    expect(kindOf({ ...linux, report: { ...linux.report!, machine: { ...linux.report!.machine!, os: "linux" } } })).toBeNull();
   });
 });

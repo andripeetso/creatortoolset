@@ -16,9 +16,9 @@ import { openSetupAt } from "@/lib/setup";
  * Setting up a computer to help with heavy work, on one screen: what it needs (each row quiet when fine, else what to
  * do), the account's footage and music folders with Connect for each it can't read yet (its drives are read again
  * straight after, and when the window comes back from the Finder), and a test that reads a file in each folder and
- * times an encode, then sets its Prefer / Normal / Less often / Off from the result. Used by setup's Help screen, Add a
- * computer once the new one shows up, and a computer's Set up in Settings → Devices. Its result shows on every computer
- * of the account at once (Device.check, the devices topic).
+ * times an encode, then sets its Prefer / Normal / Less often / Off from the result. Used by setup's Help screen, Add
+ * computer once the new one is on the list, and a computer's Set up in Settings → Computers. Its result is on every
+ * computer of the account at once (Device.check, the devices topic).
  */
 
 /** "A", "A and B", "A, B and C". */
@@ -28,13 +28,13 @@ export const andList = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.
 export const workOf = (d: Pick<Computer, "kinds" | "report">): string =>
   d.report?.machine?.os !== "mac" && (d.kinds ?? []).every((k) => k === TRANSCRIBE_KIND || k === HELPER_CHECK_KIND) ? "transcripts" : "drafts and renders";
 
-/** The line a test that went well ends on; null while it has not, or a folder failed. */
+/** What a test that went well ends on, the work this computer is used for; null while it has not, or a folder failed. */
 export function readyLine(d: Pick<Computer, "kinds" | "report">, check: HelperCheck | undefined): string | null {
   if (!check || !check.ffmpeg || !check.encode || check.folders.some((f) => !f.ok)) return null;
   const work = workOf(d);
   // transcripts come from the server, never from a folder
   const from = work === "transcripts" ? [] : [...new Set(check.folders.map((f) => f.name))];
-  return `Ready: this computer takes ${work}${from.length ? ` from ${andList(from)}` : ""}`;
+  return `Used for ${work}${from.length ? ` from ${andList(from)}` : ""}.`;
 }
 
 /** The footage and music folders another computer of the account added (each once, however many workspaces list it). */
@@ -82,7 +82,7 @@ export function HelperSetup({ device }: { device: string }) {
     if (admin) void call<Balance>("/api/devices/balance").then((b) => setWeight(b.weights[device] ?? DEFAULT_WEIGHT), () => {});
   }, [admin, device]);
 
-  if (!view || !d) return <p className="text-sm text-muted-foreground">Waiting for the computer to show up…</p>;
+  if (!view || !d) return <p className="text-sm text-muted-foreground">Waiting for the computer…</p>;
 
   const os = d.report?.machine?.os;
   const check = d.check;
@@ -122,15 +122,15 @@ export function HelperSetup({ device }: { device: string }) {
         />
         <Row
           title="Video renders"
-          status={check && !check.ffmpeg ? <Status tone="broken">{os === "linux" ? "Install ffmpeg on it: sudo apt install ffmpeg" : "Install ffmpeg on it"}</Status> : undefined}
+          status={check && !check.ffmpeg ? <Status tone="broken">{os === "linux" ? "Needs ffmpeg: sudo apt install ffmpeg" : "Needs ffmpeg"}</Status> : undefined}
           control={check?.ffmpeg ? ok : undefined}
         />
         {aiShown && (
           <Row
             title="AI"
-            description={aiIn ? undefined : "Sign in to Claude Code or Codex on it to share its AI work too"}
+            description={aiIn ? undefined : "Runs AI jobs too once Claude Code or Codex is signed in on it."}
             control={aiIn ? ok : device === document.documentElement.dataset.macDevice ? (
-              <Button size="sm" variant="outline" onClick={() => openSetupAt("agents", true)}>Connect AI</Button>
+              <Button size="sm" variant="outline" onClick={() => openSetupAt("agents", true)}>Set up</Button>
             ) : undefined}
           />
         )}
@@ -161,18 +161,18 @@ export function HelperSetup({ device }: { device: string }) {
       <Card>
         <Row
           title="Test run"
-          description={ready ?? "Reads a file in each folder it can reach and times a short video encode"}
-          status={problem ? <Status tone="broken">{problem}</Status> : check?.ffmpeg && !check.encode ? <Status tone="broken">The encode failed on {d.name}</Status> : undefined}
+          description={ready ?? "Reads a file in each folder and times a short video render."}
+          status={problem ? <Status tone="broken">{problem}</Status> : check?.ffmpeg && !check.encode ? <Status tone="broken">Video render failed on {d.name}</Status> : undefined}
           control={
-            <Button size="sm" variant="outline" className="min-w-32" disabled={testing || !d.online || !updated} onClick={() => void test()}>
-              {testing ? "Testing…" : check ? "Test again" : "Test this computer"}
+            <Button size="sm" variant="outline" className="min-w-20" disabled={testing || !d.online || !updated} onClick={() => void test()}>
+              {testing ? "Testing…" : "Test"}
             </Button>
           }
         />
         {check && admin && weight !== null && (
           <Row
-            title="Takes heavy work"
-            control={<SettingsSelect label="Takes heavy work" value={String(weight)} onValueChange={pickWeight} options={LOAD_PREFERENCES.map((p) => ({ value: String(p.value), label: p.label }))} />}
+            title="Heavy work share"
+            control={<SettingsSelect label="Heavy work share" value={String(weight)} onValueChange={pickWeight} options={LOAD_PREFERENCES.map((p) => ({ value: String(p.value), label: p.label }))} />}
           />
         )}
       </Card>
@@ -192,13 +192,13 @@ export function HelperSetup({ device }: { device: string }) {
   );
 }
 
-/** The Mac app's own Mac before it helps: the one switch that pairs it (Settings → Devices, Use this Mac for my AI). */
+/** The Mac app's own Mac before it helps: the one switch that adds it (Settings → Computers, AI on this Mac). */
 export function HelperPair() {
   return (
     <Card>
       <Row
-        title="Use this computer"
-        description="Pairs it with your account, so it can take heavy work"
+        title="AI on this Mac"
+        description="AI jobs can run on this Mac."
         control={<Button size="sm" onClick={() => tell("ai:on")}>Turn on</Button>}
       />
     </Card>

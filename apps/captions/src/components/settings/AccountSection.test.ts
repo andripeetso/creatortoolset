@@ -15,9 +15,9 @@ describe("signInNameProblem (the allowed sign-in name, shown only when broken)",
 });
 
 describe("signInReturn (the toast after a sign-in link)", () => {
-  it("says a linked provider by its name", () => {
-    expect(signInReturn("?linked=google")).toEqual({ tone: "success", text: "Google is linked to your account." });
-    expect(signInReturn("linked=github")).toEqual({ tone: "success", text: "GitHub is linked to your account." });
+  it("says an added sign-in by its provider's name", () => {
+    expect(signInReturn("?linked=google")).toEqual({ tone: "success", text: "Google sign-in added" });
+    expect(signInReturn("linked=github")).toEqual({ tone: "success", text: "GitHub sign-in added" });
   });
 
   it("shows the server's message as an error, whatever else is in the query", () => {

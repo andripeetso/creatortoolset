@@ -23,9 +23,11 @@ describe("setup's AI apps screen, after In my own AI or Both", () => {
     expect(buttons(html)).toEqual(["Install", "Install"]);
   });
 
-  it("an app that must sign in or update first says so, with Install waiting behind it", () => {
+  it("an app that must sign in or update first has that one button, and says what it needs", () => {
     const html = show({ local: true, rows: [app("claude", "Claude Code", { signedIn: false }), app("codex", "Codex", { mcp: "update" })] });
-    expect(buttons(html)).toEqual(["Sign in", "Install", "Update", "Install"]);
+    expect(buttons(html)).toEqual(["Sign in", "Update"]);
+    expect(html).toContain("Needs sign-in");
+    expect(html).toContain("needs an update");
   });
 
   it("an app it is installed in says Installed, with no Install button", () => {

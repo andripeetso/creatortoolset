@@ -698,7 +698,7 @@ authApp.post("/code/off", async (c) => {
   const user = accountHere(c);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   if (!user.code) return c.json({ ok: true });
-  if (codeRequired()) return c.json({ error: "This server asks everyone for a sign-in code" }, 400);
+  if (codeRequired()) return c.json({ error: "A sign-in code is required on this server" }, 400);
   if (!fromThisMac(c)) {
     const from = clientAddress(c);
     if (waitFor(user.username, from)) return locked(c, user.username, from);
@@ -826,7 +826,7 @@ authApp.delete("/api-key", (c) => {
   return c.json({ ...apiKeysOf(user), ai: aiKeysOf(user) });
 });
 
-/** Settings → Account: unlinks a Google or Apple sign-in (hosted only; a team's required provider can't be removed). */
+/** Settings → Account → Sign-ins: disconnects a Google, Apple or GitHub sign-in (hosted only, the one place the page lists them; a team's required provider can't be removed). */
 authApp.delete("/identity/:provider", (c) => {
   if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
   const session = getSessionUser(c.req.header("cookie"));
@@ -837,7 +837,7 @@ authApp.delete("/identity/:provider", (c) => {
   const rule = ruleFor(user.username);
   const left = (user.identities ?? []).filter((i) => i.provider !== provider && rule?.allowed.includes(i.provider));
   if (rule?.allowed.includes(provider) && !left.length) {
-    return c.json({ error: `Your team signs in with ${rule.allowed.map(providerLabel).join(" or ")}: link another one first` }, 400);
+    return c.json({ error: `Your team signs in with ${rule.allowed.map(providerLabel).join(" or ")}: add another of them first` }, 400);
   }
   unlinkIdentity(user, provider);
   return c.json({ ok: true });

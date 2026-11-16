@@ -25,7 +25,7 @@ in an app that takes one; that app then asks you to sign in to that server.
 ## Claude Code, Codex and scripts
 
 Settings → Headless access → **Install** on the Claude Code or Codex row adds it on your Mac. Any other app or script:
-**Get address and key**, then send the key as `Authorization: Bearer <key>`. Each app gets a key of its own.
+**Create key** on the Another app row, then send the key as `Authorization: Bearer <key>`. Each app gets a key of its own.
 
 ## What an AI app sees
 
